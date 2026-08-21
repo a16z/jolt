@@ -13,7 +13,6 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
-use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::{
     absorb_packed_commitments, absorb_transcript_preamble, validate_inputs_from_parts,
@@ -21,7 +20,7 @@ use jolt_verifier::{
 };
 use jolt_witness::JoltWitnessPlane;
 
-use super::witness::{assemble_one_hot_trace, commit_advice_one_hot, AdviceOneHot};
+use super::witness::{assemble_one_hot_trace_rows, commit_advice_one_hot, AdviceOneHot};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 0's outputs: the validated inputs, the seeded transcript (positioned
@@ -54,7 +53,7 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
@@ -167,28 +166,32 @@ where
         });
     }
 
-    let one_hot_trace = assemble_one_hot_trace(
+    let packed_trace_rows = assemble_one_hot_trace_rows(
         witness,
         &plan,
         formula_dimensions.ra_layout,
         log_k_chunk,
         log_t,
     )?;
-    // The packed sibling of the homomorphic path's `commit_witness` seam:
-    // one native commit of the single prefix-packed polynomial.
     let (commitment, hint) = tracing::info_span!(
         "CommitmentScheme::commit_batch",
         packed_num_vars = plan.packing().packed_num_vars()
     )
     .in_scope(|| {
-        PCS::commit_batch(
-            &[&one_hot_trace as &dyn MultilinearPoly<F>],
-            preprocessing.pcs_setup.default_layout_digest(),
+        PCS::commit_trace_one_hot(
             &preprocessing.pcs_setup,
+            preprocessing.pcs_setup.default_layout_digest(),
+            plan.packing().slot_capacity(),
+            packed_trace_rows,
         )
     })
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
+    })?;
+    PCS::release_post_commit_residency(&preprocessing.pcs_setup).map_err(|error| {
+        VerifierError::FinalOpeningVerificationFailed {
+            reason: error.to_string(),
+        }
     })?;
 
     // The per-proof untrusted-advice byte object; the trusted object is

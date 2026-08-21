@@ -9,17 +9,18 @@
 
 use std::sync::Arc;
 
-#[cfg(feature = "allocative")]
-use allocative::{Allocative, Key, Visitor};
 use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
-use jolt_witness::{JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
+#[cfg(feature = "parallel")]
+use jolt_witness::{RandomAccessRows, WitnessError};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
-use super::support::collect_rows;
 use crate::{KernelError, ProofSession};
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
-pub(crate) const NO_ACCESS: u64 = u64::MAX;
+pub(crate) const NO_ACCESS: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RamAccessBundle {
@@ -28,11 +29,86 @@ struct RamAccessBundle {
     post_value: RamWriteValue,
 }
 
+#[derive(Clone, Copy)]
+enum AddressEncodingError {
+    TooLarge,
+    SentinelCollision,
+}
+
+impl AddressEncodingError {
+    fn into_kernel_error<F: Field>(self) -> KernelError<F> {
+        let reason = match self {
+            Self::TooLarge => "optimized RAM kernels require remapped addresses below 2^32 - 1",
+            Self::SentinelCollision => {
+                "optimized RAM kernels reserve u32::MAX as the no-access sentinel"
+            }
+        };
+        KernelError::Unsupported { reason }
+    }
+}
+
+fn encode_address(address: Option<u64>) -> Result<u32, AddressEncodingError> {
+    let Some(address) = address else {
+        return Ok(NO_ACCESS);
+    };
+    let address = u32::try_from(address).map_err(|_| AddressEncodingError::TooLarge)?;
+    if address == NO_ACCESS {
+        return Err(AddressEncodingError::SentinelCollision);
+    }
+    Ok(address)
+}
+
+struct CollectRamAccessColumns {
+    addresses: Vec<u32>,
+    pre_values: Vec<u64>,
+    post_values: Vec<u64>,
+    address_error: Option<AddressEncodingError>,
+}
+
+impl StreamConsumer for CollectRamAccessColumns {
+    type Witness = RamAccessBundle;
+
+    fn consume(&mut self, chunk: &[RamAccessBundle]) {
+        for bundle in chunk {
+            let address = encode_address(bundle.address.0).unwrap_or_else(|failure| {
+                let _ = self.address_error.get_or_insert(failure);
+                NO_ACCESS
+            });
+            self.addresses.push(address);
+            self.pre_values.push(bundle.pre_value.0);
+            self.post_values.push(bundle.post_value.0);
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+enum CollectFailure {
+    Witness(WitnessError),
+    Address(AddressEncodingError),
+}
+
 /// Column-major per-cycle RAM access data over the full padded cycle domain.
 pub(crate) struct RamAccessColumns {
     /// Remapped word address per cycle; [`NO_ACCESS`] when the cycle makes no
     /// remappable RAM access (no-ops and address 0).
-    pub addresses: Vec<u64>,
+    pub addresses: Vec<u32>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RamAccessColumns {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("addresses"),
+            crate::backend::vec_heap_bytes(&self.addresses),
+        );
+        visitor.exit();
+    }
+}
+
+/// RAM values have one final consumer in stage 4, so they are parked
+/// separately from the address column and consumed there.
+pub(crate) struct RamAccessValues {
     /// Pre-access word value per cycle (a read's value, a write's pre-value);
     /// 0 on no-access cycles.
     pub pre_values: Vec<u64>,
@@ -41,20 +117,17 @@ pub(crate) struct RamAccessColumns {
 }
 
 #[cfg(feature = "allocative")]
-impl RamAccessColumns {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        use crate::backend::vec_heap_bytes;
-        vec_heap_bytes(&self.addresses)
-            + vec_heap_bytes(&self.pre_values)
-            + vec_heap_bytes(&self.post_values)
-    }
-}
-
-#[cfg(feature = "allocative")]
-impl Allocative for RamAccessColumns {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+impl allocative::Allocative for RamAccessValues {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(Key::new("heap"), self.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("pre_values"),
+            crate::backend::vec_heap_bytes(&self.pre_values),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("post_values"),
+            crate::backend::vec_heap_bytes(&self.post_values),
+        );
         visitor.exit();
     }
 }
@@ -63,22 +136,104 @@ impl RamAccessColumns {
     fn collect<F: Field>(
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
-    ) -> Result<Self, KernelError<F>> {
+    ) -> Result<(Self, RamAccessValues), KernelError<F>> {
         let cycles = 1usize << log_t;
-        let bundles: Vec<RamAccessBundle> = collect_rows(witness, cycles)?;
+        #[cfg(feature = "parallel")]
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, cycles);
+            }
+        }
+
+        const COLLECT_CHUNK: usize = 1 << 16;
+        let mut consumers = (CollectRamAccessColumns {
+            addresses: Vec::with_capacity(cycles),
+            pre_values: Vec::with_capacity(cycles),
+            post_values: Vec::with_capacity(cycles),
+            address_error: None,
+        },);
+        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+        let collected = consumers.0;
+        if let Some(failure) = collected.address_error {
+            return Err(failure.into_kernel_error());
+        }
+        Ok((
+            Self {
+                addresses: collected.addresses,
+            },
+            RamAccessValues {
+                pre_values: collected.pre_values,
+                post_values: collected.post_values,
+            },
+        ))
+    }
+
+    /// Slice-backed traces scatter directly into the three final columns,
+    /// avoiding a full-width `RamAccessBundle` vector at the collection peak.
+    #[cfg(feature = "parallel")]
+    fn collect_par<F: Field>(
+        access: &RandomAccessRows,
+        cycles: usize,
+    ) -> Result<(Self, RamAccessValues), KernelError<F>> {
+        const CHUNK: usize = 1 << 12;
         let mut addresses = Vec::with_capacity(cycles);
         let mut pre_values = Vec::with_capacity(cycles);
         let mut post_values = Vec::with_capacity(cycles);
-        for bundle in bundles {
-            addresses.push(bundle.address.0.unwrap_or(NO_ACCESS));
-            pre_values.push(bundle.pre_value.0);
-            post_values.push(bundle.post_value.0);
+        let error = std::sync::Mutex::new(None);
+        (
+            addresses.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            pre_values.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            post_values.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+        )
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(chunk_index, (addresses, pre_values, post_values))| {
+                let base = chunk_index * CHUNK;
+                for offset in 0..addresses.len() {
+                    let bundle = match access.window::<RamAccessBundle>(base + offset) {
+                        Ok(bundle) => bundle,
+                        Err(failure) => {
+                            if let Ok(mut guard) = error.try_lock() {
+                                let _ = guard.get_or_insert(CollectFailure::Witness(failure));
+                            }
+                            return;
+                        }
+                    };
+                    let address = match encode_address(bundle.address.0) {
+                        Ok(address) => address,
+                        Err(failure) => {
+                            if let Ok(mut guard) = error.try_lock() {
+                                let _ = guard.get_or_insert(CollectFailure::Address(failure));
+                            }
+                            return;
+                        }
+                    };
+                    let _ = addresses[offset].write(address);
+                    let _ = pre_values[offset].write(bundle.pre_value.0);
+                    let _ = post_values[offset].write(bundle.post_value.0);
+                }
+            });
+        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
+        if let Some(failure) = error.into_inner().unwrap() {
+            return Err(match failure {
+                CollectFailure::Witness(failure) => failure.into(),
+                CollectFailure::Address(failure) => failure.into_kernel_error(),
+            });
         }
-        Ok(Self {
-            addresses,
-            pre_values,
-            post_values,
-        })
+        // SAFETY: with no latched error, every worker initialized its entire
+        // disjoint span in all three vectors.
+        unsafe {
+            addresses.set_len(cycles);
+            pre_values.set_len(cycles);
+            post_values.set_len(cycles);
+        }
+        Ok((
+            Self { addresses },
+            RamAccessValues {
+                pre_values,
+                post_values,
+            },
+        ))
     }
 
     /// The session-shared columns: collected on first request (whichever RAM
@@ -93,26 +248,38 @@ impl RamAccessColumns {
         log_t: usize,
     ) -> Result<Arc<Self>, KernelError<F>> {
         if session.state::<Arc<Self>>().is_none() {
-            let columns = Arc::new(Self::collect(witness, log_t)?);
+            let (columns, values) = Self::collect(witness, log_t)?;
+            let columns = Arc::new(columns);
             session.park(columns);
+            session.park(values);
         }
         let columns = Arc::clone(
             session
                 .state::<Arc<Self>>()
                 .expect("RAM access columns parked above"),
         );
-        // Five kernels across stages 2–6b reclaim these columns by type
-        // alone; a wrong-domain reclaim means OOB indexing or a silently
-        // wrong RA claim from a prefix-covering table, so hard-error like
-        // the `PcRow::shared` twin instead of a release-compiled-out assert.
-        if columns.addresses.len() != 1usize << log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: "session-shared RAM access columns".to_owned(),
-                expected: 1usize << log_t,
-                got: columns.addresses.len(),
-            });
-        }
+        debug_assert_eq!(
+            columns.addresses.len(),
+            1usize << log_t,
+            "parked RAM access columns cover a different cycle domain than requested"
+        );
         Ok(columns)
+    }
+
+    /// Reclaims the value columns at their final consumer while leaving the
+    /// shared address column available to later stages.
+    pub fn shared_with_values<F: Field>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+    ) -> Result<(Arc<Self>, RamAccessValues), KernelError<F>> {
+        let columns = Self::shared(session, witness, log_t)?;
+        let values = session
+            .take::<RamAccessValues>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "RAM access value columns were already consumed",
+            })?;
+        Ok((columns, values))
     }
 
     /// Bounds-check every accessed address against the proof's `K`, matching
@@ -121,7 +288,7 @@ impl RamAccessColumns {
         if self
             .addresses
             .iter()
-            .any(|&address| address != NO_ACCESS && address >= ram_k as u64)
+            .any(|&address| address != NO_ACCESS && address as usize >= ram_k)
         {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM access address remapped beyond ram_K",
@@ -170,10 +337,11 @@ impl RamAccessColumns {
     /// being consistent with the final memory image (exactly what the RAM
     /// val/output sumchecks prove). A dishonest witness diverges here and
     /// fails the engine's round checks loudly.
-    pub fn reconstruct_val_init<F: Field>(&self, val_final: Vec<F>) -> Vec<F> {
+    pub fn reconstruct_val_init<F: Field>(&self, pre_values: &[u64], val_final: Vec<F>) -> Vec<F> {
+        debug_assert_eq!(self.addresses.len(), pre_values.len());
         let mut val_init = val_final;
         let mut seen = vec![false; val_init.len()];
-        for (&address, &pre_value) in self.addresses.iter().zip(&self.pre_values) {
+        for (&address, &pre_value) in self.addresses.iter().zip(pre_values) {
             if address == NO_ACCESS {
                 continue;
             }

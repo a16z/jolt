@@ -3247,8 +3247,10 @@ dependencies = [
 name = "jolt-akita"
 version = "0.1.0"
 dependencies = [
+ "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-field",
  "akita-pcs",
  "akita-planner",
  "akita-prover",
@@ -3747,6 +3749,7 @@ dependencies = [
  "chrono",
  "clap",
  "common",
+ "jolt-akita",
  "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",
@@ -5377,7 +5380,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

@@ -20,7 +20,6 @@
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
-use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -32,10 +31,9 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{
-    bind_all, pair, par_sum_pair_groups, round_poly_from_skipped_evals, scaled_eq_table,
-    RoundProgress,
-};
+#[cfg(feature = "parallel")]
+use super::support::merge_evals;
+use super::support::{bind_all, pair, round_poly_from_skipped_evals, scaled_eq_table};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -88,44 +86,55 @@ impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduc
             gamma_squared * gamma,
         );
 
-        let dense = |id: JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
-            let table = witness.oracle_table(id.polynomial_id())?;
-            if table.len() != cycles {
-                return Err(KernelError::TableSizeMismatch {
-                    table: format!("{id:?}"),
-                    expected: cycles,
-                    got: table.len(),
-                });
-            }
-            Ok(table)
-        };
+        let dense =
+            |id: jolt_claims::protocols::jolt::JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
+                let table = witness.oracle_table(id.polynomial_id())?;
+                if table.len() != cycles {
+                    return Err(KernelError::TableSizeMismatch {
+                        table: format!("{id:?}"),
+                        expected: cycles,
+                        got: table.len(),
+                    });
+                }
+                Ok(table)
+            };
 
         Ok(Box::new(IncKernel {
-            progress: RoundProgress::new(relation.rounds()),
+            rounds: relation.rounds(),
             ram_inc: Polynomial::new(dense(ram_inc_reduced())?),
             rd_inc: Polynomial::new(dense(rd_inc_reduced())?),
             ram_weights: Polynomial::new(ram_weights),
             rd_weights: Polynomial::new(rd_weights),
+            rounds_bound: 0,
         }))
     }
 }
 
 struct IncKernel<F: Field> {
-    progress: RoundProgress,
+    rounds: usize,
     ram_inc: Polynomial<F>,
     rd_inc: Polynomial<F>,
     ram_weights: Polynomial<F>,
     rd_weights: Polynomial<F>,
+    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(IncKernel, |kernel| {
-    use crate::backend::poly_heap_bytes;
-    poly_heap_bytes(&kernel.ram_inc)
-        + poly_heap_bytes(&kernel.rd_inc)
-        + poly_heap_bytes(&kernel.ram_weights)
-        + poly_heap_bytes(&kernel.rd_weights)
-});
+impl<F: Field> allocative::Allocative for IncKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::poly_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        for (key, bytes) in [
+            ("ram_inc", poly_heap_bytes(&self.ram_inc)),
+            ("rd_inc", poly_heap_bytes(&self.rd_inc)),
+            ("ram_weights", poly_heap_bytes(&self.ram_weights)),
+            ("rd_weights", poly_heap_bytes(&self.rd_weights)),
+        ] {
+            visitor.visit_simple(allocative::Key::new(key), bytes);
+        }
+        visitor.exit();
+    }
+}
 
 impl<F: Field> IncKernel<F> {
     fn bind(&mut self, challenge: F) {
@@ -138,7 +147,7 @@ impl<F: Field> IncKernel<F> {
             ],
             challenge,
         );
-        self.progress.advance();
+        self.rounds_bound += 1;
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
@@ -158,7 +167,7 @@ impl<F: Field> IncKernel<F> {
 
 impl<F: Field> ProveRounds<F> for IncKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.progress.total()
+        self.rounds
     }
 
     fn prove_round(
@@ -172,10 +181,25 @@ impl<F: Field> ProveRounds<F> for IncKernel<F> {
         }
         let half = self.ram_inc.len() / 2;
 
-        let evals = par_sum_pair_groups(half, 2, |acc, y| {
+        #[cfg(feature = "parallel")]
+        let evals = (0..half)
+            .into_par_iter()
+            .fold(
+                || vec![F::zero(); 2],
+                |mut acc, y| {
+                    let group = self.group_evals(y);
+                    acc[0] += group[0];
+                    acc[1] += group[1];
+                    acc
+                },
+            )
+            .reduce(|| vec![F::zero(); 2], merge_evals);
+        #[cfg(not(feature = "parallel"))]
+        let evals = (0..half).fold(vec![F::zero(); 2], |mut acc, y| {
             let group = self.group_evals(y);
             acc[0] += group[0];
             acc[1] += group[1];
+            acc
         });
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
@@ -194,7 +218,11 @@ impl<F: Field> SumcheckKernel<F> for IncKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<IncClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        if self.rounds_bound != self.rounds {
+            return Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.rounds - self.rounds_bound,
+            });
+        }
         Ok(IncClaimReductionOutputClaims {
             ram_inc: self.ram_inc.evals()[0],
             rd_inc: self.rd_inc.evals()[0],
@@ -217,7 +245,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
-    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::harness::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::ReferenceBackend;
 
     #[test]

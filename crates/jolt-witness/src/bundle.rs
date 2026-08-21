@@ -1,7 +1,7 @@
 //! Consumer bundles: a consumer's witness data flow, stated as a type.
 
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
 use crate::witnesses::WitnessEnv;
 use crate::WitnessError;

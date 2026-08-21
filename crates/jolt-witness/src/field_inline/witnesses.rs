@@ -75,7 +75,7 @@ impl<F: Field> FieldValue<F> for FieldOpFlag {
     }
 }
 
-impl<F: Field> Extract for FieldRs1Value<F> {
+impl<F: Field> Extract<TraceRow> for FieldRs1Value<F> {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -90,7 +90,7 @@ impl<F: Field> Extract for FieldRs1Value<F> {
     }
 }
 
-impl<F: Field> Extract for FieldRs2Value<F> {
+impl<F: Field> Extract<TraceRow> for FieldRs2Value<F> {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -105,7 +105,7 @@ impl<F: Field> Extract for FieldRs2Value<F> {
     }
 }
 
-impl<F: Field> Extract for FieldRdValue<F> {
+impl<F: Field> Extract<TraceRow> for FieldRdValue<F> {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -120,7 +120,7 @@ impl<F: Field> Extract for FieldRdValue<F> {
     }
 }
 
-impl<F: Field> Extract for FieldProduct<F> {
+impl<F: Field> Extract<TraceRow> for FieldProduct<F> {
     fn extract(
         row: &TraceRow,
         next: Option<&TraceRow>,
@@ -132,7 +132,7 @@ impl<F: Field> Extract for FieldProduct<F> {
     }
 }
 
-impl<F: Field> Extract for FieldInvProduct<F> {
+impl<F: Field> Extract<TraceRow> for FieldInvProduct<F> {
     fn extract(
         row: &TraceRow,
         next: Option<&TraceRow>,
@@ -144,7 +144,7 @@ impl<F: Field> Extract for FieldInvProduct<F> {
     }
 }
 
-impl ExtractIndexed<FieldInlineOpFlag> for FieldOpFlag {
+impl ExtractIndexed<FieldInlineOpFlag, TraceRow> for FieldOpFlag {
     fn extract_indexed(
         flag: FieldInlineOpFlag,
         row: &TraceRow,
@@ -159,7 +159,7 @@ impl ExtractIndexed<FieldInlineOpFlag> for FieldOpFlag {
     }
 }
 
-impl<F: Field> Extract for FieldRdInc<F> {
+impl<F: Field> Extract<TraceRow> for FieldRdInc<F> {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,

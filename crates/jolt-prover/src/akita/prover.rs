@@ -16,7 +16,6 @@ use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
 use super::witness::AdviceOneHot;
 use super::JoltAkitaBackend;
-use crate::recorder::ProofMode;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
 use crate::stages::stage3::prove_stage3;
@@ -25,7 +24,7 @@ use crate::stages::stage5::prove_stage5;
 use crate::stages::stage6a::prove_stage6a;
 use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
 
 /// See [`super::prove`].
 #[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
@@ -39,7 +38,7 @@ pub fn prove<F, PCS, VC, T, W>(
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
     F: Field + CanonicalBytes + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript,
     VC: VectorCommitment<Field = F>,

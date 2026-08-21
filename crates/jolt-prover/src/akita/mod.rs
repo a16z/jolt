@@ -86,7 +86,7 @@ where
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        _source: &dyn jolt_witness::JoltWitnessPlane<F>,
+        _source: &dyn jolt_witness::RowSource,
         _ids: &[jolt_claims::protocols::jolt::JoltCommittedPolynomial],
         _grid: jolt_kernels::CommitmentGrid,
         _setup: &PCS::ProverSetup,
@@ -188,6 +188,14 @@ where
         }
     }
 
+    /// The packed backend with optimized stage 1–7 arithmetic and native
+    /// Akita commitment/opening boundaries.
+    pub fn optimized() -> Self {
+        let mut backend = Self::reference();
+        backend.base = backend.base.with_optimized_compute();
+        backend
+    }
+
     /// Open the proof-scoped session that slot state lives in — the same
     /// contract as [`JoltBackend::begin_proof`].
     pub fn begin_proof(&self) -> ProofSession {
@@ -218,7 +226,7 @@ pub fn prove<F, PCS, VC, T, W>(
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
     F: Field + CanonicalBytes + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript,
     VC: VectorCommitment<Field = F>,

@@ -9,13 +9,11 @@
 //! per-kernel tests.
 #![expect(clippy::expect_used, clippy::panic, reason = "test-only module")]
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::{Field, Fr, FromPrimitiveInt};
 use jolt_sumcheck::SumcheckError;
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
-};
+#[cfg(not(feature = "akita"))]
 use jolt_witness::JoltWitnessOracle;
 
 use crate::SumcheckKernel;
@@ -36,6 +34,7 @@ pub(crate) fn synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
 /// Probe the committed one-hot family sizes and chunk bits off the backend's
 /// shape surface: family count by scanning indices until the shape errors,
 /// chunk bits from `log(one-hot rows) − log_t`.
+#[cfg(not(feature = "akita"))]
 pub(crate) fn probe_one_hot_family(
     witness: &impl JoltWitnessOracle<Fr>,
     family: impl Fn(usize) -> JoltCommittedPolynomial,
@@ -57,10 +56,11 @@ pub(crate) fn probe_one_hot_family(
 /// `prove_round(None, ..)` binds nothing, so the probe is state-free.
 pub(crate) fn probe_input_claim<F: Field, R>(kernel: &mut dyn SumcheckKernel<F, Relation = R>) -> F
 where
-    R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    R: jolt_verifier::stages::relations::ConcreteSumcheck<F>,
+    jolt_verifier::stages::relations::SumcheckInputClaims<F, R>: jolt_claims::InputClaims<F>,
+    jolt_verifier::stages::relations::SumcheckOutputClaims<F, R>: jolt_claims::OutputClaims<F>,
+    jolt_verifier::stages::relations::ConcreteSumcheckChallenges<F, R>:
+        jolt_claims::SumcheckChallenges<F, jolt_claims::protocols::jolt::JoltChallengeId>,
 {
     match kernel.prove_round(None, 0, F::zero()) {
         Ok(_) => F::zero(),
@@ -80,10 +80,11 @@ pub(crate) fn run_lockstep<F: Field, R>(
     initial_claim: F,
     challenges: &[F],
 ) where
-    R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    R: jolt_verifier::stages::relations::ConcreteSumcheck<F>,
+    jolt_verifier::stages::relations::SumcheckInputClaims<F, R>: jolt_claims::InputClaims<F>,
+    jolt_verifier::stages::relations::SumcheckOutputClaims<F, R>: jolt_claims::OutputClaims<F>,
+    jolt_verifier::stages::relations::ConcreteSumcheckChallenges<F, R>:
+        jolt_claims::SumcheckChallenges<F, jolt_claims::protocols::jolt::JoltChallengeId>,
 {
     let rounds = reference.num_rounds();
     assert_eq!(rounds, optimized.num_rounds(), "round count mismatch");

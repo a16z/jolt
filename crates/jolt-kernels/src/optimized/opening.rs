@@ -41,8 +41,6 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
-#[cfg(feature = "parallel")]
-use std::sync::Mutex;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
@@ -54,8 +52,6 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "parallel")]
-use super::rows::RandomAccessRows;
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
 use crate::opening::JointOpeningPolynomials;
 use crate::reference::commitment::{column_kinds, ColumnKind};
@@ -191,8 +187,10 @@ impl OpeningColumns {
         // Slice-backed sources fill the five columns index-parallel — the
         // chunked walk serializes on staging buffers and the consume copy.
         #[cfg(feature = "parallel")]
-        if let Some(access) = RandomAccessRows::new(witness, cycles)? {
-            return Self::collect_par(&access, cycles);
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, cycles);
+            }
         }
         let mut consumers = (CollectOpeningColumns {
             columns: Self {
@@ -219,7 +217,7 @@ impl OpeningColumns {
     /// every slot is written).
     #[cfg(feature = "parallel")]
     fn collect_par<F: Field>(
-        access: &RandomAccessRows<'_>,
+        access: &jolt_witness::RandomAccessRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         /// The scatter grain: big enough to amortize rayon dispatch, small
@@ -230,7 +228,7 @@ impl OpeningColumns {
         let mut lookup_index: Vec<u128> = unsafe_allocate_zero_vec(cycles);
         let mut bytecode_pc: Vec<u64> = unsafe_allocate_zero_vec(cycles);
         let mut ram_address: Vec<u64> = unsafe_allocate_zero_vec(cycles);
-        let error = Mutex::new(None);
+        let error = std::sync::Mutex::new(None);
         (
             rd_inc.par_chunks_mut(CHUNK),
             ram_inc.par_chunks_mut(CHUNK),
