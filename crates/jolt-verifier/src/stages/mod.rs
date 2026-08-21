@@ -9,7 +9,7 @@ use jolt_claims::protocols::jolt::{
     TracePolynomialOrder,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 
@@ -79,7 +79,7 @@ pub fn formula_dimensions_from_parts(
     })
 }
 
-pub(crate) fn stage6_checked_split<'a, F: Field>(
+pub(crate) fn stage6_checked_split<'a, F: JoltField>(
     label: &'static str,
     point: &'a [F],
     split_at: usize,

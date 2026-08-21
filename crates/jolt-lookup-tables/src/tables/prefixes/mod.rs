@@ -46,7 +46,7 @@ pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotw;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use std::fmt::Display;
 use std::ops::Index;
 
@@ -58,7 +58,7 @@ use crate::lookup_bits::LookupBits;
 /// - `default_checkpoint()`: the initial checkpoint value before any phases
 /// - `evaluate()`: the prefix value at a binary point, given accumulated
 ///   checkpoints from previous phases
-pub trait SparseDensePrefix<F: Field>: 'static + Sync {
+pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Default checkpoint value for this prefix before any phases have run.
     fn default_checkpoint() -> F;
 
@@ -220,12 +220,12 @@ macro_rules! dispatch_prefix {
 
 impl Prefixes {
     /// Return the default checkpoint value for this prefix variant.
-    pub fn default_checkpoint<F: Field>(&self) -> PrefixEval<F> {
+    pub fn default_checkpoint<F: JoltField>(&self) -> PrefixEval<F> {
         PrefixEval(dispatch_prefix!(self, default_checkpoint))
     }
 
     /// Evaluate this prefix at binary point `b`.
-    pub fn evaluate<F: Field>(
+    pub fn evaluate<F: JoltField>(
         &self,
         checkpoints: &[PrefixEval<F>],
         b: LookupBits,

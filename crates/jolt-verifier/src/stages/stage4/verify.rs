@@ -6,7 +6,7 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
@@ -45,7 +45,7 @@ use crate::{
 /// come from stage 3's registers claim-reduction, and the RAM value-check inputs
 /// come from stage 2's RAM `val`/`val_final` plus the reconstructed `Val_init`
 /// decomposition (advice / program-image contributions).
-pub fn stage4_input_values_from_upstream<F: Field>(
+pub fn stage4_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage3: &Stage3OutputClaims<F>,
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
@@ -60,7 +60,7 @@ pub fn stage4_input_values_from_upstream<F: Field>(
 /// aggregates and the pre-branch init structure. ZK-agnostic: both the clear and
 /// ZK upstream outputs expose these, so the same wiring builds the input points in
 /// either mode.
-pub fn stage4_input_points_from_upstream<F: Field>(
+pub fn stage4_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage3: &Stage3OutputPoints<F>,
     structure: &RamValCheckInitStructure<F>,

@@ -11,7 +11,7 @@ use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -53,7 +53,7 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + AppendToTranscript,

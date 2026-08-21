@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -28,7 +28,7 @@ impl<const XLEN: usize> LookupTable for WindowMaskWTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let half = XLEN / 2;
@@ -54,7 +54,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskWTable<XLE
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         const { assert!(XLEN == 64, "Pow2OffsetW hardcodes the 32-bit lane") };
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2_offset_w] = suffixes.try_into().unwrap();

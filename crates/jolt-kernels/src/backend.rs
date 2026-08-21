@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 use jolt_verifier::stages::relations::{
@@ -65,7 +65,7 @@ use crate::KernelError;
 /// scheduler per stage via `build`. Takes [`ProofSession`] so a device
 /// traversal shares the carry its kernels park in `prepare`, and so
 /// per-proof state cannot leak onto the long-lived backend.
-pub trait BuildRoundScheduler<F: Field> {
+pub trait BuildRoundScheduler<F: JoltField> {
     fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
 }
 
@@ -97,7 +97,7 @@ pub trait BuildRoundScheduler<F: Field> {
 /// surfaces the same distant way.
 pub trait PrepareKernel<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -125,7 +125,7 @@ where
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
@@ -171,7 +171,7 @@ where
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// Open the proof-scoped session that slot state lives in. One session
@@ -288,13 +288,13 @@ pub struct ProofSession {
 impl ProofSession {
     /// Retain the proof's witness plane for kernels whose state outlives
     /// their `prepare` borrow.
-    pub fn set_witness<F: Field>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
+    pub fn set_witness<F: JoltField>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
         self.witness = Some(Box::new(witness));
     }
 
     /// The retained witness plane for `F`, when the proof was started from
     /// an owned plane.
-    pub fn witness<F: Field>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
+    pub fn witness<F: JoltField>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
         self.witness.as_ref()?.downcast_ref()
     }
 
@@ -397,7 +397,7 @@ mod kernel_slots_derive_tests {
     // delegation is unrepresentable.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
-    struct ToyRegistry<F: Field> {
+    struct ToyRegistry<F: JoltField> {
         label: String,
         shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
         slot_count: usize,

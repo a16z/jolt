@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::MultilinearPoly;
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::JoltWitnessPlane;
@@ -19,7 +19,7 @@ use crate::commitment::CommitmentGrid;
 use crate::opening::JointOpeningPolynomials;
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
-impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
+impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
     // The backend-neutral `JointOpeningPolynomials::prepare` span lives at
     // the stage-8 call boundary (`crates/jolt-prover/src/stages/stage8.rs`),
     // so every implementation inherits it — see the taxonomy's kernel-seam
@@ -73,7 +73,7 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
 /// a one-hot table's native `k · T + t` view permutes to `t · cycle_stride +
 /// k · one_hot_stride`; a dense (per-cycle) table sits at each cycle block's
 /// address slot zero.
-fn address_major_embed<F: Field>(
+fn address_major_embed<F: JoltField>(
     table: &[F],
     grid: CommitmentGrid,
     polynomial: JoltCommittedPolynomial,
@@ -147,7 +147,7 @@ fn address_major_embed<F: Field>(
 /// Embed an advice polynomial's balanced matrix into the grid matrix's
 /// top-left block: advice coefficient `row · 2^σ_a + col` lands at grid index
 /// `row · 2^σ_main + col`.
-fn block_embed<F: Field>(
+fn block_embed<F: JoltField>(
     table: &[F],
     grid: CommitmentGrid,
     polynomial: JoltCommittedPolynomial,

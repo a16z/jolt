@@ -17,7 +17,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc_val_check;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -58,7 +58,7 @@ impl ChunkIndexSource for RamAddressIndices {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -97,7 +97,7 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
-struct RamValCheckKernel<F: Field> {
+struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: Polynomial<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,
@@ -111,7 +111,7 @@ crate::optimized::impl_field_allocative!(RamValCheckKernel, |kernel| {
         + kernel.lt.heap_bytes()
 });
 
-impl<F: Field> RamValCheckKernel<F> {
+impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);
         self.ra.bind(challenge);
@@ -120,7 +120,7 @@ impl<F: Field> RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -152,7 +152,7 @@ impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
     type Relation = RamValCheck<F>;
 
     fn output_claims(
@@ -200,7 +200,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::{
         RamValCheckChallenges, RamValCheckInputClaims,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::LtPolynomial;
 
     use super::super::testing::{

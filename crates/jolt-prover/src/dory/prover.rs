@@ -9,7 +9,7 @@ use std::sync::Arc;
 use allocative::FlameGraphBuilder;
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::{Field, RingAccumulator, WithAccumulator};
+use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -118,7 +118,7 @@ pub fn prove<F, PCS, VC, T, W>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output, Blind = F>,
@@ -127,7 +127,7 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F> + 'static,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let mut session = backend.begin_proof();

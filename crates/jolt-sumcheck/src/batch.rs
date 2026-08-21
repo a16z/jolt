@@ -8,7 +8,7 @@
 //! head's output in engine form: plain positional data with no per-stage
 //! types, so this crate's provers can consume it without naming any stage.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 /// One present batch member: its input claim (the member's initial running
 /// claim), its batching coefficient, its round count, and its activation
@@ -41,7 +41,7 @@ pub struct BatchPrelude<F> {
     pub max_degree: usize,
 }
 
-impl<F: Field> BatchPrelude<F> {
+impl<F: JoltField> BatchPrelude<F> {
     /// Combine `members` into the batch's initial running claim. The
     /// `2^(max_num_vars − rounds)` scale is each shorter member's dummy-round
     /// padding — its summand extended constantly over the batch's extra

@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
@@ -26,7 +26,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -81,7 +81,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
     use jolt_claims::protocols::jolt::relations::ram::RamRafEvaluationInputClaims;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,

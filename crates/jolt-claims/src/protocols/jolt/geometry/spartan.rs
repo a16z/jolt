@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 
 use crate::derived;
@@ -126,7 +126,7 @@ pub fn outer_uniskip_opening() -> JoltOpeningId {
 
 pub(crate) fn product_weight<F>(index: usize) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::LagrangeWeight(index),
@@ -135,7 +135,7 @@ where
 
 pub(crate) fn product_uniskip_weight<F>(index: usize) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index),
@@ -144,7 +144,7 @@ where
 
 pub(crate) fn product_tau_kernel<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::TauKernel,

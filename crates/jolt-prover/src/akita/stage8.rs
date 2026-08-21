@@ -15,7 +15,7 @@
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -30,7 +30,7 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use super::witness::{AdviceOneHot, ProgramOneHot};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-fn batch_failed<F: Field>(reason: impl ToString) -> ProverError<F> {
+fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     ProverError::Verifier(VerifierError::FinalOpeningBatchFailed {
         reason: reason.to_string(),
     })
@@ -56,7 +56,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<AkitaJointOpeningProof<PCS::Proof>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
