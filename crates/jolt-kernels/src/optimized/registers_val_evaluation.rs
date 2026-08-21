@@ -28,7 +28,7 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -61,7 +61,7 @@ enum WaState<F> {
     Dense(Vec<F>),
 }
 
-impl<F: Field> WaState<F> {
+impl<F: JoltField> WaState<F> {
     #[inline]
     fn pair(&self, y: usize) -> (F, F) {
         match self {
@@ -105,7 +105,7 @@ impl<F: Field> WaState<F> {
 
 pub struct OptimizedRegistersValEvaluation;
 
-impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
+impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -183,7 +183,7 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
 
 /// The increment table's lifecycle: deferred to the member's first active
 /// round on slice-backed sources, dense from prepare otherwise.
-enum IncSource<F: Field> {
+enum IncSource<F: JoltField> {
     Deferred {
         witness: Arc<dyn JoltWitnessPlane<F>>,
         cycles: usize,
@@ -197,7 +197,7 @@ struct RdIncRow {
     rd_inc: RdInc,
 }
 
-struct ValEvaluationKernel<F: Field> {
+struct ValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncSource<F>,
     wa: WaState<F>,
@@ -218,7 +218,7 @@ crate::optimized::impl_field_allocative!(ValEvaluationKernel, |kernel| {
     inc + wa + kernel.lt.heap_bytes()
 });
 
-impl<F: Field> ValEvaluationKernel<F> {
+impl<F: JoltField> ValEvaluationKernel<F> {
     /// Materialize the deferred increment table; a no-op once ready.
     fn ensure_inc(&mut self) -> Result<(), SumcheckError<F>> {
         if let IncSource::Deferred { witness, cycles } = &self.inc {
@@ -241,7 +241,7 @@ impl<F: Field> ValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -290,7 +290,7 @@ impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
     type Relation = RegistersValEvaluation<F>;
 
     fn output_claims(

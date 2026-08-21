@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -19,7 +19,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 /// still depend on suffix bits.
 pub enum SignExtensionWPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for SignExtensionWPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for SignExtensionWPrefix {
     fn default_checkpoint() -> F {
         F::zero()
     }

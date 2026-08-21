@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -14,7 +14,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 /// suffix-owned sign-fill terms.
 pub enum WordMsbPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for WordMsbPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for WordMsbPrefix {
     fn default_checkpoint() -> F {
         F::one()
     }

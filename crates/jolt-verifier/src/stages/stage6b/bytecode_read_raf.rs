@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::{
     BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_riscv::JoltInstructionRow;
 
@@ -58,7 +58,7 @@ pub type BytecodeReadRafCycleOutputClaims<C> = LatticeBytecodeReadRafOutputClaim
 /// weight each row. Consumed at construction ([`BytecodeReadRaf::new`] folds the
 /// table against `eq(r_address)` immediately), so nothing borrowed is stored and
 /// the relation stays lifetime-free.
-pub struct BytecodeReadRafTableFoldInputs<'a, F: Field> {
+pub struct BytecodeReadRafTableFoldInputs<'a, F: JoltField> {
     pub bytecode: &'a [JoltInstructionRow],
     pub register_read_write_point: &'a [F],
     pub register_val_evaluation_point: &'a [F],
@@ -70,7 +70,7 @@ pub struct BytecodeReadRafTableFoldInputs<'a, F: Field> {
 /// `stage_cycle_points` are the verifier's per-stage cycle bindings.
 /// `table_fold` is `Some` only in clear mode — ZK never runs `expected_output`,
 /// so it skips the `O(2^log_k)` fold entirely.
-pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
+pub struct BytecodeReadRafCycleInputs<'a, F: JoltField> {
     pub dimensions: BytecodeReadRafDimensions,
     pub r_address: Vec<F>,
     pub stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES],
@@ -111,7 +111,7 @@ fn cycle_symbolic_committed(dimensions: BytecodeReadRafDimensions) -> CycleSymbo
 /// attached in [`ConcreteSumcheck::expected_output`], which it OVERRIDES to
 /// evaluate the publics once and reuse the [`expected_output_from_publics`] helper.
 #[derive(Clone)]
-pub struct BytecodeReadRaf<F: Field> {
+pub struct BytecodeReadRaf<F: JoltField> {
     symbolic: CycleSymbolic,
     dimensions: BytecodeReadRafDimensions,
     r_address: Vec<F>,
@@ -126,7 +126,7 @@ pub struct BytecodeReadRaf<F: Field> {
     stage_values_at_r_address: Option<[F; NUM_BYTECODE_VAL_STAGES]>,
 }
 
-impl<F: Field> BytecodeReadRaf<F> {
+impl<F: JoltField> BytecodeReadRaf<F> {
     pub fn new(inputs: BytecodeReadRafCycleInputs<'_, F>) -> Result<Self, VerifierError> {
         let stage_values_at_r_address = inputs
             .table_fold
@@ -149,7 +149,7 @@ impl<F: Field> BytecodeReadRaf<F> {
 /// the lattice store stage as its last element) folded against
 /// `eq(r_address)`. The cycle-eq factors are attached later, at
 /// `expected_output` time, so the fold can run before the cycle sumcheck.
-fn fold_stage_values<F: Field>(
+fn fold_stage_values<F: JoltField>(
     r_address: &[F],
     fold: BytecodeReadRafTableFoldInputs<'_, F>,
 ) -> Result<[F; NUM_BYTECODE_VAL_STAGES], VerifierError> {
@@ -192,7 +192,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 
 /// The `log_t`-variable cycle suffix of a produced `BytecodeRa` opening point
 /// (`chunk ++ r_cycle`).
-fn r_cycle_suffix<F: Field>(log_t: usize, opening_point: &[F]) -> Result<&[F], VerifierError> {
+fn r_cycle_suffix<F: JoltField>(log_t: usize, opening_point: &[F]) -> Result<&[F], VerifierError> {
     opening_point
         .len()
         .checked_sub(log_t)
@@ -207,7 +207,7 @@ fn r_cycle_suffix<F: Field>(log_t: usize, opening_point: &[F]) -> Result<&[F], V
     clippy::wildcard_enum_match_arm,
     reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
 )]
-fn expected_output_from_publics<F: Field>(
+fn expected_output_from_publics<F: JoltField>(
     dimensions: BytecodeReadRafDimensions,
     public_values: &bytecode::BytecodeReadRafPublicValues<F>,
     bytecode_ra: &[F],
@@ -247,7 +247,7 @@ fn expected_output_from_publics<F: Field>(
     )
 }
 
-impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
     type Symbolic = CycleSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -395,7 +395,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
 /// Derive the cycle-phase produced opening points: one `(chunk ++ r_cycle)`
 /// point per committed `BytecodeRa` chunk, plus (packed) the `FusedInc` cycle
 /// point.
-fn derive_cycle_opening_points<F: Field>(
+fn derive_cycle_opening_points<F: JoltField>(
     r_address: &[F],
     committed_chunk_bits: usize,
     r_cycle: Vec<F>,
@@ -420,7 +420,7 @@ fn derive_cycle_opening_points<F: Field>(
 /// Construction inputs for the committed-program bytecode cycle relation.
 /// One cycle point per relation stage — five in base mode, nine on the packed
 /// path (the four fused-inc consumer points follow the base five).
-pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
+pub struct BytecodeReadRafCommittedCycleInputs<F: JoltField> {
     pub dimensions: BytecodeReadRafDimensions,
     pub r_address: Vec<F>,
     pub stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES],
@@ -440,7 +440,7 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 /// [`ConcreteSumcheck::expected_output`]: the staged Val openings are inputs mixed
 /// into the output, and the committed public values are evaluated once.
 #[derive(Clone)]
-pub struct BytecodeReadRafCommitted<F: Field> {
+pub struct BytecodeReadRafCommitted<F: JoltField> {
     symbolic: CycleSymbolicCommitted,
     dimensions: BytecodeReadRafDimensions,
     r_address: Vec<F>,
@@ -450,7 +450,7 @@ pub struct BytecodeReadRafCommitted<F: Field> {
     val_stages: Vec<F>,
 }
 
-impl<F: Field> BytecodeReadRafCommitted<F> {
+impl<F: JoltField> BytecodeReadRafCommitted<F> {
     pub fn new(inputs: BytecodeReadRafCommittedCycleInputs<F>) -> Self {
         Self {
             symbolic: cycle_symbolic_committed(inputs.dimensions),
@@ -464,7 +464,7 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
     type Symbolic = CycleSymbolicCommitted;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -544,7 +544,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
 }
 
 #[derive(Clone)]
-enum BytecodeReadRafCycleVariant<F: Field> {
+enum BytecodeReadRafCycleVariant<F: JoltField> {
     Full(BytecodeReadRaf<F>),
     Committed(BytecodeReadRafCommitted<F>),
 }
@@ -554,13 +554,13 @@ enum BytecodeReadRafCycleVariant<F: Field> {
 /// ([`BytecodeReadRafCommitted`]). Lifetime-free so it can be a
 /// `Stage6bSumchecks` member directly.
 #[derive(Clone)]
-pub struct BytecodeReadRafCycle<F: Field> {
+pub struct BytecodeReadRafCycle<F: JoltField> {
     /// The `ConcreteSumcheck` anchor symbolic (see the invariant on the impl).
     anchor: CycleSymbolicCommitted,
     variant: BytecodeReadRafCycleVariant<F>,
 }
 
-impl<F: Field> BytecodeReadRafCycle<F> {
+impl<F: JoltField> BytecodeReadRafCycle<F> {
     pub fn full(inputs: BytecodeReadRafCycleInputs<'_, F>) -> Result<Self, VerifierError> {
         Ok(Self {
             anchor: cycle_symbolic_committed(inputs.dimensions),
@@ -576,7 +576,7 @@ impl<F: Field> BytecodeReadRafCycle<F> {
     }
 }
 
-impl<F: Field> BytecodeReadRafCycle<F> {
+impl<F: JoltField> BytecodeReadRafCycle<F> {
     pub fn dimensions(&self) -> BytecodeReadRafDimensions {
         match &self.variant {
             BytecodeReadRafCycleVariant::Full(relation) => relation.dimensions,
@@ -647,7 +647,7 @@ impl<F: Field> BytecodeReadRafCycle<F> {
 /// those overrides stand and the batch keeps `no_output_shape` (the
 /// committed output `Expr` references the staged `BytecodeValClaim` openings,
 /// which the full mode never produces).
-impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
     type Symbolic = CycleSymbolicCommitted;
 
     fn symbolic(&self) -> &Self::Symbolic {

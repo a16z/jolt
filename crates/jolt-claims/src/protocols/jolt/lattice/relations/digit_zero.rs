@@ -21,7 +21,7 @@
 //! with no range relation at all — see "Increment range" in
 //! `specs/lattice-claims.md`. Do not treat this reduction as bounding `Inc`.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
@@ -180,7 +180,7 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let eq_booleanity_digit_zero =
             derived(HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero);
@@ -227,7 +227,7 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
         input + gamma.pow(self.decode_power()) * opening(fused_inc_read_raf_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let eq_booleanity = derived(HammingWeightClaimReductionPublic::EqBooleanity);
         let eq_booleanity_digit_zero =
@@ -298,7 +298,7 @@ mod tests {
     use crate::protocols::jolt::{
         HammingWeightClaimReductionChallenge, JoltChallengeId, JoltDerivedId,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn public_unit_activation_ra_is_reconstructed_but_ram_keeps_base_legs() {

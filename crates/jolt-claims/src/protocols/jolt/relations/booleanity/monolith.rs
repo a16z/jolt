@@ -1,6 +1,6 @@
 //! The full (monolithic) booleanity symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::booleanity::{booleanity_cycle_output, BooleanityDimensions};
@@ -78,11 +78,11 @@ impl SymbolicSumcheck for Booleanity {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         booleanity_cycle_output(self.shape)
     }
 }
@@ -96,7 +96,7 @@ mod tests {
         BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltCommittedPolynomial,
         JoltDerivedId, JoltOpeningId,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
         let layout = JoltRaPolynomialLayout::new(instruction, bytecode, ram).unwrap();

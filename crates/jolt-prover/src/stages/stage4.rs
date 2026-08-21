@@ -14,7 +14,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
@@ -42,7 +42,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
-pub struct Stage4ProverOutput<F: Field, C> {
+pub struct Stage4ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage4OutputClaims<F>,
     pub clear_output: Stage4ClearOutput<F>,
@@ -66,7 +66,7 @@ pub fn prove_stage4<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage4ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,

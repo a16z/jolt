@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -15,7 +15,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 /// same product while both bits belong to the suffix.
 pub enum SrlwSextPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for SrlwSextPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for SrlwSextPrefix {
     fn default_checkpoint() -> F {
         F::zero()
     }

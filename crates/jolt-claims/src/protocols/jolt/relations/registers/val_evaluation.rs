@@ -1,6 +1,6 @@
 //! registers val-evaluation symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::registers::{
@@ -67,11 +67,11 @@ impl SymbolicSumcheck for ValEvaluation {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(registers_val_read_write())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(RegistersValEvaluationPublic::LtCycle)
             * opening(rd_inc_val_evaluation())
             * opening(rd_wa_val_evaluation())
@@ -82,7 +82,7 @@ impl SymbolicSumcheck for ValEvaluation {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

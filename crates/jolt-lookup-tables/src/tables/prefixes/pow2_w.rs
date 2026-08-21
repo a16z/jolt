@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 
@@ -6,7 +6,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum Pow2WPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for Pow2WPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for Pow2WPrefix {
     fn default_checkpoint() -> F {
         F::one()
     }

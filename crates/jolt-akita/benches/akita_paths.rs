@@ -51,7 +51,7 @@ use jolt_akita::{
     AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
-use jolt_field::{Field, Fr, FromPrimitiveInt};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, PrefixPackedClaims, PrefixPackedLayout,
     VerifierOpeningClaim,
@@ -226,15 +226,18 @@ fn criterion_filter_matches(group_name: &str) -> bool {
     })
 }
 
-fn field<F: FromPrimitiveInt>(value: u64) -> F {
+fn field<F: Ring>(value: u64) -> F {
     F::from_u64(value)
 }
 
-fn deterministic_dense_poly<F: Field>(num_vars: usize) -> Polynomial<F> {
+fn deterministic_dense_poly<F: JoltField>(num_vars: usize) -> Polynomial<F> {
     deterministic_dense_poly_with_offset(num_vars, 0)
 }
 
-fn deterministic_dense_poly_with_offset<F: Field>(num_vars: usize, offset: u64) -> Polynomial<F> {
+fn deterministic_dense_poly_with_offset<F: JoltField>(
+    num_vars: usize,
+    offset: u64,
+) -> Polynomial<F> {
     let len = 1usize << num_vars;
     let evals = (0..len)
         .map(|i| field::<F>(((i as u64 * 17 + offset * 19 + 5) % 31) + 1))
@@ -242,7 +245,7 @@ fn deterministic_dense_poly_with_offset<F: Field>(num_vars: usize, offset: u64) 
     Polynomial::new(evals)
 }
 
-fn deterministic_point<F: Field>(num_vars: usize) -> Vec<F> {
+fn deterministic_point<F: JoltField>(num_vars: usize) -> Vec<F> {
     (0..num_vars)
         .map(|i| field::<F>(((i as u64 * 7 + 11) % 97) + 2))
         .collect()
@@ -256,7 +259,7 @@ fn sparse_one_hot(num_vars: usize) -> OneHotPolynomial {
     OneHotPolynomial::new(AKITA_ONE_HOT_K256, indices)
 }
 
-fn materialize_sparse<F: Field>(poly: &OneHotPolynomial) -> Polynomial<F> {
+fn materialize_sparse<F: JoltField>(poly: &OneHotPolynomial) -> Polynomial<F> {
     let mut evals = vec![F::zero(); 1usize << poly.num_vars()];
     <OneHotPolynomial as MultilinearPoly<F>>::for_each_one(poly, &mut |index| {
         evals[index] = F::one();

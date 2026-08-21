@@ -3,7 +3,7 @@
     reason = "Tracer concrete instruction names mirror generated Jolt instruction constants"
 )]
 
-use jolt_field::{CanonicalBytes, CanonicalU64, Fr, Invertible, ReducingBytes};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Field, Fr};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
     FieldRegisterWrite,
@@ -285,7 +285,7 @@ fn execute_store_to_x(
     // records both the full `field_value` and the truncated `x_value`, so any constraint
     // binding this bridge must enforce that `x_value == field_value mod 2^64`.
     let x_value = decode_field(field_value)
-        .to_canonical_u64_checked()
+        .to_u64_checked()
         .unwrap_or_else(|| {
             u64::from_le_bytes(field_value.bytes_le[..8].try_into().unwrap_or([0; 8]))
         });
@@ -329,7 +329,7 @@ fn execute_load_imm(
 }
 
 fn decode_field(value: FieldEncodedValue) -> Fr {
-    <Fr as ReducingBytes>::from_le_bytes_mod_order(&value.bytes_le)
+    <Fr as CanonicalEncoding>::from_bytes_le_reduced(&value.bytes_le)
 }
 
 fn encode_field(value: Fr) -> FieldEncodedValue {

@@ -171,7 +171,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

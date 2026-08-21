@@ -3,7 +3,7 @@
 //! Fuzz: random polynomial + random point must always commit-open-verify successfully.
 
 use jolt_crypto::Bn254;
-use jolt_field::{Field, Fr};
+use jolt_field::{JoltField, Fr};
 use jolt_hyperkzg::HyperKZGScheme;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;

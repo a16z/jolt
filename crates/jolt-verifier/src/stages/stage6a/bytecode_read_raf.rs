@@ -23,7 +23,7 @@ use jolt_claims::protocols::jolt::{
     JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints};
 use crate::stages::stage2::Stage2BatchOutputPoints;
@@ -42,7 +42,7 @@ use crate::VerifierError;
 /// stage-1 binding is the raw remainder tail, re-reversed), plus the register
 /// opening points whose 7-var address prefixes feed the stage-value folds.
 #[derive(Clone)]
-pub struct BytecodeStagePoints<F: Field> {
+pub struct BytecodeStagePoints<F: JoltField> {
     pub stage_cycle_points: [Vec<F>; 5],
     pub register_read_write_point: Vec<F>,
     pub register_val_evaluation_point: Vec<F>,
@@ -54,7 +54,7 @@ pub struct BytecodeStagePoints<F: Field> {
     pub fused_inc_cycle_points: Vec<Vec<F>>,
 }
 
-impl<F: Field> BytecodeStagePoints<F> {
+impl<F: JoltField> BytecodeStagePoints<F> {
     /// The stage-4 register read-write cycle leg (`stage_cycle_points[3]`).
     pub fn register_read_write_cycle(&self) -> &[F] {
         &self.stage_cycle_points[3]
@@ -72,7 +72,7 @@ impl<F: Field> BytecodeStagePoints<F> {
 /// paths. The BlindFold ZK input derivation (`crate::stages::zk::blindfold`)
 /// assembles its own legs from the committed consistency points and does not
 /// route through this helper.
-pub fn bytecode_stage_points<F: Field>(
+pub fn bytecode_stage_points<F: JoltField>(
     stage1_cycle_binding: &[F],
     stage2: &Stage2BatchOutputPoints<F>,
     stage3: &Stage3OutputPoints<F>,
@@ -155,7 +155,7 @@ type AddressPhaseSymbolic =
 /// field-for-field read from the stage-1 outer remainder; the input claim reads
 /// only values, so the consumed input *points* are the generated all-empty
 /// `empty_input_points`.
-pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
+pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,
     stage3: &Stage3OutputClaims<F>,
@@ -210,7 +210,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct BytecodeReadRafAddressPhase<F: Field> {
+pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     symbolic: AddressPhaseSymbolic,
     dimensions: BytecodeReadRafDimensions,
     /// Committed-program mode stages the `BytecodeValClaim` wire claims.
@@ -224,7 +224,7 @@ pub struct BytecodeReadRafAddressPhase<F: Field> {
     entry_bytecode_index: usize,
 }
 
-impl<F: Field> BytecodeReadRafAddressPhase<F> {
+impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
     pub fn new(
         dimensions: BytecodeReadRafDimensions,
         committed_program: bool,
@@ -286,7 +286,7 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     type Symbolic = AddressPhaseSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {

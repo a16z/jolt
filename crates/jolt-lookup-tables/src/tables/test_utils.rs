@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use rand::prelude::*;
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -31,7 +31,10 @@ pub fn gen_bitmask_w_lookup_index<const XLEN: usize>(rng: &mut StdRng) -> u128 {
     interleave_bits(x, y)
 }
 
-pub fn index_to_field_bitvector<F: Field + ChallengeOps<F>>(value: u128, bits: usize) -> Vec<F> {
+pub fn index_to_field_bitvector<F: JoltField + ChallengeOps<F>>(
+    value: u128,
+    bits: usize,
+) -> Vec<F> {
     if bits != 128 {
         assert!(value < 1u128 << bits);
     }
@@ -53,7 +56,7 @@ pub fn index_to_field_bitvector<F: Field + ChallengeOps<F>>(value: u128, bits: u
 /// has `2^16` entries.
 pub fn mle_full_hypercube_test<const XLEN: usize, F, T>()
 where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
+    F: JoltField + FieldOps<F> + ChallengeOps<F>,
     T: LookupTable + Default,
 {
     assert!(
@@ -72,7 +75,7 @@ where
 
 pub fn mle_random_test<const XLEN: usize, F, T>()
 where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
+    F: JoltField + FieldOps<F> + ChallengeOps<F>,
     T: LookupTable + Default,
 {
     let mut rng = StdRng::seed_from_u64(12345);
@@ -100,7 +103,7 @@ where
 /// corresponding (partially random) evaluation point.
 pub fn prefix_suffix_test<const XLEN: usize, F, T>()
 where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
+    F: JoltField + FieldOps<F> + ChallengeOps<F>,
     T: PrefixSuffixDecomposition<XLEN>,
 {
     prefix_suffix_materialization_test::<XLEN, F, T>(16, 3);
@@ -114,7 +117,7 @@ pub fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
     rounds_per_phase: usize,
     num_runs: usize,
 ) where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
+    F: JoltField + FieldOps<F> + ChallengeOps<F>,
     T: PrefixSuffixDecomposition<XLEN>,
 {
     let total_bits = XLEN * 2;
@@ -232,7 +235,7 @@ pub fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
 }
 
 #[expect(clippy::expect_used, reason = "writing to a String cannot fail")]
-fn format_prefix_evals<F: Field>(evals: &[PrefixEval<F>]) -> String {
+fn format_prefix_evals<F: JoltField>(evals: &[PrefixEval<F>]) -> String {
     use std::fmt::Write;
 
     let mut out = String::new();

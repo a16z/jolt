@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 
@@ -8,7 +8,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 /// the word-offset half of a doubleword effective address.
 pub enum Pow2OffsetWPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for Pow2OffsetWPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for Pow2OffsetWPrefix {
     fn default_checkpoint() -> F {
         F::one()
     }

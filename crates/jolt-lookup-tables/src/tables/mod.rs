@@ -9,7 +9,7 @@
 //! All tables are generic over `const XLEN: usize`. The supported word sizes
 //! are `XLEN = 64` (production) and `XLEN = 8` (full-hypercube tests).
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -250,7 +250,7 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
     pub fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         dispatch!(self, t => t.evaluate_mle(r))
     }
@@ -263,7 +263,11 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
         dispatch!(self, t => PrefixSuffixDecomposition::prefixes(t))
     }
 
-    pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    pub fn combine<F: JoltField>(
+        &self,
+        prefixes: &[PrefixEval<F>],
+        suffixes: &[SuffixEval<F>],
+    ) -> F {
         dispatch!(self, t => PrefixSuffixDecomposition::combine(t, prefixes, suffixes))
     }
 }
@@ -285,7 +289,7 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Def
     fn suffixes(&self) -> &'static [Suffixes];
 
     /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 
     /// Generate a random lookup index inside the table's valid input domain,
     /// for testing.

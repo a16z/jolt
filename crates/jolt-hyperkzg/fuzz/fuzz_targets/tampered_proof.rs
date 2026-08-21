@@ -6,7 +6,7 @@
 //! an intermediate commitment, or a witness commitment using fuzzer-chosen bytes.
 
 use jolt_crypto::{Bn254, JoltGroup};
-use jolt_field::{Field, Fr};
+use jolt_field::{JoltField, Fr};
 use jolt_hyperkzg::HyperKZGScheme;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;

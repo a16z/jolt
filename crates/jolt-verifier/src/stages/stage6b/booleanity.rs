@@ -23,7 +23,7 @@ use jolt_claims::protocols::jolt::{
     geometry::booleanity::BooleanityDimensions, BooleanityPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints, SumcheckOutputPoints};
@@ -43,7 +43,7 @@ pub type BooleanityCycleDimensions = BooleanityDimensions;
 pub type BooleanityCycleDimensions = lattice_booleanity::LatticeBooleanityDimensions;
 
 #[derive(Clone)]
-pub struct Booleanity<F: Field> {
+pub struct Booleanity<F: JoltField> {
     symbolic: CyclePhaseSymbolic,
     dimensions: BooleanityCycleDimensions,
     /// The address opening prefix from the stage-6a phase.
@@ -53,7 +53,7 @@ pub struct Booleanity<F: Field> {
     reference_cycle: Vec<F>,
 }
 
-impl<F: Field> Booleanity<F> {
+impl<F: JoltField> Booleanity<F> {
     pub fn new(
         dimensions: BooleanityCycleDimensions,
         r_address: Vec<F>,
@@ -104,7 +104,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
     type Symbolic = CyclePhaseSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {

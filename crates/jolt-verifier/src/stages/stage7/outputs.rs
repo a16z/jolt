@@ -1,7 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 7 verification.
 
 use jolt_claims::protocols::jolt::JoltAdviceKind;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::SumcheckBatch;
@@ -33,7 +33,7 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 /// relation type whose produced claims carry a single non-`Option` slot.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-pub struct Stage7Sumchecks<F: Field> {
+pub struct Stage7Sumchecks<F: JoltField> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
     /// Final `TrustedAdvice` claim from the trusted advice reduction's address
     /// phase; present only when that phase runs. On the prove side the kernel
@@ -53,7 +53,7 @@ pub struct Stage7Sumchecks<F: Field> {
 
 /// The shared opening-point accessors over the point-only stage-7 aggregate.
 /// Stages 7/8 read each produced opening's point off these cells.
-impl<F: Field> Stage7OutputPoints<F> {
+impl<F: JoltField> Stage7OutputPoints<F> {
     /// The hamming-weight reduction's shared opening point (the own point of the
     /// one-hot `Ra` polynomials): the first non-empty per-family RA cell. `None`
     /// only if the reduction produced no openings (never in practice — at least one
@@ -95,7 +95,7 @@ impl<F: Field> Stage7OutputPoints<F> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct Stage7ClearOutput<F: Field> {
+pub struct Stage7ClearOutput<F: JoltField> {
     /// The produced stage-7 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage7OutputClaims<F>,
@@ -117,7 +117,7 @@ pub struct Stage7ClearOutput<F: Field> {
 /// `challenges.hamming_weight_claim_reduction.gamma`, matching the
 /// `input.stageN.challenges.<relation>.<field>` idiom used by stages 3–5.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7ZkOutput<F: Field, C> {
+pub struct Stage7ZkOutput<F: JoltField, C> {
     pub challenges: Stage7Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
@@ -129,12 +129,12 @@ pub struct Stage7ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage7Output<F: Field, C> {
+pub enum Stage7Output<F: JoltField, C> {
     Clear(Stage7ClearOutput<F>),
     Zk(Stage7ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage7Output<F, C> {
+impl<F: JoltField, C> Stage7Output<F, C> {
     pub fn clear(&self) -> Result<&Stage7ClearOutput<F>, crate::VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
@@ -161,7 +161,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionAddressPhaseOutputClaims;
     use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::ProgramImageReductionAddressPhaseOutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

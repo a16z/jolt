@@ -4,7 +4,7 @@
 use crate::optimized::rows::RandomAccessRows;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use jolt_utils::FirstErrorLatch;
 use jolt_witness::__private::TraceRow;
@@ -95,14 +95,14 @@ const COLLECT_CHUNK: usize = 1 << 16;
 
 /// Streaming consumer building the sparse entries and the operand index
 /// columns in one trace pass, no whole-trace row materialization.
-pub(super) struct CollectRegisterEntries<F: Field> {
+pub(super) struct CollectRegisterEntries<F: JoltField> {
     pub(super) entries: Vec<SparseEntry<F, LutIndex>>,
     pub(super) rs1_indices: Vec<Option<u8>>,
     pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) rd_indices: Vec<Option<u8>>,
 }
 
-impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
+impl<F: JoltField> StreamConsumer for CollectRegisterEntries<F> {
     type Witness = RegisterCycleRow;
 
     fn consume(&mut self, chunk: &[RegisterCycleRow]) {
@@ -117,7 +117,7 @@ impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
     }
 }
 
-impl<F: Field> CollectRegisterEntries<F> {
+impl<F: JoltField> CollectRegisterEntries<F> {
     /// Builds the sparse entries and the operand index columns in one trace
     /// pass. Slice-backed sources build index-parallel; re-emulating sources
     /// stream sequentially. Entry values and order are identical either way —

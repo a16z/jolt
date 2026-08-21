@@ -23,7 +23,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use std::sync::Arc;
 
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
@@ -43,7 +43,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -133,7 +133,7 @@ impl ChunkIndexSource for RamAddressChunks {
     }
 }
 
-struct RamRaVirtualizationKernel<F: Field> {
+struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
@@ -151,7 +151,7 @@ crate::optimized::impl_field_allocative!(RamRaVirtualizationKernel, |kernel| {
         + kernel.gruen.heap_bytes()
 });
 
-impl<F: Field> RamRaVirtualizationKernel<F> {
+impl<F: JoltField> RamRaVirtualizationKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
     /// `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`.
     fn message(
@@ -222,7 +222,7 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -245,7 +245,7 @@ impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
     type Relation = RamRaVirtualization<F>;
 
     fn output_claims(
@@ -288,7 +288,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationInputClaims;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::VerifierError;
 
