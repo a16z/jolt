@@ -2272,9 +2272,9 @@ dependencies = [
 
 [[package]]
 name = "dory-pcs"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc655754c8ddb6b75f528efcfcddf2cd8db59bdea777de157400d642048bd2f4"
+checksum = "065945e9fff3c7dac5d6f72f8260eac82ad577e7c7009b6290847d1252d14d78"
 dependencies = [
  "ark-bn254 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
