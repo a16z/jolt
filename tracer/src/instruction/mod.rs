@@ -156,7 +156,10 @@ use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
-use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
+use virtual_xor_rotw::{
+    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
+    VirtualXORROTW7, VirtualXORROTW8,
+};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
