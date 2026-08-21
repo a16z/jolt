@@ -117,9 +117,8 @@ pub use virt::Pow2W;
 pub use virt::VirtualAdvice;
 pub use virt::VirtualAdviceLen;
 pub use virt::VirtualAdviceLoad;
-pub use virt::VirtualChangeDivisor;
-pub use virt::VirtualChangeDivisorW;
 pub use virt::VirtualHostIO;
+pub use virt::VirtualNegateIf;
 pub use virt::VirtualRev8W;
 pub use virt::VirtualRotri;
 pub use virt::VirtualRotriw;
@@ -386,8 +385,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     MulIW(MulIW<T>),
     MovSign(MovSign<T>),
     VirtualRev8W(VirtualRev8W<T>),
-    VirtualChangeDivisor(VirtualChangeDivisor<T>),
-    VirtualChangeDivisorW(VirtualChangeDivisorW<T>),
+    VirtualNegateIf(VirtualNegateIf<T>),
     VirtualSignExtendWord(VirtualSignExtendWord<T>),
     VirtualZeroExtendWord(VirtualZeroExtendWord<T>),
     VirtualSrl(VirtualSrl<T>),
@@ -595,8 +593,7 @@ impl_jolt_instructions_flags! {
     MulIW => VirtualMULIW,
     MovSign => VirtualMovsign,
     VirtualRev8W => VirtualRev8W,
-    VirtualChangeDivisor => VirtualChangeDivisor,
-    VirtualChangeDivisorW => VirtualChangeDivisorW,
+    VirtualNegateIf => VirtualNegateIf,
     VirtualSignExtendWord => VirtualSignExtendWord,
     VirtualZeroExtendWord => VirtualZeroExtendWord,
     VirtualSrl => VirtualSRL,

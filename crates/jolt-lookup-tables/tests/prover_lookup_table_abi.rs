@@ -148,14 +148,8 @@ fn modular_lookup_table_indices_match_prover_abi() {
             prover_index(ProverLookupTables::<XLEN>::VirtualROTRW(Default::default())),
         ),
         (
-            LookupTableKind::<XLEN>::VirtualChangeDivisor(Default::default()).index(),
-            prover_index(ProverLookupTables::<XLEN>::VirtualChangeDivisor(
-                Default::default(),
-            )),
-        ),
-        (
-            LookupTableKind::<XLEN>::VirtualChangeDivisorW(Default::default()).index(),
-            prover_index(ProverLookupTables::<XLEN>::VirtualChangeDivisorW(
+            LookupTableKind::<XLEN>::VirtualNegateIf(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualNegateIf(
                 Default::default(),
             )),
         ),

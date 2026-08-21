@@ -145,8 +145,7 @@ macro_rules! for_each_instruction_kind {
                 VirtualAssertValidDiv0 => AssertValidDiv0 => "jolt.virtual.assert_valid_div0",
                 VirtualAssertValidUnsignedRemainder => AssertValidUnsignedRemainder => "jolt.virtual.assert_valid_unsigned_remainder",
                 VirtualAssertMulUNoOverflow => AssertMulUNoOverflow => "jolt.virtual.assert_mul_u_no_overflow",
-                VirtualChangeDivisor => VirtualChangeDivisor => "jolt.virtual.change_divisor",
-                VirtualChangeDivisorW => VirtualChangeDivisorW => "jolt.virtual.change_divisor_w",
+                VirtualNegateIf => VirtualNegateIf => "jolt.virtual.negate_if",
                 VirtualZeroExtendWord => VirtualZeroExtendWord => "jolt.virtual.zero_extend_word",
                 VirtualSignExtendWord => VirtualSignExtendWord => "jolt.virtual.sign_extend_word",
                 VirtualPow2W => Pow2W => "jolt.virtual.pow2_w",
@@ -241,8 +240,6 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualAssertValidDiv0 => AssertValidDiv0 => (0x0069, "jolt.virtual.assert_valid_div0"),
                 VirtualAssertValidUnsignedRemainder => AssertValidUnsignedRemainder => (0x006a, "jolt.virtual.assert_valid_unsigned_remainder"),
                 VirtualAssertMulUNoOverflow => AssertMulUNoOverflow => (0x006b, "jolt.virtual.assert_mul_u_no_overflow"),
-                VirtualChangeDivisor => VirtualChangeDivisor => (0x006c, "jolt.virtual.change_divisor"),
-                VirtualChangeDivisorW => VirtualChangeDivisorW => (0x006d, "jolt.virtual.change_divisor_w"),
                 VirtualZeroExtendWord => VirtualZeroExtendWord => (0x0070, "jolt.virtual.zero_extend_word"),
                 VirtualSignExtendWord => VirtualSignExtendWord => (0x0071, "jolt.virtual.sign_extend_word"),
                 VirtualPow2W => Pow2W => (0x0072, "jolt.virtual.pow2_w"),
@@ -275,6 +272,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualMULIW => MulIW => (0x008e, "jolt.virtual.muliw"),
                 VirtualWindowMaskW => WindowMaskW => (0x008f, "jolt.virtual.windowmaskw"),
                 VirtualPextSigned => PextSigned => (0x0090, "jolt.virtual.pextsigned"),
+                VirtualNegateIf => VirtualNegateIf => (0x0096, "jolt.virtual.negate_if"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

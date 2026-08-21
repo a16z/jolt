@@ -28,8 +28,7 @@ use unsigned_less_than_equal::UnsignedLessThanEqualTable;
 use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
-use virtual_change_divisor::VirtualChangeDivisorTable;
-use virtual_change_divisor_w::VirtualChangeDivisorWTable;
+use virtual_negate_if::VirtualNegateIfTable;
 use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualRotrTable;
 use virtual_rotrw::VirtualRotrWTable;
@@ -101,8 +100,7 @@ pub mod unsigned_less_than_equal;
 pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_unsigned_remainder;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
+pub mod virtual_negate_if;
 pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
@@ -153,8 +151,7 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualSRA(VirtualSRATable<XLEN>),
     VirtualROTR(VirtualRotrTable<XLEN>),
     VirtualROTRW(VirtualRotrWTable<XLEN>),
-    VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
-    VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
+    VirtualNegateIf(VirtualNegateIfTable<XLEN>),
     MulUNoOverflow(MulUNoOverflowTable<XLEN>),
     VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
@@ -207,8 +204,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.materialize(),
             LookupTables::VirtualROTR(table) => table.materialize(),
             LookupTables::VirtualROTRW(table) => table.materialize(),
-            LookupTables::VirtualChangeDivisor(table) => table.materialize(),
-            LookupTables::VirtualChangeDivisorW(table) => table.materialize(),
+            LookupTables::VirtualNegateIf(table) => table.materialize(),
             LookupTables::MulUNoOverflow(table) => table.materialize(),
             LookupTables::VirtualXORROT32(table) => table.materialize(),
             LookupTables::VirtualXORROT24(table) => table.materialize(),
@@ -254,8 +250,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.materialize_entry(index),
             LookupTables::VirtualROTR(table) => table.materialize_entry(index),
             LookupTables::VirtualROTRW(table) => table.materialize_entry(index),
-            LookupTables::VirtualChangeDivisor(table) => table.materialize_entry(index),
-            LookupTables::VirtualChangeDivisorW(table) => table.materialize_entry(index),
+            LookupTables::VirtualNegateIf(table) => table.materialize_entry(index),
             LookupTables::MulUNoOverflow(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT32(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT24(table) => table.materialize_entry(index),
@@ -305,8 +300,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.evaluate_mle(r),
             LookupTables::VirtualROTR(table) => table.evaluate_mle(r),
             LookupTables::VirtualROTRW(table) => table.evaluate_mle(r),
-            LookupTables::VirtualChangeDivisor(table) => table.evaluate_mle(r),
-            LookupTables::VirtualChangeDivisorW(table) => table.evaluate_mle(r),
+            LookupTables::VirtualNegateIf(table) => table.evaluate_mle(r),
             LookupTables::MulUNoOverflow(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT32(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT24(table) => table.evaluate_mle(r),
@@ -352,8 +346,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.suffixes(),
             LookupTables::VirtualROTR(table) => table.suffixes(),
             LookupTables::VirtualROTRW(table) => table.suffixes(),
-            LookupTables::VirtualChangeDivisor(table) => table.suffixes(),
-            LookupTables::VirtualChangeDivisorW(table) => table.suffixes(),
+            LookupTables::VirtualNegateIf(table) => table.suffixes(),
             LookupTables::MulUNoOverflow(table) => table.suffixes(),
             LookupTables::VirtualXORROT32(table) => table.suffixes(),
             LookupTables::VirtualXORROT24(table) => table.suffixes(),
@@ -403,8 +396,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualROTR(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualROTRW(table) => table.combine(prefixes, suffixes),
-            LookupTables::VirtualChangeDivisor(table) => table.combine(prefixes, suffixes),
-            LookupTables::VirtualChangeDivisorW(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualNegateIf(table) => table.combine(prefixes, suffixes),
             LookupTables::MulUNoOverflow(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT32(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT24(table) => table.combine(prefixes, suffixes),

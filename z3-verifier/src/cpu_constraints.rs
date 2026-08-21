@@ -57,10 +57,10 @@ use tracer::instruction::{
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
     virtual_assert_word_alignment::VirtualAssertWordAlignment,
-    virtual_change_divisor::VirtualChangeDivisor,
     virtual_movsign::VirtualMovsign,
     virtual_muli::VirtualMULI,
     virtual_muliw::VirtualMULIW,
+    virtual_negate_if::VirtualNegateIf,
     virtual_pow2::VirtualPow2,
     virtual_pow2_w::VirtualPow2W,
     virtual_pow2i::VirtualPow2I,
@@ -526,7 +526,7 @@ test_instruction_constraints!(VirtualAssertMulUNoOverflow, FormatB);
 test_instruction_constraints!(VirtualAssertValidDiv0, FormatB);
 test_instruction_constraints!(VirtualAssertValidUnsignedRemainder, FormatB);
 test_instruction_constraints!(VirtualAssertWordAlignment, FormatAssert);
-test_instruction_constraints!(VirtualChangeDivisor, FormatR);
+test_instruction_constraints!(VirtualNegateIf, FormatR);
 test_instruction_constraints!(VirtualMovsign, FormatI);
 test_instruction_constraints!(VirtualMULI, FormatI);
 test_instruction_constraints!(VirtualMULIW, FormatI);
