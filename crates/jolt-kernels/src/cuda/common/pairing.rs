@@ -499,4 +499,22 @@ mod tests {
             assert_eq!(got, expected, "the pairing diverged for shape {index}");
         }
     }
+
+    #[test]
+    fn multi_miller_above_the_warp_threshold_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(5_600);
+        for count in [MILLER_WARP_MAX_PAIRS + 1, 2 * MILLER_WARP_MAX_PAIRS] {
+            let ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+            let qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller(&ps, &qs);
+            assert_eq!(
+                got, expected,
+                "the Miller loop diverged for {count} pairs, above the warp threshold"
+            );
+        }
+    }
 }

@@ -417,195 +417,99 @@ impl<F: Field> SumcheckKernel<F> for DeviceInstructionReadRaf<F> {
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
-    clippy::panic,
-    reason = "test module: device and fixture errors fail loudly"
+    reason = "test module: device operations fail loudly"
 )]
-mod legacy_oracle {
-    use std::sync::Arc;
+mod tests {
+    use std::num::NonZeroUsize;
 
-    use jolt_field::Fr;
-
-    use super::ADDRESS_BITS;
-
-    use ark_bn254::Fr as LegacyFr;
-    use jolt_prover_legacy::field::JoltField as LegacyJoltField;
-    use jolt_prover_legacy::poly::opening_proof::ProverOpeningAccumulator;
-    use jolt_prover_legacy::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
-    use jolt_prover_legacy::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-    use jolt_prover_legacy::transcripts::{Blake2bTranscript, Transcript};
-    use jolt_prover_legacy::zkvm::config::OneHotParams;
-    use jolt_prover_legacy::zkvm::instruction::{
-        Flags as LegacyFlags, InstructionLookup as LegacyLookup, InterleavedBitsMarker,
-        JoltTraceCycle, LookupQuery as LegacyLookupQuery,
+    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
+    use jolt_claims::protocols::jolt::relations::instruction::{
+        InstructionReadRafChallenges, InstructionReadRafInputClaims,
     };
-    use jolt_prover_legacy::zkvm::instruction_lookups::read_raf_checking::{
-        InstructionReadRafSumcheckParams, InstructionReadRafSumcheckProver,
-    };
-    use jolt_prover_legacy::zkvm::lookup_table::LookupTables;
-    use jolt_prover_legacy::zkvm::witness::VirtualPolynomial;
-    use rand::rngs::StdRng;
-    use rand::{RngCore, SeedableRng};
-    use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use jolt_claims::protocols::jolt::JoltOneHotConfig;
+    use jolt_claims::OutputClaims;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_verifier::stages::stage5::InstructionReadRaf;
+    use proptest::prelude::*;
 
-    use super::address_driver::DeviceAddressPhase;
+    use super::{CudaBackend, ADDRESS_BITS};
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::{
+        arb_point, drive, fr, reference_input_claim, with_instruction_witness,
+    };
+    use crate::optimized::instruction_read_raf::OptimizedInstructionReadRaf;
+    use crate::{PrepareKernel, ProofSession, ProverInputs};
 
     const LOG_T: usize = 8;
+    const RA_POLYS: usize = 8;
 
-    fn random_cycle(rng: &mut StdRng) -> Cycle {
-        let variants: Vec<Cycle> = Cycle::iter().collect();
-        for _ in 0..10_000 {
-            let index = rng.next_u64() as usize % variants.len();
-            let candidate = variants[index].random(rng);
-            if JoltTraceCycle::try_new(&candidate).is_ok() {
-                return candidate;
-            }
+    fn one_hot() -> JoltOneHotConfig {
+        JoltOneHotConfig {
+            log_k_chunk: 8,
+            lookups_ra_virtual_log_k_chunk: 16,
         }
-        panic!("no convertible cycle variant found");
     }
 
-    fn trace(log_t: usize, seed: u64) -> Vec<Cycle> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        (0..1usize << log_t)
-            .map(|_| random_cycle(&mut rng))
-            .collect()
-    }
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2))]
+        #[test]
+        fn instruction_read_raf_matches_optimized_round_for_round(
+            seed in any::<u64>(),
+            lookup_output in arb_point(LOG_T),
+            gamma in any::<u64>().prop_map(fr),
+            challenges in arb_point(ADDRESS_BITS + LOG_T),
+        ) {
+            let Some(_) = shared_context() else { return Ok(()); };
 
-    fn consumed_openings(trace: &[Cycle], eq: &[LegacyFr]) -> (LegacyFr, LegacyFr, LegacyFr) {
-        let mut rv = <LegacyFr as LegacyJoltField>::from_u64(0);
-        let mut left = <LegacyFr as LegacyJoltField>::from_u64(0);
-        let mut right = <LegacyFr as LegacyJoltField>::from_u64(0);
-        for (index, cycle) in trace.iter().enumerate() {
-            let jolt = JoltTraceCycle::try_new(cycle).expect("final Jolt row");
-            let lookup_index = LegacyLookupQuery::<64>::to_lookup_index(&jolt);
-            if let Some(table) = LegacyLookup::<64>::lookup_table(&jolt) {
-                rv += LegacyJoltField::mul_u64(&eq[index], table.materialize_entry(lookup_index));
-            }
-            let (lo, ro) = LegacyLookupQuery::<64>::to_lookup_operands(cycle);
-            left += LegacyJoltField::mul_u64(&eq[index], lo);
-            right += LegacyJoltField::mul_u128(&eq[index], ro);
+            let dimensions = InstructionReadRafDimensions::new(
+                LOG_T,
+                ADDRESS_BITS,
+                NonZeroUsize::new(RA_POLYS).expect("a nonzero virtual ra count"),
+            );
+            let relation = InstructionReadRaf::<Fr>::new(dimensions);
+            let claims = InstructionReadRafInputClaims {
+                lookup_output: Fr::from_u64(0),
+                left_lookup_operand: Fr::from_u64(0),
+                right_lookup_operand: Fr::from_u64(0),
+            };
+            let points = InstructionReadRafInputClaims {
+                lookup_output: lookup_output.clone(),
+                left_lookup_operand: lookup_output.clone(),
+                right_lookup_operand: lookup_output.clone(),
+            };
+            let challenge_set = InstructionReadRafChallenges { gamma };
+
+            with_instruction_witness(LOG_T, one_hot(), seed, |witness| {
+                let make_inputs = || ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenge_set,
+                };
+
+                let input_claim = reference_input_claim(witness, make_inputs);
+                let mut expected_kernel = OptimizedInstructionReadRaf
+                    .prepare(&mut ProofSession::default(), witness, make_inputs())
+                    .expect("optimized prepare");
+                let mut got_kernel = CudaBackend
+                    .prepare(&mut ProofSession::default(), witness, make_inputs())
+                    .expect("cuda prepare");
+
+                let expected = drive(&mut *expected_kernel, input_claim, &challenges);
+                let got = drive(&mut *got_kernel, input_claim, &challenges);
+                prop_assert_eq!(got, expected, "round polynomials diverged");
+
+                let expected_claims = expected_kernel
+                    .output_claims(&claims)
+                    .expect("optimized claims");
+                let got_claims = got_kernel.output_claims(&claims).expect("cuda claims");
+                prop_assert_eq!(
+                    got_claims.opening_values(),
+                    expected_claims.opening_values(),
+                    "output claims diverged"
+                );
+                Ok(())
+            })?;
         }
-        (rv, left, right)
-    }
-
-    #[test]
-    fn instruction_read_raf_matches_legacy() {
-        let Some(_) = shared_context() else {
-            return;
-        };
-        let trace = Arc::new(trace(LOG_T, 12345));
-
-        let transcript = &mut Blake2bTranscript::new(&[]);
-        let mut accumulator = ProverOpeningAccumulator::new(LOG_T);
-        let r_cycle: Vec<<LegacyFr as LegacyJoltField>::Challenge> =
-            transcript.challenge_vector_optimized::<LegacyFr>(LOG_T);
-        let eq = jolt_prover_legacy::poly::eq_poly::EqPolynomial::<LegacyFr>::evals(&r_cycle);
-        let (rv, left, right) = consumed_openings(&trace, &eq);
-
-        for (polynomial, claim) in [
-            (VirtualPolynomial::LookupOutput, rv),
-            (VirtualPolynomial::LeftLookupOperand, left),
-            (VirtualPolynomial::RightLookupOperand, right),
-        ] {
-            accumulator.append_virtual(
-                polynomial,
-                SumcheckId::InstructionClaimReduction,
-                OpeningPoint::<BIG_ENDIAN, LegacyFr>::new(r_cycle.clone()),
-                claim,
-            );
-        }
-        accumulator.append_virtual(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanProductVirtualization,
-            OpeningPoint::<BIG_ENDIAN, LegacyFr>::new(r_cycle.clone()),
-            rv,
-        );
-
-        let one_hot = OneHotParams::new(LOG_T, 100, 100);
-        let params =
-            InstructionReadRafSumcheckParams::new(LOG_T, &one_hot, &accumulator, transcript);
-        let legacy_gamma = params.gamma;
-        let mut legacy = InstructionReadRafSumcheckProver::initialize(params, Arc::clone(&trace));
-
-        let lookup_index: Vec<u128> = trace
-            .iter()
-            .map(|cycle| {
-                let jolt = JoltTraceCycle::try_new(cycle).expect("final Jolt row");
-                LegacyLookupQuery::<64>::to_lookup_index(&jolt)
-            })
-            .collect();
-        let table_index: Vec<Option<usize>> = trace
-            .iter()
-            .map(|cycle| {
-                let jolt = JoltTraceCycle::try_new(cycle).expect("final Jolt row");
-                LegacyLookup::<64>::lookup_table(&jolt)
-                    .map(|table| LookupTables::<64>::enum_index(&table))
-            })
-            .collect();
-        let raf_flag: Vec<bool> = trace
-            .iter()
-            .map(|cycle| {
-                let jolt = JoltTraceCycle::try_new(cycle).expect("final Jolt row");
-                !LegacyFlags::circuit_flags(&jolt).is_interleaved_operands()
-            })
-            .collect();
-        let r_reduction: Vec<Fr> = r_cycle
-            .iter()
-            .map(|challenge| {
-                let value: LegacyFr = (*challenge).into();
-                Fr::from(value)
-            })
-            .collect();
-        let context = shared_context().expect("cuda context");
-        let mut device = DeviceAddressPhase::new(
-            context,
-            &lookup_index,
-            &table_index,
-            &raf_flag,
-            &r_reduction,
-            ADDRESS_BITS,
-        )
-        .expect("device address phase");
-        let gamma = Fr::from(legacy_gamma);
-
-        let mut claim = <LegacyFr as LegacyJoltField>::from_u64(0);
-        let mut rounds_checked = 0usize;
-        for round in 0..ADDRESS_BITS {
-            rounds_checked += 1;
-            let want = SumcheckInstanceProver::<LegacyFr, Blake2bTranscript>::compute_message(
-                &mut legacy,
-                round,
-                claim,
-            );
-            let got = device
-                .round_message_hinted(context, gamma, Fr::from(claim))
-                .expect("device message");
-            let want_at = |x: u64| want.evaluate(&<LegacyFr as LegacyJoltField>::from_u64(x));
-            assert_eq!(
-                Fr::from(want_at(0)),
-                got[0],
-                "round {round} message at X = 0 diverged"
-            );
-            assert_eq!(
-                Fr::from(want_at(2)),
-                got[1],
-                "round {round} message at X = 2 diverged"
-            );
-            let challenge = r_cycle[round % r_cycle.len()];
-            claim = want.evaluate(&<LegacyFr as From<_>>::from(challenge));
-            SumcheckInstanceProver::<LegacyFr, Blake2bTranscript>::ingest_challenge(
-                &mut legacy,
-                challenge,
-                round,
-            );
-            device
-                .bind(context, Fr::from(<LegacyFr as From<_>>::from(challenge)))
-                .expect("device bind");
-        }
-        assert_eq!(
-            rounds_checked, ADDRESS_BITS,
-            "the oracle must compare every address round"
-        );
     }
 }
