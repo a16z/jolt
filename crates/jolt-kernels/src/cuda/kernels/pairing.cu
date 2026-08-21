@@ -448,6 +448,298 @@ extern "C" __global__ void pairing_miller_kernel(const u64 *__restrict__ g1,
     }
 }
 
+#define MW_COEFFS 6
+#define MW_GROUPS 3
+#define MW_MASK 0xffffffffu
+
+static_assert(MW_COEFFS * MW_GROUPS <= 32, "the cooperative Miller loop must fit one warp");
+
+__device__ __forceinline__ void mw_fq2_mul(const u64 *a, const u64 *b, u64 *out) {
+    u64 v0[LIMBS], v1[LIMBS], s[LIMBS], t[LIMBS], c1[LIMBS];
+    fq_mul(a, b, v0);
+    fq_mul(a + LIMBS, b + LIMBS, v1);
+    fq_add(a, a + LIMBS, s);
+    fq_add(b, b + LIMBS, t);
+    fq_mul(s, t, c1);
+    fq_sub(c1, v0, s);
+    fq_sub(s, v1, c1);
+    fq_sub(v0, v1, out);
+    fq_copy(c1, out + LIMBS);
+}
+
+__device__ __forceinline__ void mw_fq2_sqr(const u64 *a, u64 *out) {
+    u64 s[LIMBS], d[LIMBS], m[LIMBS], c0[LIMBS];
+    fq_add(a, a + LIMBS, s);
+    fq_sub(a, a + LIMBS, d);
+    fq_mul(a, a + LIMBS, m);
+    fq_mul(s, d, c0);
+    fq_double(m, out + LIMBS);
+    fq_copy(c0, out);
+}
+
+__device__ __forceinline__ void mw_bcast(const u64 *src, unsigned int lane, u64 *out) {
+    for (int i = 0; i < FQ2_LIMBS; i++) {
+        out[i] = __shfl_sync(MW_MASK, src[i], (int)lane);
+    }
+}
+
+__device__ __noinline__ void mw_fq12_mul(const u64 *fc, const u64 *ec, unsigned int lane,
+                                            u64 *out) {
+    unsigned int k = (lane / MW_GROUPS) % MW_COEFFS;
+    unsigned int s = lane % MW_GROUPS;
+
+    u64 plain[FQ2_LIMBS], twisted[FQ2_LIMBS];
+    fq2_set_zero(plain);
+    fq2_set_zero(twisted);
+
+    for (unsigned int step = 0; step < 2; step++) {
+        unsigned int i = s + step * MW_GROUPS;
+        unsigned int j = (k + MW_COEFFS - i) % MW_COEFFS;
+        u64 di[FQ2_LIMBS], ej[FQ2_LIMBS], prod[FQ2_LIMBS];
+        mw_bcast(fc, i, di);
+        mw_bcast(ec, j, ej);
+        mw_fq2_mul(di, ej, prod);
+        if (i <= k) {
+            fq2_add(plain, prod, plain);
+        } else {
+            fq2_add(twisted, prod, twisted);
+        }
+    }
+
+    u64 acc[FQ2_LIMBS], acc_twisted[FQ2_LIMBS], part[FQ2_LIMBS], part_twisted[FQ2_LIMBS];
+    fq2_set_zero(acc);
+    fq2_set_zero(acc_twisted);
+    for (unsigned int group = 0; group < MW_GROUPS; group++) {
+        unsigned int src = (lane % MW_COEFFS) * MW_GROUPS + group;
+        mw_bcast(plain, src, part);
+        mw_bcast(twisted, src, part_twisted);
+        fq2_add(acc, part, acc);
+        fq2_add(acc_twisted, part_twisted, acc_twisted);
+    }
+    fq2_mul_by_nonresidue(acc_twisted, part_twisted);
+    fq2_add(acc, part_twisted, out);
+}
+
+__device__ __noinline__ void mw_ell(u64 *fc, const u64 *coeff, const u64 *px, const u64 *py,
+                                       unsigned int lane) {
+    unsigned int slot = lane % MW_COEFFS;
+    u64 ec[FQ2_LIMBS];
+    fq2_set_zero(ec);
+    if (slot == 0) {
+        fq2_mul_by_fp(coeff, py, ec);
+    }
+    if (slot == 1) {
+        fq2_mul_by_fp(coeff + FQ2_LIMBS, px, ec);
+    }
+    if (slot == 3) {
+        fq2_copy(coeff + 2 * FQ2_LIMBS, ec);
+    }
+    u64 next[FQ2_LIMBS];
+    mw_fq12_mul(fc, ec, lane, next);
+    fq2_copy(next, fc);
+}
+
+__device__ __noinline__ void mw_g2_double_step(u64 *rx, u64 *ry, u64 *rz, const u64 *consts,
+                                                  u64 *coeff) {
+    const u64 *two_inv = consts + PC_TWO_INV;
+    const u64 *coeff_b = consts + PC_COEFF_B;
+
+    u64 a[FQ2_LIMBS], b[FQ2_LIMBS], c[FQ2_LIMBS], e[FQ2_LIMBS], f[FQ2_LIMBS];
+    u64 g[FQ2_LIMBS], h[FQ2_LIMBS], i[FQ2_LIMBS], j[FQ2_LIMBS];
+    u64 e_square[FQ2_LIMBS], t[FQ2_LIMBS], u[FQ2_LIMBS];
+
+    mw_fq2_mul(rx, ry, t);
+    fq2_mul_by_fp(t, two_inv, a);
+    mw_fq2_sqr(ry, b);
+    mw_fq2_sqr(rz, c);
+    fq2_double(c, t);
+    fq2_add(t, c, t);
+    mw_fq2_mul(coeff_b, t, e);
+    fq2_double(e, t);
+    fq2_add(t, e, f);
+    fq2_add(b, f, t);
+    fq2_mul_by_fp(t, two_inv, g);
+    fq2_add(ry, rz, t);
+    mw_fq2_sqr(t, h);
+    fq2_add(b, c, t);
+    fq2_sub(h, t, h);
+    fq2_sub(e, b, i);
+    mw_fq2_sqr(rx, j);
+    mw_fq2_sqr(e, e_square);
+
+    fq2_sub(b, f, t);
+    mw_fq2_mul(a, t, u);
+    mw_fq2_sqr(g, t);
+    fq2_double(e_square, a);
+    fq2_add(a, e_square, a);
+    fq2_sub(t, a, t);
+    mw_fq2_mul(b, h, a);
+
+    fq2_copy(u, rx);
+    fq2_copy(t, ry);
+    fq2_copy(a, rz);
+
+    fq2_neg(h, coeff);
+    fq2_double(j, t);
+    fq2_add(t, j, coeff + FQ2_LIMBS);
+    fq2_copy(i, coeff + 2 * FQ2_LIMBS);
+}
+
+__device__ __noinline__ void mw_g2_add_step(u64 *rx, u64 *ry, u64 *rz, const u64 *qx,
+                                               const u64 *qy, u64 *coeff) {
+    u64 theta[FQ2_LIMBS], lambda[FQ2_LIMBS], c[FQ2_LIMBS], d[FQ2_LIMBS];
+    u64 e[FQ2_LIMBS], f[FQ2_LIMBS], g[FQ2_LIMBS], h[FQ2_LIMBS];
+    u64 j[FQ2_LIMBS], t[FQ2_LIMBS], u[FQ2_LIMBS];
+
+    mw_fq2_mul(qy, rz, t);
+    fq2_sub(ry, t, theta);
+    mw_fq2_mul(qx, rz, t);
+    fq2_sub(rx, t, lambda);
+    mw_fq2_sqr(theta, c);
+    mw_fq2_sqr(lambda, d);
+    mw_fq2_mul(lambda, d, e);
+    mw_fq2_mul(rz, c, f);
+    mw_fq2_mul(rx, d, g);
+    fq2_double(g, t);
+    fq2_add(e, f, h);
+    fq2_sub(h, t, h);
+
+    mw_fq2_mul(theta, qx, t);
+    mw_fq2_mul(lambda, qy, u);
+    fq2_sub(t, u, j);
+
+    mw_fq2_mul(lambda, h, t);
+    fq2_sub(g, h, u);
+    mw_fq2_mul(theta, u, u);
+    mw_fq2_mul(e, ry, c);
+    fq2_sub(u, c, u);
+    mw_fq2_mul(rz, e, d);
+
+    fq2_copy(t, rx);
+    fq2_copy(u, ry);
+    fq2_copy(d, rz);
+
+    fq2_copy(lambda, coeff);
+    fq2_neg(theta, coeff + FQ2_LIMBS);
+    fq2_copy(j, coeff + 2 * FQ2_LIMBS);
+}
+
+__device__ __noinline__ void mw_g2_mul_by_char(const u64 *qx, const u64 *qy, const u64 *consts,
+                                                  u64 *outx, u64 *outy) {
+    u64 t[FQ2_LIMBS];
+    fq2_conj(qx, t);
+    mw_fq2_mul(t, consts + PC_TWIST_Q_X, outx);
+    fq2_conj(qy, t);
+    mw_fq2_mul(t, consts + PC_TWIST_Q_Y, outy);
+}
+
+__device__ __forceinline__ void mw_store(u64 *out, const u64 *fc, unsigned int lane) {
+    if (lane >= MW_COEFFS) return;
+    u64 *target = out + (lane % 2) * FQ6_LIMBS + (lane / 2) * FQ2_LIMBS;
+    for (int i = 0; i < FQ2_LIMBS; i++) target[i] = fc[i];
+}
+
+extern "C" __global__ void pairing_miller_warp_kernel(const u64 *__restrict__ g1,
+                                                      const u64 *__restrict__ g2,
+                                                      const u64 *__restrict__ consts,
+                                                      const u64 *__restrict__ ate,
+                                                      unsigned int ate_len,
+                                                      const unsigned int *__restrict__ g1_offsets,
+                                                      const unsigned int *__restrict__ g2_offsets,
+                                                      unsigned int count, u64 *__restrict__ out) {
+    unsigned int pair = blockIdx.x * blockDim.y + threadIdx.y;
+    if (pair >= count) return;
+    unsigned int segment = blockIdx.y;
+    unsigned int lane = threadIdx.x;
+    unsigned long long idx = (unsigned long long)segment * count + pair;
+
+    u64 fc[FQ2_LIMBS];
+    fq2_set_zero(fc);
+    if (lane == 0) {
+        fq2_set_one(fc);
+    }
+
+    const u64 *p = g1 + ((unsigned long long)g1_offsets[segment] + pair) * 3 * LIMBS;
+    const u64 *q = g2 + ((unsigned long long)g2_offsets[segment] + pair) * 3 * FQ2_LIMBS;
+
+    if (jac_is_zero(p) || jac2_is_zero(q)) {
+        mw_store(out + idx * FQ12_LIMBS, fc, lane);
+        return;
+    }
+
+    u64 px[LIMBS], py[LIMBS];
+    {
+        u64 zinv[LIMBS], zinv2[LIMBS], t1[LIMBS];
+        if (fq_is_one(p + 2 * LIMBS)) {
+            fq_copy(p, px);
+            fq_copy(p + LIMBS, py);
+        } else {
+            fq_inverse(p + 2 * LIMBS, zinv);
+            fq_sqr(zinv, zinv2);
+            fq_mul(p, zinv2, px);
+            fq_mul(p + LIMBS, zinv2, t1);
+            fq_mul(t1, zinv, py);
+        }
+    }
+
+    u64 qx[FQ2_LIMBS], qy[FQ2_LIMBS];
+    {
+        u64 q2inv[FQ2_LIMBS], q2inv2[FQ2_LIMBS], s2[FQ2_LIMBS];
+        if (fq2_is_one(q + 2 * FQ2_LIMBS)) {
+            fq2_copy(q, qx);
+            fq2_copy(q + FQ2_LIMBS, qy);
+        } else {
+            fq2_inverse(q + 2 * FQ2_LIMBS, q2inv);
+            mw_fq2_sqr(q2inv, q2inv2);
+            mw_fq2_mul(q, q2inv2, qx);
+            mw_fq2_mul(q + FQ2_LIMBS, q2inv2, s2);
+            mw_fq2_mul(s2, q2inv, qy);
+        }
+    }
+
+    u64 rx[FQ2_LIMBS], ry[FQ2_LIMBS], rz[FQ2_LIMBS], coeff[3 * FQ2_LIMBS];
+    fq2_copy(qx, rx);
+    fq2_copy(qy, ry);
+    fq2_set_one(rz);
+
+#pragma unroll 1
+    for (int i = (int)ate_len - 1; i >= 1; i--) {
+        if (i != (int)ate_len - 1) {
+            u64 squared[FQ2_LIMBS];
+            mw_fq12_mul(fc, fc, lane, squared);
+            fq2_copy(squared, fc);
+        }
+        mw_g2_double_step(rx, ry, rz, consts, coeff);
+        mw_ell(fc, coeff, px, py, lane);
+
+        u64 bit = ate[i - 1];
+        if (bit == 1ULL) {
+            mw_g2_add_step(rx, ry, rz, qx, qy, coeff);
+            mw_ell(fc, coeff, px, py, lane);
+        } else if (bit == 2ULL) {
+            u64 neg_qy[FQ2_LIMBS];
+            fq2_neg(qy, neg_qy);
+            mw_g2_add_step(rx, ry, rz, qx, neg_qy, coeff);
+            mw_ell(fc, coeff, px, py, lane);
+        }
+    }
+
+    {
+        u64 q1x[FQ2_LIMBS], q1y[FQ2_LIMBS], q2x[FQ2_LIMBS], q2y[FQ2_LIMBS], s2[FQ2_LIMBS];
+        mw_g2_mul_by_char(qx, qy, consts, q1x, q1y);
+        mw_g2_mul_by_char(q1x, q1y, consts, q2x, q2y);
+        fq2_neg(q2y, s2);
+        fq2_copy(s2, q2y);
+
+        mw_g2_add_step(rx, ry, rz, q1x, q1y, coeff);
+        mw_ell(fc, coeff, px, py, lane);
+        mw_g2_add_step(rx, ry, rz, q2x, q2y, coeff);
+        mw_ell(fc, coeff, px, py, lane);
+    }
+
+    mw_store(out + idx * FQ12_LIMBS, fc, lane);
+}
+
 extern "C" __global__ void pairing_fq12_product_kernel(const u64 *__restrict__ values,
                                                        unsigned int count,
                                                        u64 *__restrict__ out) {

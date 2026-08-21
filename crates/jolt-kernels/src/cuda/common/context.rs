@@ -237,6 +237,7 @@ pub struct CudaKernelContext {
     msm_g1_axpy: CudaFunction,
     msm_g2_fixed_base: CudaFunction,
     pairing_miller: CudaFunction,
+    pairing_miller_warp: CudaFunction,
     pairing_prepare_lines: CudaFunction,
     pairing_miller_prepared: CudaFunction,
     pairing_fq12_product: CudaFunction,
@@ -427,6 +428,7 @@ impl CudaKernelContext {
             msm_g1_axpy: module.load_function("msm_g1_axpy_kernel")?,
             msm_g2_fixed_base: module.load_function("msm_g2_fixed_base_kernel")?,
             pairing_miller: module.load_function("pairing_miller_kernel")?,
+            pairing_miller_warp: module.load_function("pairing_miller_warp_kernel")?,
             pairing_prepare_lines: module.load_function("pairing_prepare_lines_kernel")?,
             pairing_miller_prepared: module.load_function("pairing_miller_prepared_kernel")?,
             pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
@@ -883,6 +885,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn pairing_miller(&self) -> &CudaFunction {
         &self.pairing_miller
+    }
+
+    pub(crate) const fn pairing_miller_warp(&self) -> &CudaFunction {
+        &self.pairing_miller_warp
     }
 
     pub(crate) const fn pairing_prepare_lines(&self) -> &CudaFunction {

@@ -16,6 +16,12 @@ const PC_WORDS: usize = 28;
 
 const PRODUCT_BLOCK: u32 = 32;
 
+const WARP: u32 = 32;
+
+const MILLER_WARP_WARPS: u32 = 4;
+
+const MILLER_WARP_MAX_PAIRS: usize = 256;
+
 struct Constants {
     values: CudaSlice<u64>,
     ate: CudaSlice<u64>,
@@ -273,6 +279,9 @@ impl CudaKernelContext {
         segments: &[(usize, usize)],
         count: usize,
     ) -> Result<Vec<u64>, CudaError> {
+        if segments.len().saturating_mul(count) <= MILLER_WARP_MAX_PAIRS {
+            return self.multi_miller_warp_batch(g1, g2, segments, count);
+        }
         if count == 0 || segments.is_empty() {
             return Err(CudaError::InvariantViolation {
                 reason: "a multi-Miller batch needs at least one segment and one pair",
@@ -338,6 +347,115 @@ impl CudaKernelContext {
             config.grid_dim.1 = lanes_of;
             // SAFETY: as argued above.
             let _ = unsafe { builder.launch(config) }?;
+            Ok(())
+        })?;
+
+        let mut product = self.alloc_u64(segments.len() * FQ12_LIMBS)?;
+        let shared = PRODUCT_BLOCK * FQ12_LIMBS as u32 * size_of::<u64>() as u32;
+        let mut builder = self.stream().launch_builder(self.pairing_fq12_product());
+        let _ = builder.arg(&lanes);
+        let _ = builder.arg(&pairs);
+        let _ = builder.arg(&mut product);
+        // SAFETY: one block per segment, so `blockIdx.x < segments` selects the
+        // `count` Fq12 values at `blockIdx.x * count` of `lanes`, which holds
+        // `segments * count` of them; each thread strides by `blockDim.x` from
+        // `threadIdx.x` and so stays below `count`. Shared memory is
+        // `PRODUCT_BLOCK * FQ12_LIMBS` u64s, matching `shared_mem_bytes`, and
+        // `PRODUCT_BLOCK` is a power of two so the halving tree covers the
+        // block; every thread reaches each `__syncthreads()` because the strided
+        // loop and the tree sit outside any early return. Only thread 0 writes,
+        // to slot `blockIdx.x` of the freshly allocated `product`, which is
+        // distinct from `lanes`.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (lanes_of, 1, 1),
+                block_dim: (PRODUCT_BLOCK, 1, 1),
+                shared_mem_bytes: shared,
+            })
+        }?;
+
+        self.download_u64(&product)
+    }
+
+    pub fn multi_miller_warp_batch(
+        &self,
+        g1: &CudaSlice<u64>,
+        g2: &CudaSlice<u64>,
+        segments: &[(usize, usize)],
+        count: usize,
+    ) -> Result<Vec<u64>, CudaError> {
+        if count == 0 || segments.is_empty() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a multi-Miller batch needs at least one segment and one pair",
+            });
+        }
+        let mut g1_offsets = Vec::with_capacity(segments.len());
+        let mut g2_offsets = Vec::with_capacity(segments.len());
+        for &(g1_offset, g2_offset) in segments {
+            if (g1_offset + count) * 3 * FQ_LIMBS > g1.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: g1.len(),
+                    got: (g1_offset + count) * 3 * FQ_LIMBS,
+                });
+            }
+            if (g2_offset + count) * 6 * FQ_LIMBS > g2.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: g2.len(),
+                    got: (g2_offset + count) * 6 * FQ_LIMBS,
+                });
+            }
+            g1_offsets.push(Self::count_of(g1_offset)?);
+            g2_offsets.push(Self::count_of(g2_offset)?);
+        }
+
+        let lanes_len = segments
+            .len()
+            .checked_mul(count)
+            .and_then(|pairs| pairs.checked_mul(FQ12_LIMBS))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a multi-Miller batch overflowed its lane buffer",
+            })?;
+        let mut lanes = self.alloc_u64(lanes_len)?;
+        let pairs = Self::count_of(count)?;
+        let lanes_of = Self::count_of(segments.len())?;
+        let device_g1_offsets = self.upload_u32_slice(&g1_offsets)?;
+        let device_g2_offsets = self.upload_u32_slice(&g2_offsets)?;
+
+        self.with_pairing_constants(|constants| {
+            let ate_len = Self::count_of(constants.ate_len)?;
+            let mut builder = self.stream().launch_builder(self.pairing_miller_warp());
+            let _ = builder.arg(g1);
+            let _ = builder.arg(g2);
+            let _ = builder.arg(&constants.values);
+            let _ = builder.arg(&constants.ate);
+            let _ = builder.arg(&ate_len);
+            let _ = builder.arg(&device_g1_offsets);
+            let _ = builder.arg(&device_g2_offsets);
+            let _ = builder.arg(&pairs);
+            let _ = builder.arg(&mut lanes);
+            // SAFETY: the block is `(WARP, MILLER_WARP_WARPS)` and the grid is
+            // `(ceil(pairs / MILLER_WARP_WARPS), segments)`, so warp
+            // `blockIdx.x * blockDim.y + threadIdx.y` owns one pair and
+            // `blockIdx.y` indexes `g1_offsets`/`g2_offsets`, both uploaded with
+            // exactly `segments` entries. That warp reads the `3 * FQ_LIMBS`
+            // limbs of G1 point `g1_offsets[segment] + pair` and the
+            // `6 * FQ_LIMBS` limbs of G2 point `g2_offsets[segment] + pair`,
+            // every such span checked above to end inside its buffer, plus the
+            // `PC_WORDS` constants and `ate_len` loop digits, whose lengths are
+            // fixed at upload. It writes only the `FQ12_LIMBS` limbs at
+            // `(segment * count + pair) * FQ12_LIMBS` of the freshly allocated
+            // `lanes`, which holds `segments * count` such slots and is distinct
+            // from every input, so no warp reads what another writes. Warps with
+            // `pair >= pairs` return before any access, and they return as a
+            // whole warp, so no lane of a live warp is lost to divergence at a
+            // shuffle.
+            let _ = unsafe {
+                builder.launch(LaunchConfig {
+                    grid_dim: (pairs.div_ceil(MILLER_WARP_WARPS), lanes_of, 1),
+                    block_dim: (WARP, MILLER_WARP_WARPS, 1),
+                    shared_mem_bytes: 0,
+                })
+            }?;
             Ok(())
         })?;
 
@@ -447,6 +565,37 @@ mod tests {
         fq12(&limbs)
     }
 
+    fn device_miller_warp(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
+        let context = shared_context().expect("a CUDA device");
+        let g1: Vec<u64> = ps.iter().flat_map(g1_words).collect();
+        let g2: Vec<u64> = qs.iter().flat_map(g2_words).collect();
+        let device_g1 = context.upload_raw_u64(&g1).unwrap();
+        let device_g2 = context.upload_raw_u64(&g2).unwrap();
+        let limbs = context
+            .multi_miller_warp_batch(&device_g1, &device_g2, &[(0, 0)], ps.len())
+            .unwrap();
+        fq12(&limbs)
+    }
+
+    fn device_miller_warp_segments(
+        ps: &[G1Projective],
+        qs: &[G2Projective],
+        count: usize,
+    ) -> Vec<Fq12> {
+        let context = shared_context().expect("a CUDA device");
+        let g1: Vec<u64> = ps.iter().flat_map(g1_words).collect();
+        let g2: Vec<u64> = qs.iter().flat_map(g2_words).collect();
+        let device_g1 = context.upload_raw_u64(&g1).unwrap();
+        let device_g2 = context.upload_raw_u64(&g2).unwrap();
+        let segments: Vec<(usize, usize)> = (0..ps.len() / count)
+            .map(|segment| (segment * count, segment * count))
+            .collect();
+        let limbs = context
+            .multi_miller_warp_batch(&device_g1, &device_g2, &segments, count)
+            .unwrap();
+        limbs.chunks_exact(FQ12_LIMBS).map(fq12).collect()
+    }
+
     fn shapes(seed: u64) -> Vec<(Vec<G1Projective>, Vec<G2Projective>)> {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
         let mut cases = Vec::new();
@@ -494,6 +643,50 @@ mod tests {
                 expected,
                 "the Miller loop diverged for shape {index} of {} pairs",
                 ps.len()
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_warp_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        for (index, (ps, qs)) in shapes(5_400).into_iter().enumerate() {
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller_warp(&ps, &qs);
+            assert_eq!(
+                got,
+                expected,
+                "the warp Miller loop diverged for shape {index} of {} pairs",
+                ps.len()
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_warp_segments_match_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(5_500);
+        for (count, segments) in [(1usize, 2usize), (1, 4), (3, 3), (5, 2), (33, 2)] {
+            let ps: Vec<G1Projective> = (0..count * segments)
+                .map(|_| G1Projective::rand(&mut rng))
+                .collect();
+            let qs: Vec<G2Projective> = (0..count * segments)
+                .map(|_| G2Projective::rand(&mut rng))
+                .collect();
+            let expected: Vec<Fq12> = (0..segments)
+                .map(|segment| {
+                    let span = segment * count..(segment + 1) * count;
+                    Bn254::multi_miller_loop(ps[span.clone()].to_vec(), qs[span].to_vec()).0
+                })
+                .collect();
+            let got = device_miller_warp_segments(&ps, &qs, count);
+            assert_eq!(
+                got, expected,
+                "the warp Miller loop diverged for {segments} segments of {count} pairs"
             );
         }
     }
