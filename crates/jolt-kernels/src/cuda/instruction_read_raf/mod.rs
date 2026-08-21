@@ -3,7 +3,6 @@ pub(super) mod address_phase;
 mod combine;
 mod cycle_handoff;
 mod cycle_rounds;
-mod prefix_suffix;
 mod prefixes;
 mod suffixes;
 

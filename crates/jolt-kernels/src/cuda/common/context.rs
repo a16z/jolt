@@ -4,7 +4,7 @@ use cudarc::driver::{
     CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, DevicePtr, LaunchConfig,
     PushKernelArg,
 };
-use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
+use cudarc::nvrtc::Ptx;
 use jolt_field::Fr;
 
 use super::device::{fill_staging, DeviceFrVec, LIMBS};
@@ -14,91 +14,7 @@ use super::xfer_stats::{self, Phase};
 
 pub const BLOCK: u32 = 256;
 
-const KERNEL_SRC: &str = concat!(
-    include_str!("../kernels/prelude.cu"),
-    "\n",
-    include_str!("../kernels/probe.cu"),
-    "\n",
-    include_str!("../kernels/arith.cu"),
-    "\n",
-    include_str!("../kernels/tables.cu"),
-    "\n",
-    include_str!("../kernels/sumcheck_common.cu"),
-    "\n",
-    include_str!("../kernels/precommitted_reduction.cu"),
-    "\n",
-    include_str!("../kernels/msm.cu"),
-    "\n",
-    include_str!("../kernels/pairing.cu"),
-    "\n",
-    include_str!("../kernels/opening.cu"),
-    "\n",
-    include_str!("../kernels/scan.cu"),
-    "\n",
-    include_str!("../kernels/lt_poly.cu"),
-    "\n",
-    include_str!("../kernels/dense_product.cu"),
-    "\n",
-    include_str!("../kernels/half_fold.cu"),
-    "\n",
-    include_str!("../kernels/ra_poly.cu"),
-    "\n",
-    include_str!("../kernels/ram_ra_reduction.cu"),
-    "\n",
-    include_str!("../kernels/prefix_suffix.cu"),
-    "\n",
-    include_str!("../kernels/suffixes.cu"),
-    "\n",
-    include_str!("../kernels/prefixes.cu"),
-    "\n",
-    include_str!("../kernels/prefix_mle.cu"),
-    "\n",
-    include_str!("../kernels/combine.cu"),
-    "\n",
-    include_str!("../kernels/unreduced.cu"),
-    "\n",
-    include_str!("../kernels/product_accum.cu"),
-    "\n",
-    include_str!("../kernels/read_write_matrix.cu"),
-    "\n",
-    include_str!("../kernels/rs2_claim.cu"),
-    "\n",
-    include_str!("../kernels/address_major_matrix.cu"),
-    "\n",
-    include_str!("../kernels/address_phase.cu"),
-    "\n",
-    include_str!("../kernels/cycle_rounds.cu"),
-    "\n",
-    include_str!("../kernels/ram_read_write.cu"),
-    "\n",
-    include_str!("../kernels/registers_read_write.cu"),
-    "\n",
-    include_str!("../kernels/instruction_ra_virtualization.cu"),
-    "\n",
-    include_str!("../kernels/ram_ra_virtualization.cu"),
-    "\n",
-    include_str!("../kernels/booleanity_cycle.cu"),
-    "\n",
-    include_str!("../kernels/bytecode_read_raf.cu"),
-    "\n",
-    include_str!("../kernels/spartan_outer.cu"),
-    "\n",
-    include_str!("../kernels/one_hot_fold.cu"),
-    "\n",
-    include_str!("../kernels/hamming_weight_claim_reduction.cu"),
-    "\n",
-    include_str!("../kernels/ram_output_check.cu"),
-    "\n",
-    include_str!("../kernels/spartan_product.cu"),
-    "\n",
-    include_str!("../kernels/spartan_shift.cu"),
-    "\n",
-    include_str!("../kernels/booleanity_address.cu"),
-    "\n",
-    include_str!("../kernels/bytecode_read_raf_address.cu"),
-    "\n",
-    include_str!("../kernels/instruction_input.cu"),
-);
+const KERNEL_CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kernels.cubin"));
 
 pub struct CudaKernelContext {
     stream: Arc<CudaStream>,
@@ -131,15 +47,12 @@ pub struct CudaKernelContext {
     ram_ra_fold_suffix: CudaFunction,
     ram_ra_fold_prefix: CudaFunction,
     ram_ra_phase1_round: CudaFunction,
-    ps_init_q_raf: CudaFunction,
-    ps_scale_shift: CudaFunction,
     sfx_eval_batch: CudaFunction,
     pfx_eval_batch: CudaFunction,
     pfx_mle_batch: CudaFunction,
     pfx_update_checkpoints: CudaFunction,
     pfx_mle_round: CudaFunction,
     pfx_default_checkpoints: CudaFunction,
-    cmb_combine: CudaFunction,
     ap_raf_keys: CudaFunction,
     ap_table_keys: CudaFunction,
     ap_histogram: CudaFunction,
@@ -239,8 +152,6 @@ pub struct CudaKernelContext {
     msm_g2_fixed_base: CudaFunction,
     pairing_miller: CudaFunction,
     pairing_miller_warp: CudaFunction,
-    pairing_prepare_lines: CudaFunction,
-    pairing_miller_prepared: CudaFunction,
     pairing_fq12_product: CudaFunction,
     msm_window_accumulate: CudaFunction,
     msm_block_embed: CudaFunction,
@@ -260,8 +171,6 @@ pub struct CudaKernelContext {
     sopg_round: CudaFunction,
     ii_gather: CudaFunction,
     ii_columns: CudaFunction,
-    #[cfg(test)]
-    ss_columns: CudaFunction,
     ss_columns_device: CudaFunction,
     bap_bind_squared: CudaFunction,
     bap_message: CudaFunction,
@@ -284,12 +193,7 @@ impl CudaKernelContext {
     pub fn new(ordinal: usize) -> Result<Self, CudaError> {
         let context = DriverContext::new(ordinal)?;
         let stream = context.default_stream();
-        let options = CompileOptions {
-            options: vec!["--device-int128".to_owned()],
-            ..Default::default()
-        };
-        let ptx = compile_ptx_with_opts(KERNEL_SRC, options)?;
-        let module = context.load_module(ptx)?;
+        let module = context.load_module(Ptx::from_binary(KERNEL_CUBIN.to_vec()))?;
         Ok(Self {
             stream,
             staging: StagingPool::new(),
@@ -321,15 +225,12 @@ impl CudaKernelContext {
             ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
             ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
-            ps_init_q_raf: module.load_function("ps_init_q_raf_kernel")?,
-            ps_scale_shift: module.load_function("ps_scale_shift_kernel")?,
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
             pfx_eval_batch: module.load_function("pfx_eval_batch_kernel")?,
             pfx_mle_batch: module.load_function("pfx_mle_batch_kernel")?,
             pfx_update_checkpoints: module.load_function("pfx_update_checkpoints_kernel")?,
             pfx_mle_round: module.load_function("pfx_mle_round_kernel")?,
             pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
-            cmb_combine: module.load_function("cmb_combine_kernel")?,
             ap_raf_keys: module.load_function("ap_raf_keys_kernel")?,
             ap_table_keys: module.load_function("ap_table_keys_kernel")?,
             ap_histogram: module.load_function("ap_histogram_kernel")?,
@@ -431,8 +332,6 @@ impl CudaKernelContext {
             msm_g2_fixed_base: module.load_function("msm_g2_fixed_base_kernel")?,
             pairing_miller: module.load_function("pairing_miller_kernel")?,
             pairing_miller_warp: module.load_function("pairing_miller_warp_kernel")?,
-            pairing_prepare_lines: module.load_function("pairing_prepare_lines_kernel")?,
-            pairing_miller_prepared: module.load_function("pairing_miller_prepared_kernel")?,
             pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
             msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
             msm_block_embed: module.load_function("msm_block_embed_kernel")?,
@@ -452,8 +351,6 @@ impl CudaKernelContext {
             sopg_round: module.load_function("sopg_round_kernel")?,
             ii_gather: module.load_function("ii_gather_kernel")?,
             ii_columns: module.load_function("ii_columns_kernel")?,
-            #[cfg(test)]
-            ss_columns: module.load_function("ss_columns_kernel")?,
             ss_columns_device: module.load_function("ss_columns_device_kernel")?,
             bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
             bap_message: module.load_function("bap_message_kernel")?,
@@ -720,11 +617,6 @@ impl CudaKernelContext {
         &self.ss_columns_device
     }
 
-    #[cfg(test)]
-    pub(crate) const fn ss_columns(&self) -> &CudaFunction {
-        &self.ss_columns
-    }
-
     pub(crate) const fn bap_bind_squared(&self) -> &CudaFunction {
         &self.bap_bind_squared
     }
@@ -893,14 +785,6 @@ impl CudaKernelContext {
         &self.pairing_miller_warp
     }
 
-    pub(crate) const fn pairing_prepare_lines(&self) -> &CudaFunction {
-        &self.pairing_prepare_lines
-    }
-
-    pub(crate) const fn pairing_miller_prepared(&self) -> &CudaFunction {
-        &self.pairing_miller_prepared
-    }
-
     pub(crate) const fn pairing_fq12_product(&self) -> &CudaFunction {
         &self.pairing_fq12_product
     }
@@ -1013,14 +897,6 @@ impl CudaKernelContext {
         &self.ram_ra_phase1_round
     }
 
-    pub(crate) const fn ps_init_q_raf(&self) -> &CudaFunction {
-        &self.ps_init_q_raf
-    }
-
-    pub(crate) const fn ps_scale_shift(&self) -> &CudaFunction {
-        &self.ps_scale_shift
-    }
-
     pub(crate) const fn sfx_eval_batch(&self) -> &CudaFunction {
         &self.sfx_eval_batch
     }
@@ -1043,10 +919,6 @@ impl CudaKernelContext {
 
     pub(crate) const fn pfx_default_checkpoints(&self) -> &CudaFunction {
         &self.pfx_default_checkpoints
-    }
-
-    pub(crate) const fn cmb_combine(&self) -> &CudaFunction {
-        &self.cmb_combine
     }
 
     pub(crate) const fn ap_raf_keys(&self) -> &CudaFunction {

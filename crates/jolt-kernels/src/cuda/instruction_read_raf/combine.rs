@@ -3,13 +3,10 @@
     reason = "implementation target: the device address phase wires this once its kernels land"
 )]
 
-use cudarc::driver::PushKernelArg;
 use jolt_lookup_tables::tables::prefixes::Prefixes;
 use jolt_lookup_tables::tables::suffixes::Suffixes;
 use jolt_lookup_tables::tables::LookupTableKind;
 
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device::DeviceFrVec;
 use crate::cuda::common::error::CudaError;
 
 pub const RISCV_XLEN: usize = 64;
@@ -233,71 +230,6 @@ fn xor_rot_terms(prefix: Prefixes, one: usize, rot: usize) -> Vec<CombineTerm> {
     ]
 }
 
-pub fn combine_batch(
-    context: &CudaKernelContext,
-    terms: &[CombineTerm],
-    prefixes: &DeviceFrVec,
-    suffixes: &[&DeviceFrVec],
-    count: usize,
-) -> Result<DeviceFrVec, CudaError> {
-    let mut out = context.alloc(count)?;
-    if count == 0 || terms.is_empty() {
-        return Ok(out);
-    }
-    for term in terms {
-        if term.suffix >= suffixes.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: suffixes.len(),
-                got: term.suffix,
-            });
-        }
-    }
-    for column in suffixes {
-        if column.len() != count {
-            return Err(CudaError::LengthMismatch {
-                expected: count,
-                got: column.len(),
-            });
-        }
-    }
-
-    let scales: Vec<u32> = terms.iter().map(|term| term.scale as u32).collect();
-    let prefix_ids: Vec<u32> = terms
-        .iter()
-        .map(|term| term.prefix.map_or(NO_PREFIX, |prefix| prefix as u32))
-        .collect();
-    let slots: Vec<u32> = terms.iter().map(|term| term.suffix as u32).collect();
-
-    let device_scales = context.upload_u32_slice(&scales)?;
-    let device_prefix_ids = context.upload_u32_slice(&prefix_ids)?;
-    let device_slots = context.upload_u32_slice(&slots)?;
-    let pointers = context.device_pointers(suffixes)?;
-    let term_count = CudaKernelContext::count_of(terms.len())?;
-    let n = CudaKernelContext::count_of(count)?;
-
-    let mut builder = context.stream().launch_builder(context.cmb_combine());
-    let _ = builder.arg(&device_scales);
-    let _ = builder.arg(&device_prefix_ids);
-    let _ = builder.arg(&device_slots);
-    let _ = builder.arg(&term_count);
-    let _ = builder.arg(prefixes.limbs());
-    let _ = builder.arg(&pointers);
-    let _ = builder.arg(out.limbs_mut());
-    let _ = builder.arg(&n);
-    // SAFETY: thread `i < n` reads, for each of `term_count` terms,
-    // `suffix_columns[slots[t]][i]` — every slot is `< suffixes.len()` and every
-    // column holds exactly `count` elements, both checked above — plus
-    // `prefixes[prefix_ids[t]]` when that id is not `NO_PREFIX` (ids come from
-    // the `Prefixes` enum, bounded by the 46-element buffer). Writes only
-    // `out[i]` of `count`; `out` is a distinct allocation. The three term arrays
-    // hold `term_count` u32s each.
-    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(n)) }?;
-    context.stream().synchronize()?;
-    Ok(out)
-}
-
-const NO_PREFIX: u32 = u32::MAX;
-
 pub(super) fn suffix_index(suffix: Suffixes) -> usize {
     suffix as usize
 }
@@ -311,10 +243,8 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_lookup_tables::tables::prefixes::PrefixEval;
     use jolt_lookup_tables::tables::LookupTableKind;
-    use proptest::prelude::*;
 
-    use super::{combine_batch, combine_terms, CombineTerm, Scale, RISCV_XLEN};
-    use crate::cuda::common::context::shared_context;
+    use super::{combine_terms, CombineTerm, Scale, RISCV_XLEN};
     use crate::cuda::common::testing::fr;
 
     const NUM_PREFIXES: usize = 46;
@@ -360,48 +290,6 @@ mod tests {
                 got, expected,
                 "term list for {table:?} does not reproduce combine"
             );
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn combine_batch_matches_the_term_sum(
-            seed in 1u64..100_000,
-            table_index in 0usize..40,
-        ) {
-            let Some(context) = shared_context() else { return Ok(()); };
-            let tables = present_tables();
-            let Some(&table) = tables.get(table_index) else { return Ok(()); };
-            let terms = combine_terms(table).expect("combine terms");
-
-            let count = 256usize;
-            let prefixes: Vec<Fr> = (0..NUM_PREFIXES).map(|i| fr(seed + i as u64)).collect();
-            let suffix_columns: Vec<Vec<Fr>> = (0..table.suffixes().len())
-                .map(|slot| {
-                    (0..count).map(|j| fr(seed + (slot * count + j) as u64 + 7)).collect()
-                })
-                .collect();
-
-            let device_prefixes = context.upload(&prefixes).expect("upload prefixes");
-            let device_suffixes: Vec<_> = suffix_columns
-                .iter()
-                .map(|column| context.upload(column).expect("upload suffix column"))
-                .collect();
-            let handles: Vec<_> = device_suffixes.iter().collect();
-
-            let got = combine_batch(context, &terms, &device_prefixes, &handles, count)
-                .expect("device combine_batch")
-                .to_host()
-                .expect("download");
-
-            let expected: Vec<Fr> = (0..count)
-                .map(|j| {
-                    let row: Vec<Fr> =
-                        suffix_columns.iter().map(|column| column[j]).collect();
-                    host_from_terms(&terms, &prefixes, &row)
-                })
-                .collect();
-            prop_assert_eq!(got, expected, "combine_batch diverged for {:?}", table);
         }
     }
 }

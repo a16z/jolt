@@ -605,4 +605,37 @@ mod tests {
             prop_assert_eq!(got, expected);
         }
     }
+
+    #[test]
+    fn lane_sums_match_the_host_fold() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for lanes in [1usize, 6] {
+            for width in [1usize, 2, 3, 5, 8, 17] {
+                let values: Vec<Fr> = (0..lanes * width)
+                    .map(|index| Fr::from_u64(index as u64 * 31 + 7))
+                    .collect();
+                let partials = context.upload(&values).expect("upload partials");
+                let got = DeviceRamRaReduction::reduce_lanes::<Fr>(
+                    context,
+                    partials,
+                    lanes as u32,
+                    width as u32,
+                )
+                .expect("device lane fold");
+                let expected: Vec<Fr> = (0..lanes)
+                    .map(|lane| {
+                        values[lane * width..(lane + 1) * width]
+                            .iter()
+                            .fold(Fr::from_u64(0), |acc, &value| acc + value)
+                    })
+                    .collect();
+                assert_eq!(
+                    got, expected,
+                    "the lane fold diverged at {lanes} lanes of width {width}"
+                );
+            }
+        }
+    }
 }

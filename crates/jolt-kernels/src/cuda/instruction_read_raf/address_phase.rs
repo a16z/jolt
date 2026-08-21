@@ -615,8 +615,8 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use super::{
-        condense_u_evals, init_raf_buckets, init_raf_buckets_chunked, init_suffix_buckets,
-        init_suffix_buckets_chunked, DeviceRows, CHUNK_LEN, CHUNK_SIZE,
+        condense_u_evals, init_raf_buckets, init_raf_buckets_chunked, init_suffix_buckets_chunked,
+        DeviceRows, CHUNK_LEN, CHUNK_SIZE,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
     use crate::cuda::common::testing::fr;
@@ -681,53 +681,6 @@ mod tests {
 
     proptest! {
         #[test]
-        fn raf_buckets_match_the_reference_init_phase(
-            log_t in 4usize..=10,
-            seed in any::<u64>(),
-            phase in 0usize..PHASES,
-        ) {
-            let Some(context) = shared_context() else { return Ok(()); };
-            let host = reference_at_phase(log_t, seed, phase);
-            let rows = device_rows(context, host.rows());
-            let u_evals = context.upload(host.u_evals()).expect("upload u_evals");
-
-            let got = init_raf_buckets(context, &rows, &u_evals, ADDRESS_BITS, phase)
-                .expect("device init_raf_buckets");
-
-            for (label, device, expected) in [
-                ("shift_half", &got.shift_half, evals(&host.raf_left.q_shift)),
-                ("left", &got.left, evals(&host.raf_left.q_value)),
-                ("shift_full", &got.shift_full, evals(&host.raf_identity.q_shift)),
-                ("identity", &got.identity, evals(&host.raf_identity.q_value)),
-                ("right", &got.right, evals(&host.raf_right.q_value)),
-            ] {
-                prop_assert_eq!(
-                    &device.to_host().expect("download"),
-                    &expected,
-                    "{} bucket diverged at phase {}",
-                    label,
-                    phase
-                );
-            }
-
-            if CANONICAL_INSTRUCTION_ADDRESS {
-                prop_assert_eq!(
-                    &got.upper_all_ones.to_host().expect("download"),
-                    &evals(&host.raf_upper_all_ones.q_shift),
-                    "upper_all_ones bucket diverged at phase {}",
-                    phase
-                );
-            } else {
-                prop_assert_eq!(
-                    host.raf_upper_all_ones.q_shift.evals().len(),
-                    1,
-                    "the reference built an upper_all_ones table with akita off, so the \
-                     device lane is no longer untested and this test must compare it",
-                );
-            }
-        }
-
-        #[test]
         fn chunked_raf_buckets_match_the_reference_init_phase(
             log_t in 4usize..=10,
             seed in any::<u64>(),
@@ -769,40 +722,13 @@ mod tests {
                     phase,
                     chunks
                 );
-            }
-        }
-
-        #[test]
-        fn suffix_buckets_match_the_reference_init_phase(
-            log_t in 4usize..=10,
-            seed in any::<u64>(),
-            phase in 0usize..PHASES,
-        ) {
-            let Some(context) = shared_context() else { return Ok(()); };
-            let host = reference_at_phase(log_t, seed, phase);
-            let rows = device_rows(context, host.rows());
-            let u_evals = context.upload(host.u_evals()).expect("upload u_evals");
-            let present: Vec<LookupTableKind<RISCV_XLEN>> =
-                host.suffix_tables.iter().map(|(table, _)| *table).collect();
-
-            let got = init_suffix_buckets(
-                context, &rows, &u_evals, &present, ADDRESS_BITS, phase,
-            )
-            .expect("device init_suffix_buckets");
-
-            prop_assert_eq!(got.len(), host.suffix_tables.len());
-            for (columns, (table, expected)) in got.iter().zip(&host.suffix_tables) {
-                prop_assert_eq!(columns.len(), expected.len());
-                for (slot, (column, want)) in columns.iter().zip(expected).enumerate() {
-                    prop_assert_eq!(
-                        &column.to_host().expect("download"),
-                        &evals(want),
-                        "table {:?} suffix slot {} diverged at phase {}",
-                        table,
-                        slot,
-                        phase
-                    );
-                }
+            } else {
+                prop_assert_eq!(
+                    host.raf_upper_all_ones.q_shift.evals().len(),
+                    1,
+                    "the reference built an upper_all_ones table with akita off, so the \
+                     device lane is no longer untested and this test must compare it",
+                );
             }
         }
 

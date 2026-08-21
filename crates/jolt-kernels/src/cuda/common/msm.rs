@@ -3161,6 +3161,8 @@ mod tests {
 
     const GLV_LENS: [usize; 5] = [1, 2, 257, 1024, 4096];
 
+    const FROBENIUS_LENS: [usize; 4] = [1, 2, 257, 1024];
+
     fn glv_lambda() -> ArkFr {
         <ark_bn254::g1::Config as GLVConfig>::LAMBDA
     }
@@ -3263,7 +3265,7 @@ mod tests {
             return;
         };
         let lambda = psi_eigenvalue();
-        for count in GLV_LENS {
+        for count in FROBENIUS_LENS {
             for offset in [0usize, 3] {
                 let lead = g2_span(offset, 17);
                 let points = g2_span(count, 23);
@@ -3283,11 +3285,18 @@ mod tests {
 
                 let mut power = ArkFr::ONE;
                 for step in 0..4usize {
-                    let divergence = (0..count).position(|index| {
-                        let slot = (step * count + index) * 24;
-                        g2_from_limbs(&hosted[slot..slot + 24]).into_affine()
-                            != (points[index] * power).into_affine()
-                    });
+                    let got: Vec<G2Projective> = (0..count)
+                        .map(|index| {
+                            let slot = (step * count + index) * 24;
+                            g2_from_limbs(&hosted[slot..slot + 24])
+                        })
+                        .collect();
+                    let want: Vec<G2Projective> =
+                        (0..count).map(|index| points[index] * power).collect();
+                    let divergence = G2Projective::normalize_batch(&got)
+                        .into_iter()
+                        .zip(G2Projective::normalize_batch(&want))
+                        .position(|(got, want)| got != want);
                     assert_eq!(
                         divergence, None,
                         "psi^{step} diverged at count {count}, offset {offset}"

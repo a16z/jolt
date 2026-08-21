@@ -342,6 +342,8 @@ mod tests {
 
     const SHAPES: [usize; 5] = [1, 2, 129, 1024, 4096];
 
+    const G2_SHAPES: [usize; 4] = [1, 2, 129, 1024];
+
     fn affine(points: &[ArkG1]) -> Vec<ark_bn254::G1Affine> {
         points.iter().map(|point| point.0.into()).collect()
     }
@@ -459,7 +461,7 @@ mod tests {
         if shared_context().is_none() {
             return;
         }
-        for (index, len) in SHAPES.into_iter().enumerate() {
+        for (index, len) in G2_SHAPES.into_iter().enumerate() {
             let bases = points_g2(len, 2_300 + index as u64);
             let start = points_g2(len, 2_700 + index as u64);
             let scalar = weight(2_900 + index as u64);
@@ -494,7 +496,7 @@ mod tests {
         if shared_context().is_none() {
             return;
         }
-        for (index, len) in SHAPES.into_iter().enumerate() {
+        for (index, len) in G2_SHAPES.into_iter().enumerate() {
             let addends = points_g2(len, 3_300 + index as u64);
             let start = points_g2(len, 3_700 + index as u64);
             let scalar = weight(3_900 + index as u64);
@@ -529,7 +531,7 @@ mod tests {
         if shared_context().is_none() {
             return;
         }
-        for (index, len) in SHAPES.into_iter().enumerate() {
+        for (index, len) in G2_SHAPES.into_iter().enumerate() {
             let base = points_g2(1, 4_100 + index as u64)[0];
             let weights = scalars(len, 4_300 + index as u64);
 

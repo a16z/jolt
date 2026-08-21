@@ -117,6 +117,3 @@ required-features = ["cuda"]
 name = "cuda_rows1_msm_bench"
 required-features = ["cuda"]
 
-[[example]]
-name = "cuda_prepared_pairing_bench"
-required-features = ["cuda"]

@@ -290,6 +290,48 @@ pub(crate) fn sparse_hot_columns<F: Field>(
     Ok(sparse)
 }
 
+fn hot_address_of(
+    slot: &mut u32,
+    row: &CommittedColumnsWitness,
+    kind: crate::reference::commitment::ColumnKind,
+) -> usize {
+    match kind.hot_address(row) {
+        None => 0,
+        Some(address) => {
+            *slot = address as u32;
+            address + 1
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn fill_hot_addresses(
+    hot: &mut [u32],
+    rows: &[CommittedColumnsWitness],
+    kind: crate::reference::commitment::ColumnKind,
+) -> usize {
+    use rayon::prelude::*;
+
+    hot.par_iter_mut()
+        .zip(rows.par_iter())
+        .map(|(slot, row)| hot_address_of(slot, row, kind))
+        .max()
+        .unwrap_or(0)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn fill_hot_addresses(
+    hot: &mut [u32],
+    rows: &[CommittedColumnsWitness],
+    kind: crate::reference::commitment::ColumnKind,
+) -> usize {
+    hot.iter_mut()
+        .zip(rows)
+        .map(|(slot, row)| hot_address_of(slot, row, kind))
+        .max()
+        .unwrap_or(0)
+}
+
 fn walk_hot_column<F: Field>(
     context: &'static CudaKernelContext,
     witness: &dyn JoltWitnessPlane<F>,
@@ -298,17 +340,8 @@ fn walk_hot_column<F: Field>(
     one_hot_k: usize,
 ) -> Result<(CudaSlice<u32>, usize), KernelError<F>> {
     let rows = collect_rows::<F, CommittedColumnsWitness>(witness, cycles)?;
-    let mut hot = Vec::with_capacity(cycles);
-    let mut span = 0usize;
-    for row in &rows {
-        match kind.hot_address(row) {
-            None => hot.push(NO_HOT),
-            Some(address) => {
-                span = span.max(address + 1);
-                hot.push(address as u32);
-            }
-        }
-    }
+    let mut hot = vec![NO_HOT; rows.len()];
+    let span = fill_hot_addresses(&mut hot, &rows, kind);
     if span > one_hot_k || span > NO_HOT as usize {
         return Err(CudaError::LengthMismatch {
             expected: one_hot_k,

@@ -31,6 +31,31 @@ fn jolt_g1(point: JacobianLimbs) -> Bn254G1 {
     ))
 }
 
+fn fill_row(dst: &mut [JacobianLimbs], hint: &DoryHint) {
+    for (row, target) in dst.iter_mut().enumerate() {
+        if let Some(&commitment) = hint.row_commitments.get(row) {
+            *target = jacobian_limbs(commitment);
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn fill_bases(bases: &mut [JacobianLimbs], hints: &[DoryHint], rows: usize) {
+    use rayon::prelude::*;
+
+    bases
+        .par_chunks_mut(rows)
+        .zip(hints.par_iter())
+        .for_each(|(dst, hint)| fill_row(dst, hint));
+}
+
+#[cfg(not(feature = "parallel"))]
+fn fill_bases(bases: &mut [JacobianLimbs], hints: &[DoryHint], rows: usize) {
+    for (dst, hint) in bases.chunks_mut(rows).zip(hints) {
+        fill_row(dst, hint);
+    }
+}
+
 pub(super) fn combine_hints(hints: Vec<DoryHint>, scalars: &[Fr]) -> DoryHint {
     match combine_on_device(&hints, scalars) {
         Ok(hint) => hint,
@@ -68,15 +93,8 @@ pub(super) fn combine_on_device(hints: &[DoryHint], scalars: &[Fr]) -> Result<Do
     }
     let _ = tracing::Span::current().record("rows", rows);
 
-    let mut bases = Vec::with_capacity(rows * hints.len());
-    for hint in hints {
-        for row in 0..rows {
-            bases.push(match hint.row_commitments.get(row) {
-                Some(&commitment) => jacobian_limbs(commitment),
-                None => JacobianLimbs::IDENTITY,
-            });
-        }
-    }
+    let mut bases = vec![JacobianLimbs::IDENTITY; rows * hints.len()];
+    fill_bases(&mut bases, hints, rows);
 
     let combined = context.msm_rows_shared_scalars(&bases, scalars, rows)?;
     if combined.len() != rows {
