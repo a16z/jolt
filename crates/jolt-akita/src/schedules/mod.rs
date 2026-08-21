@@ -169,8 +169,14 @@ pub mod emit {
         const METAL_ROOT_DIMS: &[CommitmentRingDims] = &[CommitmentRingDims {
             inner: 512,
             outer: 64,
-            opening: 128,
+            opening: 64,
         }];
+        let num_positions_per_block = match key.num_vars() {
+            38 | 39 => 1 << 16,
+            40 => 1 << 17,
+            41 => 1 << 18,
+            _ => return regen::<JoltOneHotK256>(key),
+        };
         let lookup_key = AkitaScheduleLookupKey::single(key);
         let planned = find_schedule_with_root_constraint(
             &lookup_key,
@@ -179,7 +185,7 @@ pub mod emit {
             &policy_of::<JoltOneHotK256>(),
             RootCandidateConstraint {
                 dimensions: Some(METAL_ROOT_DIMS),
-                num_positions_per_block: Some(1 << 19),
+                num_positions_per_block: Some(num_positions_per_block),
                 inner_output_rank: Some(1),
                 ..RootCandidateConstraint::default()
             },

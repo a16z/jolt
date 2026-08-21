@@ -37,6 +37,8 @@ use crate::adapters::{
     AkitaOneHotK256Config, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup,
     AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::scheme::TraceCommitmentBackendKind;
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
 /// opening protocol.
@@ -309,6 +311,67 @@ where
     .map_err(prove_failed)
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the backend proof boundary keeps the statement, hint, backend, and transcript explicit"
+)]
+fn prove_trace_one_hot_metal<'a>(
+    setup: &AkitaProverSetup,
+    point: &[AkitaField],
+    evaluations: &[AkitaField],
+    polynomials: &'a [&'a crate::trace_onehot::TracePackedOneHot],
+    backend_commitment: AkitaBackendCommitment,
+    backend_hint: AkitaBackendHint,
+    backend: &crate::scheme::RequiredMetalTraceCommitment,
+    akita_transcript: &mut AkitaTranscript<AkitaField>,
+) -> Result<AkitaBackendProof, OpeningsError> {
+    if setup.one_hot_k() != AKITA_ONE_HOT_K256 {
+        return Err(invalid_batch(
+            "Metal trace opening currently requires one-hot K=256",
+        ));
+    }
+    let (backend_prover_setup, cpu_prepared) = setup.one_hot_backend()?;
+    let backend_setup_owner = setup
+        .one_hot_backend_prover_setup
+        .as_ref()
+        .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
+    let prepared = backend.prepared_setup(backend_setup_owner)?;
+    let stack = akita_prover::ProverComputeStack::new(
+        (&CpuBackend::DEFAULT, cpu_prepared),
+        (&backend.backend, prepared.as_ref()),
+        (&CpuBackend::DEFAULT, cpu_prepared),
+        (&backend.backend, prepared.as_ref()),
+        backend_prover_setup.expanded.as_ref(),
+    )
+    .map_err(akita_error)?;
+    let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
+    let backend_point = reverse_point(point);
+    let claims = single_group_batch::<AkitaOneHotK256Config, _>(
+        &backend_point,
+        evaluations,
+        polynomials,
+        backend_commitment,
+        backend_hint,
+    )
+    .map_err(akita_error)?;
+    backend
+        .backend
+        .begin_opening_metrics()
+        .map_err(akita_error)?;
+    let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
+    with_backend_pool(|| {
+        AkitaOneHotK256BackendScheme::batched_prove(
+            backend_prover_setup,
+            claims,
+            &releasing_stack,
+            akita_transcript,
+            BasisMode::Lagrange,
+        )
+    })
+    .map_err(prove_failed)
+}
+
 impl BatchOpeningScheme for AkitaNativeBatching {
     type Field = AkitaField;
     type ProverSetup = AkitaProverSetup;
@@ -347,6 +410,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         )
         .entered();
         validate_witness(&hint, commitment, &polynomials)?;
+        let trace_backend = hint.trace_backend.clone();
         let (backend_commitment, backend_hint) = hint
             .backend
             .ok_or_else(|| invalid_batch("Akita prover hint is missing backend opening data"))?;
@@ -385,6 +449,48 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             }
             AkitaHintPolynomials::TraceOneHot(one_hot) => {
                 let refs = one_hot.iter().collect::<Vec<_>>();
+                #[cfg(all(feature = "metal", target_os = "macos"))]
+                if let Some(crate::scheme::TraceCommitmentBackend {
+                    kind: TraceCommitmentBackendKind::MetalRequired(backend),
+                }) = trace_backend.as_ref()
+                {
+                    if crate::scheme::TraceCommitmentBackend::shape_is_metal_qualified(
+                        setup.one_hot_k(),
+                        point.len(),
+                    ) {
+                        prove_trace_one_hot_metal(
+                            setup,
+                            point,
+                            &evaluations,
+                            &refs,
+                            backend_commitment,
+                            backend_hint,
+                            backend,
+                            &mut akita_transcript,
+                        )?
+                    } else {
+                        prove_one_hot::<crate::trace_onehot::TracePackedOneHot>(
+                            setup,
+                            point,
+                            &evaluations,
+                            &refs,
+                            backend_commitment,
+                            backend_hint,
+                            &mut akita_transcript,
+                        )?
+                    }
+                } else {
+                    prove_one_hot::<crate::trace_onehot::TracePackedOneHot>(
+                        setup,
+                        point,
+                        &evaluations,
+                        &refs,
+                        backend_commitment,
+                        backend_hint,
+                        &mut akita_transcript,
+                    )?
+                }
+                #[cfg(not(all(feature = "metal", target_os = "macos")))]
                 prove_one_hot::<crate::trace_onehot::TracePackedOneHot>(
                     setup,
                     point,

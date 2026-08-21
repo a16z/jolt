@@ -37,12 +37,19 @@ tracing.workspace = true
 akita-metal = { workspace = true, optional = true, features = ["parallel"] }
 
 [dev-dependencies]
+blake3 = { workspace = true }
 criterion = { workspace = true }
 jolt-dory = { workspace = true }
 # Subscriber stack only (bench tracing setup); no summary pipeline.
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
 serde_json = { workspace = true, features = ["std"] }
+memory-stats = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "akita_paths"
+harness = false
+
+[[bench]]
+name = "akita_eval_proof"
 harness = false

@@ -224,19 +224,22 @@ mod tests {
             akita_schedules::RingDimensionScheduleMode::AdaptiveDimension { .. }
         ));
 
-        let layout = akita_types::OpeningClaimsLayout::new(41, 1).unwrap();
-        let row = JoltOneHotK256::resolve_catalog_row_for_opening(&layout).unwrap();
-        let schedule = row.schedule();
-        let commitment = &schedule.root.params.final_group.commitment;
-        assert_eq!(
-            commitment.role_dims(),
-            akita_types::CommitmentRingDims {
-                inner: 512,
-                outer: 64,
-                opening: 128,
-            }
-        );
-        assert_eq!(commitment.num_positions_per_block, 1 << 19);
-        assert_eq!(commitment.inner_commit_matrix.output_rank(), 1);
+        for (num_vars, positions_per_block) in
+            [(38, 1 << 16), (39, 1 << 16), (40, 1 << 17), (41, 1 << 18)]
+        {
+            let layout = akita_types::OpeningClaimsLayout::new(num_vars, 1).unwrap();
+            let row = JoltOneHotK256::resolve_catalog_row_for_opening(&layout).unwrap();
+            let commitment = &row.schedule().root.params.final_group.commitment;
+            assert_eq!(
+                commitment.role_dims(),
+                akita_types::CommitmentRingDims {
+                    inner: 512,
+                    outer: 64,
+                    opening: 64,
+                }
+            );
+            assert_eq!(commitment.num_positions_per_block, positions_per_block);
+            assert_eq!(commitment.inner_commit_matrix.output_rank(), 1);
+        }
     }
 }

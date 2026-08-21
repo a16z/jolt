@@ -43,7 +43,7 @@ pub use native_batching::{
 pub use scheme::TraceCommitmentMetalError;
 pub use scheme::{
     AkitaScheme, PostCommitmentCleanup, TraceCommitmentBackend, TraceMetalCommitMetrics,
-    TraceOneHotCommitment, TraceOneHotStreamShape,
+    TraceMetalOpeningMetrics, TraceOneHotCommitment, TraceOneHotStreamShape,
 };
 pub use trace_onehot::{no_selected_row, OwnedTraceOneHotRows, TraceOneHotRows, TracePackedOneHot};
 

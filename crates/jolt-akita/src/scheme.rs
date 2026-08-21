@@ -74,14 +74,27 @@ pub struct TraceMetalCommitMetrics {
     pub compression_time: Duration,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct TraceMetalOpeningMetrics {
+    pub command_wall_time: Duration,
+    pub gpu_active_time: Duration,
+    pub upload_time: Duration,
+    pub readback_time: Duration,
+    pub allocation_bytes: usize,
+    pub cpu_fallback_calls: usize,
+    pub planned_cpu_calls: usize,
+    pub planned_cpu_work_units: usize,
+    pub cpu_tail_work_units: usize,
+}
+
 /// Runtime routing for the native packed trace commitment.
 #[derive(Clone, Default)]
 pub struct TraceCommitmentBackend {
-    kind: TraceCommitmentBackendKind,
+    pub(crate) kind: TraceCommitmentBackendKind,
 }
 
 #[derive(Clone, Default)]
-enum TraceCommitmentBackendKind {
+pub(crate) enum TraceCommitmentBackendKind {
     #[default]
     Cpu,
     #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -90,8 +103,8 @@ enum TraceCommitmentBackendKind {
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 #[derive(Clone)]
-struct RequiredMetalTraceCommitment {
-    backend: akita_metal::MetalCommitBackend<AkitaField>,
+pub(crate) struct RequiredMetalTraceCommitment {
+    pub(crate) backend: akita_metal::MetalCommitBackend<AkitaField>,
     prepared: Arc<Mutex<HashMap<usize, Arc<akita_metal::MetalPreparedSetup<AkitaField>>>>>,
     stream_buffers: Arc<Mutex<HashMap<usize, PackedOneHotStreamBuffer>>>,
 }
@@ -211,6 +224,36 @@ impl TraceCommitmentBackend {
         Ok(None)
     }
 
+    pub fn last_metal_opening_metrics(
+        &self,
+    ) -> Result<Option<TraceMetalOpeningMetrics>, OpeningsError> {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if let TraceCommitmentBackendKind::MetalRequired(metal) = &self.kind {
+            return metal
+                .backend
+                .last_opening_metrics()
+                .map_err(commit_failed)
+                .map(|metrics| {
+                    metrics.map(|metrics| TraceMetalOpeningMetrics {
+                        command_wall_time: metrics.command_wall_time,
+                        gpu_active_time: metrics.gpu_active_time,
+                        upload_time: metrics.upload_time,
+                        readback_time: metrics.readback_time,
+                        allocation_bytes: metrics.allocation_bytes,
+                        cpu_fallback_calls: metrics.cpu_fallback_calls,
+                        planned_cpu_calls: metrics.planned_cpu_calls,
+                        planned_cpu_work_units: metrics.planned_cpu_work_units,
+                        cpu_tail_work_units: metrics.cpu_tail_work_units,
+                    })
+                });
+        }
+        Ok(None)
+    }
+
+    pub fn prepare_opening_backend(&self, _setup: &AkitaProverSetup) -> Result<(), OpeningsError> {
+        Ok(())
+    }
+
     fn prepare(
         &self,
         _setup: &AkitaProverSetup,
@@ -218,6 +261,7 @@ impl TraceCommitmentBackend {
         _num_columns: usize,
         _num_rows: usize,
     ) -> Result<(), OpeningsError> {
+        self.prepare_opening_backend(_setup)?;
         #[cfg(all(feature = "metal", target_os = "macos"))]
         if let TraceCommitmentBackendKind::MetalRequired(metal) = &self.kind {
             if !Self::shape_is_metal_qualified(_setup.one_hot_k(), _setup.max_num_vars()) {
@@ -235,7 +279,7 @@ impl TraceCommitmentBackend {
                 != (akita_types::CommitmentRingDims {
                     inner: 512,
                     outer: 64,
-                    opening: 128,
+                    opening: 64,
                 })
                 || commitment.inner_commit_matrix.output_rank() != 1
             {
@@ -281,13 +325,28 @@ impl TraceCommitmentBackend {
     }
 }
 
+impl AkitaProverHint {
+    pub fn with_trace_backend(
+        mut self,
+        backend: TraceCommitmentBackend,
+    ) -> Result<Self, OpeningsError> {
+        if !matches!(self.polynomials, AkitaHintPolynomials::TraceOneHot(_)) {
+            return Err(invalid_batch(
+                "a trace backend can only be attached to a trace one-hot hint",
+            ));
+        }
+        self.trace_backend = Some(backend);
+        Ok(self)
+    }
+}
+
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl RequiredMetalTraceCommitment {
     fn setup_key(setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>) -> usize {
         Arc::as_ptr(&setup.expanded) as usize
     }
 
-    fn prepared_setup(
+    pub(crate) fn prepared_setup(
         &self,
         setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>,
     ) -> Result<Arc<akita_metal::MetalPreparedSetup<AkitaField>>, OpeningsError> {
@@ -520,13 +579,15 @@ impl AkitaScheme {
         let (backend_commitment, backend_hint) =
             Self::commit_trace_one_hot_backend(backend, setup, &source, num_vars)
                 .map(split_commit_output)?;
-        Self::package_commitment(
+        let (commitment, mut hint) = Self::package_commitment(
             layout_digest,
             num_vars,
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::TraceOneHot(vec![source].into()),
-        )
+        )?;
+        hint.trace_backend = Some(backend.clone());
+        Ok((commitment, hint))
     }
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -601,7 +662,7 @@ impl AkitaScheme {
             != (akita_types::CommitmentRingDims {
                 inner: 512,
                 outer: 64,
-                opening: 128,
+                opening: 64,
             })
             || commitment.inner_commit_matrix.output_rank() != 1
         {
@@ -664,13 +725,15 @@ impl AkitaScheme {
         let rows: Arc<dyn TraceOneHotRows> = Arc::new(OwnedTraceOneHotRows::from_packed(packed));
         let source = TracePackedOneHot::new(setup.one_hot_k(), column_capacity, rows)
             .map_err(commit_failed)?;
-        Self::package_commitment(
+        let (commitment, mut hint) = Self::package_commitment(
             layout_digest,
             num_vars,
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::TraceOneHot(vec![source].into()),
-        )
+        )?;
+        hint.trace_backend = Some(backend.clone());
+        Ok((commitment, hint))
     }
 
     fn commit_trace_one_hot_backend(
@@ -858,6 +921,7 @@ impl AkitaScheme {
                 commitment,
                 backend: Some((backend_commitment, backend_hint)),
                 polynomials,
+                trace_backend: None,
             },
         ))
     }

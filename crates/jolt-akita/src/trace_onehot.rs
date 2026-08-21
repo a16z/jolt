@@ -32,8 +32,8 @@ use akita_prover::compute::{
 };
 use akita_prover::{
     BatchDecomposeFoldOutcome, CommitInnerWitness, ComputeBackendSetup, CpuBackend,
-    PackedOneHotPoly, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootTensorSource,
+    PackedOneHotPoly, PackedOneHotView, RootCommitSource, RootOpeningSource, RootPolyMeta,
+    RootPolyShape, RootTensorSource,
 };
 use akita_types::{FpExtEncoding, PreparedSubringCoefficientPackingPoint};
 use rayon::prelude::*;
@@ -581,6 +581,24 @@ impl<const D: usize> TracePackedOneHotView<'_, D> {
             rows,
         }
     }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn packed_view(&self) -> Result<PackedOneHotView<'_, AkitaField, D>, AkitaError> {
+        let Some(rows) = self.rows.as_deref() else {
+            unreachable!("trace one-hot view holds live row storage");
+        };
+        let packed = rows.packed_one_hot().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "Metal trace opening requires aligned packed row storage".to_string(),
+            )
+        })?;
+        PackedOneHotView::new(
+            packed.onehot_k(),
+            packed.column_capacity(),
+            packed.num_columns(),
+            packed.lanes(),
+        )
+    }
 }
 
 impl<const D: usize> TracePackedOneHotBatchView<'_, D> {
@@ -592,6 +610,24 @@ impl<const D: usize> TracePackedOneHotBatchView<'_, D> {
             source: self.sources[0],
             rows,
         }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn packed_view(&self) -> Result<PackedOneHotView<'_, AkitaField, D>, AkitaError> {
+        let Some(rows) = self.rows.as_deref() else {
+            unreachable!("trace one-hot batch view holds live row storage");
+        };
+        let packed = rows.packed_one_hot().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "Metal trace opening requires aligned packed row storage".to_string(),
+            )
+        })?;
+        PackedOneHotView::new(
+            packed.onehot_k(),
+            packed.column_capacity(),
+            packed.num_columns(),
+            packed.lanes(),
+        )
     }
 }
 
@@ -2560,6 +2596,70 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField, D>
+    for akita_metal::MetalCommitBackend<AkitaField>
+{
+    fn evaluate_and_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotView<'_, D>,
+        plan: OpeningFoldPlan<'_, AkitaField>,
+    ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
+        self.record_opening_cpu_fallback(
+            source
+                .source
+                .num_rows
+                .saturating_mul(source.source.num_columns),
+        )
+        .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        CpuBackend::DEFAULT.evaluate_and_fold(None, source, plan)
+    }
+
+    fn decompose_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotView<'_, D>,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
+        let _span = tracing::info_span!("TracePackedOneHot::decompose_fold").entered();
+        self.decompose_fold_packed_fp128_d512(source.packed_view()?, plan)
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, D>
+    for akita_metal::MetalCommitBackend<AkitaField>
+{
+    fn decompose_fold_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotBatchView<'_, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
+        let _span = tracing::info_span!("TracePackedOneHot::decompose_fold").entered();
+        let packed = source.packed_view()?;
+        match plan {
+            DecomposeFoldBatchPlan::Sparse {
+                challenges,
+                num_positions_per_block,
+                num_digits,
+                log_basis,
+            } => Ok(BatchDecomposeFoldOutcome::Fused(
+                self.decompose_fold_packed_fp128_d512(
+                    packed,
+                    DecomposeFoldPlan {
+                        challenges,
+                        num_positions_per_block,
+                        num_digits,
+                        log_basis,
+                    },
+                )?,
+            )),
+        }
+    }
+}
+
 struct TraceCoefficientPackingScatter<'a, E: akita_field::FieldCore> {
     point: &'a PreparedSubringCoefficientPackingPoint<E>,
     stride: usize,
@@ -2623,6 +2723,154 @@ where
         }
         Ok(())
     }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+struct DeferredFp128Coordinates {
+    limbs: Vec<[u64; 2]>,
+    wraps: Vec<u32>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl DeferredFp128Coordinates {
+    fn zero(len: usize) -> Self {
+        Self {
+            limbs: vec![[0; 2]; len],
+            wraps: vec![0; len],
+        }
+    }
+
+    #[inline(always)]
+    fn add(&mut self, index: usize, value: AkitaField) {
+        let [value_lo, value_hi] = value.to_limbs();
+        let [current_lo, current_hi] = self.limbs[index];
+        let (lo, carry_lo) = current_lo.overflowing_add(value_lo);
+        let (hi_without_carry, carry_hi) = current_hi.overflowing_add(value_hi);
+        let (hi, carry_from_lo) = hi_without_carry.overflowing_add(u64::from(carry_lo));
+        debug_assert!(!(carry_hi && carry_from_lo));
+        self.limbs[index] = [lo, hi];
+        self.wraps[index] += u32::from(carry_hi || carry_from_lo);
+    }
+
+    fn reduce(self) -> Vec<AkitaField> {
+        self.limbs
+            .into_iter()
+            .zip(self.wraps)
+            .map(|([lo, hi], wraps)| {
+                let base = AkitaField::from_canonical_u128_reduced(
+                    u128::from(lo) | (u128::from(hi) << 64),
+                );
+                let correction = AkitaField::from_canonical_u128_reduced(
+                    u128::from(wraps) * AkitaField::MODULUS_OFFSET,
+                );
+                base + correction
+            })
+            .collect()
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn coefficient_packing_row_blocks_fp128_d512(
+    source: &TracePackedOneHotKernelSource<'_>,
+    point: &PreparedSubringCoefficientPackingPoint<AkitaField>,
+    blocks_per_column: usize,
+    rows_per_block: usize,
+) -> Result<Option<Vec<Vec<AkitaField>>>, AkitaError> {
+    const D: usize = 512;
+    const K: usize = 256;
+
+    let geometry = point.geometry();
+    let Some(packed) = source.rows.packed_one_hot() else {
+        return Ok(None);
+    };
+    let stride = geometry.subring_embedding_stride();
+    let partial_width = geometry.partial_base_field_width();
+    if source.one_hot_k != K
+        || geometry.a_ring_dimension() != D
+        || geometry.extension_degree() != 1
+        || !stride.is_power_of_two()
+        || stride.checked_mul(partial_width) != Some(D)
+        || point.packing_weights().len() != stride
+        || point.position_weights().len().checked_mul(2) != Some(rows_per_block)
+        || rows_per_block > u32::MAX as usize
+    {
+        return Ok(None);
+    }
+
+    let combined_weight_len = point
+        .position_weights()
+        .len()
+        .checked_mul(stride)
+        .ok_or_else(|| AkitaError::InvalidInput("root packing weight length overflow".into()))?;
+    let mut combined_weights = Vec::new();
+    combined_weights
+        .try_reserve_exact(combined_weight_len)
+        .map_err(|_| AkitaError::InvalidInput("root packing weight allocation failed".into()))?;
+    for &position_weight in point.position_weights() {
+        combined_weights.extend(
+            point
+                .packing_weights()
+                .iter()
+                .map(|&packing_weight| position_weight * packing_weight),
+        );
+    }
+
+    let num_columns = source.num_columns;
+    let lanes = packed.lanes();
+    let log_stride = stride.trailing_zeros();
+    let low_mask = stride - 1;
+    let row_blocks = (0..blocks_per_column)
+        .into_par_iter()
+        .map(|block_in_column| {
+            let row_start = block_in_column.checked_mul(rows_per_block).ok_or_else(|| {
+                AkitaError::InvalidInput("coefficient-packing row offset overflow".into())
+            })?;
+            let row_end = row_start
+                .checked_add(rows_per_block)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("coefficient-packing row end overflow".into())
+                })?
+                .min(source.num_rows);
+            let lane_start = row_start
+                .checked_mul(num_columns)
+                .ok_or_else(|| AkitaError::InvalidInput("packed lane offset overflow".into()))?;
+            let lane_end = row_end
+                .checked_mul(num_columns)
+                .ok_or_else(|| AkitaError::InvalidInput("packed lane end overflow".into()))?;
+            let mut deferred = DeferredFp128Coordinates::zero(num_columns * partial_width);
+
+            for (local_row, row_lanes) in lanes[lane_start..lane_end]
+                .chunks_exact(num_columns)
+                .enumerate()
+            {
+                let weight_base = (local_row >> 1) * stride;
+                for (column, &hot) in row_lanes.iter().enumerate() {
+                    if hot == NO_SELECTED_ROW {
+                        continue;
+                    }
+                    let hot = usize::from(hot);
+                    let coefficient = (local_row & 1) * K + hot;
+                    let bucket = coefficient >> log_stride;
+                    let low = coefficient & low_mask;
+                    let output_index = column * partial_width + bucket;
+                    deferred.add(output_index, combined_weights[weight_base + low]);
+                }
+            }
+            Ok(deferred.reduce())
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+
+    let num_blocks = source
+        .column_capacity
+        .checked_mul(blocks_per_column)
+        .ok_or_else(|| AkitaError::InvalidInput("coefficient-packing block overflow".into()))?;
+    let mut blocks = vec![Vec::new(); num_blocks];
+    for (block_in_column, coordinates) in row_blocks.into_iter().enumerate() {
+        for (column, block) in coordinates.chunks_exact(partial_width).enumerate() {
+            blocks[column * blocks_per_column + block_in_column] = block.to_vec();
+        }
+    }
+    Ok(Some(blocks))
 }
 
 fn coefficient_packing_row_blocks<E, const D: usize>(
@@ -2820,7 +3068,6 @@ impl<E, const D: usize>
 where
     E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
 {
-    #[tracing::instrument(skip_all, name = "coefficient_packing_trace_onehot_partials")]
     fn coefficient_packing_partials_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
@@ -2903,6 +3150,95 @@ where
             point.num_live_blocks(),
             coordinates,
         )?])
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize>
+    SubringCoefficientPackingBatchKernel<
+        TracePackedOneHotBatchView<'_, D>,
+        AkitaField,
+        AkitaField,
+        D,
+    > for akita_metal::MetalCommitBackend<AkitaField>
+{
+    #[tracing::instrument(skip_all, name = "coefficient_packing_trace_onehot_partials")]
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotBatchView<'_, D>,
+        plan: SubringCoefficientPackingPlan<'_, AkitaField>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<AkitaField>>, AkitaError> {
+        let work_units = source.sources.first().map_or(0, |source| {
+            source.num_rows.saturating_mul(source.num_columns)
+        });
+        self.record_opening_cpu_fallback(work_units)
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+
+        let optimized_blocks = {
+            let kernel_source = source.kernel_source();
+            plan.validate::<D>(kernel_source.num_vars)?;
+            let point = plan.point;
+            let expected_field_elements =
+                point.num_live_positions().checked_mul(D).ok_or_else(|| {
+                    AkitaError::InvalidInput("coefficient-packing trace length overflow".into())
+                })?;
+            if kernel_source.total_field_elems() != expected_field_elements {
+                return Err(AkitaError::InvalidSize {
+                    expected: expected_field_elements,
+                    actual: kernel_source.total_field_elems(),
+                });
+            }
+            let segment_field_elements = kernel_source
+                .num_rows
+                .checked_mul(kernel_source.one_hot_k)
+                .ok_or_else(|| AkitaError::InvalidInput("trace segment overflow".into()))?;
+            let block_field_elements = point
+                .num_positions_per_block()
+                .checked_mul(D)
+                .ok_or_else(|| AkitaError::InvalidInput("packing block width overflow".into()))?;
+            if segment_field_elements.is_multiple_of(block_field_elements)
+                && block_field_elements.is_multiple_of(kernel_source.one_hot_k)
+            {
+                coefficient_packing_row_blocks_fp128_d512(
+                    &kernel_source,
+                    point,
+                    segment_field_elements / block_field_elements,
+                    block_field_elements / kernel_source.one_hot_k,
+                )?
+            } else {
+                None
+            }
+        };
+        if let Some(mut blocks) = optimized_blocks {
+            let point = plan.point;
+            if blocks.len() != point.num_live_blocks() {
+                return Err(AkitaError::InvalidSize {
+                    expected: point.num_live_blocks(),
+                    actual: blocks.len(),
+                });
+            }
+            let partial_width = point.geometry().partial_base_field_width();
+            let output_len = blocks.len().checked_mul(partial_width).ok_or_else(|| {
+                AkitaError::InvalidInput("coefficient-packing output length overflow".into())
+            })?;
+            let mut coordinates = Vec::new();
+            coordinates.try_reserve_exact(output_len).map_err(|_| {
+                AkitaError::InvalidInput("coefficient-packing output allocation failed".into())
+            })?;
+            for block in &mut blocks {
+                if block.is_empty() {
+                    block.resize(partial_width, AkitaField::zero());
+                }
+                coordinates.append(block);
+            }
+            return Ok(vec![SubringCoefficientPackingPartials::new(
+                point.geometry(),
+                point.num_live_blocks(),
+                coordinates,
+            )?]);
+        }
+        CpuBackend::DEFAULT.coefficient_packing_partials_batch(None, source, plan)
     }
 }
 
@@ -3272,6 +3608,21 @@ mod tests {
         assert_deferred_fp128_shift_accumulator::<256>();
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn deferred_fp128_coordinates_match_maximal_root_bucket_skew() {
+        const ADDITIONS: usize = 1 << 19;
+        let mut deferred = DeferredFp128Coordinates::zero(1);
+        for _ in 0..ADDITIONS {
+            deferred.add(0, -AkitaField::one());
+        }
+        assert!(deferred.wraps[0] < 1 << 20);
+        assert_eq!(
+            deferred.reduce(),
+            vec![-AkitaField::from_u64(ADDITIONS as u64)]
+        );
+    }
+
     fn assert_opening_kernels_match_materialized<const D: usize>(
         k: usize,
         rows: usize,
@@ -3485,5 +3836,165 @@ mod tests {
         assert_opening_kernels_match_materialized::<512>(16, 32, 2, None);
         assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1));
         assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1));
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_d512_k256_deferred_root_scatter_matches_cpu() {
+        const D: usize = 512;
+        const ROWS: usize = 128;
+        const COLUMNS: usize = 3;
+        const CAPACITY: usize = 32;
+        const POSITIONS: usize = 8;
+
+        let rows = OwnedTraceOneHotRows::from_row_fn(256, CAPACITY, COLUMNS, ROWS, |row, lanes| {
+            for (column, lane) in lanes.iter_mut().enumerate() {
+                *lane = (1 + (row * 17 + column * 29) % 255) as u8;
+            }
+        })
+        .unwrap();
+        let source = TracePackedOneHot::new(256, CAPACITY, Arc::new(rows)).unwrap();
+        let sources = [&source];
+        for subring_dimension in [D / 2, D / 8] {
+            let geometry =
+                SubringCoefficientPackingGeometry::try_new(1, D, subring_dimension).unwrap();
+            let point_values =
+                (0..<TracePackedOneHot as RootPolyMeta<AkitaField>>::num_vars(&source))
+                    .map(|index| AkitaField::from_u64((index + 3) as u64))
+                    .collect::<Vec<_>>();
+            let point = PreparedSubringCoefficientPackingPoint::new(
+                geometry,
+                BasisMode::Lagrange,
+                <TracePackedOneHot as RootPolyShape<AkitaField, D>>::num_ring_elems(&source),
+                POSITIONS,
+                <TracePackedOneHot as RootPolyMeta<AkitaField>>::num_vars(&source),
+                &point_values,
+            )
+            .unwrap();
+            let plan = SubringCoefficientPackingPlan { point: &point };
+
+            let cpu = <CpuBackend as SubringCoefficientPackingBatchKernel<
+                TracePackedOneHotBatchView<'_, D>,
+                AkitaField,
+                AkitaField,
+                D,
+            >>::coefficient_packing_partials_batch(
+                &CpuBackend::DEFAULT,
+                None,
+                <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&sources)
+                    .unwrap(),
+                plan,
+            )
+            .unwrap();
+            let batch =
+                <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&sources)
+                    .unwrap();
+            let kernel_source = batch.kernel_source();
+            let segment_field_elements = kernel_source.num_rows * kernel_source.one_hot_k;
+            let block_field_elements = point.num_positions_per_block() * D;
+            let mut blocks = coefficient_packing_row_blocks_fp128_d512(
+                &kernel_source,
+                &point,
+                segment_field_elements / block_field_elements,
+                block_field_elements / kernel_source.one_hot_k,
+            )
+            .unwrap()
+            .unwrap();
+            let partial_width = geometry.partial_base_field_width();
+            let mut coordinates = Vec::with_capacity(blocks.len() * partial_width);
+            for block in &mut blocks {
+                if block.is_empty() {
+                    block.resize(partial_width, AkitaField::zero());
+                }
+                coordinates.append(block);
+            }
+            let hybrid = vec![SubringCoefficientPackingPartials::new(
+                geometry,
+                point.num_live_blocks(),
+                coordinates,
+            )
+            .unwrap()];
+
+            assert_eq!(hybrid, cpu);
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_d512_packed_decompose_fold_matches_cpu() {
+        const D: usize = 512;
+        const ROWS: usize = 128;
+        const COLUMNS: usize = 3;
+        const CAPACITY: usize = 32;
+        const POSITIONS: usize = 8;
+
+        let rows = OwnedTraceOneHotRows::from_row_fn(256, CAPACITY, COLUMNS, ROWS, |row, lanes| {
+            for (column, lane) in lanes.iter_mut().enumerate() {
+                *lane = (1 + (row * 17 + column * 29) % 255) as u8;
+            }
+        })
+        .unwrap();
+        let source = TracePackedOneHot::new(256, CAPACITY, Arc::new(rows)).unwrap();
+        let num_blocks =
+            <TracePackedOneHot as RootPolyShape<AkitaField, D>>::num_ring_elems(&source)
+                / POSITIONS;
+        let challenges = (0..num_blocks)
+            .map(|block| SparseChallenge {
+                positions: (0..19)
+                    .map(|term| ((block * 7 + term * 23) % D) as u32)
+                    .collect::<Vec<_>>()
+                    .into(),
+                coeffs: (0..19)
+                    .map(|term| {
+                        if (block + term).is_multiple_of(2) {
+                            1
+                        } else {
+                            -1
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+            })
+            .collect::<Vec<_>>();
+        let plan = DecomposeFoldPlan {
+            challenges: &challenges,
+            num_positions_per_block: POSITIONS,
+            num_digits: 2,
+            log_basis: 3,
+        };
+
+        let cpu = <CpuBackend as OpeningFoldKernel<
+            TracePackedOneHotView<'_, D>,
+            AkitaField,
+            D,
+        >>::decompose_fold(
+            &CpuBackend::DEFAULT,
+            None,
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap(),
+            plan,
+        )
+        .unwrap();
+        let metal = akita_metal::MetalCommitBackend::<AkitaField>::new(
+            akita_metal::MetalExecutionPolicy::RequireMetal,
+        )
+        .unwrap();
+        metal.begin_opening_metrics().unwrap();
+        let gpu = <akita_metal::MetalCommitBackend<AkitaField> as OpeningFoldKernel<
+            TracePackedOneHotView<'_, D>,
+            AkitaField,
+            D,
+        >>::decompose_fold(
+            &metal,
+            None,
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap(),
+            plan,
+        )
+        .unwrap();
+
+        assert_eq!(gpu, cpu);
+        let metrics = metal.last_opening_metrics().unwrap().unwrap();
+        assert_eq!(metrics.cpu_fallback_calls, 0);
+        assert!(!metrics.command_wall_time.is_zero());
+        assert!(metrics.allocation_bytes > 0);
     }
 }
