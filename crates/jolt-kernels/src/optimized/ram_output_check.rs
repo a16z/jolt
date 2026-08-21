@@ -328,7 +328,8 @@ mod tests {
             is_first_in_sequence: false,
             is_compressed: false,
         };
-        let preprocessing = JoltProgramPreprocessing {
+        use std::sync::Arc;
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 vec![instruction],
                 instruction.address as u64,
@@ -338,7 +339,7 @@ mod tests {
             ram: RAMPreprocessing::default(),
             memory_layout: device.memory_layout.clone(),
             max_padded_trace_length: 1 << log_t,
-        };
+        });
         let rows = vec![TraceRow {
             instruction,
             ..TraceRow::default()
@@ -354,7 +355,7 @@ mod tests {
             ],
         };
 
-        let program = JoltProgram::default();
+        let program = Arc::new(JoltProgram::default());
         let config = JoltVmWitnessConfig::new(
             log_t,
             ram_k,

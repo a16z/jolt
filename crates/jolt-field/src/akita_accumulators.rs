@@ -50,14 +50,14 @@ impl RingAccumulator for AkitaAccumulator {
     }
 }
 
-/// Signed fp128 × i64 accumulator with one reduction at finalization.
+/// Deferred-reduction accumulator for signed scalar products.
 #[derive(Clone, Copy)]
-pub struct AkitaSmallScalarAccumulator {
+pub struct AkitaSignedAccumulator {
     pos: Fp128MulU64Accum,
     neg: Fp128MulU64Accum,
 }
 
-impl Default for AkitaSmallScalarAccumulator {
+impl Default for AkitaSignedAccumulator {
     #[inline(always)]
     fn default() -> Self {
         Self {
@@ -67,29 +67,10 @@ impl Default for AkitaSmallScalarAccumulator {
     }
 }
 
-impl SignedScalarAccumulator for AkitaSmallScalarAccumulator {
-    type Element = AkitaField;
-
+impl AkitaSignedAccumulator {
     #[inline(always)]
-    fn add(&mut self, value: AkitaField) {
-        self.pos += Fp128MulU64Accum::from(value);
-    }
-
-    #[inline(always)]
-    fn fmadd_u64(&mut self, value: AkitaField, scalar: u64) {
-        if scalar != 0 {
-            self.pos += value.mul_u64_unreduced(scalar);
-        }
-    }
-
-    #[inline(always)]
-    fn fmadd_i64(&mut self, value: AkitaField, scalar: i64) {
-        let magnitude = scalar.unsigned_abs();
-        if magnitude == 0 {
-            return;
-        }
-        let term = value.mul_u64_unreduced(magnitude);
-        if scalar > 0 {
+    fn accumulate(&mut self, term: Fp128MulU64Accum, is_positive: bool) {
+        if is_positive {
             self.pos += term;
         } else {
             self.neg += term;
@@ -97,33 +78,10 @@ impl SignedScalarAccumulator for AkitaSmallScalarAccumulator {
     }
 
     #[inline(always)]
-    fn reduce(self) -> AkitaField {
+    fn reduce_signed(self) -> AkitaField {
         AkitaField::reduce_mul_u64_accum(self.pos) - AkitaField::reduce_mul_u64_accum(self.neg)
     }
-}
 
-/// Signed fp128 × 256-bit accumulator used by Spartan's wide integer folds.
-///
-/// Each term is reduced directly from the 5- or 6-limb product. Canonical
-/// terms then accumulate in wide slots, avoiding a second field multiply and
-/// all intermediate field additions.
-#[derive(Clone, Copy)]
-pub struct AkitaSignedProductAccumulator {
-    pos: Fp128MulU64Accum,
-    neg: Fp128MulU64Accum,
-}
-
-impl Default for AkitaSignedProductAccumulator {
-    #[inline(always)]
-    fn default() -> Self {
-        Self {
-            pos: Fp128MulU64Accum::ZERO,
-            neg: Fp128MulU64Accum::ZERO,
-        }
-    }
-}
-
-impl AkitaSignedProductAccumulator {
     #[inline(always)]
     fn product(value: AkitaField, magnitude: [u64; 4]) -> AkitaField {
         if magnitude[3] == 0 {
@@ -138,7 +96,35 @@ impl AkitaSignedProductAccumulator {
     }
 }
 
-impl SignedProductAccumulator for AkitaSignedProductAccumulator {
+impl SignedScalarAccumulator for AkitaSignedAccumulator {
+    type Element = AkitaField;
+
+    #[inline(always)]
+    fn add(&mut self, value: AkitaField) {
+        self.pos += Fp128MulU64Accum::from(value);
+    }
+
+    #[inline(always)]
+    fn fmadd_u64(&mut self, value: AkitaField, scalar: u64) {
+        if scalar != 0 {
+            self.accumulate(value.mul_u64_unreduced(scalar), true);
+        }
+    }
+
+    #[inline(always)]
+    fn fmadd_i64(&mut self, value: AkitaField, scalar: i64) {
+        if scalar != 0 {
+            self.accumulate(value.mul_u64_unreduced(scalar.unsigned_abs()), scalar > 0);
+        }
+    }
+
+    #[inline(always)]
+    fn reduce(self) -> AkitaField {
+        self.reduce_signed()
+    }
+}
+
+impl SignedProductAccumulator for AkitaSignedAccumulator {
     type Element = AkitaField;
 
     #[inline(always)]
@@ -147,12 +133,10 @@ impl SignedProductAccumulator for AkitaSignedProductAccumulator {
         if magnitude == [0; 4] {
             return;
         }
-        let term = Fp128MulU64Accum::from(Self::product(value, magnitude));
-        if scalar.is_positive {
-            self.pos += term;
-        } else {
-            self.neg += term;
-        }
+        self.accumulate(
+            Fp128MulU64Accum::from(Self::product(value, magnitude)),
+            scalar.is_positive,
+        );
     }
 
     #[inline(always)]
@@ -160,17 +144,12 @@ impl SignedProductAccumulator for AkitaSignedProductAccumulator {
         if magnitude == 0 {
             return;
         }
-        let term = value.mul_u64_unreduced(magnitude);
-        if is_positive {
-            self.pos += term;
-        } else {
-            self.neg += term;
-        }
+        self.accumulate(value.mul_u64_unreduced(magnitude), is_positive);
     }
 
     #[inline(always)]
     fn reduce(self) -> AkitaField {
-        AkitaField::reduce_mul_u64_accum(self.pos) - AkitaField::reduce_mul_u64_accum(self.neg)
+        self.reduce_signed()
     }
 }
 
@@ -201,7 +180,7 @@ mod tests {
     #[test]
     fn small_scalar_accumulator_matches_naive() {
         let mut rng = ChaCha20Rng::seed_from_u64(2);
-        let mut candidate = AkitaSmallScalarAccumulator::default();
+        let mut candidate = AkitaSignedAccumulator::default();
         let mut expected = NaiveSignedScalarAccumulator::<AkitaField>::default();
         for index in 0..16_384 {
             let value = AkitaField::random(&mut rng);
@@ -210,13 +189,16 @@ mod tests {
             candidate.fmadd_i64(value, scalar);
             expected.fmadd_i64(value, scalar);
         }
-        assert_eq!(candidate.reduce(), expected.reduce());
+        assert_eq!(
+            SignedScalarAccumulator::reduce(candidate),
+            expected.reduce()
+        );
     }
 
     #[test]
     fn signed_product_accumulator_matches_naive() {
         let mut rng = ChaCha20Rng::seed_from_u64(3);
-        let mut candidate = AkitaSignedProductAccumulator::default();
+        let mut candidate = AkitaSignedAccumulator::default();
         let mut expected = NaiveSignedProductAccumulator::<AkitaField>::default();
         for index in 0..16_384 {
             let value = AkitaField::random(&mut rng);
@@ -235,7 +217,10 @@ mod tests {
         let value = AkitaField::random(&mut rng);
         candidate.fmadd_signed_u64(value, u64::MAX, false);
         expected.fmadd_signed_u64(value, u64::MAX, false);
-        assert_eq!(candidate.reduce(), expected.reduce());
+        assert_eq!(
+            SignedProductAccumulator::reduce(candidate),
+            expected.reduce()
+        );
     }
 
     #[test]
@@ -246,9 +231,12 @@ mod tests {
         ring.fmadd_u64(value, 5);
         assert_eq!(ring.reduce(), AkitaField::from_u64(42));
 
-        let mut small = AkitaSmallScalarAccumulator::default();
+        let mut small = AkitaSignedAccumulator::default();
         small.add(value);
         small.fmadd_i64(value, -1);
-        assert_eq!(small.reduce(), AkitaField::from_u64(0));
+        assert_eq!(
+            SignedScalarAccumulator::reduce(small),
+            AkitaField::from_u64(0)
+        );
     }
 }

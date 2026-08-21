@@ -217,7 +217,7 @@ impl OpeningColumns {
     /// every slot is written).
     #[cfg(feature = "parallel")]
     fn collect_par<F: Field>(
-        access: &jolt_witness::RandomAccessRows<'_>,
+        access: &jolt_witness::RandomAccessRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         /// The scatter grain: big enough to amortize rayon dispatch, small

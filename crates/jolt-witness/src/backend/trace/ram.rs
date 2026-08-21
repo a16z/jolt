@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackend<'_, T> {
+impl<T: TraceSource> TraceBackend<T> {
     pub(crate) fn materialize_ram_read_write_virtual<F: Field>(
         &self,
         id: JoltVirtualPolynomial,
@@ -30,7 +30,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 values[address * cycles + cycle] = F::from_u64(value);
             }
 
-            let Some(row) = self.trace_rows.get(cycle) else {
+            let Some(row) = self.trace.trace.get(cycle) else {
                 continue;
             };
             if row.is_load() {
@@ -54,7 +54,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         let mut values = jolt_utils::unsafe_allocate_zero_vec(addresses * cycles);
 
         for cycle in 0..cycles {
-            let Some(row) = self.trace_rows.get(cycle) else {
+            let Some(row) = self.trace.trace.get(cycle) else {
                 continue;
             };
             if let Some(raw_address) = ram_access_address(row) {
@@ -97,34 +97,34 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 "bytecode",
             )?;
         }
-        if !self.device.trusted_advice.is_empty() {
+        if !self.trace.device.trusted_advice.is_empty() {
             let start = self.remapped_required_address(
-                self.device.memory_layout.trusted_advice_start,
+                self.trace.device.memory_layout.trusted_advice_start,
                 "trusted advice",
             )?;
             populate_ram_bytes(
                 &mut state,
                 start,
-                &self.device.trusted_advice,
+                &self.trace.device.trusted_advice,
                 "trusted advice",
             )?;
         }
-        if !self.device.untrusted_advice.is_empty() {
+        if !self.trace.device.untrusted_advice.is_empty() {
             let start = self.remapped_required_address(
-                self.device.memory_layout.untrusted_advice_start,
+                self.trace.device.memory_layout.untrusted_advice_start,
                 "untrusted advice",
             )?;
             populate_ram_bytes(
                 &mut state,
                 start,
-                &self.device.untrusted_advice,
+                &self.trace.device.untrusted_advice,
                 "untrusted advice",
             )?;
         }
-        if !self.device.inputs.is_empty() {
-            let start =
-                self.remapped_required_address(self.device.memory_layout.input_start, "input")?;
-            populate_ram_bytes(&mut state, start, &self.device.inputs, "input")?;
+        if !self.trace.device.inputs.is_empty() {
+            let start = self
+                .remapped_required_address(self.trace.device.memory_layout.input_start, "input")?;
+            populate_ram_bytes(&mut state, start, &self.trace.device.inputs, "input")?;
         }
         Ok(state)
     }
@@ -137,50 +137,59 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
             });
         }
         let mut state = vec![0; self.config.ram_k];
-        if let Some(final_memory) = &self.final_memory {
+        if let Some(final_memory) = &self.trace.final_memory {
             self.populate_final_memory_image(&mut state, &final_memory.bytes)?;
         }
-        if !self.device.trusted_advice.is_empty() {
+        if !self.trace.device.trusted_advice.is_empty() {
             let start = self.remapped_required_address(
-                self.device.memory_layout.trusted_advice_start,
+                self.trace.device.memory_layout.trusted_advice_start,
                 "trusted advice",
             )?;
             populate_ram_bytes(
                 &mut state,
                 start,
-                &self.device.trusted_advice,
+                &self.trace.device.trusted_advice,
                 "trusted advice",
             )?;
         }
-        if !self.device.untrusted_advice.is_empty() {
+        if !self.trace.device.untrusted_advice.is_empty() {
             let start = self.remapped_required_address(
-                self.device.memory_layout.untrusted_advice_start,
+                self.trace.device.memory_layout.untrusted_advice_start,
                 "untrusted advice",
             )?;
             populate_ram_bytes(
                 &mut state,
                 start,
-                &self.device.untrusted_advice,
+                &self.trace.device.untrusted_advice,
                 "untrusted advice",
             )?;
         }
-        if !self.device.inputs.is_empty() {
-            let start =
-                self.remapped_required_address(self.device.memory_layout.input_start, "input")?;
-            populate_ram_bytes(&mut state, start, &self.device.inputs, "input")?;
+        if !self.trace.device.inputs.is_empty() {
+            let start = self
+                .remapped_required_address(self.trace.device.memory_layout.input_start, "input")?;
+            populate_ram_bytes(&mut state, start, &self.trace.device.inputs, "input")?;
         }
-        if !self.device.outputs.is_empty() {
-            let start =
-                self.remapped_required_address(self.device.memory_layout.output_start, "output")?;
-            populate_ram_bytes(&mut state, start, &self.device.outputs, "output")?;
+        if !self.trace.device.outputs.is_empty() {
+            let start = self.remapped_required_address(
+                self.trace.device.memory_layout.output_start,
+                "output",
+            )?;
+            populate_ram_bytes(&mut state, start, &self.trace.device.outputs, "output")?;
         }
 
         let panic_index =
-            self.remapped_required_address(self.device.memory_layout.panic, "panic")?;
-        set_ram_word(&mut state, panic_index, self.device.panic as u64, "panic")?;
-        if !self.device.panic {
-            let termination_index = self
-                .remapped_required_address(self.device.memory_layout.termination, "termination")?;
+            self.remapped_required_address(self.trace.device.memory_layout.panic, "panic")?;
+        set_ram_word(
+            &mut state,
+            panic_index,
+            self.trace.device.panic as u64,
+            "panic",
+        )?;
+        if !self.trace.device.panic {
+            let termination_index = self.remapped_required_address(
+                self.trace.device.memory_layout.termination,
+                "termination",
+            )?;
             set_ram_word(&mut state, termination_index, 1, "termination")?;
         }
         Ok(state)

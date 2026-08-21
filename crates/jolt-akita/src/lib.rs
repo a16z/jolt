@@ -38,7 +38,7 @@ pub use adapters::{
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
-pub use scheme::{AkitaScheme, PostCommitmentCleanup, TraceOneHotCommitment};
+pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotRows, TracePackedOneHot};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw

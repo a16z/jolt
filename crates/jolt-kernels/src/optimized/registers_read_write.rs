@@ -185,7 +185,7 @@ fn collect_register_entries<F: Field>(
 /// to the streaming pass: cycle_entries is pure per cycle.
 #[cfg(feature = "parallel")]
 fn collect_register_entries_par<F: Field>(
-    access: &RandomAccessRows<'_>,
+    access: &RandomAccessRows,
     cycles: usize,
 ) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
     use core::mem::MaybeUninit;
@@ -1637,7 +1637,7 @@ pub(crate) mod test_support {
         pub(crate) fn with_plane<R>(
             self,
             log_t: usize,
-            f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+            f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
         ) -> R {
             assert!(self.rows.len() <= 1 << log_t, "fixture overflows 2^log_t");
             let bytecode = self
@@ -1646,14 +1646,15 @@ pub(crate) mod test_support {
                 .map(|row| row.instruction)
                 .filter(|instruction| instruction.instruction_kind != JoltInstructionKind::NoOp)
                 .collect();
-            let preprocessing = JoltProgramPreprocessing {
+            use std::sync::Arc;
+            let preprocessing = Arc::new(JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT)
                     .unwrap(),
                 ram: RAMPreprocessing::default(),
                 memory_layout: Default::default(),
                 max_padded_trace_length: 1 << log_t,
-            };
-            let program = JoltProgram::default();
+            });
+            let program = Arc::new(JoltProgram::default());
             let config = JoltVmWitnessConfig::new(
                 log_t,
                 64,

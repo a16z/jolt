@@ -446,7 +446,7 @@ impl<F: Field> allocative::Allocative for SpartanOuterCarry<F> {
 /// large scale) never exists. Re-emulating sources retain the collected
 /// rows as before.
 enum RowsStore {
-    Owned(jolt_witness::OwnedRows),
+    Owned(jolt_witness::RandomAccessRows),
     Retained(Vec<SpartanOuterRow>),
 }
 
@@ -458,15 +458,15 @@ impl RowsStore {
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
-        match witness.owned_rows() {
-            Some(owned) if cycles <= owned.cycles() => Ok(Self::Owned(owned)),
+        match witness.random_access() {
+            Some(rows) if cycles <= rows.cycles() => Ok(Self::Owned(rows)),
             _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
         }
     }
 
     fn access(&self) -> RowsAccess<'_> {
         match self {
-            Self::Owned(owned) => RowsAccess::View(owned.view()),
+            Self::Owned(rows) => RowsAccess::View(rows),
             Self::Retained(rows) => RowsAccess::Retained(rows),
         }
     }
@@ -484,7 +484,7 @@ impl RowsStore {
 
 /// One pass's borrowed row provider.
 enum RowsAccess<'a> {
-    View(jolt_witness::RandomAccessRows<'a>),
+    View(&'a jolt_witness::RandomAccessRows),
     Retained(&'a [SpartanOuterRow]),
 }
 

@@ -14,9 +14,9 @@
 //! is a function of rows `t` and `t + 1`, with padding semantics at
 //! `T - 1`) and the environment ([`WitnessEnv`]).
 
-use common::jolt_device::MemoryLayout;
 use jolt_field::Field;
-use jolt_lookup_tables::JoltLookupQuery;
+use jolt_lookup_tables::{JoltLookupQuery, LookupQuery};
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
     CircuitFlags, JoltCycle, JoltInstruction, JoltInstructionRow, JoltTraceRow as TraceRow,
     NormalizedOperands,
@@ -54,7 +54,13 @@ pub(crate) use ram::ram_access_address;
 /// Non-row inputs of witness extraction: the preprocessing (bytecode PC
 /// mapping, memory layout). Constructed by backends; opaque to consumers.
 pub struct WitnessEnv<'a> {
-    pub(crate) memory_layout: &'a MemoryLayout,
+    pub(crate) preprocessing: &'a JoltProgramPreprocessing,
+}
+
+impl<'a> WitnessEnv<'a> {
+    pub fn new(preprocessing: &'a JoltProgramPreprocessing) -> Self {
+        Self { preprocessing }
+    }
 }
 
 /// The field encoding of an atomic witness value.
@@ -63,21 +69,17 @@ pub trait ToField {
 }
 
 /// The single-sourced derivation of one atomic witness from a trace row.
-pub trait Extract: Sized {
-    fn extract(
-        row: &TraceRow,
-        next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError>;
+pub trait Extract<R = TraceRow>: Sized {
+    fn extract(row: &R, next: Option<&R>, env: &WitnessEnv<'_>) -> Result<Self, WitnessError>;
 }
 
 /// [`Extract`] for indexed witness families ([`OpFlag`], [`InstructionFlag`],
 /// [`LookupTableFlag`]): which member is extracted is bound at the use site.
-pub trait ExtractIndexed<I>: Sized {
+pub trait ExtractIndexed<I, R = TraceRow>: Sized {
     fn extract_indexed(
         index: I,
-        row: &TraceRow,
-        next: Option<&TraceRow>,
+        row: &R,
+        next: Option<&R>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError>;
 }
@@ -152,10 +154,32 @@ pub(crate) fn lookup_query(row: &TraceRow) -> JoltLookupQuery<CompactTraceCycle<
     )
 }
 
-#[inline]
-pub fn lookup_values(row: &TraceRow) -> ((u64, i128), (u64, u128), u64) {
-    lookup_query(row).to_lookup_values::<{ crate::RV64_XLEN }>()
+macro_rules! define_lookup_values {
+    (
+        instructions: [$($(#[$meta:meta])* $kind:ident => $variant:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+    ) => {
+        #[inline]
+        pub fn lookup_values(row: &TraceRow) -> ((u64, i128), (u64, u128), u64) {
+            let cycle = CompactTraceCycle(row);
+            match row.instruction_kind().unwrap_or_default() {
+                JoltInstruction::Noop(_) => ((0, 0), (0, 0), 0),
+                $(
+                    $(#[$meta])*
+                    JoltInstruction::$variant(_) => {
+                        let instruction = jolt_riscv::instructions::$variant(cycle);
+                        (
+                            LookupQuery::<{ crate::RV64_XLEN }>::to_instruction_inputs(&instruction),
+                            LookupQuery::<{ crate::RV64_XLEN }>::to_lookup_operands(&instruction),
+                            LookupQuery::<{ crate::RV64_XLEN }>::to_lookup_output(&instruction),
+                        )
+                    }
+                )*
+            }
+        }
+    };
 }
+
+jolt_riscv::for_each_jolt_instruction_kind!(define_lookup_values);
 
 pub(crate) fn decode_instruction(row: &TraceRow) -> Result<JoltInstruction, WitnessError> {
     JoltInstruction::try_from(instruction_row(row)).map_err(|kind| {

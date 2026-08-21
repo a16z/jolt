@@ -22,9 +22,7 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_witness::{
-    collect_range_into, stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer,
-};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -42,6 +40,9 @@ use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 /// buffer (64 B/cycle, two reused buffers) is the only staging that scales
 /// with the superchunk — columns feed the commit windows by closure.
 const SUPERCHUNK_CYCLES: usize = 1 << 21;
+
+#[cfg(feature = "parallel")]
+const COLLECT_PAR_CHUNK: usize = 1 << 12;
 
 impl<F, PCS> CommitWitness<F, PCS> for OptimizedBackend
 where
@@ -149,8 +150,34 @@ where
 /// the chunk walk's — the pipeline only overlaps extraction with group
 /// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
+fn collect_range_into(
+    access: &jolt_witness::RandomAccessRows,
+    range: std::ops::Range<usize>,
+    out: &mut Vec<CommittedColumnsWitness>,
+) -> Result<(), jolt_witness::WitnessError> {
+    out.clear();
+    let start = range.start;
+    let count = range.end - start;
+    out.reserve(count);
+    let spare = &mut out.spare_capacity_mut()[..count];
+    spare
+        .par_chunks_mut(COLLECT_PAR_CHUNK)
+        .enumerate()
+        .try_for_each(|(chunk, destination)| {
+            let base = start + chunk * COLLECT_PAR_CHUNK;
+            for (offset, slot) in destination.iter_mut().enumerate() {
+                let _ = slot.write(access.window(base + offset)?);
+            }
+            Ok::<_, jolt_witness::WitnessError>(())
+        })?;
+    // SAFETY: every slot was initialized above; the row type is `Copy`.
+    unsafe { out.set_len(count) };
+    Ok(())
+}
+
+#[cfg(feature = "parallel")]
 fn commit_pipelined<F, PCS>(
-    access: &jolt_witness::RandomAccessRows<'_>,
+    access: &jolt_witness::RandomAccessRows,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,

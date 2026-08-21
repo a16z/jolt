@@ -172,7 +172,7 @@ impl RamAccessColumns {
     /// avoiding a full-width `RamAccessBundle` vector at the collection peak.
     #[cfg(feature = "parallel")]
     fn collect_par<F: Field>(
-        access: &RandomAccessRows<'_>,
+        access: &RandomAccessRows,
         cycles: usize,
     ) -> Result<(Self, RamAccessValues), KernelError<F>> {
         const CHUNK: usize = 1 << 12;

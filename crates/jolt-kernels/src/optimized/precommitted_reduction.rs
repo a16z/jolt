@@ -556,7 +556,7 @@ mod tests {
 
     fn with_fixture<R>(
         trace_order: TracePolynomialOrder,
-        f: impl FnOnce(&TraceBackend<'_, OwnedTrace>, &PrecommittedSchedule) -> R,
+        f: impl FnOnce(&TraceBackend<OwnedTrace>, &PrecommittedSchedule) -> R,
     ) -> R {
         let instructions: Vec<JoltInstructionRow> = (0..3u64)
             .map(|index| JoltInstructionRow {
@@ -578,7 +578,8 @@ mod tests {
             max_untrusted_advice_size: UNTRUSTED_ADVICE_MAX_BYTES as u64,
             ..Default::default()
         };
-        let preprocessing = JoltProgramPreprocessing {
+        use std::sync::Arc;
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 instructions,
                 0x8000_0000u64,
@@ -591,8 +592,8 @@ mod tests {
             },
             memory_layout: memory_layout.clone(),
             max_padded_trace_length: 1 << LOG_T,
-        };
-        let program = JoltProgram::default();
+        });
+        let program = Arc::new(JoltProgram::default());
         let rows = vec![TraceRow::default(), TraceRow::default()];
         let device = JoltDevice {
             trusted_advice: (1..=24).collect(),
@@ -654,7 +655,7 @@ mod tests {
         SumcheckOutputClaims<Fr, RA>: OutputClaims<Fr>,
         ConcreteSumcheckChallenges<Fr, RA>: SumcheckChallenges<Fr, JoltChallengeId>,
     {
-        backend: &'a TraceBackend<'a, OwnedTrace>,
+        backend: &'a TraceBackend<OwnedTrace>,
         cycle_relation: &'a RC,
         cycle_claims: &'a SumcheckInputClaims<Fr, RC>,
         cycle_points: &'a SumcheckInputPoints<Fr, RC>,

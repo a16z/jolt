@@ -163,7 +163,7 @@ mod tests {
     use super::*;
 
     const LOG_K_CHUNK: usize = 8;
-    const CHUNKS: usize = FUSED_INC_BITS / LOG_K_CHUNK;
+    const DIGITS: usize = FUSED_INC_BITS / LOG_K_CHUNK;
 
     fn fused_trace() -> Vec<FusedInc> {
         [
@@ -182,28 +182,29 @@ mod tests {
         .collect()
     }
 
+    fn centered(row: usize, radix: i128) -> i128 {
+        if (row as i128) < radix / 2 {
+            row as i128
+        } else {
+            row as i128 - radix
+        }
+    }
+
     #[test]
     fn balanced_digits_and_carry_reconstruct_the_fused_increment() {
+        let radix = 1i128 << LOG_K_CHUNK;
         for (cycle, inc) in fused_trace().iter().enumerate() {
-            let radix = 1i128 << LOG_K_CHUNK;
-            let half = radix / 2;
             let mut reconstructed = 0i128;
-            for index in 0..CHUNKS {
+            for index in 0..DIGITS {
                 let selected_row = inc.selected_row(BalancedIncColumn::Digit {
                     width: LOG_K_CHUNK,
                     index,
                 });
                 assert!(selected_row < 1 << LOG_K_CHUNK, "cycle {cycle}");
-                let digit = if (selected_row as i128) < half {
-                    selected_row as i128
-                } else {
-                    selected_row as i128 - radix
-                };
-                reconstructed += digit << (LOG_K_CHUNK * index);
+                reconstructed += centered(selected_row, radix) << (LOG_K_CHUNK * index);
             }
-            let carry = inc.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK }) as i128;
-            let carry = if carry < half { carry } else { carry - radix };
-            reconstructed += carry << FUSED_INC_BITS;
+            let carry = inc.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK });
+            reconstructed += centered(carry, radix) << FUSED_INC_BITS;
             assert_eq!(reconstructed, inc.0, "cycle {cycle}");
         }
     }
@@ -215,7 +216,7 @@ mod tests {
             padding.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK }),
             0
         );
-        for index in 0..CHUNKS {
+        for index in 0..DIGITS {
             assert_eq!(
                 padding.selected_row(BalancedIncColumn::Digit {
                     width: LOG_K_CHUNK,

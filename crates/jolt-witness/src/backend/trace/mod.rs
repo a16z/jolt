@@ -8,7 +8,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_lookup_tables::LookupTableKind;
 use jolt_program::{
-    execution::{JoltProgram, MemoryImage, RamAccess, TraceOutput, TraceRow, TraceSource},
+    execution::{JoltProgram, RamAccess, TraceOutput, TraceRow, TraceSource},
     preprocess::JoltProgramPreprocessing,
 };
 use jolt_riscv::{
@@ -86,47 +86,45 @@ impl JoltVmWitnessConfig {
     }
 }
 
-pub struct JoltVmWitnessInputs<'a, T: TraceSource> {
-    pub program: &'a JoltProgram,
-    pub preprocessing: &'a JoltProgramPreprocessing,
+pub struct JoltVmWitnessInputs<T: TraceSource> {
+    pub program: Arc<JoltProgram>,
+    pub preprocessing: Arc<JoltProgramPreprocessing>,
     pub trace: TraceOutput<T>,
 }
 
-impl<'a, T: TraceSource> JoltVmWitnessInputs<'a, T> {
-    pub const fn new(
-        program: &'a JoltProgram,
-        preprocessing: &'a JoltProgramPreprocessing,
+impl<T: TraceSource> JoltVmWitnessInputs<T> {
+    pub fn new(
+        program: &Arc<JoltProgram>,
+        preprocessing: &Arc<JoltProgramPreprocessing>,
         trace: TraceOutput<T>,
     ) -> Self {
         Self {
-            program,
-            preprocessing,
+            program: Arc::clone(program),
+            preprocessing: Arc::clone(preprocessing),
             trace,
         }
     }
 }
 
-pub struct TraceBackend<'a, T: TraceSource> {
+pub struct TraceBackend<T: TraceSource> {
     pub config: JoltVmWitnessConfig,
-    pub program: &'a JoltProgram,
-    pub preprocessing: &'a JoltProgramPreprocessing,
-    pub(crate) trace_rows: Arc<Vec<JoltTraceRow>>,
-    pub(crate) device: common::jolt_device::JoltDevice,
-    pub(crate) final_memory: Option<MemoryImage>,
+    pub program: Arc<JoltProgram>,
+    pub preprocessing: Arc<JoltProgramPreprocessing>,
+    pub trace: TraceOutput<Arc<Vec<JoltTraceRow>>>,
     #[cfg(feature = "field-inline")]
-    pub(crate) raw_trace: TraceOutput<jolt_program::execution::OwnedTrace>,
+    pub(crate) raw_trace_rows: Arc<Vec<TraceRow>>,
     source: PhantomData<fn() -> T>,
     #[cfg(feature = "field-inline")]
-    pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness<'a>>,
+    pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness>,
 }
 
-impl<T: TraceSource> ProgramSource for TraceBackend<'_, T> {
+impl<T: TraceSource> ProgramSource for TraceBackend<T> {
     fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
-        self.preprocessing
+        &self.preprocessing
     }
 }
 
-impl<'a, T: TraceSource> TraceBackend<'a, T> {
+impl<T: TraceSource> TraceBackend<T> {
     /// Constructs a backend from a trace produced against `inputs.preprocessing`.
     ///
     /// Panics when the trace violates that producer contract. Use
@@ -135,7 +133,7 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
         clippy::panic,
         reason = "compatibility constructor for trusted prover-generated traces"
     )]
-    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<'a, T>) -> Self {
+    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<T>) -> Self {
         match Self::try_new(config, inputs) {
             Ok(backend) => backend,
             Err(error) => panic!("invalid proof-facing trace: {error}"),
@@ -144,20 +142,20 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
 
     pub fn try_new(
         config: JoltVmWitnessConfig,
-        inputs: JoltVmWitnessInputs<'a, T>,
+        inputs: JoltVmWitnessInputs<T>,
     ) -> Result<Self, WitnessError> {
         let TraceOutput {
-            mut trace,
+            trace: mut source,
             device,
             final_memory,
-            advice_tape: _advice_tape,
+            advice_tape,
         } = inputs.trace;
         let mut trace_rows = Vec::new();
         let mut trailing_padding = 0;
         #[cfg(feature = "field-inline")]
         let mut raw_rows = Vec::new();
-        while let Some(row) = trace.next_row() {
-            let compact = compact_trace_row(&row, inputs.preprocessing)?;
+        while let Some(row) = source.next_row() {
+            let compact = compact_trace_row(&row, &inputs.preprocessing)?;
             if compact == JoltTraceRow::default() {
                 trailing_padding += 1;
             } else {
@@ -168,22 +166,14 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
             #[cfg(feature = "field-inline")]
             raw_rows.push(row);
         }
-        #[cfg(feature = "field-inline")]
-        let raw_trace = TraceOutput::new(
-            jolt_program::execution::OwnedTrace::new(raw_rows),
-            device.clone(),
-            final_memory.clone(),
-            _advice_tape,
-        );
+        let trace = TraceOutput::new(Arc::new(trace_rows), device, final_memory, advice_tape);
         let backend = Self {
             config,
             program: inputs.program,
             preprocessing: inputs.preprocessing,
-            trace_rows: Arc::new(trace_rows),
-            device,
-            final_memory,
+            trace,
             #[cfg(feature = "field-inline")]
-            raw_trace,
+            raw_trace_rows: Arc::new(raw_rows),
             source: PhantomData,
             #[cfg(feature = "field-inline")]
             field_inline: None,

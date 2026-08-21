@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
 
-impl<T: TraceSource + Clone> TraceBackend<'_, T> {
+impl<T: TraceSource> TraceBackend<T> {
     /// Materializes one cycle-domain witness column by walking the trace
     /// once; all per-witness logic lives on `W`.
     pub(crate) fn materialize_cycle<F: Field, W: Extract + ToField>(
@@ -105,18 +105,16 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     /// One pass over `2^log_t` cycles with the one-row lookahead window;
     /// rows beyond the trace are padding (default) rows.
     ///
-    /// Extraction is pure per cycle window, so the walk is index-parallel.
-    fn walk_cycles<V: Send>(
+    /// Extraction is pure per cycle window and parallel when enabled.
+    fn walk_cycles<V: Copy + Send>(
         &self,
         value: impl Fn(&TraceRow, Option<&TraceRow>, &WitnessEnv<'_>) -> Result<V, WitnessError>
             + Send
             + Sync,
     ) -> Result<Vec<V>, WitnessError> {
         let rows = checked_pow2(self.config.log_t)?;
-        let env = WitnessEnv {
-            memory_layout: &self.preprocessing.memory_layout,
-        };
-        let physical = self.trace_rows.as_slice();
+        let env = WitnessEnv::new(&self.preprocessing);
+        let physical = self.trace.trace.as_slice();
         let padding = TraceRow::default();
         let window = |index: usize| {
             let current = physical.get(index).unwrap_or(&padding);
@@ -124,30 +122,19 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
             value(current, next, &env)
         };
         #[cfg(feature = "parallel")]
-        return crate::consumer::par_collect_windows(rows, window);
+        return jolt_utils::par_collect_windows(rows, window);
         #[cfg(not(feature = "parallel"))]
         return (0..rows).map(window).collect();
     }
 }
 
-impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
-    fn random_access(&self) -> Option<crate::RandomAccessRows<'_>> {
+impl<T: TraceSource> RowSource for TraceBackend<T> {
+    fn random_access(&self) -> Option<crate::RandomAccessRows> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
         Some(crate::RandomAccessRows::new(
-            &self.trace_rows,
+            std::sync::Arc::clone(&self.trace.trace),
             cycles,
-            WitnessEnv {
-                memory_layout: &self.preprocessing.memory_layout,
-            },
-        ))
-    }
-
-    fn owned_rows(&self) -> Option<crate::OwnedRows> {
-        let cycles = checked_pow2(self.config.log_t).ok()?;
-        Some(crate::OwnedRows::new(
-            std::sync::Arc::clone(&self.trace_rows),
-            cycles,
-            self.preprocessing.memory_layout.clone(),
+            std::sync::Arc::clone(&self.preprocessing),
         ))
     }
 
@@ -167,10 +154,8 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
                 ),
             });
         }
-        let env = WitnessEnv {
-            memory_layout: &self.preprocessing.memory_layout,
-        };
-        let physical = self.trace_rows.as_slice();
+        let env = WitnessEnv::new(&self.preprocessing);
+        let physical = self.trace.trace.as_slice();
         let padding = TraceRow::default();
         let mut position = range.start;
         while position < range.end {
@@ -191,7 +176,7 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
     }
 }
 
-impl<T: TraceSource + Clone> BundleSource for TraceBackend<'_, T> {
+impl<T: TraceSource> BundleSource for TraceBackend<T> {
     fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
         crate::collect_bundles(self, checked_pow2(self.config.log_t)?)
     }

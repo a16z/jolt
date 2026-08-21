@@ -2,11 +2,10 @@ use akita_config::proof_optimized::fp128::Field as AkitaField;
 use rand_core::RngCore;
 
 use crate::{
-    AdditiveGroup, AkitaAccumulator, AkitaSignedProductAccumulator, AkitaSmallScalarAccumulator,
-    CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore, FixedByteSize, FixedBytes,
-    FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt, RandomSampling, ReducingBytes,
-    RingCore, TranscriptChallenge, WithAccumulator, WithSignedProductAccumulator,
-    WithSmallScalarAccumulator,
+    AdditiveGroup, AkitaAccumulator, AkitaSignedAccumulator, CanonicalBitLength, CanonicalBytes,
+    CanonicalU64, Field, FieldCore, FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible,
+    MulPow2, MulPrimitiveInt, RandomSampling, ReducingBytes, RingCore, TranscriptChallenge,
+    WithAccumulator, WithSignedProductAccumulator, WithSmallScalarAccumulator,
 };
 
 impl AdditiveGroup for AkitaField {}
@@ -110,11 +109,11 @@ impl WithAccumulator for AkitaField {
 }
 
 impl WithSmallScalarAccumulator for AkitaField {
-    type SmallScalarAccumulator = AkitaSmallScalarAccumulator;
+    type SmallScalarAccumulator = AkitaSignedAccumulator;
 }
 
 impl WithSignedProductAccumulator for AkitaField {
-    type SignedProductAccumulator = AkitaSignedProductAccumulator;
+    type SignedProductAccumulator = AkitaSignedAccumulator;
 }
 
 impl Field for AkitaField {}

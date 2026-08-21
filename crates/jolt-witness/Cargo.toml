@@ -24,7 +24,6 @@ field-inline = [
 ]
 
 [dependencies]
-common.workspace = true
 jolt-claims.workspace = true
 jolt-witness-derive.workspace = true
 jolt-field.workspace = true
@@ -37,3 +36,4 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+common.workspace = true

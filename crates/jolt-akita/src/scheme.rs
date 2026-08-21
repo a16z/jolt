@@ -32,16 +32,6 @@ fn split_commit_output(
     (output.committed_group, output.hint)
 }
 
-/// Prover-only cleanup after a commitment has produced its opening hint.
-pub trait PostCommitmentCleanup: CommitmentScheme {
-    /// Releases backend state that can be reconstructed from the setup or
-    /// opening hint before the opening proof needs it again.
-    fn release_post_commit_residency(
-        setup: &Self::ProverSetup,
-        hint: &Self::OpeningHint,
-    ) -> Result<(), OpeningsError>;
-}
-
 /// Prover seam for committing the packed trace directly from selected one-hot rows.
 pub trait TraceOneHotCommitment: CommitmentScheme {
     fn commit_trace_one_hot(
@@ -50,15 +40,9 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
-}
 
-impl PostCommitmentCleanup for AkitaScheme {
-    fn release_post_commit_residency(
-        setup: &Self::ProverSetup,
-        _hint: &Self::OpeningHint,
-    ) -> Result<(), OpeningsError> {
-        setup.release_post_commit_ntt_residency()
-    }
+    /// Releases backend state that can be rebuilt before the opening proof.
+    fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError>;
 }
 
 impl AkitaScheme {
@@ -167,51 +151,6 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::OneHot(backend_polynomials.into()),
-        )
-    }
-
-    /// Commits the prefix-packed trace without constructing padded per-column
-    /// index vectors or Akita's generic one-hot block representation.
-    pub fn commit_trace_one_hot(
-        setup: &AkitaProverSetup,
-        layout_digest: [u8; 32],
-        column_capacity: usize,
-        rows: Arc<dyn TraceOneHotRows>,
-    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        let source = TracePackedOneHot::new(
-            setup.one_hot_k(),
-            AKITA_SOURCE_RING_DIMENSION,
-            column_capacity,
-            rows,
-        )
-        .map_err(commit_failed)?;
-        let num_vars = akita_prover::RootPolyMeta::num_vars(&source);
-        Self::validate_commit_shape(setup, num_vars, 1)?;
-        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
-        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let (backend_commitment, backend_hint) = with_backend_pool(|| match setup.one_hot_k() {
-            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
-                backend_prover_setup,
-                std::slice::from_ref(&source),
-                &stack,
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-            ),
-            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
-                backend_prover_setup,
-                std::slice::from_ref(&source),
-                &stack,
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-            ),
-            _ => unreachable!("the one-hot setup geometry was validated during setup"),
-        })
-        .map(split_commit_output)
-        .map_err(commit_failed)?;
-        Self::package_commitment(
-            layout_digest,
-            num_vars,
-            backend_commitment,
-            backend_hint,
-            AkitaHintPolynomials::TraceOneHot(vec![source].into()),
         )
     }
 
@@ -367,7 +306,45 @@ impl TraceOneHotCommitment for AkitaScheme {
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Self::commit_trace_one_hot(setup, layout_digest, column_capacity, rows)
+        let source = TracePackedOneHot::new(
+            setup.one_hot_k(),
+            AKITA_SOURCE_RING_DIMENSION,
+            column_capacity,
+            rows,
+        )
+        .map_err(commit_failed)?;
+        let num_vars = akita_prover::RootPolyMeta::num_vars(&source);
+        Self::validate_commit_shape(setup, num_vars, 1)?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::TraceOneHot(source),
+        )
+    }
+
+    fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError> {
+        setup.release_post_commit_ntt_residency()
     }
 }
 
@@ -667,10 +644,8 @@ impl CommitmentScheme for AkitaScheme {
 impl TransparentObjectSetup for AkitaScheme {
     /// The singleton commitment-object setup convention (advice byte columns,
     /// `ProgramOneHot`): one polynomial at `num_vars`, seeded by the object
-    /// plan's layout digest. Every
-    /// auxiliary packed object commits through the sparse-unit/dense flavor,
-    /// so the one-hot backend setup — which dominates the setup cost at these
-    /// shapes — is never built.
+    /// plan's layout digest. Auxiliary packed objects use the sparse-unit/dense
+    /// flavor, so their setup omits the costly one-hot backend.
     fn transparent_object_setup(
         num_vars: usize,
         layout_digest: [u8; 32],

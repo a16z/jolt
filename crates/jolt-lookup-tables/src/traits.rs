@@ -234,31 +234,6 @@ macro_rules! impl_jolt_lookup_query {
                     )*
                 }
             }
-
-        }
-
-        impl<C> JoltLookupQuery<C>
-        where
-            C: JoltCycle + Copy,
-        {
-            /// Computes all proof-facing lookup values with one dynamic dispatch.
-            #[inline]
-            pub fn to_lookup_values<const XLEN: usize>(&self) -> ((u64, i128), (u64, u128), u64) {
-                match self.instruction_kind {
-                    JoltInstruction::Noop(_) => ((0, 0), (0, 0), 0),
-                    $(
-                        $(#[$meta])*
-                        JoltInstruction::$variant(_) => {
-                            let instruction = jolt_riscv::instructions::$variant(self.cycle);
-                            (
-                                LookupQuery::<XLEN>::to_instruction_inputs(&instruction),
-                                LookupQuery::<XLEN>::to_lookup_operands(&instruction),
-                                LookupQuery::<XLEN>::to_lookup_output(&instruction),
-                            )
-                        }
-                    )*
-                }
-            }
         }
     };
 }
@@ -270,7 +245,7 @@ mod tests {
     use super::*;
     use jolt_riscv::{
         instructions::{Add, Ld, Noop},
-        Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionRow, JoltInstructionRowData,
+        Flags, InterleavedBitsMarker, JoltInstructionRow, JoltInstructionRowData,
         NormalizedOperands,
     };
 
@@ -332,41 +307,6 @@ mod tests {
 
         fn ram_write_value(&self) -> Option<u64> {
             None
-        }
-    }
-
-    #[test]
-    fn fused_lookup_values_match_individual_queries() {
-        let operands = NormalizedOperands {
-            rd: Some(1),
-            rs1: Some(2),
-            rs2: Some(3),
-            imm: 17,
-        };
-        for instruction_kind in [
-            JoltInstruction::Noop(Noop(())),
-            JoltInstruction::Add(Add(())),
-            JoltInstruction::Ld(Ld(())),
-        ] {
-            let cycle = TestCycle {
-                instruction: JoltInstructionRow {
-                    instruction_kind,
-                    operands,
-                    ..Default::default()
-                },
-                rs1: Some(11),
-                rs2: Some(23),
-                rd: Some((29, 31)),
-            };
-            let query = JoltLookupQuery::new(instruction_kind, cycle);
-            assert_eq!(
-                query.to_lookup_values::<64>(),
-                (
-                    LookupQuery::<64>::to_instruction_inputs(&query),
-                    LookupQuery::<64>::to_lookup_operands(&query),
-                    LookupQuery::<64>::to_lookup_output(&query),
-                )
-            );
         }
     }
 

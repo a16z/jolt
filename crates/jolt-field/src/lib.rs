@@ -98,9 +98,7 @@ pub use transcript_challenge::TranscriptChallenge;
 pub use with_accumulator::WithAccumulator;
 
 #[cfg(feature = "akita")]
-pub use akita_accumulators::{
-    AkitaAccumulator, AkitaSignedProductAccumulator, AkitaSmallScalarAccumulator,
-};
+pub use akita_accumulators::{AkitaAccumulator, AkitaSignedAccumulator};
 
 pub mod limbs;
 pub use limbs::Limbs;

@@ -106,7 +106,12 @@ impl Extract for RemappedRamAddress {
     ) -> Result<Self, WitnessError> {
         Ok(Self(
             ram_access_address(row)
-                .and_then(|address| env.memory_layout.remap_word_address(address).ok())
+                .and_then(|address| {
+                    env.preprocessing
+                        .memory_layout
+                        .remap_word_address(address)
+                        .ok()
+                })
                 .flatten(),
         ))
     }

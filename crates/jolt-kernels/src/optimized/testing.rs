@@ -130,7 +130,8 @@ pub(crate) fn with_ram_fixture_init<R>(
         },
         ..load
     };
-    let preprocessing = JoltProgramPreprocessing {
+    use std::sync::Arc;
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
             vec![load, store],
             load.address as u64,
@@ -140,8 +141,8 @@ pub(crate) fn with_ram_fixture_init<R>(
         ram: RAMPreprocessing::default(),
         memory_layout: memory_layout.clone(),
         max_padded_trace_length: 1 << shape.log_t,
-    };
-    let program = JoltProgram::default();
+    });
+    let program = Arc::new(JoltProgram::default());
 
     let mut state = vec![0u64; shape.ram_k];
     let trusted_advice: Vec<u8> = if init_words.is_empty() {

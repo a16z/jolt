@@ -3,8 +3,20 @@
 use jolt_field::{Field, RingAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial, UnivariatePoly};
 use jolt_witness::{
-    collect_par_map, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
+    stream_witnesses, RandomAccessRows, RowSource, StreamConsumer, WitnessBundle, WitnessError,
 };
+
+pub(crate) fn collect_par_map<B: WitnessBundle, V: Copy + Send>(
+    access: &RandomAccessRows,
+    cycles: usize,
+    pack: impl Fn(B) -> V + Send + Sync,
+) -> Result<Vec<V>, WitnessError> {
+    let window = |index| access.window::<B>(index).map(&pack);
+    #[cfg(feature = "parallel")]
+    return jolt_utils::par_collect_windows(cycles, window);
+    #[cfg(not(feature = "parallel"))]
+    (0..cycles).map(window).collect()
+}
 
 /// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
 /// rayon extraction dispatch amortizes (the stock bundle pass uses 2^12-row
@@ -17,7 +29,7 @@ const COLLECT_ROWS_CHUNK: usize = 1 << 16;
 /// realloc). Chunk size never changes the collected bundles — the pass
 /// carries the lookahead row across chunk boundaries — so this is walk-shape
 /// only.
-pub(crate) fn collect_rows<B: WitnessBundle + Clone + Send + Sync>(
+pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
@@ -253,7 +265,7 @@ impl<F: Field> SplitLt<F> {
 /// collected rows. The generic twin of the spartan-outer kernel's store,
 /// for every carry-style typed-row consumer.
 pub(crate) enum BundleStore<B> {
-    Owned(jolt_witness::OwnedRows),
+    Owned(jolt_witness::RandomAccessRows),
     Retained(Vec<B>),
 }
 
@@ -267,7 +279,7 @@ impl<B> BundleStore<B> {
     }
 }
 
-impl<B: WitnessBundle + Clone + Send + Sync> BundleStore<B> {
+impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
     /// Resolve for a witness plane: the owning handle when the source is
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.
@@ -275,15 +287,15 @@ impl<B: WitnessBundle + Clone + Send + Sync> BundleStore<B> {
         witness: &dyn jolt_witness::JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, crate::KernelError<F>> {
-        match witness.owned_rows() {
-            Some(owned) if cycles <= owned.cycles() => Ok(Self::Owned(owned)),
+        match witness.random_access() {
+            Some(rows) if cycles <= rows.cycles() => Ok(Self::Owned(rows)),
             _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
         }
     }
 
     pub(crate) fn access(&self) -> BundleAccess<'_, B> {
         match self {
-            Self::Owned(owned) => BundleAccess::View(owned.view()),
+            Self::Owned(rows) => BundleAccess::View(rows),
             Self::Retained(rows) => BundleAccess::Retained(rows),
         }
     }
@@ -291,7 +303,7 @@ impl<B: WitnessBundle + Clone + Send + Sync> BundleStore<B> {
 
 /// One pass's borrowed row provider over a [`BundleStore`].
 pub(crate) enum BundleAccess<'a, B> {
-    View(jolt_witness::RandomAccessRows<'a>),
+    View(&'a jolt_witness::RandomAccessRows),
     Retained(&'a [B]),
 }
 

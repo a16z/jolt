@@ -20,6 +20,8 @@
 #[cfg(all(feature = "prover-fixtures", feature = "akita"))]
 #[expect(clippy::expect_used)]
 mod support {
+    use std::sync::Arc;
+
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
@@ -144,19 +146,21 @@ mod support {
     pub fn rebuild_full_program(
         prover_data: &LegacyCommittedProgramProverData<AkitaPackedScheme>,
         memory_layout: &MemoryLayout,
-    ) -> JoltProgramPreprocessing {
-        JoltProgramPreprocessing {
+    ) -> Arc<JoltProgramPreprocessing> {
+        Arc::new(JoltProgramPreprocessing {
             bytecode: prover_data.full.bytecode.as_ref().clone(),
             ram: prover_data.full.ram.clone(),
             memory_layout: memory_layout.clone(),
             max_padded_trace_length: MAX_PADDED_TRACE_LENGTH,
-        }
+        })
     }
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "akita"))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
+    use std::sync::Arc;
+
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::akita;
@@ -219,14 +223,13 @@ mod muldiv {
             akita_verifier_preprocessing(&legacy_preprocessing, verifier_setup, None);
 
         // --- Modular side: trace independently, derive the config, prove.
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = TraceBackend::new(
@@ -347,14 +350,13 @@ mod muldiv {
             akita_verifier_preprocessing(&legacy_preprocessing, verifier_setup, None);
 
         // --- Modular side, with the same forced regime on the wire config.
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let mut config =
             support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
         config.one_hot_config = jolt_claims::protocols::jolt::JoltOneHotConfig {
@@ -396,6 +398,8 @@ mod muldiv {
 #[cfg(all(feature = "prover-fixtures", feature = "akita"))]
 #[expect(clippy::expect_used)]
 mod advice {
+    use std::sync::Arc;
+
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::akita;
@@ -471,7 +475,7 @@ mod advice {
         // --- Modular side: trace with the advice inputs, prove with the
         // precommitted trusted object's commitment (the port will carry the
         // full object's opening material through a packed prover-data shape).
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(
             &jolt_program,
@@ -482,9 +486,8 @@ mod advice {
         );
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = TraceBackend::new(
@@ -610,7 +613,7 @@ mod advice {
         let verifier_preprocessing =
             akita_verifier_preprocessing(&legacy_preprocessing, verifier_setup, None);
 
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(
             &jolt_program,
@@ -621,9 +624,8 @@ mod advice {
         );
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = TraceBackend::new(
@@ -662,6 +664,8 @@ mod advice {
 #[cfg(all(feature = "prover-fixtures", feature = "akita"))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod committed {
+    use std::sync::Arc;
+
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::akita;
@@ -731,7 +735,7 @@ mod committed {
                 .expect("legacy committed prover data"),
             memory_layout,
         );
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
         let padded_output = support::pad_trace(trace_output, config.trace_length);
@@ -747,7 +751,7 @@ mod committed {
             verifier: verifier_preprocessing,
             pcs_setup: object_setup,
             committed_program: Some(jolt_prover::CommittedProgramProverData {
-                full: full_program.clone(),
+                full: (*full_program).clone(),
                 program_one_hot: modular_program_one_hot,
             }),
         };

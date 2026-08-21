@@ -561,25 +561,12 @@ pub struct AkitaProverHint {
 /// time and reused when opening. The variant doubles as the source-kind
 /// discriminator, so a hint can never pair one kind's metadata with another
 /// kind's polynomials.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
     OneHot(Arc<[AkitaBackendOneHotPoly]>),
-    TraceOneHot(Arc<[TracePackedOneHot]>),
+    TraceOneHot(TracePackedOneHot),
     SparseUnit(Arc<[AkitaBackendSparsePoly]>),
-}
-
-impl Clone for AkitaHintPolynomials {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Dense(polys) => Self::Dense(Arc::clone(polys)),
-            Self::OneHot(polys) => Self::OneHot(Arc::clone(polys)),
-            Self::TraceOneHot(polys) => {
-                Self::TraceOneHot(polys.iter().cloned().collect::<Vec<_>>().into())
-            }
-            Self::SparseUnit(polys) => Self::SparseUnit(Arc::clone(polys)),
-        }
-    }
 }
 
 impl Default for AkitaHintPolynomials {
@@ -609,7 +596,7 @@ impl AkitaHintPolynomials {
         match self {
             Self::Dense(polys) => polys.len(),
             Self::OneHot(polys) => polys.len(),
-            Self::TraceOneHot(polys) => polys.len(),
+            Self::TraceOneHot(_) => 1,
             Self::SparseUnit(polys) => polys.len(),
         }
     }
@@ -619,9 +606,9 @@ impl AkitaHintPolynomials {
             Self::OneHot(polys) => polys
                 .first()
                 .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
-            Self::TraceOneHot(polys) => polys
-                .first()
-                .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
+            Self::TraceOneHot(polynomial) => {
+                akita_prover::RootPolyMeta::onehot_chunk_size(polynomial)
+            }
             Self::Dense(_) | Self::SparseUnit(_) => None,
         }
     }

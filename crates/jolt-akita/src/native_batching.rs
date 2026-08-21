@@ -385,7 +385,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 )?
             }
             AkitaHintPolynomials::TraceOneHot(one_hot) => {
-                let refs = one_hot.iter().collect::<Vec<_>>();
+                let refs = [one_hot];
                 prove_one_hot::<crate::trace_onehot::TracePackedOneHot>(
                     setup,
                     point,
