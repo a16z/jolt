@@ -83,7 +83,7 @@ The span taxonomy (versioned, normative) lives in `crates/jolt-profiling/src/tax
 
 ### Crate Structure
 
-The workspace is mid-decomposition: `crates/` holds the modular stack (jolt-verifier, jolt-prover, jolt-sumcheck, jolt-poly, jolt-blindfold, jolt-witness, jolt-openings, jolt-r1cs, jolt-dory, jolt-transcript, jolt-utils, …27 crates), while **crates/jolt-prover-legacy** is the legacy monolith mapped below. Top-level crates: `tracer`, `jolt-sdk`, `jolt-inlines`, `common`.
+The workspace is mid-decomposition: `crates/` holds the modular stack (jolt-verifier, jolt-prover, jolt-sumcheck, jolt-poly, jolt-blindfold, jolt-witness, jolt-openings, jolt-r1cs, jolt-dory, jolt-transcript, jolt-utils, …26 crates), while **crates/jolt-prover-legacy** is the legacy monolith mapped below. Top-level crates: `tracer`, `jolt-sdk`, `jolt-inlines`, `common`.
 
 Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shout`, pinned in the root `Cargo.toml`.
 
@@ -91,7 +91,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 
 - `host/`: Guest ELF compilation and program analysis (feature-gated behind `host`)
 - `zkvm/`: Jolt PIOP — prover, verifier, R1CS/Spartan, memory checking, instruction lookups
-- `poly/`: Polynomial types, commitment schemes (Dory, HyperKZG), opening proofs
+- `poly/`: Polynomial types, commitment schemes (Dory, Hyrax, Pedersen), opening proofs
 - `field/`: `JoltField` trait and BN254 scalar field implementation
 - `subprotocols/`: Sumcheck (batched, streaming, univariate skip), booleanity checks, BlindFold ZK protocol
 - `msm/`: Multi-scalar multiplication
@@ -248,7 +248,7 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 ### Lint Policy
 
 - Workspace enforces `allow_attributes = "deny"` — use `#[expect(...)]` instead of `#[allow(...)]`
-- The jolt-verifier runtime closure (19 crates, listed in `specs/verifier-closure-lints.md`) carries stricter crate-root lints: panic-source denies (`indexing_slicing` in control-plane crates, `panic_in_result_fn`, `wildcard_enum_match_arm`, ...), `forbid(unsafe_code)` where a crate has no unsafe, and numeric-discipline denies in jolt-verifier itself — which additionally denies `unreachable`, the only abort macro that escapes both `panic` and `panic_in_result_fn`. New code in those crates must fix the lint or add `#[expect(clippy::..., reason = "...")]` at the narrowest scope with a real justification
+- The jolt-verifier runtime closure (18 crates, listed in `specs/verifier-closure-lints.md`) carries stricter crate-root lints: panic-source denies (`indexing_slicing` in control-plane crates, `panic_in_result_fn`, `wildcard_enum_match_arm`, ...), `forbid(unsafe_code)` where a crate has no unsafe, and numeric-discipline denies in jolt-verifier itself — which additionally denies `unreachable`, the only abort macro that escapes both `panic` and `panic_in_result_fn`. New code in those crates must fix the lint or add `#[expect(clippy::..., reason = "...")]` at the narrowest scope with a real justification
 - `.unwrap()` and `.expect()` are fine in tests. In non-test code, avoid them unless the alternative significantly hurts readability (e.g., infallible fixed-size array conversions). When used, annotate the function with `#[expect(clippy::unwrap_used)]` or `#[expect(clippy::expect_used)]`
 - Use `#[expect(clippy::...)]` on test modules to blanket-suppress test-inappropriate lints rather than per-function annotations
 
