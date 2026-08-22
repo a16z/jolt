@@ -38,8 +38,6 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
-    UntrustedAdviceReconstruction,
-    TrustedAdviceReconstruction,
     ProgramImageReconstruction,
     BytecodeChunkReconstruction,
 }
@@ -300,38 +298,6 @@ pub enum InstructionRaVirtualizationPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UntrustedAdviceReconstructionChallenge {
-    Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UntrustedAdviceReconstructionPublic {
-    /// `eq` over the full `(byte ‖ place ‖ word)` domain at the bound point —
-    /// weights the booleanity leg.
-    EqBytePlaceWord,
-    /// `eq` over the `(place ‖ word)` sub-domain at the bound point — weights
-    /// the per-byte-place hamming leg (byte variables are summed, not
-    /// eq-bound).
-    EqPlaceWord,
-    /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
-    /// evaluation at the bound `(byte ‖ place)` coordinates — decodes the
-    /// one-hot entries into the little-endian word value.
-    ByteDecode,
-    /// `eq` of the bound word coordinates against the advice claim
-    /// reduction's word point — reduces the incoming word claim to this
-    /// relation's bound point.
-    EqWord,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum TrustedAdviceReconstructionPublic {
-    /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
-    /// evaluation at the bound `(byte ‖ place)` coordinates (the word point
-    /// is fixed by the incoming claim, so no `eq` derived is needed).
-    ByteDecode,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ProgramImageReconstructionPublic {
     /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
     /// evaluation at the bound `(byte ‖ place)` coordinates (the word point
@@ -382,7 +348,6 @@ pub enum JoltChallengeId {
     InstructionInput(InstructionInputChallenge),
     InstructionReadRaf(InstructionReadRafChallenge),
     InstructionRaVirtualization(InstructionRaVirtualizationChallenge),
-    UntrustedAdviceReconstruction(UntrustedAdviceReconstructionChallenge),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionChallenge),
 }
 
@@ -415,8 +380,6 @@ pub enum JoltCommittedPolynomial {
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,
-    TrustedAdviceBytes,
-    UntrustedAdviceBytes,
     // Lattice-mode precommitted bytecode decompositions: the per-lane one-hot /
     // flag / byte decompositions of `BytecodeChunk(chunk)`, plus the program
     // image byte encoding. Their claims are produced by the reconstruction
@@ -446,15 +409,6 @@ pub enum JoltCommittedPolynomial {
         chunk: usize,
     },
     ProgramImageBytes,
-}
-
-impl JoltCommittedPolynomial {
-    pub fn advice_bytes(kind: JoltAdviceKind) -> Self {
-        match kind {
-            JoltAdviceKind::Trusted => Self::TrustedAdviceBytes,
-            JoltAdviceKind::Untrusted => Self::UntrustedAdviceBytes,
-        }
-    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -599,8 +553,6 @@ pub enum JoltDerivedId {
     InstructionInput(InstructionInputPublic),
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
-    UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
-    TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
     ProgramImageReconstruction(ProgramImageReconstructionPublic),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
     /// Test-only derived id for toy relations that define their own

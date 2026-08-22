@@ -26,7 +26,7 @@ fn main() {
     );
     let only = args.next();
 
-    for family in family_specs(output_dir) {
+    for family in family_specs(output_dir).expect("every family must declare a valid contract") {
         if only
             .as_deref()
             .is_some_and(|only| !family.module_name.ends_with(only))

@@ -26,9 +26,6 @@
 )]
 
 use jolt_claims::protocols::jolt::lattice::relations::{
-    advice_reconstruction::{
-        TrustedAdviceReconstructionOutputClaims, UntrustedAdviceReconstructionOutputClaims,
-    },
     booleanity::LatticeBooleanityOutputClaims,
     bytecode_reconstruction::BytecodeChunkReconstructionOutputClaims,
     program_image_reconstruction::ProgramImageReconstructionOutputClaims,
@@ -530,17 +527,9 @@ fn visit_reconstruction<F: JoltField>(
     f: &mut dyn FnMut(&mut F),
 ) {
     let ReconstructionOutputClaims {
-        untrusted_advice,
-        trusted_advice,
         bytecode,
         program_image,
     } = claims;
-    if let Some(UntrustedAdviceReconstructionOutputClaims { bytes }) = untrusted_advice {
-        f(bytes);
-    }
-    if let Some(TrustedAdviceReconstructionOutputClaims { bytes }) = trusted_advice {
-        f(bytes);
-    }
     if let Some(BytecodeChunkReconstructionOutputClaims {
         register_selectors,
         circuit_flags,
@@ -727,8 +716,9 @@ fn every_commitment_wire_rejects_perturbation() {
     }
 }
 
-/// Proof-shape tampers: a swapped phase proof, dropped reconstruction /
-/// auxiliary proofs, and swapped auxiliary object proofs — each fail-closed.
+/// Proof-shape tampers: a swapped phase proof, a spurious auxiliary proof on a
+/// case that has none, dropped committed-program reconstruction / auxiliary
+/// proofs, and swapped auxiliary object proofs — each fail-closed.
 #[test]
 fn akita_proof_shape_tampers_reject() {
     let muldiv = akita_muldiv_case();
@@ -736,16 +726,23 @@ fn akita_proof_shape_tampers_reject() {
     proof.stages.stage6b_sumcheck_proof = proof.stages.stage3_sumcheck_proof.clone();
     assert_rejects(muldiv.verify_proof(&proof));
 
+    // Both advice objects are precommitted batch groups, so the advice case
+    // carries no auxiliary proofs at all — a spurious one must be rejected on
+    // count. (Clearing the list would be a no-op here, hence a vacuous tamper.)
     let advice = akita_advice_case();
     let mut proof = advice.proof.clone();
-    proof.stages.reconstruction_sumcheck_proof = None;
-    assert_rejects(advice.verify_proof(&proof));
-
-    let mut proof = advice.proof.clone();
-    proof.joint_opening_proof.auxiliary.clear();
+    assert!(proof.joint_opening_proof.auxiliary.is_empty());
+    proof
+        .joint_opening_proof
+        .auxiliary
+        .push(proof.joint_opening_proof.main_batch.clone());
     assert_rejects(advice.verify_proof(&proof));
 
     let committed = akita_committed_muldiv_case();
+    let mut proof = committed.proof.clone();
+    proof.stages.reconstruction_sumcheck_proof = None;
+    assert_rejects(committed.verify_proof(&proof));
+
     let mut proof = committed.proof.clone();
     proof.joint_opening_proof.auxiliary.clear();
     assert_rejects(committed.verify_proof(&proof));
@@ -756,7 +753,7 @@ fn akita_proof_shape_tampers_reject() {
 }
 
 /// The advice case fails closed when its trusted-advice commitment is absent:
-/// the reconstruction outputs have nothing to bind against.
+/// the direct dense opening has no commitment to bind against.
 #[test]
 fn akita_advice_commitment_presence_rejects() {
     let advice = akita_advice_case();

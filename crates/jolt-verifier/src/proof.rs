@@ -33,15 +33,15 @@ pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 #[cfg(feature = "akita")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaJointOpeningProof<P> {
-    pub one_hot_trace: P,
+    pub main_batch: P,
     pub auxiliary: Vec<P>,
 }
 
 #[cfg(feature = "akita")]
 impl<P> AkitaJointOpeningProof<P> {
-    pub fn new(one_hot_trace: P, auxiliary: Vec<P>) -> Self {
+    pub fn new(main_batch: P, auxiliary: Vec<P>) -> Self {
         Self {
-            one_hot_trace,
+            main_batch,
             auxiliary,
         }
     }

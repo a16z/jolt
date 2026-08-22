@@ -6,7 +6,9 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
-use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
+use jolt_openings::{
+    CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
+};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
@@ -15,7 +17,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::reconstruction::prove_reconstruction;
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
-use super::witness::AdviceOneHot;
+use super::witness::AdviceObject;
 use super::JoltAkitaBackend;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -33,7 +35,7 @@ pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    trusted_advice: Option<&AdviceOneHot<PCS>>,
+    trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
@@ -41,7 +43,7 @@ where
     F: JoltField + CanonicalBytes + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
-    PCS::Output: Clone + PartialEq + AppendToTranscript,
+    PCS::Output: Clone + PartialEq + AppendToTranscript + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -168,14 +170,11 @@ where
         &mut transcript,
     )?;
 
-    // The precommitted auxiliary objects arrive whole — the trusted-advice
-    // object as an argument, the ProgramOneHot objects retained in the
-    // preprocessing — so stage 8 opens them directly; stage 0 already
-    // cross-checked their commitments against the verifier preprocessing.
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
         preprocessing,
+        &stage0.commitment,
         stage0.hint,
         stage0.untrusted_advice.as_ref(),
         trusted_advice,
@@ -183,6 +182,7 @@ where
             .committed_program
             .as_ref()
             .map(|data| &data.program_one_hot),
+        &stage6b.clear_output,
         &stage7.clear_output,
         &reconstruction.clear_output,
         &mut transcript,

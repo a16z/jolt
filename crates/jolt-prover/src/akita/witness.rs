@@ -1,6 +1,7 @@
 //! Prover-side packed (Akita) witness assembly: the `OneHotTrace` columns
-//! from the witness plane's typed rows and the sparse unit-valued auxiliary
-//! objects (advice byte columns, the precommitted `ProgramOneHot`).
+//! from the witness plane's typed rows, the advice word objects, the
+//! sparse unit-valued precommitted `ProgramOneHot`, and the shape-only
+//! stand-ins the native openings take.
 
 use std::sync::Arc;
 
@@ -8,15 +9,15 @@ use jolt_akita::TraceOneHotRows;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_bytes_packing_plan, precommitted_packing_plan, PrecommittedPackingShape,
+    advice_packing_plan, precommitted_packing_plan, PrecommittedPackingShape,
     PrefixPackedObjectPlan,
 };
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
-use jolt_field::{CanonicalBytes, JoltField};
+use jolt_field::{CanonicalBytes, JoltField, Ring};
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
-use jolt_poly::MultilinearPoly;
+use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
     instructions::Noop, Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction,
@@ -349,63 +350,45 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
     }))
 }
 
-/// A packed advice commitment object (`UntrustedAdviceOneHot` per proof,
-/// `TrustedAdviceOneHot` precommitted): the byte one-hot column and its
-/// commitment data over the transparent per-object setup.
-pub struct AdviceOneHot<PCS: CommitmentScheme> {
+/// One advice-word commitment object: one field coefficient per
+/// canonical little-endian `u64`, embedded in slot zero when Akita's dense
+/// schedule floor exceeds the logical word arity.
+pub struct AdviceObject<PCS: CommitmentScheme> {
     pub plan: PrefixPackedObjectPlan,
-    pub byte_column: SparseUnitPolynomial<PCS::Field>,
+    pub polynomial: Polynomial<PCS::Field>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub setup: PCS::ProverSetup,
     pub word_vars: usize,
 }
 
-/// Builds a packed advice byte commitment object from raw advice bytes: per
-/// `(place ‖ word)` row the hot value is the advice byte, zero-padded past
-/// the actual advice length — the same zero padding the base word polynomial
-/// carries. The setup is derived from the public advice shape with the same
-/// fixed seed on both sides (the setup is transparent).
-pub fn commit_advice_one_hot<PCS>(
+/// Builds the canonical zero-padded advice-word commitment. The setup
+/// is derived from the public advice shape with the same fixed seed on both
+/// sides (the setup is transparent).
+pub fn commit_advice<PCS>(
     kind: JoltAdviceKind,
     advice_bytes: &[u8],
     max_advice_bytes: usize,
-) -> Result<AdviceOneHot<PCS>, ProverError<PCS::Field>>
+) -> Result<AdviceObject<PCS>, ProverError<PCS::Field>>
 where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
-    if advice_bytes.len() > max_advice_bytes {
-        return Err(ProverError::Unsupported {
-            reason: "advice bytes exceed the configured maximum advice size",
-        });
+    let words = common::advice::canonical_advice_words(advice_bytes, max_advice_bytes)
+        .map_err(commit_failed)?;
+    let word_vars = words.len().ilog2() as usize;
+    let plan = advice_packing_plan(kind, word_vars).map_err(commit_failed)?;
+    let physical_vars = plan.packing().packed_num_vars();
+    let (setup, _) = PCS::transparent_object_setup(physical_vars, plan.layout_digest())
+        .map_err(commit_failed)?;
+    let mut evaluations = vec![PCS::Field::default(); 1usize << physical_vars];
+    for (evaluation, word) in evaluations.iter_mut().zip(words) {
+        *evaluation = PCS::Field::from_u64(word);
     }
-    if max_advice_bytes < WORD_BYTES || !max_advice_bytes.is_power_of_two() {
-        return Err(ProverError::Unsupported {
-            reason: "maximum advice size must be a nonzero power of two of at least one word",
-        });
-    }
-    let words = max_advice_bytes / WORD_BYTES;
-    let word_vars = words.ilog2() as usize;
-    let plan = advice_bytes_packing_plan(kind, word_vars).map_err(commit_failed)?;
-    let cell_vars = plan.packing().packed_num_vars();
-    let limb_bits = WORD_BYTES.ilog2() as usize;
-    let mut one_positions = Vec::with_capacity(WORD_BYTES * words);
-    for limb in 0..WORD_BYTES {
-        for word_index in 0..words {
-            let byte = advice_bytes
-                .get(word_index * 8 + limb)
-                .copied()
-                .unwrap_or(0) as usize;
-            one_positions.push((((byte << limb_bits) | limb) << word_vars) | word_index);
-        }
-    }
-    let byte_column = SparseUnitPolynomial::new(cell_vars, one_positions);
-    let (setup, _verifier_setup) =
-        PCS::transparent_object_setup(cell_vars, plan.layout_digest()).map_err(commit_failed)?;
-    let (commitment, hint) = PCS::commit(&byte_column, &setup).map_err(commit_failed)?;
-    Ok(AdviceOneHot {
+    let polynomial = Polynomial::new(evaluations);
+    let (commitment, hint) = PCS::commit(&polynomial, &setup).map_err(commit_failed)?;
+    Ok(AdviceObject {
         plan,
-        byte_column,
+        polynomial,
         commitment,
         hint,
         setup,
@@ -705,25 +688,11 @@ pub fn assemble_precommitted_witness<F: JoltField>(
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_akita::{AkitaField, AkitaScheme};
+    use jolt_akita::AkitaField;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 
     use super::*;
-
-    #[test]
-    fn rejects_noncanonical_advice_shapes() {
-        for max_advice_bytes in [0, 4, 12, 24] {
-            assert!(matches!(
-                commit_advice_one_hot::<AkitaScheme>(
-                    JoltAdviceKind::Untrusted,
-                    &[],
-                    max_advice_bytes,
-                ),
-                Err(ProverError::Unsupported { .. })
-            ));
-        }
-    }
 
     #[test]
     fn rejects_mismatched_one_hot_trace_dimensions() {
