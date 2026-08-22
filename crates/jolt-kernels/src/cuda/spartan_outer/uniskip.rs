@@ -11,7 +11,7 @@ use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::LIMBS;
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::split_eq::split_eq_tables;
+use crate::cuda::common::split_eq::split_eq_tables_window;
 
 pub const EXTENDED_SIZE: usize = 2 * OUTER_UNISKIP_DOMAIN_SIZE - 1;
 
@@ -70,6 +70,29 @@ pub fn extended_evals<F: Field>(
     tau: &[F],
     log_t: usize,
 ) -> Result<Vec<F>, CudaError> {
+    extended_evals_window(context, inputs, matrices, tau, log_t, 0, 1, inputs.cycles())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one cycle window of the uni-skip reduce: the shard index, shard count and window               length all pick out which cycles this device sums over"
+)]
+pub fn extended_evals_window<F: Field>(
+    context: &CudaKernelContext,
+    inputs: &DeviceR1csInputs,
+    matrices: &ConstraintMatrices<F>,
+    tau: &[F],
+    log_t: usize,
+    shard: usize,
+    shards: usize,
+    cycles: usize,
+) -> Result<Vec<F>, CudaError> {
+    if cycles > inputs.cycles() {
+        return Err(CudaError::LengthMismatch {
+            expected: inputs.cycles(),
+            got: cycles,
+        });
+    }
     let nodes = extended_nodes();
     let variables = super::witness::VARIABLES;
     let columns: Vec<usize> = (1..=variables).collect();
@@ -82,9 +105,8 @@ pub fn extended_evals<F: Field>(
     }
     let device_forms = forms.upload(context)?;
 
-    let (e_in, e_out, in_bits) = split_eq_tables(context, &tau[..=log_t])?;
+    let (e_in, e_out, in_bits) = split_eq_tables_window(context, &tau[..=log_t], shard, shards)?;
 
-    let cycles = inputs.cycles();
     let threads = cycles.div_ceil(STRIP);
     let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
         CudaError::InvariantViolation {

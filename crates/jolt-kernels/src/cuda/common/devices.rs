@@ -11,6 +11,13 @@ impl CycleWindow {
     pub(crate) const fn end(&self) -> usize {
         self.start + self.len
     }
+
+    pub(crate) fn residency(&self, cycles: usize) -> Self {
+        Self {
+            start: self.start,
+            len: self.len + usize::from(self.end() < cycles),
+        }
+    }
 }
 
 const MIN_WITNESS_WINDOW: usize = 1 << 12;

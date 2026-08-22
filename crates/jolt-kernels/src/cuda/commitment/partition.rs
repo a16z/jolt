@@ -170,7 +170,7 @@ pub(super) fn split_columns<F: Field>(
                     source.rows,
                     plan.cycles,
                     window.start,
-                    window.len,
+                    window.residency(plan.cycles).len,
                     source.preprocessing,
                 )
             })?;

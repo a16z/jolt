@@ -9,9 +9,13 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::cuda::common::device_columns::device_pc_words;
-use crate::cuda::witness::{session_atom_columns, session_device_trace};
+use crate::cuda::common::devices::{fan_out, witness_windows, DeviceTask};
+use crate::cuda::witness::{
+    session_atom_columns, session_atom_columns_window, session_device_trace,
+    session_device_trace_window,
+};
 
-use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::{require_context, CudaBackend};
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -49,6 +53,97 @@ impl<F: Field> allocative::Allocative for SpartanOuterState<F> {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the uni-skip reduce needs the session and witness to build each device's window \
+              alongside the inputs, matrices and point the reduce itself consumes"
+)]
+fn uniskip_extended<F: Field>(
+    context: &'static CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: &DeviceR1csInputs,
+    matrices: &ConstraintMatrices<F>,
+    tau: &[F],
+    log_t: usize,
+    cycles: usize,
+) -> Result<Vec<F>, KernelError<F>> {
+    let windows = witness_windows(cycles);
+    let shards = windows.len();
+    if shards <= 1 {
+        return Ok(uniskip::extended_evals(
+            context, inputs, matrices, tau, log_t,
+        )?);
+    }
+
+    let mut shard_inputs: Vec<DeviceR1csInputs> = Vec::with_capacity(shards - 1);
+    for (ordinal, window) in windows.iter().enumerate().skip(1) {
+        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "a Spartan outer uni-skip window names an absent device",
+        })?;
+        let resident = window.residency(cycles);
+        let trace = session_device_trace_window(device, session, witness, cycles, &resident)?;
+        let atoms = session_atom_columns_window(device, session, witness, cycles, &resident)?;
+        let pc_words = trace.mapped_pc_words()?;
+        shard_inputs.push(DeviceR1csInputs::from_device(
+            device,
+            &trace,
+            &atoms,
+            &pc_words,
+            resident.len,
+        )?);
+    }
+
+    let mut tasks: Vec<DeviceTask<'_, Vec<F>, KernelError<F>>> = Vec::with_capacity(shards);
+    for (ordinal, window) in windows.iter().enumerate() {
+        let shard_input = if ordinal == 0 {
+            inputs
+        } else {
+            shard_inputs
+                .get(ordinal - 1)
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "a Spartan outer uni-skip window has no device inputs",
+                })?
+        };
+        tasks.push(Box::new(move || {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a Spartan outer uni-skip window names an absent device",
+            })?;
+            Ok(
+                tracing::info_span!("so_uniskip_window", device = ordinal, cycles = window.len)
+                    .in_scope(|| {
+                        uniskip::extended_evals_window(
+                            device,
+                            shard_input,
+                            matrices,
+                            tau,
+                            log_t,
+                            ordinal,
+                            shards,
+                            window.len,
+                        )
+                    })?,
+            )
+        }));
+    }
+
+    let mut parts = fan_out(tasks)?.into_iter();
+    let mut extended = parts.next().ok_or(KernelError::InvariantViolation {
+        reason: "the Spartan outer uni-skip reduce produced no window",
+    })?;
+    for part in parts {
+        if part.len() != extended.len() {
+            return Err(KernelError::InvariantViolation {
+                reason: "two Spartan outer uni-skip windows disagree on the extended node count",
+            });
+        }
+        for (total, addend) in extended.iter_mut().zip(&part) {
+            *total += *addend;
+        }
+    }
+    Ok(extended)
+}
+
 impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
     fn prepare(
         &self,
@@ -76,7 +171,9 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
                 reason: "the CUDA Spartan outer kernels cover the 19-row RV64 constraint system                          over its 35 inputs; the field-inline system appends rows and columns",
             });
         }
-        let extended = uniskip::extended_evals(context, &inputs, &matrices, tau, log_t)?;
+        let extended = uniskip_extended::<F>(
+            context, session, witness, &inputs, &matrices, tau, log_t, cycles,
+        )?;
 
         session.park(SpartanOuterState {
             context,
@@ -190,12 +287,16 @@ mod tests {
     use jolt_witness::{collect_bundles, JoltWitnessPlane};
     use proptest::prelude::*;
 
+    use super::columns::DeviceR1csInputs;
+    use super::uniskip;
     use super::witness::{self, SpartanOuterWitness};
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::devices::CycleWindow;
     use crate::cuda::common::testing::{
         arb_point, drive, fr, probe_input_claim, with_r1cs_witness,
     };
+    use crate::cuda::witness::{session_atom_columns_window, session_device_trace_window};
     use crate::reference::spartan_outer::{
         materialize_input_tables, row_value_tables, ReferenceOuterRemainder,
     };
@@ -345,6 +446,80 @@ mod tests {
                 .prepare(&mut session, witness, inputs)
                 .expect("reference remainder prepare")
         }
+    }
+
+    #[test]
+    fn uniskip_cycle_windows_sum_to_the_whole_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let tau: Vec<Fr> = (0..LOG_T + 2).map(|i| fr(23 + 5 * i as u64)).collect();
+        let matrices = spartan_outer_constraints::<Fr>();
+        let cycles = 1usize << LOG_T;
+
+        with_r1cs_witness(LOG_T, RAM_K, one_hot(), 9, |witness| {
+            let inputs = |session: &mut ProofSession, window: &CycleWindow| {
+                let resident = window.residency(cycles);
+                let trace =
+                    session_device_trace_window::<Fr>(context, session, witness, cycles, &resident)
+                        .expect("windowed residency");
+                let atoms =
+                    session_atom_columns_window::<Fr>(context, session, witness, cycles, &resident)
+                        .expect("windowed atom columns");
+                let pc_words = trace.mapped_pc_words().expect("windowed pc words");
+                DeviceR1csInputs::from_device(context, &trace, &atoms, &pc_words, resident.len)
+                    .expect("windowed r1cs inputs")
+            };
+
+            let mut session = ProofSession::default();
+            let whole_window = CycleWindow {
+                start: 0,
+                len: cycles,
+            };
+            let whole = uniskip::extended_evals(
+                context,
+                &inputs(&mut session, &whole_window),
+                &matrices,
+                &tau,
+                LOG_T,
+            )
+            .expect("whole-domain extended evals");
+
+            for shards in [2usize, 4] {
+                let len = cycles / shards;
+                let mut summed = vec![Fr::from_u64(0); whole.len()];
+                for shard in 0..shards {
+                    let window = CycleWindow {
+                        start: shard * len,
+                        len,
+                    };
+                    let part = uniskip::extended_evals_window(
+                        context,
+                        &inputs(&mut session, &window),
+                        &matrices,
+                        &tau,
+                        LOG_T,
+                        shard,
+                        shards,
+                        len,
+                    )
+                    .expect("windowed extended evals");
+                    for (total, addend) in summed.iter_mut().zip(&part) {
+                        *total += *addend;
+                    }
+                }
+                prop_assert_eq!(
+                    summed,
+                    whole.clone(),
+                    "the uni-skip extended evaluations over {} cycle windows must sum to the \
+                     whole-domain values: each node is a sum over cycles, and a contiguous cycle \
+                     window is a contiguous window of the split-eq outer factor",
+                    shards
+                );
+            }
+            Ok(())
+        })
+        .expect("r1cs witness fixture");
     }
 
     proptest! {

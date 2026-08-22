@@ -477,7 +477,13 @@ where
                 let identity = witness_identity(source);
                 for (ordinal, trace) in parked {
                     if let Some(window) = windows.get(ordinal) {
-                        park_device_trace(session, ordinal, identity, window, trace);
+                        park_device_trace(
+                            session,
+                            ordinal,
+                            identity,
+                            &window.residency(cycles),
+                            trace,
+                        );
                     }
                 }
                 let finished = tracing::info_span!("cuda_commit_tier2", columns = columns.len())
