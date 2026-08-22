@@ -187,7 +187,7 @@ impl<const P: u128> Fp128<P> {
     fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         #[cfg(target_arch = "aarch64")]
         {
-            Self::mul_raw_aarch64(a, b)
+            Self::mul_raw_aarch64_dispatch(a, b)
         }
         #[cfg(not(target_arch = "aarch64"))]
         {
@@ -308,7 +308,53 @@ impl<const P: u128> Fp128<P> {
     /// Benchmarked at 1.29x throughput improvement on Apple M4.
     #[cfg(target_arch = "aarch64")]
     #[inline(always)]
-    fn mul_raw_aarch64(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    fn mul_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        if Self::C_LO == 0xffff_a7f7 {
+            Self::mul_raw_aarch64_a7f7(a, b)
+        } else {
+            Self::mul_raw_aarch64_reg(a, b)
+        }
+    }
+
+    /// A7F7 multiplication through the exact instruction body imported by
+    /// the HOL Light proof.
+    ///
+    /// `x0:x1` starts with `a` and finishes with the result. `x2:x3` contains
+    /// `b`. `x4` contains `C = 0xffff_a7f7`. The body uses `x5:x12` and the
+    /// condition flags as temporary state. It does not access memory or the
+    /// stack.
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn mul_raw_aarch64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [mut out_lo, mut out_hi] = a;
+        let [b_lo, b_hi] = b;
+        // SAFETY: The register contract is listed above. Every temporary
+        // register is declared, and the body does not access memory or stack.
+        unsafe {
+            asm!(
+                include_str!("../../asm/aarch64/fp128_mul_body.inc"),
+                inout("x0") out_lo,
+                inout("x1") out_hi,
+                in("x2") b_lo,
+                in("x3") b_hi,
+                in("x4") Self::C_LO,
+                out("x5") _,
+                out("x6") _,
+                out("x7") _,
+                out("x8") _,
+                out("x9") _,
+                out("x10") _,
+                out("x11") _,
+                out("x12") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn mul_raw_aarch64_reg(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let out_lo: u64;
         let out_hi: u64;
         // SAFETY: register-only inline asm (pure, nomem, nostack) over plain
@@ -435,7 +481,7 @@ impl<const P: u128> Fp128<P> {
     /// 31-instruction AArch64 inline-asm squaring with Solinas reduction:
     /// 3 widening multiplies (vs 4 for general mul), the cross term doubled
     /// via shifted-register operands, then the same fold-1 + ccmp
-    /// canonicalize as [`mul_raw_aarch64`](Self::mul_raw_aarch64).
+    /// canonicalize as [`mul_raw_aarch64_reg`](Self::mul_raw_aarch64_reg).
     #[cfg(target_arch = "aarch64")]
     #[inline(always)]
     fn sqr_raw_aarch64(a: [u64; 2]) -> [u64; 2] {
@@ -443,7 +489,7 @@ impl<const P: u128> Fp128<P> {
         let out_hi: u64;
         // SAFETY: register-only inline asm (pure, nomem, nostack) over plain
         // integer operands; implements exactly `sqr_wide` + `reduce_4`, with
-        // the same `C < 2^32` fold-2 invariant as `mul_raw_aarch64`.
+        // the same `C < 2^32` fold-2 invariant as `mul_raw_aarch64_reg`.
         unsafe {
             asm!(
                 // Squaring schoolbook: 3 widening muls
@@ -521,9 +567,14 @@ impl<const P: u128> Fp128<P> {
         acc
     }
 
-    /// Create from a canonical representative in `[0, P)`.
+    /// Create from a canonical representative in `[0, P)` without checking it.
+    ///
+    /// # Safety
+    ///
+    /// `x` must be less than `P`. Violating this condition breaks the private
+    /// canonical representation invariant used by the arithmetic kernels.
     #[inline]
-    pub fn from_canonical_u128(x: u128) -> Self {
+    pub unsafe fn from_canonical_u128(x: u128) -> Self {
         debug_assert!(x < P);
         Self(split(x))
     }
@@ -1099,7 +1150,7 @@ mod tests {
                     "sub asm vs portable, a={a:?} b={b:?}"
                 );
                 assert_eq!(
-                    Fp128::<P>::mul_raw_aarch64(a, b),
+                    Fp128::<P>::mul_raw_aarch64_dispatch(a, b),
                     Fp128::<P>::mul_raw_portable(a, b),
                     "mul asm vs portable, a={a:?} b={b:?}"
                 );

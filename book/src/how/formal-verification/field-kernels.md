@@ -1,8 +1,9 @@
 # Formal verification of field kernels
 
 Jolt proves the scalar addition and subtraction kernels for
-`Prime128OffsetA7F7` on AArch64 and x86-64. This chapter explains the claim,
-the connection to Rust, and the limits of the proof.
+`Prime128OffsetA7F7` on AArch64 and x86-64. It also proves scalar
+multiplication on AArch64. This chapter explains the claim, the connection to
+Rust, and the limits of the proof.
 
 The field modulus is
 
@@ -19,7 +20,7 @@ returns the canonical sum or difference modulo `p`.
 
 ```mermaid
 flowchart TD
-    Public[Public Prime128OffsetA7F7 add or subtract]
+    Public[Public Prime128OffsetA7F7 operation]
     Dispatch[Architecture dispatch]
     Body[Fixed instruction bytes]
     Witness[Optimized public witness]
@@ -75,9 +76,10 @@ The AArch64 body uses the following registers.
 | Addition temporary values | `x5:x9` |
 | Subtraction temporary values | `x5:x7` |
 
-The body does not access memory or the stack. The standalone object adds one
-`ret` instruction. The subroutine theorem proves the return through `x30` and
-uses the normal AArch64 set of registers that a callee may change.
+Multiplication also uses `x10:x12` as temporary registers. None of the proved
+bodies accesses memory or the stack. Each standalone object adds one `ret`
+instruction. The subroutine theorem proves the return through `x30` and uses
+the normal AArch64 set of registers that a callee may change.
 
 ## x86-64 register contract
 
@@ -157,6 +159,44 @@ gets its borrow bit and mask value from the actual instruction trace. It then
 uses the named lemma to prove the final modular result. Replacing the machine
 value with an assumption would not be sufficient.
 
+## Multiplication
+
+The AArch64 multiplication theorem states
+
+```text
+result = (m * n) mod p
+```
+
+The machine proof follows the same stages as the code.
+
+1. Four widening multiplications and their carry chains reconstruct the exact
+   256 bit product. The proof also shows that the apparent carry above bit 255
+   is zero for two 128 bit inputs.
+2. The first Solinas fold replaces the high 128 bits by their product with
+   `C`, using `2^128 = C mod p`.
+3. The remaining high limb is at most `C`. Its product with `C` therefore fits
+   in one 64 bit word. This justifies the second fold without a hidden
+   overflow assumption.
+4. The twice-folded value is below `2p`. The last add, compare, and select
+   instructions either keep it or subtract `p` once.
+
+The final result is therefore both congruent to `m * n` and in the canonical
+range. The theorem covers the exact 35-instruction A7F7 body and the callable
+body followed by `ret`.
+
+The generic AArch64 multiplication body still exists for other moduli. The
+A7F7 dispatch uses the fixed-register shared body because that exact byte
+sequence is what HOL Light imports. The modulus check is a compile-time
+constant after monomorphization.
+
+## The modulus is prime
+
+`JOLT_FP128_A7F7_PRIME` proves `prime p` with a checked Pocklington
+certificate. This is separate from the kernel theorems. Addition,
+subtraction, and multiplication modulo a number do not themselves prove that
+the number is prime. Field algorithms such as inversion rely on this extra
+fact.
+
 ## The theorem layers
 
 Each operation has two theorem levels.
@@ -185,23 +225,27 @@ small logical kernel.
 | `fp128_sub_x86_64_object.ml` | Exact subtraction bytes and instruction execution rule |
 | `fp128_add_x86_64_correct.ml` | Reloadable addition theorems |
 | `fp128_sub_x86_64_correct.ml` | Reloadable subtraction theorems |
-| Generated combined entry | One process per architecture that proves both operations |
+| `fp128_mul_object.ml` | Exact AArch64 multiplication words and execution rule |
+| `fp128_mul_correct.ml` | Reloadable AArch64 multiplication theorems |
+| `fp128_prime.ml` | Checked primality certificate for the A7F7 modulus |
+| Generated combined entry | One process per architecture that proves all covered operations |
 
 The AArch64 proof files retain one source file per operation. The runner loads
-both into one proof process, so the processor model is initialized once. Both
+them into one proof process, so the processor model is initialized once. Both
 architectures use the same public witness and artifact checker.
 
 ## Exact claim
 
 | Architecture | Proved object | Public Rust connection |
 | --- | --- | --- |
-| AArch64 | Complete fixed body and `ret` | The complete optimized witness words match the constant load, body, and `ret` |
+| AArch64 add, subtract, multiply | Complete fixed body and `ret` | The complete optimized witness words match the constant load, body, and `ret` |
 | x86-64 | Complete fixed body and `ret` | The constant load and fixed body occur exactly once inside the optimized witness |
 
 These claims cover the A7F7 register kernels. They do not cover the small
 offset immediate kernels or the generic register fallback used by other field
-types. They also do not cover packed SIMD arithmetic, multiplication, the full
-proof system, or an arbitrary downstream executable.
+types. They also do not cover packed SIMD arithmetic, x86-64 multiplication,
+squaring, inversion, the full proof system, or an arbitrary downstream
+executable.
 
 ## Trust boundary
 
@@ -215,9 +259,13 @@ The result relies on the following assumptions.
 * A downstream application checks that its final optimized binary reaches the
   proved operation from the pinned Jolt revision.
 
-Jolt owns the kernel, theorem, proof object, and public operation witness.
-Akita owns the check of its final verifier binary. Neither repository can
-claim the other part without running that check.
+Jolt owns the kernel, theorem, proof object, and public operation witness. This
+does not yet prove every executable that depends on Jolt. In particular, the
+current legacy `akita` feature in `jolt-prover` still reaches the external
+Akita field implementation instead of `Prime128OffsetA7F7`. These theorems do
+not cover that path. The final cutover must route the production prover or
+verifier through this field type and inspect that final binary before making
+an end-to-end production claim.
 
 ## Running the checks
 
@@ -238,6 +286,14 @@ S2N_BIGNUM_DIR=/path/to/s2n-bignum \
 The first bytecode load imports the x86 model and object and can take several
 minutes. After an edit, reload only the correctness file with the command
 printed by the session. Reloads take seconds because the model stays in memory.
+
+For AArch64 multiplication, use
+
+```sh
+HOL_LIGHT_DIR=/path/to/hol-light \
+S2N_BIGNUM_DIR=/path/to/s2n-bignum \
+  ./proofs/hol-light/dev.sh aarch64 mul
+```
 
 Run the complete clean check with
 

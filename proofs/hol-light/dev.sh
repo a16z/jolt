@@ -7,16 +7,25 @@ PROOF_DIR="$REPO_ROOT/proofs/hol-light"
 : "${HOL_LIGHT_DIR:?set HOL_LIGHT_DIR to a HOL Light checkout}"
 : "${S2N_BIGNUM_DIR:?set S2N_BIGNUM_DIR to an s2n-bignum checkout}"
 
-if [[ $# -ne 2 || "$1" != x86_64 || ! "$2" =~ ^(add|sub)$ ]]; then
-  echo "usage: $0 x86_64 add|sub" >&2
+if [[ $# -ne 2 ]]; then
+  echo "usage: $0 x86_64 add|sub | aarch64 mul" >&2
   exit 2
 fi
+ARCHITECTURE=$1
 OPERATION=$2
+if [[ "$ARCHITECTURE" == x86_64 && "$OPERATION" =~ ^(add|sub)$ ]]; then
+  DEV_ENTRY=fp128_x86_64_dev.ml
+elif [[ "$ARCHITECTURE" == aarch64 && "$OPERATION" == mul ]]; then
+  DEV_ENTRY=fp128_aarch64_dev.ml
+else
+  echo "usage: $0 x86_64 add|sub | aarch64 mul" >&2
+  exit 2
+fi
 
-"$PROOF_DIR/check.sh" bytes x86_64
+"$PROOF_DIR/check.sh" bytes "$ARCHITECTURE"
 
-TARGET_DIR="$REPO_ROOT/target/fp128-formal-verification/x86_64"
-if [[ "$(uname -m)" == arm64 ]]; then
+TARGET_DIR="$REPO_ROOT/target/fp128-formal-verification/$ARCHITECTURE"
+if [[ "$ARCHITECTURE" == x86_64 && "$(uname -m)" == arm64 ]]; then
   PROFILE_ROOT="$TARGET_DIR/x86_64-apple-darwin/release"
 else
   PROFILE_ROOT="$TARGET_DIR/release"
@@ -39,7 +48,11 @@ find_newest_object() {
 
 ADD_OBJECT=$(find_newest_object fp128_add.o)
 SUB_OBJECT=$(find_newest_object fp128_sub.o)
-if [[ "$(uname -s)" == Darwin ]]; then
+MUL_OBJECT=""
+if [[ "$ARCHITECTURE" == aarch64 ]]; then
+  MUL_OBJECT=$(find_newest_object fp128_mul.o)
+fi
+if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
   ELF_OBJECT_DIR="$TARGET_DIR/x86_64-elf"
   mkdir -p "$ELF_OBJECT_DIR"
   clang --target=x86_64-unknown-linux-gnu \
@@ -61,6 +74,10 @@ trap cleanup EXIT
 
 printf '#use "%s/hol.ml";;\nloadt "%s/fp128_x86_64_dev.ml";;\n' \
   "$HOL_LIGHT_DIR" "$PROOF_DIR" >"$DEV_INIT"
+if [[ "$DEV_ENTRY" != fp128_x86_64_dev.ml ]]; then
+  printf '#use "%s/hol.ml";;\nloadt "%s/%s";;\n' \
+    "$HOL_LIGHT_DIR" "$PROOF_DIR" "$DEV_ENTRY" >"$DEV_INIT"
+fi
 
 if [[ -z "${LINE_EDITOR:-}" ]]; then
   if command -v rlwrap >/dev/null 2>&1; then
@@ -72,14 +89,15 @@ if [[ -z "${LINE_EDITOR:-}" ]]; then
   fi
 fi
 
-echo "Starting one persistent HOL Light session for x86-64 $OPERATION."
-echo "The first load is slow. Later theorem reloads reuse the loaded x86 model."
+echo "Starting one persistent HOL Light session for $ARCHITECTURE $OPERATION."
+echo "The first load is slow. Later theorem reloads reuse the loaded processor model."
 
 cd "$S2N_BIGNUM_DIR"
 export JOLT_FP128_PROOF_DIR="$PROOF_DIR"
 export JOLT_FP128_DEV_OPERATION="$OPERATION"
 export JOLT_FP128_ADD_OBJECT="$ADD_OBJECT"
 export JOLT_FP128_SUB_OBJECT="$SUB_OBJECT"
+export JOLT_FP128_MUL_OBJECT="$MUL_OBJECT"
 export HOL_ML_PATH="$DEV_INIT"
 export LINE_EDITOR
 if [[ -d "$HOL_LIGHT_DIR/_opam" ]]; then

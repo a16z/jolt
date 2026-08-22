@@ -105,6 +105,10 @@ CARGO_TARGET_DIR="$PROOF_TARGET" \
 
 ADD_OBJECT=$(find_newest_object fp128_add.o)
 SUB_OBJECT=$(find_newest_object fp128_sub.o)
+MUL_OBJECT=""
+if [[ "$ARCHITECTURE" == aarch64 ]]; then
+  MUL_OBJECT=$(find_newest_object fp128_mul.o)
+fi
 PRODUCTION_WITNESS="$PROFILE_ROOT/examples/fp128_production_witness"
 
 if [[ "$MODE" == bytes ]]; then
@@ -112,11 +116,17 @@ if [[ "$MODE" == bytes ]]; then
 else
   echo "[2/5] Checking exact object and public witness bytes"
 fi
-python3 "$REPO_ROOT/scripts/check_fp128_proof_artifacts.py" \
-  --architecture "$ARCHITECTURE" \
-  --add-object "$ADD_OBJECT" \
-  --sub-object "$SUB_OBJECT" \
+CHECKER_ARGS=(
+  --architecture "$ARCHITECTURE"
+  --add-object "$ADD_OBJECT"
+  --sub-object "$SUB_OBJECT"
   --production-witness "$PRODUCTION_WITNESS"
+)
+if [[ -n "$MUL_OBJECT" ]]; then
+  CHECKER_ARGS+=(--mul-object "$MUL_OBJECT")
+fi
+python3 "$REPO_ROOT/scripts/check_fp128_proof_artifacts.py" \
+  "${CHECKER_ARGS[@]}"
 
 if [[ "$MODE" == bytes ]]; then
   exit 0
@@ -197,14 +207,17 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
   ARCHITECTURE_LABEL=x86-64
   ADD_THEOREM=JOLT_FP128_ADD_X86_64_SUBROUTINE_CORRECT
   SUB_THEOREM=JOLT_FP128_SUB_X86_64_SUBROUTINE_CORRECT
-  printf 'print_endline "[HOL 1/2] Proving x86-64 addition";;\n' >"$COMBINED_SOURCE"
+  MUL_THEOREM=""
+  printf 'print_endline "[HOL 1/3] Proving x86-64 addition";;\n' >"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_common.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_x86_64_common.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_add_x86_64_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_add_x86_64_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 2/2] Proving x86-64 subtraction";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 2/3] Proving x86-64 subtraction";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_sub_x86_64_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_sub_x86_64_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 3/3] Certifying the A7F7 modulus";;\n' >>"$COMBINED_SOURCE"
+  printf 'loadt "%s/fp128_prime.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   PROOF_SOURCES=(
     "$COMBINED_SOURCE"
     "$PROOF_DIR/fp128_common.ml"
@@ -213,21 +226,31 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
     "$PROOF_DIR/fp128_add_x86_64_correct.ml"
     "$PROOF_DIR/fp128_sub_x86_64_object.ml"
     "$PROOF_DIR/fp128_sub_x86_64_correct.ml"
+    "$PROOF_DIR/fp128_prime.ml"
   )
 else
   ARCHITECTURE_LABEL=AArch64
   ADD_THEOREM=JOLT_FP128_ADD_SUBROUTINE_CORRECT
   SUB_THEOREM=JOLT_FP128_SUB_SUBROUTINE_CORRECT
-  printf 'print_endline "[HOL 1/2] Proving AArch64 addition";;\n' >"$COMBINED_SOURCE"
+  MUL_THEOREM=JOLT_FP128_MUL_SUBROUTINE_CORRECT
+  printf 'print_endline "[HOL 1/4] Proving AArch64 addition";;\n' >"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_common.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_add_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 2/2] Proving AArch64 subtraction";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 2/4] Proving AArch64 subtraction";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_sub_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 3/4] Proving AArch64 multiplication";;\n' >>"$COMBINED_SOURCE"
+  printf 'loadt "%s/fp128_mul_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
+  printf 'loadt "%s/fp128_mul_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 4/4] Certifying the A7F7 modulus";;\n' >>"$COMBINED_SOURCE"
+  printf 'loadt "%s/fp128_prime.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   PROOF_SOURCES=(
     "$COMBINED_SOURCE"
     "$PROOF_DIR/fp128_common.ml"
     "$PROOF_DIR/fp128_add_correct.ml"
     "$PROOF_DIR/fp128_sub_correct.ml"
+    "$PROOF_DIR/fp128_mul_object.ml"
+    "$PROOF_DIR/fp128_mul_correct.ml"
+    "$PROOF_DIR/fp128_prime.ml"
   )
 fi
 
@@ -235,6 +258,12 @@ printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
   "$ADD_THEOREM" "$ADD_THEOREM" >>"$COMBINED_SOURCE"
 printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
   "$SUB_THEOREM" "$SUB_THEOREM" >>"$COMBINED_SOURCE"
+if [[ -n "$MUL_THEOREM" ]]; then
+  printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
+    "$MUL_THEOREM" "$MUL_THEOREM" >>"$COMBINED_SOURCE"
+fi
+printf 'Printf.printf "val JOLT_FP128_A7F7_PRIME : thm = %%s\\n" (string_of_thm JOLT_FP128_A7F7_PRIME);;\n' \
+  >>"$COMBINED_SOURCE"
 
 CACHE_KEY=$(
   {
@@ -256,9 +285,14 @@ echo "[4/5] Loading the $ARCHITECTURE_LABEL model and proving both operations"
 JOLT_FP128_PROOF_DIR="$PROOF_DIR" \
 JOLT_FP128_ADD_OBJECT="$ADD_PROOF_OBJECT" \
 JOLT_FP128_SUB_OBJECT="$SUB_PROOF_OBJECT" \
+JOLT_FP128_MUL_OBJECT="$MUL_OBJECT" \
   "$NATIVE_PROOF" 2>&1 | tee "$LOG_PATH"
-echo "[5/5] Confirming both $ARCHITECTURE_LABEL subroutine theorems"
+echo "[5/5] Confirming the $ARCHITECTURE_LABEL theorems"
 grep -F "val $ADD_THEOREM : thm" "$LOG_PATH"
 grep -F "val $SUB_THEOREM : thm" "$LOG_PATH"
+if [[ -n "$MUL_THEOREM" ]]; then
+  grep -F "val $MUL_THEOREM : thm" "$LOG_PATH"
+fi
+grep -F "val JOLT_FP128_A7F7_PRIME : thm" "$LOG_PATH"
 
 echo "Fp128 $ARCHITECTURE public witness proofs passed."

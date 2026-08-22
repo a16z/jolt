@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connect proved Fp128 add/sub objects to optimized public witnesses."""
+"""Connect proved Fp128 arithmetic objects to optimized public witnesses."""
 
 from __future__ import annotations
 
@@ -27,10 +27,48 @@ AARCH64_SUB_BODY = [
     0xEB0700A0,
     0xDA1F00C1,
 ]
+AARCH64_MUL_BODY = [
+    0x9B027C05,
+    0x9BC27C06,
+    0x9B037C07,
+    0x9BC37C08,
+    0x9B027C29,
+    0x9BC27C2A,
+    0x9B037C2B,
+    0x9BC37C2C,
+    0xAB0700C6,
+    0x1A9F37E7,
+    0xAB0A0108,
+    0x1A9F37EA,
+    0xAB0B0108,
+    0x9A8A354A,
+    0xAB0900C6,
+    0xBA070108,
+    0x9A0A018C,
+    0x9B047D07,
+    0x9BC47D09,
+    0x9B047D8A,
+    0x9BC47D8B,
+    0xAB0700A5,
+    0xBA0900C6,
+    0x1A9F37E8,
+    0xAB0A00C6,
+    0x9A08016C,
+    0x9B047D87,
+    0xAB0700A5,
+    0xBA1F00C6,
+    0x1A9F37E7,
+    0xAB0400A9,
+    0xBA1F00CA,
+    0x7A4038E0,
+    0x9A851120,
+    0x9A861141,
+]
 AARCH64_RET = 0xD65F03C0
 AARCH64_LOAD_A7F7_INTO_W4 = 0x128B0104
 AARCH64_ADD_OBJECT_WORDS = [*AARCH64_ADD_BODY, AARCH64_RET]
 AARCH64_SUB_OBJECT_WORDS = [*AARCH64_SUB_BODY, AARCH64_RET]
+AARCH64_MUL_OBJECT_WORDS = [*AARCH64_MUL_BODY, AARCH64_RET]
 AARCH64_ADD_WITNESS_WORDS = [
     AARCH64_LOAD_A7F7_INTO_W4,
     *AARCH64_ADD_BODY,
@@ -39,6 +77,11 @@ AARCH64_ADD_WITNESS_WORDS = [
 AARCH64_SUB_WITNESS_WORDS = [
     AARCH64_LOAD_A7F7_INTO_W4,
     *AARCH64_SUB_BODY,
+    AARCH64_RET,
+]
+AARCH64_MUL_WITNESS_WORDS = [
+    AARCH64_LOAD_A7F7_INTO_W4,
+    *AARCH64_MUL_BODY,
     AARCH64_RET,
 ]
 
@@ -179,15 +222,23 @@ def require_bytes_once(label: str, actual: bytes, expected: bytes) -> None:
 
 
 def check_aarch64(
-    tool: list[str], add_object: Path, sub_object: Path, witness: Path
+    tool: list[str],
+    add_object: Path,
+    sub_object: Path,
+    mul_object: Path,
+    witness: Path,
 ) -> None:
     add_object_words = read_symbol_words(tool, add_object, "jolt_fp128_add_asm")
     sub_object_words = read_symbol_words(tool, sub_object, "jolt_fp128_sub_asm")
+    mul_object_words = read_symbol_words(tool, mul_object, "jolt_fp128_mul_asm")
     add_witness_words = read_symbol_words(
         tool, witness, "jolt_fp128_add_production_witness"
     )
     sub_witness_words = read_symbol_words(
         tool, witness, "jolt_fp128_sub_production_witness"
+    )
+    mul_witness_words = read_symbol_words(
+        tool, witness, "jolt_fp128_mul_production_witness"
     )
     require_words(
         "standalone addition proof object",
@@ -206,6 +257,16 @@ def check_aarch64(
         "public subtraction witness",
         sub_witness_words,
         AARCH64_SUB_WITNESS_WORDS,
+    )
+    require_words(
+        "standalone multiplication proof object",
+        mul_object_words,
+        AARCH64_MUL_OBJECT_WORDS,
+    )
+    require_words(
+        "public multiplication witness",
+        mul_witness_words,
+        AARCH64_MUL_WITNESS_WORDS,
     )
 
 
@@ -249,13 +310,22 @@ def main() -> None:
     )
     parser.add_argument("--add-object", required=True, type=Path)
     parser.add_argument("--sub-object", required=True, type=Path)
+    parser.add_argument("--mul-object", type=Path)
     parser.add_argument("--production-witness", required=True, type=Path)
     parser.add_argument("--llvm-objdump")
     args = parser.parse_args()
 
     tool = find_llvm_objdump(args.llvm_objdump)
     if args.architecture == "aarch64":
-        check_aarch64(tool, args.add_object, args.sub_object, args.production_witness)
+        if args.mul_object is None:
+            parser.error("--mul-object is required for aarch64")
+        check_aarch64(
+            tool,
+            args.add_object,
+            args.sub_object,
+            args.mul_object,
+            args.production_witness,
+        )
     else:
         check_x86_64(tool, args.add_object, args.sub_object, args.production_witness)
     print(f"Fp128 {args.architecture} proof objects and public witnesses match.")

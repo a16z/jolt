@@ -305,12 +305,13 @@ impl FieldOps<&AkitaFp128, AkitaFp128> for &AkitaFp128 {}
 
 /// Reinterpret a (canonical) unreduced element as a field element.
 ///
-/// `from_canonical_u128` only debug-asserts canonicity; values produced by
-/// `to_unreduced` are always canonical, and the subsequent widening multiply
-/// plus Solinas reduce are correct for any 128-bit integer regardless.
+/// The unsafe constructor relies on canonicity. Values produced by
+/// `to_unreduced` satisfy that invariant. The subsequent widening multiply
+/// and Solinas reduction are correct for every 128-bit integer.
 #[inline(always)]
 fn elem_to_field(a: &BigInt<2>) -> AkitaField {
-    AkitaField::from_canonical_u128(a.0[0] as u128 | (a.0[1] as u128) << 64)
+    // SAFETY: `to_unreduced` creates this `BigInt` from canonical field limbs.
+    unsafe { AkitaField::from_canonical_u128(a.0[0] as u128 | (a.0[1] as u128) << 64) }
 }
 
 /// field × M-limb magnitude, eagerly reduced to a canonical element.
