@@ -14,7 +14,8 @@ p = 2^128 - 2^32 + 22537
 
 Every field value has one canonical integer representative from `0` through
 `p - 1`. Each kernel accepts two canonical values in two 64 bit limbs. It
-returns the canonical sum or difference modulo `p`.
+returns the canonical sum, difference, or product modulo `p`, according to the
+operation.
 
 ## From the public Rust operation to a theorem
 
@@ -204,10 +205,11 @@ fact.
 
 Each operation has two theorem levels.
 
-The body theorem starts at the first arithmetic instruction and stops before
-`ret`. Its precondition fixes the loaded bytes, program counter, input
-registers, and offset. Its postcondition states the field result. Its frame
-condition lists every part of processor state that may change.
+The body theorem starts at the constant-load instruction and stops before
+`ret`. Its precondition fixes the loaded bytes, program counter, and input
+registers. It does not assume an initial value for the offset register. Its
+postcondition states the field result. Its frame condition lists every part of
+processor state that may change.
 
 The subroutine theorem adds `ret` and the procedure call convention. It states
 where the return address comes from and which registers a caller must treat as
