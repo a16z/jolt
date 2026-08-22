@@ -3608,6 +3608,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-program",
+ "jolt-prover",
  "jolt-prover-legacy",
  "jolt-r1cs",
  "jolt-riscv",

@@ -75,7 +75,6 @@ jolt-poly = { workspace = true, default-features = false }
 jolt-program.workspace = true
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
-jolt-riscv.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rand_core = { workspace = true, features = ["getrandom"], optional = true }

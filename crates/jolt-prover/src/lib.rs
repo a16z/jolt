@@ -21,10 +21,6 @@ pub mod profile;
 mod prover;
 mod recorder;
 pub mod stages;
-#[cfg(feature = "profiling")]
-pub mod vertical;
-#[cfg(feature = "profiling")]
-pub mod vertical_baseline;
 
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
 pub use driver::{KernelSource, Proved, StageProver};

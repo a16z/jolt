@@ -110,6 +110,17 @@ where
     }
 }
 
+pub fn warm_shared_witness<F: jolt_field::Field>(
+    session: &mut crate::ProofSession,
+    witness: &dyn jolt_witness::JoltWitnessPlane<F>,
+    log_t: usize,
+) -> Result<(), crate::KernelError<F>> {
+    let context = require_context()?;
+    let _ = self::witness::session_atom_columns(context, session, witness, 1usize << log_t)?;
+    context.stream().synchronize().map_err(CudaError::from)?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,

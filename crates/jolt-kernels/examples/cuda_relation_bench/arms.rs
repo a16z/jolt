@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use crate::fixture::{Fixture, Parts};
+use jolt_prover::ProverConfig;
+use jolt_witness::JoltWitnessPlane;
 use std::time::{Duration, Instant};
 
 use common::constants::XLEN as RISCV_XLEN;
-use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     COMMITTED_BYTECODE_LANE_CAPACITY, NUM_BYTECODE_VAL_STAGES,
@@ -66,14 +67,7 @@ use jolt_claims::NoChallenges;
 use jolt_dory::DoryScheme;
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, ProverInputs};
-use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
-use jolt_program::preprocess::{JoltProgramPreprocessing, PublicIoMemory};
-use jolt_prover_legacy::host;
-use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
-use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
-use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
-use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::formula_dimensions_from_parts;
 use jolt_verifier::stages::stage1::outer_remainder::{
@@ -130,124 +124,15 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_verifier::stages::{CommittedProgramSchedule, PrecommittedSchedule};
-use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+use jolt_verifier::stages::PrecommittedSchedule;
 
-use crate::profile::{pad_trace, trace_modular, BackendKind, Workload};
-use crate::vertical_baseline::{
-    advice_baseline, bytecode_baseline, program_image_baseline, LegacyPrecommittedInputs,
-};
-use crate::ProverConfig;
-use jolt_kernels::committed_program::program_image_words_padded;
-use jolt_prover_legacy::zkvm::claim_reductions::AdviceKind;
-
-const SAFETY_MARGIN: f64 = 0.9;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub enum VerticalRelation {
-    AdviceOpening,
-    BooleanityAddress,
-    BooleanityCycle,
-    BytecodeReadRafAddress,
-    BytecodeReadRafCycle,
-    BytecodeReductionAddress,
-    BytecodeReductionCycle,
-    Commit,
-    HammingWeightClaimReduction,
-    IncClaimReduction,
-    InstructionClaimReduction,
-    InstructionInput,
-    InstructionRaVirtualization,
-    InstructionReadRaf,
-    JointOpening,
-    ProgramImageReductionAddress,
-    ProgramImageReductionCycle,
-    RamHammingBooleanity,
-    RamOutputCheck,
-    RamRaClaimReduction,
-    RamRafEvaluation,
-    RamRaVirtualization,
-    RamReadWrite,
-    RamValCheck,
-    RegistersClaimReduction,
-    RegistersReadWrite,
-    RegistersValEvaluation,
-    SpartanOuter,
-    SpartanProduct,
-    SpartanShift,
-    TrustedAdviceAddress,
-    TrustedAdviceCycle,
-    UntrustedAdviceAddress,
-    UntrustedAdviceCycle,
-}
-
-impl VerticalRelation {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AdviceOpening => "advice-opening",
-            Self::BooleanityAddress => "booleanity-address",
-            Self::BooleanityCycle => "booleanity-cycle",
-            Self::BytecodeReadRafAddress => "bytecode-read-raf-address",
-            Self::BytecodeReadRafCycle => "bytecode-read-raf-cycle",
-            Self::BytecodeReductionAddress => "bytecode-reduction-address",
-            Self::BytecodeReductionCycle => "bytecode-reduction-cycle",
-            Self::Commit => "commit",
-            Self::HammingWeightClaimReduction => "hamming-weight-claim-reduction",
-            Self::IncClaimReduction => "inc-claim-reduction",
-            Self::InstructionClaimReduction => "instruction-claim-reduction",
-            Self::InstructionInput => "instruction-input",
-            Self::InstructionRaVirtualization => "instruction-ra-virtualization",
-            Self::InstructionReadRaf => "instruction-read-raf",
-            Self::JointOpening => "joint-opening",
-            Self::ProgramImageReductionAddress => "program-image-reduction-address",
-            Self::ProgramImageReductionCycle => "program-image-reduction-cycle",
-            Self::RamHammingBooleanity => "ram-hamming-booleanity",
-            Self::RamOutputCheck => "ram-output-check",
-            Self::RamRaClaimReduction => "ram-ra-claim-reduction",
-            Self::RamRafEvaluation => "ram-raf-evaluation",
-            Self::RamRaVirtualization => "ram-ra-virtualization",
-            Self::RamReadWrite => "ram-read-write",
-            Self::RamValCheck => "ram-val-check",
-            Self::RegistersClaimReduction => "registers-claim-reduction",
-            Self::RegistersReadWrite => "registers-read-write",
-            Self::RegistersValEvaluation => "registers-val-evaluation",
-            Self::SpartanOuter => "spartan-outer",
-            Self::SpartanProduct => "spartan-product",
-            Self::SpartanShift => "spartan-shift",
-            Self::TrustedAdviceAddress => "trusted-advice-address",
-            Self::TrustedAdviceCycle => "trusted-advice-cycle",
-            Self::UntrustedAdviceAddress => "untrusted-advice-address",
-            Self::UntrustedAdviceCycle => "untrusted-advice-cycle",
-        }
-    }
-}
+use jolt_prover::profile::BackendKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoundPhase {
     Address,
     Handoff,
     Cycle,
-}
-
-#[derive(Debug, clap::Args)]
-pub struct VerticalArgs {
-    #[clap(long, value_enum)]
-    pub relation: VerticalRelation,
-
-    #[clap(long, value_enum)]
-    pub name: Workload,
-
-    #[clap(long, value_delimiter = ',', default_values_t = [16u32, 20, 22])]
-    pub scales: Vec<u32>,
-
-    #[clap(long, value_enum, default_value = "reference")]
-    pub backend: BackendKind,
-
-    #[clap(long, default_value_t = 2)]
-    pub bytecode_chunks: usize,
-
-    #[clap(long)]
-    pub legacy: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -330,295 +215,21 @@ where
     }
 }
 
-struct VerticalFixture {
-    program: Arc<JoltProgram>,
-    program_preprocessing: Arc<JoltProgramPreprocessing>,
-    config: ProverConfig,
-    log_t: usize,
-    trace: TraceOutput<OwnedTrace>,
-    memory_layout: MemoryLayout,
-    min_bytecode_address: u64,
-    program_image_len_words: usize,
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "measurement harness: fixture errors fail loudly"
-)]
-fn fixture(workload: Workload, scale: u32) -> VerticalFixture {
-    let bench_name = workload.as_str();
-    let max_trace_length = 1usize << scale;
-    let input = workload.input((max_trace_length as f64 * SAFETY_MARGIN) as usize);
-
-    let mut program = host::Program::new(&format!("{bench_name}-guest"));
-    let (bytecode, init_memory_state, _, entry_address) = program.decode();
-    let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
-    drop(legacy_trace);
-    let elf_contents = program.get_elf_contents().expect("elf contents");
-    let memory_layout = io_device.memory_layout.clone();
-
-    let program_data =
-        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
-            .expect("legacy preprocess");
-    let shared =
-        JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
-    let legacy = LegacyProverPreprocessing::<
-        jolt_prover_legacy::ark_bn254::Fr,
-        jolt_prover_legacy::curve::Bn254Curve,
-        DoryCommitmentScheme,
-    >::new(shared);
-    let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy);
-    let program_preprocessing = Arc::new(
-        verifier_preprocessing
-            .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone(),
-    );
-    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
-
-    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
-    let config = ProverConfig::derive::<Fr>(
-        trace_output.trace.rows(),
-        &memory_layout,
-        verifier_preprocessing.program.min_bytecode_address(),
-        verifier_preprocessing.program.program_image_len_words(),
-        max_trace_length,
-    )
-    .expect("derive config");
-    let padded = pad_trace(trace_output, config.trace_length);
-    let log_t = config.trace_length.ilog2() as usize;
-
-    VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
-        log_t,
-        trace: padded,
-        memory_layout,
-        min_bytecode_address: verifier_preprocessing.program.min_bytecode_address(),
-        program_image_len_words: verifier_preprocessing.program.program_image_len_words(),
-    }
-}
-
-#[expect(
-    clippy::print_stdout,
-    reason = "measurement harness: reports to stdout like the profile subcommand"
-)]
-pub fn run(args: &VerticalArgs) -> Vec<VerticalTiming> {
-    println!(
-        "{} vertical — {} backend, {} workload",
-        args.relation.as_str(),
-        if args.legacy {
-            "legacy"
-        } else {
-            args.backend.as_str()
-        },
-        args.name.as_str(),
-    );
-    println!(
-        "{:>6}  {:>11}  {:>11}  {:>11}  {:>11}  {:>11}  {:>11}",
-        "log_T", "prepare", "address", "handoff", "cycle", "claims", "total",
-    );
-    let mut timings = Vec::new();
-    for &scale in &args.scales {
-        if args.legacy {
-            assert!(
-                !matches!(
-                    args.relation,
-                    VerticalRelation::Commit
-                        | VerticalRelation::JointOpening
-                        | VerticalRelation::AdviceOpening
-                ),
-                "the Dory MSM slots have no in-harness legacy driver: legacy's commit method is \
-                 private and takes `&mut self` on the whole prover, and its joint opening happens \
-                 inside the external dory crate. Take the baseline from legacy's own trace instead \
-                 — `cargo run --release -p jolt-prover-legacy -- benchmark --name {} --scale {} \
-                 --format chrome` then `python3 scripts/legacy_relation_baseline.py \
-                 benchmark-runs/perfetto_traces/<trace>.json commit commit-phases stage8`",
-                args.name.as_str(),
-                scale,
-            );
-            let timing =
-                measure_legacy_precommitted(args.relation, args.name, scale, args.bytecode_chunks);
-            println!(
-                "{:>6}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}",
-                timing.log_t,
-                timing.prepare,
-                timing.address,
-                timing.handoff,
-                timing.cycle,
-                timing.claims,
-                timing.total(),
-            );
-            timings.push(timing);
-            continue;
-        }
-        let timing = match args.relation {
-            VerticalRelation::Commit => measure_commit(args.name, scale, args.backend),
-            VerticalRelation::JointOpening => measure_joint_opening(args.name, scale, args.backend),
-            VerticalRelation::AdviceOpening => measure_advice_opening(
-                args.name,
-                scale,
-                args.backend,
-                args.bytecode_chunks,
-                JoltAdviceKind::Trusted,
-            ),
-            VerticalRelation::BooleanityCycle => {
-                measure_booleanity_cycle(args.name, scale, args.backend)
-            }
-            VerticalRelation::BytecodeReadRafCycle => {
-                measure_bytecode_read_raf_cycle(args.name, scale, args.backend)
-            }
-            VerticalRelation::BooleanityAddress => {
-                measure_booleanity_address(args.name, scale, args.backend)
-            }
-            VerticalRelation::BytecodeReadRafAddress => {
-                measure_bytecode_read_raf_address(args.name, scale, args.backend)
-            }
-            VerticalRelation::HammingWeightClaimReduction => {
-                measure_hamming_weight_claim_reduction(args.name, scale, args.backend)
-            }
-            VerticalRelation::IncClaimReduction => {
-                measure_inc_claim_reduction(args.name, scale, args.backend)
-            }
-            VerticalRelation::InstructionClaimReduction => {
-                measure_instruction_claim_reduction(args.name, scale, args.backend)
-            }
-            VerticalRelation::InstructionInput => {
-                measure_instruction_input(args.name, scale, args.backend)
-            }
-            VerticalRelation::InstructionRaVirtualization => {
-                measure_instruction_ra_virtualization(args.name, scale, args.backend)
-            }
-            VerticalRelation::RamHammingBooleanity => {
-                measure_ram_hamming_booleanity(args.name, scale, args.backend)
-            }
-            VerticalRelation::RamOutputCheck => {
-                measure_ram_output_check(args.name, scale, args.backend)
-            }
-            VerticalRelation::RamRaClaimReduction => {
-                measure_ram_ra_claim_reduction(args.name, scale, args.backend)
-            }
-            VerticalRelation::RamRafEvaluation => {
-                measure_ram_raf_evaluation(args.name, scale, args.backend)
-            }
-            VerticalRelation::RegistersValEvaluation => {
-                measure_registers_val_evaluation(args.name, scale, args.backend)
-            }
-            VerticalRelation::RegistersClaimReduction => {
-                measure_registers_claim_reduction(args.name, scale, args.backend)
-            }
-            VerticalRelation::SpartanShift => measure_spartan_shift(args.name, scale, args.backend),
-            VerticalRelation::InstructionReadRaf => {
-                measure_instruction_read_raf(args.name, scale, args.backend)
-            }
-            VerticalRelation::RamRaVirtualization => {
-                measure_ram_ra_virtualization(args.name, scale, args.backend)
-            }
-            VerticalRelation::RamReadWrite => {
-                measure_ram_read_write(args.name, scale, args.backend)
-            }
-            VerticalRelation::RamValCheck => measure_ram_val_check(args.name, scale, args.backend),
-            VerticalRelation::RegistersReadWrite => {
-                measure_registers_read_write(args.name, scale, args.backend)
-            }
-            VerticalRelation::SpartanOuter => measure_spartan_outer(args.name, scale, args.backend),
-            VerticalRelation::SpartanProduct => {
-                measure_spartan_product(args.name, scale, args.backend)
-            }
-            VerticalRelation::TrustedAdviceCycle => measure_advice_cycle(
-                args.name,
-                scale,
-                args.backend,
-                args.bytecode_chunks,
-                JoltAdviceKind::Trusted,
-            ),
-            VerticalRelation::UntrustedAdviceCycle => measure_advice_cycle(
-                args.name,
-                scale,
-                args.backend,
-                args.bytecode_chunks,
-                JoltAdviceKind::Untrusted,
-            ),
-            VerticalRelation::TrustedAdviceAddress => measure_advice_address(
-                args.name,
-                scale,
-                args.backend,
-                args.bytecode_chunks,
-                JoltAdviceKind::Trusted,
-            ),
-            VerticalRelation::UntrustedAdviceAddress => measure_advice_address(
-                args.name,
-                scale,
-                args.backend,
-                args.bytecode_chunks,
-                JoltAdviceKind::Untrusted,
-            ),
-            VerticalRelation::BytecodeReductionCycle => measure_bytecode_reduction_cycle(
-                args.name,
-                scale,
-                args.backend,
-                args.bytecode_chunks,
-            ),
-            VerticalRelation::BytecodeReductionAddress => measure_bytecode_reduction_address(
-                args.name,
-                scale,
-                args.backend,
-                args.bytecode_chunks,
-            ),
-            VerticalRelation::ProgramImageReductionCycle => measure_program_image_reduction_cycle(
-                args.name,
-                scale,
-                args.backend,
-                args.bytecode_chunks,
-            ),
-            VerticalRelation::ProgramImageReductionAddress => {
-                measure_program_image_reduction_address(
-                    args.name,
-                    scale,
-                    args.backend,
-                    args.bytecode_chunks,
-                )
-            }
-        };
-        println!(
-            "{:>6}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}",
-            timing.log_t,
-            timing.prepare,
-            timing.address,
-            timing.handoff,
-            timing.cycle,
-            timing.claims,
-            timing.total(),
-        );
-        timings.push(timing);
-    }
-    timings
-}
-
 #[expect(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_instruction_read_raf(
-    workload: Workload,
-    scale: u32,
+pub fn measure_instruction_read_raf(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
+    let Parts {
         program_preprocessing,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let dimensions = formula_dimensions_from_parts(
         config.one_hot_config,
@@ -664,10 +275,11 @@ fn measure_instruction_read_raf(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .instruction_read_raf
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-5 read-RAF kernel");
     let prepare = start.elapsed();
 
@@ -690,24 +302,17 @@ fn measure_instruction_read_raf(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_instruction_ra_virtualization(
-    workload: Workload,
-    scale: u32,
+pub fn measure_instruction_ra_virtualization(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
+    let Parts {
         program_preprocessing,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let dimensions = formula_dimensions_from_parts(
         config.one_hot_config,
@@ -762,10 +367,11 @@ fn measure_instruction_ra_virtualization(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .instruction_ra_virtualization
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-6b RA virtualization kernel");
     let prepare = start.elapsed();
 
@@ -778,24 +384,17 @@ fn measure_instruction_ra_virtualization(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_booleanity_cycle(
-    workload: Workload,
-    scale: u32,
+pub fn measure_booleanity_cycle(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
+    let Parts {
         program_preprocessing,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let chunk_bits = config.one_hot_config.committed_chunk_bits();
     let layout = formula_dimensions_from_parts(
@@ -849,10 +448,11 @@ fn measure_booleanity_cycle(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .booleanity_cycle
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-6b booleanity cycle-phase kernel");
     let prepare = start.elapsed();
 
@@ -865,24 +465,17 @@ fn measure_booleanity_cycle(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_bytecode_read_raf_cycle(
-    workload: Workload,
-    scale: u32,
+pub fn measure_bytecode_read_raf_cycle(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
+    let Parts {
         program_preprocessing,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let chunk_bits = config.one_hot_config.committed_chunk_bits();
     let dimensions = formula_dimensions_from_parts(
@@ -939,10 +532,11 @@ fn measure_bytecode_read_raf_cycle(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .bytecode_read_raf_cycle
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-6b bytecode read-RAF cycle-phase kernel");
     let prepare = start.elapsed();
 
@@ -955,24 +549,17 @@ fn measure_bytecode_read_raf_cycle(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_ram_ra_virtualization(
-    workload: Workload,
-    scale: u32,
+pub fn measure_ram_ra_virtualization(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
+    let Parts {
         program_preprocessing,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let ram_log_k = config.ram_K.ilog2() as usize;
     let dimensions = formula_dimensions_from_parts(
@@ -1020,10 +607,11 @@ fn measure_ram_ra_virtualization(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .ram_ra_virtualization
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-6b RAM RA virtualization kernel");
     let prepare = start.elapsed();
 
@@ -1036,20 +624,17 @@ fn measure_ram_ra_virtualization(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_ram_val_check(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
+pub fn measure_ram_val_check(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    let Parts {
+        program_preprocessing: _,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let ram_log_k = config.ram_K.ilog2() as usize;
     let relation = jolt_verifier::stages::stage4::ram_val_check::RamValCheck::<Fr>::new(
@@ -1093,10 +678,11 @@ fn measure_ram_val_check(workload: Workload, scale: u32, backend: BackendKind) -
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .ram_val_check
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-4 RAM value-check kernel");
     let prepare = start.elapsed();
 
@@ -1109,55 +695,18 @@ fn measure_ram_val_check(workload: Workload, scale: u32, backend: BackendKind) -
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_ram_read_write(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
-    let bench_name = workload.as_str();
-    let max_trace_length = 1usize << scale;
-    let input = workload.input((max_trace_length as f64 * SAFETY_MARGIN) as usize);
-
-    let mut program = host::Program::new(&format!("{bench_name}-guest"));
-    let (bytecode, init_memory_state, _, entry_address) = program.decode();
-    let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
-    drop(legacy_trace);
-    let elf_contents = program.get_elf_contents().expect("elf contents");
-    let memory_layout = io_device.memory_layout.clone();
-
-    let program_data =
-        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
-            .expect("legacy preprocess");
-    let shared =
-        JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
-    let legacy = LegacyProverPreprocessing::<
-        jolt_prover_legacy::ark_bn254::Fr,
-        jolt_prover_legacy::curve::Bn254Curve,
-        DoryCommitmentScheme,
-    >::new(shared);
-    let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy);
-    let program_preprocessing = Arc::new(
-        verifier_preprocessing
-            .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone(),
-    );
-    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
-
-    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
-    let config = ProverConfig::derive::<Fr>(
-        trace_output.trace.rows(),
-        &memory_layout,
-        verifier_preprocessing.program.min_bytecode_address(),
-        verifier_preprocessing.program.program_image_len_words(),
-        max_trace_length,
-    )
-    .expect("derive config");
-    let padded = pad_trace(trace_output, config.trace_length);
-    let log_t = config.trace_length.ilog2() as usize;
+pub fn measure_ram_read_write(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    let Parts {
+        program_preprocessing: _program_preprocessing,
+        config,
+        log_t,
+        ..
+    } = f.parts();
     let ram_log_k = config.ram_K.ilog2() as usize;
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
 
     let ram_dimensions = config.rw_config.ram_dimensions(log_t, ram_log_k);
     let tau_low: Vec<Fr> = (0..log_t)
@@ -1196,10 +745,11 @@ fn measure_ram_read_write(workload: Workload, scale: u32, backend: BackendKind) 
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .ram_read_write
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-2 RAM read-write kernel");
     let prepare = start.elapsed();
 
@@ -1219,24 +769,17 @@ fn measure_ram_read_write(workload: Workload, scale: u32, backend: BackendKind) 
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_registers_read_write(
-    workload: Workload,
-    scale: u32,
+pub fn measure_registers_read_write(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
+    let Parts {
+        program_preprocessing: _,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let register_dimensions = config
         .rw_config
@@ -1276,10 +819,11 @@ fn measure_registers_read_write(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .registers_read_write
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-4 registers read-write kernel");
     let prepare = start.elapsed();
 
@@ -1299,20 +843,17 @@ fn measure_registers_read_write(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_spartan_outer(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+pub fn measure_spartan_outer(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let tau: Vec<Fr> = (0..log_t + 2)
         .map(|i| Fr::from_u64(37 + 7 * i as u64))
@@ -1327,10 +868,11 @@ fn measure_spartan_outer(workload: Workload, scale: u32, backend: BackendKind) -
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     selected
         .spartan_outer_uniskip
-        .prepare(&mut session, log_t, &tau, &witness)
+        .prepare(&mut session, log_t, &tau, witness)
         .expect("prepare the stage-1 Spartan outer uni-skip kernel");
     let prepare = start.elapsed();
 
@@ -1361,7 +903,7 @@ fn measure_spartan_outer(workload: Workload, scale: u32, backend: BackendKind) -
     let start = Instant::now();
     let mut kernel = selected
         .spartan_outer_remainder
-        .prepare(&mut session, &witness, inputs)
+        .prepare(&mut session, witness, inputs)
         .expect("prepare the stage-1 Spartan outer remainder kernel");
     let remainder_prepare = start.elapsed();
 
@@ -1380,20 +922,17 @@ fn measure_spartan_outer(workload: Workload, scale: u32, backend: BackendKind) -
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_spartan_shift(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+pub fn measure_spartan_shift(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let product_tau_low: Vec<Fr> = (0..log_t)
         .map(|i| Fr::from_u64(23 + 3 * i as u64))
@@ -1427,10 +966,11 @@ fn measure_spartan_shift(workload: Workload, scale: u32, backend: BackendKind) -
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .spartan_shift
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-3 Spartan shift kernel");
     let prepare = start.elapsed();
 
@@ -1443,24 +983,17 @@ fn measure_spartan_shift(workload: Workload, scale: u32, backend: BackendKind) -
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_instruction_input(
-    workload: Workload,
-    scale: u32,
+pub fn measure_instruction_input(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let product_remainder_point: Vec<Fr> = (0..log_t)
         .map(|i| Fr::from_u64(37 + 7 * i as u64))
@@ -1488,10 +1021,11 @@ fn measure_instruction_input(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .instruction_input
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-3 instruction input-virtualization kernel");
     let prepare = start.elapsed();
 
@@ -1504,24 +1038,17 @@ fn measure_instruction_input(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_registers_claim_reduction(
-    workload: Workload,
-    scale: u32,
+pub fn measure_registers_claim_reduction(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let product_tau_low: Vec<Fr> = (0..log_t)
         .map(|i| Fr::from_u64(23 + 3 * i as u64))
@@ -1548,10 +1075,11 @@ fn measure_registers_claim_reduction(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .registers_claim_reduction
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-3 registers claim-reduction kernel");
     let prepare = start.elapsed();
 
@@ -1564,24 +1092,17 @@ fn measure_registers_claim_reduction(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_instruction_claim_reduction(
-    workload: Workload,
-    scale: u32,
+pub fn measure_instruction_claim_reduction(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let tau_low: Vec<Fr> = (0..log_t)
         .map(|i| Fr::from_u64(23 + 3 * i as u64))
@@ -1608,10 +1129,11 @@ fn measure_instruction_claim_reduction(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .instruction_claim_reduction
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-2 instruction claim-reduction kernel");
     let prepare = start.elapsed();
 
@@ -1624,24 +1146,17 @@ fn measure_instruction_claim_reduction(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_inc_claim_reduction(
-    workload: Workload,
-    scale: u32,
+pub fn measure_inc_claim_reduction(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let cycle_point = |offset: u64| -> Vec<Fr> {
         (0..log_t)
@@ -1676,10 +1191,11 @@ fn measure_inc_claim_reduction(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .inc_claim_reduction
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-6b increment claim-reduction kernel");
     let prepare = start.elapsed();
 
@@ -1692,24 +1208,17 @@ fn measure_inc_claim_reduction(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_ram_hamming_booleanity(
-    workload: Workload,
-    scale: u32,
+pub fn measure_ram_hamming_booleanity(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let stage1_cycle_binding: Vec<Fr> = (0..log_t)
         .map(|i| Fr::from_u64(23 + 3 * i as u64))
@@ -1735,10 +1244,11 @@ fn measure_ram_hamming_booleanity(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .ram_hamming_booleanity
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-6b RAM Hamming-booleanity kernel");
     let prepare = start.elapsed();
 
@@ -1751,24 +1261,17 @@ fn measure_ram_hamming_booleanity(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_registers_val_evaluation(
-    workload: Workload,
-    scale: u32,
+pub fn measure_registers_val_evaluation(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let relation = RegistersValEvaluation::<Fr>::new(TraceDimensions::new(log_t));
     let point: Vec<Fr> = (0..REGISTER_ADDRESS_BITS + log_t)
@@ -1797,10 +1300,11 @@ fn measure_registers_val_evaluation(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .registers_val_evaluation
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-5 registers value-evaluation kernel");
     let prepare = start.elapsed();
 
@@ -1813,24 +1317,17 @@ fn measure_registers_val_evaluation(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_ram_ra_claim_reduction(
-    workload: Workload,
-    scale: u32,
+pub fn measure_ram_ra_claim_reduction(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
+    let Parts {
+        program_preprocessing: _,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let ram_log_k = config.ram_K.ilog2() as usize;
     let relation = RamRaClaimReduction::<Fr>::new(TraceDimensions::new(log_t), ram_log_k);
@@ -1868,10 +1365,11 @@ fn measure_ram_ra_claim_reduction(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .ram_ra_claim_reduction
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-5 RAM ra claim-reduction kernel");
     let prepare = start.elapsed();
 
@@ -1884,24 +1382,17 @@ fn measure_ram_ra_claim_reduction(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_hamming_weight_claim_reduction(
-    workload: Workload,
-    scale: u32,
+pub fn measure_hamming_weight_claim_reduction(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
+    let Parts {
         program_preprocessing,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let chunk_bits = config.one_hot_config.committed_chunk_bits();
     let layout = formula_dimensions_from_parts(
@@ -1955,10 +1446,11 @@ fn measure_hamming_weight_claim_reduction(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .hamming_weight_claim_reduction
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-7 Hamming-weight claim-reduction kernel");
     let prepare = start.elapsed();
 
@@ -1974,25 +1466,19 @@ fn measure_hamming_weight_claim_reduction(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_ram_raf_evaluation(
-    workload: Workload,
-    scale: u32,
+pub fn measure_ram_raf_evaluation(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
+    let Parts {
+        program_preprocessing: _,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
+    } = f.parts();
 
-    let lowest_address = padded.device.memory_layout.get_lowest_address();
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    let lowest_address = f.device().memory_layout.get_lowest_address();
 
     let ram_log_k = config.ram_K.ilog2() as usize;
     let read_write_dimensions = config.rw_config.ram_dimensions(log_t, ram_log_k);
@@ -2031,10 +1517,11 @@ fn measure_ram_raf_evaluation(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .ram_raf_evaluation
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-2 RAM RAF-evaluation kernel");
     let prepare = start.elapsed();
 
@@ -2050,25 +1537,19 @@ fn measure_ram_raf_evaluation(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_ram_output_check(
-    workload: Workload,
-    scale: u32,
+pub fn measure_ram_output_check(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
+    let Parts {
+        program_preprocessing: _,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
+    } = f.parts();
 
-    let public_memory = PublicIoMemory::new(&padded.device).expect("public IO memory");
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    let public_memory = PublicIoMemory::new(f.device()).expect("public IO memory");
 
     let ram_log_k = config.ram_K.ilog2() as usize;
     let read_write_dimensions = config.rw_config.ram_dimensions(log_t, ram_log_k);
@@ -2096,10 +1577,11 @@ fn measure_ram_output_check(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .ram_output_check
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-2 RAM output-check kernel");
     let prepare = start.elapsed();
 
@@ -2115,24 +1597,17 @@ fn measure_ram_output_check(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_booleanity_address(
-    workload: Workload,
-    scale: u32,
+pub fn measure_booleanity_address(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
+    let Parts {
         program_preprocessing,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let chunk_bits = config.one_hot_config.committed_chunk_bits();
     let layout = formula_dimensions_from_parts(
@@ -2178,10 +1653,11 @@ fn measure_booleanity_address(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .booleanity_address
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-6a booleanity address-phase kernel");
     let prepare = start.elapsed();
 
@@ -2197,24 +1673,17 @@ fn measure_booleanity_address(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_bytecode_read_raf_address(
-    workload: Workload,
-    scale: u32,
+pub fn measure_bytecode_read_raf_address(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
 ) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
+    let Parts {
         program_preprocessing,
         config,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let dimensions = formula_dimensions_from_parts(
         config.one_hot_config,
@@ -2273,10 +1742,11 @@ fn measure_bytecode_read_raf_address(
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     let mut kernel = selected
         .bytecode_read_raf_address
-        .prepare(&mut session, &witness, inputs())
+        .prepare(&mut session, witness, inputs())
         .expect("prepare the stage-6a bytecode read-RAF address-phase kernel");
     let prepare = start.elapsed();
 
@@ -2292,20 +1762,17 @@ fn measure_bytecode_read_raf_address(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_spartan_product(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
+pub fn measure_spartan_product(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    let Parts {
+        program_preprocessing: _,
+        config: _,
         log_t,
-        trace: padded,
         ..
-    } = fixture(workload, scale);
-
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
+    } = f.parts();
 
     let tau_low: Vec<Fr> = (0..log_t)
         .map(|i| Fr::from_u64(23 + 3 * i as u64))
@@ -2321,10 +1788,11 @@ fn measure_spartan_product(workload: Workload, scale: u32, backend: BackendKind)
     };
 
     let mut session = ProofSession::default();
+    warm_shared_witness(&mut session, witness, backend, f.log_t);
     let start = Instant::now();
     selected
         .spartan_product_uniskip
-        .prepare(&mut session, log_t, &tau_low, &witness)
+        .prepare(&mut session, log_t, &tau_low, witness)
         .expect("prepare the stage-2 Spartan product uni-skip kernel");
     let prepare = start.elapsed();
 
@@ -2356,7 +1824,7 @@ fn measure_spartan_product(workload: Workload, scale: u32, backend: BackendKind)
     let start = Instant::now();
     let mut kernel = selected
         .spartan_product_remainder
-        .prepare(&mut session, &witness, inputs)
+        .prepare(&mut session, witness, inputs)
         .expect("prepare the stage-2 Spartan product remainder kernel");
     let remainder_prepare = start.elapsed();
 
@@ -2371,112 +1839,33 @@ fn measure_spartan_product(workload: Workload, scale: u32, backend: BackendKind)
     timing
 }
 
-struct PrecommittedFixture {
-    fixture: VerticalFixture,
-    schedule: PrecommittedSchedule,
-    bytecode_chunk_count: usize,
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "measurement harness: fixture errors fail loudly"
-)]
-fn precommitted_fixture(
-    workload: Workload,
-    scale: u32,
-    bytecode_chunks: usize,
-) -> PrecommittedFixture {
-    let fixture = fixture(workload, scale);
-    let start_index = fixture
-        .memory_layout
-        .remapped_word_address(fixture.min_bytecode_address)
-        .expect("program image start index") as usize;
-    let schedule = PrecommittedSchedule::new(
-        fixture.config.trace_polynomial_order,
-        fixture.log_t,
-        fixture.config.one_hot_config.committed_chunk_bits(),
-        Some(fixture.memory_layout.max_trusted_advice_size as usize),
-        Some(fixture.memory_layout.max_untrusted_advice_size as usize),
-        Some(CommittedProgramSchedule {
-            bytecode_len: fixture.program_preprocessing.bytecode.code_size,
-            bytecode_chunk_count: bytecode_chunks,
-            program_image_len_words: fixture.program_image_len_words,
-            program_image_start_index: start_index,
-        }),
-    )
-    .expect("precommitted schedule");
-    PrecommittedFixture {
-        fixture,
-        schedule,
-        bytecode_chunk_count: bytecode_chunks,
-    }
-}
-
 fn with_precommitted_fixture<T>(
-    workload: Workload,
-    scale: u32,
-    bytecode_chunks: usize,
-    body: impl FnOnce(&TraceBackend<OwnedTrace>, &PrecommittedSchedule, PrecommittedGeometry) -> T,
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    body: impl FnOnce(&dyn JoltWitnessPlane<Fr>, &PrecommittedSchedule, PrecommittedGeometry) -> T,
 ) -> T {
-    let PrecommittedFixture {
-        fixture,
-        schedule,
-        bytecode_chunk_count,
-    } = precommitted_fixture(workload, scale, bytecode_chunks);
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
-        log_t,
-        trace: padded,
-        ..
-    } = fixture;
+    let schedule = f.precommitted_schedule();
     let geometry = PrecommittedGeometry {
-        log_t,
-        ram_log_k: config.ram_K.ilog2() as usize,
-        bytecode_chunk_count,
+        log_t: f.log_t,
+        ram_log_k: f.config.ram_K.ilog2() as usize,
+        bytecode_chunk_count: f.bytecode_chunk_count,
     };
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config)
-            .include_trusted_advice(true)
-            .include_untrusted_advice(true),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
-    body(&witness, &schedule, geometry)
+    body(witness, &schedule, geometry)
 }
 
 #[derive(Clone, Copy)]
-struct PrecommittedGeometry {
+pub struct PrecommittedGeometry {
     log_t: usize,
     ram_log_k: usize,
     bytecode_chunk_count: usize,
 }
 
 fn with_commit_fixture<T>(
-    workload: Workload,
-    scale: u32,
-    body: impl FnOnce(&TraceBackend<OwnedTrace>, CommitmentGrid, &ProverConfig) -> T,
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    body: impl FnOnce(&dyn JoltWitnessPlane<Fr>, CommitmentGrid, &ProverConfig) -> T,
 ) -> T {
-    let VerticalFixture {
-        program: jolt_program,
-        program_preprocessing,
-        config,
-        log_t,
-        trace: padded,
-        memory_layout,
-        ..
-    } = fixture(workload, scale);
-    let grid = CommitmentGrid {
-        total_vars: config.commitment_total_vars(&memory_layout, false, false, None),
-        log_t,
-        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
-        order: config.trace_polynomial_order,
-    };
-    let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
-    );
-    body(&witness, grid, &config)
+    body(witness, f.commitment_grid(), &f.config)
 }
 
 #[expect(
@@ -2484,8 +1873,12 @@ fn with_commit_fixture<T>(
     clippy::print_stdout,
     reason = "measurement harness: kernel errors fail loudly and geometry is reported to stdout"
 )]
-fn measure_commit(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
-    with_commit_fixture(workload, scale, |witness, grid, _config| {
+pub fn measure_commit(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    with_commit_fixture(f, witness, |witness, grid, _config| {
         let ids: Vec<JoltCommittedPolynomial> =
             jolt_witness::JoltWitnessOracle::<Fr>::committed_order(witness)
                 .expect("committed order")
@@ -2501,6 +1894,7 @@ fn measure_commit(workload: Workload, scale: u32, backend: BackendKind) -> Verti
         let setup = DoryScheme::setup_prover(grid.total_vars);
         let selected = selected_backend(backend);
         let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
         let start = Instant::now();
         let committed = selected
             .commit
@@ -2529,8 +1923,12 @@ fn measure_commit(workload: Workload, scale: u32, backend: BackendKind) -> Verti
     clippy::print_stdout,
     reason = "measurement harness: kernel errors fail loudly and geometry is reported to stdout"
 )]
-fn measure_joint_opening(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
-    with_commit_fixture(workload, scale, |witness, grid, _config| {
+pub fn measure_joint_opening(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    with_commit_fixture(f, witness, |witness, grid, _config| {
         let order: Vec<JoltCommittedPolynomial> =
             jolt_witness::JoltWitnessOracle::<Fr>::committed_order(witness)
                 .expect("committed order")
@@ -2546,6 +1944,7 @@ fn measure_joint_opening(workload: Workload, scale: u32, backend: BackendKind) -
         let tables = std::collections::BTreeMap::new();
         let selected = selected_backend(backend);
         let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
         let setup = DoryScheme::setup_prover(grid.total_vars);
         let _ = selected
             .commit
@@ -2590,50 +1989,45 @@ fn measure_joint_opening(workload: Workload, scale: u32, backend: BackendKind) -
     clippy::print_stdout,
     reason = "measurement harness: kernel errors fail loudly and geometry is reported to stdout"
 )]
-fn measure_advice_opening(
-    workload: Workload,
-    scale: u32,
+pub fn measure_advice_opening(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
-    bytecode_chunks: usize,
     kind: JoltAdviceKind,
 ) -> VerticalTiming {
-    with_precommitted_fixture(
-        workload,
-        scale,
-        bytecode_chunks,
-        |witness, schedule, geometry| {
-            let layout = match kind {
-                JoltAdviceKind::Trusted => schedule.trusted_advice.as_ref(),
-                JoltAdviceKind::Untrusted => schedule.untrusted_advice.as_ref(),
-            }
-            .expect("advice layout present");
-            let vars = layout
-                .precommitted()
-                .poly_opening_round_permutation_be()
-                .len();
-            let point = synthetic_point(vars, 29);
-            let selected = selected_backend(backend);
-            let mut session = ProofSession::default();
-            let start = Instant::now();
-            let value = selected
-                .advice_opening
-                .evaluate(&mut session, kind, &point, witness)
-                .expect("evaluate the advice opening");
-            let elapsed = start.elapsed();
-            println!(
-                "         {kind:?} advice, {vars} vars, value nonzero = {}",
-                value != Fr::from_u64(0)
-            );
-            VerticalTiming {
-                log_t: geometry.log_t,
-                prepare: Duration::ZERO,
-                address: Duration::ZERO,
-                handoff: Duration::ZERO,
-                cycle: elapsed,
-                claims: Duration::ZERO,
-            }
-        },
-    )
+    with_precommitted_fixture(f, witness, |witness, schedule, geometry| {
+        let layout = match kind {
+            JoltAdviceKind::Trusted => schedule.trusted_advice.as_ref(),
+            JoltAdviceKind::Untrusted => schedule.untrusted_advice.as_ref(),
+        }
+        .expect("advice layout present");
+        let vars = layout
+            .precommitted()
+            .poly_opening_round_permutation_be()
+            .len();
+        let point = synthetic_point(vars, 29);
+        let selected = selected_backend(backend);
+        let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
+        let start = Instant::now();
+        let value = selected
+            .advice_opening
+            .evaluate(&mut session, kind, &point, witness)
+            .expect("evaluate the advice opening");
+        let elapsed = start.elapsed();
+        println!(
+            "         {kind:?} advice, {vars} vars, value nonzero = {}",
+            value != Fr::from_u64(0)
+        );
+        VerticalTiming {
+            log_t: geometry.log_t,
+            prepare: Duration::ZERO,
+            address: Duration::ZERO,
+            handoff: Duration::ZERO,
+            cycle: elapsed,
+            claims: Duration::ZERO,
+        }
+    })
 }
 
 fn selected_backend(backend: BackendKind) -> JoltBackend<Fr, DoryScheme> {
@@ -2728,691 +2122,603 @@ fn report_precommitted_geometry(
     clippy::expect_used,
     reason = "measurement harness: fixture and kernel errors fail loudly"
 )]
-fn measure_advice_cycle(
-    workload: Workload,
-    scale: u32,
+pub fn measure_advice_cycle(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
     backend: BackendKind,
-    bytecode_chunks: usize,
     kind: JoltAdviceKind,
 ) -> VerticalTiming {
-    with_precommitted_fixture(
-        workload,
-        scale,
-        bytecode_chunks,
-        |witness, schedule, geometry| {
-            let layout: &AdviceClaimReductionLayout =
-                schedule.advice(kind).expect("advice layout present");
-            let reduction = layout.precommitted();
-            let rounds = reduction.cycle_phase_total_rounds();
-            let r_val = synthetic_point(reduction.poly_opening_round_permutation_be().len(), 11);
-            let selected = selected_backend(backend);
-            let challenges = NoChallenges::default();
-            let mut session = ProofSession::default();
-            report_precommitted_geometry(
-                match kind {
-                    JoltAdviceKind::Trusted => "trusted-advice-cycle",
-                    JoltAdviceKind::Untrusted => "untrusted-advice-cycle",
-                },
-                reduction,
-                2,
-            );
-
+    with_precommitted_fixture(f, witness, |witness, schedule, geometry| {
+        let layout: &AdviceClaimReductionLayout =
+            schedule.advice(kind).expect("advice layout present");
+        let reduction = layout.precommitted();
+        let rounds = reduction.cycle_phase_total_rounds();
+        let r_val = synthetic_point(reduction.poly_opening_round_permutation_be().len(), 11);
+        let selected = selected_backend(backend);
+        let challenges = NoChallenges::default();
+        let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
+        report_precommitted_geometry(
             match kind {
-                JoltAdviceKind::Trusted => {
-                    let relation = TrustedAdviceCyclePhase::<Fr>::new(layout, Some(r_val));
-                    let claims = TrustedAdviceCyclePhaseInputClaims::default();
-                    let points = TrustedAdviceCyclePhaseInputClaims::default();
-                    let start = Instant::now();
-                    let mut kernel = selected
-                        .trusted_advice_cycle
-                        .prepare(
-                            &mut session,
-                            witness,
-                            ProverInputs {
-                                relation: &relation,
-                                claims: &claims,
-                                points: &points,
-                                challenges: &challenges,
-                            },
-                        )
-                        .expect("prepare the stage-6b trusted-advice cycle-phase kernel");
-                    let prepare = start.elapsed();
-                    drive_rounds(
-                        &mut *kernel,
-                        &claims,
-                        rounds,
-                        geometry.log_t,
-                        prepare,
-                        |_| RoundPhase::Cycle,
-                    )
-                }
-                JoltAdviceKind::Untrusted => {
-                    let relation = UntrustedAdviceCyclePhase::<Fr>::new(layout, Some(r_val));
-                    let claims = UntrustedAdviceCyclePhaseInputClaims::default();
-                    let points = UntrustedAdviceCyclePhaseInputClaims::default();
-                    let start = Instant::now();
-                    let mut kernel = selected
-                        .untrusted_advice_cycle
-                        .prepare(
-                            &mut session,
-                            witness,
-                            ProverInputs {
-                                relation: &relation,
-                                claims: &claims,
-                                points: &points,
-                                challenges: &challenges,
-                            },
-                        )
-                        .expect("prepare the stage-6b untrusted-advice cycle-phase kernel");
-                    let prepare = start.elapsed();
-                    drive_rounds(
-                        &mut *kernel,
-                        &claims,
-                        rounds,
-                        geometry.log_t,
-                        prepare,
-                        |_| RoundPhase::Cycle,
-                    )
-                }
-            }
-        },
-    )
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "measurement harness: fixture and kernel errors fail loudly"
-)]
-fn measure_advice_address(
-    workload: Workload,
-    scale: u32,
-    backend: BackendKind,
-    bytecode_chunks: usize,
-    kind: JoltAdviceKind,
-) -> VerticalTiming {
-    with_precommitted_fixture(
-        workload,
-        scale,
-        bytecode_chunks,
-        |witness, schedule, geometry| {
-            let layout: &AdviceClaimReductionLayout =
-                schedule.advice(kind).expect("advice layout present");
-            let reduction = layout.precommitted();
-            let label = match kind {
-                JoltAdviceKind::Trusted => "trusted-advice-address",
-                JoltAdviceKind::Untrusted => "untrusted-advice-address",
-            };
-            if reduction.num_address_phase_rounds() == 0 {
-                return absent_address_phase(label, reduction, geometry);
-            }
-            report_precommitted_geometry(label, reduction, 2);
-
-            let cycle_rounds = reduction.cycle_phase_total_rounds();
-            let address_rounds = reduction.address_phase_total_rounds();
-            let cycle_variables = synthetic_cycle_variables(reduction);
-            let r_val = synthetic_point(reduction.poly_opening_round_permutation_be().len(), 11);
-            let selected = selected_backend(backend);
-            let challenges = NoChallenges::default();
-            let mut session = ProofSession::default();
-
-            match kind {
-                JoltAdviceKind::Trusted => {
-                    let cycle_relation =
-                        TrustedAdviceCyclePhase::<Fr>::new(layout, Some(r_val.clone()));
-                    let cycle_claims = TrustedAdviceCyclePhaseInputClaims::default();
-                    let cycle_points = TrustedAdviceCyclePhaseInputClaims::default();
-                    let cycle_kernel = selected
-                        .trusted_advice_cycle
-                        .prepare(
-                            &mut session,
-                            witness,
-                            ProverInputs {
-                                relation: &cycle_relation,
-                                claims: &cycle_claims,
-                                points: &cycle_points,
-                                challenges: &challenges,
-                            },
-                        )
-                        .expect("prepare the stage-6b trusted-advice cycle-phase kernel");
-                    let mut cycle_kernel = cycle_kernel;
-                    let _ = drive_rounds(
-                        &mut *cycle_kernel,
-                        &cycle_claims,
-                        cycle_rounds,
-                        geometry.log_t,
-                        Duration::ZERO,
-                        |_| RoundPhase::Cycle,
-                    );
-                    cycle_kernel.park_residue(&mut session);
-
-                    let relation =
-                        TrustedAdviceAddressPhase::<Fr>::new(layout, Some(r_val), cycle_variables);
-                    let claims = TrustedAdviceAddressPhaseInputClaims::default();
-                    let points = TrustedAdviceAddressPhaseInputClaims::default();
-                    let start = Instant::now();
-                    let mut kernel = selected
-                        .trusted_advice_address
-                        .prepare(
-                            &mut session,
-                            witness,
-                            ProverInputs {
-                                relation: &relation,
-                                claims: &claims,
-                                points: &points,
-                                challenges: &challenges,
-                            },
-                        )
-                        .expect("prepare the stage-7 trusted-advice address-phase kernel");
-                    let prepare = start.elapsed();
-                    drive_rounds(
-                        &mut *kernel,
-                        &claims,
-                        address_rounds,
-                        geometry.log_t,
-                        prepare,
-                        |_| RoundPhase::Address,
-                    )
-                }
-                JoltAdviceKind::Untrusted => {
-                    let cycle_relation =
-                        UntrustedAdviceCyclePhase::<Fr>::new(layout, Some(r_val.clone()));
-                    let cycle_claims = UntrustedAdviceCyclePhaseInputClaims::default();
-                    let cycle_points = UntrustedAdviceCyclePhaseInputClaims::default();
-                    let mut cycle_kernel = selected
-                        .untrusted_advice_cycle
-                        .prepare(
-                            &mut session,
-                            witness,
-                            ProverInputs {
-                                relation: &cycle_relation,
-                                claims: &cycle_claims,
-                                points: &cycle_points,
-                                challenges: &challenges,
-                            },
-                        )
-                        .expect("prepare the stage-6b untrusted-advice cycle-phase kernel");
-                    let _ = drive_rounds(
-                        &mut *cycle_kernel,
-                        &cycle_claims,
-                        cycle_rounds,
-                        geometry.log_t,
-                        Duration::ZERO,
-                        |_| RoundPhase::Cycle,
-                    );
-                    cycle_kernel.park_residue(&mut session);
-
-                    let relation = UntrustedAdviceAddressPhase::<Fr>::new(
-                        layout,
-                        Some(r_val),
-                        cycle_variables,
-                    );
-                    let claims = UntrustedAdviceAddressPhaseInputClaims::default();
-                    let points = UntrustedAdviceAddressPhaseInputClaims::default();
-                    let start = Instant::now();
-                    let mut kernel = selected
-                        .untrusted_advice_address
-                        .prepare(
-                            &mut session,
-                            witness,
-                            ProverInputs {
-                                relation: &relation,
-                                claims: &claims,
-                                points: &points,
-                                challenges: &challenges,
-                            },
-                        )
-                        .expect("prepare the stage-7 untrusted-advice address-phase kernel");
-                    let prepare = start.elapsed();
-                    drive_rounds(
-                        &mut *kernel,
-                        &claims,
-                        address_rounds,
-                        geometry.log_t,
-                        prepare,
-                        |_| RoundPhase::Address,
-                    )
-                }
-            }
-        },
-    )
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "measurement harness: fixture and kernel errors fail loudly"
-)]
-fn measure_bytecode_reduction_cycle(
-    workload: Workload,
-    scale: u32,
-    backend: BackendKind,
-    bytecode_chunks: usize,
-) -> VerticalTiming {
-    with_precommitted_fixture(
-        workload,
-        scale,
-        bytecode_chunks,
-        |witness, schedule, geometry| {
-            let layout: &BytecodeClaimReductionLayout = schedule
-                .bytecode
-                .as_ref()
-                .expect("committed bytecode layout present");
-            let reduction = layout.precommitted();
-            report_precommitted_geometry(
-                "bytecode-reduction-cycle",
-                reduction,
-                2 + geometry.bytecode_chunk_count,
-            );
-
-            let relation = BytecodeReductionCyclePhase::<Fr>::new(
-                layout,
-                bytecode_reduction_weights_fixture(layout),
-            );
-            let claims = BytecodeReductionCyclePhaseInputClaims::default();
-            let points = BytecodeReductionCyclePhaseInputClaims::default();
-            let challenges = BytecodeReductionCyclePhaseChallenges {
-                eta: Fr::from_u64(101),
-            };
-            let selected = selected_backend(backend);
-            let mut session = ProofSession::default();
-            let start = Instant::now();
-            let mut kernel = selected
-                .bytecode_reduction_cycle
-                .prepare(
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                )
-                .expect("prepare the stage-6b committed-bytecode cycle-phase kernel");
-            let prepare = start.elapsed();
-            drive_rounds(
-                &mut *kernel,
-                &claims,
-                reduction.cycle_phase_total_rounds(),
-                geometry.log_t,
-                prepare,
-                |_| RoundPhase::Cycle,
-            )
-        },
-    )
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "measurement harness: fixture and kernel errors fail loudly"
-)]
-fn measure_bytecode_reduction_address(
-    workload: Workload,
-    scale: u32,
-    backend: BackendKind,
-    bytecode_chunks: usize,
-) -> VerticalTiming {
-    with_precommitted_fixture(
-        workload,
-        scale,
-        bytecode_chunks,
-        |witness, schedule, geometry| {
-            let layout: &BytecodeClaimReductionLayout = schedule
-                .bytecode
-                .as_ref()
-                .expect("committed bytecode layout present");
-            let reduction = layout.precommitted();
-            if reduction.num_address_phase_rounds() == 0 {
-                return absent_address_phase("bytecode-reduction-address", reduction, geometry);
-            }
-            report_precommitted_geometry(
-                "bytecode-reduction-address",
-                reduction,
-                2 + geometry.bytecode_chunk_count,
-            );
-
-            let weights = bytecode_reduction_weights_fixture(layout);
-            let cycle_relation = BytecodeReductionCyclePhase::<Fr>::new(layout, weights.clone());
-            let cycle_claims = BytecodeReductionCyclePhaseInputClaims::default();
-            let cycle_points = BytecodeReductionCyclePhaseInputClaims::default();
-            let cycle_challenges = BytecodeReductionCyclePhaseChallenges {
-                eta: Fr::from_u64(101),
-            };
-            let selected = selected_backend(backend);
-            let mut session = ProofSession::default();
-            let mut cycle_kernel = selected
-                .bytecode_reduction_cycle
-                .prepare(
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &cycle_relation,
-                        claims: &cycle_claims,
-                        points: &cycle_points,
-                        challenges: &cycle_challenges,
-                    },
-                )
-                .expect("prepare the stage-6b committed-bytecode cycle-phase kernel");
-            let _ = drive_rounds(
-                &mut *cycle_kernel,
-                &cycle_claims,
-                reduction.cycle_phase_total_rounds(),
-                geometry.log_t,
-                Duration::ZERO,
-                |_| RoundPhase::Cycle,
-            );
-            cycle_kernel.park_residue(&mut session);
-
-            let relation = BytecodeReductionAddressPhase::<Fr>::new(
-                layout,
-                Some(weights),
-                synthetic_cycle_variables(reduction),
-            );
-            let claims = BytecodeReductionAddressPhaseInputClaims::default();
-            let points = BytecodeReductionAddressPhaseInputClaims::default();
-            let challenges = NoChallenges::default();
-            let start = Instant::now();
-            let mut kernel = selected
-                .bytecode_reduction_address
-                .prepare(
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                )
-                .expect("prepare the stage-7 committed-bytecode address-phase kernel");
-            let prepare = start.elapsed();
-            drive_rounds(
-                &mut *kernel,
-                &claims,
-                reduction.address_phase_total_rounds(),
-                geometry.log_t,
-                prepare,
-                |_| RoundPhase::Address,
-            )
-        },
-    )
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "measurement harness: fixture and kernel errors fail loudly"
-)]
-fn measure_program_image_reduction_cycle(
-    workload: Workload,
-    scale: u32,
-    backend: BackendKind,
-    bytecode_chunks: usize,
-) -> VerticalTiming {
-    with_precommitted_fixture(
-        workload,
-        scale,
-        bytecode_chunks,
-        |witness, schedule, geometry| {
-            let layout: &ProgramImageClaimReductionLayout = schedule
-                .program_image
-                .as_ref()
-                .expect("program image layout present");
-            let reduction = layout.precommitted();
-            report_precommitted_geometry("program-image-reduction-cycle", reduction, 2);
-
-            let relation = ProgramImageReductionCyclePhase::<Fr>::new(
-                layout,
-                synthetic_point(geometry.ram_log_k, 13),
-            );
-            let claims = ProgramImageReductionCyclePhaseInputClaims::default();
-            let points = ProgramImageReductionCyclePhaseInputClaims::default();
-            let challenges = NoChallenges::default();
-            let selected = selected_backend(backend);
-            let mut session = ProofSession::default();
-            let start = Instant::now();
-            let mut kernel = selected
-                .program_image_reduction_cycle
-                .prepare(
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                )
-                .expect("prepare the stage-6b program-image cycle-phase kernel");
-            let prepare = start.elapsed();
-            drive_rounds(
-                &mut *kernel,
-                &claims,
-                reduction.cycle_phase_total_rounds(),
-                geometry.log_t,
-                prepare,
-                |_| RoundPhase::Cycle,
-            )
-        },
-    )
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "measurement harness: fixture and kernel errors fail loudly"
-)]
-fn measure_program_image_reduction_address(
-    workload: Workload,
-    scale: u32,
-    backend: BackendKind,
-    bytecode_chunks: usize,
-) -> VerticalTiming {
-    with_precommitted_fixture(
-        workload,
-        scale,
-        bytecode_chunks,
-        |witness, schedule, geometry| {
-            let layout: &ProgramImageClaimReductionLayout = schedule
-                .program_image
-                .as_ref()
-                .expect("program image layout present");
-            let reduction = layout.precommitted();
-            if reduction.num_address_phase_rounds() == 0 {
-                return absent_address_phase(
-                    "program-image-reduction-address",
-                    reduction,
-                    geometry,
-                );
-            }
-            report_precommitted_geometry("program-image-reduction-address", reduction, 2);
-
-            let r_addr_rw = synthetic_point(geometry.ram_log_k, 13);
-            let cycle_relation =
-                ProgramImageReductionCyclePhase::<Fr>::new(layout, r_addr_rw.clone());
-            let cycle_claims = ProgramImageReductionCyclePhaseInputClaims::default();
-            let cycle_points = ProgramImageReductionCyclePhaseInputClaims::default();
-            let challenges = NoChallenges::default();
-            let selected = selected_backend(backend);
-            let mut session = ProofSession::default();
-            let mut cycle_kernel = selected
-                .program_image_reduction_cycle
-                .prepare(
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &cycle_relation,
-                        claims: &cycle_claims,
-                        points: &cycle_points,
-                        challenges: &challenges,
-                    },
-                )
-                .expect("prepare the stage-6b program-image cycle-phase kernel");
-            let _ = drive_rounds(
-                &mut *cycle_kernel,
-                &cycle_claims,
-                reduction.cycle_phase_total_rounds(),
-                geometry.log_t,
-                Duration::ZERO,
-                |_| RoundPhase::Cycle,
-            );
-            cycle_kernel.park_residue(&mut session);
-
-            let relation = ProgramImageReductionAddressPhase::<Fr>::new(
-                layout,
-                Some(r_addr_rw),
-                synthetic_cycle_variables(reduction),
-            );
-            let claims = ProgramImageReductionAddressPhaseInputClaims::default();
-            let points = ProgramImageReductionAddressPhaseInputClaims::default();
-            let start = Instant::now();
-            let mut kernel = selected
-                .program_image_reduction_address
-                .prepare(
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                )
-                .expect("prepare the stage-7 program-image address-phase kernel");
-            let prepare = start.elapsed();
-            drive_rounds(
-                &mut *kernel,
-                &claims,
-                reduction.address_phase_total_rounds(),
-                geometry.log_t,
-                prepare,
-                |_| RoundPhase::Address,
-            )
-        },
-    )
-}
-
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "measurement harness: fixture errors and unsupported relations fail loudly"
-)]
-fn measure_legacy_precommitted(
-    relation: VerticalRelation,
-    workload: Workload,
-    scale: u32,
-    bytecode_chunks: usize,
-) -> VerticalTiming {
-    let PrecommittedFixture {
-        fixture,
-        schedule,
-        bytecode_chunk_count,
-    } = precommitted_fixture(workload, scale, bytecode_chunks);
-    let program_image_words =
-        program_image_words_padded(&fixture.program_preprocessing.ram.bytecode_words);
-    let start_index = fixture
-        .memory_layout
-        .remapped_word_address(fixture.min_bytecode_address)
-        .expect("program image start index") as usize;
-    let inputs = LegacyPrecommittedInputs {
-        log_t: fixture.log_t,
-        log_k_chunk: fixture.config.one_hot_config.committed_chunk_bits(),
-        trace_length: fixture.config.trace_length,
-        ram_k: fixture.config.ram_K,
-        bytecode: &fixture.program_preprocessing.bytecode.bytecode,
-        bytecode_chunk_count,
-        program_image_words: &program_image_words,
-        program_image_start_index: start_index,
-        max_trusted_advice_size: fixture.memory_layout.max_trusted_advice_size as usize,
-        max_untrusted_advice_size: fixture.memory_layout.max_untrusted_advice_size as usize,
-    };
-
-    let absent = |reduction: &PrecommittedClaimReduction| {
-        absent_address_phase(
-            relation.as_str(),
-            reduction,
-            PrecommittedGeometry {
-                log_t: fixture.log_t,
-                ram_log_k: inputs.ram_k.ilog2() as usize,
-                bytecode_chunk_count,
+                JoltAdviceKind::Trusted => "trusted-advice-cycle",
+                JoltAdviceKind::Untrusted => "untrusted-advice-cycle",
             },
+            reduction,
+            2,
+        );
+
+        match kind {
+            JoltAdviceKind::Trusted => {
+                let relation = TrustedAdviceCyclePhase::<Fr>::new(layout, Some(r_val));
+                let claims = TrustedAdviceCyclePhaseInputClaims::default();
+                let points = TrustedAdviceCyclePhaseInputClaims::default();
+                let start = Instant::now();
+                let mut kernel = selected
+                    .trusted_advice_cycle
+                    .prepare(
+                        &mut session,
+                        witness,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .expect("prepare the stage-6b trusted-advice cycle-phase kernel");
+                let prepare = start.elapsed();
+                drive_rounds(
+                    &mut *kernel,
+                    &claims,
+                    rounds,
+                    geometry.log_t,
+                    prepare,
+                    |_| RoundPhase::Cycle,
+                )
+            }
+            JoltAdviceKind::Untrusted => {
+                let relation = UntrustedAdviceCyclePhase::<Fr>::new(layout, Some(r_val));
+                let claims = UntrustedAdviceCyclePhaseInputClaims::default();
+                let points = UntrustedAdviceCyclePhaseInputClaims::default();
+                let start = Instant::now();
+                let mut kernel = selected
+                    .untrusted_advice_cycle
+                    .prepare(
+                        &mut session,
+                        witness,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .expect("prepare the stage-6b untrusted-advice cycle-phase kernel");
+                let prepare = start.elapsed();
+                drive_rounds(
+                    &mut *kernel,
+                    &claims,
+                    rounds,
+                    geometry.log_t,
+                    prepare,
+                    |_| RoundPhase::Cycle,
+                )
+            }
+        }
+    })
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+pub fn measure_advice_address(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+    kind: JoltAdviceKind,
+) -> VerticalTiming {
+    with_precommitted_fixture(f, witness, |witness, schedule, geometry| {
+        let layout: &AdviceClaimReductionLayout =
+            schedule.advice(kind).expect("advice layout present");
+        let reduction = layout.precommitted();
+        let label = match kind {
+            JoltAdviceKind::Trusted => "trusted-advice-address",
+            JoltAdviceKind::Untrusted => "untrusted-advice-address",
+        };
+        if reduction.num_address_phase_rounds() == 0 {
+            return absent_address_phase(label, reduction, geometry);
+        }
+        report_precommitted_geometry(label, reduction, 2);
+
+        let cycle_rounds = reduction.cycle_phase_total_rounds();
+        let address_rounds = reduction.address_phase_total_rounds();
+        let cycle_variables = synthetic_cycle_variables(reduction);
+        let r_val = synthetic_point(reduction.poly_opening_round_permutation_be().len(), 11);
+        let selected = selected_backend(backend);
+        let challenges = NoChallenges::default();
+        let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
+
+        match kind {
+            JoltAdviceKind::Trusted => {
+                let cycle_relation =
+                    TrustedAdviceCyclePhase::<Fr>::new(layout, Some(r_val.clone()));
+                let cycle_claims = TrustedAdviceCyclePhaseInputClaims::default();
+                let cycle_points = TrustedAdviceCyclePhaseInputClaims::default();
+                let cycle_kernel = selected
+                    .trusted_advice_cycle
+                    .prepare(
+                        &mut session,
+                        witness,
+                        ProverInputs {
+                            relation: &cycle_relation,
+                            claims: &cycle_claims,
+                            points: &cycle_points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .expect("prepare the stage-6b trusted-advice cycle-phase kernel");
+                let mut cycle_kernel = cycle_kernel;
+                let _ = drive_rounds(
+                    &mut *cycle_kernel,
+                    &cycle_claims,
+                    cycle_rounds,
+                    geometry.log_t,
+                    Duration::ZERO,
+                    |_| RoundPhase::Cycle,
+                );
+                cycle_kernel.park_residue(&mut session);
+
+                let relation =
+                    TrustedAdviceAddressPhase::<Fr>::new(layout, Some(r_val), cycle_variables);
+                let claims = TrustedAdviceAddressPhaseInputClaims::default();
+                let points = TrustedAdviceAddressPhaseInputClaims::default();
+                let start = Instant::now();
+                let mut kernel = selected
+                    .trusted_advice_address
+                    .prepare(
+                        &mut session,
+                        witness,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .expect("prepare the stage-7 trusted-advice address-phase kernel");
+                let prepare = start.elapsed();
+                drive_rounds(
+                    &mut *kernel,
+                    &claims,
+                    address_rounds,
+                    geometry.log_t,
+                    prepare,
+                    |_| RoundPhase::Address,
+                )
+            }
+            JoltAdviceKind::Untrusted => {
+                let cycle_relation =
+                    UntrustedAdviceCyclePhase::<Fr>::new(layout, Some(r_val.clone()));
+                let cycle_claims = UntrustedAdviceCyclePhaseInputClaims::default();
+                let cycle_points = UntrustedAdviceCyclePhaseInputClaims::default();
+                let mut cycle_kernel = selected
+                    .untrusted_advice_cycle
+                    .prepare(
+                        &mut session,
+                        witness,
+                        ProverInputs {
+                            relation: &cycle_relation,
+                            claims: &cycle_claims,
+                            points: &cycle_points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .expect("prepare the stage-6b untrusted-advice cycle-phase kernel");
+                let _ = drive_rounds(
+                    &mut *cycle_kernel,
+                    &cycle_claims,
+                    cycle_rounds,
+                    geometry.log_t,
+                    Duration::ZERO,
+                    |_| RoundPhase::Cycle,
+                );
+                cycle_kernel.park_residue(&mut session);
+
+                let relation =
+                    UntrustedAdviceAddressPhase::<Fr>::new(layout, Some(r_val), cycle_variables);
+                let claims = UntrustedAdviceAddressPhaseInputClaims::default();
+                let points = UntrustedAdviceAddressPhaseInputClaims::default();
+                let start = Instant::now();
+                let mut kernel = selected
+                    .untrusted_advice_address
+                    .prepare(
+                        &mut session,
+                        witness,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .expect("prepare the stage-7 untrusted-advice address-phase kernel");
+                let prepare = start.elapsed();
+                drive_rounds(
+                    &mut *kernel,
+                    &claims,
+                    address_rounds,
+                    geometry.log_t,
+                    prepare,
+                    |_| RoundPhase::Address,
+                )
+            }
+        }
+    })
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+pub fn measure_bytecode_reduction_cycle(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    with_precommitted_fixture(f, witness, |witness, schedule, geometry| {
+        let layout: &BytecodeClaimReductionLayout = schedule
+            .bytecode
+            .as_ref()
+            .expect("committed bytecode layout present");
+        let reduction = layout.precommitted();
+        report_precommitted_geometry(
+            "bytecode-reduction-cycle",
+            reduction,
+            2 + geometry.bytecode_chunk_count,
+        );
+
+        let relation = BytecodeReductionCyclePhase::<Fr>::new(
+            layout,
+            bytecode_reduction_weights_fixture(layout),
+        );
+        let claims = BytecodeReductionCyclePhaseInputClaims::default();
+        let points = BytecodeReductionCyclePhaseInputClaims::default();
+        let challenges = BytecodeReductionCyclePhaseChallenges {
+            eta: Fr::from_u64(101),
+        };
+        let selected = selected_backend(backend);
+        let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
+        let start = Instant::now();
+        let mut kernel = selected
+            .bytecode_reduction_cycle
+            .prepare(
+                &mut session,
+                witness,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            )
+            .expect("prepare the stage-6b committed-bytecode cycle-phase kernel");
+        let prepare = start.elapsed();
+        drive_rounds(
+            &mut *kernel,
+            &claims,
+            reduction.cycle_phase_total_rounds(),
+            geometry.log_t,
+            prepare,
+            |_| RoundPhase::Cycle,
         )
-    };
+    })
+}
 
-    let (baseline, address) = match relation {
-        VerticalRelation::TrustedAdviceCycle => (
-            advice_baseline(&inputs, &schedule, AdviceKind::Trusted, false),
-            false,
-        ),
-        VerticalRelation::UntrustedAdviceCycle => (
-            advice_baseline(&inputs, &schedule, AdviceKind::Untrusted, false),
-            false,
-        ),
-        VerticalRelation::TrustedAdviceAddress => {
-            let layout = schedule
-                .advice(JoltAdviceKind::Trusted)
-                .expect("advice layout");
-            if layout.precommitted().num_address_phase_rounds() == 0 {
-                return absent(layout.precommitted());
-            }
-            (
-                advice_baseline(&inputs, &schedule, AdviceKind::Trusted, true),
-                true,
-            )
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+pub fn measure_bytecode_reduction_address(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    with_precommitted_fixture(f, witness, |witness, schedule, geometry| {
+        let layout: &BytecodeClaimReductionLayout = schedule
+            .bytecode
+            .as_ref()
+            .expect("committed bytecode layout present");
+        let reduction = layout.precommitted();
+        if reduction.num_address_phase_rounds() == 0 {
+            return absent_address_phase("bytecode-reduction-address", reduction, geometry);
         }
-        VerticalRelation::UntrustedAdviceAddress => {
-            let layout = schedule
-                .advice(JoltAdviceKind::Untrusted)
-                .expect("advice layout");
-            if layout.precommitted().num_address_phase_rounds() == 0 {
-                return absent(layout.precommitted());
-            }
-            (
-                advice_baseline(&inputs, &schedule, AdviceKind::Untrusted, true),
-                true,
-            )
-        }
-        VerticalRelation::BytecodeReductionCycle => {
-            (bytecode_baseline(&inputs, &schedule, false), false)
-        }
-        VerticalRelation::BytecodeReductionAddress => {
-            let layout = schedule.bytecode.as_ref().expect("bytecode layout");
-            if layout.precommitted().num_address_phase_rounds() == 0 {
-                return absent(layout.precommitted());
-            }
-            (bytecode_baseline(&inputs, &schedule, true), true)
-        }
-        VerticalRelation::ProgramImageReductionCycle => {
-            (program_image_baseline(&inputs, &schedule, false), false)
-        }
-        VerticalRelation::ProgramImageReductionAddress => {
-            let layout = schedule
-                .program_image
-                .as_ref()
-                .expect("program image layout");
-            if layout.precommitted().num_address_phase_rounds() == 0 {
-                return absent(layout.precommitted());
-            }
-            (program_image_baseline(&inputs, &schedule, true), true)
-        }
-        other => panic!(
-            "--legacy covers only the eight precommitted claim-reduction arms; {} has a \
-             trace-derived baseline via scripts/legacy_relation_baseline.py",
-            other.as_str()
-        ),
-    };
+        report_precommitted_geometry(
+            "bytecode-reduction-address",
+            reduction,
+            2 + geometry.bytecode_chunk_count,
+        );
 
+        let weights = bytecode_reduction_weights_fixture(layout);
+        let cycle_relation = BytecodeReductionCyclePhase::<Fr>::new(layout, weights.clone());
+        let cycle_claims = BytecodeReductionCyclePhaseInputClaims::default();
+        let cycle_points = BytecodeReductionCyclePhaseInputClaims::default();
+        let cycle_challenges = BytecodeReductionCyclePhaseChallenges {
+            eta: Fr::from_u64(101),
+        };
+        let selected = selected_backend(backend);
+        let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
+        let mut cycle_kernel = selected
+            .bytecode_reduction_cycle
+            .prepare(
+                &mut session,
+                witness,
+                ProverInputs {
+                    relation: &cycle_relation,
+                    claims: &cycle_claims,
+                    points: &cycle_points,
+                    challenges: &cycle_challenges,
+                },
+            )
+            .expect("prepare the stage-6b committed-bytecode cycle-phase kernel");
+        let _ = drive_rounds(
+            &mut *cycle_kernel,
+            &cycle_claims,
+            reduction.cycle_phase_total_rounds(),
+            geometry.log_t,
+            Duration::ZERO,
+            |_| RoundPhase::Cycle,
+        );
+        cycle_kernel.park_residue(&mut session);
+
+        let relation = BytecodeReductionAddressPhase::<Fr>::new(
+            layout,
+            Some(weights),
+            synthetic_cycle_variables(reduction),
+        );
+        let claims = BytecodeReductionAddressPhaseInputClaims::default();
+        let points = BytecodeReductionAddressPhaseInputClaims::default();
+        let challenges = NoChallenges::default();
+        let start = Instant::now();
+        let mut kernel = selected
+            .bytecode_reduction_address
+            .prepare(
+                &mut session,
+                witness,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            )
+            .expect("prepare the stage-7 committed-bytecode address-phase kernel");
+        let prepare = start.elapsed();
+        drive_rounds(
+            &mut *kernel,
+            &claims,
+            reduction.address_phase_total_rounds(),
+            geometry.log_t,
+            prepare,
+            |_| RoundPhase::Address,
+        )
+    })
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+pub fn measure_program_image_reduction_cycle(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    with_precommitted_fixture(f, witness, |witness, schedule, geometry| {
+        let layout: &ProgramImageClaimReductionLayout = schedule
+            .program_image
+            .as_ref()
+            .expect("program image layout present");
+        let reduction = layout.precommitted();
+        report_precommitted_geometry("program-image-reduction-cycle", reduction, 2);
+
+        let relation = ProgramImageReductionCyclePhase::<Fr>::new(
+            layout,
+            synthetic_point(geometry.ram_log_k, 13),
+        );
+        let claims = ProgramImageReductionCyclePhaseInputClaims::default();
+        let points = ProgramImageReductionCyclePhaseInputClaims::default();
+        let challenges = NoChallenges::default();
+        let selected = selected_backend(backend);
+        let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
+        let start = Instant::now();
+        let mut kernel = selected
+            .program_image_reduction_cycle
+            .prepare(
+                &mut session,
+                witness,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            )
+            .expect("prepare the stage-6b program-image cycle-phase kernel");
+        let prepare = start.elapsed();
+        drive_rounds(
+            &mut *kernel,
+            &claims,
+            reduction.cycle_phase_total_rounds(),
+            geometry.log_t,
+            prepare,
+            |_| RoundPhase::Cycle,
+        )
+    })
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+pub fn measure_program_image_reduction_address(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    with_precommitted_fixture(f, witness, |witness, schedule, geometry| {
+        let layout: &ProgramImageClaimReductionLayout = schedule
+            .program_image
+            .as_ref()
+            .expect("program image layout present");
+        let reduction = layout.precommitted();
+        if reduction.num_address_phase_rounds() == 0 {
+            return absent_address_phase("program-image-reduction-address", reduction, geometry);
+        }
+        report_precommitted_geometry("program-image-reduction-address", reduction, 2);
+
+        let r_addr_rw = synthetic_point(geometry.ram_log_k, 13);
+        let cycle_relation = ProgramImageReductionCyclePhase::<Fr>::new(layout, r_addr_rw.clone());
+        let cycle_claims = ProgramImageReductionCyclePhaseInputClaims::default();
+        let cycle_points = ProgramImageReductionCyclePhaseInputClaims::default();
+        let challenges = NoChallenges::default();
+        let selected = selected_backend(backend);
+        let mut session = ProofSession::default();
+        warm_shared_witness(&mut session, witness, backend, f.log_t);
+        let mut cycle_kernel = selected
+            .program_image_reduction_cycle
+            .prepare(
+                &mut session,
+                witness,
+                ProverInputs {
+                    relation: &cycle_relation,
+                    claims: &cycle_claims,
+                    points: &cycle_points,
+                    challenges: &challenges,
+                },
+            )
+            .expect("prepare the stage-6b program-image cycle-phase kernel");
+        let _ = drive_rounds(
+            &mut *cycle_kernel,
+            &cycle_claims,
+            reduction.cycle_phase_total_rounds(),
+            geometry.log_t,
+            Duration::ZERO,
+            |_| RoundPhase::Cycle,
+        );
+        cycle_kernel.park_residue(&mut session);
+
+        let relation = ProgramImageReductionAddressPhase::<Fr>::new(
+            layout,
+            Some(r_addr_rw),
+            synthetic_cycle_variables(reduction),
+        );
+        let claims = ProgramImageReductionAddressPhaseInputClaims::default();
+        let points = ProgramImageReductionAddressPhaseInputClaims::default();
+        let start = Instant::now();
+        let mut kernel = selected
+            .program_image_reduction_address
+            .prepare(
+                &mut session,
+                witness,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            )
+            .expect("prepare the stage-7 program-image address-phase kernel");
+        let prepare = start.elapsed();
+        drive_rounds(
+            &mut *kernel,
+            &claims,
+            reduction.address_phase_total_rounds(),
+            geometry.log_t,
+            prepare,
+            |_| RoundPhase::Address,
+        )
+    })
+}
+
+pub fn advice_opening(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    measure_advice_opening(f, witness, backend, JoltAdviceKind::Trusted)
+}
+
+pub fn trusted_advice_cycle(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    measure_advice_cycle(f, witness, backend, JoltAdviceKind::Trusted)
+}
+
+pub fn untrusted_advice_cycle(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    measure_advice_cycle(f, witness, backend, JoltAdviceKind::Untrusted)
+}
+
+pub fn trusted_advice_address(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    measure_advice_address(f, witness, backend, JoltAdviceKind::Trusted)
+}
+
+pub fn untrusted_advice_address(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    measure_advice_address(f, witness, backend, JoltAdviceKind::Untrusted)
+}
+
+pub fn warm_shared_witness(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+    log_t: usize,
+) {
+    match backend {
+        BackendKind::Reference => {}
+        BackendKind::Optimized => {
+            jolt_kernels::optimized::warm_shared_witness(session, witness, log_t)
+                .expect("warm the optimized shared witness state");
+        }
+        BackendKind::Cuda => {
+            jolt_kernels::cuda::warm_shared_witness(session, witness, log_t)
+                .expect("warm the cuda shared witness state");
+        }
+    }
+}
+
+pub fn measure_witness_generation(
+    f: &Fixture,
+    witness: &dyn JoltWitnessPlane<Fr>,
+    backend: BackendKind,
+) -> VerticalTiming {
+    let log_t = f.log_t;
+    let mut session = ProofSession::default();
+    let start = Instant::now();
+    warm_shared_witness(&mut session, witness, backend, log_t);
     VerticalTiming {
-        log_t: fixture.log_t,
-        prepare: baseline.prepare,
-        address: if address {
-            baseline.rounds
-        } else {
-            Duration::ZERO
-        },
+        log_t,
+        prepare: start.elapsed(),
+        address: Duration::ZERO,
         handoff: Duration::ZERO,
-        cycle: if address {
-            Duration::ZERO
-        } else {
-            baseline.rounds
-        },
+        cycle: Duration::ZERO,
         claims: Duration::ZERO,
     }
 }

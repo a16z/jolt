@@ -74,6 +74,7 @@ jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-dory.workspace = true
 jolt-program.workspace = true
+jolt-prover = { workspace = true, features = ["profiling", "cuda"] }
 jolt-prover-legacy = { workspace = true, features = ["default"] }
 jolt-transcript.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
@@ -117,3 +118,7 @@ required-features = ["cuda"]
 name = "cuda_rows1_msm_bench"
 required-features = ["cuda"]
 
+[[example]]
+name = "cuda_relation_bench"
+path = "examples/cuda_relation_bench/main.rs"
+required-features = ["cuda"]

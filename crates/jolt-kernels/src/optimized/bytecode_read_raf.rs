@@ -97,7 +97,7 @@ struct PcBundle {
 
 impl PcRow {
     /// One trace scan per proof, shared by both phases through the session.
-    fn shared<F: Field>(
+    pub(crate) fn shared<F: Field>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,

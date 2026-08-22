@@ -114,7 +114,7 @@ impl Workload {
 
     /// The guest input targeting `target` trace cycles — the same mapping as
     /// the legacy harness's `master_benchmark`.
-    pub(crate) fn input(self, target: usize) -> Vec<u8> {
+    pub fn input(self, target: usize) -> Vec<u8> {
         match self {
             Self::Fibonacci => {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT))
@@ -752,7 +752,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
 
 /// Trace the guest through the modular stack (`TracerBackend`), with the
 /// memory config mirrored off the legacy layout — the byte-diff wiring.
-pub(crate) fn trace_modular(
+pub fn trace_modular(
     program: &JoltProgram,
     memory_layout: &common::jolt_device::MemoryLayout,
     inputs: &[u8],
@@ -781,7 +781,7 @@ pub(crate) fn trace_modular(
 }
 
 /// Pad to the padded trace length with no-op rows, as legacy does.
-pub(crate) fn pad_trace(
+pub fn pad_trace(
     trace_output: TraceOutput<OwnedTrace>,
     trace_length: usize,
 ) -> TraceOutput<OwnedTrace> {

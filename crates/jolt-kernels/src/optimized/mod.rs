@@ -32,6 +32,7 @@
 
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::commitment::ModeStreamingCommitment;
 
@@ -201,3 +202,15 @@ pub(crate) mod parity;
 pub(crate) mod rows;
 #[cfg(test)]
 pub(crate) mod testing;
+
+pub fn warm_shared_witness<F: Field>(
+    session: &mut crate::ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+) -> Result<(), crate::KernelError<F>> {
+    let cycles = 1usize << log_t;
+    let _ = self::ram_trace::RamAccessColumns::shared(session, witness, log_t)?;
+    let _ = self::bytecode_read_raf::PcRow::shared(session, witness, cycles)?;
+    let _ = self::instruction_read_raf::InstructionCycleRow::shared(session, witness, cycles)?;
+    Ok(())
+}
