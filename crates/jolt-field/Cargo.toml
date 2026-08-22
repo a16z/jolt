@@ -33,6 +33,7 @@ bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []
 parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
+fp128-proof-linkage = []
 
 [dev-dependencies]
 bincode = { workspace = true }
@@ -48,3 +49,12 @@ harness = false
 [[bench]]
 name = "fp64_kernels"
 harness = false
+
+[[bench]]
+name = "field_arithmetic"
+harness = false
+required-features = ["solinas"]
+
+[[example]]
+name = "fp128_production_witness"
+required-features = ["solinas", "fp128-proof-linkage"]

@@ -12,15 +12,18 @@
 //! composite odd modulus yields a ring whose `inverse` is meaningless.
 //!
 //! On AArch64 the multiply and squaring kernels use inline assembly
-//! (benchmarked at 1.29x throughput vs the portable path on Apple M4); every
-//! other path, and every path on other architectures, is portable Rust.
+//! (benchmarked at 1.29x throughput vs the portable path on Apple M4). The
+//! A7F7 multiplication path also uses baseline x86-64 inline assembly. Other
+//! paths use portable Rust.
 
 use super::word::mul64_wide;
 use crate::PseudoMersenne;
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 use rand_core::RngCore;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use std::arch::asm;
+
+mod add_sub;
 
 /// Pack two `u64` limbs into little-endian `[lo, hi]`.
 #[inline(always)]
@@ -181,45 +184,17 @@ impl<const P: u128> Fp128<P> {
         [s0, s1, s2, s3]
     }
 
-    /// Carry-chain add with fused reduction.
-    ///
-    /// For `a, b < p`: if the two-limb add wraps (`overflow`), the real sum
-    /// is `s + 2^128 ≡ s + C`, and `s = a + b − 2^128 < 2p − 2^128 = p − C`,
-    /// so `s + C < p` is already canonical (and `carry3 = 0`). Without wrap,
-    /// `s + C` carries iff `s ≥ p`, and then the wrapped value is
-    /// `s − p ≤ p − 2`. Both cases select `r` on `overflow | carry3`.
-    #[inline(always)]
-    fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        let (s0, carry0) = a[0].overflowing_add(b[0]);
-        let (s1a, carry1a) = a[1].overflowing_add(b[1]);
-        let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
-        let overflow = carry1a | carry1b;
-
-        let (r0, carry2) = s0.overflowing_add(Self::C_LO);
-        let (r1, carry3) = s1.overflowing_add(carry2 as u64);
-
-        pack(
-            if overflow | carry3 { r0 } else { s0 },
-            if overflow | carry3 { r1 } else { s1 },
-        )
-    }
-
-    /// Subtract with borrow-conditional modulus add-back (`a − b + p` when
-    /// `a < b`; the wrapped difference plus `p` cannot wrap again since
-    /// `a − b + 2^128 + p − 2^128 = a − b + p < p`).
-    #[inline(always)]
-    fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        let (diff, borrow) = join(a).overflowing_sub(join(b));
-        split(if borrow { diff.wrapping_add(P) } else { diff })
-    }
-
     #[inline(always)]
     fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         #[cfg(target_arch = "aarch64")]
         {
-            Self::mul_raw_aarch64(a, b)
+            Self::mul_raw_aarch64_dispatch(a, b)
         }
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(target_arch = "x86_64")]
+        {
+            Self::mul_raw_x86_64_dispatch(a, b)
+        }
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         {
             Self::mul_raw_portable(a, b)
         }
@@ -327,6 +302,99 @@ impl<const P: u128> Fp128<P> {
         Self::reduce_4(r0, r1, r2, r3)
     }
 
+    /// x86-64 multiplication dispatch. Builds that enable both BMI2 and ADX
+    /// use the matching A7F7 specialization. Other x86-64 builds use the
+    /// baseline proved sequence. Other moduli retain the portable path.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn mul_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        if Self::C_LO == 0xffff_a7f7 {
+            #[cfg(all(target_feature = "bmi2", target_feature = "adx"))]
+            {
+                Self::mul_raw_x86_64_a7f7_bmi2_adx(a, b)
+            }
+            #[cfg(not(all(target_feature = "bmi2", target_feature = "adx")))]
+            {
+                Self::mul_raw_x86_64_a7f7(a, b)
+            }
+        } else {
+            Self::mul_raw_portable(a, b)
+        }
+    }
+
+    /// A7F7 multiplication for x86-64 builds with BMI2 and ADX enabled.
+    ///
+    /// `rdi:rsi` starts with `a`, and `rdx:rcx` starts with `b`. The body
+    /// finishes directly in the System V result registers `rax:rdx`. It uses
+    /// only caller saved registers, flags, and no memory or stack.
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "bmi2",
+        target_feature = "adx"
+    ))]
+    #[inline(always)]
+    fn mul_raw_x86_64_a7f7_bmi2_adx(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [a_lo, a_hi] = a;
+        let [b_lo, b_hi] = b;
+        let out_lo: u64;
+        let out_hi: u64;
+        // SAFETY: The compile-time target-feature gate guarantees instruction
+        // availability. Every changed register is declared, and the body
+        // accesses neither memory nor stack.
+        unsafe {
+            asm!(
+                include_str!("../../asm/x86_64/fp128_mul_bmi2_adx_body.inc"),
+                inout("rdi") a_lo => _,
+                inout("rsi") a_hi => _,
+                inout("rdx") b_lo => out_hi,
+                inout("rcx") b_hi => _,
+                lateout("rax") out_lo,
+                out("r8") _,
+                out("r9") _,
+                out("r10") _,
+                out("r11") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
+    }
+
+    /// A7F7 multiplication through the exact x86-64 instruction body imported
+    /// by the HOL Light proof.
+    ///
+    /// `rdi:rsi` starts with `a`, and `rdx:rcx` starts with `b`. The result
+    /// finishes in `rdi:rcx`, which Rust binds to the two returned limbs. `r8`
+    /// contains `C = 0xffff_a7f7`. The body uses `rax`, `rdx`, `r9`, `r10`,
+    /// `r11`, and the flags as temporary state. It uses no memory or stack and
+    /// requires no optional x86 target features.
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(all(target_feature = "bmi2", target_feature = "adx"))
+    ))]
+    #[inline(always)]
+    fn mul_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [mut out_lo, a_hi] = a;
+        let [b_lo, mut out_hi] = b;
+        // SAFETY: The register contract is listed above. Every changed
+        // register is declared, and the body accesses neither memory nor stack.
+        unsafe {
+            asm!(
+                include_str!("../../asm/x86_64/fp128_mul_body.inc"),
+                inout("rdi") out_lo,
+                in("rsi") a_hi,
+                inout("rdx") b_lo => _,
+                inout("rcx") out_hi,
+                in("r8") Self::C_LO,
+                out("rax") _,
+                out("r9") _,
+                out("r10") _,
+                out("r11") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
+    }
+
     /// 35-instruction AArch64 inline-asm multiply with Solinas reduction.
     ///
     /// Saves 6 instructions vs LLVM's codegen of the portable path by:
@@ -338,7 +406,53 @@ impl<const P: u128> Fp128<P> {
     /// Benchmarked at 1.29x throughput improvement on Apple M4.
     #[cfg(target_arch = "aarch64")]
     #[inline(always)]
-    fn mul_raw_aarch64(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    fn mul_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        if Self::C_LO == 0xffff_a7f7 {
+            Self::mul_raw_aarch64_a7f7(a, b)
+        } else {
+            Self::mul_raw_aarch64_reg(a, b)
+        }
+    }
+
+    /// A7F7 multiplication through the exact instruction body imported by
+    /// the HOL Light proof.
+    ///
+    /// `x0:x1` starts with `a` and finishes with the result. `x2:x3` contains
+    /// `b`. `x4` contains `C = 0xffff_a7f7`. The body uses `x5:x12` and the
+    /// condition flags as temporary state. It does not access memory or the
+    /// stack.
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn mul_raw_aarch64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [mut out_lo, mut out_hi] = a;
+        let [b_lo, b_hi] = b;
+        // SAFETY: The register contract is listed above. Every temporary
+        // register is declared, and the body does not access memory or stack.
+        unsafe {
+            asm!(
+                include_str!("../../asm/aarch64/fp128_mul_body.inc"),
+                inout("x0") out_lo,
+                inout("x1") out_hi,
+                in("x2") b_lo,
+                in("x3") b_hi,
+                in("x4") Self::C_LO,
+                out("x5") _,
+                out("x6") _,
+                out("x7") _,
+                out("x8") _,
+                out("x9") _,
+                out("x10") _,
+                out("x11") _,
+                out("x12") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn mul_raw_aarch64_reg(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let out_lo: u64;
         let out_hi: u64;
         // SAFETY: register-only inline asm (pure, nomem, nostack) over plain
@@ -465,7 +579,7 @@ impl<const P: u128> Fp128<P> {
     /// 31-instruction AArch64 inline-asm squaring with Solinas reduction:
     /// 3 widening multiplies (vs 4 for general mul), the cross term doubled
     /// via shifted-register operands, then the same fold-1 + ccmp
-    /// canonicalize as [`mul_raw_aarch64`](Self::mul_raw_aarch64).
+    /// canonicalize as [`mul_raw_aarch64_reg`](Self::mul_raw_aarch64_reg).
     #[cfg(target_arch = "aarch64")]
     #[inline(always)]
     fn sqr_raw_aarch64(a: [u64; 2]) -> [u64; 2] {
@@ -473,7 +587,7 @@ impl<const P: u128> Fp128<P> {
         let out_hi: u64;
         // SAFETY: register-only inline asm (pure, nomem, nostack) over plain
         // integer operands; implements exactly `sqr_wide` + `reduce_4`, with
-        // the same `C < 2^32` fold-2 invariant as `mul_raw_aarch64`.
+        // the same `C < 2^32` fold-2 invariant as `mul_raw_aarch64_reg`.
         unsafe {
             asm!(
                 // Squaring schoolbook: 3 widening muls
@@ -551,9 +665,14 @@ impl<const P: u128> Fp128<P> {
         acc
     }
 
-    /// Create from a canonical representative in `[0, P)`.
+    /// Create from a canonical representative in `[0, P)` without checking it.
+    ///
+    /// # Safety
+    ///
+    /// `x` must be less than `P`. Violating this condition breaks the private
+    /// canonical representation invariant used by the arithmetic kernels.
     #[inline]
-    pub fn from_canonical_u128(x: u128) -> Self {
+    pub unsafe fn from_canonical_u128(x: u128) -> Self {
         debug_assert!(x < P);
         Self(split(x))
     }
@@ -1119,7 +1238,17 @@ mod tests {
             );
             for b in cases(P) {
                 assert_eq!(
-                    Fp128::<P>::mul_raw_aarch64(a, b),
+                    Fp128::<P>::add_raw(a, b),
+                    Fp128::<P>::add_raw_portable(a, b),
+                    "add asm vs portable, a={a:?} b={b:?}"
+                );
+                assert_eq!(
+                    Fp128::<P>::sub_raw(a, b),
+                    Fp128::<P>::sub_raw_portable(a, b),
+                    "sub asm vs portable, a={a:?} b={b:?}"
+                );
+                assert_eq!(
+                    Fp128::<P>::mul_raw_aarch64_dispatch(a, b),
                     Fp128::<P>::mul_raw_portable(a, b),
                     "mul asm vs portable, a={a:?} b={b:?}"
                 );
@@ -1134,7 +1263,7 @@ mod tests {
     }
 
     #[test]
-    fn asm_matches_portable() {
+    fn fp128_aarch64_matches_portable() {
         check::<{ u128::MAX - 274 }>(); // C = 275
         check::<{ u128::MAX - 158 }>(); // C = 159
         check::<{ u128::MAX - 2354 }>(); // C = 2355

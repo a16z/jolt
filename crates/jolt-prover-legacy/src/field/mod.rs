@@ -225,6 +225,15 @@ pub trait JoltField:
     fn from_u128(val: u128) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
+    /// Decode scalar challenge bytes using this field's transcript convention.
+    ///
+    /// BN254 and Dory preserve Jolt's historical big-endian interpretation.
+    /// Fields with a different protocol convention override this method.
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        let mut reversed = bytes.to_vec();
+        reversed.reverse();
+        Self::from_bytes(&reversed)
+    }
     fn inverse(&self) -> Option<Self>;
     fn to_u64(&self) -> Option<u64> {
         unimplemented!("conversion to u64 not implemented");

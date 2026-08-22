@@ -8,6 +8,8 @@ on:
       - "crates/jolt-field/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
   pull_request:
     branches: [main]
     paths:
@@ -15,6 +17,8 @@ on:
       - "crates/jolt-field/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
 
 permissions:
   contents: read
@@ -34,12 +38,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Require AVX2
         run: grep -Eq '(^|[[:space:]])avx2([[:space:]]|$)' /proc/cpuinfo
       - name: Run packed field tests
         env:
           RUSTFLAGS: -D warnings -C target-feature=+avx2
-        run: cargo test --release -p jolt-field --no-default-features --features solinas --test solinas_packed_differential
+        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas --test solinas_packed_differential
 
   aarch64-neon:
     name: AArch64 NEON field kernels
@@ -47,6 +53,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Require native AArch64 NEON
         run: |
           test "$(uname -m)" = "aarch64"
@@ -54,7 +62,11 @@ jobs:
       - name: Run packed field tests
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
-        run: cargo test --release -p jolt-field --no-default-features --features solinas --test solinas_packed_differential
+        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas --test solinas_packed_differential
+      - name: Compare scalar Fp128 assembly with portable arithmetic
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=native
+        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas --lib -E 'test(fp128_aarch64_matches_portable)'
 
   avx512:
     name: AVX-512 field kernels (emulated)
@@ -62,6 +74,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Install Intel Software Development Emulator
         run: |
           curl --fail --location --silent --show-error --output /tmp/intel-sde.tar.xz https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz
@@ -73,4 +87,4 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
           RUSTFLAGS: -D warnings -C target-feature=+avx2,+avx512f,+avx512dq
-        run: cargo test --release --target x86_64-unknown-linux-gnu -p jolt-field --no-default-features --features solinas --test solinas_packed_differential
+        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-field --no-default-features --features solinas --test solinas_packed_differential
