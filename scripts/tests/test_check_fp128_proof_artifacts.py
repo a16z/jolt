@@ -43,6 +43,16 @@ class CheckFp128ProofArtifactsTests(unittest.TestCase):
             CHECKER.parse_symbol_bytes(disassembly),
             {"jolt_fp128_sub_asm": bytes.fromhex("48 29 d7 48 83 de 00 c3")},
         )
+        self.assertEqual(
+            CHECKER.parse_symbol_byte_instructions(disassembly),
+            {
+                "jolt_fp128_sub_asm": [
+                    bytes.fromhex("48 29 d7"),
+                    bytes.fromhex("48 83 de 00"),
+                    bytes.fromhex("c3"),
+                ]
+            },
+        )
 
     def test_byte_mismatch_fails_closed(self) -> None:
         with self.assertRaisesRegex(SystemExit, "byte mismatch"):
@@ -53,6 +63,23 @@ class CheckFp128ProofArtifactsTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "found 2"):
             CHECKER.require_bytes_once(
                 "test", bytes.fromhex("aa bb 00 aa bb"), bytes.fromhex("aa bb")
+            )
+
+    def test_witness_sequence_must_follow_instruction_boundaries(self) -> None:
+        instructions = [bytes.fromhex("00 aa"), bytes.fromhex("bb"), bytes.fromhex("ff")]
+        CHECKER.require_instruction_sequence_once(
+            "test", instructions, bytes.fromhex("00 aa bb")
+        )
+        with self.assertRaisesRegex(SystemExit, "found 0"):
+            CHECKER.require_instruction_sequence_once(
+                "test", instructions, bytes.fromhex("aa bb")
+            )
+
+    def test_instruction_sequence_must_appear_exactly_once(self) -> None:
+        instructions = [bytes.fromhex("aa"), bytes.fromhex("bb"), bytes.fromhex("aa"), bytes.fromhex("bb")]
+        with self.assertRaisesRegex(SystemExit, "found 2"):
+            CHECKER.require_instruction_sequence_once(
+                "test", instructions, bytes.fromhex("aa bb")
             )
 
 

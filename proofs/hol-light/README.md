@@ -11,15 +11,19 @@ Start with the Book chapter
 It explains the arithmetic, theorem shape, production connection, and trust
 boundary.
 
-The final theorems cover callable functions, including `ret` and the relevant
-procedure call convention. Every proved object includes the production
-constant load, so none of the theorems assumes a prepared offset register. All
-arithmetic theorems assume canonical inputs and prove the canonical result modulo
+The final AArch64 theorems cover complete callable functions. The x86-64 final
+theorems cover fixed-register subroutines: they prove the `ret` stack behavior
+and an ABI-safe frame, while leaving the result in `rdi:rsi`. The compiler
+wrapper that moves that result into the C return registers is outside the HOL
+Light theorem. Every proved object includes the production constant load, so
+none of the theorems assumes a prepared offset register. All arithmetic
+theorems assume canonical inputs and prove the canonical result modulo
 `0xffffffffffffffffffffffff00005809`. A separate certificate proves that this
 modulus is prime.
 
 The public witness calls the normal Rust field operation. The artifact checker
 confirms that its optimized machine code contains the proved instruction body.
+On x86-64, the match must begin and end at decoded instruction boundaries.
 Jolt does not inspect an Akita executable. Akita must perform that final binary
 check at its pinned Jolt revision.
 

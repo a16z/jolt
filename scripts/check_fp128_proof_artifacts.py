@@ -123,24 +123,35 @@ def parse_symbol_words(disassembly: str) -> dict[str, list[int]]:
     return symbols
 
 
-def parse_symbol_bytes(disassembly: str) -> dict[str, bytes]:
-    """Return x86 instruction bytes keyed by normalized symbol name."""
-    symbols: dict[str, bytearray] = {}
-    current: bytearray | None = None
+def parse_symbol_byte_instructions(disassembly: str) -> dict[str, list[bytes]]:
+    """Return decoded x86 instruction byte strings by normalized symbol."""
+    symbols: dict[str, list[bytes]] = {}
+    current: list[bytes] | None = None
     for line in disassembly.splitlines():
         symbol_match = SYMBOL_RE.match(line)
         if symbol_match:
             name = symbol_match.group(1).removeprefix("_")
-            current = symbols.setdefault(name, bytearray())
+            current = symbols.setdefault(name, [])
             continue
         instruction_match = INSTRUCTION_LINE_RE.match(line)
         if instruction_match is None or current is None:
             continue
+        instruction = bytearray()
         for token in instruction_match.group(1).split():
             if BYTE_TOKEN_RE.fullmatch(token) is None:
                 break
-            current.append(int(token, 16))
-    return {name: bytes(value) for name, value in symbols.items()}
+            instruction.append(int(token, 16))
+        if instruction:
+            current.append(bytes(instruction))
+    return symbols
+
+
+def parse_symbol_bytes(disassembly: str) -> dict[str, bytes]:
+    """Return flattened x86 instruction bytes keyed by normalized symbol."""
+    return {
+        name: b"".join(instructions)
+        for name, instructions in parse_symbol_byte_instructions(disassembly).items()
+    }
 
 
 def find_llvm_objdump(explicit: str | None) -> list[str]:
@@ -190,6 +201,16 @@ def read_symbol_bytes(tool: list[str], binary: Path, symbol: str) -> bytes:
     return value
 
 
+def read_symbol_byte_instructions(
+    tool: list[str], binary: Path, symbol: str
+) -> list[bytes]:
+    disassembly = read_symbol_disassembly(tool, binary, symbol)
+    value = parse_symbol_byte_instructions(disassembly).get(symbol)
+    if value is None:
+        raise SystemExit(f"symbol {symbol!r} had no x86-64 instructions in {binary}")
+    return value
+
+
 def format_words(words: list[int]) -> str:
     return " ".join(f"{word:08x}" for word in words)
 
@@ -222,6 +243,26 @@ def require_bytes_once(label: str, actual: bytes, expected: bytes) -> None:
             f"{label} expected one exact byte sequence, found {occurrences}\n"
             f"expected sequence: {expected.hex(' ')}\n"
             f"actual symbol:     {actual.hex(' ')}"
+        )
+
+
+def require_instruction_sequence_once(
+    label: str, actual: list[bytes], expected: bytes
+) -> None:
+    """Require one exact sequence beginning and ending at decoded boundaries."""
+    occurrences = 0
+    for start in range(len(actual)):
+        candidate = bytearray()
+        for instruction in actual[start:]:
+            candidate.extend(instruction)
+            if len(candidate) >= len(expected):
+                occurrences += bytes(candidate) == expected
+                break
+    if occurrences != 1:
+        raise SystemExit(
+            f"{label} expected one exact instruction sequence, found {occurrences}\n"
+            f"expected sequence: {expected.hex(' ')}\n"
+            f"actual symbol:     {b''.join(actual).hex(' ')}"
         )
 
 
@@ -279,10 +320,10 @@ def check_x86_64(
 ) -> None:
     add_object_bytes = read_symbol_bytes(tool, add_object, "jolt_fp128_add_asm")
     sub_object_bytes = read_symbol_bytes(tool, sub_object, "jolt_fp128_sub_asm")
-    add_witness_bytes = read_symbol_bytes(
+    add_witness_instructions = read_symbol_byte_instructions(
         tool, witness, "jolt_fp128_add_production_witness"
     )
-    sub_witness_bytes = read_symbol_bytes(
+    sub_witness_instructions = read_symbol_byte_instructions(
         tool, witness, "jolt_fp128_sub_production_witness"
     )
     require_bytes(
@@ -295,14 +336,14 @@ def check_x86_64(
         sub_object_bytes,
         X86_64_LOAD_A7F7_INTO_R8D + X86_64_SUB_BODY + X86_64_RET,
     )
-    require_bytes_once(
+    require_instruction_sequence_once(
         "public addition witness",
-        add_witness_bytes,
+        add_witness_instructions,
         X86_64_LOAD_A7F7_INTO_R8D + X86_64_ADD_BODY,
     )
-    require_bytes_once(
+    require_instruction_sequence_once(
         "public subtraction witness",
-        sub_witness_bytes,
+        sub_witness_instructions,
         X86_64_LOAD_A7F7_INTO_R8D + X86_64_SUB_BODY,
     )
 

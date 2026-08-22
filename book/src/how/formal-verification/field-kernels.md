@@ -104,9 +104,9 @@ address.
 
 The optimized Rust witness has compiler generated setup and return moves
 around the proved sequence. The checker requires the exact proved constant
-load and body to occur once in the witness symbol. HOL Light proves that
-sequence and `ret` in the standalone object. It does not prove the compiler
-generated witness wrapper.
+load and body to occur once at decoded instruction boundaries in the witness
+symbol. HOL Light proves that sequence and `ret` in the standalone object. It
+does not prove the compiler generated witness wrapper.
 
 ## Addition
 
@@ -211,9 +211,16 @@ registers. It does not assume an initial value for the offset register. Its
 postcondition states the field result. Its frame condition lists every part of
 processor state that may change.
 
-The subroutine theorem adds `ret` and the procedure call convention. It states
-where the return address comes from and which registers a caller must treat as
-changed.
+The AArch64 subroutine theorem adds `ret` and the procedure call convention.
+It states where the return address comes from and which registers a caller
+must treat as changed.
+
+The x86-64 subroutine theorem is narrower. It proves the `ret` stack behavior
+and that only ABI-permitted state changes, but the arithmetic result remains
+in the fixed kernel registers `rdi:rsi`. The compiler-generated witness
+wrapper moves that result into the C return registers. That wrapper is checked
+for exact inclusion of the proved kernel, but is not itself proved by HOL
+Light.
 
 The notation `ensures x86` or `ensures arm` means that every execution which
 starts in the stated precondition reaches the stated postcondition while
