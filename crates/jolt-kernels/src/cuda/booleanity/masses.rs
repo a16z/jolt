@@ -7,7 +7,7 @@ use crate::cuda::common::device::{
     fr_into, fr_limbs, require_fr, require_fr_slice, DeviceFrVec, LIMBS,
 };
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::one_hot_fold::{DeviceOneHotColumns, FoldTuning};
+use crate::cuda::common::one_hot_fold::{FoldTuning, OneHotShards};
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
 const LANES: usize = 2;
@@ -23,10 +23,11 @@ pub struct DeviceBooleanityMasses {
 impl DeviceBooleanityMasses {
     pub fn new<F: Field>(
         context: &CudaKernelContext,
-        columns: &DeviceOneHotColumns,
+        shards: &OneHotShards,
         cycle_point: &[F],
         gamma: F,
     ) -> Result<Self, CudaError> {
+        let columns = shards.whole()?;
         let polys = columns.polys();
         let addresses = columns.addresses();
         if polys == 0 || addresses < 2 {
@@ -36,7 +37,7 @@ impl DeviceBooleanityMasses {
             });
         }
 
-        let linear = columns.fold_cycles(context, cycle_point, FoldTuning::default())?;
+        let linear = shards.fold(cycle_point, FoldTuning::default())?;
         if linear.len() != polys * addresses {
             return Err(CudaError::LengthMismatch {
                 expected: polys * addresses,
@@ -222,7 +223,7 @@ mod tests {
 
     use super::DeviceBooleanityMasses;
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+    use crate::cuda::common::one_hot_fold::{DeviceOneHotColumns, OneHotShards};
     use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
     use crate::cuda::common::pack::COLD;
     use crate::cuda::common::split_eq::DeviceSplitEq;
@@ -395,7 +396,7 @@ mod tests {
                 cycles,
             )
             .expect("upload one-hot columns");
-            let mut got = DeviceBooleanityMasses::new(context, &uploaded, &cycle_point, gamma)
+            let mut got = DeviceBooleanityMasses::new(context, &OneHotShards::single(uploaded), &cycle_point, gamma)
                 .expect("device booleanity masses");
             let mut eq = GruenSplitEqPolynomial::<Fr>::new(&address_point, BindingOrder::LowToHigh);
             let mut device_eq =
@@ -447,8 +448,13 @@ mod tests {
         )
         .expect("upload one-hot columns");
         let cycle_point: Vec<Fr> = (0..log_t).map(|i| fr(i as u64 * 13 + 5)).collect();
-        let masses = DeviceBooleanityMasses::new(context, &uploaded, &cycle_point, fr(9))
-            .expect("device booleanity masses");
+        let masses = DeviceBooleanityMasses::new(
+            context,
+            &OneHotShards::single(uploaded),
+            &cycle_point,
+            fr(9),
+        )
+        .expect("device booleanity masses");
         let short: Vec<Fr> = (0..3).map(|i| fr(i as u64 * 3 + 1)).collect();
         let eq = DeviceSplitEq::<Fr>::new(context, &short, BindingOrder::LowToHigh)
             .expect("device split-eq");

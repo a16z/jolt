@@ -17,11 +17,15 @@ use jolt_witness::JoltWitnessPlane;
 use std::sync::Arc;
 
 use crate::cuda::common::device_columns::DeviceTraceColumns;
-use crate::cuda::witness::{session_atom_columns, session_device_trace};
+use crate::cuda::witness::{
+    session_atom_columns, session_atom_columns_window, session_device_trace,
+    session_device_trace_window,
+};
 
 use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs};
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+use crate::cuda::common::context::{context_for, CudaKernelContext};
+use crate::cuda::common::devices::{witness_windows, CycleWindow};
+use crate::cuda::common::one_hot_fold::{DeviceOneHotColumns, OneHotShards};
 use crate::cuda::{require_context, CudaBackend};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -119,15 +123,62 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
 }
 
 fn device_bytecode_pc_words<F: Field>(
-    context: &'static CudaKernelContext,
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+    addresses: usize,
+) -> Result<NarrowColumn, KernelError<F>> {
+    let (trace, columns) = if window.start == 0 {
+        (
+            session_device_trace(context, session, witness, cycles)?,
+            session_atom_columns(context, session, witness, cycles)?,
+        )
+    } else {
+        let resident = window.residency(cycles);
+        (
+            session_device_trace_window(context, session, witness, cycles, &resident)?,
+            session_atom_columns_window(context, session, witness, cycles, &resident)?,
+        )
+    };
+    Ok(trace.narrow_u64_column(&columns.bytecode_pc, addresses as u64)?)
+}
+
+fn bytecode_pc_shards<F: Field>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
     addresses: usize,
-) -> Result<NarrowColumn, KernelError<F>> {
-    let trace = session_device_trace(context, session, witness, cycles)?;
-    let columns = session_atom_columns(context, session, witness, cycles)?;
-    Ok(trace.narrow_u64_column(&columns.bytecode_pc, addresses as u64)?)
+    log_k: usize,
+) -> Result<(OneHotShards, u64), KernelError<F>> {
+    let windows = witness_windows(cycles);
+    let mut columns = Vec::with_capacity(windows.len());
+    let mut entry = None;
+    for (ordinal, window) in windows.iter().enumerate() {
+        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "a bytecode read-RAF window names an absent device",
+        })?;
+        let pcs =
+            device_bytecode_pc_words::<F>(device, session, witness, cycles, window, addresses)?;
+        if ordinal == 0 {
+            entry = Some(pcs.first);
+        }
+        columns.push(DeviceOneHotColumns::from_device(
+            DeviceTraceColumns {
+                lookup: Arc::new(device.alloc_u64(0)?),
+                pc: Arc::new(device.alloc_u32(0)?),
+                ram: Arc::new(pcs.column),
+            },
+            [0, 0, 1],
+            log_k,
+            window.len,
+        )?);
+    }
+    let entry = entry.ok_or(KernelError::InvariantViolation {
+        reason: "the bytecode read-RAF partition produced no window",
+    })?;
+    Ok((OneHotShards::from_windows(windows, columns)?, entry))
 }
 
 impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend {
@@ -182,26 +233,16 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend 
             });
         }
 
-        let pcs = device_bytecode_pc_words::<F>(context, session, witness, cycles, addresses)?;
+        let (shards, entry) =
+            bytecode_pc_shards::<F>(session, witness, cycles, addresses, dimensions.log_k())?;
         let entry_trace_index =
-            usize::try_from(pcs.first).map_err(|_| KernelError::InvariantViolation {
+            usize::try_from(entry).map_err(|_| KernelError::InvariantViolation {
                 reason: "the entry bytecode PC exceeds the host word",
             })?;
 
-        let columns = DeviceOneHotColumns::from_device(
-            DeviceTraceColumns {
-                lookup: Arc::new(context.alloc_u64(0)?),
-                pc: Arc::new(context.alloc_u32(0)?),
-                ram: Arc::new(pcs.column),
-            },
-            [0, 0, 1],
-            dimensions.log_k(),
-            cycles,
-        )?;
-
         let state = DeviceBytecodePushforward::new(
             context,
-            &columns,
+            &shards,
             PushforwardInputs {
                 stage_cycle_points: relation.stage_cycle_points(),
                 stage_values: &stage_values,
@@ -210,7 +251,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend 
                 gamma: inputs.challenges.gamma,
             },
         )?;
-        drop(columns);
+        drop(shards);
 
         Ok(Box::new(BytecodeReadRafAddressKernel {
             context,

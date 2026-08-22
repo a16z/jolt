@@ -18,7 +18,8 @@ use rayon::prelude::*;
 use super::context::{current_device, CudaKernelContext};
 use super::device::{DeviceFrVec, LIMBS};
 use super::pack::COLD;
-use crate::cuda::witness::session_device_trace;
+use crate::cuda::common::devices::CycleWindow;
+use crate::cuda::witness::{session_device_trace, session_device_trace_window};
 use crate::{KernelError, ProofSession};
 
 pub(crate) const ANY_SPAN: usize = usize::MAX;
@@ -290,6 +291,38 @@ where
             Ok(trace.remapped_ram_words(addresses)?)
         },
     )
+}
+
+pub(crate) fn windowed_trace_columns<F>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+    families: [usize; 3],
+    addresses: usize,
+) -> Result<DeviceTraceColumns, KernelError<F>>
+where
+    F: Field,
+{
+    let trace =
+        session_device_trace_window(context, session, witness, cycles, &window.residency(cycles))?;
+    let lookup = if families[0] > 0 {
+        Arc::new(trace.lookup_index_limbs()?)
+    } else {
+        Arc::new(context.alloc_u64(0)?)
+    };
+    let pc = if families[1] > 0 {
+        Arc::new(trace.mapped_pc_words()?)
+    } else {
+        Arc::new(context.alloc_u32(0)?)
+    };
+    let ram = if families[2] > 0 {
+        Arc::new(trace.remapped_ram_words(addresses)?.0)
+    } else {
+        Arc::new(context.alloc_u32(0)?)
+    };
+    Ok(DeviceTraceColumns { lookup, pc, ram })
 }
 
 pub(crate) fn device_trace_columns<F>(

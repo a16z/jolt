@@ -3,10 +3,14 @@ use std::sync::Arc;
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::Field;
 
-use super::context::{CudaKernelContext, BLOCK};
+use jolt_witness::JoltWitnessPlane;
+
+use super::context::{context_for, CudaKernelContext, BLOCK};
 use super::device::{require_fr_slice, DeviceFrVec};
-use super::device_columns::DeviceTraceColumns;
+use super::device_columns::{device_trace_columns, windowed_trace_columns, DeviceTraceColumns};
+use super::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
 use super::error::CudaError;
+use crate::{KernelError, ProofSession};
 
 pub const LANES: usize = 8;
 
@@ -42,6 +46,125 @@ pub struct DeviceOneHotColumns {
     families: [usize; 3],
     chunk_bits: usize,
     cycles: usize,
+}
+
+pub(crate) struct OneHotShards {
+    windows: Vec<CycleWindow>,
+    columns: Vec<DeviceOneHotColumns>,
+}
+
+impl OneHotShards {
+    pub(crate) fn new<F: Field>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+        families: [usize; 3],
+        chunk_bits: usize,
+        addresses: usize,
+    ) -> Result<Self, KernelError<F>> {
+        let windows = witness_windows(cycles);
+        let mut columns = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a one-hot cycle-fold window names an absent device",
+            })?;
+            let raw = if ordinal == 0 {
+                device_trace_columns::<F>(device, session, witness, cycles, families, addresses)?
+            } else {
+                windowed_trace_columns::<F>(
+                    device, session, witness, cycles, window, families, addresses,
+                )?
+            };
+            columns.push(DeviceOneHotColumns::from_device(
+                raw, families, chunk_bits, window.len,
+            )?);
+        }
+        Ok(Self { windows, columns })
+    }
+
+    pub(crate) fn from_windows(
+        windows: Vec<CycleWindow>,
+        columns: Vec<DeviceOneHotColumns>,
+    ) -> Result<Self, CudaError> {
+        if windows.len() != columns.len() || windows.is_empty() {
+            return Err(CudaError::LengthMismatch {
+                expected: windows.len(),
+                got: columns.len(),
+            });
+        }
+        Ok(Self { windows, columns })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn single(columns: DeviceOneHotColumns) -> Self {
+        let window = CycleWindow {
+            start: 0,
+            len: columns.cycles,
+        };
+        Self {
+            windows: vec![window],
+            columns: vec![columns],
+        }
+    }
+
+    pub(crate) fn whole(&self) -> Result<&DeviceOneHotColumns, CudaError> {
+        self.columns.first().ok_or(CudaError::InvariantViolation {
+            reason: "a one-hot shard set holds no columns",
+        })
+    }
+
+    pub(crate) fn fold<F: Field>(
+        &self,
+        cycle_point: &[F],
+        tuning: FoldTuning,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let shards = self.windows.len();
+        let absent = || CudaError::InvariantViolation {
+            reason: "a one-hot cycle-fold window names an absent device",
+        };
+        if shards <= 1 {
+            let context = context_for(0).ok_or_else(absent)?;
+            return self.whole()?.fold_cycles(context, cycle_point, tuning);
+        }
+        let point = require_fr_slice(cycle_point)?;
+        let tasks: Vec<DeviceTask<'_, DeviceFrVec, CudaError>> = (0..shards)
+            .map(|ordinal| {
+                let task: DeviceTask<'_, DeviceFrVec, CudaError> = Box::new(move || {
+                    let context = context_for(ordinal).ok_or_else(absent)?;
+                    let columns =
+                        self.columns
+                            .get(ordinal)
+                            .ok_or(CudaError::InvariantViolation {
+                                reason: "a one-hot cycle-fold window has no columns",
+                            })?;
+                    let eq = context.eq_evals_shard(point, ordinal, shards)?;
+                    tracing::info_span!("cuda_one_hot_fold_window", device = ordinal)
+                        .in_scope(|| columns.fold_cycles_with_eq(context, &eq, tuning))
+                });
+                task
+            })
+            .collect();
+        let parts = fan_out(tasks)?;
+        let mut totals = parts
+            .first()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "the one-hot cycle fold produced no window",
+            })?
+            .to_host()?;
+        for part in parts.iter().skip(1) {
+            let addend = part.to_host()?;
+            if addend.len() != totals.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: totals.len(),
+                    got: addend.len(),
+                });
+            }
+            for (total, value) in totals.iter_mut().zip(&addend) {
+                *total += *value;
+            }
+        }
+        context_for(0).ok_or_else(absent)?.upload(&totals)
+    }
 }
 
 impl DeviceOneHotColumns {
@@ -106,19 +229,19 @@ impl DeviceOneHotColumns {
                          word address into one 32-bit word each",
             });
         }
-        if families[0] > 0 && lookup.len() != 2 * cycles {
+        if families[0] > 0 && lookup.len() < 2 * cycles {
             return Err(CudaError::LengthMismatch {
                 expected: 2 * cycles,
                 got: lookup.len(),
             });
         }
-        if families[1] > 0 && pc.len() != cycles {
+        if families[1] > 0 && pc.len() < cycles {
             return Err(CudaError::LengthMismatch {
                 expected: cycles,
                 got: pc.len(),
             });
         }
-        if families[2] > 0 && ram.len() != cycles {
+        if families[2] > 0 && ram.len() < cycles {
             return Err(CudaError::LengthMismatch {
                 expected: cycles,
                 got: ram.len(),
@@ -412,6 +535,62 @@ mod tests {
                     shared_budget
                 );
             }
+        }
+    }
+
+    #[test]
+    fn windowed_folds_sum_to_the_whole_cycle_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        const LOG_T: usize = 9;
+        let cycles = 1usize << LOG_T;
+        let chunk_bits = 4;
+        let families = [64 / chunk_bits, 2, 2];
+        let packed = columns(11, cycles, 1u32 << (chunk_bits * 2 - 1), 3);
+        let cycle_point: Vec<Fr> = (0..LOG_T).map(|i| fr(31 + 7 * i as u64)).collect();
+
+        let build = |base: usize, len: usize| {
+            DeviceOneHotColumns::new(
+                context,
+                &packed.lookup[base * 2..(base + len) * 2],
+                &packed.pc[base..base + len],
+                &packed.ram[base..base + len],
+                families,
+                chunk_bits,
+                len,
+            )
+            .expect("upload one-hot columns")
+        };
+
+        let whole = build(0, cycles)
+            .fold_cycles(context, &cycle_point, FoldTuning::default())
+            .expect("whole-domain fold")
+            .to_host()
+            .expect("download");
+
+        for shards in [2usize, 4, 8] {
+            let len = cycles / shards;
+            let mut summed = vec![Fr::from_u64(0); whole.len()];
+            for shard in 0..shards {
+                let eq = context
+                    .eq_evals_shard(&cycle_point, shard, shards)
+                    .expect("eq shard");
+                let part = build(shard * len, len)
+                    .fold_cycles_with_eq(context, &eq, FoldTuning::default())
+                    .expect("windowed fold")
+                    .to_host()
+                    .expect("download");
+                for (total, addend) in summed.iter_mut().zip(&part) {
+                    *total += *addend;
+                }
+            }
+            assert_eq!(
+                summed, whole,
+                "the one-hot cycle fold over {shards} windows must sum to the whole-domain fold: \
+                 every address bucket is a sum over the cycles that land in it, and eq_evals_shard \
+                 supplies each window its slice of the cycle eq table",
+            );
         }
     }
 

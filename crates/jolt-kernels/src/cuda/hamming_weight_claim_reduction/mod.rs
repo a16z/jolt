@@ -13,8 +13,8 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device_columns::{device_trace_columns, ANY_SPAN};
-use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+use crate::cuda::common::device_columns::ANY_SPAN;
+use crate::cuda::common::one_hot_fold::OneHotShards;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -181,20 +181,24 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend 
 
         let cycles = 1usize << relation.r_cycle().len();
         let families = [layout.instruction(), layout.bytecode(), layout.ram()];
-        let columns =
-            device_trace_columns::<F>(context, session, witness, cycles, families, ANY_SPAN)?;
-        let device_columns =
-            DeviceOneHotColumns::from_device(columns, families, dimensions.log_k_chunk, cycles)?;
+        let shards = OneHotShards::new::<F>(
+            session,
+            witness,
+            cycles,
+            families,
+            dimensions.log_k_chunk,
+            ANY_SPAN,
+        )?;
 
         let state = DeviceHammingWeightReduction::new(
             context,
-            &device_columns,
+            &shards,
             relation.r_cycle(),
             relation.r_address(),
             relation.virtualization_points(),
             inputs.challenges.gamma,
         )?;
-        drop(device_columns);
+        drop(shards);
 
         Ok(Box::new(HammingWeightClaimReductionKernel {
             context,

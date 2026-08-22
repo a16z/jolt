@@ -5,7 +5,7 @@ use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::one_hot_fold::{affine_table, DeviceOneHotColumns, FoldTuning};
+use crate::cuda::common::one_hot_fold::{affine_table, FoldTuning, OneHotShards};
 
 const LANES: usize = 2;
 
@@ -32,9 +32,10 @@ pub struct PushforwardInputs<'a, F: Field> {
 impl DeviceBytecodePushforward {
     pub fn new<F: Field>(
         context: &CudaKernelContext,
-        columns: &DeviceOneHotColumns,
+        shards: &OneHotShards,
         inputs: PushforwardInputs<'_, F>,
     ) -> Result<Self, CudaError> {
+        let columns = shards.whole()?;
         let addresses = columns.addresses();
         if columns.polys() != 1 {
             return Err(CudaError::InvariantViolation {
@@ -71,7 +72,7 @@ impl DeviceBytecodePushforward {
         let mut right = context.alloc(TERMS * addresses)?;
 
         for (stage, point) in inputs.stage_cycle_points.iter().enumerate() {
-            let folded = columns.fold_cycles(context, point, FoldTuning::default())?;
+            let folded = shards.fold(point, FoldTuning::default())?;
             Self::term(
                 context,
                 &folded,
@@ -317,7 +318,7 @@ mod tests {
 
     use super::{DeviceBytecodePushforward, PushforwardInputs, STAGES, TERMS};
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+    use crate::cuda::common::one_hot_fold::{DeviceOneHotColumns, OneHotShards};
     use crate::cuda::common::testing::fr;
 
     fn pc_column(seed: u64, cycles: usize, addresses: usize) -> Vec<u32> {
@@ -471,7 +472,7 @@ mod tests {
             .expect("upload the PC column");
             let mut got = DeviceBytecodePushforward::new(
                 context,
-                &uploaded,
+                &OneHotShards::single(uploaded),
                 PushforwardInputs {
                     stage_cycle_points: &stage_cycle_points,
                     stage_values: &stage_values,
@@ -529,7 +530,7 @@ mod tests {
         assert!(
             DeviceBytecodePushforward::new(
                 context,
-                &uploaded,
+                &OneHotShards::single(uploaded),
                 PushforwardInputs {
                     stage_cycle_points: &stage_cycle_points,
                     stage_values: &stage_values,

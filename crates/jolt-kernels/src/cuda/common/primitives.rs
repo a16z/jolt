@@ -259,6 +259,40 @@ impl CudaKernelContext {
         Ok(table)
     }
 
+    pub fn eq_evals_shard(
+        &self,
+        point: &[Fr],
+        shard: usize,
+        shards: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        if shards <= 1 {
+            return self.eq_evals(point);
+        }
+        if !shards.is_power_of_two() || shard >= shards {
+            return Err(CudaError::InvariantViolation {
+                reason: "an eq shard needs a power-of-two shard count and an in-range index",
+            });
+        }
+        let leading = shards.trailing_zeros() as usize;
+        if point.len() < leading {
+            return Err(CudaError::InvariantViolation {
+                reason: "an eq shard split more variables than the point has",
+            });
+        }
+        let (high, low) = point.split_at(leading);
+        let mut scale = Fr::from_u64(1);
+        for (index, &coordinate) in high.iter().enumerate() {
+            let bit = (shard >> (leading - 1 - index)) & 1;
+            scale *= if bit == 1 {
+                coordinate
+            } else {
+                Fr::from_u64(1) - coordinate
+            };
+        }
+        let table = self.eq_evals(low)?;
+        self.mul_scalar(&table, scale)
+    }
+
     pub fn lt_evals(&self, point: &[Fr]) -> Result<DeviceFrVec, CudaError> {
         let mut table = self.alloc(1usize << point.len())?;
         for (level, &coordinate) in point.iter().rev().enumerate() {
@@ -735,6 +769,32 @@ mod tests {
             let expected: Fr = values.iter().copied().sum();
             let got = context.sum(&upload(context, &values)).expect("device sum");
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn eq_evals_shard_matches_the_whole_table_window(point in arb_frs(4, 10)) {
+            let Some(context) = device() else { return Ok(()); };
+            let whole = context.eq_evals(&point).expect("device eq_evals")
+                .to_host().expect("download");
+            for shards in [2usize, 4, 8] {
+                let len = whole.len() / shards;
+                for shard in 0..shards {
+                    let got = context
+                        .eq_evals_shard(&point, shard, shards)
+                        .expect("device eq_evals_shard")
+                        .to_host()
+                        .expect("download");
+                    prop_assert_eq!(
+                        got,
+                        whole[shard * len..(shard + 1) * len].to_vec(),
+                        "eq shard {} of {} must equal the whole table's window: point[0] drives \
+                         the index MSB, so a shard is the sub-table over the trailing coordinates \
+                         scaled by the leading ones",
+                        shard,
+                        shards,
+                    );
+                }
+            }
         }
 
         #[test]

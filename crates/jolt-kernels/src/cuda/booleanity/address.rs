@@ -10,8 +10,8 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::masses::DeviceBooleanityMasses;
 use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device_columns::{device_trace_columns, ANY_SPAN};
-use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+use crate::cuda::common::device_columns::ANY_SPAN;
+use crate::cuda::common::one_hot_fold::OneHotShards;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::cuda::{require_context, CudaBackend};
 use crate::{
@@ -132,18 +132,22 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
         let layout = dimensions.layout;
         let cycles = 1usize << dimensions.log_t;
         let families = [layout.instruction(), layout.bytecode(), layout.ram()];
-        let columns =
-            device_trace_columns::<F>(context, session, witness, cycles, families, ANY_SPAN)?;
-        let device_columns =
-            DeviceOneHotColumns::from_device(columns, families, dimensions.log_k_chunk, cycles)?;
+        let shards = OneHotShards::new::<F>(
+            session,
+            witness,
+            cycles,
+            families,
+            dimensions.log_k_chunk,
+            ANY_SPAN,
+        )?;
 
         let masses = DeviceBooleanityMasses::new(
             context,
-            &device_columns,
+            &shards,
             &reference_cycle,
             inputs.challenges.gamma,
         )?;
-        drop(device_columns);
+        drop(shards);
 
         let eq = DeviceSplitEq::new(
             context,

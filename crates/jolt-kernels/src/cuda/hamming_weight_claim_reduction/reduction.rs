@@ -5,7 +5,7 @@ use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::one_hot_fold::{DeviceOneHotColumns, FoldTuning};
+use crate::cuda::common::one_hot_fold::{FoldTuning, OneHotShards};
 
 const LANES: usize = 2;
 
@@ -19,12 +19,13 @@ pub struct DeviceHammingWeightReduction {
 impl DeviceHammingWeightReduction {
     pub fn new<F: Field>(
         context: &CudaKernelContext,
-        columns: &DeviceOneHotColumns,
+        shards: &OneHotShards,
         cycle_point: &[F],
         address_point: &[F],
         virtualization_points: &[Vec<F>],
         gamma: F,
     ) -> Result<Self, CudaError> {
+        let columns = shards.whole()?;
         let polys = columns.polys();
         let addresses = columns.addresses();
         let chunk_bits = addresses.ilog2() as usize;
@@ -43,7 +44,7 @@ impl DeviceHammingWeightReduction {
             });
         }
 
-        let folded = columns.fold_cycles(context, cycle_point, FoldTuning::default())?;
+        let folded = shards.fold(cycle_point, FoldTuning::default())?;
         let booleanity = context.eq_evals(require_fr_slice(address_point)?)?;
         let mut virtualization = context.alloc(polys * addresses)?;
         for (index, point) in virtualization_points.iter().enumerate() {

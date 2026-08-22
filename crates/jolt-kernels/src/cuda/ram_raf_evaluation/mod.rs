@@ -10,10 +10,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
-use crate::cuda::common::one_hot_fold::{affine_table, DeviceOneHotColumns, FoldTuning};
-use std::sync::Arc;
-
-use crate::cuda::common::device_columns::{device_ram_words, DeviceTraceColumns};
+use crate::cuda::common::one_hot_fold::{affine_table, FoldTuning, OneHotShards};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -43,20 +40,17 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
         }
 
         let cycles = 1usize << relation.tau_low().len();
-        let words = device_ram_words::<F>(context, session, witness, cycles, 1usize << ram_log_k)?;
-        let columns = DeviceOneHotColumns::from_device(
-            DeviceTraceColumns {
-                lookup: Arc::new(context.alloc_u64(0)?),
-                pc: Arc::new(context.alloc_u32(0)?),
-                ram: words,
-            },
+        let shards = OneHotShards::new::<F>(
+            session,
+            witness,
+            cycles,
             [0, 0, 1],
             ram_log_k,
-            cycles,
+            1usize << ram_log_k,
         )?;
 
-        let folded = columns.fold_cycles(context, relation.tau_low(), FoldTuning::default())?;
-        drop(columns);
+        let folded = shards.fold(relation.tau_low(), FoldTuning::default())?;
+        drop(shards);
         let unmap = affine_table(
             context,
             relation.lowest_address(),
