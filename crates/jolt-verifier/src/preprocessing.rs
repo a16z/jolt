@@ -6,6 +6,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::VerifierError;
 
@@ -26,11 +27,10 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub bytecode_chunk_commitments: Vec<PCS::Output>,
     #[cfg(not(feature = "akita"))]
     pub program_image_commitment: PCS::Output,
-    /// The one packed `ProgramOneHot` commitment covering every bytecode lane
-    /// sub-column and the program image bytes (the per-chunk/image commitment
-    /// pair does not exist on the packed path).
+    /// Fixed-prefix program objects in canonical order: bytecode, then the
+    /// independently pointed program-image bytes.
     #[cfg(feature = "akita")]
-    pub program_one_hot_commitment: PCS::Output,
+    pub program_one_hot_commitments: Vec<PCS::Output>,
     #[cfg(feature = "akita")]
     pub bytecode_chunk_count: usize,
 }
@@ -57,8 +57,14 @@ impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
     serialize = "PCS::Output: Serialize",
     deserialize = "PCS::Output: serde::de::DeserializeOwned"
 ))]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "constructed once per preprocessing; boxing Committed buys nothing"
+)]
 pub enum ProgramPreprocessing<PCS: CommitmentScheme> {
-    Full(JoltProgramPreprocessing),
+    /// `Arc` so witness backends take an owning handle without deep-cloning
+    /// the program-sized tables (serde `rc`: serializes as the contents).
+    Full(Arc<JoltProgramPreprocessing>),
     Committed(CommittedProgramPreprocessing<PCS>),
 }
 
@@ -66,6 +72,15 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     pub fn as_full(&self) -> Option<&JoltProgramPreprocessing> {
         match self {
             Self::Full(full) => Some(full),
+            Self::Committed(_) => None,
+        }
+    }
+
+    /// The owning counterpart of [`as_full`](Self::as_full) — a refcount
+    /// bump, never a copy.
+    pub fn as_full_arc(&self) -> Option<Arc<JoltProgramPreprocessing>> {
+        match self {
+            Self::Full(full) => Some(Arc::clone(full)),
             Self::Committed(_) => None,
         }
     }
@@ -161,9 +176,9 @@ where
     pub untrusted_advice_setup: Option<PCS::VerifierSetup>,
     #[cfg(feature = "akita")]
     pub trusted_advice_setup: Option<PCS::VerifierSetup>,
-    /// Committed-program mode: the `ProgramOneHot` object setup.
+    /// Committed-program mode: setups matching `program_one_hot_commitments`.
     #[cfg(feature = "akita")]
-    pub program_one_hot_setup: Option<PCS::VerifierSetup>,
+    pub program_one_hot_setups: Vec<PCS::VerifierSetup>,
 }
 
 impl<PCS, VC> JoltVerifierPreprocessing<PCS, VC>
@@ -187,7 +202,7 @@ where
             #[cfg(feature = "akita")]
             trusted_advice_setup: None,
             #[cfg(feature = "akita")]
-            program_one_hot_setup: None,
+            program_one_hot_setups: Vec::new(),
         }
     }
 }

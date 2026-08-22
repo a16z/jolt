@@ -29,7 +29,7 @@
 use super::{Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8};
 use crate::{
     CanonicalEncoding, Ext2Config, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
-    Unreduced,
+    Unreduced, WithCommitAccumulator,
 };
 
 /// Splits a canonical value into 16-bit digits stored one per `i32` lane.
@@ -87,6 +87,20 @@ wide_lanes! {
     /// Wide unreduced accumulator for [`Fp128`]: 8 × `i32` lanes (one
     /// 256-bit vector register on AVX2, two 128-bit on NEON).
     Fp128x8i32: 8;
+}
+
+const MAX_WIDE_LANE_ACCUMULATIONS: usize = (i32::MAX as usize) / (u16::MAX as usize);
+
+impl<const P: u32> WithCommitAccumulator for Fp32<P> {
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u64> WithCommitAccumulator for Fp64<P> {
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u128> WithCommitAccumulator for Fp128<P> {
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
 }
 
 macro_rules! product_accum {
@@ -365,7 +379,7 @@ impl<const P: u128> Unreduced for Fp128<P> {
 /// Subtractions are evaluated after every addition (left-to-right), so no
 /// intermediate dips below zero either.
 #[inline(always)]
-fn fp_ext4_mul_to_accum_fp32<const P: u32>(
+pub(super) fn fp_ext4_mul_to_accum_fp32<const P: u32>(
     a: [Fp32<P>; 4],
     b: [Fp32<P>; 4],
 ) -> FpExt4Fp32ProductAccum {
@@ -394,6 +408,37 @@ fn fp_ext4_mul_to_accum_fp32<const P: u32>(
         product(a0, b3) + product(a3, b0) + product(a1, b2) + product(a2, b1) + 2 * p_sq
             - product(a2, b3)
             - product(a3, b2),
+    ])
+}
+
+/// Widening `FpExt4<Fp32>` square into one `u128` slot per coefficient.
+/// This is the ten-product specialization of [`fp_ext4_mul_to_accum_fp32`].
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(super) fn fp_ext4_square_to_accum_fp32<const P: u32>(
+    a: [Fp32<P>; 4],
+) -> FpExt4Fp32ProductAccum {
+    #[inline(always)]
+    fn product<const P: u32>(a: Fp32<P>, b: Fp32<P>) -> u128 {
+        (a.to_limbs() as u128) * (b.to_limbs() as u128)
+    }
+    let [a0, a1, a2, a3] = a;
+    let p_sq = (P as u128) * (P as u128);
+    let a0_sq = product(a0, a0);
+    let a1_sq = product(a1, a1);
+    let a2_sq = product(a2, a2);
+    let a3_sq = product(a3, a3);
+    let a0a1 = product(a0, a1);
+    let a0a2 = product(a0, a2);
+    let a0a3 = product(a0, a3);
+    let a1a2 = product(a1, a2);
+    let a1a3 = product(a1, a3);
+    let a2a3 = product(a2, a3);
+    FpExt4Fp32ProductAccum([
+        a0_sq + 2 * (a1_sq + a2_sq + a3_sq),
+        2 * (a0a1 + a1a2 + a2a3),
+        2 * a0a2 + a1_sq + 2 * a1a3 + p_sq - a3_sq,
+        2 * (a0a3 + a1a2 + p_sq - a2a3),
     ])
 }
 

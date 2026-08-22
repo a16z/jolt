@@ -285,6 +285,8 @@ impl CanonicalEncoding for Mersenne61 {
 
 impl WithAccumulator for Mersenne61 {
     type Accumulator = NaiveAccumulator<Mersenne61>;
+    type SmallScalarAccumulator = NaiveAccumulator<Mersenne61>;
+    type SignedProductAccumulator = NaiveAccumulator<Mersenne61>;
 }
 
 #[derive(Clone, Debug)]

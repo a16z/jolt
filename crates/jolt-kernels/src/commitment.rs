@@ -14,7 +14,7 @@ use jolt_openings::StreamingCommitment;
 #[cfg(feature = "zk")]
 use jolt_openings::ZkStreamingCommitment;
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
-use jolt_witness::{JoltWitnessOracle, RowSource, WitnessBundle};
+use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane, WitnessBundle};
 
 use crate::{KernelError, ProofSession};
 
@@ -142,7 +142,7 @@ where
     fn commit_witness(
         &self,
         session: &mut ProofSession,
-        source: &dyn RowSource,
+        source: &dyn JoltWitnessPlane<F>,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,

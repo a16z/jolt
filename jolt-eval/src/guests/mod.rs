@@ -1,6 +1,10 @@
+pub mod btreemap;
 pub mod fibonacci;
 pub mod secp256k1_ecdsa;
+pub mod sha2;
 pub mod sha2_chain;
+pub mod sha3;
+pub mod sha3_chain;
 
 use ark_bn254::Fr;
 use jolt_prover_legacy::curve::Bn254Curve;
@@ -12,10 +16,14 @@ pub use jolt_verifier::VerifierError;
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
 
+pub use btreemap::BTreeMapOps;
 pub use fibonacci::Fibonacci;
 pub use jolt_prover_legacy::guest::program::Program as GuestProgram;
 pub use secp256k1_ecdsa::Secp256k1EcdsaVerify;
+pub use sha2::Sha2;
 pub use sha2_chain::Sha2Chain;
+pub use sha3::Sha3;
+pub use sha3_chain::Sha3Chain;
 pub use tracer::JoltDevice;
 
 pub type F = Fr;
@@ -114,6 +122,10 @@ pub trait GuestConfig: Default + Send + Sync {
     /// Cargo package name (e.g. "fibonacci-guest").
     fn package(&self) -> &str;
 
+    /// Objective-neutral guest label including parameters
+    /// (e.g. "fibonacci_400000"). Objectives prefix it with their own name.
+    fn label(&self) -> String;
+
     fn memory_config(&self) -> MemoryConfig {
         MemoryConfig {
             max_input_size: 4096,
@@ -130,5 +142,7 @@ pub trait GuestConfig: Default + Send + Sync {
     fn input(&self) -> Vec<u8>;
 
     /// Display name for the benchmark.
-    fn bench_name(&self) -> String;
+    fn bench_name(&self) -> String {
+        format!("prover_time_{}", self.label())
+    }
 }

@@ -11,8 +11,8 @@
 
 use jolt_field::JoltField;
 
-use crate::thread::unsafe_allocate_zero_vec;
 use crate::EqPolynomial;
+use jolt_utils::unsafe_allocate_zero_vec;
 
 /// MLE evaluating to 1 iff `y = x + 1` (no wrap at `2^l − 1`).
 ///
@@ -70,6 +70,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
     /// partial `eq` table and a product of the remaining `r` coordinates.
     pub fn evals(r: &[F], scaling_factor: Option<F>) -> (Vec<F>, Vec<F>) {
         let ell = r.len();
+        jolt_utils::math::assert_shiftable_dim(ell);
         let size = 1usize << ell;
         let mut eq_evals: Vec<F> = unsafe_allocate_zero_vec(size);
         eq_evals[0] = scaling_factor.unwrap_or(F::one());
@@ -146,6 +147,7 @@ impl<F: JoltField> EqPlusOnePrefixSuffix<F> {
     ///
     /// Splits at `r.len() / 2`: the first half is `r_hi`, the second is `r_lo`.
     pub fn new(r: &[F]) -> Self {
+        jolt_utils::math::assert_shiftable_dim(r.len());
         let mid = r.len() / 2;
         let (r_hi, r_lo) = r.split_at(mid);
 
@@ -153,7 +155,7 @@ impl<F: JoltField> EqPlusOnePrefixSuffix<F> {
         let ones: Vec<F> = vec![F::one(); r_lo.len()];
         let is_max_eval = EqPolynomial::<F>::mle(&ones, r_lo);
 
-        let mut prefix_1 = crate::thread::unsafe_allocate_zero_vec(1 << r_lo.len());
+        let mut prefix_1 = jolt_utils::unsafe_allocate_zero_vec(1 << r_lo.len());
         prefix_1[0] = is_max_eval;
 
         let (suffix_0, suffix_1) = EqPlusOnePolynomial::evals(r_hi, None);
@@ -306,6 +308,13 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds usize shift width")]
+    fn evals_rejects_shift_overflowing_dimension() {
+        let r = vec![Fr::one(); usize::BITS as usize];
+        let _ = EqPlusOnePolynomial::evals(&r, None);
     }
 
     #[test]

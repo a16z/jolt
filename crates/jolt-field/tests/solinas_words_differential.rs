@@ -163,8 +163,9 @@ macro_rules! check_prime {
             "i128::MIN vs oracle"
         );
 
-        // Identical rejection-free sampling stream: `random` reduces one
-        // word (Fp32) or two words (Fp64) drawn from the RNG.
+        // Identical exact-uniform sampling stream: each attempt reads the
+        // minimal whole-byte candidate width covering the modulus, clears
+        // unused high bits, and rejects non-canonical candidates.
         {
             let seed: u64 = $rng.gen();
             let mut r1 = ChaCha20Rng::seed_from_u64(seed);
@@ -172,12 +173,20 @@ macro_rules! check_prime {
             use rand::RngCore;
             for _ in 0..50 {
                 let t: $two = two::Field::random(&mut r1);
-                let expected = if $bytes <= 4 {
-                    r2.next_u64() as u128 % p
+                let bits = 128 - p.leading_zeros();
+                let byte_len = bits.div_ceil(8) as usize;
+                let mask = if bits == 128 {
+                    u128::MAX
                 } else {
-                    let lo = r2.next_u64() as u128;
-                    let hi = r2.next_u64() as u128;
-                    (lo | (hi << 64)) % p
+                    (1u128 << bits) - 1
+                };
+                let expected = loop {
+                    let mut bytes = [0u8; 16];
+                    r2.fill_bytes(&mut bytes[..byte_len]);
+                    let candidate = u128::from_le_bytes(bytes) & mask;
+                    if candidate < p {
+                        break candidate;
+                    }
                 };
                 assert_eq!(t.to_u128_checked(), Some(expected), "random stream");
             }
@@ -300,4 +309,13 @@ fn jolt_field_blanket_covers_solinas() {
     let xs = [<F as Ring>::from_u64(2), <F as Ring>::from_u64(3)];
     let ys = [<F as Ring>::from_u64(5), <F as Ring>::from_u64(7)];
     assert_eq!(inner_product(&xs, &ys), <F as Ring>::from_u64(31));
+}
+
+#[test]
+fn fp32_exposes_canonical_storage_slice_only_for_u32_fields() {
+    type F32 = two::Prime32Offset99;
+    type F64 = two::Prime64Offset59;
+    let values = [F32::from_u64(1), F32::from_u64(7), F32::from_u64(42)];
+    assert_eq!(F32::canonical_u32_slice(&values), Some(&[1, 7, 42][..]));
+    assert!(F64::canonical_u32_slice(&[F64::from_u64(1)]).is_none());
 }

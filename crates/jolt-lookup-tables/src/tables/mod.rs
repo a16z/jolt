@@ -23,13 +23,14 @@ pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
+pub mod pext_signed;
 pub mod pow2;
 pub mod pow2_w;
 pub mod prefixes;
 pub mod range_check;
 pub mod range_check_aligned;
 pub mod shift_right_bitmask;
-pub mod sign_extend_half_word;
+pub mod sign_extend_word;
 pub mod sign_mask;
 pub mod signed_greater_than_equal;
 pub mod signed_less_than;
@@ -49,6 +50,7 @@ pub mod virtual_sra;
 pub mod virtual_srl;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;
+pub mod window_mask_w;
 pub mod word_alignment;
 pub mod xor;
 
@@ -63,12 +65,13 @@ use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
+use pext_signed::PextSignedTable;
 use pow2::Pow2Table;
 use pow2_w::Pow2WTable;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
-use sign_extend_half_word::SignExtendHalfWordTable;
+use sign_extend_word::SignExtendWordTable;
 use sign_mask::SignMaskTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
@@ -87,6 +90,7 @@ use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
 use virtual_xor_rot::VirtualXORROTTable;
 use virtual_xor_rotw::VirtualXORROTWTable;
+use window_mask_w::WindowMaskWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
@@ -133,7 +137,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
     WordAlignment(WordAlignmentTable<XLEN>),
     LowerHalfWord(LowerHalfWordTable<XLEN>),
-    SignExtendHalfWord(SignExtendHalfWordTable<XLEN>),
+    SignExtendWord(SignExtendWordTable<XLEN>),
     Pow2(Pow2Table<XLEN>),
     Pow2W(Pow2WTable<XLEN>),
     ShiftRightBitmask(ShiftRightBitmaskTable<XLEN>),
@@ -153,6 +157,8 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTW12(VirtualXORROTWTable<XLEN, 12>),
     VirtualXORROTW8(VirtualXORROTWTable<XLEN, 8>),
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
+    WindowMaskW(WindowMaskWTable<XLEN>),
+    PextSigned(PextSignedTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -182,7 +188,7 @@ macro_rules! dispatch {
             Self::HalfwordAlignment($t) => $expr,
             Self::WordAlignment($t) => $expr,
             Self::LowerHalfWord($t) => $expr,
-            Self::SignExtendHalfWord($t) => $expr,
+            Self::SignExtendWord($t) => $expr,
             Self::Pow2($t) => $expr,
             Self::Pow2W($t) => $expr,
             Self::ShiftRightBitmask($t) => $expr,
@@ -202,6 +208,8 @@ macro_rules! dispatch {
             Self::VirtualXORROTW12($t) => $expr,
             Self::VirtualXORROTW8($t) => $expr,
             Self::VirtualXORROTW7($t) => $expr,
+            Self::WindowMaskW($t) => $expr,
+            Self::PextSigned($t) => $expr,
         }
     };
 }

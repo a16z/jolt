@@ -3,9 +3,11 @@
 
 pub mod outputs;
 /// Packed-build statement assembly: per-object packings, leaf-claim
-/// resolution, and the joint opening call.
+/// resolution, and the joint opening call. Public because the prover's
+/// packed stage-8 recipe assembles its native opening and auxiliary
+/// statements through the same leaf resolution.
 #[cfg(feature = "akita")]
-mod packed;
+pub mod packed;
 #[cfg(not(feature = "akita"))]
 pub mod precommitted;
 /// The reconstruction phase that opens the stage-8 region on the packed path:
@@ -27,8 +29,9 @@ pub use verify::verify;
 pub use verify::{batch_entries, Stage8BatchEntry};
 
 /// The commitment/setup metadata Stage 8 enforces before dispatching a
-/// native OneHotTrace opening — the generic [`jolt_openings`] traits, applied here
-/// to the OneHotTrace group (impls live beside the concrete PCS types).
+/// OneHotTrace opening — the generic [`jolt_openings`] traits, applied here to
+/// the single packed commitment object (impls live beside the concrete PCS
+/// types).
 #[cfg(feature = "akita")]
 pub use jolt_openings::{
     GroupCommitmentMetadata as OneHotTraceCommitmentMetadata,

@@ -146,7 +146,7 @@ impl<F: JoltField> Polynomial<F> {
     /// Creates the zero polynomial with $2^n$ evaluations all equal to zero.
     pub fn zeros(num_vars: usize) -> Self {
         Self {
-            evals: crate::thread::unsafe_allocate_zero_vec(1 << num_vars),
+            evals: jolt_utils::unsafe_allocate_zero_vec(1 << num_vars),
             num_vars,
         }
     }

@@ -168,6 +168,19 @@ impl<const P: u128> Fp128<P> {
         Self::fold2_canonicalize(t0, t1, t2)
     }
 
+    /// Adds a canonical 128-bit value to a 256-bit product.
+    #[cfg(any(not(target_arch = "aarch64"), test))]
+    #[inline(always)]
+    fn add_128_into_256(prod: [u64; 4], addend: [u64; 2]) -> [u64; 4] {
+        let (s0, carry0) = prod[0].overflowing_add(addend[0]);
+        let (s1a, carry1a) = prod[1].overflowing_add(addend[1]);
+        let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
+        let (s2, carry2) = prod[2].overflowing_add((carry1a | carry1b) as u64);
+        let (s3, carry3) = prod[3].overflowing_add(carry2 as u64);
+        debug_assert!(!carry3);
+        [s0, s1, s2, s3]
+    }
+
     /// Carry-chain add with fused reduction.
     ///
     /// For `a, b < p`: if the two-limb add wraps (`overflow`), the real sum
@@ -210,6 +223,98 @@ impl<const P: u128> Fp128<P> {
         {
             Self::mul_raw_portable(a, b)
         }
+    }
+
+    #[inline(always)]
+    fn mul_add_raw(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        #[cfg(target_arch = "aarch64")]
+        {
+            Self::mul_add_raw_aarch64(a, b, addend)
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            Self::mul_add_raw_portable(a, b, addend)
+        }
+    }
+
+    #[cfg(any(not(target_arch = "aarch64"), test))]
+    #[inline(always)]
+    fn mul_add_raw_portable(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        let product = Self(a).mul_wide(Self(b));
+        let [s0, s1, s2, s3] = Self::add_128_into_256(product, addend);
+        Self::reduce_4(s0, s1, s2, s3)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn mul_add_raw_aarch64(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        let out_lo: u64;
+        let out_hi: u64;
+        // SAFETY: this register-only assembly implements the same widening
+        // product, carry-chain add, and Solinas reduction as
+        // `mul_add_raw_portable`. It does not access memory or the stack.
+        unsafe {
+            asm!(
+                "mul     {p00l}, {a0}, {b0}",
+                "umulh   {p00h}, {a0}, {b0}",
+                "mul     {p01l}, {a0}, {b1}",
+                "umulh   {p01h}, {a0}, {b1}",
+                "mul     {p10l}, {a1}, {b0}",
+                "umulh   {p10h}, {a1}, {b0}",
+                "mul     {p11l}, {a1}, {b1}",
+                "umulh   {p11h}, {a1}, {b1}",
+                "adds   {p00h}, {p00h}, {p01l}",
+                "cset   {p01l:w}, hs",
+                "adds   {p01h}, {p01h}, {p10h}",
+                "cset   {p10h:w}, hs",
+                "adds   {p01h}, {p01h}, {p11l}",
+                "cinc   {p10h}, {p10h}, hs",
+                "adds   {p00h}, {p00h}, {p10l}",
+                "adcs   {p01h}, {p01h}, {p01l}",
+                "adc    {p11h}, {p11h}, {p10h}",
+                "adds   {p00l}, {p00l}, {add_lo}",
+                "adcs   {p00h}, {p00h}, {add_hi}",
+                "adcs   {p01h}, {p01h}, xzr",
+                "adc    {p11h}, {p11h}, xzr",
+                "mul    {p01l}, {p01h}, {c}",
+                "umulh  {p10l}, {p01h}, {c}",
+                "mul    {p10h}, {p11h}, {c}",
+                "umulh  {p11l}, {p11h}, {c}",
+                "adds   {p00l}, {p00l}, {p01l}",
+                "adcs   {p00h}, {p00h}, {p10l}",
+                "cset   {p01h:w}, hs",
+                "adds   {p00h}, {p00h}, {p10h}",
+                "adc    {p11h}, {p11l}, {p01h}",
+                "mul    {p01l}, {p11h}, {c}",
+                "adds   {p00l}, {p00l}, {p01l}",
+                "adcs   {p00h}, {p00h}, xzr",
+                "cset   {p01l:w}, hs",
+                "adds   {p10l}, {p00l}, {c}",
+                "adcs   {p10h}, {p00h}, xzr",
+                "ccmp   {p01l:w}, #0, #0, lo",
+                "csel   {out_lo}, {p10l}, {p00l}, ne",
+                "csel   {out_hi}, {p10h}, {p00h}, ne",
+                a0 = in(reg) a[0],
+                a1 = in(reg) a[1],
+                b0 = in(reg) b[0],
+                b1 = in(reg) b[1],
+                add_lo = in(reg) addend[0],
+                add_hi = in(reg) addend[1],
+                c = in(reg) Self::C_LO,
+                p00l = out(reg) _,
+                p00h = out(reg) _,
+                p01l = out(reg) _,
+                p01h = out(reg) _,
+                p10l = out(reg) _,
+                p10h = out(reg) _,
+                p11l = out(reg) _,
+                p11h = out(reg) _,
+                out_lo = lateout(reg) out_lo,
+                out_hi = lateout(reg) out_hi,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     /// Portable multiply: schoolbook 2×2 widening product, then the two
@@ -524,6 +629,177 @@ impl<const P: u128> Fp128<P> {
         self.mul_wide(Self(split(other)))
     }
 
+    /// 128×(64×`M`) → (64×`OUT`) widening multiply, **no reduction**.
+    ///
+    /// Multiplies a canonical field value by an arbitrary little-endian limb
+    /// array and returns the little-endian product truncated or extended to
+    /// `OUT` limbs. The common three- and four-limb accumulator shapes use
+    /// straight-line schedules; other shapes use the generic schoolbook path.
+    #[inline(always)]
+    pub fn mul_wide_limbs<const M: usize, const OUT: usize>(self, other: [u64; M]) -> [u64; OUT] {
+        let (a0, a1) = (self.0[0], self.0[1]);
+
+        if M == 3 && OUT == 5 {
+            let (b0, b1, b2) = (other[0], other[1], other[2]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let (p12_lo, p12_hi) = mul64_wide(a1, b2);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 = p02_hi as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+            let row4 = p12_hi as u128 + (row3 >> 64);
+            debug_assert_eq!(row4 >> 64, 0);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            out[4] = row4 as u64;
+            return out;
+        }
+        if M == 3 && OUT == 4 {
+            let (b0, b1, b2) = (other[0], other[1], other[2]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let p12_lo = a1.wrapping_mul(b2);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 = p02_hi as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            return out;
+        }
+        if M == 4 && OUT == 6 {
+            let (b0, b1, b2, b3) = (other[0], other[1], other[2], other[3]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let (p03_lo, p03_hi) = mul64_wide(a0, b3);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let (p12_lo, p12_hi) = mul64_wide(a1, b2);
+            let (p13_lo, p13_hi) = mul64_wide(a1, b3);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 =
+                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+            let row4 = p03_hi as u128 + p12_hi as u128 + p13_lo as u128 + (row3 >> 64);
+            let row5 = p13_hi as u128 + (row4 >> 64);
+            debug_assert_eq!(row5 >> 64, 0);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            out[4] = row4 as u64;
+            out[5] = row5 as u64;
+            return out;
+        }
+        if M == 4 && OUT == 5 {
+            let (b0, b1, b2, b3) = (other[0], other[1], other[2], other[3]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let (p03_lo, p03_hi) = mul64_wide(a0, b3);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let (p12_lo, p12_hi) = mul64_wide(a1, b2);
+            let p13_lo = a1.wrapping_mul(b3);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 =
+                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+            let row4 = p03_hi as u128 + p12_hi as u128 + p13_lo as u128 + (row3 >> 64);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            out[4] = row4 as u64;
+            return out;
+        }
+        if M == 4 && OUT == 4 {
+            let (b0, b1, b2, b3) = (other[0], other[1], other[2], other[3]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let p03_lo = a0.wrapping_mul(b3);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let p12_lo = a1.wrapping_mul(b2);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 =
+                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            return out;
+        }
+
+        let mut out = [0u64; OUT];
+        for (i, &b) in other.iter().enumerate() {
+            if i >= OUT {
+                break;
+            }
+
+            let (p0_lo, p0_hi) = mul64_wide(a0, b);
+            let (p1_lo, p1_hi) = mul64_wide(a1, b);
+            let s0 = out[i] as u128 + p0_lo as u128;
+            out[i] = s0 as u64;
+            let mut carry = s0 >> 64;
+
+            if i + 1 >= OUT {
+                continue;
+            }
+            let s1 = out[i + 1] as u128 + p0_hi as u128 + p1_lo as u128 + carry;
+            out[i + 1] = s1 as u64;
+            carry = s1 >> 64;
+
+            if i + 2 >= OUT {
+                continue;
+            }
+            let s2 = out[i + 2] as u128 + p1_hi as u128 + carry;
+            out[i + 2] = s2 as u64;
+
+            let mut carry_hi = s2 >> 64;
+            let mut j = i + 3;
+            while carry_hi != 0 && j < OUT {
+                let sj = out[j] as u128 + carry_hi;
+                out[j] = sj as u64;
+                carry_hi = sj >> 64;
+                j += 1;
+            }
+        }
+        out
+    }
+
     /// Reduce an arbitrary-width little-endian limb array to a canonical
     /// field element via iterated Solinas folding.
     ///
@@ -690,17 +966,17 @@ impl<const P: u128> Field for Fp128<P> {
         Self(split(join(candidate.0) & mask))
     }
 
-    /// Rejection sampling: draws `(lo, hi)` until the value is canonical.
-    /// The rejection probability is `C / 2^128 < 2^-96` per draw.
+    /// Canonical rejection sampling: each attempt reads exactly 16
+    /// little-endian bytes and rejects non-canonical candidates (probability
+    /// `C / 2^128 < 2^-96` per draw).
     #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
-        loop {
-            let lo = rng.next_u64();
-            let hi = rng.next_u64();
-            if join(pack(lo, hi)) < P {
-                return Self(pack(lo, hi));
-            }
-        }
+        Self(split(super::sample_uniform_below(rng, P, u128::BITS)))
+    }
+
+    #[inline(always)]
+    fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        Self(Self::mul_add_raw(self.0, rhs.0, addend.0))
     }
 
     /// Halving via shift: `(x + (x odd)·p) / 2`, computed as
@@ -774,8 +1050,45 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
 
 crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
 
+#[cfg(test)]
+mod wide_tests {
+    use super::*;
+    use crate::solinas::Prime128Offset275;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::RngCore;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn mul_wide_limbs_roundtrips_through_reduction() {
+        type F = Prime128Offset275;
+        let mut rng = ChaCha20Rng::seed_from_u64(0x1bad_f00d_0ddc_afe1);
+        for _ in 0..1000 {
+            let a = F::random(&mut rng);
+            let b3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
+            let b4 = [
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+            ];
+
+            let got3_full = a.mul_wide_limbs::<3, 5>(b3);
+            let got3_trunc = a.mul_wide_limbs::<3, 4>(b3);
+            assert_eq!(got3_trunc, got3_full[..4]);
+            assert_eq!(F::solinas_reduce(&got3_full), a * F::solinas_reduce(&b3));
+
+            let got4_full = a.mul_wide_limbs::<4, 6>(b4);
+            let got4_trunc = a.mul_wide_limbs::<4, 4>(b4);
+            assert_eq!(got4_trunc, got4_full[..4]);
+            assert_eq!(F::solinas_reduce(&got4_full), a * F::solinas_reduce(&b4));
+        }
+    }
+}
+
 impl<const P: u128> WithAccumulator for Fp128<P> {
     type Accumulator = NaiveAccumulator<Self>;
+    type SmallScalarAccumulator = NaiveAccumulator<Self>;
+    type SignedProductAccumulator = NaiveAccumulator<Self>;
 }
 
 impl<const P: u128> PseudoMersenne for Fp128<P> {
@@ -813,6 +1126,12 @@ mod tests {
                     Fp128::<P>::mul_raw_aarch64(a, b),
                     Fp128::<P>::mul_raw_portable(a, b),
                     "mul asm vs portable, a={a:?} b={b:?}"
+                );
+                let addend = split(join(a).wrapping_add(join(b)) % P);
+                assert_eq!(
+                    Fp128::<P>::mul_add_raw_aarch64(a, b, addend),
+                    Fp128::<P>::mul_add_raw_portable(a, b, addend),
+                    "mul-add asm vs portable, a={a:?} b={b:?} addend={addend:?}"
                 );
             }
         }

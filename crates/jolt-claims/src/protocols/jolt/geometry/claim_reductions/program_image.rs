@@ -8,6 +8,7 @@
 //! Mirrors `jolt-prover-legacy`'s `zkvm/claim_reductions/program_image.rs`.
 
 use jolt_field::{JoltField, Ring};
+use jolt_utils::log2_power_of_two;
 
 use crate::{derived, opening};
 
@@ -15,7 +16,7 @@ use super::super::super::{
     JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
     JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
 };
-use super::super::dimensions::{log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder};
+use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::JoltFormulaPointError;
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,

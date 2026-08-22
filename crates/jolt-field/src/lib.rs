@@ -69,6 +69,23 @@
 //! Both invariants are enforced by differential tests against `jolt-field`
 //! as the oracle (`tests/*_differential.rs`).
 
+// In the jolt-verifier runtime closure: stricter panic discipline than the
+// workspace lints (specs/verifier-closure-lints.md). The Solinas backend owns
+// audited target-specific unsafe arithmetic, so this crate cannot inherit
+// main's former crate-wide `forbid(unsafe_code)` rule.
+#![deny(
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
+#![deny(unsafe_op_in_unsafe_fn)]
+
 mod algebra;
 #[cfg(feature = "bn254")]
 mod bn254;
@@ -87,14 +104,14 @@ pub use algebra::{
     NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "bn254")]
-pub use bn254::{Fq, Fr, WideAccumulator};
+pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};
 #[cfg(feature = "solinas")]
 pub use solinas::{
-    balanced_digit_lut, canonical_frobenius_thetas, is_registered_prime_offset,
+    balanced_digit_lut, canonical_extension_basis, is_registered_prime_offset,
     pseudo_mersenne_modulus, registered_prime_offset_spec, solve_frobenius_moore,
     validate_canonical_frobenius_thetas, AccumPair, Ext2, FoldMatrixFp32, FoldMatrixFp64, Fp128,
     Fp128MulU64Accum, Fp128Packing, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32Packing,
@@ -105,7 +122,7 @@ pub use solinas::{
     Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
-pub use unreduced::{Fold, Unreduced};
+pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
 /// Backend-independent input and shape failures.
 #[derive(Debug, thiserror::Error)]

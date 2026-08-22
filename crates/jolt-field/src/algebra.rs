@@ -17,6 +17,8 @@ use std::hash::Hash;
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
+use crate::signed::S256;
+
 /// Minimal additive group shared by fields, rings, and wide accumulators.
 pub trait AdditiveGroup:
     Sized
@@ -171,8 +173,22 @@ pub trait Field: Ring {
         self.inverse().unwrap_or_else(Self::zero)
     }
 
-    /// Samples a random element (RNG-backed, for tests and witnesses).
+    /// Samples an exactly uniform element using canonical rejection sampling.
+    ///
+    /// Prime fields consume the minimum whole-byte candidate width covering
+    /// the modulus, clear unused high bits, and reject candidates outside the
+    /// canonical range. This byte-consumption contract is deterministic for a
+    /// fixed [`RngCore`] stream. Extension fields sample their base
+    /// coefficients independently through the same contract.
     fn random<R: RngCore>(rng: &mut R) -> Self;
+
+    /// Multiply and add, equivalent to `self * rhs + addend`.
+    ///
+    /// Fields with a cheaper combined reduction may override this method.
+    #[inline]
+    fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        self * rhs + addend
+    }
 
     /// The multiplicative inverse of two.
     ///
@@ -303,6 +319,16 @@ pub trait CanonicalEncoding:
     /// Constructs an element by reducing `v` modulo the field order.
     fn from_u128_reduced(v: u128) -> Self;
 
+    /// Borrows canonical `u32` representatives without per-element conversion.
+    ///
+    /// Fields whose in-memory representation is exactly one canonical `u32`
+    /// may override this capability. Wider or encoded fields return `None`.
+    #[inline]
+    fn canonical_u32_slice(values: &[Self]) -> Option<&[u32]> {
+        let _ = values;
+        None
+    }
+
     /// Number of significant bits in this element's canonical representative.
     ///
     /// Zero is considered to have zero significant bits.
@@ -368,6 +394,24 @@ pub trait Accumulator: Default + Copy + Send + Sync {
         self.fmadd(a, Self::Element::from_i64(b));
     }
 
+    /// Fused multiply-add with a signed 256-bit scalar.
+    ///
+    /// The fallback embeds the magnitude one limb at a time. Specialized
+    /// accumulators can override this to defer reduction across the full
+    /// product sum.
+    #[inline]
+    fn fmadd_s256(&mut self, value: Self::Element, scalar: &S256) {
+        let mut magnitude = Self::Element::zero();
+        for limb in scalar.magnitude_limbs().into_iter().rev() {
+            magnitude = magnitude.mul_pow_2(64) + Self::Element::from_u64(limb);
+        }
+        if scalar.is_positive {
+            self.fmadd(value, magnitude);
+        } else {
+            self.fmadd(-value, magnitude);
+        }
+    }
+
     /// Fused multiply-add with a `bool` scalar: `self += a` when `b` is true.
     #[inline]
     fn fmadd_bool(&mut self, a: Self::Element, b: bool) {
@@ -379,8 +423,14 @@ pub trait Accumulator: Default + Copy + Send + Sync {
 
 /// Associates a deferred-reduction accumulator with an element type.
 pub trait WithAccumulator: Ring {
-    /// Accumulator type.
+    /// General field-product accumulator.
     type Accumulator: Accumulator<Element = Self>;
+
+    /// Accumulator optimized for signed `u64`/`i64` scalar products.
+    type SmallScalarAccumulator: Accumulator<Element = Self>;
+
+    /// Accumulator optimized for signed 256-bit scalar products.
+    type SignedProductAccumulator: Accumulator<Element = Self>;
 }
 
 /// Fallback accumulator using standard ring arithmetic: every

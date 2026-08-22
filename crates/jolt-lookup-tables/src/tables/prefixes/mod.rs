@@ -31,6 +31,7 @@ pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
+pub mod pow2_offset_w;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -44,6 +45,8 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
+pub mod window_sign;
+pub mod window_sign_pow2;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotw;
@@ -98,7 +101,11 @@ impl<F: Copy> PrefixEval<F> {
 impl<F> Index<Prefixes> for &[PrefixEval<F>] {
     type Output = F;
 
-    #[expect(clippy::unwrap_used)]
+    #[expect(
+        clippy::unwrap_used,
+        clippy::get_unwrap,
+        reason = "checkpoint slices are sized to Prefixes::COUNT, so every variant index is in range"
+    )]
     fn index(&self, prefix: Prefixes) -> &Self::Output {
         let index = prefix as usize;
         &self.get(index).unwrap().0
@@ -155,6 +162,9 @@ pub enum Prefixes {
     XorRotW8,
     XorRotW12,
     XorRotW16,
+    Pow2OffsetW,
+    WindowSign,
+    WindowSignPow2,
 }
 
 /// Total number of prefix variants.
@@ -216,6 +226,9 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
             Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
+            Prefixes::Pow2OffsetW => pow2_offset_w::Pow2OffsetWPrefix::$method($($args),*),
+            Prefixes::WindowSign => window_sign::WindowSignPrefix::$method($($args),*),
+            Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
         }
     };
 }

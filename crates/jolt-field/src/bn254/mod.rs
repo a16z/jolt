@@ -8,7 +8,7 @@
 
 mod mont;
 
-pub use mont::WideAccumulator;
+pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 use ark_ff::{BigInteger, PrimeField, UniformRand};
@@ -28,7 +28,7 @@ macro_rules! from_primitives {
 /// Stamps a BN254 field wrapper: operators, conversions, serde (canonical
 /// 32-byte LE), ark-serialize interop, and the canonical-encoding surface.
 macro_rules! wrap_bn254 {
-    ($(#[$doc:meta])* $ty:ident, $inner:ty, $accum:ty, challenge($low:ident, $high:ident): $challenge:expr) => {
+    ($(#[$doc:meta])* $ty:ident, $inner:ty, accumulators($accum:ty, $small_accum:ty, $signed_accum:ty), challenge($low:ident, $high:ident): $challenge:expr) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
         #[repr(transparent)]
@@ -240,6 +240,8 @@ macro_rules! wrap_bn254 {
 
         impl WithAccumulator for $ty {
             type Accumulator = $accum;
+            type SmallScalarAccumulator = $small_accum;
+            type SignedProductAccumulator = $signed_accum;
         }
     };
 }
@@ -248,7 +250,7 @@ wrap_bn254!(
     /// BN254 scalar field element (`#[repr(transparent)]` over `ark_bn254::Fr`).
     Fr,
     ark_bn254::Fr,
-    WideAccumulator,
+    accumulators(WideAccumulator, FrSmallScalarAccumulator, FrSignedProductAccumulator),
     challenge(low, high): ark_bn254::Fr::from_bigint_unchecked(ark_ff::BigInt::new([0, 0, low, high]))
 );
 
@@ -256,7 +258,7 @@ wrap_bn254!(
     /// BN254 base field element (`#[repr(transparent)]` over `ark_bn254::Fq`).
     Fq,
     ark_bn254::Fq,
-    NaiveAccumulator<Fq>,
+    accumulators(NaiveAccumulator<Fq>, NaiveAccumulator<Fq>, NaiveAccumulator<Fq>),
     challenge(low, high): ark_bn254::Fq::from_bigint(ark_ff::BigInt::new([0, 0, low, high]))
 );
 

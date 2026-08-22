@@ -3457,7 +3457,7 @@ mod tests {
     fn sha2_chain_dory_perf() {
         use std::time::Instant;
 
-        const CYCLES_PER_SHA256: f64 = 3396.0;
+        const CYCLES_PER_SHA256: f64 = 2968.0;
         let log_t: usize = std::env::var("PERF_LOG_T")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -3815,10 +3815,13 @@ mod tests {
                     let mut rounds = Vec::with_capacity(num_rounds);
 
                     for (round_idx, commitment) in zk_proof.round_commitments.iter().enumerate() {
-                        transcript.append_commitment(b"sumcheck_commitment", commitment);
-                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
-
                         let degree = zk_proof.poly_degrees[round_idx];
+                        transcript.append_commitment_with_count(
+                            b"sumcheck_commitment",
+                            degree as u64,
+                            commitment,
+                        );
+                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
 
                         // Create synthetic coefficients that satisfy sumcheck relation
                         // g(x) = c0 + c1*x + c2*x^2 + ... has degree+1 coefficients

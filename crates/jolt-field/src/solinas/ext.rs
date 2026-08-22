@@ -668,7 +668,7 @@ impl<F: PseudoMersenne> ExtField<F> for FpExt8<F> {
 /// # Errors
 ///
 /// Returns an error if `width > E::DEGREE`.
-pub fn canonical_frobenius_thetas<F, E>(width: usize) -> Result<Vec<E>, FieldError>
+pub fn canonical_extension_basis<F, E>(width: usize) -> Result<Vec<E>, FieldError>
 where
     F: Field,
     E: ExtField<F>,
@@ -766,7 +766,7 @@ where
     F: PseudoMersenne,
     E: ExtField<F>,
 {
-    let thetas = canonical_frobenius_thetas::<F, E>(width)?;
+    let thetas = canonical_extension_basis::<F, E>(width)?;
     let rhs = (0..width)
         .map(|idx| E::lift_base(F::from_u64((idx + 1) as u64)))
         .collect::<Vec<_>>();

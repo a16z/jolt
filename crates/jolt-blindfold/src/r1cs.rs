@@ -407,6 +407,7 @@ fn validate_final_opening_count<F, O, P, Ch, C>(
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use crate::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};

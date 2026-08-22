@@ -69,7 +69,10 @@ pub trait VectorCommitment:
         row_len: usize,
         row_point: &[Self::Field],
         entry_point: &[Self::Field],
-    ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError> {
+    ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError>
+    where
+        <Self::Field as WithAccumulator>::Accumulator: Accumulator<Element = Self::Field>,
+    {
         let row_count = point_len_to_basis_len(row_point.len())?;
         validate_row_len(row_len, entry_point.len())?;
         let max_len = row_count
@@ -114,6 +117,7 @@ pub trait VectorCommitment:
     ) -> Result<Self::Field, VectorOpeningError>
     where
         Self::Output: HomomorphicCommitment<Self::Field>,
+        <Self::Field as WithAccumulator>::Accumulator: Accumulator<Element = Self::Field>,
     {
         let row_count = point_len_to_basis_len(row_point.len())?;
         if row_commitments.len() != row_count {
@@ -220,9 +224,18 @@ impl Error for VectorOpeningError {}
 /// Not all commitment schemes have this property (e.g., hash-based schemes
 /// do not). Pedersen and lattice-based schemes do.
 ///
+/// # Invariant: `Default` is the additive identity
+///
+/// `Default::default()` must be the neutral element of `add`:
+/// `add(&C::default(), c) == c` for all `c`. Aggregation
+/// (`combine_commitments`) seeds both its serial fold and its parallel
+/// reduction with `C::default()`, so a non-identity default adds an
+/// unintended offset to every aggregate.
+///
 /// Blanket-implemented for [`JoltGroup`](crate::JoltGroup) over any field
-/// (via `scalar_mul` + addition). Non-group commitment types (e.g., lattice
-/// vectors) can implement this trait directly for their native scalar field.
+/// (via `scalar_mul` + addition; `JoltGroup` requires `Default == identity`).
+/// Non-group commitment types (e.g., lattice vectors) can implement this
+/// trait directly for their native scalar field.
 pub trait HomomorphicCommitment<F: JoltField>: Clone + Default {
     /// Computes `c1 + c2`.
     #[must_use]
@@ -275,7 +288,10 @@ fn combine_rows<F: JoltField>(
     row_len: usize,
     row_weights: &[F],
     max_len: usize,
-) -> Vec<F> {
+) -> Vec<F>
+where
+    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
+{
     let mut combined_vector = vec![F::zero(); row_len];
 
     if max_len >= PAR_THRESHOLD {
@@ -314,7 +330,10 @@ fn combine_rows<F: JoltField>(
     row_len: usize,
     row_weights: &[F],
     _max_len: usize,
-) -> Vec<F> {
+) -> Vec<F>
+where
+    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
+{
     let mut combined_vector = vec![F::zero(); row_len];
 
     for (entry_index, combined_entry) in combined_vector.iter_mut().enumerate() {
@@ -330,7 +349,10 @@ fn combine_rows<F: JoltField>(
     combined_vector
 }
 
-fn inner_product<F: JoltField>(lhs: &[F], rhs: &[F]) -> F {
+fn inner_product<F: JoltField>(lhs: &[F], rhs: &[F]) -> F
+where
+    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
+{
     #[cfg(feature = "parallel")]
     {
         if lhs.len() >= PAR_THRESHOLD {

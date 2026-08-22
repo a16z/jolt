@@ -15,6 +15,13 @@ use serde::{Deserialize, Serialize};
 /// All elements are `Copy` and thread-safe. Implementors must provide
 /// scalar multiplication and multi-scalar multiplication (MSM).
 ///
+/// # Invariant: `Default` is the identity
+///
+/// `Default::default()` must equal [`JoltGroup::identity()`]. Generic
+/// aggregation code (e.g. `combine_commitments` in `jolt_crypto::commitment`)
+/// seeds accumulators with `Default::default()`; a non-identity default would
+/// silently offset every aggregate.
+///
 /// Requires [`AppendToTranscript`] so group elements can be absorbed into
 /// Fiat-Shamir transcripts (e.g., Pedersen commitments in ZK sumcheck).
 pub trait JoltGroup:
@@ -57,7 +64,8 @@ pub trait JoltGroup:
     ///
     /// # Panics
     ///
-    /// Debug-asserts that `bases.len() == scalars.len()`.
+    /// Panics if `bases.len() != scalars.len()` (in all build profiles —
+    /// backend MSMs silently truncate to the shorter slice otherwise).
     #[must_use]
     fn msm<F: JoltField>(bases: &[Self], scalars: &[F]) -> Self;
 }

@@ -97,9 +97,11 @@ where
         ),
     };
 
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,

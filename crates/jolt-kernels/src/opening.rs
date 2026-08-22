@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_field::JoltField;
 use jolt_poly::MultilinearPoly;
-use jolt_witness::JoltWitnessOracle;
+use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 
 use crate::commitment::CommitmentGrid;
 use crate::{KernelError, ProofSession};
@@ -36,11 +36,14 @@ use crate::{KernelError, ProofSession};
 /// `precommitted_tables` carries the committed-program polynomials (bytecode
 /// chunks, program image) the recipe materialized from the prover-retained
 /// full program — they are preprocessing data, not witness oracles.
+/// Receives the full witness plane (not just the oracle surface) so
+/// implementations can rebuild the committed columns from typed trace
+/// bundles instead of materialized `K × T` oracle grids.
 pub trait JointOpeningPolynomials<F: JoltField> {
     fn prepare(
         &self,
         session: &mut ProofSession,
-        witness: &dyn JoltWitnessOracle<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,

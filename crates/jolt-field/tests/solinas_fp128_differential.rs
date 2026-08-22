@@ -401,6 +401,25 @@ fn fp128_random_matches_spec() {
     check::<{ u128::MAX - 0xFFFF_A7F6 }>();
 }
 
+#[test]
+fn fp128_mul_add_matches_independent_oracle() {
+    type F = two::Prime128Offset275;
+    const P: u128 = u128::MAX - 274;
+    let mut rng = rng();
+    for _ in 0..500 {
+        let a = rng.gen::<u128>() % P;
+        let b = rng.gen::<u128>() % P;
+        let c = rng.gen::<u128>() % P;
+        let fa = F::from_u128_reduced(a);
+        let fb = F::from_u128_reduced(b);
+        let fc = F::from_u128_reduced(c);
+        assert_eq!(
+            fa.mul_add(fb, fc).to_u128_checked(),
+            Some(oracle_add(oracle_mul(a, b, P), c, P))
+        );
+    }
+}
+
 fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
     let mut acc = F::Accumulator::default();
     for (&x, &y) in xs.iter().zip(ys) {

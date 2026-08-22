@@ -90,9 +90,11 @@ where
     let input_points =
         stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
 
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,
