@@ -213,6 +213,7 @@ struct Args {
     scales: Vec<u32>,
     repeats: usize,
     bytecode_chunks: usize,
+    gpus: usize,
     filter: Option<String>,
     csv: Option<String>,
 }
@@ -220,7 +221,8 @@ struct Args {
 fn usage() -> ! {
     println!(
         "usage: cuda_relation_bench [--name <workload>] [--scales 16,22] [--repeats 3]\n\
-         \x20                          [--bytecode-chunks 2] [--arm <substring>] [--csv <path>]\n\
+         \x20                          [--bytecode-chunks 2] [--gpus 1] [--arm <substring>]\n\
+         \x20                          [--csv <path>]\n\
          \n\
          workloads: fibonacci | sha2-chain | sha3-chain | btreemap\n\
          Default scales are 16 and 22; 25 is opt-in (it flips the one-hot chunk\n\
@@ -237,6 +239,7 @@ fn parse_args() -> Args {
         scales: vec![16, 22],
         repeats: 3,
         bytecode_chunks: 2,
+        gpus: 1,
         filter: None,
         csv: None,
     };
@@ -264,15 +267,17 @@ fn parse_args() -> Args {
             "--bytecode-chunks" => {
                 args.bytecode_chunks = value().parse().unwrap_or_else(|_| usage());
             }
+            "--gpus" => args.gpus = value().parse().unwrap_or_else(|_| usage()),
             "--arm" => args.filter = Some(value()),
             "--csv" => args.csv = Some(value()),
             "-h" | "--help" => usage(),
             _ => usage(),
         }
     }
-    if args.repeats == 0 || args.scales.is_empty() {
+    if args.repeats == 0 || args.scales.is_empty() || args.gpus == 0 {
         usage();
     }
+    jolt_kernels::cuda::request_devices(args.gpus);
     args
 }
 

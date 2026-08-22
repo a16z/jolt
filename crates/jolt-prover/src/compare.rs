@@ -50,6 +50,11 @@ pub struct CompareArgs {
 
     #[clap(long)]
     pub skip_modular: bool,
+
+    /// CUDA devices to split the proof across (`cuda` backend only).
+    #[cfg(feature = "cuda")]
+    #[clap(long, default_value_t = 1)]
+    pub gpus: usize,
 }
 
 #[derive(Debug)]
@@ -122,6 +127,8 @@ impl Comparison {
 }
 
 pub fn run(args: &CompareArgs) -> Comparison {
+    #[cfg(feature = "cuda")]
+    jolt_kernels::cuda::request_devices(args.gpus);
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
     assert!(args.runs > 0, "--runs must be at least 1");

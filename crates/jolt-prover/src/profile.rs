@@ -219,6 +219,11 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
+
+    /// CUDA devices to split the proof across (`cuda` backend only).
+    #[cfg(feature = "cuda")]
+    #[clap(long, default_value_t = 1)]
+    pub gpus: usize,
 }
 
 /// `benchmark` subcommand arguments: a multi-scale sweep over the workload
@@ -315,6 +320,8 @@ impl Drop for RunLock {
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
+    #[cfg(feature = "cuda")]
+    jolt_kernels::cuda::request_devices(args.gpus);
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
     let trace_name = format!(

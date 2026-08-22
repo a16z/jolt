@@ -15,7 +15,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::context::CudaKernelContext;
+use super::context::{current_device, CudaKernelContext};
 use super::device::{DeviceFrVec, LIMBS};
 use super::pack::COLD;
 use crate::cuda::witness::session_device_trace;
@@ -71,7 +71,7 @@ struct Entry {
 #[derive(Default)]
 pub(crate) struct DeviceColumns {
     source: usize,
-    entries: HashMap<DeviceColumn, Entry>,
+    entries: HashMap<(usize, DeviceColumn), Entry>,
 }
 
 impl DeviceColumns {
@@ -88,7 +88,7 @@ impl DeviceColumns {
         cycles: usize,
         span: usize,
     ) -> Option<Arc<T>> {
-        let entry = self.entries.get(&column)?;
+        let entry = self.entries.get(&(current_device(), column))?;
         if entry.cycles != cycles || entry.span > span {
             return None;
         }
@@ -104,7 +104,7 @@ impl DeviceColumns {
     ) {
         let bytes = value.device_bytes();
         let _ = self.entries.insert(
-            column,
+            (current_device(), column),
             Entry {
                 value,
                 cycles,
@@ -119,7 +119,8 @@ impl DeviceColumns {
         let mut resident: Vec<(DeviceColumn, usize, usize)> = self
             .entries
             .iter()
-            .map(|(&column, entry)| (column, entry.cycles, entry.span))
+            .filter(|&(&(ordinal, _), _)| ordinal == current_device())
+            .map(|(&(_, column), entry)| (column, entry.cycles, entry.span))
             .collect();
         resident
             .sort_unstable_by_key(|&(column, cycles, span)| (format!("{column:?}"), cycles, span));
@@ -128,7 +129,7 @@ impl DeviceColumns {
 
     #[cfg(test)]
     pub(crate) fn evict(&mut self, column: DeviceColumn) {
-        let _ = self.entries.remove(&column);
+        let _ = self.entries.remove(&(current_device(), column));
     }
 }
 
@@ -136,8 +137,8 @@ impl DeviceColumns {
 impl allocative::Allocative for DeviceColumns {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        for (column, entry) in &self.entries {
-            visitor.visit_simple(allocative::Key::new(column_key(*column)), entry.bytes);
+        for (&(_, column), entry) in &self.entries {
+            visitor.visit_simple(allocative::Key::new(column_key(column)), entry.bytes);
         }
         visitor.exit();
     }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cudarc::driver::{CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaSlice, CudaStream, CudaView, LaunchConfig, PushKernelArg};
 
 use super::context::{CudaKernelContext, BLOCK};
 use jolt_field::Fr;
@@ -75,6 +75,10 @@ impl DeviceG1Bases {
 
     pub(crate) const fn limbs(&self) -> &CudaSlice<u64> {
         &self.limbs
+    }
+
+    pub(crate) fn ordinal(&self) -> usize {
+        self.limbs.ordinal()
     }
 
     pub fn to_host(&self) -> Result<Vec<AffineLimbs>, CudaError> {
@@ -951,6 +955,7 @@ impl CudaKernelContext {
                 reason: "signed MSM scalars must fit in [-u64::MAX, u64::MAX]",
             });
         }
+        self.require_owned(bases.ordinal())?;
         let device = self.upload_u64_slice(&magnitudes)?;
         let accumulator = self.pippenger_device(
             bases,
@@ -1079,7 +1084,7 @@ impl CudaKernelContext {
     pub fn one_hot_rows_device(
         &self,
         bases: &DeviceG1Bases,
-        hot: &CudaSlice<u32>,
+        hot: &CudaView<'_, u32>,
         cycles: usize,
         one_hot_k: usize,
         chunk_len: usize,
@@ -1102,6 +1107,7 @@ impl CudaKernelContext {
                 got: hot.len(),
             });
         }
+        self.require_owned(bases.ordinal())?;
         let chunk_count = cycles / chunk_len;
         let segments = one_hot_k * chunk_count;
         let cycle_count = Self::count_of(cycles)?;
@@ -3074,7 +3080,7 @@ mod tests {
                     &context
                         .one_hot_rows_device(
                             &device_bases,
-                            &device_hot,
+                            &device_hot.slice(..),
                             cycles,
                             one_hot_k,
                             chunk_len,
@@ -3120,7 +3126,7 @@ mod tests {
             );
             prop_assert!(
                 context
-                    .one_hot_rows_device(&device_bases, &device_hot, cycles, one_hot_k, chunk_len)
+                    .one_hot_rows_device(&device_bases, &device_hot.slice(..), cycles, one_hot_k, chunk_len)
                     .is_err(),
                 "the device CSR build accepted an address past the chunk: the scatter drops such \
                  a cycle, so the commitment would silently omit it"

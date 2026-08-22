@@ -14,7 +14,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use jolt_witness::backend::cuda::HotSource;
+use jolt_witness::backend::cuda::{DeviceTrace, HotSource};
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, StreamConsumer};
 
 use super::common::context::CudaKernelContext;
@@ -115,6 +115,8 @@ impl DeviceTier1Commitment for DoryScheme {
         Ok(partial)
     }
 }
+
+mod partition;
 
 struct IncrementColumns {
     kinds: Vec<ColumnKind>,
@@ -230,16 +232,13 @@ fn collect_increments<F: Field>(
     Ok(consumers.0)
 }
 
-fn device_hot_columns<F: Field>(
-    context: &'static CudaKernelContext,
-    session: &mut ProofSession,
-    source: &dyn JoltWitnessPlane<F>,
+type HotColumnBuild = Vec<Option<(CudaSlice<u32>, usize)>>;
+
+fn hot_columns_from_trace<F: Field>(
+    trace: &DeviceTrace,
     kinds: &[ColumnKind],
-    ids: &[JoltCommittedPolynomial],
-    cycles: usize,
     one_hot_k: usize,
-) -> Result<RetainedHotColumns, KernelError<F>> {
-    let trace = session_device_trace(context, session, source, cycles)?;
+) -> Result<HotColumnBuild, KernelError<F>> {
     let wanted = |family: fn(&ColumnKind) -> bool| kinds.iter().any(family);
     let lookup = wanted(|kind| matches!(kind, ColumnKind::InstructionRa(_)))
         .then(|| trace.lookup_index_limbs())
@@ -255,7 +254,7 @@ fn device_hot_columns<F: Field>(
     let missing = || KernelError::InvariantViolation {
         reason: "a committed one-hot family has no device source column",
     };
-    let mut requests = Vec::with_capacity(ids.len());
+    let mut requests = Vec::with_capacity(kinds.len());
     for &kind in kinds {
         let request = match kind {
             ColumnKind::InstructionRa(selector) => (
@@ -274,25 +273,48 @@ fn device_hot_columns<F: Field>(
     }
     let mut chunked = trace.hot_chunk_columns(&requests, one_hot_k)?.into_iter();
 
-    let mut retained = Vec::with_capacity(ids.len());
-    for (index, &id) in ids.iter().enumerate() {
-        if !kinds[index].is_one_hot() {
+    let mut retained = Vec::with_capacity(kinds.len());
+    for &kind in kinds {
+        if !kind.is_one_hot() {
             retained.push(None);
             continue;
         }
-        let (column, span) = chunked.next().ok_or(KernelError::InvariantViolation {
+        let entry = chunked.next().ok_or(KernelError::InvariantViolation {
             reason: "the device chunk batch is shorter than the one-hot column count",
         })?;
-        let column = Arc::new(column);
-        park_device_column(
-            session,
-            source,
-            DeviceColumn::CommittedHot(id),
-            cycles,
-            span,
-            Arc::clone(&column),
-        );
-        retained.push(Some(column));
+        retained.push(Some(entry));
+    }
+    Ok(retained)
+}
+
+fn device_hot_columns<F: Field>(
+    context: &'static CudaKernelContext,
+    session: &mut ProofSession,
+    source: &dyn JoltWitnessPlane<F>,
+    kinds: &[ColumnKind],
+    ids: &[JoltCommittedPolynomial],
+    cycles: usize,
+    one_hot_k: usize,
+) -> Result<RetainedHotColumns, KernelError<F>> {
+    let trace = session_device_trace(context, session, source, cycles)?;
+    let built = hot_columns_from_trace::<F>(&trace, kinds, one_hot_k)?;
+    let mut retained = Vec::with_capacity(ids.len());
+    for (&id, entry) in ids.iter().zip(built) {
+        match entry {
+            None => retained.push(None),
+            Some((column, span)) => {
+                let column = Arc::new(column);
+                park_device_column(
+                    session,
+                    source,
+                    DeviceColumn::CommittedHot(id),
+                    cycles,
+                    span,
+                    Arc::clone(&column),
+                );
+                retained.push(Some(column));
+            }
+        }
     }
     Ok(retained)
 }
@@ -407,28 +429,37 @@ where
             let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
                 .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
             if PCS::BATCHES_TIER2 {
-                let mut columns: Vec<Option<Vec<JacobianLimbs>>> =
-                    (0..ids.len()).map(|_| None).collect();
-                for index in tier1_order(&hot) {
-                    let rows = match &hot[index] {
-                        Some(column) => {
-                            tracing::info_span!("cuda_commit_tier1_one_hot").in_scope(|| {
-                                context.one_hot_rows_device(
-                                    bases, column, cycles, one_hot_k, row_width,
-                                )
-                            })
-                        }
-                        None => tracing::info_span!("cuda_commit_tier1_dense").in_scope(|| {
-                            context.msm_rows_i128(bases, &collected.increments[index], row_width)
-                        }),
-                    }?;
-                    let slot = columns
-                        .get_mut(index)
-                        .ok_or(KernelError::InvariantViolation {
-                            reason: "the commit pipeline produced a column outside the id list",
-                        })?;
-                    *slot = Some(rows);
-                }
+                let plan = partition::ColumnPlan {
+                    kinds: &kinds,
+                    increments: &collected.increments,
+                    cycles,
+                    one_hot_k,
+                    row_width,
+                };
+                let windows = partition::windows(cycles, row_width);
+                let columns = if windows.len() > 1 {
+                    let rows = source.rows().ok_or(KernelError::Unsupported {
+                        reason: "the CUDA backend needs a slice-backed trace source to split a \
+                                 commitment across devices",
+                    })?;
+                    let host_bases = PCS::tier1_bases(setup, row_width)?;
+                    partition::split_columns::<F>(
+                        bases,
+                        &hot,
+                        &plan,
+                        &partition::TraceSource {
+                            rows,
+                            preprocessing: source.program_preprocessing(),
+                        },
+                        &host_bases,
+                        &windows,
+                    )?
+                } else {
+                    let window = windows.first().ok_or(KernelError::InvariantViolation {
+                        reason: "the commit cycle partition produced no windows",
+                    })?;
+                    partition::window_columns::<F>(context, bases, &hot, &plan, window, 0)?
+                };
                 let columns = columns.into_iter().collect::<Option<Vec<_>>>().ok_or(
                     KernelError::InvariantViolation {
                         reason: "the commit pipeline finished fewer columns than it was given",
@@ -483,7 +514,11 @@ where
                         Some(column) => {
                             tracing::info_span!("cuda_commit_tier1_one_hot").in_scope(|| {
                                 context.one_hot_rows_device(
-                                    bases, column, cycles, one_hot_k, row_width,
+                                    bases,
+                                    &column.slice(0..cycles),
+                                    cycles,
+                                    one_hot_k,
+                                    row_width,
                                 )
                             })
                         }

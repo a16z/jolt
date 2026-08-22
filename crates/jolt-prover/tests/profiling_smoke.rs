@@ -31,6 +31,8 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        #[cfg(feature = "cuda")]
+        gpus: 1,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");

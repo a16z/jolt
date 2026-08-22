@@ -1,3 +1,5 @@
+use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use cudarc::driver::{
@@ -17,6 +19,7 @@ pub const BLOCK: u32 = 256;
 const KERNEL_CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kernels.cubin"));
 
 pub struct CudaKernelContext {
+    ordinal: usize,
     stream: Arc<CudaStream>,
     staging: StagingPool,
     fr_identity_probe: CudaFunction,
@@ -191,6 +194,7 @@ impl CudaKernelContext {
         let stream = context.default_stream();
         let module = context.load_module(Ptx::from_binary(KERNEL_CUBIN.to_vec()))?;
         Ok(Self {
+            ordinal,
             stream,
             staging: StagingPool::new(),
             fr_identity_probe: module.load_function("fr_identity_probe")?,
@@ -398,6 +402,19 @@ impl CudaKernelContext {
 
     pub(crate) const fn stream(&self) -> &Arc<CudaStream> {
         &self.stream
+    }
+
+    pub const fn ordinal(&self) -> usize {
+        self.ordinal
+    }
+
+    pub(crate) fn require_owned(&self, ordinal: usize) -> Result<(), CudaError> {
+        if ordinal == self.ordinal {
+            return Ok(());
+        }
+        Err(CudaError::InvariantViolation {
+            reason: "a CUDA kernel was launched against a buffer resident on another device",
+        })
     }
 
     pub(crate) fn launch_config(count: u32) -> LaunchConfig {
@@ -1137,15 +1154,99 @@ impl CudaKernelContext {
     }
 }
 
-pub fn shared_context() -> Option<&'static CudaKernelContext> {
-    static CONTEXT: OnceLock<Option<CudaKernelContext>> = OnceLock::new();
-    CONTEXT
-        .get_or_init(|| match CudaKernelContext::new(0) {
-            Ok(context) => Some(context),
-            Err(error) => {
-                tracing::warn!("CUDA unavailable, falling back to the reference backend: {error}");
-                None
+pub const DEVICE_COUNT_VARIABLE: &str = "JOLT_CUDA_GPUS";
+
+thread_local! {
+    static CURRENT_DEVICE: Cell<usize> = const { Cell::new(0) };
+}
+
+pub struct DeviceGuard {
+    previous: usize,
+}
+
+impl Drop for DeviceGuard {
+    fn drop(&mut self) {
+        CURRENT_DEVICE.set(self.previous);
+    }
+}
+
+#[must_use]
+pub fn enter_device(ordinal: usize) -> DeviceGuard {
+    DeviceGuard {
+        previous: CURRENT_DEVICE.replace(ordinal),
+    }
+}
+
+pub fn current_device() -> usize {
+    CURRENT_DEVICE.get()
+}
+
+static REQUESTED_DEVICES: AtomicUsize = AtomicUsize::new(0);
+
+static POOL: OnceLock<Vec<CudaKernelContext>> = OnceLock::new();
+
+pub fn request_devices(count: usize) {
+    REQUESTED_DEVICES.store(count, Ordering::Relaxed);
+    if POOL.get().is_some() {
+        tracing::warn!(
+            "the CUDA device pool was already built; the request for {count} device(s) is ignored"
+        );
+    }
+}
+
+fn requested_devices() -> usize {
+    let explicit = REQUESTED_DEVICES.load(Ordering::Relaxed);
+    if explicit > 0 {
+        return explicit;
+    }
+    std::env::var(DEVICE_COUNT_VARIABLE)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|&count| count > 0)
+        .unwrap_or(1)
+}
+
+fn pool() -> &'static [CudaKernelContext] {
+    POOL.get_or_init(|| {
+        let present = DriverContext::device_count().unwrap_or_default().max(0) as usize;
+        let requested = requested_devices();
+        let wanted = requested.min(present);
+        let mut contexts = Vec::with_capacity(wanted);
+        for ordinal in 0..wanted {
+            match CudaKernelContext::new(ordinal) {
+                Ok(context) => contexts.push(context),
+                Err(error) => {
+                    if ordinal == 0 {
+                        tracing::warn!(
+                            "CUDA unavailable, falling back to the reference backend: {error}"
+                        );
+                    } else {
+                        tracing::warn!(
+                            "CUDA device {ordinal} did not open, continuing on {ordinal} device(s): {error}"
+                        );
+                    }
+                    break;
+                }
             }
-        })
-        .as_ref()
+        }
+        if requested > contexts.len() {
+            tracing::warn!(
+                "{DEVICE_COUNT_VARIABLE}={requested} but {} CUDA device(s) are usable",
+                contexts.len()
+            );
+        }
+        contexts
+    })
+}
+
+pub fn device_count() -> usize {
+    pool().len()
+}
+
+pub fn shared_context() -> Option<&'static CudaKernelContext> {
+    pool().get(current_device())
+}
+
+pub fn context_for(ordinal: usize) -> Option<&'static CudaKernelContext> {
+    pool().get(ordinal)
 }

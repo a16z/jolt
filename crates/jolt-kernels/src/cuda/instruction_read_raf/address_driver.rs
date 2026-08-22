@@ -14,9 +14,7 @@ use super::address_phase::{
     CHUNK_SIZE, NO_TABLE,
 };
 use super::combine::{combine_terms, CombineTerm};
-use super::prefixes::{
-    default_checkpoints, prefix_mle_round, update_checkpoints, HINT_POINTS,
-};
+use super::prefixes::{default_checkpoints, prefix_mle_round, update_checkpoints, HINT_POINTS};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr_slice, DeviceFrVec};
 use crate::cuda::common::error::CudaError;

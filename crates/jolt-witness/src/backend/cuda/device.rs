@@ -1,7 +1,8 @@
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
-use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
+use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions, Ptx};
 use jolt_program::execution::TraceRow;
 use jolt_program::preprocess::{bytecode::BytecodePCMapper, JoltProgramPreprocessing};
 
@@ -35,41 +36,56 @@ struct ExtractFunctions {
     hot_chunk_words: CudaFunction,
 }
 
+fn extract_ptx() -> Result<&'static Ptx, &'static String> {
+    static PTX: OnceLock<Result<Ptx, String>> = OnceLock::new();
+    PTX.get_or_init(|| {
+        let options = CompileOptions {
+            options: vec!["--device-int128".to_owned()],
+            ..Default::default()
+        };
+        compile_ptx_with_opts(EXTRACT_SRC, options).map_err(|error| error.to_string())
+    })
+    .as_ref()
+}
+
 #[tracing::instrument(skip_all, name = "cuda_witness_nvrtc")]
 fn extract_functions(stream: &CudaStream) -> Result<&'static ExtractFunctions, WitnessError> {
-    static FUNCTIONS: OnceLock<Result<ExtractFunctions, String>> = OnceLock::new();
-    FUNCTIONS
-        .get_or_init(|| {
-            let options = CompileOptions {
-                options: vec!["--device-int128".to_owned()],
-                ..Default::default()
-            };
-            let ptx =
-                compile_ptx_with_opts(EXTRACT_SRC, options).map_err(|error| error.to_string())?;
-            let module = stream
-                .context()
-                .load_module(ptx)
-                .map_err(|error| error.to_string())?;
-            let function = |name: &str| {
-                module
-                    .load_function(name)
-                    .map_err(|error: cudarc::driver::DriverError| error.to_string())
-            };
-            Ok(ExtractFunctions {
-                mapped_pc: function("mapped_pc_words_kernel")?,
-                remapped_ram: function("remapped_ram_words_kernel")?,
-                lookup_index: function("lookup_index_limbs_kernel")?,
-                atom_columns: function("atom_columns_kernel")?,
-                flag_bit: function("flag_bit_column_kernel")?,
-                extra_word: function("extra_word_column_kernel")?,
-                flag_bit_bytes: function("flag_bit_bytes_kernel")?,
-                narrow_u64: function("narrow_u64_kernel")?,
-                hot_chunk_limbs: function("hot_chunk_limbs_kernel")?,
-                hot_chunk_words: function("hot_chunk_words_kernel")?,
-            })
-        })
-        .as_ref()
-        .map_err(device_error)
+    static FUNCTIONS: OnceLock<Mutex<HashMap<usize, &'static Result<ExtractFunctions, String>>>> =
+        OnceLock::new();
+    let cache = FUNCTIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().unwrap_or_else(|poisoned| {
+        cache.clear_poison();
+        poisoned.into_inner()
+    });
+    let built = *cache
+        .entry(stream.context().ordinal())
+        .or_insert_with(|| Box::leak(Box::new(load_extract_functions(stream))));
+    built.as_ref().map_err(device_error)
+}
+
+fn load_extract_functions(stream: &CudaStream) -> Result<ExtractFunctions, String> {
+    let ptx = extract_ptx().map_err(Clone::clone)?.clone();
+    let module = stream
+        .context()
+        .load_module(ptx)
+        .map_err(|error| error.to_string())?;
+    let function = |name: &str| {
+        module
+            .load_function(name)
+            .map_err(|error: cudarc::driver::DriverError| error.to_string())
+    };
+    Ok(ExtractFunctions {
+        mapped_pc: function("mapped_pc_words_kernel")?,
+        remapped_ram: function("remapped_ram_words_kernel")?,
+        lookup_index: function("lookup_index_limbs_kernel")?,
+        atom_columns: function("atom_columns_kernel")?,
+        flag_bit: function("flag_bit_column_kernel")?,
+        extra_word: function("extra_word_column_kernel")?,
+        flag_bit_bytes: function("flag_bit_bytes_kernel")?,
+        narrow_u64: function("narrow_u64_kernel")?,
+        hot_chunk_limbs: function("hot_chunk_limbs_kernel")?,
+        hot_chunk_words: function("hot_chunk_words_kernel")?,
+    })
 }
 
 pub struct DeviceTrace {
@@ -196,7 +212,29 @@ impl DeviceTrace {
         cycles: usize,
         preprocessing: &JoltProgramPreprocessing,
     ) -> Result<Self, WitnessError> {
+        Self::upload_window(stream, rows, cycles, 0, cycles, preprocessing)
+    }
+
+    pub fn upload_window(
+        stream: Arc<CudaStream>,
+        rows: &[TraceRow],
+        cycles: usize,
+        base: usize,
+        len: usize,
+        preprocessing: &JoltProgramPreprocessing,
+    ) -> Result<Self, WitnessError> {
         PackedTrace::require_domain(rows, cycles)?;
+        if base + len > cycles {
+            return Err(WitnessError::InvalidDimensions {
+                label: JOLT_VM_LABEL,
+                reason: format!(
+                    "cycle window {base}..{} lies outside the cycle domain {cycles}",
+                    base + len
+                ),
+            });
+        }
+        let domain = cycles;
+        let cycles = len;
         let functions = extract_functions(&stream)?;
         let csr = pc_map_csr(preprocessing)?;
         let buckets = u32::try_from(csr.bucket_offsets.len().saturating_sub(1))
@@ -215,7 +253,7 @@ impl DeviceTrace {
         };
 
         let mut staging = PackedTrace::with_capacity(cycles);
-        staging.fill_range(rows, cycles, 0, cycles);
+        staging.fill_range(rows, domain, base, cycles);
         stream
             .memcpy_htod(&staging.is_noop, &mut device.is_noop.slice_mut(..))
             .map_err(device_error)?;

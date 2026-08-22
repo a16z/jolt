@@ -31,18 +31,40 @@ pub(crate) struct ResidentTrace {
     atoms: OnceLock<Arc<DeviceAtomColumns>>,
 }
 
+#[derive(Default)]
+pub(crate) struct ResidentTraces {
+    devices: Vec<Option<ResidentTrace>>,
+}
+
+impl ResidentTraces {
+    fn get(&self, ordinal: usize) -> Option<&ResidentTrace> {
+        self.devices.get(ordinal)?.as_ref()
+    }
+
+    fn park(&mut self, ordinal: usize, resident: ResidentTrace) {
+        if self.devices.len() <= ordinal {
+            self.devices.resize_with(ordinal + 1, || None);
+        }
+        if let Some(slot) = self.devices.get_mut(ordinal) {
+            *slot = Some(resident);
+        }
+    }
+}
+
 #[cfg(feature = "allocative")]
-impl allocative::Allocative for ResidentTrace {
+impl allocative::Allocative for ResidentTraces {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("device_trace"),
-            self.trace.device_bytes(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("device_atom_columns"),
-            self.atoms.get().map_or(0, |atoms| atoms.device_bytes()),
-        );
+        for resident in self.devices.iter().flatten() {
+            visitor.visit_simple(
+                allocative::Key::new("device_trace"),
+                resident.trace.device_bytes(),
+            );
+            visitor.visit_simple(
+                allocative::Key::new("device_atom_columns"),
+                resident.atoms.get().map_or(0, |atoms| atoms.device_bytes()),
+            );
+        }
         visitor.exit();
     }
 }
@@ -54,7 +76,11 @@ pub(crate) fn session_device_trace<F: Field>(
     cycles: usize,
 ) -> Result<Arc<DeviceTrace>, KernelError<F>> {
     let identity = witness_identity(witness);
-    if let Some(resident) = session.state::<ResidentTrace>() {
+    let ordinal = context.ordinal();
+    if let Some(resident) = session
+        .state::<ResidentTraces>()
+        .and_then(|traces| traces.get(ordinal))
+    {
         if resident.source == identity && resident.cycles == cycles {
             return Ok(Arc::clone(&resident.trace));
         }
@@ -71,12 +97,15 @@ pub(crate) fn session_device_trace<F: Field>(
         )
     })?;
     let trace = Arc::new(trace);
-    session.park(ResidentTrace {
-        source: identity,
-        cycles,
-        trace: Arc::clone(&trace),
-        atoms: OnceLock::new(),
-    });
+    session.state_or_insert_with(ResidentTraces::default).park(
+        ordinal,
+        ResidentTrace {
+            source: identity,
+            cycles,
+            trace: Arc::clone(&trace),
+            atoms: OnceLock::new(),
+        },
+    );
     Ok(trace)
 }
 
@@ -88,7 +117,8 @@ pub(crate) fn session_atom_columns<F: Field>(
 ) -> Result<Arc<DeviceAtomColumns>, KernelError<F>> {
     let trace = session_device_trace(context, session, witness, cycles)?;
     let resident = session
-        .state::<ResidentTrace>()
+        .state::<ResidentTraces>()
+        .and_then(|traces| traces.get(context.ordinal()))
         .ok_or(KernelError::InvariantViolation {
             reason: "the device residency was parked without an atom-column cache",
         })?;
