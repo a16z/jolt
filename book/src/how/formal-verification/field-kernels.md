@@ -260,6 +260,33 @@ types. They also do not cover packed SIMD arithmetic, x86-64 multiplication,
 squaring, inversion, the full proof system, or an arbitrary downstream
 executable.
 
+## Unreduced arithmetic is a separate obligation
+
+The prover also delays reductions while it sums many products. Those paths do
+not call the proved scalar multiplication kernel for every term. They widen
+values into larger integer accumulators, add many terms, and reduce once at
+the end.
+
+For `Fp128`, the wide accumulator has eight signed `i32` lanes. A fresh field
+value contributes less than `2^16` to each lane, so at most 32,768 same-sign
+unit additions fit before a lane can overflow. The product accumulators have
+four wrapping `u128` slots. Their documented nonnegative-product headroom is
+`2^64 - 1` terms, subject to the final value of every slot remaining in the
+ordinary `u128` range when subtraction is involved.
+
+These are caller obligations. Debug builds catch some signed-lane overflow,
+but release builds do not add checks to the hot loop. Jolt declares
+`MAX_COMMIT_ACCUMULATIONS`, but current production code does not consume that
+constant; only tests do. A production cutover must either prove that every
+batch is within its applicable bound or split longer batches and reduce
+between chunks.
+
+The differential tests cover the widening products, reductions, signed lane
+operations, and boundary examples. They are not a formal proof. Closing this
+part of the field claim requires three layers: prove each widening and
+reduction schedule, prove or enforce the caller's term and scale bounds, and
+connect the compiled implementation to those theorems.
+
 ## Trust boundary
 
 The result relies on the following assumptions.
