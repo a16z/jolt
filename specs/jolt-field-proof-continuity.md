@@ -14,8 +14,9 @@ the ownership boundary after the Akita field migration.
 | x86-64 HOL Light addition and subtraction theorems | This Jolt continuation | `proofs/hol-light/` |
 | A7F7 AArch64 multiplication body and HOL Light theorems | This Jolt continuation | `crates/jolt-field/asm/aarch64/` and `proofs/hol-light/` |
 | A7F7 baseline x86-64 multiplication body and HOL Light theorems | This Jolt continuation | `crates/jolt-field/asm/x86_64/` and `proofs/hol-light/` |
+| A7F7 BMI2 and ADX x86-64 multiplication body and HOL Light theorems | This Jolt continuation | `crates/jolt-field/asm/x86_64/` and `proofs/hol-light/` |
 | A7F7 primality certificate | This Jolt continuation | `proofs/hol-light/fp128_prime.ml` |
-| Public witness and artifact checker design | Akita proof head `241cde109751ae28d02b55c92ac54e923a6a92af` | `crates/jolt-field/examples/` and `scripts/` |
+| Inspection witness and artifact checker design | Akita proof head `241cde109751ae28d02b55c92ac54e923a6a92af` | `crates/jolt-field/examples/` and `scripts/` |
 | Field specific legacy transcript dispatch | Jolt PR 1745 commit `6b5d3ff` | `crates/jolt-prover-legacy/` |
 | Fp64 and extension corrections | Jolt PR 1794 head `4a0d4a33265c6fc7c1dc0e97046b67773a8320ea` | Stacked base of this work |
 
@@ -28,7 +29,7 @@ in the original Jolt migration branch.
 ## Ownership after migration
 
 Jolt owns the field implementation, exact AArch64 and x86-64 bodies, proof
-objects, HOL Light theorems, public operation witness, and proof workflow.
+objects, HOL Light theorems, inspection witness, and proof workflow.
 
 Akita owns the check that its final verifier executable contains the proved
 operation from the exact Jolt revision selected by Cargo. This downstream
@@ -46,14 +47,18 @@ compatibility.
 
 The current HOL Light claim covers scalar AArch64 and x86-64 addition,
 subtraction, and multiplication for `Prime128OffsetA7F7`, under canonical
-input assumptions. The x86-64 multiplication path uses only baseline `mulq`,
-`add`, and `adc` instructions. It does not require BMI2 or ADX. The proofs also
-show that the A7F7 modulus is prime. The x86-64 callable theorems continue
-through the result moves into `rax:rdx` and `ret`. The complete optimized Linux
-public witness symbols are byte identical to those proved objects. Darwin
+input assumptions. x86-64 has a baseline multiplication theorem and a separate
+theorem for builds that enable both BMI2 and ADX. The proofs also show that the
+A7F7 modulus is prime. The x86-64 callable theorems continue through any result
+moves into `rax:rdx` and through `ret`. The complete optimized Linux inspection
+witness symbols are byte identical to those proved objects. Darwin
 x86-64 adds an exact frame wrapper that the artifact checker checks but HOL
 Light does not yet prove. Normal field operations still inline the arithmetic
 bodies, so the compiler code around arbitrary inlined copies remains outside
 the theorem. The proofs do not cover the small offset immediate kernels,
 generic fallback kernels, packed SIMD arithmetic, squaring, inversion, the
 complete Rust verifier, or a downstream final executable.
+
+The Book chapter [Formal verification of field kernels](../book/src/how/formal-verification/field-kernels.md)
+and its linked guides define the evidence words, theorem shape, source to byte
+connection, and remaining trust boundary.

@@ -1,8 +1,11 @@
 # Formal verification of field kernels
 
-Jolt proves the scalar addition, subtraction, and multiplication kernels for
-`Prime128OffsetA7F7` on AArch64 and x86-64. This chapter explains the claim,
-the connection to Rust, and the limits of the proof.
+HOL Light proves that exact AArch64 and x86-64 instruction sequences
+compute scalar addition, subtraction, and multiplication correctly for
+canonical `Prime128OffsetA7F7` inputs. Jolt also checks that deliberately
+compiled inspection functions contain the expected bytes. The proof does not
+cover every inlined caller or a downstream executable. This chapter explains
+the exact claim, its connection to Rust, and its limits.
 
 The field modulus is
 
@@ -23,7 +26,7 @@ flowchart TD
     Public[Public Prime128OffsetA7F7 operation]
     Dispatch[Architecture dispatch]
     Body[Fixed instruction bytes]
-    Witness[Optimized public witness]
+    Witness[Compiled inspection witness]
     Object[Standalone proof object]
     Import[HOL Light exact byte import]
     Execute[Instruction execution theorem]
@@ -39,17 +42,20 @@ flowchart TD
     Execute --> Result
 ```
 
-The fixed instruction body is the source of truth for the proved machine
-code. Rust includes the body with `asm!`. The standalone object includes the
-same body with the system assembler. The artifact checker independently lists
-the expected words or bytes. HOL Light imports the object and refuses to load
-it if one byte differs.
+Rust and the standalone proof object include the same instruction fragment.
+The artifact checker and HOL Light keep independent expected byte lists. This
+small amount of duplication makes an instruction change visible to review.
+HOL Light imports the object and refuses to load it if one byte differs.
 
-The public witness calls the normal `Prime128OffsetA7F7` operation. It does not
-call a separate proof function. The checker disassembles each optimized
+The inspection witness calls the normal `Prime128OffsetA7F7` operation. It does
+not call a separate proof function. The checker disassembles each optimized
 witness. The complete AArch64 and Linux x86-64 witness symbols must match the
 proved objects exactly. The Darwin x86-64 witness must have one exact frame
 wrapper around the same proved arithmetic and result sequence.
+
+[From Rust to machine bytes](field-kernels-source-to-bytes.md) follows this
+connection one boundary at a time and explains `include_str!`, inline assembly
+declarations, and the standalone proof object.
 
 ## Why the theorem names physical registers
 
@@ -93,39 +99,43 @@ The x86-64 body uses the following registers.
 | Input `a` | `rdi:rsi` |
 | Input `b` | `rdx:rcx` |
 | Addition and subtraction output | `rdi:rsi` |
-| Multiplication output | `rdi:rcx` |
+| Baseline multiplication output | `rdi:rcx` |
+| BMI2 and ADX multiplication output | `rax:rdx` |
 | System V function result | `rax:rdx` |
-| Offset `C = 2^128 - p` | `r8` after the fixed load instruction |
+| Baseline offset `C = 2^128 - p` | `r8` after the fixed load instruction |
+| BMI2 and ADX offset `C = 2^128 - p` | `rdx` after the initial products |
 | Addition temporary values | `r9:r11` |
 | Subtraction mask | `r9` |
 | Multiplication temporary values | `rax`, `rdx`, and `r9:r11` |
 
 These registers are caller saved in the System V x86-64 procedure call
-convention. The standalone object and theorem include the `r8d` constant load,
-so no initial value is assumed for `r8`. The body does not access memory or the
-stack. The subroutine theorem also proves that `ret` reads the return address
-from the stack, updates `rsp` by eight bytes, and transfers control to that
-address.
+convention. Each standalone object and theorem includes its constant load. The
+baseline objects load `r8d`. The BMI2 and ADX object loads `edx` after it has
+used the second input. No theorem assumes a prepared constant register. The
+body does not access memory or the stack. The subroutine theorem also proves
+that `ret` reads the return address from the stack, updates `rsp` by eight
+bytes, and transfers control to that address.
 
-The x86-64 object continues through the two moves that copy the internal
-result into `rax:rdx`, then executes `ret`. HOL Light proves this complete
-System V function. On Linux, the checker requires every byte of the optimized
-Rust witness symbol to match that object. If the compiler changes the setup,
-result moves, or return sequence, the check fails.
+The baseline x86-64 object continues through two moves that copy its internal
+result into `rax:rdx`, then executes `ret`. The BMI2 and ADX object creates its
+result directly in `rax:rdx`. HOL Light proves each complete System V function.
+On Linux, the checker requires every byte of the corresponding optimized Rust
+witness symbol to match its object. If the compiler changes the setup, result
+moves, or return sequence, the check fails.
 
 The Darwin x86-64 compiler adds a fixed frame setup and teardown. The checker
 requires that exact wrapper and ignores only decoded padding after `ret`. The
-arithmetic sequence and result moves inside it match the proved object. The
-current HOL Light theorem does not cover the Darwin frame instructions.
+arithmetic sequence inside it matches the proved object. The current HOL Light
+theorem does not cover the Darwin frame instructions.
 
-This closes the compiler wrapper gap for the public witness. Normal field
+This closes the compiler wrapper gap for the inspection witness. Normal field
 operations still inline the arithmetic body into their callers. HOL Light
 does not prove the machine code around every inlined copy. At that boundary,
 we still trust Rust and LLVM to honor the declared assembly inputs, outputs,
 and changed registers. A final executable check must also confirm that the
 application reaches the expected Jolt field operation.
 
-## Native x86-64 performance measurement
+## Native x86-64 performance measurements
 
 We compared commit `586e6b347` with its parent on an AMD Ryzen 9 9950X. Both
 builds used Rust 1.95.0. Criterion measured batches of 4,096 field products on
@@ -140,9 +150,24 @@ rounds.
 The assembly path took 13.95 percent less time. Its throughput was 16.2
 percent higher. With `-C target-cpu=native`, the portable path used `mulx` but
 not `adcx` or `adox`. It took 9.388 microseconds, while the proved baseline
-body took 8.111 microseconds under the same setting. Jolt does not yet have a
-handwritten BMI2 and ADX kernel. These measurements are performance evidence,
-not part of the correctness theorem.
+body took 8.111 microseconds under the same setting.
+
+We then compared the baseline body with a handwritten BMI2 and ADX body on the
+same processor. This benchmark used the production operation in batches of
+4,096 products. It ran on one pinned CPU and alternated the two binaries.
+
+| x86-64 assembly body | Time for 4,096 products | Time per product |
+| --- | ---: | ---: |
+| Baseline | 8.223 to 8.226 microseconds | 2.008 nanoseconds |
+| BMI2 and ADX | 8.023 to 8.030 microseconds | 1.960 nanoseconds |
+
+The body that uses BMI2 and ADX took about 2.4 percent less time. A separate
+test program measured 4.1 percent more throughput for a batch. It also measured
+4.5 percent less time when each product depended on the previous product. The
+same program compared one million random canonical input pairs and the edge
+matrix with the portable implementation. Every result matched. These
+measurements and tests cover one machine and one build. They are not part of
+the correctness theorem.
 
 ## Addition
 
@@ -217,19 +242,22 @@ The machine proof follows the same stages as the code.
 3. The remaining high limb is at most `C`. Its product with `C` therefore fits
    in one 64 bit word. This justifies the second fold without a hidden
    overflow assumption.
-4. The twice-folded value is below `2p`. The last add, compare, and select
+4. The value after two folds is below `2p`. The last add, compare, and select
    instructions either keep it or subtract `p` once.
 
 The final result is therefore both congruent to `m * n` and in the canonical
-range. The AArch64 theorem covers its exact 35 instruction A7F7 body. The
-x86-64 theorem covers its exact baseline `mulq`, `add`, and `adc` sequence.
-Both architectures also have a theorem for the callable body followed by
-`ret`.
+range. The AArch64 theorem covers its exact 35 instruction A7F7 body. One
+x86-64 theorem covers the baseline `mulq`, `add`, and `adc` sequence. A second
+x86-64 theorem covers the 31 instruction BMI2 and ADX sequence built from
+`mulx`, `adcx`, and `adox`. Each architecture has a theorem for the callable
+body followed by `ret`.
 
 The generic multiplication bodies still exist for other moduli. The A7F7
-dispatch uses the fixed register shared body because HOL Light imports that
-exact byte sequence. The modulus check is a compile time constant after
-monomorphization. The x86-64 path requires no optional BMI2 or ADX features.
+dispatch uses a fixed register instruction fragment because HOL Light imports
+that exact byte sequence. The compiler knows the modulus for this field type,
+so it can remove the branches for other moduli. A baseline x86-64 build needs
+no optional features. A build that enables both BMI2 and ADX uses the separately
+proved fragment. It performs no feature check inside a field multiplication.
 
 ## The modulus is prime
 
@@ -264,6 +292,9 @@ starts in the stated precondition reaches the stated postcondition while
 changing only the listed state. HOL Light checks the final theorem with its
 small logical kernel.
 
+[Reading a machine theorem](field-kernels-reading-theorem.md) explains each
+part of this statement for readers who do not use HOL Light.
+
 ## Proof source layout
 
 | File | Purpose |
@@ -276,6 +307,8 @@ small logical kernel.
 | `fp128_sub_x86_64_correct.ml` | Reloadable subtraction theorems |
 | `fp128_mul_x86_64_object.ml` | Exact x86-64 multiplication bytes and execution rule |
 | `fp128_mul_x86_64_correct.ml` | Reloadable x86-64 multiplication theorems |
+| `fp128_mul_x86_64_bmi2_adx_object.ml` | Exact BMI2 and ADX multiplication bytes and execution rule |
+| `fp128_mul_x86_64_bmi2_adx_correct.ml` | Reloadable BMI2 and ADX multiplication theorems |
 | `fp128_mul_object.ml` | Exact AArch64 multiplication words and execution rule |
 | `fp128_mul_correct.ml` | Reloadable AArch64 multiplication theorems |
 | `fp128_prime.ml` | Checked primality certificate for the A7F7 modulus |
@@ -283,16 +316,17 @@ small logical kernel.
 
 The AArch64 proof files retain one source file per operation. The runner loads
 them into one proof process, so the processor model is initialized once. Both
-architectures use the same public witness and artifact checker.
+architectures use the same inspection witness and artifact checker.
 
 ## Exact claim
 
-| Architecture | Proved object | Public Rust connection |
+| Architecture | Proved object | Rust connection |
 | --- | --- | --- |
 | AArch64 add and subtract | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
 | AArch64 multiply | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
 | Linux x86-64 add and subtract | Constant load, complete fixed body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
 | Linux x86-64 multiply | Constant load, complete baseline body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
+| Linux x86-64 BMI2 and ADX multiply | Complete BMI2 and ADX body with direct ABI result and `ret` | The proof object and witness built with both features are byte identical |
 | Darwin x86-64 add, subtract, and multiply | Arithmetic and ABI result sequence | The checker requires one exact unproved Darwin frame wrapper around the proved sequence |
 
 These claims cover the A7F7 register kernels. They do not cover the small
@@ -308,13 +342,13 @@ values into larger integer accumulators, add many terms, and reduce once at
 the end.
 
 For `Fp128`, the wide accumulator has eight signed `i32` lanes. A fresh field
-value contributes less than `2^16` to each lane, so at most 32,768 same-sign
+value contributes less than `2^16` to each lane, so at most 32,768 terms with the same sign
 unit additions fit before a lane can overflow. The product accumulators have
-four wrapping `u128` slots. Their documented nonnegative-product headroom is
+four wrapping `u128` slots. Their documented limit for nonnegative products is
 `2^64 - 1` terms, subject to the final value of every slot remaining in the
 ordinary `u128` range when subtraction is involved.
 
-These are caller obligations. Debug builds catch some signed-lane overflow,
+Callers must satisfy these limits. Debug builds catch some signed lane overflow,
 but release builds do not add checks to the hot loop. Jolt declares
 `MAX_COMMIT_ACCUMULATIONS`, but current production code does not consume that
 constant; only tests do. A production cutover must either prove that every
@@ -329,6 +363,10 @@ connect the compiled implementation to those theorems.
 
 ## Trust boundary
 
+[Trust boundary and review guide](field-kernels-trust-boundary.md) separates
+what is proved, checked, tested, and trusted. The short list below is only a
+summary.
+
 The result relies on the following assumptions.
 
 * The field type maintains the canonical input invariant.
@@ -339,17 +377,17 @@ The result relies on the following assumptions.
 * A downstream application checks that its final optimized binary reaches the
   proved operation from the pinned Jolt revision.
 
-Jolt owns the kernel, theorem, proof object, and public operation witness. This
+Jolt owns the kernel, theorem, proof object, and inspection witness. This
 does not yet prove every executable that depends on Jolt. In particular, the
 current legacy `akita` feature in `jolt-prover` still reaches the external
 Akita field implementation instead of `Prime128OffsetA7F7`. These theorems do
 not cover that path. The final cutover must route the production prover or
 verifier through this field type and inspect that final binary before making
-an end-to-end production claim.
+a claim about the complete production path.
 
 ## Running the checks
 
-Check only the object and public witness bytes with
+Check only the object and inspection witness bytes with
 
 ```sh
 ./proofs/hol-light/check.sh bytes x86_64
@@ -362,6 +400,8 @@ HOL_LIGHT_DIR=/path/to/hol-light \
 S2N_BIGNUM_DIR=/path/to/s2n-bignum \
   ./proofs/hol-light/dev.sh x86_64 mul
 ```
+
+Use `mul_bmi2_adx` to work on the BMI2 and ADX multiplication theorem.
 
 The first bytecode load imports the x86 model and object and can take several
 minutes. After an edit, reload only the correctness file with the command
