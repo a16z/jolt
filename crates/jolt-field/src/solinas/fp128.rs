@@ -22,6 +22,8 @@ use rand_core::RngCore;
 #[cfg(target_arch = "aarch64")]
 use std::arch::asm;
 
+mod add_sub;
+
 /// Pack two `u64` limbs into little-endian `[lo, hi]`.
 #[inline(always)]
 const fn pack(lo: u64, hi: u64) -> [u64; 2] {
@@ -179,38 +181,6 @@ impl<const P: u128> Fp128<P> {
         let (s3, carry3) = prod[3].overflowing_add(carry2 as u64);
         debug_assert!(!carry3);
         [s0, s1, s2, s3]
-    }
-
-    /// Carry-chain add with fused reduction.
-    ///
-    /// For `a, b < p`: if the two-limb add wraps (`overflow`), the real sum
-    /// is `s + 2^128 ≡ s + C`, and `s = a + b − 2^128 < 2p − 2^128 = p − C`,
-    /// so `s + C < p` is already canonical (and `carry3 = 0`). Without wrap,
-    /// `s + C` carries iff `s ≥ p`, and then the wrapped value is
-    /// `s − p ≤ p − 2`. Both cases select `r` on `overflow | carry3`.
-    #[inline(always)]
-    fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        let (s0, carry0) = a[0].overflowing_add(b[0]);
-        let (s1a, carry1a) = a[1].overflowing_add(b[1]);
-        let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
-        let overflow = carry1a | carry1b;
-
-        let (r0, carry2) = s0.overflowing_add(Self::C_LO);
-        let (r1, carry3) = s1.overflowing_add(carry2 as u64);
-
-        pack(
-            if overflow | carry3 { r0 } else { s0 },
-            if overflow | carry3 { r1 } else { s1 },
-        )
-    }
-
-    /// Subtract with borrow-conditional modulus add-back (`a − b + p` when
-    /// `a < b`; the wrapped difference plus `p` cannot wrap again since
-    /// `a − b + 2^128 + p − 2^128 = a − b + p < p`).
-    #[inline(always)]
-    fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        let (diff, borrow) = join(a).overflowing_sub(join(b));
-        split(if borrow { diff.wrapping_add(P) } else { diff })
     }
 
     #[inline(always)]
@@ -1119,6 +1089,16 @@ mod tests {
             );
             for b in cases(P) {
                 assert_eq!(
+                    Fp128::<P>::add_raw(a, b),
+                    Fp128::<P>::add_raw_portable(a, b),
+                    "add asm vs portable, a={a:?} b={b:?}"
+                );
+                assert_eq!(
+                    Fp128::<P>::sub_raw(a, b),
+                    Fp128::<P>::sub_raw_portable(a, b),
+                    "sub asm vs portable, a={a:?} b={b:?}"
+                );
+                assert_eq!(
                     Fp128::<P>::mul_raw_aarch64(a, b),
                     Fp128::<P>::mul_raw_portable(a, b),
                     "mul asm vs portable, a={a:?} b={b:?}"
@@ -1134,7 +1114,7 @@ mod tests {
     }
 
     #[test]
-    fn asm_matches_portable() {
+    fn fp128_aarch64_matches_portable() {
         check::<{ u128::MAX - 274 }>(); // C = 275
         check::<{ u128::MAX - 158 }>(); // C = 159
         check::<{ u128::MAX - 2354 }>(); // C = 2355

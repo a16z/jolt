@@ -32,6 +32,7 @@
         - [EQ optimizations](./how/optimizations/eq.md)
         - [Torus compression](./how/optimizations/compression.md)
     - [Formal Verification](./how/formal-verification/formal-verification.md)
+        - [Field Kernels](./how/formal-verification/field-kernels.md)
         - [Z3 Verifier](./how/formal-verification/z3-verifier.md)
     - [Appendix](./how/appendix/appendix.md)
         - [Terminology and nomenclature](./how/appendix/terminology.md)
