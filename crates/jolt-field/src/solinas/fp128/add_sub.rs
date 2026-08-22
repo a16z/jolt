@@ -27,7 +27,10 @@ impl<const P: u128> Fp128<P> {
     }
 
     #[cfg_attr(
-        all(any(target_arch = "aarch64", target_arch = "x86_64"), not(test)),
+        all(
+            any(target_arch = "aarch64", target_arch = "x86_64"),
+            not(all(test, target_arch = "aarch64"))
+        ),
         expect(
             dead_code,
             reason = "target-specific helper is intentionally unused on some architectures"
@@ -283,7 +286,10 @@ impl<const P: u128> Fp128<P> {
     }
 
     #[cfg_attr(
-        all(any(target_arch = "aarch64", target_arch = "x86_64"), not(test)),
+        all(
+            any(target_arch = "aarch64", target_arch = "x86_64"),
+            not(all(test, target_arch = "aarch64"))
+        ),
         expect(
             dead_code,
             reason = "target-specific helper is intentionally unused on some architectures"
