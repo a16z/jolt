@@ -93,11 +93,7 @@ impl DeviceTier1Commitment for CudaDoryScheme {
         setup: &Self::ProverSetup,
         columns: &[Vec<JacobianLimbs>],
     ) -> Result<Vec<crate::cuda::commitment::FinishedColumn<Self>>, CudaError> {
-        let context =
-            crate::cuda::common::context::shared_context().ok_or(CudaError::NotImplemented {
-                kernel: "no CUDA device is present for the batched tier-2",
-            })?;
-        let commitments = tier2::tier2_batched(context, setup, columns)?;
+        let commitments = tier2::tier2_columns(setup, columns)?;
         let blind = <Fr as jolt_field::FromPrimitiveInt>::from_u64(0);
         #[cfg(feature = "parallel")]
         let partials = columns
