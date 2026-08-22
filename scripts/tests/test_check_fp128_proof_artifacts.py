@@ -32,6 +32,29 @@ class CheckFp128ProofArtifactsTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "instruction mismatch"):
             CHECKER.require_words("test", [1], [2])
 
+    def test_parses_x86_bytes_and_macos_symbol_name(self) -> None:
+        disassembly = """
+0000000000000000 <_jolt_fp128_sub_asm>:
+       0: 48 29 d7                      subq %rdx, %rdi
+       3: 48 83 de 00                   sbbq $0x0, %rsi
+       7: c3                            retq
+"""
+        self.assertEqual(
+            CHECKER.parse_symbol_bytes(disassembly),
+            {"jolt_fp128_sub_asm": bytes.fromhex("48 29 d7 48 83 de 00 c3")},
+        )
+
+    def test_byte_mismatch_fails_closed(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "byte mismatch"):
+            CHECKER.require_bytes("test", bytes([1]), bytes([2]))
+
+    def test_witness_sequence_must_appear_exactly_once(self) -> None:
+        CHECKER.require_bytes_once("test", bytes.fromhex("00 aa bb ff"), bytes.fromhex("aa bb"))
+        with self.assertRaisesRegex(SystemExit, "found 2"):
+            CHECKER.require_bytes_once(
+                "test", bytes.fromhex("aa bb 00 aa bb"), bytes.fromhex("aa bb")
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
 
 use jolt_field::Prime128OffsetA7F7;
 
-/// Two 64-bit limbs returned through the AArch64 C calling convention.
+/// Two 64-bit limbs returned through the platform C calling convention.
 #[repr(C)]
 pub struct Fp128Result {
     lo: u64,

@@ -192,8 +192,47 @@ impl<const P: u128> Fp128<P> {
             275 => Self::add_raw_x86_64_imm::<275>(a, b),
             159 => Self::add_raw_x86_64_imm::<159>(a, b),
             2355 => Self::add_raw_x86_64_imm::<2355>(a, b),
+            0xffff_a7f7 => Self::add_raw_x86_64_a7f7(a, b),
             _ => Self::add_raw_x86_64_reg(a, b, Self::C_LO),
         }
+    }
+
+    /// A7F7 addition through the exact instruction body proved in HOL Light.
+    ///
+    /// Register contract for `fp128_add_body.inc`:
+    ///
+    /// - `rdi:rsi` starts with `a` and finishes with the result.
+    /// - `rdx:rcx` contains `b` and is not changed.
+    /// - `r8` contains `C = 2^128 - P = 0xffff_a7f7` and is not changed.
+    /// - `r9:r11` and the condition flags are temporary state.
+    /// - The body does not access memory or the stack.
+    ///
+    /// The field representation requires canonical inputs. The machine theorem
+    /// uses the same assumption. This function adds no runtime range check.
+    /// The formal verification workflow checks the exact object bytes and the
+    /// optimized public operation witness.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn add_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [mut out_lo, mut out_hi] = a;
+        let [b_lo, b_hi] = b;
+        // SAFETY: The register contract is listed above. The body declares
+        // every clobber and does not access memory or the stack.
+        unsafe {
+            asm!(
+                include_str!("../../../asm/x86_64/fp128_add_body.inc"),
+                inout("rdi") out_lo,
+                inout("rsi") out_hi,
+                in("rdx") b_lo,
+                in("rcx") b_hi,
+                in("r8") Self::C_LO,
+                out("r9") _,
+                out("r10") _,
+                out("r11") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -420,8 +459,45 @@ impl<const P: u128> Fp128<P> {
             275 => Self::sub_raw_x86_64_imm::<275>(a, b),
             159 => Self::sub_raw_x86_64_imm::<159>(a, b),
             2355 => Self::sub_raw_x86_64_imm::<2355>(a, b),
+            0xffff_a7f7 => Self::sub_raw_x86_64_a7f7(a, b),
             _ => Self::sub_raw_x86_64_reg(a, b, Self::C_LO),
         }
+    }
+
+    /// A7F7 subtraction through the exact instruction body proved in HOL Light.
+    ///
+    /// Register contract for `fp128_sub_body.inc`:
+    ///
+    /// - `rdi:rsi` starts with `a` and finishes with the result.
+    /// - `rdx:rcx` contains `b` and is not changed.
+    /// - `r8` contains `C = 2^128 - P = 0xffff_a7f7` and is not changed.
+    /// - `r9` and the condition flags are temporary state.
+    /// - The body does not access memory or the stack.
+    ///
+    /// The field representation requires canonical inputs. The machine theorem
+    /// uses the same assumption. This function adds no runtime range check.
+    /// The formal verification workflow checks the exact object bytes and the
+    /// optimized public operation witness.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn sub_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [mut out_lo, mut out_hi] = a;
+        let [b_lo, b_hi] = b;
+        // SAFETY: The register contract is listed above. The body declares
+        // every clobber and does not access memory or the stack.
+        unsafe {
+            asm!(
+                include_str!("../../../asm/x86_64/fp128_sub_body.inc"),
+                inout("rdi") out_lo,
+                inout("rsi") out_hi,
+                in("rdx") b_lo,
+                in("rcx") b_hi,
+                in("r8") Self::C_LO,
+                out("r9") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     #[cfg(target_arch = "x86_64")]

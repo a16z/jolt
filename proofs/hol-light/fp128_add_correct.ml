@@ -19,6 +19,8 @@
  *)
 
 needs "arm/proofs/base.ml";;
+needs (Filename.concat (Sys.getenv "JOLT_FP128_PROOF_DIR")
+        "fp128_common.ml");;
 
 let jolt_fp128_add_object = Sys.getenv "JOLT_FP128_ADD_OBJECT";;
 
@@ -39,9 +41,6 @@ let jolt_fp128_add_mc =
   ];;
 
 let JOLT_FP128_ADD_EXEC = ARM_MK_EXEC_RULE jolt_fp128_add_mc;;
-
-let jolt_fp128_a7f7_p = new_definition
- `jolt_fp128_a7f7_p = 0xffffffffffffffffffffffff00005809`;;
 
 (*** ensures arm takes a precondition, a postcondition, and a frame condition.
 

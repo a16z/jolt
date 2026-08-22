@@ -110,7 +110,7 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
   imm-vs-reg dispatch subtlety matters because a sign-extended imm32 is
   unusable for C ≥ 2^31, including `Prime128OffsetA7F7`. The proof continuity
   follow-up restores both architecture families. It also binds the A7F7
-  AArch64 words to HOL Light theorems and an optimized public witness. See
+  AArch64 words and x86-64 bytes to HOL Light theorems and an optimized public witness. See
   `specs/jolt-field-proof-continuity.md`.
 - **Initially dropped:** the AArch64 `mul_add` asm kernel together with the
   `mul_add`/`add_128_into_256` fused multiply-add surface had no consumer in
@@ -318,7 +318,7 @@ Final per-file actuals are recorded in the file-structure table below
    reuses the canonical `FpExt4Fp32ProductAccum` formula and reduces four
    slots once; sub-32-bit Fp32 moduli retain the generic schedule.
 7. **Fp128 architecture add and subtract kernels are restored.** The A7F7
-   AArch64 instruction bodies are shared by production inline assembly and
+   AArch64 and x86-64 instruction bodies are shared by production inline assembly and
    standalone proof objects. HOL Light proves the object bytes. An optimized
    public witness checks that Rust includes the same words.
 8. **Scalar challenge decoding is field specific.** BN254 and Dory preserve

@@ -1,8 +1,8 @@
 # Formal verification of field kernels
 
-This chapter explains what Jolt proves about the AArch64 addition and
-subtraction kernels for `Prime128OffsetA7F7`. It also explains what the proof
-does not cover.
+Jolt proves the scalar addition and subtraction kernels for
+`Prime128OffsetA7F7` on AArch64 and x86-64. This chapter explains the claim,
+the connection to Rust, and the limits of the proof.
 
 The field modulus is
 
@@ -11,124 +11,243 @@ p = 2^128 - 2^32 + 22537
   = 0xffffffffffffffffffffffff00005809
 ```
 
-Every field value has a unique integer representative between `0` and
-`p - 1`. The kernels accept two such representatives in two 64 bit limbs and
-return the unique representative of their sum or difference modulo `p`.
+Every field value has one canonical integer representative from `0` through
+`p - 1`. Each kernel accepts two canonical values in two 64 bit limbs. It
+returns the canonical sum or difference modulo `p`.
 
-## The connection from Rust to the theorem
+## From the public Rust operation to a theorem
 
-There are four layers.
+```mermaid
+flowchart TD
+    Public[Public Prime128OffsetA7F7 add or subtract]
+    Dispatch[Architecture dispatch]
+    Body[Fixed instruction bytes]
+    Witness[Optimized public witness]
+    Object[Standalone proof object]
+    Import[HOL Light exact byte import]
+    Execute[Instruction execution theorem]
+    Result[Canonical field result theorem]
 
-```text
-public Rust operation
-        |
-        v
-fixed AArch64 instruction body included by Rust
-        |
-        +------> optimized public witness is inspected byte for byte
-        |
-        v
-standalone object built from the same instruction body
-        |
-        v
-HOL Light theorem imports and proves those object bytes
+    Public --> Dispatch
+    Dispatch --> Body
+    Body --> Witness
+    Body --> Object
+    Witness -->|artifact checker finds the proved body| Body
+    Object --> Import
+    Import --> Execute
+    Execute --> Result
 ```
 
-The shared instruction files are the source of truth for the proved machine
-code. The Rust implementation includes them with `asm!`. The standalone
-objects include them with the assembler. The artifact checker compares the
-object and public witness against an independent list of expected words.
-Finally, HOL Light imports the standalone object and refuses to run the proof
-if its words differ.
+The fixed instruction body is the source of truth for the proved machine
+code. Rust includes the body with `asm!`. The standalone object includes the
+same body with the system assembler. The artifact checker independently lists
+the expected words or bytes. HOL Light imports the object and refuses to load
+it if one byte differs.
 
-This closes a common gap in low level verification. The theorem is not about
-a handwritten instruction listing that merely resembles production code. It
-is about the exact words included by the production field operation.
+The public witness calls the normal `Prime128OffsetA7F7` operation. It does not
+call a separate proof function. The checker disassembles this optimized
+witness and checks that it contains the proved body.
 
-## What the addition theorem says
+## Why the theorem names physical registers
 
-For canonical inputs `m` and `n`, the addition theorem says that calling the
-machine code returns `(m + n) mod p` as a canonical value.
+The arithmetic theorem covers every canonical input value. It does not cover
+every possible assignment of physical registers.
 
-The code first adds the two 128 bit inputs. It then conditionally adds the
-small offset `2^32 - 22537`. This offset is equal to `2^128` modulo `p`.
-The condition records whether the original addition crossed the 128 bit
-boundary. A final conditional selection chooses the corrected or uncorrected
-value.
+x86 instruction bytes contain register numbers. For example, changing `rdi`
+to `rax` changes the encoded bytes. One byte string therefore cannot describe
+arbitrary register choices.
 
-The proof follows the carry flags produced by each instruction. It shows that
-the selected value is both congruent to `m + n` modulo `p` and inside the
-canonical range.
+Jolt separates these concerns. The arithmetic proof uses variables for the
+input values. The machine proof fixes the registers that carry those values.
+The fixed registers use the caller saved part of the procedure call
+convention, so the body does not corrupt registers that a function must
+preserve.
 
-## What the subtraction theorem says
+## AArch64 register contract
 
-For canonical inputs `m` and `n`, the subtraction theorem says that calling
-the machine code returns `(m - n) mod p` as a canonical value.
+The AArch64 body uses the following registers.
 
-The code subtracts `n` from `m`. If this borrows, it subtracts the small offset
-`2^32 - 22537` from the wrapped 128 bit result. This is the same as adding the
-modulus after an ordinary negative subtraction. If there is no borrow, the
-first result is already canonical.
+| Role | Registers |
+| --- | --- |
+| Input `a` and output | `x0:x1` |
+| Input `b` | `x2:x3` |
+| Offset `C = 2^128 - p` | `x4` |
+| Addition temporary values | `x5:x9` |
+| Subtraction temporary values | `x5:x7` |
 
-The proof follows the borrow flag and proves both cases.
+The body does not access memory or the stack. The standalone object adds one
+`ret` instruction. The subroutine theorem proves the return through `x30` and
+uses the normal AArch64 set of registers that a callee may change.
 
-## Reading the HOL Light statements
+## x86-64 register contract
 
-The proof files contain two theorem levels for each operation.
+The x86-64 body uses the following registers.
 
-The body theorem describes the arithmetic instructions before `ret`. Its
-precondition fixes the program counter, input registers, and modulus offset.
-Its postcondition states the result in the output registers. It also lists the
-registers and condition flags that the code may change.
+| Role | Registers |
+| --- | --- |
+| Input `a` and output | `rdi:rsi` |
+| Input `b` | `rdx:rcx` |
+| Offset `C = 2^128 - p` | `r8` |
+| Addition temporary values | `r9:r11` |
+| Subtraction mask | `r9` |
 
-The subroutine theorem adds the return instruction and the normal AArch64
-procedure call convention. This is the theorem that describes a callable
-function.
+These registers are caller saved in the System V x86-64 procedure call
+convention. The body does not access memory or the stack. The subroutine
+theorem also proves that `ret` reads the return address from the stack, updates
+`rsp` by eight bytes, and transfers control to that address.
 
-The notation `ensures arm` means this: if the stated conditions are true before
-execution, then after the modeled instructions finish, the stated result is
-true. It also records which parts of machine state may have changed.
+The optimized Rust witness has compiler generated setup and return moves
+around the body. The checker requires the `r8d` constant load followed by the
+exact proved body to occur once in the witness symbol. HOL Light proves the
+body and `ret` in the standalone object. It does not prove the compiler
+generated witness wrapper.
 
-The proofs are in HOL Light rather than Lean. A proof script uses tactics to
-symbolically execute instructions, derive facts about carries and borrows, and
-finish the integer arithmetic. The theorem produced at the end is checked by
-the small HOL Light kernel.
+## Addition
+
+For canonical inputs `m` and `n`, the addition theorem states
+
+```text
+result = (m + n) mod p
+```
+
+The code first adds the two 128 bit inputs. This produces a wrapped 128 bit
+sum and a carry bit. It then adds the offset `C = 2^32 - 22537` to make a
+candidate reduced value.
+
+The final instructions choose the candidate when either addition says that
+reduction is needed. AArch64 records this condition with `ccmp` and uses
+`csel`. x86-64 converts the first carry into a mask, combines it with the
+second carry, and uses `cmovne`.
+
+The proof symbolically executes each instruction. It derives the two carry
+equations and proves that the selected value is the canonical residue.
+
+## Subtraction
+
+For canonical inputs `m` and `n`, the subtraction theorem states
+
+```text
+result = (m + p - n) mod p
+```
+
+This expression is equal to `(m - n) mod p`. It uses natural numbers, so adding
+`p` before subtracting avoids a negative intermediate value.
+
+The code first computes the wrapped 128 bit difference. If the subtraction
+borrows, it subtracts the offset `C` from that wrapped difference. This has the
+same modular effect as adding `p`.
+
+The x86-64 proof makes the mask step explicit.
+
+```text
+borrow flag
+    |
+    v
+sbb r9, r9        gives 0 or 0xffffffffffffffff
+    |
+    v
+and r9, r8        gives 0 or C
+    |
+    v
+sub and sbb       apply the selected correction
+```
+
+`JOLT_FP128_X86_64_BORROW_MASK` proves the middle fact once. The machine proof
+gets its borrow bit and mask value from the actual instruction trace. It then
+uses the named lemma to prove the final modular result. Replacing the machine
+value with an assumption would not be sufficient.
+
+## The theorem layers
+
+Each operation has two theorem levels.
+
+The body theorem starts at the first arithmetic instruction and stops before
+`ret`. Its precondition fixes the loaded bytes, program counter, input
+registers, and offset. Its postcondition states the field result. Its frame
+condition lists every part of processor state that may change.
+
+The subroutine theorem adds `ret` and the procedure call convention. It states
+where the return address comes from and which registers a caller must treat as
+changed.
+
+The notation `ensures x86` or `ensures arm` means that every execution which
+starts in the stated precondition reaches the stated postcondition while
+changing only the listed state. HOL Light checks the final theorem with its
+small logical kernel.
+
+## Proof source layout
+
+| File | Purpose |
+| --- | --- |
+| `fp128_common.ml` | Modulus shared by both architectures |
+| `fp128_x86_64_common.ml` | x86 model and the named borrow mask lemma |
+| `fp128_add_x86_64_object.ml` | Exact addition bytes and instruction execution rule |
+| `fp128_sub_x86_64_object.ml` | Exact subtraction bytes and instruction execution rule |
+| `fp128_add_x86_64_correct.ml` | Reloadable addition theorems |
+| `fp128_sub_x86_64_correct.ml` | Reloadable subtraction theorems |
+| Generated combined entry | One process per architecture that proves both operations |
+
+The AArch64 proof files retain one source file per operation. The runner loads
+both into one proof process, so the processor model is initialized once. Both
+architectures use the same public witness and artifact checker.
 
 ## Exact claim
 
-Jolt proves the following claim on AArch64.
+| Architecture | Proved object | Public Rust connection |
+| --- | --- | --- |
+| AArch64 | Complete fixed body and `ret` | The complete optimized witness words match the constant load, body, and `ret` |
+| x86-64 | Complete fixed body and `ret` | The constant load and fixed body occur exactly once inside the optimized witness |
 
-1. The standalone addition and subtraction objects contain the expected
-   instruction words.
-2. HOL Light proves those words implement canonical field addition and
-   subtraction for canonical inputs.
-3. The optimized public Rust witnesses contain the same words and call the
-   public `Prime128OffsetA7F7` operations.
-
-This claim covers scalar addition and subtraction only. It does not cover the
-packed SIMD implementation, multiplication, the full proof system, or an
-arbitrary downstream executable.
+These claims cover the A7F7 register kernels. They do not cover the small
+offset immediate kernels or the generic register fallback used by other field
+types. They also do not cover packed SIMD arithmetic, multiplication, the full
+proof system, or an arbitrary downstream executable.
 
 ## Trust boundary
 
-The result still relies on several components.
+The result relies on the following assumptions.
 
-* The field type must maintain its canonical input invariant.
-* Rust and the linker must honor the inline assembly contract.
-* The HOL Light AArch64 model must match the processor.
-* HOL Light, OCaml, the operating system, and the hardware are trusted to run
-  the checker correctly.
-* A downstream application must verify that its final optimized binary still
-  contains and reaches the proved operation.
+* The field type maintains the canonical input invariant.
+* Rust and the linker honor the declared inline assembly inputs, outputs, and
+  clobbers.
+* The HOL Light processor models match the processors.
+* HOL Light and its host software execute the checker correctly.
+* A downstream application checks that its final optimized binary reaches the
+  proved operation from the pinned Jolt revision.
 
-Jolt owns the theorem and the public operation witness because Jolt owns the
-field kernel. Akita owns its final verifier binary, so Akita must scan that
-binary at the exact Jolt revision it links. Neither repository should claim
-the other half of this boundary without running its own check.
+Jolt owns the kernel, theorem, proof object, and public operation witness.
+Akita owns the check of its final verifier binary. Neither repository can
+claim the other part without running that check.
 
-## Running the proof
+## Running the checks
 
-Follow [`proofs/hol-light/README.md`](../../../../proofs/hol-light/README.md).
-The single check command builds fresh objects and a fresh public witness,
-compares their instruction words, builds both HOL Light proofs, and runs the
-subroutine theorems.
+Check only the object and public witness bytes with
+
+```sh
+./proofs/hol-light/check.sh bytes x86_64
+```
+
+Develop one x86-64 theorem in a persistent HOL Light session with
+
+```sh
+HOL_LIGHT_DIR=/path/to/hol-light \
+S2N_BIGNUM_DIR=/path/to/s2n-bignum \
+  ./proofs/hol-light/dev.sh x86_64 sub
+```
+
+The first bytecode load imports the x86 model and object and can take several
+minutes. After an edit, reload only the correctness file with the command
+printed by the session. Reloads take seconds because the model stays in memory.
+
+Run the complete clean check with
+
+```sh
+HOL_LIGHT_DIR=/path/to/hol-light \
+S2N_BIGNUM_DIR=/path/to/s2n-bignum \
+  ./proofs/hol-light/check.sh all x86_64 --clean
+```
+
+The clean check uses fresh Cargo output and one combined proof process for the
+selected architecture. A local run without `--clean` caches that native proof
+program when its inputs are unchanged. CI runs the clean check independently
+for AArch64 and x86-64.
