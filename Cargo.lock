@@ -3228,7 +3228,6 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-config",
- "akita-error",
  "akita-pcs",
  "akita-planner",
  "akita-prover",
