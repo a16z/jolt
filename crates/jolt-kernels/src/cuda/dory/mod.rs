@@ -641,6 +641,82 @@ mod tests {
     }
 
     #[test]
+    fn open_matches_reference_dory_across_variable_parities() {
+        if shared_context().is_none() {
+            return;
+        }
+        for num_vars in [3usize, 4, 5, 6, 7] {
+            let mut rng = ChaCha20Rng::seed_from_u64(13 + num_vars as u64);
+            let prover_setup = CudaDoryScheme::setup_prover(num_vars);
+            let verifier_setup = CudaDoryScheme::setup_verifier(num_vars);
+
+            let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|_| <Fr as RandomSampling>::random(&mut rng))
+                .collect();
+            let eval = poly.evaluate(&point);
+
+            let (commitment, hint) =
+                CudaDoryScheme::commit(poly.evaluations(), &prover_setup).expect("cuda commit");
+            let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+            assert_eq!(
+                proof, expected,
+                "the proof diverged at {num_vars} variables"
+            );
+
+            let mut verify_transcript = Blake2bTranscript::new(b"dory");
+            let accepted = DoryScheme::verify(
+                &commitment,
+                &point,
+                eval,
+                &proof,
+                &verifier_setup,
+                &mut verify_transcript,
+            );
+            assert!(
+                accepted.is_ok(),
+                "the verifier rejected a {num_vars}-variable CudaDoryScheme proof: {accepted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_matches_reference_dory_when_the_setup_outsizes_the_polynomial() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(11);
+        let prover_setup = CudaDoryScheme::setup_prover(PROVE_SCALE_VARS);
+        let verifier_setup = CudaDoryScheme::setup_verifier(PROVE_SCALE_VARS);
+
+        let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
+        let point: Vec<Fr> = (0..NUM_VARS)
+            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+
+        let (commitment, hint) =
+            CudaDoryScheme::commit(poly.evaluations(), &prover_setup).expect("cuda commit");
+        let (expected_commitment, _) =
+            DoryScheme::commit(poly.evaluations(), &prover_setup).expect("dory commit");
+        assert_eq!(commitment, expected_commitment, "the commitment diverged");
+
+        let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+        assert_eq!(proof, expected, "the proof diverged from DoryScheme's");
+
+        let mut verify_transcript = Blake2bTranscript::new(b"dory");
+        DoryScheme::verify(
+            &commitment,
+            &point,
+            eval,
+            &proof,
+            &verifier_setup,
+            &mut verify_transcript,
+        )
+        .expect("the DoryScheme verifier must accept a CudaDoryScheme proof");
+    }
+
+    #[test]
     fn open_matches_reference_dory_at_prove_scale() {
         if shared_context().is_none() {
             return;

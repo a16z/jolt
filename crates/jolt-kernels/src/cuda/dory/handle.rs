@@ -203,7 +203,7 @@ const _: () = assert!(G1_WORDS == 12);
 const _: () = assert!(G2_WORDS == 24);
 
 macro_rules! device_handle_bulk {
-    ($span:ident, $load_all:ident, $store_all:ident, $store_frozen:ident, $store_all_with:ident, $name:ident, $family:expr, $words:expr, $projective:ty, $limbs:path, $point:path) => {
+    ($span:ident, $load_all:ident, $store_all:ident, $store_frozen:ident, $store_all_with:ident, $rehome:ident, $name:ident, $family:expr, $words:expr, $projective:ty, $limbs:path, $point:path) => {
         pub(super) fn $span(handles: &[$name]) -> Option<usize> {
             let first = handles.first()?.offset as usize;
             handles
@@ -232,6 +232,20 @@ macro_rules! device_handle_bulk {
 
         pub(super) fn $store_all(points: &[$projective]) -> Vec<$name> {
             $store_all_with(points, false)
+        }
+
+        pub(super) fn $rehome(handles: &mut [$name], points: &[$projective]) {
+            if handles.len() != points.len() {
+                arena::poison(concat!(
+                    "a ",
+                    stringify!($name),
+                    " rehoming was handed a mismatched point count"
+                ));
+                return;
+            }
+            for (handle, fresh) in handles.iter_mut().zip($store_all(points)) {
+                *handle = fresh;
+            }
         }
 
         pub(super) fn $store_frozen(points: &[$projective]) -> Vec<$name> {
@@ -285,6 +299,7 @@ device_handle_bulk!(
     store_all,
     store_frozen,
     store_all_with,
+    rehome,
     DeviceG1,
     Family::G1,
     G1_WORDS,
@@ -299,6 +314,7 @@ device_handle_bulk!(
     store_all_g2,
     store_frozen_g2,
     store_all_with_g2,
+    rehome_g2,
     DeviceG2,
     Family::G2,
     G2_WORDS,

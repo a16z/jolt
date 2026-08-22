@@ -3,7 +3,8 @@ use jolt_field::Fr;
 
 use super::arena::{self, Family};
 use super::handle::{
-    load_all, load_all_g2, span, span_g2, store_all, store_all_g2, DeviceG1, DeviceG2,
+    load_all, load_all_g2, rehome, rehome_g2, span, span_g2, store_all, store_all_g2, DeviceG1,
+    DeviceG2,
 };
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::msm::ResidentAxpy;
@@ -184,17 +185,27 @@ impl DoryRoutines<DeviceG1> for CudaG1Routines {
 }
 
 fn write_back(handles: &mut [DeviceG1], points: &[ArkG1]) {
-    for (handle, point) in handles.iter_mut().zip(points) {
-        handle.overwrite(&point.0);
+    if span(handles).is_some() {
+        for (handle, point) in handles.iter_mut().zip(points) {
+            handle.overwrite(&point.0);
+        }
+        return;
     }
+    let fresh: Vec<_> = points.iter().map(|point| point.0).collect();
+    rehome(handles, &fresh);
 }
 
 pub struct CudaG2Routines;
 
 fn write_back_g2(handles: &mut [DeviceG2], points: &[ArkG2]) {
-    for (handle, point) in handles.iter_mut().zip(points) {
-        handle.overwrite(&point.0);
+    if span_g2(handles).is_some() {
+        for (handle, point) in handles.iter_mut().zip(points) {
+            handle.overwrite(&point.0);
+        }
+        return;
     }
+    let fresh: Vec<_> = points.iter().map(|point| point.0).collect();
+    rehome_g2(handles, &fresh);
 }
 
 fn resident_msm_g2(bases: &[DeviceG2], scalars: &[ArkFr]) -> Result<DeviceG2, CudaError> {
@@ -342,10 +353,68 @@ mod tests {
 
     const SHAPES: [usize; 5] = [1, 2, 129, 1024, 4096];
 
+    const MSM_SHAPES: [usize; 8] = [1, 2, 3, 4, 5, 8, 129, 1024];
+
     const G2_SHAPES: [usize; 4] = [1, 2, 129, 1024];
 
     fn affine(points: &[ArkG1]) -> Vec<ark_bn254::G1Affine> {
         points.iter().map(|point| point.0.into()).collect()
+    }
+
+    #[test]
+    fn g1_msm_matches_reference_dory() {
+        if shared_context().is_none() {
+            return;
+        }
+        for (index, len) in MSM_SHAPES.into_iter().enumerate() {
+            let bases = points(len, 4_100 + index as u64);
+            let weights = scalars(len, 4_300 + index as u64);
+
+            let expected = JoltG1Routines::msm(&bases, &weights);
+
+            let Ok(guard) = arena::open(2 * len + 64, 2 * len + 64) else {
+                return;
+            };
+            let resident_bases = resident(&bases);
+            let got = CudaG1Routines::msm(&resident_bases, &weights);
+            let got = hosted(&[got]);
+            assert!(!arena::poisoned(), "the arena poisoned at len {len}");
+            drop(guard);
+
+            assert_eq!(
+                affine(&got),
+                affine(&[expected]),
+                "the G1 MSM diverged at len {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn g2_msm_matches_reference_dory() {
+        if shared_context().is_none() {
+            return;
+        }
+        for (index, len) in MSM_SHAPES.into_iter().enumerate() {
+            let bases = points_g2(len, 4_500 + index as u64);
+            let weights = scalars(len, 4_700 + index as u64);
+
+            let expected = JoltG2Routines::msm(&bases, &weights);
+
+            let Ok(guard) = arena::open(64, 2 * len + 64) else {
+                return;
+            };
+            let resident_bases = resident_g2(&bases);
+            let got = CudaG2Routines::msm(&resident_bases, &weights);
+            let got = hosted_g2(&[got]);
+            assert!(!arena::poisoned(), "the arena poisoned at len {len}");
+            drop(guard);
+
+            assert_eq!(
+                affine_g2(&got),
+                affine_g2(&[expected]),
+                "the G2 MSM diverged at len {len}"
+            );
+        }
     }
 
     #[test]
