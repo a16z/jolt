@@ -770,9 +770,10 @@ __device__ int pml_eval(unsigned int prefix, const pml_args *a, u64 *out) {
                 store4(out, sum);
                 return 1;
             }
-            u64 sign_bit[LIMBS], result[LIMBS];
+            u64 sign_bit[LIMBS], base[LIMBS], result[LIMBS];
             pfx_load(a->checkpoints, PFX_LEFT_MSB, sign_bit);
-            pfx_load(a->checkpoints, PFX_SIGN_EXTENSION, result);
+            pfx_load(a->checkpoints, PFX_SIGN_EXTENSION, base);
+            pfx_zero(result);
             u64 term[LIMBS], sum[LIMBS];
             if (a->has_r_x) {
                 u64 nc[LIMBS], scaled[LIMBS];
@@ -800,7 +801,8 @@ __device__ int pml_eval(unsigned int prefix, const pml_args *a, u64 *out) {
                     store4(result, sum);
                 }
             }
-            fr_mul(result, sign_bit, sum);
+            fr_mul(result, sign_bit, term);
+            fr_add(base, term, sum);
             store4(out, sum);
             return 1;
         }
@@ -1373,18 +1375,13 @@ __device__ void pml_update(unsigned int prefix,
         }
         case PFX_SIGN_EXTENSION: {
             if (j == 1u) { pml_default(PFX_SIGN_EXTENSION, out); return; }
-            u64 term[LIMBS], scaled[LIMBS], sum[LIMBS];
+            u64 msb[LIMBS], term[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pfx_load(checkpoints, PFX_LEFT_MSB, msb);
             pfx_from_u64(1ULL << (j / 2u), term);
             fr_mul(term, nry, scaled);
-            fr_add(current, scaled, sum);
-            store4(current, sum);
-            if (j == 2u * PFX_XLEN - 1u) {
-                u64 msb[LIMBS], product[LIMBS];
-                pfx_load(checkpoints, PFX_LEFT_MSB, msb);
-                fr_mul(current, msb, product);
-                store4(current, product);
-            }
-            store4(out, current);
+            fr_mul(scaled, msb, term);
+            fr_add(current, term, sum);
+            store4(out, sum);
             return;
         }
         case PFX_SIGN_EXT_UPPER_HALF: {
@@ -1400,7 +1397,9 @@ __device__ void pml_update(unsigned int prefix,
             return;
         }
         case PFX_SIGN_EXT_RIGHT_OPERAND: {
-            if (j == PFX_XLEN + 1u) {
+            if (suffix_len >= PFX_XLEN) {
+                pfx_one(out);
+            } else if (j == PFX_XLEN + 1u) {
                 u64 mask[LIMBS], product[LIMBS];
                 pfx_from_u128(((u128)1 << PFX_XLEN) - ((u128)1 << (PFX_XLEN / 2u)), mask);
                 fr_mul(mask, r_y, product);

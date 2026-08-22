@@ -14,14 +14,15 @@ use super::address_phase::{
     CHUNK_SIZE, NO_TABLE,
 };
 use super::combine::{combine_terms, CombineTerm};
-use super::prefixes::{default_checkpoints, update_checkpoints, NUM_PREFIXES};
+use super::prefixes::{
+    default_checkpoints, prefix_mle_round, update_checkpoints, HINT_POINTS,
+};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr_slice, DeviceFrVec};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
 
 const RAF_TERMS: usize = 3;
-const HINT_POINTS: usize = 2;
 const RAF_CHECKPOINTS: usize = 4;
 const NO_PREFIX: u32 = u32::MAX;
 
@@ -236,41 +237,18 @@ impl DeviceAddressPhase {
                 reason: "the address round tables are already fully bound",
             },
         )? as usize;
-        let mut out = context.alloc(HINT_POINTS * NUM_PREFIXES * half)?;
-        let has_r_x = u32::from(self.rounds_bound % 2 == 1);
-        let challenge = context.upload(&[self
-            .phase_challenges
-            .last()
-            .copied()
-            .unwrap_or(Fr::from(0u64))])?;
-        let round = CudaKernelContext::count_of(self.rounds_bound)?;
-        let b_len_arg = CudaKernelContext::count_of(b_len)?;
-        let half_arg = CudaKernelContext::count_of(half)?;
-        let prefix_count = CudaKernelContext::count_of(NUM_PREFIXES)?;
-        let points = CudaKernelContext::count_of(HINT_POINTS)?;
-
-        let mut builder = context.stream().launch_builder(context.pfx_mle_round());
-        let _ = builder.arg(self.checkpoints.limbs());
-        let _ = builder.arg(challenge.limbs());
-        let _ = builder.arg(&has_r_x);
-        let _ = builder.arg(&round);
-        let _ = builder.arg(&b_len_arg);
-        let _ = builder.arg(&half_arg);
-        let _ = builder.arg(out.limbs_mut());
-        // SAFETY: block `(b_block, prefix < NUM_PREFIXES, point < HINT_POINTS)`
-        // with thread `b < half` reads the `NUM_PREFIXES` checkpoints and the
-        // single-element challenge, and writes
-        // `out[(point * NUM_PREFIXES + prefix) * half + b]`, one slot per
-        // (point, prefix, b) of the `HINT_POINTS * NUM_PREFIXES * half` allocated.
-        let _ = unsafe {
-            builder.launch(LaunchConfig {
-                grid_dim: (half_arg.div_ceil(BLOCK), prefix_count, points),
-                block_dim: (BLOCK, 1, 1),
-                shared_mem_bytes: 0,
-            })
-        }?;
-        context.stream().synchronize()?;
-        Ok(out)
+        prefix_mle_round(
+            context,
+            &self.checkpoints,
+            self.phase_challenges
+                .last()
+                .copied()
+                .unwrap_or(Fr::from(0u64)),
+            self.rounds_bound % 2 == 1,
+            self.rounds_bound,
+            b_len,
+            half,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "ap_build_raf_prefix")]

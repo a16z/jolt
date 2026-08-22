@@ -345,7 +345,7 @@ impl<F: Field> RafDecomposition<F> {
 /// Linear extension of a dense table's top variable at `c = 0` and `c = 2`:
 /// `(evals[b], 2·evals[b + half] − evals[b])`.
 #[inline]
-fn extension_pair<F: Field>(evals: &[F], b: usize, half: usize) -> (F, F) {
+pub(crate) fn extension_pair<F: Field>(evals: &[F], b: usize, half: usize) -> (F, F) {
     let lo = evals[b];
     let hi = evals[b + half];
     (lo, hi + hi - lo)
