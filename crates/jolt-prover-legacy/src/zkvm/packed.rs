@@ -2409,6 +2409,7 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 #[expect(clippy::unwrap_used)]
 mod advice_object_tests {
     use super::*;
+    use jolt_field::Zero;
     use jolt_poly::MultilinearPoly;
 
     /// A couple of bytes of advice must stay provable: without the packing
