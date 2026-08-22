@@ -12,10 +12,9 @@ It explains the arithmetic, theorem shape, production connection, and trust
 boundary.
 
 The final theorems cover callable functions, including `ret` and the relevant
-procedure call convention. The AArch64 and x86-64 addition and subtraction
-objects include the production constant load, so those theorems do not assume
-a prepared offset register. All arithmetic theorems assume canonical inputs
-and prove the canonical result modulo
+procedure call convention. Every proved object includes the production
+constant load, so none of the theorems assumes a prepared offset register. All
+arithmetic theorems assume canonical inputs and prove the canonical result modulo
 `0xffffffffffffffffffffffff00005809`. A separate certificate proves that this
 modulus is prime.
 

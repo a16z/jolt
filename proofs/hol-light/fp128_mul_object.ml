@@ -9,6 +9,7 @@ let jolt_fp128_mul_object = Sys.getenv "JOLT_FP128_MUL_OBJECT";;
 let jolt_fp128_mul_mc =
   define_assert_from_elf "jolt_fp128_mul_mc" jolt_fp128_mul_object
   [
+    0x128b0104;
     0x9b027c05;
     0x9bc27c06;
     0x9b037c07;

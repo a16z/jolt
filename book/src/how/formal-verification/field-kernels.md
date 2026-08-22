@@ -76,13 +76,11 @@ The AArch64 body uses the following registers.
 | Addition temporary values | `x5:x9` |
 | Subtraction temporary values | `x5:x7` |
 
-The addition and subtraction objects include the constant load, arithmetic
-body, and `ret`. Their theorems do not assume any initial value for `x4`.
-Multiplication also uses `x10:x12` as temporary registers. Its arithmetic
-theorem currently assumes `x4 = C`; the artifact checker separately checks the
-constant load immediately before the proved body. None of the proved bodies
-accesses memory or the stack. The subroutine theorems prove the return through
-`x30` and use the normal AArch64 set of registers that a callee may change.
+Each proved AArch64 object includes the constant load, arithmetic body, and
+`ret`. The theorems do not assume any initial value for `x4`. Multiplication
+also uses `x10:x12` as temporary registers. None of the proved bodies accesses
+memory or the stack. The subroutine theorems prove the return through `x30`
+and use the normal AArch64 set of registers that a callee may change.
 
 ## x86-64 register contract
 
@@ -244,7 +242,7 @@ architectures use the same public witness and artifact checker.
 | Architecture | Proved object | Public Rust connection |
 | --- | --- | --- |
 | AArch64 add and subtract | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
-| AArch64 multiply | Complete fixed body and `ret`, assuming `x4 = C` | The complete optimized witness words match the constant load, body, and `ret` |
+| AArch64 multiply | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
 | x86-64 add and subtract | Constant load, complete fixed body, and `ret` | The proved constant load and fixed body occur exactly once inside the optimized witness |
 
 These claims cover the A7F7 register kernels. They do not cover the small
