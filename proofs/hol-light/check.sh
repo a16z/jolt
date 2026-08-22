@@ -79,12 +79,13 @@ fi
 
 find_newest_object() {
   local name=$1
+  local profile_root=${2:-$PROFILE_ROOT}
   local newest=""
   while IFS= read -r path; do
     if [[ -z "$newest" || "$path" -nt "$newest" ]]; then
       newest=$path
     fi
-  done < <(find "$PROFILE_ROOT/build" -path "*/out/$name" -print)
+  done < <(find "$profile_root/build" -path "*/out/$name" -print)
   if [[ -z "$newest" ]]; then
     echo "no $name object was produced" >&2
     return 1
@@ -93,9 +94,9 @@ find_newest_object() {
 }
 
 if [[ "$MODE" == bytes ]]; then
-  echo "[1/2] Building the $ARCHITECTURE production witness"
+  echo "[1/2] Building the $ARCHITECTURE inspection witnesses"
 else
-  echo "[1/5] Building the $ARCHITECTURE production witness"
+  echo "[1/5] Building the $ARCHITECTURE inspection witnesses"
 fi
 CARGO_TARGET_DIR="$PROOF_TARGET" \
   cargo "${CARGO_BUILD_ARGS[@]}" \
@@ -108,10 +109,29 @@ SUB_OBJECT=$(find_newest_object fp128_sub.o)
 MUL_OBJECT=$(find_newest_object fp128_mul.o)
 PRODUCTION_WITNESS="$PROFILE_ROOT/examples/fp128_production_witness"
 
+BMI2_ADX_MUL_OBJECT=""
+BMI2_ADX_PRODUCTION_WITNESS=""
+if [[ "$ARCHITECTURE" == x86_64 ]]; then
+  BMI2_ADX_TARGET="$PROOF_TARGET/bmi2-adx"
+  if [[ -n "$TARGET_TRIPLE" ]]; then
+    BMI2_ADX_PROFILE_ROOT="$BMI2_ADX_TARGET/$TARGET_TRIPLE/release"
+  else
+    BMI2_ADX_PROFILE_ROOT="$BMI2_ADX_TARGET/release"
+  fi
+  RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+bmi2,+adx" \
+  CARGO_TARGET_DIR="$BMI2_ADX_TARGET" \
+    cargo "${CARGO_BUILD_ARGS[@]}" \
+      --no-default-features \
+      --features solinas,fp128-proof-linkage \
+      --example fp128_production_witness
+  BMI2_ADX_MUL_OBJECT=$(find_newest_object fp128_mul_bmi2_adx.o "$BMI2_ADX_PROFILE_ROOT")
+  BMI2_ADX_PRODUCTION_WITNESS="$BMI2_ADX_PROFILE_ROOT/examples/fp128_production_witness"
+fi
+
 if [[ "$MODE" == bytes ]]; then
-  echo "[2/2] Checking exact object and public witness bytes"
+  echo "[2/2] Checking exact object and inspection witness bytes"
 else
-  echo "[2/5] Checking exact object and public witness bytes"
+  echo "[2/5] Checking exact object and inspection witness bytes"
 fi
 CHECKER_ARGS=(
   --architecture "$ARCHITECTURE"
@@ -120,6 +140,12 @@ CHECKER_ARGS=(
   --production-witness "$PRODUCTION_WITNESS"
 )
 CHECKER_ARGS+=(--mul-object "$MUL_OBJECT")
+if [[ "$ARCHITECTURE" == x86_64 ]]; then
+  CHECKER_ARGS+=(
+    --bmi2-adx-mul-object "$BMI2_ADX_MUL_OBJECT"
+    --bmi2-adx-production-witness "$BMI2_ADX_PRODUCTION_WITNESS"
+  )
+fi
 python3 "$REPO_ROOT/scripts/check_fp128_proof_artifacts.py" \
   "${CHECKER_ARGS[@]}"
 
@@ -133,6 +159,7 @@ fi
 ADD_PROOF_OBJECT=$ADD_OBJECT
 SUB_PROOF_OBJECT=$SUB_OBJECT
 MUL_PROOF_OBJECT=$MUL_OBJECT
+BMI2_ADX_MUL_PROOF_OBJECT=$BMI2_ADX_MUL_OBJECT
 if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
   ELF_OBJECT_DIR="$PROOF_TARGET/x86_64-elf"
   mkdir -p "$ELF_OBJECT_DIR"
@@ -148,9 +175,14 @@ if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
     -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
     "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_mul.S" \
     -o "$ELF_OBJECT_DIR/fp128_mul.o"
+  clang --target=x86_64-unknown-linux-gnu \
+    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_mul_bmi2_adx.S" \
+    -o "$ELF_OBJECT_DIR/fp128_mul_bmi2_adx.o"
   ADD_PROOF_OBJECT="$ELF_OBJECT_DIR/fp128_add.o"
   SUB_PROOF_OBJECT="$ELF_OBJECT_DIR/fp128_sub.o"
   MUL_PROOF_OBJECT="$ELF_OBJECT_DIR/fp128_mul.o"
+  BMI2_ADX_MUL_PROOF_OBJECT="$ELF_OBJECT_DIR/fp128_mul_bmi2_adx.o"
 fi
 
 S2N_ARCH_DIR=$ARCHITECTURE
@@ -209,19 +241,23 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
   ADD_THEOREM=JOLT_FP128_ADD_X86_64_SUBROUTINE_CORRECT
   SUB_THEOREM=JOLT_FP128_SUB_X86_64_SUBROUTINE_CORRECT
   MUL_THEOREM=JOLT_FP128_MUL_X86_64_SUBROUTINE_CORRECT
-  printf 'print_endline "[HOL 1/4] Proving x86-64 addition";;\n' >"$COMBINED_SOURCE"
+  BMI2_ADX_MUL_THEOREM=JOLT_FP128_MUL_X86_64_BMI2_ADX_SUBROUTINE_CORRECT
+  printf 'print_endline "[HOL 1/5] Proving x86-64 addition";;\n' >"$COMBINED_SOURCE"
   printf 'loadt "x86/proofs/base.ml";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_common.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_x86_64_common.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_add_x86_64_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_add_x86_64_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 2/4] Proving x86-64 subtraction";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 2/5] Proving x86-64 subtraction";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_sub_x86_64_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_sub_x86_64_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 3/4] Proving x86-64 multiplication";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 3/5] Proving baseline x86-64 multiplication";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_x86_64_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_mul_x86_64_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
-  printf 'print_endline "[HOL 4/4] Certifying the A7F7 modulus";;\n' >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 4/5] Proving BMI2 and ADX x86-64 multiplication";;\n' >>"$COMBINED_SOURCE"
+  printf 'loadt "%s/fp128_mul_x86_64_bmi2_adx_object.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
+  printf 'loadt "%s/fp128_mul_x86_64_bmi2_adx_correct.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
+  printf 'print_endline "[HOL 5/5] Certifying the A7F7 modulus";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_prime.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
   PROOF_SOURCES=(
     "$COMBINED_SOURCE"
@@ -233,6 +269,8 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
     "$PROOF_DIR/fp128_sub_x86_64_correct.ml"
     "$PROOF_DIR/fp128_mul_x86_64_object.ml"
     "$PROOF_DIR/fp128_mul_x86_64_correct.ml"
+    "$PROOF_DIR/fp128_mul_x86_64_bmi2_adx_object.ml"
+    "$PROOF_DIR/fp128_mul_x86_64_bmi2_adx_correct.ml"
     "$PROOF_DIR/fp128_prime.ml"
   )
 else
@@ -240,6 +278,7 @@ else
   ADD_THEOREM=JOLT_FP128_ADD_SUBROUTINE_CORRECT
   SUB_THEOREM=JOLT_FP128_SUB_SUBROUTINE_CORRECT
   MUL_THEOREM=JOLT_FP128_MUL_SUBROUTINE_CORRECT
+  BMI2_ADX_MUL_THEOREM=""
   printf 'print_endline "[HOL 1/4] Proving AArch64 addition";;\n' >"$COMBINED_SOURCE"
   printf 'loadt "arm/proofs/base.ml";;\n' >>"$COMBINED_SOURCE"
   printf 'loadt "%s/fp128_common.ml";;\n' "$PROOF_DIR" >>"$COMBINED_SOURCE"
@@ -270,6 +309,10 @@ if [[ -n "$MUL_THEOREM" ]]; then
   printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
     "$MUL_THEOREM" "$MUL_THEOREM" >>"$COMBINED_SOURCE"
 fi
+if [[ -n "$BMI2_ADX_MUL_THEOREM" ]]; then
+  printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
+    "$BMI2_ADX_MUL_THEOREM" "$BMI2_ADX_MUL_THEOREM" >>"$COMBINED_SOURCE"
+fi
 printf 'Printf.printf "val JOLT_FP128_A7F7_PRIME : thm = %%s\\n" (string_of_thm JOLT_FP128_A7F7_PRIME);;\n' \
   >>"$COMBINED_SOURCE"
 
@@ -294,6 +337,7 @@ JOLT_FP128_PROOF_DIR="$PROOF_DIR" \
 JOLT_FP128_ADD_OBJECT="$ADD_PROOF_OBJECT" \
 JOLT_FP128_SUB_OBJECT="$SUB_PROOF_OBJECT" \
 JOLT_FP128_MUL_OBJECT="$MUL_PROOF_OBJECT" \
+JOLT_FP128_MUL_BMI2_ADX_OBJECT="$BMI2_ADX_MUL_PROOF_OBJECT" \
   "$NATIVE_PROOF" 2>&1 | tee "$LOG_PATH"
 echo "[5/5] Confirming the $ARCHITECTURE_LABEL theorems"
 grep -F "val $ADD_THEOREM : thm" "$LOG_PATH"
@@ -301,6 +345,9 @@ grep -F "val $SUB_THEOREM : thm" "$LOG_PATH"
 if [[ -n "$MUL_THEOREM" ]]; then
   grep -F "val $MUL_THEOREM : thm" "$LOG_PATH"
 fi
+if [[ -n "$BMI2_ADX_MUL_THEOREM" ]]; then
+  grep -F "val $BMI2_ADX_MUL_THEOREM : thm" "$LOG_PATH"
+fi
 grep -F "val JOLT_FP128_A7F7_PRIME : thm" "$LOG_PATH"
 
-echo "Fp128 $ARCHITECTURE public witness proofs passed."
+echo "Fp128 $ARCHITECTURE inspection witness proofs passed."

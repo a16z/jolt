@@ -302,17 +302,61 @@ impl<const P: u128> Fp128<P> {
         Self::reduce_4(r0, r1, r2, r3)
     }
 
-    /// Baseline x86-64 multiplication dispatch. The A7F7 specialization uses
-    /// only instructions guaranteed by the x86-64 ISA, with no BMI2 or ADX
-    /// target-feature requirement. Other moduli retain the portable path.
+    /// x86-64 multiplication dispatch. Builds that enable both BMI2 and ADX
+    /// use the matching A7F7 specialization. Other x86-64 builds use the
+    /// baseline proved sequence. Other moduli retain the portable path.
     #[cfg(target_arch = "x86_64")]
     #[inline(always)]
     fn mul_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         if Self::C_LO == 0xffff_a7f7 {
-            Self::mul_raw_x86_64_a7f7(a, b)
+            #[cfg(all(target_feature = "bmi2", target_feature = "adx"))]
+            {
+                Self::mul_raw_x86_64_a7f7_bmi2_adx(a, b)
+            }
+            #[cfg(not(all(target_feature = "bmi2", target_feature = "adx")))]
+            {
+                Self::mul_raw_x86_64_a7f7(a, b)
+            }
         } else {
             Self::mul_raw_portable(a, b)
         }
+    }
+
+    /// A7F7 multiplication for x86-64 builds with BMI2 and ADX enabled.
+    ///
+    /// `rdi:rsi` starts with `a`, and `rdx:rcx` starts with `b`. The body
+    /// finishes directly in the System V result registers `rax:rdx`. It uses
+    /// only caller saved registers, flags, and no memory or stack.
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "bmi2",
+        target_feature = "adx"
+    ))]
+    #[inline(always)]
+    fn mul_raw_x86_64_a7f7_bmi2_adx(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [a_lo, a_hi] = a;
+        let [b_lo, b_hi] = b;
+        let out_lo: u64;
+        let out_hi: u64;
+        // SAFETY: The compile-time target-feature gate guarantees instruction
+        // availability. Every changed register is declared, and the body
+        // accesses neither memory nor stack.
+        unsafe {
+            asm!(
+                include_str!("../../asm/x86_64/fp128_mul_bmi2_adx_body.inc"),
+                inout("rdi") a_lo => _,
+                inout("rsi") a_hi => _,
+                inout("rdx") b_lo => out_hi,
+                inout("rcx") b_hi => _,
+                lateout("rax") out_lo,
+                out("r8") _,
+                out("r9") _,
+                out("r10") _,
+                out("r11") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     /// A7F7 multiplication through the exact x86-64 instruction body imported
@@ -323,7 +367,10 @@ impl<const P: u128> Fp128<P> {
     /// contains `C = 0xffff_a7f7`. The body uses `rax`, `rdx`, `r9`, `r10`,
     /// `r11`, and the flags as temporary state. It uses no memory or stack and
     /// requires no optional x86 target features.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(all(target_feature = "bmi2", target_feature = "adx"))
+    ))]
     #[inline(always)]
     fn mul_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, a_hi] = a;

@@ -9,6 +9,7 @@ let jolt_fp128_dev_theorem =
   | "add" -> "fp128_add_x86_64_correct.ml"
   | "sub" -> "fp128_sub_x86_64_correct.ml"
   | "mul" -> "fp128_mul_x86_64_correct.ml"
+  | "mul_bmi2_adx" -> "fp128_mul_x86_64_bmi2_adx_correct.ml"
   | operation -> failwith ("unsupported Fp128 proof operation: " ^ operation);;
 
 loadt (Filename.concat jolt_fp128_proof_dir jolt_fp128_dev_theorem);;

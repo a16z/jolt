@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connect proved Fp128 arithmetic objects to optimized public witnesses."""
+"""Connect proved Fp128 arithmetic objects to compiled inspection witnesses."""
 
 from __future__ import annotations
 
@@ -107,6 +107,15 @@ X86_64_MUL_BODY = bytes.fromhex(
     "45 31 c9 48 01 c7 48 83 d1 00 49 83 d1 00 48 89 f8 48 "
     "89 ca 4c 01 c0 48 83 d2 00 4d 11 c9 48 0f 45 f8 48 0f "
     "45 ca"
+)
+X86_64_MUL_BMI2_ADX_BODY = bytes.fromhex(
+    "c4 62 b3 f6 d7 c4 62 fb f6 de 48 89 ca c4 e2 f3 f6 ff "
+    "c4 62 cb f6 c6 31 d2 66 4c 0f 38 f6 d0 f3 4c 0f 38 f6 d1 "
+    "66 4c 0f 38 f6 df f3 4c 0f 38 f6 de 66 4c 0f 38 f6 c2 "
+    "f3 4c 0f 38 f6 c2 ba f7 a7 ff ff c4 c2 cb f6 fb c4 c2 fb f6 c8 "
+    "49 01 f1 49 11 fa 48 83 d1 00 49 01 c2 48 83 d1 00 48 0f af ca "
+    "49 01 c9 49 83 d2 00 4d 19 db 4c 89 c8 48 01 d0 4c 89 d2 "
+    "48 83 d2 00 4d 11 db 49 0f 44 c1 49 0f 44 d2"
 )
 X86_64_RET = bytes([0xC3])
 X86_64_LOAD_A7F7_INTO_R8D = bytes.fromhex("41 b8 f7 a7 ff ff")
@@ -315,7 +324,7 @@ def check_aarch64(
         AARCH64_ADD_OBJECT_WORDS,
     )
     require_words(
-        "public addition witness", add_witness_words, AARCH64_ADD_WITNESS_WORDS
+        "addition inspection witness", add_witness_words, AARCH64_ADD_WITNESS_WORDS
     )
     require_words(
         "standalone subtraction proof object",
@@ -323,7 +332,7 @@ def check_aarch64(
         AARCH64_SUB_OBJECT_WORDS,
     )
     require_words(
-        "public subtraction witness",
+        "subtraction inspection witness",
         sub_witness_words,
         AARCH64_SUB_WITNESS_WORDS,
     )
@@ -333,7 +342,7 @@ def check_aarch64(
         AARCH64_MUL_OBJECT_WORDS,
     )
     require_words(
-        "public multiplication witness",
+        "multiplication inspection witness",
         mul_witness_words,
         AARCH64_MUL_WITNESS_WORDS,
     )
@@ -345,10 +354,15 @@ def check_x86_64(
     sub_object: Path,
     mul_object: Path,
     witness: Path,
+    bmi2_adx_mul_object: Path,
+    bmi2_adx_witness: Path,
 ) -> None:
     add_object_bytes = read_symbol_bytes(tool, add_object, "jolt_fp128_add_asm")
     sub_object_bytes = read_symbol_bytes(tool, sub_object, "jolt_fp128_sub_asm")
     mul_object_bytes = read_symbol_bytes(tool, mul_object, "jolt_fp128_mul_asm")
+    bmi2_adx_mul_object_bytes = read_symbol_bytes(
+        tool, bmi2_adx_mul_object, "jolt_fp128_mul_bmi2_adx_asm"
+    )
     add_witness_instructions = read_symbol_byte_instructions(
         tool, witness, "jolt_fp128_add_production_witness"
     )
@@ -357,6 +371,9 @@ def check_x86_64(
     )
     mul_witness_instructions = read_symbol_byte_instructions(
         tool, witness, "jolt_fp128_mul_production_witness"
+    )
+    bmi2_adx_witness_instructions = read_symbol_byte_instructions(
+        tool, bmi2_adx_witness, "jolt_fp128_mul_production_witness"
     )
     add_expected = (
         X86_64_LOAD_A7F7_INTO_R8D
@@ -376,6 +393,7 @@ def check_x86_64(
         + X86_64_MUL_ABI_RETURN
         + X86_64_RET
     )
+    bmi2_adx_mul_expected = X86_64_MUL_BMI2_ADX_BODY + X86_64_RET
     add_darwin_expected = (
         X86_64_DARWIN_FRAME_ENTER
         + add_expected[:-1]
@@ -389,6 +407,11 @@ def check_x86_64(
     mul_darwin_expected = (
         X86_64_DARWIN_FRAME_ENTER
         + mul_expected[:-1]
+        + X86_64_DARWIN_FRAME_LEAVE
+    )
+    bmi2_adx_mul_darwin_expected = (
+        X86_64_DARWIN_FRAME_ENTER
+        + X86_64_MUL_BMI2_ADX_BODY
         + X86_64_DARWIN_FRAME_LEAVE
     )
     require_bytes(
@@ -406,6 +429,11 @@ def check_x86_64(
         mul_object_bytes,
         mul_expected,
     )
+    require_bytes(
+        "standalone BMI2 and ADX multiplication proof object",
+        bmi2_adx_mul_object_bytes,
+        bmi2_adx_mul_expected,
+    )
     add_witness_expected = (
         add_darwin_expected if sys.platform == "darwin" else add_expected
     )
@@ -416,23 +444,38 @@ def check_x86_64(
         mul_darwin_expected if sys.platform == "darwin" else mul_expected
     )
     require_bytes(
-        "public addition witness",
-        instructions_through_ret("public addition witness", add_witness_instructions),
+        "addition inspection witness",
+        instructions_through_ret(
+            "addition inspection witness", add_witness_instructions
+        ),
         add_witness_expected,
     )
     require_bytes(
-        "public subtraction witness",
+        "subtraction inspection witness",
         instructions_through_ret(
-            "public subtraction witness", sub_witness_instructions
+            "subtraction inspection witness", sub_witness_instructions
         ),
         sub_witness_expected,
     )
     require_bytes(
-        "public multiplication witness",
+        "multiplication inspection witness",
         instructions_through_ret(
-            "public multiplication witness", mul_witness_instructions
+            "multiplication inspection witness", mul_witness_instructions
         ),
         mul_witness_expected,
+    )
+    bmi2_adx_witness_expected = (
+        bmi2_adx_mul_darwin_expected
+        if sys.platform == "darwin"
+        else bmi2_adx_mul_expected
+    )
+    require_bytes(
+        "BMI2 and ADX multiplication inspection witness",
+        instructions_through_ret(
+            "BMI2 and ADX multiplication inspection witness",
+            bmi2_adx_witness_instructions,
+        ),
+        bmi2_adx_witness_expected,
     )
 
 
@@ -444,7 +487,9 @@ def main() -> None:
     parser.add_argument("--add-object", required=True, type=Path)
     parser.add_argument("--sub-object", required=True, type=Path)
     parser.add_argument("--mul-object", type=Path)
+    parser.add_argument("--bmi2-adx-mul-object", type=Path)
     parser.add_argument("--production-witness", required=True, type=Path)
+    parser.add_argument("--bmi2-adx-production-witness", type=Path)
     parser.add_argument("--llvm-objdump")
     args = parser.parse_args()
 
@@ -462,14 +507,20 @@ def main() -> None:
     else:
         if args.mul_object is None:
             parser.error("--mul-object is required for x86_64")
+        if args.bmi2_adx_mul_object is None:
+            parser.error("--bmi2-adx-mul-object is required for x86_64")
+        if args.bmi2_adx_production_witness is None:
+            parser.error("--bmi2-adx-production-witness is required for x86_64")
         check_x86_64(
             tool,
             args.add_object,
             args.sub_object,
             args.mul_object,
             args.production_witness,
+            args.bmi2_adx_mul_object,
+            args.bmi2_adx_production_witness,
         )
-    print(f"Fp128 {args.architecture} proof objects and public witnesses match.")
+    print(f"Fp128 {args.architecture} proof objects and inspection witnesses match.")
 
 
 if __name__ == "__main__":
