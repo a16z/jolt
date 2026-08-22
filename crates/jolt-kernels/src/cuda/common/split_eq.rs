@@ -110,6 +110,10 @@ impl<F: Field> DeviceSplitEq<F> {
         self.host.e_in_current().len()
     }
 
+    pub fn current_scalar(&self) -> F {
+        self.host.current_scalar()
+    }
+
     pub fn bind(&mut self, challenge: F) {
         self.host.bind(challenge);
         Self::align(&mut self.e_in, self.host.e_in_current().len());

@@ -23,8 +23,6 @@ pub struct BooleanityAddressKernel<F: Field> {
     relation: BooleanityAddressPhase<F>,
     masses: DeviceBooleanityMasses,
     eq: DeviceSplitEq<F>,
-    last_round_poly: Option<UnivariatePoly<F>>,
-    intermediate: Option<F>,
     rounds_bound: usize,
 }
 
@@ -46,11 +44,6 @@ impl<F: Field> BooleanityAddressKernel<F> {
         })?;
         self.eq.bind(challenge);
         self.rounds_bound += 1;
-        if let Some(poly) = self.last_round_poly.take() {
-            if self.rounds_bound == self.relation.symbolic().rounds() {
-                self.intermediate = Some(poly.evaluate(challenge));
-            }
-        }
         Ok(())
     }
 }
@@ -80,9 +73,7 @@ impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
             .gruen_poly_deg_3(at_zero, leading, previous_claim)
             .into_coefficients();
         coefficients.resize(self.relation.degree() + 1, F::from_u64(0));
-        let poly = UnivariatePoly::new(coefficients);
-        self.last_round_poly = Some(poly.clone());
-        Ok(poly)
+        Ok(UnivariatePoly::new(coefficients))
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -107,12 +98,14 @@ impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
                          tables are not fully bound",
             });
         }
-        let intermediate = self
-            .intermediate
-            .ok_or(SumcheckKernelError::InvariantViolation {
-                reason: "CUDA booleanity address phase never staged its intermediate claim",
-            })?;
-        Ok(BooleanityAddressPhaseOutputClaims { intermediate })
+        let defect = self.masses.booleanity_defect::<F>().map_err(|_| {
+            SumcheckKernelError::InvariantViolation {
+                reason: "CUDA booleanity address phase could not read its fully bound mass tables",
+            }
+        })?;
+        Ok(BooleanityAddressPhaseOutputClaims {
+            intermediate: self.eq.current_scalar() * defect,
+        })
     }
 }
 
@@ -163,8 +156,6 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
             relation: relation.clone(),
             masses,
             eq,
-            last_round_poly: None,
-            intermediate: None,
             rounds_bound: 0,
         }))
     }

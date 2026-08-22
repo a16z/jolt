@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::cuda::common::device_columns::DeviceTraceColumns;
 use crate::cuda::witness::{session_atom_columns, session_device_trace};
 
-use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs, STAGES};
+use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
 use crate::cuda::{require_context, CudaBackend};
@@ -31,20 +31,13 @@ pub struct BytecodeReadRafAddressKernel<F: Field> {
     context: &'static CudaKernelContext,
     relation: BytecodeReadRafAddressPhase<F>,
     state: DeviceBytecodePushforward,
-    last_round_poly: Option<UnivariatePoly<F>>,
-    intermediate: Option<F>,
-    val_stages: Vec<F>,
     rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
 impl<F: Field> allocative::Allocative for BytecodeReadRafAddressKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("val_stages"),
-            self.val_stages.len() * size_of::<F>(),
-        );
+        let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
@@ -58,15 +51,6 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
             .bind(self.context, challenge)
             .map_err(|_| failed())?;
         self.rounds_bound += 1;
-        let final_round = self.rounds_bound == self.relation.symbolic().rounds();
-        if let Some(poly) = self.last_round_poly.take() {
-            if final_round {
-                self.intermediate = Some(poly.evaluate(challenge));
-            }
-        }
-        if final_round && self.relation.committed_program() {
-            self.val_stages = self.state.val_claims().map_err(|_| failed())?;
-        }
         Ok(())
     }
 }
@@ -90,9 +74,10 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
                 kind: "cuda bytecode read-RAF address-phase round",
             }
         })?;
-        let poly = UnivariatePoly::from_evals_and_hint(previous_claim, &[at_zero, at_two]);
-        self.last_round_poly = Some(poly.clone());
-        Ok(poly)
+        Ok(UnivariatePoly::from_evals_and_hint(
+            previous_claim,
+            &[at_zero, at_two],
+        ))
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -117,14 +102,18 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
                          are not fully bound",
             });
         }
-        let intermediate = self
-            .intermediate
-            .ok_or(SumcheckKernelError::InvariantViolation {
-                reason: "CUDA bytecode read-RAF address phase never staged its intermediate claim",
-            })?;
+        let readback = || SumcheckKernelError::InvariantViolation {
+            reason: "CUDA bytecode read-RAF address phase could not read its fully bound tables",
+        };
+        let intermediate = self.state.intermediate_claim().map_err(|_| readback())?;
+        let val_stages = if self.relation.committed_program() {
+            self.state.val_claims().map_err(|_| readback())?
+        } else {
+            Vec::new()
+        };
         Ok(BytecodeReadRafAddressPhaseOutputClaims {
             intermediate,
-            val_stages: self.val_stages.clone(),
+            val_stages,
         })
     }
 }
@@ -227,9 +216,6 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend 
             context,
             relation: relation.clone(),
             state,
-            last_round_poly: None,
-            intermediate: None,
-            val_stages: Vec::with_capacity(STAGES),
             rounds_bound: 0,
         }))
     }

@@ -257,6 +257,30 @@ impl DeviceBytecodePushforward {
         Ok(())
     }
 
+    pub fn intermediate_claim<F: Field>(&self) -> Result<F, CudaError> {
+        if self.len != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len,
+            });
+        }
+        let left = self.left.to_host()?;
+        let right = self.right.to_host()?;
+        if left.len() != TERMS || right.len() != TERMS {
+            return Err(CudaError::LengthMismatch {
+                expected: TERMS,
+                got: left.len().min(right.len()),
+            });
+        }
+        let mut claim = Fr::from(0u64);
+        for term in 0..TERMS {
+            claim += left[term] * right[term];
+        }
+        fr_into(claim).ok_or(CudaError::NotImplemented {
+            kernel: "CUDA kernels support only the BN254 scalar field",
+        })
+    }
+
     pub fn val_claims<F: Field>(&self) -> Result<Vec<F>, CudaError> {
         if self.len != 1 {
             return Err(CudaError::LengthMismatch {

@@ -183,6 +183,31 @@ impl DeviceBooleanityMasses {
         self.len /= 2;
         Ok(())
     }
+
+    pub fn booleanity_defect<F: Field>(&self) -> Result<F, CudaError> {
+        if self.len != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len,
+            });
+        }
+        let linear = self.linear.to_host()?;
+        let squared = self.squared.to_host()?;
+        let rho = self.rho.to_host()?;
+        if linear.len() != self.polys || squared.len() != self.polys || rho.len() != self.polys {
+            return Err(CudaError::LengthMismatch {
+                expected: self.polys,
+                got: linear.len().min(squared.len()).min(rho.len()),
+            });
+        }
+        let mut defect = Fr::from(0u64);
+        for poly in 0..self.polys {
+            defect += rho[poly] * (squared[poly] - linear[poly]);
+        }
+        fr_into(defect).ok_or(CudaError::NotImplemented {
+            kernel: "CUDA kernels support only the BN254 scalar field",
+        })
+    }
 }
 
 #[cfg(test)]
