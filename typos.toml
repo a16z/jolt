@@ -25,3 +25,6 @@ extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
 # (A_tru, A_unt) in the packed (Akita) prove path docs.
 "tru" = "tru"
 "unt" = "unt"
+# HOL Light names and theorem type.
+"ASSUM" = "ASSUM"
+"thm" = "thm"

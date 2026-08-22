@@ -424,6 +424,14 @@ impl JoltField for AkitaFp128 {
         ))
     }
 
+    /// Akita transcripts interpret digest bytes directly as little-endian.
+    #[inline]
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self(<AkitaField as ReducingBytes>::from_le_bytes_mod_order(
+            bytes,
+        ))
+    }
+
     #[inline]
     fn num_bits(&self) -> u32 {
         <AkitaField as CanonicalBitLength>::num_bits(&self.0)
@@ -659,6 +667,21 @@ mod tests {
             F::from_bytes(&u128::MAX.to_le_bytes()),
             F::from_u128(u128::MAX)
         );
+    }
+
+    #[test]
+    fn scalar_challenge_uses_akita_little_endian_convention() {
+        let bytes = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ];
+        let direct = F::from_bytes(&bytes);
+        let challenge = F::from_scalar_challenge_bytes(&bytes);
+        let mut reversed = bytes;
+        reversed.reverse();
+
+        assert_eq!(challenge, direct);
+        assert_ne!(challenge, F::from_bytes(&reversed));
     }
 
     #[test]
