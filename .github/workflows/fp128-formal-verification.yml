@@ -70,7 +70,7 @@ jobs:
         run: ./proofs/hol-light/check.sh all aarch64 --clean
 
   fp128-x86-64:
-    name: Prove x86-64 addition and subtraction
+    name: Prove x86-64 add, sub, and mul
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

@@ -1,10 +1,9 @@
 # Fp128 HOL Light proofs
 
-These proofs cover scalar addition and subtraction for
-`Prime128OffsetA7F7` on AArch64 and x86-64. They also cover scalar
-multiplication on AArch64. They import the exact instruction words or bytes
-from standalone objects. Production Rust includes the same instruction body
-files.
+These proofs cover scalar addition, subtraction, and multiplication for
+`Prime128OffsetA7F7` on AArch64 and x86-64. They import the exact instruction
+words or bytes from standalone objects. Production Rust includes the same
+instruction body files.
 
 Start with the Book chapter
 [Formal verification of field kernels](../../book/src/how/formal-verification/field-kernels.md).
@@ -12,10 +11,11 @@ It explains the arithmetic, theorem shape, production connection, and trust
 boundary.
 
 The final AArch64 theorems cover complete callable functions. The x86-64 final
-theorems cover fixed-register subroutines: they prove the `ret` stack behavior
-and an ABI-safe frame, while leaving the result in `rdi:rsi`. The compiler
-wrapper that moves that result into the C return registers is outside the HOL
-Light theorem. Every proved object includes the production constant load, so
+theorems cover fixed register subroutines. They prove the `ret` stack behavior
+and an ABI safe frame. Addition and subtraction leave the result in `rdi:rsi`.
+Multiplication leaves it in `rdi:rcx`. Rust binds those exact registers as the
+inline assembly outputs. The compiler code around the inline assembly remains
+outside the HOL Light theorem. Every proved object includes the production constant load, so
 none of the theorems assumes a prepared offset register. All arithmetic
 theorems assume canonical inputs and prove the canonical result modulo
 `0xffffffffffffffffffffffff00005809`. A separate certificate proves that this
@@ -69,9 +69,9 @@ and shared lemmas. It can take several minutes. The session prints a command
 that reloads only the editable correctness file. Reloads then take seconds and
 syntax or tactic failures do not require another Cargo build or model load.
 
-Use `./proofs/hol-light/dev.sh aarch64 mul` for AArch64 multiplication. Its
-editable theorem file is also reloaded inside one persistent processor-model
-session.
+Use `mul` instead of `sub` for x86-64 multiplication. Use
+`./proofs/hol-light/dev.sh aarch64 mul` for AArch64 multiplication. Each
+editable theorem file reloads inside one persistent processor model session.
 
 ## Clean final check
 
@@ -91,6 +91,5 @@ clean run preserves its temporary workspace and prints the path. A successful
 clean run removes it. CI runs clean checks independently for AArch64 and
 x86-64.
 
-Packed SIMD operations, x86-64 multiplication, squaring, inversion, small
-offset immediate kernels, and generic fallback kernels are outside the
-present proof scope.
+Packed SIMD operations, squaring, inversion, small offset immediate kernels,
+and generic fallback kernels are outside the present proof scope.

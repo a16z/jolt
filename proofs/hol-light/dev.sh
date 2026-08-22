@@ -8,17 +8,17 @@ PROOF_DIR="$REPO_ROOT/proofs/hol-light"
 : "${S2N_BIGNUM_DIR:?set S2N_BIGNUM_DIR to an s2n-bignum checkout}"
 
 if [[ $# -ne 2 ]]; then
-  echo "usage: $0 x86_64 add|sub | aarch64 mul" >&2
+  echo "usage: $0 x86_64 add|sub|mul | aarch64 mul" >&2
   exit 2
 fi
 ARCHITECTURE=$1
 OPERATION=$2
-if [[ "$ARCHITECTURE" == x86_64 && "$OPERATION" =~ ^(add|sub)$ ]]; then
+if [[ "$ARCHITECTURE" == x86_64 && "$OPERATION" =~ ^(add|sub|mul)$ ]]; then
   DEV_ENTRY=fp128_x86_64_dev.ml
 elif [[ "$ARCHITECTURE" == aarch64 && "$OPERATION" == mul ]]; then
   DEV_ENTRY=fp128_aarch64_dev.ml
 else
-  echo "usage: $0 x86_64 add|sub | aarch64 mul" >&2
+  echo "usage: $0 x86_64 add|sub|mul | aarch64 mul" >&2
   exit 2
 fi
 
@@ -48,10 +48,7 @@ find_newest_object() {
 
 ADD_OBJECT=$(find_newest_object fp128_add.o)
 SUB_OBJECT=$(find_newest_object fp128_sub.o)
-MUL_OBJECT=""
-if [[ "$ARCHITECTURE" == aarch64 ]]; then
-  MUL_OBJECT=$(find_newest_object fp128_mul.o)
-fi
+MUL_OBJECT=$(find_newest_object fp128_mul.o)
 if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
   ELF_OBJECT_DIR="$TARGET_DIR/x86_64-elf"
   mkdir -p "$ELF_OBJECT_DIR"
@@ -63,8 +60,13 @@ if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
     -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
     "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_sub.S" \
     -o "$ELF_OBJECT_DIR/fp128_sub.o"
+  clang --target=x86_64-unknown-linux-gnu \
+    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_mul.S" \
+    -o "$ELF_OBJECT_DIR/fp128_mul.o"
   ADD_OBJECT="$ELF_OBJECT_DIR/fp128_add.o"
   SUB_OBJECT="$ELF_OBJECT_DIR/fp128_sub.o"
+  MUL_OBJECT="$ELF_OBJECT_DIR/fp128_mul.o"
 fi
 DEV_INIT=$(mktemp)
 cleanup() {

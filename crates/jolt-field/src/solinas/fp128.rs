@@ -12,14 +12,15 @@
 //! composite odd modulus yields a ring whose `inverse` is meaningless.
 //!
 //! On AArch64 the multiply and squaring kernels use inline assembly
-//! (benchmarked at 1.29x throughput vs the portable path on Apple M4); every
-//! other path, and every path on other architectures, is portable Rust.
+//! (benchmarked at 1.29x throughput vs the portable path on Apple M4). The
+//! A7F7 multiplication path also uses baseline x86-64 inline assembly. Other
+//! paths use portable Rust.
 
 use super::word::mul64_wide;
 use crate::PseudoMersenne;
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 use rand_core::RngCore;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use std::arch::asm;
 
 mod add_sub;
@@ -189,7 +190,11 @@ impl<const P: u128> Fp128<P> {
         {
             Self::mul_raw_aarch64_dispatch(a, b)
         }
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(target_arch = "x86_64")]
+        {
+            Self::mul_raw_x86_64_dispatch(a, b)
+        }
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         {
             Self::mul_raw_portable(a, b)
         }
@@ -295,6 +300,52 @@ impl<const P: u128> Fp128<P> {
     fn mul_raw_portable(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [r0, r1, r2, r3] = Self(a).mul_wide(Self(b));
         Self::reduce_4(r0, r1, r2, r3)
+    }
+
+    /// Baseline x86-64 multiplication dispatch. The A7F7 specialization uses
+    /// only instructions guaranteed by the x86-64 ISA, with no BMI2 or ADX
+    /// target-feature requirement. Other moduli retain the portable path.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn mul_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        if Self::C_LO == 0xffff_a7f7 {
+            Self::mul_raw_x86_64_a7f7(a, b)
+        } else {
+            Self::mul_raw_portable(a, b)
+        }
+    }
+
+    /// A7F7 multiplication through the exact x86-64 instruction body imported
+    /// by the HOL Light proof.
+    ///
+    /// `rdi:rsi` starts with `a`, and `rdx:rcx` starts with `b`. The result
+    /// finishes in `rdi:rcx`, which Rust binds to the two returned limbs. `r8`
+    /// contains `C = 0xffff_a7f7`. The body uses `rax`, `rdx`, `r9`, `r10`,
+    /// `r11`, and the flags as temporary state. It uses no memory or stack and
+    /// requires no optional x86 target features.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn mul_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [mut out_lo, a_hi] = a;
+        let [b_lo, mut out_hi] = b;
+        // SAFETY: The register contract is listed above. Every changed
+        // register is declared, and the body accesses neither memory nor stack.
+        unsafe {
+            asm!(
+                include_str!("../../asm/x86_64/fp128_mul_body.inc"),
+                inout("rdi") out_lo,
+                in("rsi") a_hi,
+                inout("rdx") b_lo => _,
+                inout("rcx") out_hi,
+                in("r8") Self::C_LO,
+                out("rax") _,
+                out("r9") _,
+                out("r10") _,
+                out("r11") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     /// 35-instruction AArch64 inline-asm multiply with Solinas reduction.

@@ -1,9 +1,8 @@
 # Formal verification of field kernels
 
-Jolt proves the scalar addition and subtraction kernels for
-`Prime128OffsetA7F7` on AArch64 and x86-64. It also proves scalar
-multiplication on AArch64. This chapter explains the claim, the connection to
-Rust, and the limits of the proof.
+Jolt proves the scalar addition, subtraction, and multiplication kernels for
+`Prime128OffsetA7F7` on AArch64 and x86-64. This chapter explains the claim,
+the connection to Rust, and the limits of the proof.
 
 The field modulus is
 
@@ -89,11 +88,14 @@ The x86-64 body uses the following registers.
 
 | Role | Registers |
 | --- | --- |
-| Input `a` and output | `rdi:rsi` |
+| Input `a` | `rdi:rsi` |
 | Input `b` | `rdx:rcx` |
+| Addition and subtraction output | `rdi:rsi` |
+| Multiplication output | `rdi:rcx` |
 | Offset `C = 2^128 - p` | `r8` after the fixed load instruction |
 | Addition temporary values | `r9:r11` |
 | Subtraction mask | `r9` |
+| Multiplication temporary values | `rax`, `rdx`, and `r9:r11` |
 
 These registers are caller saved in the System V x86-64 procedure call
 convention. The standalone object and theorem include the `r8d` constant load,
@@ -165,7 +167,7 @@ value with an assumption would not be sufficient.
 
 ## Multiplication
 
-The AArch64 multiplication theorem states
+The multiplication theorems state
 
 ```text
 result = (m * n) mod p
@@ -185,13 +187,15 @@ The machine proof follows the same stages as the code.
    instructions either keep it or subtract `p` once.
 
 The final result is therefore both congruent to `m * n` and in the canonical
-range. The theorem covers the exact 35-instruction A7F7 body and the callable
-body followed by `ret`.
+range. The AArch64 theorem covers its exact 35 instruction A7F7 body. The
+x86-64 theorem covers its exact baseline `mulq`, `add`, and `adc` sequence.
+Both architectures also have a theorem for the callable body followed by
+`ret`.
 
-The generic AArch64 multiplication body still exists for other moduli. The
-A7F7 dispatch uses the fixed-register shared body because that exact byte
-sequence is what HOL Light imports. The modulus check is a compile-time
-constant after monomorphization.
+The generic multiplication bodies still exist for other moduli. The A7F7
+dispatch uses the fixed register shared body because HOL Light imports that
+exact byte sequence. The modulus check is a compile time constant after
+monomorphization. The x86-64 path requires no optional BMI2 or ADX features.
 
 ## The modulus is prime
 
@@ -216,11 +220,11 @@ It states where the return address comes from and which registers a caller
 must treat as changed.
 
 The x86-64 subroutine theorem is narrower. It proves the `ret` stack behavior
-and that only ABI-permitted state changes, but the arithmetic result remains
-in the fixed kernel registers `rdi:rsi`. The compiler-generated witness
-wrapper moves that result into the C return registers. That wrapper is checked
-for exact inclusion of the proved kernel, but is not itself proved by HOL
-Light.
+and that only ABI permitted state changes. Addition and subtraction leave the
+result in `rdi:rsi`. Multiplication leaves it in `rdi:rcx`. Rust binds these
+fixed registers as the inline assembly outputs. The compiler generated code
+around the inline assembly is checked for exact inclusion of the proved
+kernel, but HOL Light does not prove that surrounding code.
 
 The notation `ensures x86` or `ensures arm` means that every execution which
 starts in the stated precondition reaches the stated postcondition while
@@ -237,6 +241,8 @@ small logical kernel.
 | `fp128_sub_x86_64_object.ml` | Exact subtraction bytes and instruction execution rule |
 | `fp128_add_x86_64_correct.ml` | Reloadable addition theorems |
 | `fp128_sub_x86_64_correct.ml` | Reloadable subtraction theorems |
+| `fp128_mul_x86_64_object.ml` | Exact x86-64 multiplication bytes and execution rule |
+| `fp128_mul_x86_64_correct.ml` | Reloadable x86-64 multiplication theorems |
 | `fp128_mul_object.ml` | Exact AArch64 multiplication words and execution rule |
 | `fp128_mul_correct.ml` | Reloadable AArch64 multiplication theorems |
 | `fp128_prime.ml` | Checked primality certificate for the A7F7 modulus |
@@ -253,12 +259,12 @@ architectures use the same public witness and artifact checker.
 | AArch64 add and subtract | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
 | AArch64 multiply | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
 | x86-64 add and subtract | Constant load, complete fixed body, and `ret` | The proved constant load and fixed body occur exactly once inside the optimized witness |
+| x86-64 multiply | Constant load, complete baseline body, and `ret` | The proved constant load and fixed body occur exactly once inside the optimized witness |
 
 These claims cover the A7F7 register kernels. They do not cover the small
 offset immediate kernels or the generic register fallback used by other field
-types. They also do not cover packed SIMD arithmetic, x86-64 multiplication,
-squaring, inversion, the full proof system, or an arbitrary downstream
-executable.
+types. They also do not cover packed SIMD arithmetic, squaring, inversion, the
+full proof system, or an arbitrary downstream executable.
 
 ## Unreduced arithmetic is a separate obligation
 
@@ -320,7 +326,7 @@ Develop one x86-64 theorem in a persistent HOL Light session with
 ```sh
 HOL_LIGHT_DIR=/path/to/hol-light \
 S2N_BIGNUM_DIR=/path/to/s2n-bignum \
-  ./proofs/hol-light/dev.sh x86_64 sub
+  ./proofs/hol-light/dev.sh x86_64 mul
 ```
 
 The first bytecode load imports the x86 model and object and can take several

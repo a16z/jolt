@@ -96,6 +96,17 @@ X86_64_ADD_BODY = bytes.fromhex(
 X86_64_SUB_BODY = bytes.fromhex(
     "48 29 d7 48 19 ce 4d 19 c9 4d 21 c1 4c 29 cf 48 83 de 00"
 )
+X86_64_MUL_BODY = bytes.fromhex(
+    "49 89 d2 49 89 cb 49 89 f9 48 89 f8 49 f7 e2 48 89 c7 "
+    "48 89 d1 4c 89 c8 49 f7 e3 48 01 c1 48 83 d2 00 49 89 "
+    "d1 48 89 f0 49 f7 e2 45 31 d2 48 01 c1 49 11 d1 49 83 "
+    "d2 00 48 89 f0 49 f7 e3 49 01 c1 4c 11 d2 49 89 d3 4c "
+    "89 c8 49 f7 e0 45 31 d2 48 01 c7 48 11 d1 49 83 d2 00 "
+    "4c 89 d8 49 f7 e0 48 01 c1 4c 11 d2 48 89 d0 49 f7 e0 "
+    "45 31 c9 48 01 c7 48 83 d1 00 49 83 d1 00 48 89 f8 48 "
+    "89 ca 4c 01 c0 48 83 d2 00 4d 11 c9 48 0f 45 f8 48 0f "
+    "45 ca"
+)
 X86_64_RET = bytes([0xC3])
 X86_64_LOAD_A7F7_INTO_R8D = bytes.fromhex("41 b8 f7 a7 ff ff")
 
@@ -316,15 +327,23 @@ def check_aarch64(
 
 
 def check_x86_64(
-    tool: list[str], add_object: Path, sub_object: Path, witness: Path
+    tool: list[str],
+    add_object: Path,
+    sub_object: Path,
+    mul_object: Path,
+    witness: Path,
 ) -> None:
     add_object_bytes = read_symbol_bytes(tool, add_object, "jolt_fp128_add_asm")
     sub_object_bytes = read_symbol_bytes(tool, sub_object, "jolt_fp128_sub_asm")
+    mul_object_bytes = read_symbol_bytes(tool, mul_object, "jolt_fp128_mul_asm")
     add_witness_instructions = read_symbol_byte_instructions(
         tool, witness, "jolt_fp128_add_production_witness"
     )
     sub_witness_instructions = read_symbol_byte_instructions(
         tool, witness, "jolt_fp128_sub_production_witness"
+    )
+    mul_witness_instructions = read_symbol_byte_instructions(
+        tool, witness, "jolt_fp128_mul_production_witness"
     )
     require_bytes(
         "standalone addition proof object",
@@ -336,6 +355,11 @@ def check_x86_64(
         sub_object_bytes,
         X86_64_LOAD_A7F7_INTO_R8D + X86_64_SUB_BODY + X86_64_RET,
     )
+    require_bytes(
+        "standalone multiplication proof object",
+        mul_object_bytes,
+        X86_64_LOAD_A7F7_INTO_R8D + X86_64_MUL_BODY + X86_64_RET,
+    )
     require_instruction_sequence_once(
         "public addition witness",
         add_witness_instructions,
@@ -345,6 +369,11 @@ def check_x86_64(
         "public subtraction witness",
         sub_witness_instructions,
         X86_64_LOAD_A7F7_INTO_R8D + X86_64_SUB_BODY,
+    )
+    require_instruction_sequence_once(
+        "public multiplication witness",
+        mul_witness_instructions,
+        X86_64_LOAD_A7F7_INTO_R8D + X86_64_MUL_BODY,
     )
 
 
@@ -372,7 +401,15 @@ def main() -> None:
             args.production_witness,
         )
     else:
-        check_x86_64(tool, args.add_object, args.sub_object, args.production_witness)
+        if args.mul_object is None:
+            parser.error("--mul-object is required for x86_64")
+        check_x86_64(
+            tool,
+            args.add_object,
+            args.sub_object,
+            args.mul_object,
+            args.production_witness,
+        )
     print(f"Fp128 {args.architecture} proof objects and public witnesses match.")
 
 

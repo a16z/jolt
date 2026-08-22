@@ -13,6 +13,7 @@ the ownership boundary after the Akita field migration.
 | AArch64 HOL Light addition and subtraction theorems | Akita proof head `241cde109751ae28d02b55c92ac54e923a6a92af` | `proofs/hol-light/` |
 | x86-64 HOL Light addition and subtraction theorems | This Jolt continuation | `proofs/hol-light/` |
 | A7F7 AArch64 multiplication body and HOL Light theorems | This Jolt continuation | `crates/jolt-field/asm/aarch64/` and `proofs/hol-light/` |
+| A7F7 baseline x86-64 multiplication body and HOL Light theorems | This Jolt continuation | `crates/jolt-field/asm/x86_64/` and `proofs/hol-light/` |
 | A7F7 primality certificate | This Jolt continuation | `proofs/hol-light/fp128_prime.ml` |
 | Public witness and artifact checker design | Akita proof head `241cde109751ae28d02b55c92ac54e923a6a92af` | `crates/jolt-field/examples/` and `scripts/` |
 | Field specific legacy transcript dispatch | Jolt PR 1745 commit `6b5d3ff` | `crates/jolt-prover-legacy/` |
@@ -43,9 +44,11 @@ compatibility.
 
 ## Proof scope
 
-The current HOL Light claim covers scalar AArch64 and x86-64 addition and
-subtraction for `Prime128OffsetA7F7`, and scalar AArch64 multiplication, under
-canonical input assumptions. It also proves that the A7F7 modulus is prime.
-It does not cover the small offset immediate kernels, generic fallback
-kernels, packed SIMD arithmetic, x86-64 multiplication, squaring, inversion,
-the complete Rust verifier, or a downstream final executable.
+The current HOL Light claim covers scalar AArch64 and x86-64 addition,
+subtraction, and multiplication for `Prime128OffsetA7F7`, under canonical
+input assumptions. The x86-64 multiplication path uses only baseline `mulq`,
+`add`, and `adc` instructions. It does not require BMI2 or ADX. The proofs also
+show that the A7F7 modulus is prime. They do not cover the small offset
+immediate kernels, generic fallback kernels, packed SIMD arithmetic,
+squaring, inversion, the complete Rust verifier, or a downstream final
+executable.

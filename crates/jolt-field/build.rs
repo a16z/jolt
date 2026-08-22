@@ -26,16 +26,15 @@ fn compile_asm(
 fn main() -> Result<(), Box<dyn Error>> {
     for architecture in ["aarch64", "x86_64"] {
         let asm_dir = Path::new("asm").join(architecture);
-        let mut files = vec![
+        let files = vec![
             "fp128_add.S",
             "fp128_add_body.inc",
             "fp128_load_a7f7.inc",
             "fp128_sub.S",
             "fp128_sub_body.inc",
+            "fp128_mul.S",
+            "fp128_mul_body.inc",
         ];
-        if architecture == "aarch64" {
-            files.extend(["fp128_mul.S", "fp128_mul_body.inc"]);
-        }
         for file in files {
             println!("cargo:rerun-if-changed={}", asm_dir.join(file).display());
         }
@@ -67,10 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None
     };
 
-    let mut stems = vec!["fp128_add", "fp128_sub"];
-    if target_arch == "aarch64" {
-        stems.push("fp128_mul");
-    }
+    let stems = ["fp128_add", "fp128_sub", "fp128_mul"];
     for stem in stems {
         compile_asm(
             &compiler,

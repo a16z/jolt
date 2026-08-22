@@ -321,6 +321,10 @@ Final per-file actuals are recorded in the file-structure table below
    AArch64 and x86-64 instruction bodies are shared by production inline assembly and
    standalone proof objects. HOL Light proves the object bytes. An optimized
    public witness checks that Rust includes the same words.
+   The same proof path now covers baseline x86-64 multiplication. That kernel
+   uses `mulq`, `add`, and `adc`, so it does not require BMI2 or ADX. The proved
+   inline path is about 20% faster than the former portable path in the focused
+   x86-64 Criterion benchmark under Rosetta.
 8. **Scalar challenge decoding is field specific.** BN254 and Dory preserve
    the historical byte reversal. Fp128 uses Akita's direct little endian
    convention. Old packed Akita proofs are not supported.

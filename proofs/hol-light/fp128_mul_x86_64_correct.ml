@@ -1,43 +1,38 @@
-(* Functional correctness proof for the fixed A7F7 AArch64 multiply kernel. *)
+(*
+ * Functional correctness proof for Jolt's baseline x86-64 Fp128 multiply.
+ *
+ * Inputs are RDI:RSI and RDX:RCX, low word first. The object loads
+ * C = 2^128 - p into R8. The result is returned in RDI:RCX. The proof follows
+ * the actual carry chain through the 256-bit schoolbook product, two Solinas
+ * folds, and the final conditional correction.
+ *)
 
 needs (Filename.concat (Sys.getenv "JOLT_FP128_PROOF_DIR")
-        "fp128_mul_object.ml");;
+        "fp128_mul_x86_64_object.ml");;
 
-(* CSET writes a 32-bit zero or one before the value is widened to 64 bits.
-   CINC adds a second carry bit. These lemmas expose those machine-level
-   expressions as ordinary natural-number carry values. *)
-let JOLT_FP128_VAL_CSET = prove
- (`!b. val(word_zx(word(bitval b):(32)word):(64)word) = bitval b`,
-  GEN_TAC THEN BOOL_CASES_TAC `b:bool` THEN
-  REWRITE_TAC[BITVAL_CLAUSES] THEN CONV_TAC WORD_REDUCE_CONV);;
+let JOLT_FP128_WORDLIST2_BOUND = prove
+ (`!x y:int64. bignum_of_wordlist [x; y] < 2 EXP 128`,
+  REPEAT GEN_TAC THEN REWRITE_TAC[bignum_of_wordlist] THEN
+  MP_TAC(SPEC `x:int64` VAL_BOUND_64) THEN
+  MP_TAC(SPEC `y:int64` VAL_BOUND_64) THEN ARITH_TAC);;
 
-let JOLT_FP128_VAL_CINC = prove
- (`!b c.
-      (&(val((if c
-              then word_add (word_zx(word(bitval b):(32)word)) (word 1)
-              else word_zx(word(bitval b):(32)word)):(64)word)):real) =
-      &(bitval b) + &(bitval c)`,
-  REPEAT GEN_TAC THEN BOOL_CASES_TAC `b:bool` THEN
-  BOOL_CASES_TAC `c:bool` THEN REWRITE_TAC[BITVAL_CLAUSES] THEN
-  CONV_TAC WORD_REDUCE_CONV THEN ARITH_TAC);;
-
-let JOLT_FP128_MUL_CORRECT = time prove
+let JOLT_FP128_MUL_X86_64_CORRECT = time prove
  (`!a0 a1 b0 b1 pc.
-        ensures arm
-          (\s. aligned_bytes_loaded s (word pc) jolt_fp128_mul_mc /\
-               read PC s = word pc /\
-               read X0 s = a0 /\
-               read X1 s = a1 /\
-               read X2 s = b0 /\
-               read X3 s = b1)
-          (\s. read PC s = word (pc + 0x90) /\
+        ensures x86
+          (\s. bytes_loaded s (word pc) (BUTLAST jolt_fp128_mul_x86_64_mc) /\
+               read RIP s = word pc /\
+               read RDI s = a0 /\
+               read RSI s = a1 /\
+               read RDX s = b0 /\
+               read RCX s = b1)
+          (\s. read RIP s = word (pc + 0x98) /\
                (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
                 bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
-                ==> bignum_of_wordlist [read X0 s; read X1 s] =
+                ==> bignum_of_wordlist [read RDI s; read RCX s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
                     jolt_fp128_a7f7_p))
-          (MAYCHANGE [PC; X0; X1; X4; X5; X6; X7; X8; X9; X10; X11; X12] ,,
+          (MAYCHANGE [RIP; RAX; RCX; RDX; RDI; RSI; R8; R9; R10; R11] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
    [`a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
@@ -45,13 +40,13 @@ let JOLT_FP128_MUL_CORRECT = time prove
   ABBREV_TAC `m = bignum_of_wordlist [a0; a1]` THEN
   ABBREV_TAC `n = bignum_of_wordlist [b0; b1]` THEN
   ENSURES_INIT_TAC "s0" THEN
-  ARM_ACCSTEPS_TAC JOLT_FP128_MUL_EXEC (1--36) (1--36) THEN
+  X86_ACCSTEPS_TAC JOLT_FP128_MUL_X86_64_EXEC
+   [6;10;11;12;15;17;18;21;22;23;26;28;29;32;33;34;36;38;39;43;44;45]
+   (1--47) THEN
   ENSURES_FINAL_STATE_TAC THEN ASM_REWRITE_TAC[] THEN STRIP_TAC THEN
 
-  RULE_ASSUM_TAC(REWRITE_RULE[COND_SWAP; GSYM WORD_BITVAL]) THEN
-
   ABBREV_TAC
-   `mn4 = bignum_of_wordlist [mullo_s2; sum_s16; sum_s17; sum_s18]` THEN
+   `mn4 = bignum_of_wordlist [mullo_s6; sum_s17; sum_s22; sum_s23]` THEN
   SUBGOAL_THEN `m * n < 2 EXP 256` ASSUME_TAC THENL
    [REWRITE_TAC[ARITH_RULE `2 EXP 256 = 2 EXP 128 * 2 EXP 128`] THEN
     MATCH_MP_TAC LT_MULT2 THEN
@@ -60,106 +55,99 @@ let JOLT_FP128_MUL_CORRECT = time prove
     REWRITE_TAC[jolt_fp128_a7f7_p] THEN ARITH_TAC;
     ALL_TAC] THEN
   SUBGOAL_THEN
-   `2 EXP 256 * bitval carry_s18 + mn4 = m * n`
+   `2 EXP 256 * bitval carry_s23 + mn4 = m * n`
   ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["mn4"; "m"; "n"] THEN
     REWRITE_TAC[bignum_of_wordlist; GSYM REAL_OF_NUM_CLAUSES;
                 REAL_MUL_RZERO; REAL_ADD_RID] THEN
     CONV_TAC(RAND_CONV REAL_POLY_CONV) THEN
-    ACCUMULATOR_ASSUM_LIST(fun thl ->
-      MP_TAC(end_itlist CONJ
-       (map (REWRITE_RULE
-          [COND_SWAP; GSYM WORD_BITVAL; JOLT_FP128_VAL_CSET;
-           JOLT_FP128_VAL_CINC]) (DESUM_RULE thl)))) THEN
+    ACCUMULATOR_ASSUM_LIST(MP_TAC o end_itlist CONJ o DECARRY_RULE) THEN
     DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN
     CONV_TAC REAL_RAT_REDUCE_CONV THEN CONV_TAC REAL_RING;
     ALL_TAC] THEN
   SUBGOAL_THEN `mn4 = m * n` ASSUME_TAC THENL
    [MP_TAC(SPECL
-      [`bitval carry_s18`; `2 EXP 256`; `mn4:num`; `m * n`]
+      [`bitval carry_s23`; `2 EXP 256`; `mn4:num`; `m * n`]
       JOLT_FP128_NO_TOP_CARRY) THEN ASM_REWRITE_TAC[] THEN
     CONV_TAC NUM_REDUCE_CONV;
     ALL_TAC] THEN
-
-  ABBREV_TAC `lo0 = bignum_of_wordlist [mullo_s2; sum_s16]` THEN
-  ABBREV_TAC `hi0 = bignum_of_wordlist [sum_s17; sum_s18]` THEN
+  ABBREV_TAC `lo0 = bignum_of_wordlist [mullo_s6; sum_s17]` THEN
+  ABBREV_TAC `hi0 = bignum_of_wordlist [sum_s22; sum_s23]` THEN
   SUBGOAL_THEN `mn4 = 2 EXP 128 * hi0 + lo0` ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["mn4"; "lo0"; "hi0"] THEN
     REWRITE_TAC[bignum_of_wordlist] THEN ARITH_TAC;
     ALL_TAC] THEN
-  ABBREV_TAC `t = bignum_of_wordlist [sum_s23; sum_s26; sum_s27]` THEN
+
+  ABBREV_TAC `t = bignum_of_wordlist [sum_s28; sum_s33; sum_s34]` THEN
   SUBGOAL_THEN `lo0 + 4294944759 * hi0 < 2 EXP 192` ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["lo0"; "hi0"] THEN
     REWRITE_TAC[bignum_of_wordlist] THEN BOUNDER_TAC[];
     ALL_TAC] THEN
   SUBGOAL_THEN
-   `2 EXP 192 * bitval carry_s27 + t = lo0 + 4294944759 * hi0`
+   `2 EXP 192 * bitval carry_s34 + t = lo0 + 4294944759 * hi0`
   ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["t"; "lo0"; "hi0"] THEN
     REWRITE_TAC[bignum_of_wordlist; GSYM REAL_OF_NUM_CLAUSES;
                 REAL_MUL_RZERO; REAL_ADD_RID] THEN
     CONV_TAC(RAND_CONV REAL_POLY_CONV) THEN
-    ACCUMULATOR_ASSUM_LIST(fun thl ->
-      MP_TAC(end_itlist CONJ
-       (map (REWRITE_RULE
-          [COND_SWAP; GSYM WORD_BITVAL; JOLT_FP128_VAL_CSET;
-           JOLT_FP128_VAL_CINC]) (DESUM_RULE thl)))) THEN
+    ACCUMULATOR_ASSUM_LIST(MP_TAC o end_itlist CONJ o DESUM_RULE) THEN
     DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN
     CONV_TAC REAL_RAT_REDUCE_CONV THEN CONV_TAC REAL_RING;
     ALL_TAC] THEN
   SUBGOAL_THEN `t = lo0 + 4294944759 * hi0` ASSUME_TAC THENL
    [MP_TAC(SPECL
-      [`bitval carry_s27`; `2 EXP 192`; `t:num`;
+      [`bitval carry_s34`; `2 EXP 192`; `t:num`;
        `lo0 + 4294944759 * hi0`] JOLT_FP128_NO_TOP_CARRY) THEN
     ASM_REWRITE_TAC[] THEN CONV_TAC NUM_REDUCE_CONV;
     ALL_TAC] THEN
 
-  ABBREV_TAC `lo1 = bignum_of_wordlist [sum_s23; sum_s26]` THEN
+  ABBREV_TAC `lo1 = bignum_of_wordlist [sum_s28; sum_s33]` THEN
   SUBGOAL_THEN
    `lo0 < 2 EXP 128 /\ hi0 < 2 EXP 128 /\ lo1 < 2 EXP 128`
   STRIP_ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["lo0"; "hi0"; "lo1"] THEN
     REWRITE_TAC[bignum_of_wordlist] THEN BOUNDER_TAC[];
     ALL_TAC] THEN
-  SUBGOAL_THEN `t = 2 EXP 128 * val(sum_s27:int64) + lo1` ASSUME_TAC THENL
+  SUBGOAL_THEN `t = 2 EXP 128 * val(sum_s34:int64) + lo1` ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["t"; "lo1"] THEN
     REWRITE_TAC[bignum_of_wordlist] THEN ARITH_TAC;
     ALL_TAC] THEN
-  SUBGOAL_THEN `val(sum_s27:int64) <= 4294944759` ASSUME_TAC THENL
+  SUBGOAL_THEN `val(sum_s34:int64) <= 4294944759` ASSUME_TAC THENL
    [MAP_EVERY UNDISCH_TAC
      [`t = lo0 + 4294944759 * hi0`;
-      `t = 2 EXP 128 * val(sum_s27:int64) + lo1`;
+      `t = 2 EXP 128 * val(sum_s34:int64) + lo1`;
       `lo0 < 2 EXP 128`; `hi0 < 2 EXP 128`; `lo1 < 2 EXP 128`] THEN
     CONV_TAC NUM_REDUCE_CONV THEN ARITH_TAC;
     ALL_TAC] THEN
-  SUBGOAL_THEN `val(sum_s27:int64) * 4294944759 < 2 EXP 64`
+  SUBGOAL_THEN `val(sum_s34:int64) * 4294944759 < 2 EXP 64`
   ASSUME_TAC THENL
-   [UNDISCH_TAC `val(sum_s27:int64) <= 4294944759` THEN
+   [UNDISCH_TAC `val(sum_s34:int64) <= 4294944759` THEN
     CONV_TAC NUM_REDUCE_CONV THEN ARITH_TAC;
     ALL_TAC] THEN
   SUBGOAL_THEN
-   `2 EXP 64 * val(mulhi_s28:int64) + val(mullo_s28:int64) =
-    val(sum_s27:int64) * 4294944759`
+   `2 EXP 64 * val(mulhi_s36:int64) + val(mullo_s36:int64) =
+    val(sum_s34:int64) * 4294944759`
   ASSUME_TAC THENL
    [REWRITE_TAC[GSYM REAL_OF_NUM_EQ; GSYM REAL_OF_NUM_CLAUSES] THEN
     ACCUMULATOR_ASSUM_LIST(MP_TAC o end_itlist CONJ o DESUM_RULE) THEN
     DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN
     CONV_TAC REAL_RAT_REDUCE_CONV THEN CONV_TAC REAL_RING;
     ALL_TAC] THEN
-  SUBGOAL_THEN `val(mullo_s28:int64) = val(sum_s27:int64) * 4294944759`
+  SUBGOAL_THEN
+   `val(mullo_s36:int64) = val(sum_s34:int64) * 4294944759`
   ASSUME_TAC THENL
    [MP_TAC(SPECL
-      [`val(mulhi_s28:int64)`; `2 EXP 64`; `val(mullo_s28:int64)`;
-       `val(sum_s27:int64) * 4294944759`] JOLT_FP128_NO_TOP_CARRY) THEN
+      [`val(mulhi_s36:int64)`; `2 EXP 64`; `val(mullo_s36:int64)`;
+       `val(sum_s34:int64) * 4294944759`] JOLT_FP128_NO_TOP_CARRY) THEN
     ASM_REWRITE_TAC[] THEN CONV_TAC NUM_REDUCE_CONV;
     ALL_TAC] THEN
 
-  ABBREV_TAC `r = bignum_of_wordlist [sum_s29; sum_s30]` THEN
-  ABBREV_TAC `u = bignum_of_wordlist [sum_s32; sum_s33]` THEN
-  ABBREV_TAC `v = 2 EXP 128 * bitval carry_s30 + r` THEN
+  ABBREV_TAC `r = bignum_of_wordlist [sum_s38; sum_s39]` THEN
+  ABBREV_TAC `u = bignum_of_wordlist [sum_s43; sum_s44]` THEN
+  ABBREV_TAC `v = 2 EXP 128 * bitval carry_s39 + r` THEN
   SUBGOAL_THEN
-   `2 EXP 128 * bitval carry_s30 + r =
-    lo1 + val(mullo_s28:int64)`
+   `2 EXP 128 * bitval carry_s39 + r =
+    lo1 + val(mullo_s36:int64)`
   ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["r"; "lo1"] THEN
     REWRITE_TAC[bignum_of_wordlist; MULT_CLAUSES; ADD_CLAUSES] THEN
@@ -167,24 +155,20 @@ let JOLT_FP128_MUL_CORRECT = time prove
     ACCUMULATOR_ASSUM_LIST(MP_TAC o end_itlist CONJ o DECARRY_RULE) THEN
     DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN REAL_ARITH_TAC;
     ALL_TAC] THEN
-  SUBGOAL_THEN `v = lo1 + 4294944759 * val(sum_s27:int64)` ASSUME_TAC THENL
+  SUBGOAL_THEN `v = lo1 + 4294944759 * val(sum_s34:int64)` ASSUME_TAC THENL
    [EXPAND_TAC "v" THEN
     MP_TAC(ASSUME
-     `2 EXP 128 * bitval carry_s30 + r =
-      lo1 + val(mullo_s28:int64)`) THEN
+     `2 EXP 128 * bitval carry_s39 + r =
+      lo1 + val(mullo_s36:int64)`) THEN
     MP_TAC(ASSUME
-     `val(mullo_s28:int64) = val(sum_s27:int64) * 4294944759`) THEN
+     `val(mullo_s36:int64) = val(sum_s34:int64) * 4294944759`) THEN
     ARITH_TAC;
     ALL_TAC] THEN
   SUBGOAL_THEN `v < 2 * jolt_fp128_a7f7_p` ASSUME_TAC THENL
    [MATCH_MP_TAC(SPECL
-     [`lo1:num`; `val(sum_s27:int64)`; `v:num`]
+     [`lo1:num`; `val(sum_s34:int64)`; `v:num`]
      JOLT_FP128_SECOND_FOLD_BOUND) THEN
-    REPEAT CONJ_TAC THENL
-     [ACCEPT_TAC(ASSUME `lo1 < 2 EXP 128`);
-      ACCEPT_TAC(ASSUME `val(sum_s27:int64) <= 4294944759`);
-      ACCEPT_TAC(ASSUME
-       `v = lo1 + 4294944759 * val(sum_s27:int64)`)];
+    ASM_REWRITE_TAC[];
     ALL_TAC] THEN
   SUBGOAL_THEN `(m * n) MOD jolt_fp128_a7f7_p =
                 v MOD jolt_fp128_a7f7_p`
@@ -192,35 +176,34 @@ let JOLT_FP128_MUL_CORRECT = time prove
    [ONCE_REWRITE_TAC[GSYM(ASSUME `mn4 = m * n`)] THEN
     MATCH_MP_TAC(SPECL
      [`mn4:num`; `t:num`; `v:num`; `hi0:num`; `lo0:num`;
-      `val(sum_s27:int64)`; `lo1:num`] JOLT_FP128_TWO_FOLDS) THEN
+      `val(sum_s34:int64)`; `lo1:num`] JOLT_FP128_TWO_FOLDS) THEN
     REPEAT CONJ_TAC THENL
      [ACCEPT_TAC(ASSUME `mn4 = 2 EXP 128 * hi0 + lo0`);
       ACCEPT_TAC(ASSUME `t = lo0 + 4294944759 * hi0`);
       ACCEPT_TAC(ASSUME
-       `t = 2 EXP 128 * val(sum_s27:int64) + lo1`);
+       `t = 2 EXP 128 * val(sum_s34:int64) + lo1`);
       ACCEPT_TAC(ASSUME
-       `v = lo1 + 4294944759 * val(sum_s27:int64)`)];
+       `v = lo1 + 4294944759 * val(sum_s34:int64)`)];
     ALL_TAC] THEN
-  SUBGOAL_THEN `r < 2 EXP 128 /\ u < 2 EXP 128` STRIP_ASSUME_TAC THENL
-   [MAP_EVERY EXPAND_TAC ["r"; "u"] THEN BOUNDER_TAC[];
-    ALL_TAC] THEN
+
   SUBGOAL_THEN
-   `2 EXP 128 * bitval carry_s33 + u = r + 4294944759`
+   `2 EXP 128 * bitval carry_s44 + u = r + 4294944759`
   ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["u"; "r"] THEN
     REWRITE_TAC[bignum_of_wordlist; MULT_CLAUSES; ADD_CLAUSES] THEN
     REWRITE_TAC[GSYM REAL_OF_NUM_CLAUSES] THEN
     ACCUMULATOR_ASSUM_LIST(MP_TAC o end_itlist CONJ o DECARRY_RULE) THEN
-    DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN REAL_ARITH_TAC;
+    DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN CONV_TAC REAL_RING;
     ALL_TAC] THEN
-  DISCARD_STATE_TAC "s36" THEN
+  ASM_REWRITE_TAC[] THEN
+  DISCARD_STATE_TAC "s47" THEN
   ACCUMULATOR_POP_ASSUM_LIST(K ALL_TAC) THEN
   MATCH_MP_TAC EQ_TRANS THEN
-  EXISTS_TAC `(if carry_s30 \/ carry_s33 then u else r):num` THEN
+  EXISTS_TAC `(if carry_s39 \/ carry_s44 then u else r):num` THEN
   CONJ_TAC THENL
    [MAP_EVERY EXPAND_TAC ["u"; "r"] THEN
-    ASM_CASES_TAC `carry_s30:bool` THEN
-    ASM_CASES_TAC `carry_s33:bool` THEN
+    ASM_CASES_TAC `carry_s39:bool` THEN
+    ASM_CASES_TAC `carry_s44:bool` THEN
     ASM_REWRITE_TAC
      [WORD_SUB_0; VAL_WORD_BITVAL; BITVAL_EQ_0; BITVAL_CLAUSES;
       COND_SWAP] THEN
@@ -229,33 +212,36 @@ let JOLT_FP128_MUL_CORRECT = time prove
     ONCE_REWRITE_TAC[ASSUME
      `(m * n) MOD jolt_fp128_a7f7_p = v MOD jolt_fp128_a7f7_p`] THEN
     MATCH_MP_TAC(SPECL
-     [`v:num`; `r:num`; `u:num`; `carry_s30:bool`; `carry_s33:bool`]
+     [`v:num`; `r:num`; `u:num`; `carry_s39:bool`; `carry_s44:bool`]
      JOLT_FP128_CANONICALIZE) THEN
     REPEAT CONJ_TAC THENL
-     [EXPAND_TAC "v" THEN REFL_TAC;
-      ACCEPT_TAC(ASSUME
-       `2 EXP 128 * bitval carry_s33 + u = r + 4294944759`);
+     [EXPAND_TAC "v" THEN ASM_REWRITE_TAC[];
+      ASM_REWRITE_TAC[];
+      ONCE_REWRITE_TAC[GSYM(ASSUME
+      `v = lo1 + 4294944759 * val(sum_s34:int64)`)] THEN
       ACCEPT_TAC(ASSUME `v < 2 * jolt_fp128_a7f7_p`);
-      ACCEPT_TAC(ASSUME `r < 2 EXP 128`);
-      ACCEPT_TAC(ASSUME `u < 2 EXP 128`)]]);;
+      EXPAND_TAC "r" THEN MATCH_ACCEPT_TAC JOLT_FP128_WORDLIST2_BOUND;
+      EXPAND_TAC "u" THEN MATCH_ACCEPT_TAC JOLT_FP128_WORDLIST2_BOUND]]);;
 
-let JOLT_FP128_MUL_SUBROUTINE_CORRECT = time prove
- (`!a0 a1 b0 b1 pc returnaddress.
-        ensures arm
-          (\s. aligned_bytes_loaded s (word pc) jolt_fp128_mul_mc /\
-               read PC s = word pc /\
-               read X30 s = returnaddress /\
-               read X0 s = a0 /\
-               read X1 s = a1 /\
-               read X2 s = b0 /\
-               read X3 s = b1)
-          (\s. read PC s = returnaddress /\
+let JOLT_FP128_MUL_X86_64_SUBROUTINE_CORRECT = time prove
+ (`!a0 a1 b0 b1 pc stackpointer returnaddress.
+        ensures x86
+          (\s. bytes_loaded s (word pc) jolt_fp128_mul_x86_64_mc /\
+               read RIP s = word pc /\
+               read RSP s = stackpointer /\
+               read (memory :> bytes64 stackpointer) s = returnaddress /\
+               read RDI s = a0 /\
+               read RSI s = a1 /\
+               read RDX s = b0 /\
+               read RCX s = b1)
+          (\s. read RIP s = returnaddress /\
+               read RSP s = word_add stackpointer (word 8) /\
                (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
                 bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
-                ==> bignum_of_wordlist [read X0 s; read X1 s] =
+                ==> bignum_of_wordlist [read RDI s; read RCX s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
                     jolt_fp128_a7f7_p))
-          MAYCHANGE_REGS_AND_FLAGS_PERMITTED_BY_ABI`,
-  ARM_ADD_RETURN_NOSTACK_TAC
-    JOLT_FP128_MUL_EXEC JOLT_FP128_MUL_CORRECT);;
+          (MAYCHANGE [RSP] ,, MAYCHANGE_REGS_AND_FLAGS_PERMITTED_BY_ABI)`,
+  X86_PROMOTE_RETURN_NOSTACK_TAC
+    jolt_fp128_mul_x86_64_mc JOLT_FP128_MUL_X86_64_CORRECT);;
