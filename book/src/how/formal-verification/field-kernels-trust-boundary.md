@@ -16,21 +16,21 @@ This documentation uses four words with fixed meanings.
 | Trusted | The claim assumes this component behaves correctly |
 
 A byte comparison is checked evidence. It is not an arithmetic proof. A
-million random products are strong test evidence. They do not cover every pair
-of 128 bit inputs.
+million random products are strong test evidence. They do not cover every
+possible input pair.
 
 ## Evidence at each layer
 
 | Layer | Current evidence |
 | --- | --- |
-| Arithmetic specification | Reviewed equations for addition, subtraction, and multiplication modulo the A7F7 prime |
+| Arithmetic specification | Reviewed equations for scalar addition, subtraction, and multiplication modulo the A7F7 and `2^64 - 59` primes |
 | Exact proof object | HOL Light body and callable subroutine theorems |
 | Linux inspection witness | Complete byte equality with the proved object |
 | Darwin inspection witness | Exact wrapper bytes checked, while frame semantics remain outside the theorem |
-| Arbitrary inlined callers | Rust and LLVM inline assembly contract trusted |
+| Arbitrary inlined callers | Rust and LLVM compiler contract trusted |
 | CPU feature selection | Build conditions checked by building both x86-64 paths |
 | Final downstream executable | Required for a release claim, but not performed by Jolt |
-| Complete Fp128 use | Packed arithmetic, unreduced accumulation, squaring, and inversion have separate obligations |
+| Complete field use | Extension fields, packed arithmetic, unreduced accumulation, squaring, and inversion have separate obligations |
 
 ## Why not use only idiomatic Rust?
 
@@ -42,16 +42,21 @@ instructions can also change with the compiler version, optimization flags,
 and target CPU. Tests can miss a carry failure that occurs only at a boundary
 value.
 
-Jolt uses handwritten assembly here because measurements show a useful gain
-and because HOL Light can verify the exact instructions. The proof gives a
-stronger functional claim than tests. It does not make assembly safe by itself.
-Jolt still needs a correct inline assembly declaration, correct feature
-selection, and a final integration check.
+Jolt uses handwritten Fp128 assembly because measurements show a useful gain
+and because HOL Light can verify the exact instructions. The Fp64 production
+path stays in Rust because a native assembly experiment was slower. For Fp64,
+HOL Light proves a matching standalone sequence and the artifact checker ties
+it to one compiled inspection function.
+
+The proof gives a stronger functional claim than tests. It does not make
+assembly or compiler output safe by itself. Jolt still needs correct compiler
+contracts, correct feature selection, and a final integration check.
 
 If assembly does not improve performance, its unsafe boundary and proof upkeep
 are difficult to justify. The A7F7 paths remain because native measurements
-show a gain over the portable implementation. The BMI2 and ADX variant remains
-separate because not every x86-64 processor supports those instructions.
+show a gain over the portable implementation. Fp64 therefore keeps its Rust
+production path. Optional x86 instructions remain separate because not every
+x86-64 processor supports them.
 
 ## What the arithmetic theorem rules out
 
@@ -72,13 +77,14 @@ does not strengthen its universal arithmetic statement.
 
 ## What the theorem does not rule out
 
-### A wrong Rust assembly declaration
+### A wrong Rust or assembly compiler boundary
 
-The bytes can be correct while the surrounding program is wrong. A missing
-changed register tells LLVM that a value survived when the assembly actually
-destroyed it. The theorem proves the object in isolation. The inspection
-witness checks one complete compilation. Other inlined callers still rely on
-the compiler contract.
+The bytes can be correct while the surrounding program is wrong. For inline
+assembly, a missing changed register can tell LLVM that a value survived when
+the assembly actually destroyed it. For generic Rust, a compiler can produce
+different instructions in different callers. The theorem proves the object in
+isolation. The inspection witness checks one complete compilation. Other
+inlined callers still rely on the compiler.
 
 ### A wrong dispatch path
 
@@ -125,14 +131,17 @@ canonical value. The whole program preservation argument is not yet formalized.
 ### Other field operations
 
 The scalar add, subtract, and multiply theorems do not automatically prove
-squaring, inversion, packed SIMD code, or unreduced accumulators. Inversion
-also relies on the separate theorem that the modulus is prime.
+extension field formulas, squaring, inversion, packed SIMD code, or unreduced
+accumulators. The current Fp64 proof also does not cover
+`Prime63Offset259`. Inversion relies on the separate theorem that the modulus
+is prime.
 
 ## Inline code and callable objects
 
-The proof object is a complete callable function. The production operation is
-inline because a function call was measured to cost more than the small add and
-subtract bodies.
+The proof object is a complete callable function. Fp128 production operations
+stay inline because a function call was measured to cost more than the small
+add and subtract bodies. Fp64 production operations also stay inline, but LLVM
+generates them from Rust rather than from a shared assembly fragment.
 
 This choice preserves performance and leaves a compiler boundary. The shared
 fragment and inspection witness make divergence visible. They do not prove the
@@ -192,6 +201,6 @@ Then state the remaining boundary.
 > The proof does not currently establish every inline call site or a downstream
 > executable.
 
-Do not shorten this to “Fp128 is fully verified,” “the Rust implementation is
-proved,” or “the final binary is verified.” Those sentences claim more than
-the current evidence establishes.
+Do not shorten this to “Fp128 is fully verified,” “Fp64 is fully verified,”
+“the Rust implementation is proved,” or “the final binary is verified.” Those
+sentences claim more than the current evidence establishes.

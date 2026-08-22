@@ -1,14 +1,24 @@
-# Fp128 HOL Light proofs
+# HOL Light field kernel proofs
 
-These proofs cover scalar addition, subtraction, and multiplication for
-`Prime128OffsetA7F7` on AArch64 and x86-64. They import the exact instruction
-words or bytes from standalone objects. Production Rust includes the same
-instruction body files.
+The Fp128 proofs cover scalar addition, subtraction, and multiplication for
+`Prime128OffsetA7F7` on AArch64 and x86-64. Production Rust includes the exact
+instruction fragments imported by those proofs.
+
+The Fp64 proofs cover scalar addition, subtraction, and multiplication for
+`Prime64Offset59` on AArch64 and x86-64. They include baseline x86-64 and BMI2
+multiplication. Production keeps its faster generic Rust implementation. An
+artifact checker confirms byte identity for AArch64 and Linux x86-64. On
+Darwin x86-64, it checks one exact compiler frame around the proved sequence.
+No Fp64 proof uses AVX, AVX2, or AVX-512.
 
 Start with the Book chapter
 [Formal verification of field kernels](../../book/src/how/formal-verification/field-kernels.md).
 It explains the arithmetic, theorem shape, production connection, and trust
 boundary.
+
+The [scalar Fp64 guide](../../book/src/how/formal-verification/field-kernels-fp64.md)
+states the precise Fp64 claim, explains the `2^64 - 59` reduction, and lists
+the remaining Fp64 work.
 
 The final theorems cover complete callable AArch64 and Linux x86-64 witness
 functions. The baseline x86-64 bodies copy their internal results to the
@@ -104,3 +114,31 @@ x86-64.
 
 Packed SIMD operations, squaring, inversion, small offset immediate kernels,
 and generic fallback kernels are outside the present proof scope.
+
+## Scalar Fp64 checks
+
+Run the fast Fp64 byte check with
+
+```sh
+./proofs/hol-light/check-fp64.sh bytes x86_64
+```
+
+Start a persistent Fp64 proof session with
+
+```sh
+HOL_LIGHT_DIR=/path/to/hol-light \
+S2N_BIGNUM_DIR=/path/to/s2n-bignum \
+  ./proofs/hol-light/dev-fp64.sh x86_64 mul_bmi2
+```
+
+Run the complete clean Fp64 check with
+
+```sh
+HOL_LIGHT_DIR=/path/to/hol-light \
+S2N_BIGNUM_DIR=/path/to/s2n-bignum \
+  ./proofs/hol-light/check-fp64.sh all x86_64 --clean
+```
+
+Use `aarch64` for the AArch64 byte and clean checks. The Fp64 theorem sessions
+accept `add`, `sub`, and `mul` on both architectures. The x86-64 session also
+accepts `mul_bmi2`.

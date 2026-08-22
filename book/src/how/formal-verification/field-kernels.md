@@ -7,7 +7,11 @@ compiled inspection functions contain the expected bytes. The proof does not
 cover every inlined caller or a downstream executable. This chapter explains
 the exact claim, its connection to Rust, and its limits.
 
-The field modulus is
+This page focuses on `Prime128OffsetA7F7`. The
+[scalar Fp64 page](field-kernels-fp64.md) describes the separate
+`Prime64Offset59` proofs.
+
+The Fp128 field modulus is
 
 ```text
 p = 2^128 - 2^32 + 22537

@@ -27,6 +27,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     for architecture in ["aarch64", "x86_64"] {
         let asm_dir = Path::new("asm").join(architecture);
         let mut files = vec![
+            "fp64_add.S",
+            "fp64_add_body.inc",
+            "fp64_sub.S",
+            "fp64_sub_body.inc",
+            "fp64_mul.S",
+            "fp64_mul_body.inc",
             "fp128_add.S",
             "fp128_add_body.inc",
             "fp128_load_a7f7.inc",
@@ -36,14 +42,21 @@ fn main() -> Result<(), Box<dyn Error>> {
             "fp128_mul_body.inc",
         ];
         if architecture == "x86_64" {
-            files.extend(["fp128_mul_bmi2_adx.S", "fp128_mul_bmi2_adx_body.inc"]);
+            files.extend([
+                "fp64_mul_bmi2.S",
+                "fp64_mul_bmi2_body.inc",
+                "fp128_mul_bmi2_adx.S",
+                "fp128_mul_bmi2_adx_body.inc",
+            ]);
         }
         for file in files {
             println!("cargo:rerun-if-changed={}", asm_dir.join(file).display());
         }
     }
 
-    if env::var_os("CARGO_FEATURE_FP128_PROOF_LINKAGE").is_none() {
+    let fp64_linkage = env::var_os("CARGO_FEATURE_FP64_PROOF_LINKAGE").is_some();
+    let fp128_linkage = env::var_os("CARGO_FEATURE_FP128_PROOF_LINKAGE").is_some();
+    if !fp64_linkage && !fp128_linkage {
         return Ok(());
     }
 
@@ -69,9 +82,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         None
     };
 
-    let mut stems = vec!["fp128_add", "fp128_sub", "fp128_mul"];
-    if target_arch == "x86_64" {
-        stems.push("fp128_mul_bmi2_adx");
+    let mut stems = Vec::new();
+    if fp64_linkage {
+        stems.extend(["fp64_add", "fp64_sub", "fp64_mul"]);
+        if target_arch == "x86_64" {
+            stems.push("fp64_mul_bmi2");
+        }
+    }
+    if fp128_linkage {
+        stems.extend(["fp128_add", "fp128_sub", "fp128_mul"]);
+        if target_arch == "x86_64" {
+            stems.push("fp128_mul_bmi2_adx");
+        }
     }
     for stem in stems {
         compile_asm(
