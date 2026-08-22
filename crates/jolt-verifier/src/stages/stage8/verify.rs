@@ -413,8 +413,6 @@ where
                 )?,
                 JoltCommittedPolynomial::BalancedIncDigit(_)
                 | JoltCommittedPolynomial::BalancedIncCarry
-                | JoltCommittedPolynomial::TrustedAdviceBytes
-                | JoltCommittedPolynomial::UntrustedAdviceBytes
                 | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
                 | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
                 | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
@@ -506,8 +504,7 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    // The reconstruction phase settles auxiliary word/chunk claims against
-    // their committed one-hot decompositions.
+    // Settle committed-program word/chunk claims against their one-hot decompositions.
     let reconstruction = super::reconstruction::verify(
         checked,
         proof.stages.reconstruction_sumcheck_proof.as_ref(),
@@ -528,6 +525,8 @@ where
         trusted_advice_commitment,
         &proof.joint_opening_proof,
         transcript,
+        &checked.precommitted,
+        stage6.clear()?,
         stage7.clear()?,
         &reconstruction,
     )?;

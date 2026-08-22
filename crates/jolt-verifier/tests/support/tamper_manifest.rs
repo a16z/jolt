@@ -1080,22 +1080,6 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         "the hamming-weight reduction final-claim fold covers the increment carry",
     ),
     checked_standard(
-        "reconstruction.claims.untrusted_advice",
-        "claims.reconstruction.untrusted_advice",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the untrusted advice leaf",
-    ),
-    checked_standard(
-        "reconstruction.claims.trusted_advice",
-        "claims.reconstruction.trusted_advice",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the trusted advice leaf",
-    ),
-    checked_standard(
         "reconstruction.claims.bytecode",
         "claims.reconstruction.bytecode",
         VerifierPhase::Stage8Openings,
@@ -1356,8 +1340,6 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
     ClearProofClaims {
         #[cfg(feature = "akita")]
         reconstruction: jolt_verifier::stages::stage8::reconstruction::ReconstructionOutputClaims {
-            untrusted_advice: None,
-            trusted_advice: None,
             bytecode: None,
             program_image: None,
         },

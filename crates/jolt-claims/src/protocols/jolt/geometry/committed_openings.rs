@@ -78,10 +78,6 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
 
         JoltCommittedPolynomial::BalancedIncDigit(_)
         | JoltCommittedPolynomial::BalancedIncCarry => JoltRelationId::HammingWeightClaimReduction,
-        JoltCommittedPolynomial::UntrustedAdviceBytes => {
-            JoltRelationId::UntrustedAdviceReconstruction
-        }
-        JoltCommittedPolynomial::TrustedAdviceBytes => JoltRelationId::TrustedAdviceReconstruction,
         JoltCommittedPolynomial::ProgramImageBytes => JoltRelationId::ProgramImageReconstruction,
         JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
         | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }

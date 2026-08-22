@@ -46,7 +46,7 @@ use akita_types::{
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
-    configs::{JoltDense as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
+    configs::{JoltDenseBounded as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
     AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };

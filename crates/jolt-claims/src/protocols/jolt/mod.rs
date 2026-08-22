@@ -35,6 +35,5 @@ pub use ids::{
     RamValCheckChallenge, RamValCheckPublic, RegistersClaimReductionChallenge,
     RegistersClaimReductionPublic, RegistersReadWriteChallenge, RegistersReadWritePublic,
     RegistersValEvaluationPublic, SpartanOuterPublic, SpartanProductVirtualizationPublic,
-    SpartanShiftChallenge, SpartanShiftPublic, TrustedAdviceReconstructionPublic,
-    UntrustedAdviceReconstructionChallenge, UntrustedAdviceReconstructionPublic,
+    SpartanShiftChallenge, SpartanShiftPublic,
 };

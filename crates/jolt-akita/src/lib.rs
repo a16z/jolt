@@ -23,12 +23,15 @@
 mod adapters;
 pub mod configs;
 mod native_batching;
+pub mod schedule_registry;
 pub mod schedules;
 mod scheme;
 mod shape_guard;
 mod trace_onehot;
 
 pub(crate) use akita_schedules::RecursiveSplitSearchPolicy;
+
+pub use akita_pcs::AkitaError;
 
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,

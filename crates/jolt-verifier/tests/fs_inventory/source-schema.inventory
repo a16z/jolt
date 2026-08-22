@@ -57,7 +57,7 @@ jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.vc_setup
 jolt-verifier::preprocessing.rs::ProgramPreprocessing::Committed.0
 jolt-verifier::preprocessing.rs::ProgramPreprocessing::Full.0
 jolt-verifier::proof.rs::AkitaJointOpeningProof.auxiliary
-jolt-verifier::proof.rs::AkitaJointOpeningProof.one_hot_trace
+jolt-verifier::proof.rs::AkitaJointOpeningProof.main_batch
 jolt-verifier::proof.rs::ClearProofClaims.reconstruction
 jolt-verifier::proof.rs::ClearProofClaims.stage1
 jolt-verifier::proof.rs::ClearProofClaims.stage2

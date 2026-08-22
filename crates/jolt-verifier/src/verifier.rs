@@ -1475,8 +1475,6 @@ mod tests {
             },
             #[cfg(feature = "akita")]
             reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims {
-                untrusted_advice: None,
-                trusted_advice: None,
                 bytecode: None,
                 program_image: None,
             },

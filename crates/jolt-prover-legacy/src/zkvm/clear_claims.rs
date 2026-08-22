@@ -631,9 +631,6 @@ impl<F: Field> OpeningClaimMap<F> {
 mod packed {
     use super::*;
     use jolt_claims::protocols::jolt::geometry::bytecode::fused_inc_read_raf_opening;
-    use jolt_claims::protocols::jolt::lattice::relations::advice_reconstruction::{
-        self, TrustedAdviceReconstructionOutputClaims, UntrustedAdviceReconstructionOutputClaims,
-    };
     use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims;
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
         self, BytecodeChunkReconstructionOutputClaims,
@@ -863,12 +860,6 @@ mod packed {
         claims: &OpeningClaimMap<F>,
     ) -> ReconstructionOutputClaims<F> {
         ReconstructionOutputClaims {
-            untrusted_advice: claims
-                .get(advice_reconstruction::untrusted_advice_bytes_opening())
-                .map(|bytes| UntrustedAdviceReconstructionOutputClaims { bytes }),
-            trusted_advice: claims
-                .get(advice_reconstruction::trusted_advice_bytes_opening())
-                .map(|bytes| TrustedAdviceReconstructionOutputClaims { bytes }),
             bytecode: bytecode_reconstruction_claims_from_openings(claims),
             program_image: claims
                 .get(program_image_reconstruction::program_image_bytes_opening())

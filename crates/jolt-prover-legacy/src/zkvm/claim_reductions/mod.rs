@@ -1,6 +1,4 @@
 pub mod advice;
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub mod advice_bytes;
 pub mod bytecode;
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub mod bytecode_reconstruction;
@@ -17,11 +15,6 @@ pub mod registers;
 pub use advice::{
     AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceClaimReductionVerifier,
     AdviceKind,
-};
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub use advice_bytes::{
-    TrustedAdviceReconstructionSumcheckParams, TrustedAdviceReconstructionSumcheckProver,
-    UntrustedAdviceReconstructionSumcheckParams, UntrustedAdviceReconstructionSumcheckProver,
 };
 pub use bytecode::{
     BytecodeClaimReductionParams, BytecodeClaimReductionProver, BytecodeClaimReductionVerifier,
