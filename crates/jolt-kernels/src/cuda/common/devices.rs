@@ -13,7 +13,7 @@ impl CycleWindow {
     }
 }
 
-pub(crate) fn cycle_windows(cycles: usize, alignment: usize) -> Vec<CycleWindow> {
+pub(crate) fn device_windows(cycles: usize, alignment: usize) -> Vec<CycleWindow> {
     let devices = device_count().max(1);
     if devices == 1 || alignment == 0 || !cycles.is_multiple_of(alignment) {
         return vec![CycleWindow {

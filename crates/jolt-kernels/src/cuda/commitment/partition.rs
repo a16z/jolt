@@ -7,7 +7,7 @@ use jolt_witness::backend::cuda::DeviceTrace;
 
 use super::{hot_columns_from_trace, tier1_order, ColumnKind, RetainedHotColumns};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
-use crate::cuda::common::devices::{cycle_windows, fan_out, CycleWindow, DeviceTask};
+use crate::cuda::common::devices::{device_windows, fan_out, CycleWindow, DeviceTask};
 use crate::cuda::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs};
 use crate::KernelError;
 
@@ -27,7 +27,7 @@ pub(super) struct TraceSource<'a> {
 type Columns = Vec<Option<Vec<JacobianLimbs>>>;
 
 pub(super) fn windows(cycles: usize, row_width: usize) -> Vec<CycleWindow> {
-    cycle_windows(cycles, row_width)
+    device_windows(cycles, row_width)
 }
 
 pub(super) fn window_columns<F: Field>(
