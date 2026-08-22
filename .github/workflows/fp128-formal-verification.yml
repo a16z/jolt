@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   fp128-aarch64:
-    name: Prove AArch64 addition and subtraction
+    name: Prove AArch64 add, sub, and mul
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     steps:

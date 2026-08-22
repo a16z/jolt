@@ -72,14 +72,17 @@ The AArch64 body uses the following registers.
 | --- | --- |
 | Input `a` and output | `x0:x1` |
 | Input `b` | `x2:x3` |
-| Offset `C = 2^128 - p` | `x4` |
+| Offset `C = 2^128 - p` | `x4` after the fixed load instruction |
 | Addition temporary values | `x5:x9` |
 | Subtraction temporary values | `x5:x7` |
 
-Multiplication also uses `x10:x12` as temporary registers. None of the proved
-bodies accesses memory or the stack. Each standalone object adds one `ret`
-instruction. The subroutine theorem proves the return through `x30` and uses
-the normal AArch64 set of registers that a callee may change.
+The addition and subtraction objects include the constant load, arithmetic
+body, and `ret`. Their theorems do not assume any initial value for `x4`.
+Multiplication also uses `x10:x12` as temporary registers. Its arithmetic
+theorem currently assumes `x4 = C`; the artifact checker separately checks the
+constant load immediately before the proved body. None of the proved bodies
+accesses memory or the stack. The subroutine theorems prove the return through
+`x30` and use the normal AArch64 set of registers that a callee may change.
 
 ## x86-64 register contract
 
@@ -89,19 +92,21 @@ The x86-64 body uses the following registers.
 | --- | --- |
 | Input `a` and output | `rdi:rsi` |
 | Input `b` | `rdx:rcx` |
-| Offset `C = 2^128 - p` | `r8` |
+| Offset `C = 2^128 - p` | `r8` after the fixed load instruction |
 | Addition temporary values | `r9:r11` |
 | Subtraction mask | `r9` |
 
 These registers are caller saved in the System V x86-64 procedure call
-convention. The body does not access memory or the stack. The subroutine
-theorem also proves that `ret` reads the return address from the stack, updates
-`rsp` by eight bytes, and transfers control to that address.
+convention. The standalone object and theorem include the `r8d` constant load,
+so no initial value is assumed for `r8`. The body does not access memory or the
+stack. The subroutine theorem also proves that `ret` reads the return address
+from the stack, updates `rsp` by eight bytes, and transfers control to that
+address.
 
 The optimized Rust witness has compiler generated setup and return moves
-around the body. The checker requires the `r8d` constant load followed by the
-exact proved body to occur once in the witness symbol. HOL Light proves the
-body and `ret` in the standalone object. It does not prove the compiler
+around the proved sequence. The checker requires the exact proved constant
+load and body to occur once in the witness symbol. HOL Light proves that
+sequence and `ret` in the standalone object. It does not prove the compiler
 generated witness wrapper.
 
 ## Addition
@@ -238,8 +243,9 @@ architectures use the same public witness and artifact checker.
 
 | Architecture | Proved object | Public Rust connection |
 | --- | --- | --- |
-| AArch64 add, subtract, multiply | Complete fixed body and `ret` | The complete optimized witness words match the constant load, body, and `ret` |
-| x86-64 | Complete fixed body and `ret` | The constant load and fixed body occur exactly once inside the optimized witness |
+| AArch64 add and subtract | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
+| AArch64 multiply | Complete fixed body and `ret`, assuming `x4 = C` | The complete optimized witness words match the constant load, body, and `ret` |
+| x86-64 add and subtract | Constant load, complete fixed body, and `ret` | The proved constant load and fixed body occur exactly once inside the optimized witness |
 
 These claims cover the A7F7 register kernels. They do not cover the small
 offset immediate kernels or the generic register fallback used by other field

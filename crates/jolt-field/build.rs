@@ -29,6 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut files = vec![
             "fp128_add.S",
             "fp128_add_body.inc",
+            "fp128_load_a7f7.inc",
             "fp128_sub.S",
             "fp128_sub_body.inc",
         ];

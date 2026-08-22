@@ -66,8 +66,8 @@ AARCH64_MUL_BODY = [
 ]
 AARCH64_RET = 0xD65F03C0
 AARCH64_LOAD_A7F7_INTO_W4 = 0x128B0104
-AARCH64_ADD_OBJECT_WORDS = [*AARCH64_ADD_BODY, AARCH64_RET]
-AARCH64_SUB_OBJECT_WORDS = [*AARCH64_SUB_BODY, AARCH64_RET]
+AARCH64_ADD_OBJECT_WORDS = [AARCH64_LOAD_A7F7_INTO_W4, *AARCH64_ADD_BODY, AARCH64_RET]
+AARCH64_SUB_OBJECT_WORDS = [AARCH64_LOAD_A7F7_INTO_W4, *AARCH64_SUB_BODY, AARCH64_RET]
 AARCH64_MUL_OBJECT_WORDS = [*AARCH64_MUL_BODY, AARCH64_RET]
 AARCH64_ADD_WITNESS_WORDS = [
     AARCH64_LOAD_A7F7_INTO_W4,
@@ -284,12 +284,12 @@ def check_x86_64(
     require_bytes(
         "standalone addition proof object",
         add_object_bytes,
-        X86_64_ADD_BODY + X86_64_RET,
+        X86_64_LOAD_A7F7_INTO_R8D + X86_64_ADD_BODY + X86_64_RET,
     )
     require_bytes(
         "standalone subtraction proof object",
         sub_object_bytes,
-        X86_64_SUB_BODY + X86_64_RET,
+        X86_64_LOAD_A7F7_INTO_R8D + X86_64_SUB_BODY + X86_64_RET,
     )
     require_bytes_once(
         "public addition witness",
