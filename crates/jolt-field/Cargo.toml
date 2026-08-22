@@ -31,10 +31,15 @@ allocative = ["dep:allocative"]
 
 [dev-dependencies]
 bincode = { workspace = true }
+criterion = { workspace = true }
 num-bigint = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 
 [[bench]]
 name = "ext4_kernels"
+harness = false
+
+[[bench]]
+name = "fp64_kernels"
 harness = false

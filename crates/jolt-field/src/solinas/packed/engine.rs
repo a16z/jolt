@@ -17,7 +17,7 @@
 
 use super::simd::SimdWord;
 use crate::solinas::{Fp32, Fp64};
-use crate::Packed;
+use crate::{Ext2NonResidueKind, Packed};
 
 pub(crate) use super::fp128::PackedFp128;
 
@@ -265,13 +265,31 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
     } else {
         (1u64 << Self::BITS) - 1
     };
+    /// Whether two folds and one subtraction reduce a sum of three products.
+    const EXT2_TWO_FUSION_SAFE: bool =
+        Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
+
+    /// Reduces a scalar sum of up to three products for lane-wise backends.
+    #[inline(always)]
+    fn reduce_three_product_sum(lo: u64, hi: u64) -> u64 {
+        debug_assert!(Self::EXT2_TWO_FUSION_SAFE);
+        Fp64::<P>::reduce_sub_word_wide(lo, hi, hi >> Self::BITS)
+    }
+
+    /// Adds lane-wise 128-bit values represented as `[lo, hi]`.
+    #[inline(always)]
+    fn add128(a: [I::V64; 2], b: [I::V64; 2]) -> [I::V64; 2] {
+        let lo = I::add64(a[0], b[0]);
+        let carry = I::select64(I::lt_u64(lo, a[0]), I::splat64(1), I::splat64(0));
+        [lo, I::add64(I::add64(a[1], b[1]), carry)]
+    }
 
     #[inline(always)]
     fn add_raw(a: Self, b: Self) -> Self {
         let p = I::splat64(P);
         let s = I::add64(a.0, b.0);
-        if Self::BITS <= 62 {
-            // a + b < 2P < 2^63: no wrap possible.
+        if Self::BITS < 64 {
+            // a + b < 2P < 2^64: no wrap possible.
             Self(I::select64(I::lt_u64(s, p), s, I::sub64(s, p)))
         } else {
             let no_wrap = I::select64(I::lt_u64(s, p), s, I::sub64(s, p));
@@ -301,7 +319,14 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
     fn mul_raw(a: Self, b: Self) -> Self {
         if I::FP64_MUL_BY_LANES {
             Self(I::v64_from_fn(|i| {
-                (Fp64::<P>(I::v64_lane(a.0, i)) * Fp64::<P>(I::v64_lane(b.0, i))).0
+                let x = I::v64_lane(a.0, i);
+                let y = I::v64_lane(b.0, i);
+                if Self::BITS == 63 {
+                    if let Some(reduced) = I::mul_pm63(x, y, P, Self::C) {
+                        return reduced;
+                    }
+                }
+                (Fp64::<P>(x) * Fp64::<P>(y)).0
             }))
         } else {
             let [lo, hi] = I::mul64_wide(a.0, b.0);
@@ -313,11 +338,7 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
     #[inline(always)]
     fn reduce128(lo: I::V64, hi: I::V64) -> I::V64 {
         let p = I::splat64(P);
-        if Self::BITS < 64 {
-            // Both folds stay in u64 whenever C < 2^(64−BITS) — true for
-            // every registered sub-64-bit prime (the scalar field switches
-            // to its u128 path in exactly the same regime).
-            debug_assert!(u128::from(Self::C) < 1u128 << (64 - Self::BITS));
+        if Self::BITS < 64 && Fp64::<P>::FOLD_IN_U64 {
             let mask = I::splat64(Self::MASK);
             let hi_k = I::add64(I::shr64(lo, Self::BITS), I::shl64(hi, 64 - Self::BITS));
             let f1 = I::add64(I::and64(lo, mask), mul_by_offset::<I>(hi_k, Self::C));
@@ -326,6 +347,8 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
                 mul_by_offset::<I>(I::shr64(f1, Self::BITS), Self::C),
             );
             I::select64(I::lt_u64(f2, p), f2, I::sub64(f2, p))
+        } else if Self::BITS < 64 {
+            Self::reduce128_sub_word_wide(lo, hi)
         } else {
             // BITS == 64: hi·2^64 ≡ C·hi, a 96-bit product. Fold its carry
             // limb once more; the final +C correction cannot cascade
@@ -339,6 +362,30 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
             let r = I::select64(I::lt_u64(r, s), I::add64(r, I::splat64(Self::C)), r);
             I::select64(I::lt_u64(r, p), r, I::sub64(r, p))
         }
+    }
+
+    /// Two-fold sub-word reduction that retains the carry out of the first
+    /// `C * (product >> BITS)` fold. It also accepts sums of up to three
+    /// products when [`Self::EXT2_TWO_FUSION_SAFE`] holds.
+    #[inline(always)]
+    fn reduce128_sub_word_wide(lo: I::V64, hi: I::V64) -> I::V64 {
+        let mask = I::splat64(Self::MASK);
+        let high = I::or64(I::shr64(lo, Self::BITS), I::shl64(hi, 64 - Self::BITS));
+        let high_overflow = I::shr64(hi, Self::BITS);
+        let [c_high_lo, c_high_hi] = I::mul_small_wide(high, Self::C);
+        let c_high_hi = I::add64(c_high_hi, I::mul_small(high_overflow, Self::C));
+
+        let low_bits = I::and64(lo, mask);
+        let fold1_lo = I::add64(low_bits, c_high_lo);
+        let carry = I::select64(I::lt_u64(fold1_lo, low_bits), I::splat64(1), I::splat64(0));
+        let fold1_hi = I::add64(c_high_hi, carry);
+        let fold1_high = I::or64(
+            I::shr64(fold1_lo, Self::BITS),
+            I::shl64(fold1_hi, 64 - Self::BITS),
+        );
+        let fold2 = I::add64(I::and64(fold1_lo, mask), I::mul_small(fold1_high, Self::C));
+        let p = I::splat64(P);
+        I::select64(I::lt_u64(fold2, p), fold2, I::sub64(fold2, p))
     }
 }
 
@@ -362,5 +409,54 @@ impl<const P: u64, I: SimdWord> Packed for PackedFp64<P, I> {
     #[inline]
     fn broadcast(value: Fp64<P>) -> Self {
         Self(I::splat64(value.0))
+    }
+
+    #[inline(always)]
+    fn ext2_mul<C: crate::Ext2Config<Self::Scalar>>(
+        a0: Self,
+        a1: Self,
+        b0: Self,
+        b1: Self,
+    ) -> (Self, Self) {
+        if C::NON_RESIDUE_KIND == Ext2NonResidueKind::Two && Self::EXT2_TWO_FUSION_SAFE {
+            if I::FP64_MUL_BY_LANES {
+                let c0 = I::v64_from_fn(|lane| {
+                    let a0 = I::v64_lane(a0.0, lane) as u128;
+                    let a1 = I::v64_lane(a1.0, lane) as u128;
+                    let b0 = I::v64_lane(b0.0, lane) as u128;
+                    let b1 = I::v64_lane(b1.0, lane) as u128;
+                    let z = a0 * b0 + 2 * a1 * b1;
+                    Self::reduce_three_product_sum(z as u64, (z >> 64) as u64)
+                });
+                let c1 = I::v64_from_fn(|lane| {
+                    let a0 = I::v64_lane(a0.0, lane) as u128;
+                    let a1 = I::v64_lane(a1.0, lane) as u128;
+                    let b0 = I::v64_lane(b0.0, lane) as u128;
+                    let b1 = I::v64_lane(b1.0, lane) as u128;
+                    let z = a0 * b1 + a1 * b0;
+                    Self::reduce_three_product_sum(z as u64, (z >> 64) as u64)
+                });
+                return (Self(c0), Self(c1));
+            }
+
+            let p00 = I::mul64_wide(a0.0, b0.0);
+            let p11 = I::mul64_wide(a1.0, b1.0);
+            let p01 = I::mul64_wide(a0.0, b1.0);
+            let p10 = I::mul64_wide(a1.0, b0.0);
+            let z0 = Self::add128(Self::add128(p00, p11), p11);
+            let z1 = Self::add128(p01, p10);
+            return (
+                Self(Self::reduce128_sub_word_wide(z0[0], z0[1])),
+                Self(Self::reduce128_sub_word_wide(z1[0], z1[1])),
+            );
+        }
+
+        let v0 = a0 * b0;
+        let v1 = a1 * b1;
+        let cross = (a0 + a1) * (b0 + b1);
+        (
+            v0 + C::mul_non_residue(v1, Self::broadcast),
+            cross - v0 - v1,
+        )
     }
 }

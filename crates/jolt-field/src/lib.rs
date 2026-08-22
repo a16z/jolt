@@ -105,7 +105,7 @@ pub use algebra::{
 };
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
-pub use extension::{Ext2Config, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
+pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};
