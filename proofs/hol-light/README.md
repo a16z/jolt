@@ -10,22 +10,25 @@ Start with the Book chapter
 It explains the arithmetic, theorem shape, production connection, and trust
 boundary.
 
-The final AArch64 theorems cover complete callable functions. The x86-64 final
-theorems cover fixed register subroutines. They prove the `ret` stack behavior
-and an ABI safe frame. Addition and subtraction leave the result in `rdi:rsi`.
-Multiplication leaves it in `rdi:rcx`. Rust binds those exact registers as the
-inline assembly outputs. The compiler code around the inline assembly remains
-outside the HOL Light theorem. Every proved object includes the production constant load, so
-none of the theorems assumes a prepared offset register. All arithmetic
-theorems assume canonical inputs and prove the canonical result modulo
+The final theorems cover complete callable AArch64 and Linux x86-64 witness
+functions. The x86-64 arithmetic bodies form their internal results in fixed
+registers, then copy both limbs to the System V return registers `rax:rdx`.
+The theorems prove those moves, the `ret` stack behavior, and an ABI safe
+frame. The Darwin x86-64 compiler adds a fixed frame wrapper. The artifact
+checker checks that wrapper exactly, but the current theorem does not cover
+its frame instructions. Every proved object includes the production constant
+load, so none of the theorems assumes a prepared offset register. All
+arithmetic theorems assume canonical inputs and prove the canonical result modulo
 `0xffffffffffffffffffffffff00005809`. A separate certificate proves that this
 modulus is prime.
 
-The public witness calls the normal Rust field operation. The artifact checker
-confirms that its optimized machine code contains the proved instruction body.
-On x86-64, the match must begin and end at decoded instruction boundaries.
-Jolt does not inspect an Akita executable. Akita must perform that final binary
-check at its pinned Jolt revision.
+The public witness calls the normal Rust field operation. On AArch64 and Linux
+x86-64, the artifact checker confirms that its complete optimized symbol is
+byte identical to the proved object. On Darwin x86-64, the checker requires an
+exact frame wrapper around the proved sequence. Normal field operations still
+inline the arithmetic body, so the theorems do not cover the machine code
+around every inlined copy. Jolt does not inspect an Akita executable. Akita
+must perform that final binary check at its pinned Jolt revision.
 
 ## Requirements
 
@@ -47,9 +50,9 @@ artifact checker.
 ./proofs/hol-light/check.sh bytes x86_64
 ```
 
-This builds the optimized public witness and answers only whether the proof
-object and production witness still contain the expected bytes. It does not
-start HOL Light. The default target directory is persistent, so unchanged
+This builds the optimized public witness and answers only whether each proof
+object and complete production witness symbol have the expected bytes. It does
+not start HOL Light. The default target directory is persistent, so unchanged
 dependencies are reused.
 
 Use `aarch64` instead of `x86_64` to check the AArch64 path.

@@ -48,7 +48,12 @@ The current HOL Light claim covers scalar AArch64 and x86-64 addition,
 subtraction, and multiplication for `Prime128OffsetA7F7`, under canonical
 input assumptions. The x86-64 multiplication path uses only baseline `mulq`,
 `add`, and `adc` instructions. It does not require BMI2 or ADX. The proofs also
-show that the A7F7 modulus is prime. They do not cover the small offset
-immediate kernels, generic fallback kernels, packed SIMD arithmetic,
-squaring, inversion, the complete Rust verifier, or a downstream final
-executable.
+show that the A7F7 modulus is prime. The x86-64 callable theorems continue
+through the result moves into `rax:rdx` and `ret`. The complete optimized Linux
+public witness symbols are byte identical to those proved objects. Darwin
+x86-64 adds an exact frame wrapper that the artifact checker checks but HOL
+Light does not yet prove. Normal field operations still inline the arithmetic
+bodies, so the compiler code around arbitrary inlined copies remains outside
+the theorem. The proofs do not cover the small offset immediate kernels,
+generic fallback kernels, packed SIMD arithmetic, squaring, inversion, the
+complete Rust verifier, or a downstream final executable.

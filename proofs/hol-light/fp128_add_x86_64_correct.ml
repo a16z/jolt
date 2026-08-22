@@ -3,8 +3,9 @@
  *
  * The input value a is stored in RDI:RSI, with the low word first. The input
  * b is stored in RDX:RCX. The first instruction loads C = 2^128 - p into R8.
- * The result is returned in RDI:RSI. The object file imports the exact bytes
- * that the production Rust path includes for Prime128OffsetA7F7.
+ * The arithmetic result is formed in RDI:RSI, then copied to the System V
+ * return registers RAX:RDX. The object file imports the complete optimized
+ * public witness bytes for Prime128OffsetA7F7.
  *)
 
 needs (Filename.concat (Sys.getenv "JOLT_FP128_PROOF_DIR")
@@ -19,14 +20,14 @@ let JOLT_FP128_ADD_X86_64_CORRECT = time prove
                read RSI s = a1 /\
                read RDX s = b0 /\
                read RCX s = b1)
-          (\s. read RIP s = word (pc + 0x27) /\
+          (\s. read RIP s = word (pc + 0x2d) /\
                (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
                 bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
-                ==> bignum_of_wordlist [read RDI s; read RSI s] =
+                ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] +
                      bignum_of_wordlist [b0; b1]) MOD
                     jolt_fp128_a7f7_p))
-          (MAYCHANGE [RIP; RDI; RSI; R8; R9; R10; R11] ,,
+          (MAYCHANGE [RIP; RAX; RDX; RDI; RSI; R8; R9; R10; R11] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
    [`a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
@@ -35,7 +36,7 @@ let JOLT_FP128_ADD_X86_64_CORRECT = time prove
   ABBREV_TAC `n = bignum_of_wordlist [b0; b1]` THEN
 
   ENSURES_INIT_TAC "s0" THEN
-  X86_ACCSTEPS_TAC JOLT_FP128_ADD_X86_64_EXEC [2;3;7;8] (1--11) THEN
+  X86_ACCSTEPS_TAC JOLT_FP128_ADD_X86_64_EXEC [2;3;7;8] (1--13) THEN
   ENSURES_FINAL_STATE_TAC THEN ASM_REWRITE_TAC[] THEN STRIP_TAC THEN
 
   ABBREV_TAC `l = bignum_of_wordlist [sum_s2; sum_s3]` THEN
@@ -60,7 +61,7 @@ let JOLT_FP128_ADD_X86_64_CORRECT = time prove
   SUBGOAL_THEN `l < 2 EXP 128 /\ t < 2 EXP 128` STRIP_ASSUME_TAC THENL
    [MAP_EVERY EXPAND_TAC ["l"; "t"] THEN BOUNDER_TAC[];
     ALL_TAC] THEN
-  DISCARD_STATE_TAC "s11" THEN
+  DISCARD_STATE_TAC "s13" THEN
   ACCUMULATOR_POP_ASSUM_LIST(K ALL_TAC) THEN
 
   (ASM_CASES_TAC `carry_s3:bool` THENL
@@ -99,7 +100,7 @@ let JOLT_FP128_ADD_X86_64_SUBROUTINE_CORRECT = time prove
                read RSP s = word_add stackpointer (word 8) /\
                (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
                 bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
-                ==> bignum_of_wordlist [read RDI s; read RSI s] =
+                ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] +
                      bignum_of_wordlist [b0; b1]) MOD
                     jolt_fp128_a7f7_p))

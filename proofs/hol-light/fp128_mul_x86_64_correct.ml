@@ -2,9 +2,10 @@
  * Functional correctness proof for Jolt's baseline x86-64 Fp128 multiply.
  *
  * Inputs are RDI:RSI and RDX:RCX, low word first. The object loads
- * C = 2^128 - p into R8. The result is returned in RDI:RCX. The proof follows
- * the actual carry chain through the 256-bit schoolbook product, two Solinas
- * folds, and the final conditional correction.
+ * C = 2^128 - p into R8. The arithmetic result is formed in RDI:RCX, then
+ * copied to the System V return registers RAX:RDX. The proof follows the
+ * actual carry chain through the 256-bit schoolbook product, two Solinas
+ * folds, the final conditional correction, and the ABI result moves.
  *)
 
 needs (Filename.concat (Sys.getenv "JOLT_FP128_PROOF_DIR")
@@ -25,10 +26,10 @@ let JOLT_FP128_MUL_X86_64_CORRECT = time prove
                read RSI s = a1 /\
                read RDX s = b0 /\
                read RCX s = b1)
-          (\s. read RIP s = word (pc + 0x98) /\
+          (\s. read RIP s = word (pc + 0x9e) /\
                (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
                 bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
-                ==> bignum_of_wordlist [read RDI s; read RCX s] =
+                ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
                     jolt_fp128_a7f7_p))
@@ -42,7 +43,7 @@ let JOLT_FP128_MUL_X86_64_CORRECT = time prove
   ENSURES_INIT_TAC "s0" THEN
   X86_ACCSTEPS_TAC JOLT_FP128_MUL_X86_64_EXEC
    [6;10;11;12;15;17;18;21;22;23;26;28;29;32;33;34;36;38;39;43;44;45]
-   (1--47) THEN
+   (1--49) THEN
   ENSURES_FINAL_STATE_TAC THEN ASM_REWRITE_TAC[] THEN STRIP_TAC THEN
 
   ABBREV_TAC
@@ -196,7 +197,7 @@ let JOLT_FP128_MUL_X86_64_CORRECT = time prove
     DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN CONV_TAC REAL_RING;
     ALL_TAC] THEN
   ASM_REWRITE_TAC[] THEN
-  DISCARD_STATE_TAC "s47" THEN
+  DISCARD_STATE_TAC "s49" THEN
   ACCUMULATOR_POP_ASSUM_LIST(K ALL_TAC) THEN
   MATCH_MP_TAC EQ_TRANS THEN
   EXISTS_TAC `(if carry_s39 \/ carry_s44 then u else r):num` THEN
@@ -238,7 +239,7 @@ let JOLT_FP128_MUL_X86_64_SUBROUTINE_CORRECT = time prove
                read RSP s = word_add stackpointer (word 8) /\
                (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
                 bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
-                ==> bignum_of_wordlist [read RDI s; read RCX s] =
+                ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
                     jolt_fp128_a7f7_p))

@@ -58,6 +58,15 @@ class CheckFp128ProofArtifactsTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "byte mismatch"):
             CHECKER.require_bytes("test", bytes([1]), bytes([2]))
 
+    def test_symbol_is_trimmed_at_decoded_ret(self) -> None:
+        instructions = [bytes.fromhex("55"), bytes.fromhex("c3"), bytes.fromhex("90")]
+        self.assertEqual(
+            CHECKER.instructions_through_ret("test", instructions),
+            bytes.fromhex("55 c3"),
+        )
+        with self.assertRaisesRegex(SystemExit, "no decoded ret"):
+            CHECKER.instructions_through_ret("test", [bytes.fromhex("90")])
+
     def test_witness_sequence_must_appear_exactly_once(self) -> None:
         CHECKER.require_bytes_once("test", bytes.fromhex("00 aa bb ff"), bytes.fromhex("aa bb"))
         with self.assertRaisesRegex(SystemExit, "found 2"):

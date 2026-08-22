@@ -7,6 +7,7 @@ import argparse
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -109,6 +110,10 @@ X86_64_MUL_BODY = bytes.fromhex(
 )
 X86_64_RET = bytes([0xC3])
 X86_64_LOAD_A7F7_INTO_R8D = bytes.fromhex("41 b8 f7 a7 ff ff")
+X86_64_ADD_SUB_ABI_RETURN = bytes.fromhex("48 89 f2 48 89 f8")
+X86_64_MUL_ABI_RETURN = bytes.fromhex("48 89 f8 48 89 ca")
+X86_64_DARWIN_FRAME_ENTER = bytes.fromhex("55 48 89 e5")
+X86_64_DARWIN_FRAME_LEAVE = bytes.fromhex("5d c3")
 
 SYMBOL_RE = re.compile(r"^\s*[0-9a-fA-F]+\s+<([^>]+)>:\s*$")
 AARCH64_INSTRUCTION_RE = re.compile(
@@ -244,6 +249,14 @@ def require_bytes(label: str, actual: bytes, expected: bytes) -> None:
         )
 
 
+def instructions_through_ret(label: str, instructions: list[bytes]) -> bytes:
+    """Return one function body through its first decoded near return."""
+    for index, instruction in enumerate(instructions):
+        if instruction == X86_64_RET:
+            return b"".join(instructions[: index + 1])
+    raise SystemExit(f"{label} had no decoded ret instruction")
+
+
 def require_bytes_once(label: str, actual: bytes, expected: bytes) -> None:
     occurrences = sum(
         actual.startswith(expected, index)
@@ -345,35 +358,81 @@ def check_x86_64(
     mul_witness_instructions = read_symbol_byte_instructions(
         tool, witness, "jolt_fp128_mul_production_witness"
     )
+    add_expected = (
+        X86_64_LOAD_A7F7_INTO_R8D
+        + X86_64_ADD_BODY
+        + X86_64_ADD_SUB_ABI_RETURN
+        + X86_64_RET
+    )
+    sub_expected = (
+        X86_64_LOAD_A7F7_INTO_R8D
+        + X86_64_SUB_BODY
+        + X86_64_ADD_SUB_ABI_RETURN
+        + X86_64_RET
+    )
+    mul_expected = (
+        X86_64_LOAD_A7F7_INTO_R8D
+        + X86_64_MUL_BODY
+        + X86_64_MUL_ABI_RETURN
+        + X86_64_RET
+    )
+    add_darwin_expected = (
+        X86_64_DARWIN_FRAME_ENTER
+        + add_expected[:-1]
+        + X86_64_DARWIN_FRAME_LEAVE
+    )
+    sub_darwin_expected = (
+        X86_64_DARWIN_FRAME_ENTER
+        + sub_expected[:-1]
+        + X86_64_DARWIN_FRAME_LEAVE
+    )
+    mul_darwin_expected = (
+        X86_64_DARWIN_FRAME_ENTER
+        + mul_expected[:-1]
+        + X86_64_DARWIN_FRAME_LEAVE
+    )
     require_bytes(
         "standalone addition proof object",
         add_object_bytes,
-        X86_64_LOAD_A7F7_INTO_R8D + X86_64_ADD_BODY + X86_64_RET,
+        add_expected,
     )
     require_bytes(
         "standalone subtraction proof object",
         sub_object_bytes,
-        X86_64_LOAD_A7F7_INTO_R8D + X86_64_SUB_BODY + X86_64_RET,
+        sub_expected,
     )
     require_bytes(
         "standalone multiplication proof object",
         mul_object_bytes,
-        X86_64_LOAD_A7F7_INTO_R8D + X86_64_MUL_BODY + X86_64_RET,
+        mul_expected,
     )
-    require_instruction_sequence_once(
+    add_witness_expected = (
+        add_darwin_expected if sys.platform == "darwin" else add_expected
+    )
+    sub_witness_expected = (
+        sub_darwin_expected if sys.platform == "darwin" else sub_expected
+    )
+    mul_witness_expected = (
+        mul_darwin_expected if sys.platform == "darwin" else mul_expected
+    )
+    require_bytes(
         "public addition witness",
-        add_witness_instructions,
-        X86_64_LOAD_A7F7_INTO_R8D + X86_64_ADD_BODY,
+        instructions_through_ret("public addition witness", add_witness_instructions),
+        add_witness_expected,
     )
-    require_instruction_sequence_once(
+    require_bytes(
         "public subtraction witness",
-        sub_witness_instructions,
-        X86_64_LOAD_A7F7_INTO_R8D + X86_64_SUB_BODY,
+        instructions_through_ret(
+            "public subtraction witness", sub_witness_instructions
+        ),
+        sub_witness_expected,
     )
-    require_instruction_sequence_once(
+    require_bytes(
         "public multiplication witness",
-        mul_witness_instructions,
-        X86_64_LOAD_A7F7_INTO_R8D + X86_64_MUL_BODY,
+        instructions_through_ret(
+            "public multiplication witness", mul_witness_instructions
+        ),
+        mul_witness_expected,
     )
 
 

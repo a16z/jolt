@@ -33,7 +33,7 @@ flowchart TD
     Dispatch --> Body
     Body --> Witness
     Body --> Object
-    Witness -->|artifact checker finds the proved body| Body
+    Witness -->|artifact checker checks the complete symbol| Object
     Object --> Import
     Import --> Execute
     Execute --> Result
@@ -46,8 +46,10 @@ the expected words or bytes. HOL Light imports the object and refuses to load
 it if one byte differs.
 
 The public witness calls the normal `Prime128OffsetA7F7` operation. It does not
-call a separate proof function. The checker disassembles this optimized
-witness and checks that it contains the proved body.
+call a separate proof function. The checker disassembles each optimized
+witness. The complete AArch64 and Linux x86-64 witness symbols must match the
+proved objects exactly. The Darwin x86-64 witness must have one exact frame
+wrapper around the same proved arithmetic and result sequence.
 
 ## Why the theorem names physical registers
 
@@ -92,6 +94,7 @@ The x86-64 body uses the following registers.
 | Input `b` | `rdx:rcx` |
 | Addition and subtraction output | `rdi:rsi` |
 | Multiplication output | `rdi:rcx` |
+| System V function result | `rax:rdx` |
 | Offset `C = 2^128 - p` | `r8` after the fixed load instruction |
 | Addition temporary values | `r9:r11` |
 | Subtraction mask | `r9` |
@@ -104,11 +107,42 @@ stack. The subroutine theorem also proves that `ret` reads the return address
 from the stack, updates `rsp` by eight bytes, and transfers control to that
 address.
 
-The optimized Rust witness has compiler generated setup and return moves
-around the proved sequence. The checker requires the exact proved constant
-load and body to occur once at decoded instruction boundaries in the witness
-symbol. HOL Light proves that sequence and `ret` in the standalone object. It
-does not prove the compiler generated witness wrapper.
+The x86-64 object continues through the two moves that copy the internal
+result into `rax:rdx`, then executes `ret`. HOL Light proves this complete
+System V function. On Linux, the checker requires every byte of the optimized
+Rust witness symbol to match that object. If the compiler changes the setup,
+result moves, or return sequence, the check fails.
+
+The Darwin x86-64 compiler adds a fixed frame setup and teardown. The checker
+requires that exact wrapper and ignores only decoded padding after `ret`. The
+arithmetic sequence and result moves inside it match the proved object. The
+current HOL Light theorem does not cover the Darwin frame instructions.
+
+This closes the compiler wrapper gap for the public witness. Normal field
+operations still inline the arithmetic body into their callers. HOL Light
+does not prove the machine code around every inlined copy. At that boundary,
+we still trust Rust and LLVM to honor the declared assembly inputs, outputs,
+and changed registers. A final executable check must also confirm that the
+application reaches the expected Jolt field operation.
+
+## Native x86-64 performance measurement
+
+We compared commit `586e6b347` with its parent on an AMD Ryzen 9 9950X. Both
+builds used Rust 1.95.0. Criterion measured batches of 4,096 field products on
+one pinned CPU. We alternated the portable and assembly binaries for three
+rounds.
+
+| Build | Time for 4,096 products | Time per product |
+| --- | ---: | ---: |
+| Portable parent | 9.418 microseconds | 2.30 nanoseconds |
+| Proved baseline assembly | 8.104 microseconds | 1.98 nanoseconds |
+
+The assembly path took 13.95 percent less time. Its throughput was 16.2
+percent higher. With `-C target-cpu=native`, the portable path used `mulx` but
+not `adcx` or `adox`. It took 9.388 microseconds, while the proved baseline
+body took 8.111 microseconds under the same setting. Jolt does not yet have a
+handwritten BMI2 and ADX kernel. These measurements are performance evidence,
+not part of the correctness theorem.
 
 ## Addition
 
@@ -219,12 +253,11 @@ The AArch64 subroutine theorem adds `ret` and the procedure call convention.
 It states where the return address comes from and which registers a caller
 must treat as changed.
 
-The x86-64 subroutine theorem is narrower. It proves the `ret` stack behavior
-and that only ABI permitted state changes. Addition and subtraction leave the
-result in `rdi:rsi`. Multiplication leaves it in `rdi:rcx`. Rust binds these
-fixed registers as the inline assembly outputs. The compiler generated code
-around the inline assembly is checked for exact inclusion of the proved
-kernel, but HOL Light does not prove that surrounding code.
+The x86-64 subroutine theorem proves the complete optimized Linux witness
+function. It starts with System V inputs in `rdi:rsi` and `rdx:rcx`. The
+arithmetic body forms its internal result in fixed registers. The final moves
+place the two result limbs in `rax:rdx`. The theorem also proves the `ret`
+stack behavior and permits only state changes allowed by the ABI.
 
 The notation `ensures x86` or `ensures arm` means that every execution which
 starts in the stated precondition reaches the stated postcondition while
@@ -258,8 +291,9 @@ architectures use the same public witness and artifact checker.
 | --- | --- | --- |
 | AArch64 add and subtract | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
 | AArch64 multiply | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
-| x86-64 add and subtract | Constant load, complete fixed body, and `ret` | The proved constant load and fixed body occur exactly once inside the optimized witness |
-| x86-64 multiply | Constant load, complete baseline body, and `ret` | The proved constant load and fixed body occur exactly once inside the optimized witness |
+| Linux x86-64 add and subtract | Constant load, complete fixed body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
+| Linux x86-64 multiply | Constant load, complete baseline body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
+| Darwin x86-64 add, subtract, and multiply | Arithmetic and ABI result sequence | The checker requires one exact unproved Darwin frame wrapper around the proved sequence |
 
 These claims cover the A7F7 register kernels. They do not cover the small
 offset immediate kernels or the generic register fallback used by other field
