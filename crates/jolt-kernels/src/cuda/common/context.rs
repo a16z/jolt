@@ -48,8 +48,6 @@ pub struct CudaKernelContext {
     ram_ra_fold_prefix: CudaFunction,
     ram_ra_phase1_round: CudaFunction,
     sfx_eval_batch: CudaFunction,
-    pfx_eval_batch: CudaFunction,
-    pfx_mle_batch: CudaFunction,
     pfx_update_checkpoints: CudaFunction,
     pfx_mle_round: CudaFunction,
     pfx_default_checkpoints: CudaFunction,
@@ -72,8 +70,6 @@ pub struct CudaKernelContext {
     unr_mul_scatter: CudaFunction,
     unr_reduce: CudaFunction,
     unr_fold_chunks: CudaFunction,
-    pa_scatter: CudaFunction,
-    pa_reduce: CudaFunction,
     rwm_segment_flags: CudaFunction,
     rwm_segment_bounds: CudaFunction,
     rwm_count: CudaFunction,
@@ -226,8 +222,6 @@ impl CudaKernelContext {
             ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
-            pfx_eval_batch: module.load_function("pfx_eval_batch_kernel")?,
-            pfx_mle_batch: module.load_function("pfx_mle_batch_kernel")?,
             pfx_update_checkpoints: module.load_function("pfx_update_checkpoints_kernel")?,
             pfx_mle_round: module.load_function("pfx_mle_round_kernel")?,
             pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
@@ -250,8 +244,6 @@ impl CudaKernelContext {
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             unr_reduce: module.load_function("unr_reduce_kernel")?,
             unr_fold_chunks: module.load_function("unr_fold_chunks_kernel")?,
-            pa_scatter: module.load_function("pa_scatter_kernel")?,
-            pa_reduce: module.load_function("pa_reduce_kernel")?,
             rwm_segment_flags: module.load_function("rwm_segment_flags_kernel")?,
             rwm_segment_bounds: module.load_function("rwm_segment_bounds_kernel")?,
             rwm_count: module.load_function("rwm_count_kernel")?,
@@ -909,14 +901,6 @@ impl CudaKernelContext {
         &self.pfx_update_checkpoints
     }
 
-    pub(crate) const fn pfx_mle_batch(&self) -> &CudaFunction {
-        &self.pfx_mle_batch
-    }
-
-    pub(crate) const fn pfx_eval_batch(&self) -> &CudaFunction {
-        &self.pfx_eval_batch
-    }
-
     pub(crate) const fn pfx_default_checkpoints(&self) -> &CudaFunction {
         &self.pfx_default_checkpoints
     }
@@ -991,14 +975,6 @@ impl CudaKernelContext {
 
     pub(crate) const fn cr_quotient(&self) -> &CudaFunction {
         &self.cr_quotient
-    }
-
-    pub(crate) const fn pa_scatter(&self) -> &CudaFunction {
-        &self.pa_scatter
-    }
-
-    pub(crate) const fn pa_reduce(&self) -> &CudaFunction {
-        &self.pa_reduce
     }
 
     pub(crate) const fn rwm_segment_flags(&self) -> &CudaFunction {

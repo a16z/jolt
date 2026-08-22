@@ -429,19 +429,26 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_claims::OutputClaims;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_riscv::JoltInstructionKind;
     use jolt_verifier::stages::stage5::InstructionReadRaf;
     use proptest::prelude::*;
 
     use super::{CudaBackend, ADDRESS_BITS};
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{
-        arb_point, drive, fr, reference_input_claim, with_instruction_witness,
+        arb_point, drive, fr, reference_input_claim, with_instruction_kind_witness,
     };
     use crate::optimized::instruction_read_raf::OptimizedInstructionReadRaf;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 
     const LOG_T: usize = 8;
     const RA_POLYS: usize = 8;
+
+    const SWEPT_KINDS: [JoltInstructionKind; 3] = [
+        JoltInstructionKind::XOR,
+        JoltInstructionKind::VirtualSRAI,
+        JoltInstructionKind::SLT,
+    ];
 
     fn one_hot() -> JoltOneHotConfig {
         JoltOneHotConfig {
@@ -458,6 +465,7 @@ mod tests {
             lookup_output in arb_point(LOG_T),
             gamma in any::<u64>().prop_map(fr),
             challenges in arb_point(ADDRESS_BITS + LOG_T),
+            kind in prop::sample::select(SWEPT_KINDS.to_vec()),
         ) {
             let Some(_) = shared_context() else { return Ok(()); };
 
@@ -479,7 +487,7 @@ mod tests {
             };
             let challenge_set = InstructionReadRafChallenges { gamma };
 
-            with_instruction_witness(LOG_T, one_hot(), seed, |witness| {
+            with_instruction_kind_witness(kind, LOG_T, one_hot(), seed, |witness| {
                 let make_inputs = || ProverInputs {
                     relation: &relation,
                     claims: &claims,
@@ -497,7 +505,7 @@ mod tests {
 
                 let expected = drive(&mut *expected_kernel, input_claim, &challenges);
                 let got = drive(&mut *got_kernel, input_claim, &challenges);
-                prop_assert_eq!(got, expected, "round polynomials diverged");
+                prop_assert_eq!(got, expected, "round polynomials diverged for {:?}", kind);
 
                 let expected_claims = expected_kernel
                     .output_claims(&claims)

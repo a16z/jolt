@@ -176,7 +176,7 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
     clippy::panic,
     reason = "test scaffolding: fixture and device errors fail loudly"
 )]
-pub(crate) mod legacy_fixture {
+pub(crate) mod fixture_support {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
@@ -198,7 +198,7 @@ pub(crate) mod legacy_fixture {
 
     const KINDS: [&str; 8] = ["ADD", "SUB", "XOR", "OR", "AND", "SLTU", "LD", "SD"];
 
-    pub(crate) struct LegacyFixture {
+    pub(crate) struct Fixture {
         pub(crate) trace: Vec<Cycle>,
         pub(crate) rows: Vec<TraceRow>,
         pub(crate) bytecode: BytecodePreprocessing,
@@ -272,12 +272,12 @@ pub(crate) mod legacy_fixture {
             .expect("every fixture palette cycle has a final Jolt instruction row")
     }
 
-    pub(crate) fn with_legacy_witness<R>(
+    pub(crate) fn with_witness<R>(
         log_t: usize,
         ram_k: usize,
         one_hot: JoltOneHotConfig,
         seed: u64,
-        body: impl FnOnce(&TraceBackend<OwnedTrace>, &LegacyFixture) -> R,
+        body: impl FnOnce(&TraceBackend<OwnedTrace>, &Fixture) -> R,
     ) -> R {
         let memory_layout = MemoryLayout::new(&MemoryConfig {
             program_size: Some(1 << 12),
@@ -340,7 +340,7 @@ pub(crate) mod legacy_fixture {
             JoltVmWitnessInputs::new(&program, &preprocessing, output),
         );
 
-        let fixture = LegacyFixture {
+        let fixture = Fixture {
             trace,
             rows,
             bytecode,
@@ -359,35 +359,19 @@ pub(crate) mod legacy_fixture {
 mod tests {
     use std::collections::BTreeSet;
 
-    use ark_bn254::Fr as LegacyFr;
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltRelationId};
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_prover_legacy::field::JoltField as LegacyJoltField;
-    use jolt_prover_legacy::poly::opening_proof::{
-        OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
-    };
-    use jolt_prover_legacy::poly::shared_ra_polys::RaIndices;
-    use jolt_prover_legacy::subprotocols::booleanity::{
-        BooleanityAddressSumcheckProver, BooleanitySumcheckParams,
-    };
-    use jolt_prover_legacy::subprotocols::sumcheck_prover::SumcheckInstanceProver;
-    use jolt_prover_legacy::transcripts::{Blake2bTranscript, Transcript};
-    use jolt_prover_legacy::zkvm::bytecode::get_pc_for_cycle;
-    use jolt_prover_legacy::zkvm::config::OneHotParams;
-    use jolt_prover_legacy::zkvm::witness::VirtualPolynomial;
     use jolt_verifier::stages::formula_dimensions_from_parts;
     use jolt_verifier::stages::stage6a::booleanity::{
         BooleanityAddressPhase, BooleanityAddressPhaseChallenges, BooleanityAddressPhaseInputClaims,
     };
 
-    use super::legacy_fixture::{
-        row_ram_address, slot_for_cycle, with_legacy_witness, LegacyFixture, SLOTS,
-    };
+    use super::fixture_support::{row_ram_address, slot_for_cycle, with_witness, SLOTS};
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{fr, hot_addresses};
     use crate::cuda::CudaBackend;
-    use crate::reference::ReferenceBackend;
+    use crate::optimized::booleanity::OptimizedBooleanityAddress;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 
     const LOG_T: usize = 8;
@@ -398,145 +382,27 @@ mod tests {
 
     const DEGREE: usize = 3;
 
-    fn one_hot() -> JoltOneHotConfig {
+    fn one_hot_with(log_k_chunk: u8) -> JoltOneHotConfig {
         JoltOneHotConfig {
-            log_k_chunk: 4,
+            log_k_chunk,
             lookups_ra_virtual_log_k_chunk: 16,
         }
     }
 
-    fn legacy_params(fixture: &LegacyFixture) -> OneHotParams {
-        OneHotParams::new(LOG_T, fixture.bytecode.code_size, fixture.ram_k)
-    }
-
-    fn to_fr(value: LegacyFr) -> Fr {
-        Fr::from(value)
-    }
-
-    fn challenge_to_fr(challenge: <LegacyFr as LegacyJoltField>::Challenge) -> Fr {
-        to_fr(<LegacyFr as From<_>>::from(challenge))
+    fn one_hot() -> JoltOneHotConfig {
+        one_hot_with(4)
     }
 
     struct Family {
         name: &'static str,
-        base: usize,
         count: usize,
         make: fn(usize) -> JoltCommittedPolynomial,
     }
 
-    struct LegacyRun {
-        messages: Vec<[Fr; DEGREE + 1]>,
-        challenges: Vec<Fr>,
-        output_claim: Fr,
-        reference_address: Vec<Fr>,
-        instruction_r_address: Vec<Fr>,
-        instruction_r_cycle: Vec<Fr>,
-        gamma: Fr,
-        chunk_bits: usize,
-    }
-
-    fn run_legacy(fixture: &LegacyFixture) -> LegacyRun {
-        let one_hot_params = legacy_params(fixture);
-        let log_k_instruction = one_hot_params.lookups_ra_virtual_log_k_chunk;
-        let chunk_bits = one_hot_params.log_k_chunk;
-
-        let transcript = &mut Blake2bTranscript::new(&[]);
-        let mut accumulator = ProverOpeningAccumulator::new(LOG_T);
-        let stage5_point: Vec<<LegacyFr as LegacyJoltField>::Challenge> =
-            transcript.challenge_vector_optimized::<LegacyFr>(log_k_instruction + LOG_T);
-        accumulator.append_virtual(
-            VirtualPolynomial::InstructionRa(0),
-            SumcheckId::InstructionReadRaf,
-            OpeningPoint::<BIG_ENDIAN, LegacyFr>::new(stage5_point.clone()),
-            <LegacyFr as LegacyJoltField>::from_u64(7),
-        );
-
-        let params = BooleanitySumcheckParams::<LegacyFr>::new(
-            LOG_T,
-            &one_hot_params,
-            &accumulator,
-            transcript,
-        );
-        let rounds = params.log_k_chunk;
-        assert_eq!(rounds, chunk_bits, "the address phase binds the chunk bits");
-        let reference_address: Vec<Fr> = params
-            .r_address
-            .iter()
-            .map(|challenge| challenge_to_fr(*challenge))
-            .collect();
-        let gamma = challenge_to_fr(params.gamma);
-
-        let legacy_challenges: Vec<<LegacyFr as LegacyJoltField>::Challenge> =
-            transcript.challenge_vector_optimized::<LegacyFr>(rounds);
-
-        let mut legacy = BooleanityAddressSumcheckProver::initialize(
-            params,
-            &fixture.trace,
-            &fixture.bytecode,
-            &fixture.memory_layout,
-        );
-
-        let mut claim = <LegacyFr as LegacyJoltField>::from_u64(0);
-        let mut messages = Vec::with_capacity(rounds);
-        for (round, &r_j) in legacy_challenges.iter().enumerate() {
-            let message = SumcheckInstanceProver::<LegacyFr, Blake2bTranscript>::compute_message(
-                &mut legacy,
-                round,
-                claim,
-            );
-            let mut evals = [Fr::from_u64(0); DEGREE + 1];
-            for (point, eval) in evals.iter_mut().enumerate() {
-                *eval =
-                    to_fr(message.evaluate(&<LegacyFr as LegacyJoltField>::from_u64(point as u64)));
-            }
-            messages.push(evals);
-            claim = message.evaluate(&<LegacyFr as From<_>>::from(r_j));
-            SumcheckInstanceProver::<LegacyFr, Blake2bTranscript>::ingest_challenge(
-                &mut legacy,
-                r_j,
-                round,
-            );
-        }
-        SumcheckInstanceProver::<LegacyFr, Blake2bTranscript>::cache_openings(
-            &legacy,
-            &mut accumulator,
-            &legacy_challenges,
-        );
-        let output_claim = to_fr(
-            accumulator
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::BooleanityAddrClaim,
-                    SumcheckId::BooleanityAddressPhase,
-                )
-                .1,
-        );
-
-        LegacyRun {
-            messages,
-            challenges: legacy_challenges
-                .iter()
-                .map(|challenge| challenge_to_fr(*challenge))
-                .collect(),
-            output_claim,
-            reference_address,
-            instruction_r_address: stage5_point[..log_k_instruction]
-                .iter()
-                .map(|challenge| challenge_to_fr(*challenge))
-                .collect(),
-            instruction_r_cycle: stage5_point[log_k_instruction..]
-                .iter()
-                .map(|challenge| challenge_to_fr(*challenge))
-                .collect(),
-            gamma,
-            chunk_bits,
-        }
-    }
-
     #[test]
-    fn fixture_one_hot_columns_agree_across_tiers() {
-        with_legacy_witness(LOG_T, RAM_K, one_hot(), SEED, |witness, fixture| {
-            let one_hot_params = legacy_params(fixture);
-            let addresses = 1usize << one_hot_params.log_k_chunk;
+    fn fixture_one_hot_columns_are_not_blind() {
+        with_witness(LOG_T, RAM_K, one_hot(), SEED, |witness, fixture| {
+            let addresses = 1usize << one_hot().log_k_chunk;
             let cycles = 1usize << LOG_T;
             let layout = formula_dimensions_from_parts(
                 one_hot(),
@@ -548,46 +414,19 @@ mod tests {
             .expect("formula dimensions")
             .ra_layout;
 
-            assert_eq!(
-                (layout.instruction(), layout.bytecode(), layout.ram()),
-                (
-                    one_hot_params.instruction_d,
-                    one_hot_params.bytecode_d,
-                    one_hot_params.ram_d
-                ),
-                "the two tiers disagree on the one-hot chunk layout, so the oracle would \
-                 compare different polynomials",
-            );
-
-            let legacy_indices: Vec<RaIndices> = fixture
-                .trace
-                .iter()
-                .map(|cycle| {
-                    RaIndices::from_cycle(
-                        cycle,
-                        &fixture.bytecode,
-                        &fixture.memory_layout,
-                        &one_hot_params,
-                    )
-                })
-                .collect();
-
             let families: [Family; 3] = [
                 Family {
                     name: "instruction",
-                    base: 0,
                     count: layout.instruction(),
                     make: JoltCommittedPolynomial::InstructionRa,
                 },
                 Family {
                     name: "bytecode",
-                    base: layout.instruction(),
                     count: layout.bytecode(),
                     make: JoltCommittedPolynomial::BytecodeRa,
                 },
                 Family {
                     name: "ram",
-                    base: layout.instruction() + layout.bytecode(),
                     count: layout.ram(),
                     make: JoltCommittedPolynomial::RamRa,
                 },
@@ -595,7 +434,6 @@ mod tests {
 
             for Family {
                 name: family,
-                base,
                 count,
                 make,
             } in families
@@ -603,20 +441,7 @@ mod tests {
                 assert!(count > 0, "the {family} family is empty in this config");
                 for index in 0..count {
                     let hot = hot_addresses(witness, make(index), addresses, cycles);
-                    let mut distinct = BTreeSet::new();
-                    for (cycle, address) in hot.iter().enumerate() {
-                        let legacy = legacy_indices[cycle]
-                            .get_index(base + index, &one_hot_params)
-                            .map(usize::from);
-                        assert_eq!(
-                            *address, legacy,
-                            "{family} chunk {index} cycle {cycle}: the witness plane and the \
-                             legacy RaIndices disagree on the hot address",
-                        );
-                        if let Some(address) = address {
-                            let _ = distinct.insert(*address);
-                        }
-                    }
+                    let distinct: BTreeSet<usize> = hot.iter().flatten().copied().collect();
                     assert!(
                         distinct.len() > 1,
                         "{family} chunk {index} is hot at a single address across the whole \
@@ -628,8 +453,8 @@ mod tests {
     }
 
     #[test]
-    fn fixture_is_well_formed_for_both_tiers() {
-        with_legacy_witness(LOG_T, RAM_K, one_hot(), SEED, |_witness, fixture| {
+    fn fixture_is_well_formed() {
+        with_witness(LOG_T, RAM_K, one_hot(), SEED, |_witness, fixture| {
             let cycles = 1usize << LOG_T;
             let mut visited = BTreeSet::new();
             let mut ram_hot = 0usize;
@@ -641,11 +466,6 @@ mod tests {
                     .expect("every fixture row has a bytecode mapping");
                 assert_eq!(
                     mapped,
-                    get_pc_for_cycle(&fixture.bytecode, cycle),
-                    "cycle {index}: the modular row and the legacy cycle map to different PCs",
-                );
-                assert_eq!(
-                    mapped,
                     slot_for_cycle(index) + 1,
                     "cycle {index}: the fixture's own slot schedule disagrees with the \
                      preprocessing",
@@ -655,7 +475,7 @@ mod tests {
                 assert_eq!(
                     address,
                     cycle.ram_access().address() as u64,
-                    "cycle {index}: the modular row and the legacy cycle disagree on the RAM \
+                    "cycle {index}: the modular row and the tracer cycle disagree on the RAM \
                      address",
                 );
                 match fixture
@@ -686,187 +506,202 @@ mod tests {
         });
     }
 
-    #[test]
-    fn fixture_legacy_message_vanishes_at_the_boolean_points() {
-        with_legacy_witness(LOG_T, RAM_K, one_hot(), SEED, |_witness, fixture| {
-            let legacy = run_legacy(fixture);
-            assert_eq!(
-                (legacy.messages[0][0], legacy.messages[0][1]),
-                (Fr::from_u64(0), Fr::from_u64(0)),
-                "round 0 must vanish at X = 0 and X = 1: the booleanity summand is identically \
-                 zero on a genuinely one-hot witness, so a non-zero value means the oracle is \
-                 reading the wrong trace, bytecode, memory layout or eq points",
-            );
-            assert_ne!(
-                legacy.messages[0][2],
-                Fr::from_u64(0),
-                "round 0 must NOT vanish at X = 2: the squared leg's extension is quadratic \
-                 while the linear leg's is linear, so a zero here means the masses are zero and \
-                 the fixture is blind",
-            );
-        });
+    struct Geometry {
+        log_t: usize,
+        ram_k: usize,
+        log_k_chunk: u8,
     }
 
-    #[test]
-    fn booleanity_address_matches_reference_round_for_round() {
-        let Some(_) = shared_context() else {
-            return;
-        };
-        with_legacy_witness(LOG_T, RAM_K, one_hot(), SEED, |witness, fixture| {
-            let layout = formula_dimensions_from_parts(
-                one_hot(),
-                LOG_T,
-                fixture.bytecode.code_size,
-                fixture.ram_k,
-                JoltRelationId::Booleanity,
-            )
-            .expect("formula dimensions")
-            .ra_layout;
-            let chunk_bits = usize::from(one_hot().log_k_chunk);
-            let dimensions = BooleanityDimensions::new(layout, LOG_T, chunk_bits);
-            let cycle_point: Vec<Fr> = (0..LOG_T).map(|i| fr(3 * i as u64 + 1)).collect();
-            let address_point: Vec<Fr> = (0..chunk_bits).map(|i| fr(7 * i as u64 + 5)).collect();
-            let relation =
-                BooleanityAddressPhase::<Fr>::new(dimensions, address_point.clone(), cycle_point);
+    const DEFAULT_GEOMETRY: Geometry = Geometry {
+        log_t: LOG_T,
+        ram_k: RAM_K,
+        log_k_chunk: 4,
+    };
 
-            let claims = BooleanityAddressPhaseInputClaims::default();
-            let points = BooleanityAddressPhaseInputClaims::default();
-            let challenge_set = BooleanityAddressPhaseChallenges {
+    const SINGLE_CYCLE_ROUND: Geometry = Geometry {
+        log_t: 1,
+        ram_k: RAM_K,
+        log_k_chunk: 4,
+    };
+
+    const WIDE_CHUNK: Geometry = Geometry {
+        log_t: LOG_T,
+        ram_k: RAM_K,
+        log_k_chunk: 8,
+    };
+
+    struct Parity<'a> {
+        relation: BooleanityAddressPhase<Fr>,
+        claims: BooleanityAddressPhaseInputClaims<Fr>,
+        challenges: BooleanityAddressPhaseChallenges<Fr>,
+        points: BooleanityAddressPhaseInputClaims<Vec<Fr>>,
+        witness: &'a dyn jolt_witness::JoltWitnessPlane<Fr>,
+        chunk_bits: usize,
+    }
+
+    fn parity_setup<'a>(
+        geometry: &Geometry,
+        witness: &'a dyn jolt_witness::JoltWitnessPlane<Fr>,
+        code_size: usize,
+        ram_k: usize,
+    ) -> Parity<'a> {
+        let one_hot = one_hot_with(geometry.log_k_chunk);
+        let layout = formula_dimensions_from_parts(
+            one_hot,
+            geometry.log_t,
+            code_size,
+            ram_k,
+            JoltRelationId::Booleanity,
+        )
+        .expect("formula dimensions")
+        .ra_layout;
+        let chunk_bits = usize::from(geometry.log_k_chunk);
+        let dimensions = BooleanityDimensions::new(layout, geometry.log_t, chunk_bits);
+        let cycle_point: Vec<Fr> = (0..geometry.log_t).map(|i| fr(3 * i as u64 + 1)).collect();
+        let address_point: Vec<Fr> = (0..chunk_bits).map(|i| fr(7 * i as u64 + 5)).collect();
+        Parity {
+            relation: BooleanityAddressPhase::<Fr>::new(
+                dimensions,
+                address_point.clone(),
+                cycle_point,
+            ),
+            claims: BooleanityAddressPhaseInputClaims::default(),
+            challenges: BooleanityAddressPhaseChallenges {
                 reference_address: address_point,
                 gamma: fr(11),
-            };
-            let make_inputs = || ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &challenge_set,
-            };
-
-            let mut expected_kernel = ReferenceBackend
-                .prepare(&mut ProofSession::default(), witness, make_inputs())
-                .expect("reference prepare");
-            let mut got_kernel = CudaBackend
-                .prepare(&mut ProofSession::default(), witness, make_inputs())
-                .expect("cuda prepare");
-
-            let challenges: Vec<Fr> = (0..chunk_bits).map(|i| fr(13 * i as u64 + 2)).collect();
-            let mut expected_claim = Fr::from_u64(0);
-            let mut got_claim = Fr::from_u64(0);
-            let mut bind = None;
-            for (round, &challenge) in challenges.iter().enumerate() {
-                let expected = expected_kernel
-                    .prove_round(bind, round, expected_claim)
-                    .expect("reference prove_round");
-                let got = got_kernel
-                    .prove_round(bind, round, got_claim)
-                    .expect("cuda prove_round");
-                for point in 0..=DEGREE {
-                    let at = Fr::from_u64(point as u64);
-                    assert_eq!(
-                        got.evaluate(at),
-                        expected.evaluate(at),
-                        "round {round} message diverged at X = {point}",
-                    );
-                }
-                expected_claim = expected.evaluate(challenge);
-                got_claim = got.evaluate(challenge);
-                bind = Some(challenge);
-            }
-            let last = challenges[challenges.len() - 1];
-            expected_kernel
-                .finish_rounds(last)
-                .expect("reference finish_rounds");
-            got_kernel.finish_rounds(last).expect("cuda finish_rounds");
-            assert_eq!(
-                got_kernel
-                    .output_claims(&claims)
-                    .expect("cuda output claims")
-                    .intermediate,
-                expected_kernel
-                    .output_claims(&claims)
-                    .expect("reference output claims")
-                    .intermediate,
-                "the staged address-phase claim diverged",
-            );
-        });
+            },
+            points: BooleanityAddressPhaseInputClaims::default(),
+            witness,
+            chunk_bits,
+        }
     }
 
-    #[test]
-    fn booleanity_address_matches_legacy_round_for_round() {
+    impl Parity<'_> {
+        fn inputs(&self) -> ProverInputs<'_, Fr, BooleanityAddressPhase<Fr>> {
+            ProverInputs {
+                relation: &self.relation,
+                claims: &self.claims,
+                points: &self.points,
+                challenges: &self.challenges,
+            }
+        }
+    }
+
+    fn address_parity(geometry: &Geometry) {
         let Some(_) = shared_context() else {
             return;
         };
-        with_legacy_witness(LOG_T, RAM_K, one_hot(), SEED, |witness, fixture| {
-            let legacy = run_legacy(fixture);
-            let layout = formula_dimensions_from_parts(
-                one_hot(),
-                LOG_T,
-                fixture.bytecode.code_size,
-                fixture.ram_k,
-                JoltRelationId::Booleanity,
-            )
-            .expect("formula dimensions")
-            .ra_layout;
-            let dimensions = BooleanityDimensions::new(layout, LOG_T, legacy.chunk_bits);
-            let relation = BooleanityAddressPhase::<Fr>::new(
-                dimensions,
-                legacy.instruction_r_address.clone(),
-                legacy.instruction_r_cycle.clone(),
-            );
-            assert_eq!(
-                relation.reference_cycle(),
-                legacy
-                    .instruction_r_cycle
-                    .iter()
-                    .rev()
-                    .copied()
-                    .collect::<Vec<_>>(),
-                "the modular reference cycle must be the reversed stage-5 cycle legacy uses",
-            );
+        with_witness(
+            geometry.log_t,
+            geometry.ram_k,
+            one_hot_with(geometry.log_k_chunk),
+            SEED,
+            |witness, fixture| {
+                let parity =
+                    parity_setup(geometry, witness, fixture.bytecode.code_size, fixture.ram_k);
 
-            let claims = BooleanityAddressPhaseInputClaims::default();
-            let points = BooleanityAddressPhaseInputClaims::default();
-            let challenge_set = BooleanityAddressPhaseChallenges {
-                reference_address: legacy.reference_address.clone(),
-                gamma: legacy.gamma,
-            };
-            let inputs = || ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &challenge_set,
-            };
+                let mut expected_kernel = OptimizedBooleanityAddress
+                    .prepare(
+                        &mut ProofSession::default(),
+                        parity.witness,
+                        parity.inputs(),
+                    )
+                    .expect("optimized prepare");
+                let mut got_kernel = CudaBackend
+                    .prepare(
+                        &mut ProofSession::default(),
+                        parity.witness,
+                        parity.inputs(),
+                    )
+                    .expect("cuda prepare");
 
-            let mut got_kernel = CudaBackend
-                .prepare(&mut ProofSession::default(), witness, inputs())
-                .expect("cuda prepare");
+                assert_eq!(
+                    expected_kernel.num_rounds(),
+                    got_kernel.num_rounds(),
+                    "the two tiers disagree on the address-phase round count",
+                );
+                assert!(
+                    parity.chunk_bits > 0,
+                    "a zero-round parity run proves nothing",
+                );
 
-            let mut claim = Fr::from_u64(0);
-            let mut bind = None;
-            for (round, &challenge) in legacy.challenges.iter().enumerate() {
-                let message = got_kernel
-                    .prove_round(bind, round, claim)
-                    .expect("cuda prove_round");
-                let mut got = [Fr::from_u64(0); DEGREE + 1];
-                for (point, eval) in got.iter_mut().enumerate() {
-                    *eval = message.evaluate(Fr::from_u64(point as u64));
+                let challenges: Vec<Fr> = (0..parity.chunk_bits)
+                    .map(|i| fr(13 * i as u64 + 2))
+                    .collect();
+                let mut expected_claim = Fr::from_u64(0);
+                let mut got_claim = Fr::from_u64(0);
+                let mut bind = None;
+                for (round, &challenge) in challenges.iter().enumerate() {
+                    let expected = expected_kernel
+                        .prove_round(bind, round, expected_claim)
+                        .expect("optimized prove_round");
+                    let got = got_kernel
+                        .prove_round(bind, round, got_claim)
+                        .expect("cuda prove_round");
+                    for point in 0..=DEGREE {
+                        let at = Fr::from_u64(point as u64);
+                        assert_eq!(
+                            got.evaluate(at),
+                            expected.evaluate(at),
+                            "round {round} message diverged at X = {point}",
+                        );
+                    }
+                    if round == 0 {
+                        assert_eq!(
+                            (
+                                expected.evaluate(Fr::from_u64(0)),
+                                expected.evaluate(Fr::from_u64(1))
+                            ),
+                            (Fr::from_u64(0), Fr::from_u64(0)),
+                            "round 0 must vanish at X = 0 and X = 1: the booleanity summand is \
+                             identically zero on a genuinely one-hot witness, so a non-zero value \
+                             means the oracle is reading the wrong trace, bytecode, memory layout \
+                             or eq points",
+                        );
+                        assert_ne!(
+                            expected.evaluate(Fr::from_u64(2)),
+                            Fr::from_u64(0),
+                            "round 0 must NOT vanish at X = 2: the squared leg's extension is \
+                             quadratic while the linear leg's is linear, so a zero here means the \
+                             masses are zero and the fixture is blind",
+                        );
+                    }
+                    expected_claim = expected.evaluate(challenge);
+                    got_claim = got.evaluate(challenge);
+                    bind = Some(challenge);
                 }
-                let expected = legacy.messages[round];
-                assert_eq!(got, expected, "round {round} message diverged");
-                claim = message.evaluate(challenge);
-                bind = Some(challenge);
-            }
-            got_kernel
-                .finish_rounds(legacy.challenges[legacy.challenges.len() - 1])
-                .expect("cuda finish_rounds");
-            let got = got_kernel
-                .output_claims(&claims)
-                .expect("cuda output claims")
-                .intermediate;
-            assert_eq!(
-                got, legacy.output_claim,
-                "the staged address-phase claim diverged",
-            );
-        });
+                let last = challenges[challenges.len() - 1];
+                expected_kernel
+                    .finish_rounds(last)
+                    .expect("optimized finish_rounds");
+                got_kernel.finish_rounds(last).expect("cuda finish_rounds");
+                assert_eq!(
+                    got_kernel
+                        .output_claims(&parity.claims)
+                        .expect("cuda output claims")
+                        .intermediate,
+                    expected_kernel
+                        .output_claims(&parity.claims)
+                        .expect("optimized output claims")
+                        .intermediate,
+                    "the staged address-phase claim diverged",
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn booleanity_address_matches_optimized_round_for_round() {
+        address_parity(&DEFAULT_GEOMETRY);
+    }
+
+    #[test]
+    fn booleanity_address_matches_optimized_single_cycle_round() {
+        address_parity(&SINGLE_CYCLE_ROUND);
+    }
+
+    #[test]
+    fn booleanity_address_matches_optimized_wide_chunk() {
+        address_parity(&WIDE_CHUNK);
     }
 }

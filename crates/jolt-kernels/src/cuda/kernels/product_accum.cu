@@ -33,17 +33,6 @@ __device__ __forceinline__ void pa_zero(u64 *folded) {
     for (int i = 0; i < 2 * PA_SLOTS; i++) folded[i] = 0;
 }
 
-__device__ __forceinline__ void pa_add_folded(u64 *folded, const u64 *other) {
-    for (int i = 0; i < 2 * PA_SLOTS; i++) folded[i] += other[i];
-}
-
-__device__ __forceinline__ void pa_scatter_add(u64 *slots, const u64 *folded) {
-    for (int i = 0; i < 2 * PA_SLOTS; i++) {
-        unsigned long long lane = (unsigned long long)folded[i];
-        if (lane != 0ULL) atomicAdd((unsigned long long *)&slots[i], lane);
-    }
-}
-
 __device__ __forceinline__ void pa_finalize(const u64 *folded, u64 *out) {
     u64 limbs[PA_SLOTS + 1];
     u128 carry = 0;
@@ -67,30 +56,4 @@ __device__ __forceinline__ void pa_finalize(const u64 *folded, u64 *out) {
     u64 reduced[LIMBS];
     fr_mul(acc, raw_one, reduced);
     store4(out, reduced);
-}
-
-extern "C" __global__ void pa_scatter_kernel(const u64 *__restrict__ left,
-                                            const u64 *__restrict__ right,
-                                            const unsigned int *__restrict__ buckets,
-                                            u64 *__restrict__ slots,
-                                            unsigned int n) {
-    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
-    if (j >= n) return;
-
-    u64 a[LIMBS], b[LIMBS];
-    load4(left + (unsigned long long)j * LIMBS, a);
-    load4(right + (unsigned long long)j * LIMBS, b);
-
-    u64 folded[2 * PA_SLOTS];
-    pa_fold_mul(a, b, folded);
-    pa_scatter_add(slots + (unsigned long long)buckets[j] * (2 * PA_SLOTS), folded);
-}
-
-extern "C" __global__ void pa_reduce_kernel(const u64 *__restrict__ slots,
-                                           u64 *__restrict__ out,
-                                           unsigned int n) {
-    unsigned int b = blockIdx.x * blockDim.x + threadIdx.x;
-    if (b >= n) return;
-    pa_finalize(slots + (unsigned long long)b * (2 * PA_SLOTS),
-                out + (unsigned long long)b * LIMBS);
 }

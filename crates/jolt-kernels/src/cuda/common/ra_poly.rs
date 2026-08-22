@@ -397,7 +397,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn ra_poly_matches_legacy_model(
+        fn ra_poly_matches_the_host_model(
             log_t in 1usize..=6,
             log_k in 1usize..=4,
             seed in any::<u64>(),

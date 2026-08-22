@@ -138,105 +138,13 @@ pub fn matrix_entries(rows: &[RegistersReadWriteWitness], gamma: Fr) -> Vec<Matr
 }
 
 #[cfg(test)]
-#[expect(clippy::panic, reason = "test module: fixture errors fail loudly")]
 mod tests {
-    use ark_bn254::Fr as LegacyFr;
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_prover_legacy::field::JoltField as LegacyJoltField;
-    use jolt_prover_legacy::subprotocols::read_write_matrix::{
-        CycleMajorMatrixEntry, ReadWriteMatrixCycleMajor, RegistersCycleMajorEntry,
-    };
-    use rand::rngs::StdRng;
-    use rand::{RngCore, SeedableRng};
-    use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
 
     use super::{matrix_entries, RdPreValue, RegistersReadWriteWitness, Rs1Address, Rs2Address};
 
-    const LOG_T: usize = 6;
-
-    fn random_cycle(rng: &mut StdRng) -> Cycle {
-        let variants: Vec<Cycle> = Cycle::iter().collect();
-        for _ in 0..10_000 {
-            let index = rng.next_u64() as usize % variants.len();
-            let candidate = variants[index].random(rng);
-            if jolt_prover_legacy::zkvm::instruction::JoltTraceCycle::try_new(&candidate).is_ok() {
-                return candidate;
-            }
-        }
-        panic!("no convertible cycle variant found");
-    }
-
     #[test]
-    fn matrix_entries_match_legacy_construction() {
-        let mut rng = StdRng::seed_from_u64(13);
-        let trace: Vec<Cycle> = (0..1usize << LOG_T)
-            .map(|_| random_cycle(&mut rng))
-            .collect();
-        let gamma_raw = 101u64;
-        let gamma = <LegacyFr as LegacyJoltField>::from_u64(gamma_raw);
-
-        let legacy =
-            ReadWriteMatrixCycleMajor::<LegacyFr, RegistersCycleMajorEntry<LegacyFr, _>>::new(
-                &trace, gamma,
-            )
-            .deref_coeffs();
-
-        let rows: Vec<RegistersReadWriteWitness> = trace
-            .iter()
-            .map(|cycle| RegistersReadWriteWitness {
-                rs1_address: Rs1Address(cycle.rs1_read().map(|(r, _)| r)),
-                rs1_value: jolt_witness::witnesses::Rs1Value(
-                    cycle.rs1_read().map_or(0, |(_, v)| v),
-                ),
-                rs2_address: Rs2Address(cycle.rs2_read().map(|(r, _)| r)),
-                rs2_value: jolt_witness::witnesses::Rs2Value(
-                    cycle.rs2_read().map_or(0, |(_, v)| v),
-                ),
-                rd_address: jolt_witness::witnesses::RdAddress(cycle.rd_write().map(|(r, ..)| r)),
-                rd_pre_value: RdPreValue(cycle.rd_write().map_or(0, |(_, pre, _)| pre)),
-                rd_post_value: jolt_witness::witnesses::RdWriteValue(
-                    cycle.rd_write().map_or(0, |(_, _, post)| post),
-                ),
-            })
-            .collect();
-
-        let got = matrix_entries(&rows, Fr::from(gamma));
-
-        let expected: Vec<(u32, u32, Fr, u64, u64, Fr, Fr)> = legacy
-            .entries
-            .iter()
-            .map(|entry| {
-                (
-                    CycleMajorMatrixEntry::row(entry) as u32,
-                    CycleMajorMatrixEntry::column(entry) as u32,
-                    Fr::from(entry.val_coeff),
-                    entry.prev_val,
-                    entry.next_val,
-                    Fr::from(entry.ra_coeff),
-                    Fr::from(entry.wa_coeff),
-                )
-            })
-            .collect();
-        let mine: Vec<(u32, u32, Fr, u64, u64, Fr, Fr)> = got
-            .iter()
-            .map(|e| {
-                (
-                    e.row,
-                    e.col,
-                    e.val_coeff,
-                    e.prev_val,
-                    e.next_val,
-                    e.coeffs[0],
-                    e.coeffs[1],
-                )
-            })
-            .collect();
-        assert_eq!(mine, expected);
-    }
-
-    #[test]
-    fn collision_cases_use_legacy_lookup_table_values() {
+    fn collision_cases_use_the_documented_coefficients() {
         let gamma = Fr::from_u64(101);
         let gamma_squared = gamma * gamma;
         let one = Fr::from_u64(1);

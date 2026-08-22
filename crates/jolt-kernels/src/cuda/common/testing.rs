@@ -289,6 +289,44 @@ pub fn ram_trace(log_t: usize, ram_k: usize) -> Vec<tracer::instruction::Cycle> 
         .collect()
 }
 
+pub struct RamCell {
+    pub row: usize,
+    pub col: usize,
+    pub prev_val: u64,
+    pub next_val: u64,
+}
+
+pub fn ram_matrix_cells(log_t: usize, ram_k: usize) -> Vec<RamCell> {
+    use tracer::instruction::RAMAccess;
+
+    let layout = MemoryLayout::default();
+    let cells: Vec<RamCell> = ram_trace(log_t, ram_k)
+        .iter()
+        .enumerate()
+        .filter_map(|(row, cycle)| {
+            let (address, prev_val, next_val) = match cycle.ram_access() {
+                RAMAccess::Read(read) => (read.address, read.value, read.value),
+                RAMAccess::Write(write) => (write.address, write.pre_value, write.post_value),
+                RAMAccess::NoOp => return None,
+            };
+            let col = layout
+                .remap_word_address(address)
+                .expect("fixture RAM addresses are mapped")?;
+            Some(RamCell {
+                row,
+                col: col as usize,
+                prev_val,
+                next_val,
+            })
+        })
+        .collect();
+    assert!(
+        !cells.is_empty(),
+        "the RAM fixture produced no accesses to build a matrix from",
+    );
+    cells
+}
+
 fn instruction_rows(instruction: JoltInstructionRow, log_t: usize, seed: u64) -> Vec<TraceRow> {
     (0..1usize << log_t)
         .map(|cycle| {
@@ -322,8 +360,18 @@ pub fn with_instruction_witness<R>(
     seed: u64,
     body: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
 ) -> R {
+    with_instruction_kind_witness(JoltInstructionKind::XOR, log_t, one_hot, seed, body)
+}
+
+pub fn with_instruction_kind_witness<R>(
+    instruction_kind: JoltInstructionKind,
+    log_t: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
+) -> R {
     let instruction = JoltInstructionRow {
-        instruction_kind: JoltInstructionKind::XOR,
+        instruction_kind,
         address: 0x8000_0000,
         operands: NormalizedOperands {
             rd: Some(1),

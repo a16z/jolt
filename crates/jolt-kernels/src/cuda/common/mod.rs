@@ -15,7 +15,6 @@ pub(crate) mod pairing;
 pub(crate) mod precommitted_reduction;
 pub(crate) mod prefix_suffix;
 pub(crate) mod primitives;
-pub(crate) mod product_accum;
 pub(crate) mod ra_poly;
 pub(crate) mod read_write_matrix;
 pub(crate) mod split_eq;

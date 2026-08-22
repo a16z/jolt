@@ -381,75 +381,54 @@ impl DeviceReadWriteMatrix {
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
-    clippy::panic,
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
-    use ark_bn254::Fr as LegacyFr;
-    use jolt_field::Fr;
-    use jolt_field::FromPrimitiveInt;
-    use jolt_prover_legacy::field::challenge::MontU128Challenge as LegacyChallenge;
-    use jolt_prover_legacy::field::JoltField as LegacyJoltField;
-    use jolt_prover_legacy::poly::multilinear_polynomial::{
-        BindingOrder as LegacyBindingOrder, MultilinearPolynomial as LegacyMultilinear,
-        PolynomialBinding as LegacyBinding,
-    };
-    use jolt_prover_legacy::poly::split_eq_poly::GruenSplitEqPolynomial as LegacyGruen;
-    use jolt_prover_legacy::subprotocols::read_write_matrix::{
-        CycleMajorMatrixEntry, ReadWriteMatrixCycleMajor, RegistersCycleMajorEntry,
-    };
-    use rand::rngs::StdRng;
-    use rand::{RngCore, SeedableRng};
-    use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial};
 
     use super::super::context::shared_context;
+    use super::super::split_eq::DeviceSplitEq;
+    use super::super::testing::{fr, ram_matrix_cells};
     use super::{DeviceReadWriteMatrix, MatrixEntry};
+    use crate::optimized::rw_matrix::{CycleMajorEntry, CycleMajorMatrix};
 
     const LOG_T: usize = 6;
-    const COEFF_WIDTH: usize = 2;
+    const RAM_K: usize = 32;
 
-    fn random_cycle(rng: &mut StdRng) -> Cycle {
-        let variants: Vec<Cycle> = Cycle::iter().collect();
-        for _ in 0..10_000 {
-            let index = rng.next_u64() as usize % variants.len();
-            let candidate = variants[index].random(rng);
-            if jolt_prover_legacy::zkvm::instruction::JoltTraceCycle::try_new(&candidate).is_ok() {
-                return candidate;
-            }
-        }
-        panic!("no convertible cycle variant found");
+    struct RamFixture {
+        device: Vec<MatrixEntry>,
+        optimized: Vec<CycleMajorEntry<Fr>>,
     }
 
-    fn trace(seed: u64) -> Vec<Cycle> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        (0..1usize << LOG_T)
-            .map(|_| random_cycle(&mut rng))
-            .collect()
-    }
-
-    type LegacyMatrix =
-        ReadWriteMatrixCycleMajor<LegacyFr, RegistersCycleMajorEntry<LegacyFr, LegacyFr>>;
-
-    fn legacy_entries(matrix: &LegacyMatrix) -> Vec<(u32, u32, Fr, u64, u64, Fr, Fr)> {
-        matrix
-            .entries
+    fn ram_fixture() -> RamFixture {
+        let cells = ram_matrix_cells(LOG_T, RAM_K);
+        let device = cells
             .iter()
-            .map(|entry| {
-                (
-                    CycleMajorMatrixEntry::row(entry) as u32,
-                    CycleMajorMatrixEntry::column(entry) as u32,
-                    Fr::from(entry.val_coeff),
-                    entry.prev_val,
-                    entry.next_val,
-                    Fr::from(entry.ra_coeff),
-                    Fr::from(entry.wa_coeff),
-                )
+            .map(|cell| MatrixEntry {
+                row: cell.row as u32,
+                col: cell.col as u32,
+                val_coeff: Fr::from_u64(cell.prev_val),
+                prev_val: cell.prev_val,
+                next_val: cell.next_val,
+                coeffs: [Fr::from_u64(1), Fr::from_u64(0)],
             })
-            .collect()
+            .collect();
+        let optimized = cells
+            .iter()
+            .map(|cell| CycleMajorEntry {
+                row: cell.row,
+                col: cell.col,
+                prev_val: cell.prev_val,
+                next_val: cell.next_val,
+                val: Fr::from_u64(cell.prev_val),
+                ra: Fr::from_u64(1),
+            })
+            .collect();
+        RamFixture { device, optimized }
     }
 
-    fn device_entries(entries: &[MatrixEntry]) -> Vec<(u32, u32, Fr, u64, u64, Fr, Fr)> {
+    fn entry_tuples(entries: &[MatrixEntry]) -> Vec<(u32, u32, Fr, u64, u64, Fr)> {
         entries
             .iter()
             .map(|entry| {
@@ -460,289 +439,106 @@ mod tests {
                     entry.prev_val,
                     entry.next_val,
                     entry.coeffs[0],
-                    entry.coeffs[1],
                 )
             })
             .collect()
     }
 
-    fn seed_from(matrix: &LegacyMatrix) -> Vec<MatrixEntry> {
-        matrix
-            .entries
+    fn optimized_tuples(entries: &[CycleMajorEntry<Fr>]) -> Vec<(u32, u32, Fr, u64, u64, Fr)> {
+        entries
             .iter()
-            .map(|entry| MatrixEntry {
-                row: CycleMajorMatrixEntry::row(entry) as u32,
-                col: CycleMajorMatrixEntry::column(entry) as u32,
-                val_coeff: Fr::from(entry.val_coeff),
-                prev_val: entry.prev_val,
-                next_val: entry.next_val,
-                coeffs: [Fr::from(entry.ra_coeff), Fr::from(entry.wa_coeff)],
+            .map(|entry| {
+                (
+                    entry.row as u32,
+                    entry.col as u32,
+                    entry.val,
+                    entry.prev_val,
+                    entry.next_val,
+                    entry.ra,
+                )
             })
             .collect()
     }
 
     #[test]
-    fn device_quadratic_coeffs_match_legacy_round_for_round() {
+    fn device_ram_matrix_bind_matches_optimized_round_for_round() {
         let Some(context) = shared_context() else {
             return;
         };
-        let gamma_raw = 101u64;
-        let gamma = <LegacyFr as LegacyJoltField>::from_u64(gamma_raw);
-        let mut legacy: LegacyMatrix = ReadWriteMatrixCycleMajor::<
-            LegacyFr,
-            RegistersCycleMajorEntry<LegacyFr, _>,
-        >::new(&trace(7), gamma)
-        .deref_coeffs();
-        let mut device =
-            DeviceReadWriteMatrix::new(context, &seed_from(&legacy), COEFF_WIDTH, None)
-                .expect("device matrix");
-
-        let inc_host: Vec<Fr> = (0..1usize << LOG_T)
-            .map(|j| crate::cuda::common::testing::fr(j as u64 * 5 + 3))
-            .collect();
-        let mut legacy_inc = LegacyMultilinear::from(
-            inc_host
-                .iter()
-                .map(|value| LegacyFr::from(*value))
-                .collect::<Vec<_>>(),
-        );
-        let mut device_inc = context.upload(&inc_host).expect("upload inc");
-
-        let point: Vec<Fr> = (0..LOG_T)
-            .map(|i| crate::cuda::common::testing::fr(i as u64 * 11 + 7))
-            .collect();
-        let legacy_point: Vec<LegacyChallenge<LegacyFr>> = (0..LOG_T)
-            .map(|i| LegacyChallenge::new(31 + i as u128))
-            .collect();
-        let mut legacy_eq =
-            LegacyGruen::<LegacyFr>::new(&legacy_point, LegacyBindingOrder::LowToHigh);
-        let mut device_eq = crate::cuda::common::split_eq::DeviceSplitEq::<Fr>::new(
-            context,
-            &legacy_point
-                .iter()
-                .map(|c| Fr::from(LegacyFr::from(*c)))
-                .collect::<Vec<_>>(),
-            jolt_poly::BindingOrder::LowToHigh,
-        )
-        .expect("device split-eq");
-        let _ = point;
-
-        for round in 0..LOG_T {
-            let expected = legacy.compute_message(
-                &legacy_inc,
-                &legacy_eq,
-                gamma,
-                <LegacyFr as LegacyJoltField>::from_u64(0),
-            );
-            let got_coeffs: [Fr; 2] = device
-                .quadratic_coeffs(context, &device_inc, &device_eq)
-                .expect("device quadratic coeffs");
-            let got = device_eq.gruen_poly_deg_3(got_coeffs[0], got_coeffs[1], Fr::from_u64(0));
-            let expected: Vec<Fr> = expected.coeffs.iter().map(|c| Fr::from(*c)).collect();
-            assert_eq!(
-                got.coefficients().to_vec(),
-                expected,
-                "round polynomials diverged at round {round}",
-            );
-
-            let challenge = LegacyChallenge::new(17 + round as u128);
-            legacy.bind(challenge);
-            device
-                .bind(context, Fr::from(LegacyFr::from(challenge)))
-                .expect("device bind");
-            legacy_inc.bind_parallel(challenge, LegacyBindingOrder::LowToHigh);
-            device_inc = context
-                .bind(
-                    &device_inc,
-                    Fr::from(LegacyFr::from(challenge)),
-                    jolt_poly::BindingOrder::LowToHigh,
-                )
-                .expect("bind device inc");
-            legacy_eq.bind(challenge);
-            device_eq.bind(Fr::from(LegacyFr::from(challenge)));
-        }
-    }
-
-    fn legacy_ram_quadratic_coeffs(
-        matrix: &ReadWriteMatrixCycleMajor<
-            LegacyFr,
-            jolt_prover_legacy::subprotocols::read_write_matrix::RamCycleMajorEntry<LegacyFr>,
-        >,
-        inc: &LegacyMultilinear<LegacyFr>,
-        eq: &LegacyGruen<LegacyFr>,
-        gamma: LegacyFr,
-    ) -> [LegacyFr; 2] {
-        use jolt_prover_legacy::field::OptimizedMul;
-
-        let e_in = eq.E_in_current();
-        let e_in_len = e_in.len();
-        let num_x_in_bits = e_in_len.max(1).ilog2() as usize;
-        let x_bitmask = (1usize << num_x_in_bits) - 1;
-        let zero = <LegacyFr as LegacyJoltField>::from_u64(0);
-        let mut total = [zero; 2];
-
-        for outer in matrix.entries.chunk_by(|a, b| {
-            (CycleMajorMatrixEntry::row(a) / 2) >> num_x_in_bits
-                == (CycleMajorMatrixEntry::row(b) / 2) >> num_x_in_bits
-        }) {
-            let x_out = (CycleMajorMatrixEntry::row(&outer[0]) / 2) >> num_x_in_bits;
-            let e_out_eval = eq.E_out_current()[x_out];
-            let mut outer_sum = [zero; 2];
-
-            for pair in outer.chunk_by(|a, b| {
-                CycleMajorMatrixEntry::row(a) / 2 == CycleMajorMatrixEntry::row(b) / 2
-            }) {
-                let odd_start =
-                    pair.partition_point(|entry| CycleMajorMatrixEntry::row(entry) % 2 == 0);
-                let (even_row, odd_row) = pair.split_at(odd_start);
-                let j_prime = 2 * (CycleMajorMatrixEntry::row(&pair[0]) / 2);
-                let e_in_eval = if e_in_len <= 1 {
-                    <LegacyFr as LegacyJoltField>::from_u64(1)
-                } else {
-                    e_in[(j_prime / 2) & x_bitmask]
-                };
-                let inc_0 = inc.get_bound_coeff(j_prime);
-                let inc_1 = inc.get_bound_coeff(j_prime + 1);
-                let inner = matrix.prover_message_contribution(
-                    even_row,
-                    odd_row,
-                    [inc_0, inc_1 - inc_0],
-                    gamma,
-                );
-                outer_sum[0] += e_in_eval.mul_0_optimized(inner[0]);
-                outer_sum[1] += e_in_eval.mul_0_optimized(inner[1]);
-            }
-
-            total[0] += e_out_eval.mul_0_optimized(outer_sum[0]);
-            total[1] += e_out_eval.mul_0_optimized(outer_sum[1]);
-        }
-        total
-    }
-
-    #[test]
-    fn device_ram_quadratic_coeffs_match_legacy_round_for_round() {
-        use jolt_prover_legacy::subprotocols::read_write_matrix::RamCycleMajorEntry;
-
-        let Some(context) = shared_context() else {
-            return;
+        let fixture = ram_fixture();
+        let mut expected = CycleMajorMatrix {
+            entries: fixture.optimized,
         };
-        const RAM_K: usize = 32;
-        let layout = common::jolt_device::MemoryLayout::default();
-        let ram_trace = crate::cuda::common::testing::ram_trace(LOG_T, RAM_K);
-        let gamma_raw = 103u64;
-        let gamma = <LegacyFr as LegacyJoltField>::from_u64(gamma_raw);
-        let val_init = vec![<LegacyFr as LegacyJoltField>::from_u64(0); RAM_K];
-        let mut legacy = ReadWriteMatrixCycleMajor::<LegacyFr, RamCycleMajorEntry<LegacyFr>>::new(
-            &ram_trace, val_init, &layout,
-        );
-
-        let seeded: Vec<MatrixEntry> = legacy
-            .entries
-            .iter()
-            .map(|entry| MatrixEntry {
-                row: CycleMajorMatrixEntry::row(entry) as u32,
-                col: CycleMajorMatrixEntry::column(entry) as u32,
-                val_coeff: Fr::from(entry.val_coeff),
-                prev_val: entry.prev_val,
-                next_val: entry.next_val,
-                coeffs: [Fr::from(entry.ra_coeff), Fr::from_u64(0)],
-            })
-            .collect();
-        let mut device = DeviceReadWriteMatrix::new(context, &seeded, 1, Some(Fr::from(gamma)))
+        let mut got = DeviceReadWriteMatrix::new(context, &fixture.device, 1, Some(fr(101)))
             .expect("device RAM matrix");
 
-        let inc_host: Vec<Fr> = (0..1usize << LOG_T)
-            .map(|j| crate::cuda::common::testing::fr(j as u64 * 5 + 3))
-            .collect();
-        let mut legacy_inc = LegacyMultilinear::from(
-            inc_host
-                .iter()
-                .map(|value| LegacyFr::from(*value))
-                .collect::<Vec<_>>(),
-        );
-        let mut device_inc = context.upload(&inc_host).expect("upload inc");
-
-        let legacy_point: Vec<LegacyChallenge<LegacyFr>> = (0..LOG_T)
-            .map(|i| LegacyChallenge::new(61 + i as u128))
-            .collect();
-        let mut legacy_eq =
-            LegacyGruen::<LegacyFr>::new(&legacy_point, LegacyBindingOrder::LowToHigh);
-        let mut device_eq = crate::cuda::common::split_eq::DeviceSplitEq::<Fr>::new(
-            context,
-            &legacy_point
-                .iter()
-                .map(|c| Fr::from(LegacyFr::from(*c)))
-                .collect::<Vec<_>>(),
-            jolt_poly::BindingOrder::LowToHigh,
-        )
-        .expect("device split-eq");
-
-        for round in 0..LOG_T {
-            let expected = legacy_ram_quadratic_coeffs(&legacy, &legacy_inc, &legacy_eq, gamma);
-            let got: [Fr; 2] = device
-                .quadratic_coeffs(context, &device_inc, &device_eq)
-                .expect("device quadratic coeffs");
-            assert_eq!(
-                got.to_vec(),
-                expected
-                    .iter()
-                    .map(|value| Fr::from(*value))
-                    .collect::<Vec<_>>(),
-                "RAM quadratic coefficients diverged at round {round}",
-            );
-
-            let challenge = LegacyChallenge::new(19 + round as u128);
-            legacy.bind(challenge);
-            device
-                .bind(context, Fr::from(LegacyFr::from(challenge)))
-                .expect("device bind");
-            legacy_inc.bind_parallel(challenge, LegacyBindingOrder::LowToHigh);
-            device_inc = context
-                .bind(
-                    &device_inc,
-                    Fr::from(LegacyFr::from(challenge)),
-                    jolt_poly::BindingOrder::LowToHigh,
-                )
-                .expect("bind device inc");
-            legacy_eq.bind(challenge);
-            device_eq.bind(Fr::from(LegacyFr::from(challenge)));
-        }
-    }
-
-    #[test]
-    fn device_matrix_bind_matches_legacy_round_for_round() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let gamma = <LegacyFr as LegacyJoltField>::from_u64(101);
-        let mut legacy: LegacyMatrix = ReadWriteMatrixCycleMajor::<
-            LegacyFr,
-            RegistersCycleMajorEntry<LegacyFr, _>,
-        >::new(&trace(7), gamma)
-        .deref_coeffs();
-
-        let mut device =
-            DeviceReadWriteMatrix::new(context, &seed_from(&legacy), COEFF_WIDTH, None)
-                .expect("device matrix");
-
         assert_eq!(
-            device_entries(&device.to_host(context).expect("download")),
-            legacy_entries(&legacy),
+            entry_tuples(&got.to_host(context).expect("download")),
+            optimized_tuples(&expected.entries),
             "seeded entry sets disagree before any bind",
         );
 
         for round in 0..LOG_T {
-            let raw = 17u128 + round as u128;
-            let challenge = LegacyChallenge::new(raw);
-            legacy.bind(challenge);
-            device
-                .bind(context, Fr::from(LegacyFr::from(challenge)))
-                .expect("device bind");
+            let challenge = fr(17 + round as u64);
+            expected.bind(challenge);
+            got.bind(context, challenge).expect("device bind");
             assert_eq!(
-                device_entries(&device.to_host(context).expect("download")),
-                legacy_entries(&legacy),
+                entry_tuples(&got.to_host(context).expect("download")),
+                optimized_tuples(&expected.entries),
                 "entry sets diverged after binding round {round}",
             );
+        }
+    }
+
+    #[test]
+    fn device_ram_quadratic_coeffs_match_optimized_round_for_round() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let fixture = ram_fixture();
+        let gamma = fr(103);
+        let mut expected = CycleMajorMatrix {
+            entries: fixture.optimized,
+        };
+        let mut got = DeviceReadWriteMatrix::new(context, &fixture.device, 1, Some(gamma))
+            .expect("device RAM matrix");
+
+        let inc_host: Vec<Fr> = (0..1usize << LOG_T).map(|j| fr(j as u64 * 5 + 3)).collect();
+        let mut expected_inc = Polynomial::new(inc_host.clone());
+        let mut got_inc = context.upload(&inc_host).expect("upload inc");
+
+        let point: Vec<Fr> = (0..LOG_T).map(|i| fr(61 + i as u64)).collect();
+        let mut expected_eq = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+        let mut got_eq = DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
+            .expect("device split-eq");
+
+        for round in 0..LOG_T {
+            let e_in = expected_eq.e_in_current();
+            let e_out = expected_eq.e_out_current();
+            let in_bits = e_in.len().trailing_zeros() as usize;
+            let in_mask = e_in.len() - 1;
+            let expected_coeffs = expected.quadratic_coefficients(
+                |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
+                &expected_inc,
+                gamma,
+            );
+            let got_coeffs: [Fr; 2] = got
+                .quadratic_coeffs(context, &got_inc, &got_eq)
+                .expect("device quadratic coeffs");
+            assert_eq!(
+                got_coeffs, expected_coeffs,
+                "RAM quadratic coefficients diverged at round {round}",
+            );
+
+            let challenge = fr(19 + round as u64);
+            expected.bind(challenge);
+            got.bind(context, challenge).expect("device bind");
+            expected_inc.bind_with_order(challenge, BindingOrder::LowToHigh);
+            got_inc = context
+                .bind(&got_inc, challenge, BindingOrder::LowToHigh)
+                .expect("bind device inc");
+            expected_eq.bind(challenge);
+            got_eq.bind(challenge);
         }
     }
 }

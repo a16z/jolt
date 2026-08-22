@@ -1103,37 +1103,6 @@ __device__ int pml_eval(unsigned int prefix, const pml_args *a, u64 *out) {
     }
 }
 
-extern "C" __global__ void pfx_mle_batch_kernel(const u64 *__restrict__ checkpoints,
-                                                const unsigned long long *__restrict__ bits,
-                                                const unsigned char *__restrict__ lens,
-                                                unsigned int prefix,
-                                                const u64 *__restrict__ r_x,
-                                                unsigned int has_r_x,
-                                                unsigned int c,
-                                                unsigned int round,
-                                                unsigned int suffix_len,
-                                                u64 *__restrict__ out,
-                                                unsigned int n) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-
-    pml_args args;
-    args.checkpoints = checkpoints;
-    args.r_x = r_x;
-    args.has_r_x = has_r_x;
-    args.c = c;
-    args.round = round;
-    args.b.bits = ((u128)bits[2 * i + 1] << 64) | (u128)bits[2 * i];
-    args.b.len = lens[i];
-    args.b.bits &= sfx_mask(args.b.len);
-
-    u64 value[LIMBS];
-    if (!pml_eval(prefix, &args, value)) {
-        pfx_eval(prefix, checkpoints, args.b, suffix_len, value);
-    }
-    store4(out + (unsigned long long)i * LIMBS, value);
-}
-
 __device__ __forceinline__ void pml_default(unsigned int prefix, u64 *out) {
     switch (prefix) {
         case PFX_EQ:

@@ -439,127 +439,56 @@ impl DeviceAddressMajorMatrix {
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
-    clippy::panic,
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
-    use ark_bn254::Fr as LegacyFr;
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::UnivariatePoly;
-    use jolt_prover_legacy::field::challenge::MontU128Challenge as LegacyChallenge;
-    use jolt_prover_legacy::field::JoltField as LegacyJoltField;
-    use jolt_prover_legacy::poly::multilinear_polynomial::MultilinearPolynomial as LegacyMultilinear;
-    use jolt_prover_legacy::poly::unipoly::UniPoly as LegacyUniPoly;
-    use jolt_prover_legacy::subprotocols::read_write_matrix::{
-        AddressMajorMatrixEntry, ReadWriteMatrixAddressMajor, ReadWriteMatrixCycleMajor,
-        RegistersAddressMajorEntry, RegistersCycleMajorEntry,
-    };
-    use rand::rngs::StdRng;
-    use rand::{RngCore, SeedableRng};
-    use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use jolt_poly::Polynomial;
 
     use super::super::context::shared_context;
-    use super::super::device::DeviceFrVec;
+    use super::super::testing::{fr, ram_matrix_cells};
     use super::{AddressMajorEntry, DeviceAddressMajorMatrix};
+    use crate::optimized::rw_matrix::{AddressMajorMatrix, CycleMajorEntry, CycleMajorMatrix};
 
     const LOG_T: usize = 6;
-    const COEFF_WIDTH: usize = 2;
-    const REGISTER_COUNT: usize = 128;
+    const RAM_K: usize = 32;
+    const RAM_LOG_K: usize = 5;
 
-    fn random_cycle(rng: &mut StdRng) -> Cycle {
-        let variants: Vec<Cycle> = Cycle::iter().collect();
-        for _ in 0..10_000 {
-            let index = rng.next_u64() as usize % variants.len();
-            let candidate = variants[index].random(rng);
-            if jolt_prover_legacy::zkvm::instruction::JoltTraceCycle::try_new(&candidate).is_ok() {
-                return candidate;
-            }
-        }
-        panic!("no convertible cycle variant found");
-    }
-
-    type LegacyAddressMajor =
-        ReadWriteMatrixAddressMajor<LegacyFr, RegistersAddressMajorEntry<LegacyFr>>;
-
-    fn legacy_view(matrix: &LegacyAddressMajor) -> Vec<(u32, u32, Fr, Fr, Fr, Fr, Fr)> {
-        matrix
-            .entries
+    fn optimized_address_major() -> AddressMajorMatrix<Fr> {
+        let entries = ram_matrix_cells(LOG_T, RAM_K)
             .iter()
-            .map(|entry| {
-                (
-                    AddressMajorMatrixEntry::row(entry) as u32,
-                    AddressMajorMatrixEntry::column(entry) as u32,
-                    Fr::from(entry.val_coeff),
-                    Fr::from(AddressMajorMatrixEntry::prev_val(entry)),
-                    Fr::from(AddressMajorMatrixEntry::next_val(entry)),
-                    Fr::from(entry.ra_coeff),
-                    Fr::from(entry.wa_coeff),
-                )
+            .map(|cell| CycleMajorEntry {
+                row: cell.row,
+                col: cell.col,
+                prev_val: cell.prev_val,
+                next_val: cell.next_val,
+                val: Fr::from_u64(cell.prev_val),
+                ra: Fr::from_u64(1),
             })
-            .collect()
+            .collect();
+        let mut cycle_major = CycleMajorMatrix { entries };
+        for round in 0..LOG_T {
+            cycle_major.bind(fr(31 + round as u64));
+        }
+        cycle_major.into_address_major()
     }
 
-    fn seed_from(matrix: &LegacyAddressMajor) -> Vec<AddressMajorEntry> {
-        matrix
+    fn device_seed(expected: &AddressMajorMatrix<Fr>) -> Vec<AddressMajorEntry> {
+        expected
             .entries
             .iter()
             .map(|entry| AddressMajorEntry {
-                row: AddressMajorMatrixEntry::row(entry) as u32,
-                col: AddressMajorMatrixEntry::column(entry) as u32,
-                val_coeff: Fr::from(entry.val_coeff),
-                prev_val: Fr::from(AddressMajorMatrixEntry::prev_val(entry)),
-                next_val: Fr::from(AddressMajorMatrixEntry::next_val(entry)),
-                coeffs: [Fr::from(entry.ra_coeff), Fr::from(entry.wa_coeff)],
+                row: entry.row as u32,
+                col: entry.col as u32,
+                val_coeff: entry.val,
+                prev_val: entry.prev_val,
+                next_val: entry.next_val,
+                coeffs: [entry.ra, Fr::from_u64(0)],
             })
             .collect()
     }
 
-    fn val_init_values() -> Vec<Fr> {
-        (0..REGISTER_COUNT)
-            .map(|k| crate::cuda::common::testing::fr(k as u64 * 37 + 19))
-            .collect()
-    }
-
-    fn legacy_val_init(values: &[Fr]) -> LegacyMultilinear<LegacyFr> {
-        LegacyMultilinear::from(
-            values
-                .iter()
-                .map(|value| LegacyFr::from(*value))
-                .collect::<Vec<_>>(),
-        )
-    }
-
-    fn legacy_message(
-        matrix: &LegacyAddressMajor,
-        inc: &LegacyMultilinear<LegacyFr>,
-        eq: &LegacyMultilinear<LegacyFr>,
-        gamma: LegacyFr,
-    ) -> [LegacyFr; 2] {
-        let mut total = [<LegacyFr as LegacyJoltField>::from_u64(0); 2];
-        for entries in matrix.entries.chunk_by(|x, y| {
-            AddressMajorMatrixEntry::column(x) / 2 == AddressMajorMatrixEntry::column(y) / 2
-        }) {
-            let odd_start =
-                entries.partition_point(|entry| AddressMajorMatrixEntry::column(entry) % 2 == 0);
-            let (even_col, odd_col) = entries.split_at(odd_start);
-            let even_col_idx = 2 * (AddressMajorMatrixEntry::column(&entries[0]) / 2);
-            let contribution = LegacyAddressMajor::prover_message_contribution(
-                even_col,
-                odd_col,
-                matrix.val_init.get_bound_coeff(even_col_idx),
-                matrix.val_init.get_bound_coeff(even_col_idx + 1),
-                inc,
-                eq,
-                gamma,
-            );
-            total[0] += contribution[0];
-            total[1] += contribution[1];
-        }
-        total
-    }
-
-    fn device_view(entries: &[AddressMajorEntry]) -> Vec<(u32, u32, Fr, Fr, Fr, Fr, Fr)> {
+    fn device_view(entries: &[AddressMajorEntry]) -> Vec<(u32, u32, Fr, Fr, Fr, Fr)> {
         entries
             .iter()
             .map(|entry| {
@@ -570,327 +499,112 @@ mod tests {
                     entry.prev_val,
                     entry.next_val,
                     entry.coeffs[0],
-                    entry.coeffs[1],
                 )
             })
             .collect()
     }
 
+    fn optimized_view(matrix: &AddressMajorMatrix<Fr>) -> Vec<(u32, u32, Fr, Fr, Fr, Fr)> {
+        matrix
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.row as u32,
+                    entry.col as u32,
+                    entry.val,
+                    entry.prev_val,
+                    entry.next_val,
+                    entry.ra,
+                )
+            })
+            .collect()
+    }
+
+    fn val_init_values() -> Vec<Fr> {
+        (0..RAM_K).map(|k| fr(k as u64 * 23 + 5)).collect()
+    }
+
     #[test]
-    fn address_major_bind_matches_legacy_round_for_round() {
+    fn address_major_ram_bind_matches_optimized_round_for_round() {
         let Some(context) = shared_context() else {
             return;
         };
-        let mut rng = StdRng::seed_from_u64(17);
-        let trace: Vec<Cycle> = (0..1usize << LOG_T)
-            .map(|_| random_cycle(&mut rng))
-            .collect();
-        let gamma = <LegacyFr as LegacyJoltField>::from_u64(101);
-
-        let cycle_major = ReadWriteMatrixCycleMajor::<
-            LegacyFr,
-            RegistersCycleMajorEntry<LegacyFr, _>,
-        >::new(&trace, gamma);
-        let mut legacy: LegacyAddressMajor = cycle_major.into();
-
+        let mut expected = optimized_address_major();
         let val_init = val_init_values();
-        legacy.val_init = legacy_val_init(&val_init);
-        let seeded = seed_from(&legacy);
-        let mut device =
-            DeviceAddressMajorMatrix::new(context, &seeded, &val_init, COEFF_WIDTH, None)
-                .expect("device address-major matrix");
+        let mut expected_val_init = Polynomial::new(val_init.clone());
+        let mut got = DeviceAddressMajorMatrix::new(
+            context,
+            &device_seed(&expected),
+            &val_init,
+            1,
+            Some(fr(103)),
+        )
+        .expect("device RAM address-major matrix");
 
         assert_eq!(
-            device_view(&device.to_host(context).expect("download")),
-            legacy_view(&legacy),
+            device_view(&got.to_host(context).expect("download")),
+            optimized_view(&expected),
             "seeded entry sets disagree before any bind",
         );
 
-        for round in 0..REGISTER_COUNT.ilog2() as usize {
-            let raw = 29u128 + round as u128;
-            let challenge = LegacyChallenge::new(raw);
-            legacy.bind(challenge);
-            device
-                .bind(context, Fr::from(LegacyFr::from(challenge)))
-                .expect("device bind");
+        for round in 0..RAM_LOG_K {
+            let challenge = fr(71 + round as u64);
+            expected.bind(challenge, &mut expected_val_init);
+            got.bind(context, challenge).expect("device bind");
             assert_eq!(
-                device_view(&device.to_host(context).expect("download")),
-                legacy_view(&legacy),
+                device_view(&got.to_host(context).expect("download")),
+                optimized_view(&expected),
                 "entry sets diverged after binding round {round}",
             );
         }
     }
 
-    fn legacy_dense(polys: &[LegacyMultilinear<LegacyFr>; 3]) -> Vec<Vec<Fr>> {
-        polys
-            .iter()
-            .map(|poly| {
-                (0..poly.len())
-                    .map(|index| Fr::from(poly.get_bound_coeff(index)))
-                    .collect()
-            })
-            .collect()
-    }
-
-    fn device_dense(polys: &[DeviceFrVec; 3]) -> Vec<Vec<Fr>> {
-        polys
-            .iter()
-            .map(|poly| poly.to_host().expect("download"))
-            .collect()
-    }
-
-    fn legacy_ram_message(
-        matrix: &ReadWriteMatrixAddressMajor<
-            LegacyFr,
-            jolt_prover_legacy::subprotocols::read_write_matrix::RamAddressMajorEntry<LegacyFr>,
-        >,
-        inc: &LegacyMultilinear<LegacyFr>,
-        eq: &LegacyMultilinear<LegacyFr>,
-        gamma: LegacyFr,
-    ) -> [LegacyFr; 2] {
-        let mut total = [<LegacyFr as LegacyJoltField>::from_u64(0); 2];
-        for entries in matrix.entries.chunk_by(|x, y| {
-            AddressMajorMatrixEntry::column(x) / 2 == AddressMajorMatrixEntry::column(y) / 2
-        }) {
-            let odd_start =
-                entries.partition_point(|entry| AddressMajorMatrixEntry::column(entry) % 2 == 0);
-            let (even_col, odd_col) = entries.split_at(odd_start);
-            let even_col_idx = 2 * (AddressMajorMatrixEntry::column(&entries[0]) / 2);
-            let contribution = ReadWriteMatrixAddressMajor::prover_message_contribution(
-                even_col,
-                odd_col,
-                matrix.val_init.get_bound_coeff(even_col_idx),
-                matrix.val_init.get_bound_coeff(even_col_idx + 1),
-                inc,
-                eq,
-                gamma,
-            );
-            total[0] += contribution[0];
-            total[1] += contribution[1];
-        }
-        total
-    }
-
     #[test]
-    fn address_major_ram_message_matches_legacy_round_for_round() {
-        use jolt_prover_legacy::subprotocols::read_write_matrix::{
-            RamAddressMajorEntry, RamCycleMajorEntry,
-        };
-
+    fn address_major_ram_message_matches_optimized_round_for_round() {
         let Some(context) = shared_context() else {
             return;
         };
-        const RAM_K: usize = 32;
-        const RAM_LOG_K: usize = 5;
-        let layout = common::jolt_device::MemoryLayout::default();
-        let ram_trace = crate::cuda::common::testing::ram_trace(LOG_T, RAM_K);
-        let gamma = <LegacyFr as LegacyJoltField>::from_u64(103);
-        let cycle_major = ReadWriteMatrixCycleMajor::<LegacyFr, RamCycleMajorEntry<LegacyFr>>::new(
-            &ram_trace,
-            vec![<LegacyFr as LegacyJoltField>::from_u64(0); RAM_K],
-            &layout,
-        );
-        let mut legacy: ReadWriteMatrixAddressMajor<LegacyFr, RamAddressMajorEntry<LegacyFr>> =
-            cycle_major.into();
+        let gamma = fr(103);
+        let mut expected = optimized_address_major();
+        let val_init = val_init_values();
+        let mut expected_val_init = Polynomial::new(val_init.clone());
+        let mut got = DeviceAddressMajorMatrix::new(
+            context,
+            &device_seed(&expected),
+            &val_init,
+            1,
+            Some(gamma),
+        )
+        .expect("device RAM address-major matrix");
 
-        let val_init: Vec<Fr> = (0..RAM_K)
-            .map(|k| crate::cuda::common::testing::fr(k as u64 * 23 + 5))
-            .collect();
-        legacy.val_init = legacy_val_init(&val_init);
-        let seeded: Vec<AddressMajorEntry> = legacy
-            .entries
-            .iter()
-            .map(|entry| AddressMajorEntry {
-                row: AddressMajorMatrixEntry::row(entry) as u32,
-                col: AddressMajorMatrixEntry::column(entry) as u32,
-                val_coeff: Fr::from(entry.val_coeff),
-                prev_val: Fr::from(AddressMajorMatrixEntry::prev_val(entry)),
-                next_val: Fr::from(AddressMajorMatrixEntry::next_val(entry)),
-                coeffs: [Fr::from(entry.ra_coeff), Fr::from_u64(0)],
-            })
-            .collect();
-        let mut device =
-            DeviceAddressMajorMatrix::new(context, &seeded, &val_init, 1, Some(Fr::from(gamma)))
-                .expect("device RAM address-major matrix");
-
-        let inc_host: Vec<Fr> = (0..1usize << LOG_T)
-            .map(|j| crate::cuda::common::testing::fr(j as u64 * 5 + 3))
-            .collect();
+        let inc_host: Vec<Fr> = (0..1usize << LOG_T).map(|j| fr(j as u64 * 5 + 3)).collect();
         let eq_host: Vec<Fr> = (0..1usize << LOG_T)
-            .map(|j| crate::cuda::common::testing::fr(j as u64 * 13 + 11))
+            .map(|j| fr(j as u64 * 13 + 11))
             .collect();
-        let legacy_inc = LegacyMultilinear::from(
-            inc_host
-                .iter()
-                .map(|value| LegacyFr::from(*value))
-                .collect::<Vec<_>>(),
-        );
-        let legacy_eq = LegacyMultilinear::from(
-            eq_host
-                .iter()
-                .map(|value| LegacyFr::from(*value))
-                .collect::<Vec<_>>(),
-        );
-        let device_inc = context.upload(&inc_host).expect("upload inc");
-        let device_eq = context.upload(&eq_host).expect("upload eq");
+        let expected_inc = Polynomial::new(inc_host.clone());
+        let expected_eq = Polynomial::new(eq_host.clone());
+        let got_inc = context.upload(&inc_host).expect("upload inc");
+        let got_eq = context.upload(&eq_host).expect("upload eq");
 
         for round in 0..RAM_LOG_K {
-            let expected = legacy_ram_message(&legacy, &legacy_inc, &legacy_eq, gamma);
-            let got: [Fr; 2] = device
-                .round_evals(context, &device_inc, &device_eq)
+            let expected_evals = expected.address_round_evals(
+                &expected_val_init,
+                &expected_inc,
+                &expected_eq,
+                gamma,
+            );
+            let got_evals: [Fr; 2] = got
+                .round_evals(context, &got_inc, &got_eq)
                 .expect("device round evals");
             assert_eq!(
-                got.to_vec(),
-                expected
-                    .iter()
-                    .map(|value| Fr::from(*value))
-                    .collect::<Vec<_>>(),
+                got_evals, expected_evals,
                 "RAM round evals diverged at round {round}",
             );
 
-            let challenge = LegacyChallenge::new(71 + round as u128);
-            legacy.bind(challenge);
-            device
-                .bind(context, Fr::from(LegacyFr::from(challenge)))
-                .expect("device bind");
-        }
-    }
-
-    #[test]
-    fn address_major_materialize_matches_legacy() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let mut rng = StdRng::seed_from_u64(31);
-        let trace: Vec<Cycle> = (0..1usize << LOG_T)
-            .map(|_| random_cycle(&mut rng))
-            .collect();
-        let gamma = <LegacyFr as LegacyJoltField>::from_u64(101);
-
-        let cycle_major = ReadWriteMatrixCycleMajor::<
-            LegacyFr,
-            RegistersCycleMajorEntry<LegacyFr, _>,
-        >::new(&trace, gamma);
-        let mut legacy: LegacyAddressMajor = cycle_major.into();
-
-        let val_init = val_init_values();
-        legacy.val_init = legacy_val_init(&val_init);
-        let seeded = seed_from(&legacy);
-        let mut device =
-            DeviceAddressMajorMatrix::new(context, &seeded, &val_init, COEFF_WIDTH, None)
-                .expect("device address-major matrix");
-
-        let t_prime = 1usize << LOG_T;
-        for round in 0..=REGISTER_COUNT.ilog2() as usize {
-            let k_prime = REGISTER_COUNT >> round;
-            assert_eq!(
-                device_dense(
-                    &device
-                        .materialize(context, k_prime, t_prime)
-                        .expect("device materialize")
-                ),
-                legacy_dense(&legacy.clone().materialize(k_prime, t_prime)),
-                "materialized polynomials diverged after {round} bound rounds",
-            );
-
-            if round == REGISTER_COUNT.ilog2() as usize {
-                assert_eq!(
-                    device_dense(
-                        &device
-                            .materialize(context, 1, 1)
-                            .expect("device materialize")
-                    ),
-                    legacy_dense(&legacy.clone().materialize(1, 1)),
-                    "fully collapsed materialization diverged",
-                );
-                break;
-            }
-
-            let challenge = LegacyChallenge::new(41 + round as u128);
-            legacy.bind(challenge);
-            device
-                .bind(context, Fr::from(LegacyFr::from(challenge)))
-                .expect("device bind");
-        }
-    }
-
-    #[test]
-    fn address_major_message_matches_legacy_round_for_round() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let mut rng = StdRng::seed_from_u64(23);
-        let trace: Vec<Cycle> = (0..1usize << LOG_T)
-            .map(|_| random_cycle(&mut rng))
-            .collect();
-        let gamma = <LegacyFr as LegacyJoltField>::from_u64(101);
-
-        let cycle_major = ReadWriteMatrixCycleMajor::<
-            LegacyFr,
-            RegistersCycleMajorEntry<LegacyFr, _>,
-        >::new(&trace, gamma);
-        let mut legacy: LegacyAddressMajor = cycle_major.into();
-
-        let val_init = val_init_values();
-        legacy.val_init = legacy_val_init(&val_init);
-        let seeded = seed_from(&legacy);
-        let mut device =
-            DeviceAddressMajorMatrix::new(context, &seeded, &val_init, COEFF_WIDTH, None)
-                .expect("device address-major matrix");
-
-        let inc_host: Vec<Fr> = (0..1usize << LOG_T)
-            .map(|j| crate::cuda::common::testing::fr(j as u64 * 5 + 3))
-            .collect();
-        let eq_host: Vec<Fr> = (0..1usize << LOG_T)
-            .map(|j| crate::cuda::common::testing::fr(j as u64 * 13 + 11))
-            .collect();
-        let legacy_inc = LegacyMultilinear::from(
-            inc_host
-                .iter()
-                .map(|value| LegacyFr::from(*value))
-                .collect::<Vec<_>>(),
-        );
-        let legacy_eq = LegacyMultilinear::from(
-            eq_host
-                .iter()
-                .map(|value| LegacyFr::from(*value))
-                .collect::<Vec<_>>(),
-        );
-        let device_inc = context.upload(&inc_host).expect("upload inc");
-        let device_eq = context.upload(&eq_host).expect("upload eq");
-        let claim = <LegacyFr as LegacyJoltField>::from_u64(7919);
-
-        for round in 0..REGISTER_COUNT.ilog2() as usize {
-            let expected = legacy_message(&legacy, &legacy_inc, &legacy_eq, gamma);
-            let got: [Fr; 2] = device
-                .round_evals(context, &device_inc, &device_eq)
-                .expect("device round evals");
-            assert_eq!(
-                got.to_vec(),
-                expected
-                    .iter()
-                    .map(|value| Fr::from(*value))
-                    .collect::<Vec<_>>(),
-                "round evals diverged at round {round}",
-            );
-
-            let expected_poly = LegacyUniPoly::from_evals_and_hint(claim, &expected);
-            let got_poly = UnivariatePoly::from_evals_and_hint(Fr::from(claim), &got);
-            assert_eq!(
-                got_poly.coefficients().to_vec(),
-                expected_poly
-                    .coeffs
-                    .iter()
-                    .map(|coeff| Fr::from(*coeff))
-                    .collect::<Vec<_>>(),
-                "round polynomials diverged at round {round}",
-            );
-
-            let challenge = LegacyChallenge::new(29 + round as u128);
-            legacy.bind(challenge);
-            device
-                .bind(context, Fr::from(LegacyFr::from(challenge)))
-                .expect("device bind");
+            let challenge = fr(71 + round as u64);
+            expected.bind(challenge, &mut expected_val_init);
+            got.bind(context, challenge).expect("device bind");
         }
     }
 }

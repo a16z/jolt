@@ -586,21 +586,3 @@ extern "C" __global__ void pfx_default_checkpoints_kernel(u64 *__restrict__ out,
     }
     store4(out + (unsigned long long)i * LIMBS, value);
 }
-
-extern "C" __global__ void pfx_eval_batch_kernel(const u64 *__restrict__ checkpoints,
-                                                 const unsigned long long *__restrict__ bits,
-                                                 const unsigned char *__restrict__ lens,
-                                                 unsigned int prefix,
-                                                 unsigned int suffix_len,
-                                                 u64 *__restrict__ out,
-                                                 unsigned int n) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    sfx_bits b;
-    b.bits = ((u128)bits[2 * i + 1] << 64) | (u128)bits[2 * i];
-    b.len = lens[i];
-    b.bits &= sfx_mask(b.len);
-    u64 value[LIMBS];
-    pfx_eval(prefix, checkpoints, b, suffix_len, value);
-    store4(out + (unsigned long long)i * LIMBS, value);
-}
