@@ -13,6 +13,32 @@ impl CycleWindow {
     }
 }
 
+const MIN_WITNESS_WINDOW: usize = 1 << 12;
+
+pub(crate) fn witness_windows(cycles: usize) -> Vec<CycleWindow> {
+    let devices = device_count().max(1);
+    let whole = || {
+        vec![CycleWindow {
+            start: 0,
+            len: cycles,
+        }]
+    };
+    if devices == 1
+        || !cycles.is_power_of_two()
+        || !devices.is_power_of_two()
+        || cycles < devices * MIN_WITNESS_WINDOW
+    {
+        return whole();
+    }
+    let len = cycles / devices;
+    (0..devices)
+        .map(|device| CycleWindow {
+            start: device * len,
+            len,
+        })
+        .collect()
+}
+
 pub(crate) fn device_windows(cycles: usize, alignment: usize) -> Vec<CycleWindow> {
     let devices = device_count().max(1);
     if devices == 1 || alignment == 0 || !cycles.is_multiple_of(alignment) {

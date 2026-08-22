@@ -6,6 +6,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::common::context::CudaKernelContext;
 use super::common::device_columns::witness_identity;
+use super::common::devices::CycleWindow;
 use crate::{KernelError, ProofSession};
 
 #[tracing::instrument(
@@ -27,6 +28,7 @@ where
 pub(crate) struct ResidentTrace {
     source: usize,
     cycles: usize,
+    base: usize,
     trace: Arc<DeviceTrace>,
     atoms: OnceLock<Arc<DeviceAtomColumns>>,
 }
@@ -75,38 +77,78 @@ pub(crate) fn session_device_trace<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<Arc<DeviceTrace>, KernelError<F>> {
+    session_device_trace_window(
+        context,
+        session,
+        witness,
+        cycles,
+        &CycleWindow {
+            start: 0,
+            len: cycles,
+        },
+    )
+}
+
+pub(crate) fn session_device_trace_window<F: Field>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<DeviceTrace>, KernelError<F>> {
     let identity = witness_identity(witness);
     let ordinal = context.ordinal();
     if let Some(resident) = session
         .state::<ResidentTraces>()
         .and_then(|traces| traces.get(ordinal))
     {
-        if resident.source == identity && resident.cycles == cycles {
+        if resident.source == identity
+            && resident.cycles == window.len
+            && resident.base == window.start
+        {
             return Ok(Arc::clone(&resident.trace));
         }
     }
     let rows = witness.rows().ok_or(KernelError::Unsupported {
         reason: "the CUDA backend needs a slice-backed trace source to build its device residency",
     })?;
-    let trace = tracing::info_span!("cuda_witness_residency", cycles).in_scope(|| {
-        DeviceTrace::upload(
+    let trace = tracing::info_span!(
+        "cuda_witness_residency",
+        cycles = window.len,
+        device = ordinal
+    )
+    .in_scope(|| {
+        DeviceTrace::upload_window(
             Arc::clone(context.stream()),
             rows,
             cycles,
+            window.start,
+            window.len,
             witness.program_preprocessing(),
         )
     })?;
     let trace = Arc::new(trace);
+    park_device_trace(session, ordinal, identity, window, Arc::clone(&trace));
+    Ok(trace)
+}
+
+pub(crate) fn park_device_trace(
+    session: &mut ProofSession,
+    ordinal: usize,
+    source: usize,
+    window: &CycleWindow,
+    trace: Arc<DeviceTrace>,
+) {
     session.state_or_insert_with(ResidentTraces::default).park(
         ordinal,
         ResidentTrace {
-            source: identity,
-            cycles,
-            trace: Arc::clone(&trace),
+            source,
+            cycles: window.len,
+            base: window.start,
+            trace,
             atoms: OnceLock::new(),
         },
     );
-    Ok(trace)
 }
 
 pub(crate) fn session_atom_columns<F: Field>(
@@ -115,7 +157,26 @@ pub(crate) fn session_atom_columns<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<Arc<DeviceAtomColumns>, KernelError<F>> {
-    let trace = session_device_trace(context, session, witness, cycles)?;
+    session_atom_columns_window(
+        context,
+        session,
+        witness,
+        cycles,
+        &CycleWindow {
+            start: 0,
+            len: cycles,
+        },
+    )
+}
+
+pub(crate) fn session_atom_columns_window<F: Field>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<DeviceAtomColumns>, KernelError<F>> {
+    let trace = session_device_trace_window(context, session, witness, cycles, window)?;
     let resident = session
         .state::<ResidentTraces>()
         .and_then(|traces| traces.get(context.ordinal()))

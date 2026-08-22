@@ -19,7 +19,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, Stream
 
 use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
-use super::common::device_columns::{park_device_column, DeviceColumn};
+use super::common::device_columns::{park_device_column, witness_identity, DeviceColumn};
 use super::common::error::CudaError;
 use super::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs, FQ_LIMBS};
 use super::common::pack::COLD;
@@ -28,7 +28,7 @@ use crate::commitment::{
     finish_streamed, CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment,
 };
 use crate::cuda::inc_claim_reduction::witness::IncClaimReductionWitness;
-use crate::cuda::witness::session_device_trace;
+use crate::cuda::witness::{park_device_trace, session_device_trace};
 #[cfg(feature = "parallel")]
 use crate::optimized::rows::{collect_range_into, RandomAccessRows};
 use crate::reference::commitment::{column_kinds, ColumnKind, MaterializedColumn};
@@ -437,13 +437,15 @@ where
                     row_width,
                 };
                 let windows = partition::windows(cycles, row_width);
+                let mut parked: Vec<(usize, Arc<jolt_witness::backend::cuda::DeviceTrace>)> =
+                    Vec::new();
                 let columns = if windows.len() > 1 {
                     let rows = source.rows().ok_or(KernelError::Unsupported {
                         reason: "the CUDA backend needs a slice-backed trace source to split a \
                                  commitment across devices",
                     })?;
                     let host_bases = PCS::tier1_bases(setup, row_width)?;
-                    partition::split_columns::<F>(
+                    let (columns, traces) = partition::split_columns::<F>(
                         bases,
                         &hot,
                         &plan,
@@ -453,7 +455,14 @@ where
                         },
                         &host_bases,
                         &windows,
-                    )?
+                    )?;
+                    parked.extend(
+                        traces
+                            .into_iter()
+                            .enumerate()
+                            .filter_map(|(ordinal, trace)| trace.map(|trace| (ordinal, trace))),
+                    );
+                    columns
                 } else {
                     let window = windows.first().ok_or(KernelError::InvariantViolation {
                         reason: "the commit cycle partition produced no windows",
@@ -465,6 +474,12 @@ where
                         reason: "the commit pipeline finished fewer columns than it was given",
                     },
                 )?;
+                let identity = witness_identity(source);
+                for (ordinal, trace) in parked {
+                    if let Some(window) = windows.get(ordinal) {
+                        park_device_trace(session, ordinal, identity, window, trace);
+                    }
+                }
                 let finished = tracing::info_span!("cuda_commit_tier2", columns = columns.len())
                     .in_scope(|| PCS::tier2_columns(setup, &columns))?;
                 return finished

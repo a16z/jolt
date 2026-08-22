@@ -7,7 +7,7 @@ use jolt_witness::backend::cuda::DeviceTrace;
 
 use super::{hot_columns_from_trace, tier1_order, ColumnKind, RetainedHotColumns};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
-use crate::cuda::common::devices::{device_windows, fan_out, CycleWindow, DeviceTask};
+use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
 use crate::cuda::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs};
 use crate::KernelError;
 
@@ -27,7 +27,17 @@ pub(super) struct TraceSource<'a> {
 type Columns = Vec<Option<Vec<JacobianLimbs>>>;
 
 pub(super) fn windows(cycles: usize, row_width: usize) -> Vec<CycleWindow> {
-    device_windows(cycles, row_width)
+    let canonical = witness_windows(cycles);
+    if canonical
+        .iter()
+        .all(|window| row_width > 0 && window.len.is_multiple_of(row_width))
+    {
+        return canonical;
+    }
+    vec![CycleWindow {
+        start: 0,
+        len: cycles,
+    }]
 }
 
 pub(super) fn window_columns<F: Field>(
@@ -120,6 +130,10 @@ fn stitch<F: Field>(
     Ok(columns)
 }
 
+type WindowResult = (Columns, Option<Arc<DeviceTrace>>);
+
+type SplitColumns = (Columns, Vec<Option<Arc<DeviceTrace>>>);
+
 pub(super) fn split_columns<F: Field>(
     bases: &DeviceG1Bases,
     hot: &RetainedHotColumns,
@@ -127,13 +141,17 @@ pub(super) fn split_columns<F: Field>(
     source: &TraceSource<'_>,
     host_bases: &[AffineLimbs],
     windows: &[CycleWindow],
-) -> Result<Columns, KernelError<F>> {
-    let mut tasks: Vec<DeviceTask<'_, Columns, KernelError<F>>> = Vec::with_capacity(windows.len());
+) -> Result<SplitColumns, KernelError<F>> {
+    let mut tasks: Vec<DeviceTask<'_, WindowResult, KernelError<F>>> =
+        Vec::with_capacity(windows.len());
     for (ordinal, window) in windows.iter().enumerate() {
         if ordinal == 0 {
             tasks.push(Box::new(move || {
                 let context = crate::cuda::require_context::<F>()?;
-                window_columns::<F>(context, bases, hot, plan, window, window.start)
+                Ok((
+                    window_columns::<F>(context, bases, hot, plan, window, window.start)?,
+                    None,
+                ))
             }));
             continue;
         }
@@ -156,6 +174,7 @@ pub(super) fn split_columns<F: Field>(
                     source.preprocessing,
                 )
             })?;
+            let trace = Arc::new(trace);
             let built = tracing::info_span!("cuda_commit_park_hot", device = ordinal)
                 .in_scope(|| hot_columns_from_trace::<F>(&trace, plan.kinds, plan.one_hot_k))?;
             let hot: RetainedHotColumns = built
@@ -163,11 +182,15 @@ pub(super) fn split_columns<F: Field>(
                 .map(|entry| entry.map(|(column, _)| Arc::new(column)))
                 .collect();
             let bases = context.upload_g1_bases(host_bases)?;
-            window_columns::<F>(context, &bases, &hot, plan, window, 0)
+            Ok((
+                window_columns::<F>(context, &bases, &hot, plan, window, 0)?,
+                Some(trace),
+            ))
         }));
     }
     let parts = fan_out(tasks)?;
-    stitch::<F>(parts, windows, hot, plan)
+    let (columns, traces): (Vec<_>, Vec<_>) = parts.into_iter().unzip();
+    Ok((stitch::<F>(columns, windows, hot, plan)?, traces))
 }
 
 #[cfg(test)]

@@ -831,6 +831,69 @@ mod tests {
     }
 
     #[test]
+    fn cycle_window_bucket_sums_match_the_whole_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for phase in [0usize, 1, 3] {
+            let host = reference_at_phase(8, 11, phase);
+            let all = host.rows();
+            let u_all = host.u_evals();
+            let whole_rows = device_rows(context, all);
+            let whole_u = context.upload(u_all).expect("upload u_evals");
+            let whole = init_raf_buckets(context, &whole_rows, &whole_u, ADDRESS_BITS, phase)
+                .expect("whole-domain raf buckets");
+
+            let half = all.len() / 2;
+            let mut summed: Vec<Vec<Fr>> = Vec::new();
+            for window in [0..half, half..all.len()] {
+                let rows = device_rows(context, &all[window.clone()]);
+                let u_evals = context
+                    .upload(&u_all[window])
+                    .expect("upload window u_evals");
+                let part = init_raf_buckets(context, &rows, &u_evals, ADDRESS_BITS, phase)
+                    .expect("window raf buckets");
+                let columns = [
+                    &part.shift_half,
+                    &part.shift_full,
+                    &part.left,
+                    &part.right,
+                    &part.identity,
+                    &part.upper_all_ones,
+                ]
+                .map(|column| column.to_host().expect("download"));
+                if summed.is_empty() {
+                    summed = columns.to_vec();
+                } else {
+                    for (target, addend) in summed.iter_mut().zip(columns.iter()) {
+                        for (slot, value) in target.iter_mut().zip(addend) {
+                            *slot += *value;
+                        }
+                    }
+                }
+            }
+
+            for (label, device, expected) in [
+                ("shift_half", &whole.shift_half, &summed[0]),
+                ("shift_full", &whole.shift_full, &summed[1]),
+                ("left", &whole.left, &summed[2]),
+                ("right", &whole.right, &summed[3]),
+                ("identity", &whole.identity, &summed[4]),
+                ("upper_all_ones", &whole.upper_all_ones, &summed[5]),
+            ] {
+                let got = device.to_host().expect("download");
+                assert_eq!(
+                    &got, expected,
+                    "phase {phase}: the {label} raf bucket accumulator over the whole cycle \
+                     domain must equal the sum of its two cycle windows — every bucket is a sum \
+                     over the cycles that land in it, which is what makes a cycle-range split \
+                     across devices exact",
+                );
+            }
+        }
+    }
+
+    #[test]
     fn raf_buckets_are_chunk_sized() {
         let Some(context) = shared_context() else {
             return;
