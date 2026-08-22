@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
-use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly, SparseRingPoly};
+use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
 use akita_transcript::Transcript as AkitaBackendTranscript;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
@@ -10,7 +10,7 @@ use akita_types::{
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup,
 };
-use jolt_field::CanonicalBytes;
+use jolt_field::{CanonicalBytes, One, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -46,7 +46,7 @@ pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
 pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
-pub(crate) type AkitaBackendSparsePoly = SparseRingPoly<AkitaField>;
+pub(crate) type AkitaBackendSparsePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField>;
 pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaField>;
 pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
@@ -632,7 +632,7 @@ where
         .one_hot_indices()
         .ok_or_else(|| invalid_batch("Jolt one-hot polynomial did not expose its indices"))?;
     let _ = validate_one_hot_k(one_hot_k)?;
-    AkitaBackendOneHotPoly::new(one_hot_k, AKITA_SOURCE_RING_DIMENSION, indices.to_vec())
+    AkitaBackendOneHotPoly::new(one_hot_k, indices.to_vec())
         .map(Some)
         .map_err(akita_error)
 }
@@ -647,12 +647,7 @@ pub(crate) fn owned_one_hot_polynomial(
         )));
     }
     let _ = validate_one_hot_k(one_hot_k)?;
-    AkitaBackendOneHotPoly::new(
-        one_hot_k,
-        AKITA_SOURCE_RING_DIMENSION,
-        polynomial.into_indices(),
-    )
-    .map_err(akita_error)
+    AkitaBackendOneHotPoly::new(one_hot_k, polynomial.into_indices()).map_err(akita_error)
 }
 
 pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsError> {
@@ -715,7 +710,7 @@ pub(crate) fn sparse_unit_polynomial(
     }
 
     let mut seen = BTreeSet::new();
-    let mut coeffs = Vec::new();
+    let mut evals = vec![AkitaField::zero(); domain_size];
     for index in indices {
         if index >= domain_size {
             return Err(invalid_batch(format!(
@@ -728,20 +723,13 @@ pub(crate) fn sparse_unit_polynomial(
             )));
         }
         let akita_index = jolt_to_akita_index(num_vars, index);
-        coeffs.push((
-            akita_index / AKITA_SOURCE_RING_DIMENSION,
-            akita_index % AKITA_SOURCE_RING_DIMENSION,
-            1i8,
-        ));
+        let eval = evals
+            .get_mut(akita_index)
+            .ok_or_else(|| invalid_batch("Akita sparse polynomial index reversal overflow"))?;
+        *eval = AkitaField::one();
     }
 
-    AkitaBackendSparsePoly::from_signed_coeffs(
-        num_vars,
-        AKITA_SOURCE_RING_DIMENSION,
-        domain_size / AKITA_SOURCE_RING_DIMENSION,
-        coeffs,
-    )
-    .map_err(|error| {
+    AkitaBackendSparsePoly::from_field_evals(num_vars, evals).map_err(|error| {
         invalid_batch(format!(
             "Akita sparse polynomial construction failed: {error}"
         ))
@@ -763,12 +751,7 @@ pub(crate) fn dense_polynomials(
         .iter()
         .map(|poly| {
             let evals = jolt_to_akita_evals(poly.num_vars(), poly.evals())?;
-            AkitaBackendDensePoly::from_field_evals(
-                poly.num_vars(),
-                AKITA_SOURCE_RING_DIMENSION,
-                &evals,
-            )
-            .map_err(akita_error)
+            AkitaBackendDensePoly::from_field_evals(poly.num_vars(), evals).map_err(akita_error)
         })
         .collect()
 }

@@ -16,19 +16,18 @@
 //! may still fall back to the planner DP. Catalog identity is validated
 //! against the config policy on every lookup.
 
-pub(crate) use akita_schedules::generated::{
-    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
-    GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
-    GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
-    GeneratedRootPrecommittedGroup, GeneratedSetupPrefixInput, GeneratedTerminalFold,
-    GeneratedWitnessPartition, PlannerCostModelId, SelectionPolicyId, SelectiveL2ResponseModelId,
+pub(crate) use akita_schedules::{
+    GeneratedFoldCore, GeneratedFoldScheduleEntry, GeneratedFrozenGroup, GeneratedGroup,
+    GeneratedMatrix, GeneratedPrecommittedGroup, GeneratedRecursiveFold, GeneratedRootFold,
+    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable, GeneratedSetupPrefix,
+    GeneratedTerminalFold, PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId,
+    SelectiveL2ResponseModelId,
 };
-pub(crate) use akita_schedules::RingDimensionScheduleMode;
-pub(crate) use akita_schedules::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub(crate) use akita_types::{
-    ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, CommittedGroupProfile,
-    DecompositionParams, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-    SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
+    BlockGeometry, ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims,
+    DecompositionParams, GroupCommitPhaseParams, InnerCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId,
+    SisTableDigest,
 };
 
 #[expect(
@@ -78,10 +77,10 @@ pub fn jolt_fp128_dense_table() -> Option<GeneratedScheduleTable> {
 /// drift test: one family per config, scalar single-group keys over the
 /// reachable `OneHotTrace` grid.
 pub mod emit {
-    use akita_config::{policy_of, CommitmentConfig};
+    use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
     use akita_pcs::AkitaError;
+    use akita_planner::emit::GroupedGenerationRequest;
     use akita_planner::{find_schedule, EmitSpec};
-    use akita_types::sis::HonestFoldPolicySpec;
     use akita_types::{
         AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
     };
@@ -109,17 +108,26 @@ pub mod emit {
     fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        regen_group_batch::<Cfg>(AkitaScheduleLookupKey::single(key), Vec::new())
+        let lookup_key = AkitaScheduleLookupKey::single(key);
+        let planned = find_schedule(
+            &lookup_key,
+            honest_fold_policy_of::<Cfg>(),
+            &[],
+            &policy_of::<Cfg>(),
+            Cfg::ring_challenge_config,
+        )?;
+        planned.schedule.validate_structure()?;
+        Ok(planned.schedule)
     }
 
     fn regen_group_batch<Cfg: CommitmentConfig>(
-        key: AkitaScheduleLookupKey,
-        precommitted_honest_fold_policies: Vec<HonestFoldPolicySpec>,
+        request: GroupedGenerationRequest,
     ) -> Result<FoldSchedule, AkitaError> {
+        let key = request.key();
         let planned = find_schedule(
             &key,
-            Cfg::root_honest_fold_policy(),
-            &precommitted_honest_fold_policies,
+            honest_fold_policy_of::<Cfg>(),
+            &[],
             &policy_of::<Cfg>(),
             Cfg::ring_challenge_config,
         )?;
@@ -152,15 +160,16 @@ pub mod emit {
         num_polys: &[usize],
         num_vars: (usize, usize),
         output_dir: std::path::PathBuf,
-    ) -> EmitSpec {
-        EmitSpec {
+    ) -> Result<EmitSpec, AkitaError> {
+        Ok(EmitSpec {
             module_name,
             const_name,
             family_name,
             schedule_feature: "",
             policy: policy_of::<Cfg>(),
+            source_contract: Cfg::committed_source_contract()?,
             keys: keys(num_polys, num_vars),
-            group_batch_keys: Vec::new(),
+            grouped_requests: Vec::new(),
             preplanned_scalar: Vec::new(),
             output_dir,
             regen: regen::<Cfg>,
@@ -168,12 +177,12 @@ pub mod emit {
             ring_challenge_config: Cfg::ring_challenge_config,
             generator_command:
                 "cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/src/schedules",
-        }
+        })
     }
 
     /// All family specs, in emission order.
-    pub fn family_specs(output_dir: std::path::PathBuf) -> [EmitSpec; 3] {
-        [
+    pub fn family_specs(output_dir: std::path::PathBuf) -> Result<[EmitSpec; 3], AkitaError> {
+        Ok([
             spec::<JoltOneHotK16>(
                 "jolt_fp128_onehot_k16",
                 "JOLT_FP128_ONEHOT_K16_SCHEDULES",
@@ -181,7 +190,7 @@ pub mod emit {
                 ONE_HOT_TRACE_NUM_POLYS,
                 K16_NUM_VARS,
                 output_dir.clone(),
-            ),
+            )?,
             spec::<JoltOneHotK256>(
                 "jolt_fp128_onehot_k256",
                 "JOLT_FP128_ONEHOT_K256_SCHEDULES",
@@ -189,7 +198,7 @@ pub mod emit {
                 ONE_HOT_TRACE_NUM_POLYS,
                 K256_NUM_VARS,
                 output_dir.clone(),
-            ),
+            )?,
             spec::<JoltDense>(
                 "jolt_fp128_dense",
                 "JOLT_FP128_DENSE_SCHEDULES",
@@ -197,7 +206,7 @@ pub mod emit {
                 ONE_HOT_TRACE_NUM_POLYS,
                 DENSE_NUM_VARS,
                 output_dir,
-            ),
-        ]
+            )?,
+        ])
     }
 }

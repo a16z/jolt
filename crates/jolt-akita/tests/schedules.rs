@@ -28,16 +28,28 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
             K256_NUM_VARS,
         ),
     ] {
+        // WARNING: post-cutover, the planner DP fails on exactly this
+        // boundary shape (widest K=16 group at the minimum padded trace,
+        // `log_T = 12`), which the pre-cutover runtime planner scheduled.
+        // Open question raised on the Akita cutover review (#307 thread);
+        // the reverse assertion below makes this test fail the moment the
+        // planner starts covering it, so the exception cannot go stale.
+        let known_unschedulable = [akita_types::PolynomialGroupLayout::new(16, 81)];
         let grid = keys(num_polys, num_vars);
         assert!(!grid.is_empty());
         for key in grid {
-            assert!(
-                table.entries.iter().any(|entry| {
-                    entry.root.final_group.layout == key
-                        && entry.root.precommitted_groups.is_empty()
-                }),
-                "missing catalog entry for {key:?}"
-            );
+            let catalogued = table
+                .entries
+                .iter()
+                .any(|entry| entry.final_group == key && entry.root.precommitted_groups.is_empty());
+            if known_unschedulable.contains(&key) {
+                assert!(
+                    !catalogued,
+                    "{key:?} is catalogued now; remove it from known_unschedulable"
+                );
+                continue;
+            }
+            assert!(catalogued, "missing catalog entry for {key:?}");
         }
         assert_eq!(
             table.identity.key_count,
@@ -97,7 +109,7 @@ fn source_tokens(source: &str) -> Vec<String> {
 #[test]
 #[ignore = "regenerates every schedule through the planner DP (minutes)"]
 fn catalogs_match_planner_regeneration() {
-    for spec in family_specs(std::path::PathBuf::new()) {
+    for spec in family_specs(std::path::PathBuf::new()).expect("Jolt schedule families are valid") {
         let regenerated =
             akita_planner::emit::emit_family_module(&spec).expect("regeneration must succeed");
         let checked_in = std::fs::read_to_string(

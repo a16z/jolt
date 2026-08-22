@@ -420,7 +420,7 @@ impl CommitmentScheme for AkitaScheme {
             let mut indices = Vec::new();
             poly.for_each_one(&mut |index| indices.push(index));
             let sparse = sparse_unit_polynomial(poly.num_vars(), indices)?;
-            let num_vars = sparse.num_vars();
+            let num_vars = poly.num_vars();
             Self::validate_commit_shape(setup, num_vars, 1)?;
             let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
             let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
@@ -446,12 +446,8 @@ impl CommitmentScheme for AkitaScheme {
         let num_vars = poly.num_vars();
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let evals = akita_ordered_evaluations(poly)?;
-        let dense = vec![AkitaBackendDensePoly::from_field_evals(
-            num_vars,
-            AKITA_SOURCE_RING_DIMENSION,
-            &evals,
-        )
-        .map_err(akita_error)?];
+        let dense =
+            vec![AkitaBackendDensePoly::from_field_evals(num_vars, evals).map_err(akita_error)?];
         Self::commit_dense_backend(setup, setup.default_layout_digest(), num_vars, dense)
     }
 
@@ -671,6 +667,7 @@ mod tests {
 
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
+    use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
 
     #[test]
@@ -905,6 +902,7 @@ mod flavor_bench {
     )]
 
     use super::*;
+    use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
     use std::time::Instant;
 

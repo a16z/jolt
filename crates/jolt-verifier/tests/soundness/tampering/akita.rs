@@ -34,7 +34,7 @@ use jolt_claims::protocols::jolt::lattice::relations::{
     program_image_reconstruction::ProgramImageReconstructionOutputClaims,
     read_raf::LatticeBytecodeReadRafOutputClaims,
 };
-use jolt_field::JoltField;
+use jolt_field::{JoltField, Ring};
 use jolt_prover_legacy::zkvm::packed::{AkitaField, AkitaJoltProof, AkitaScheme};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{

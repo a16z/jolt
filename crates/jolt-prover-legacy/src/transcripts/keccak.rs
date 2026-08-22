@@ -160,8 +160,7 @@ impl Transcript for KeccakTranscript {
         let mut buf = vec![0u8; 16];
         self.challenge_bytes(&mut buf);
 
-        buf = buf.into_iter().rev().collect();
-        F::from_bytes(&buf)
+        F::from_scalar_challenge_bytes(&buf)
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {

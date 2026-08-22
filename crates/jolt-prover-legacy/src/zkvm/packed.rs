@@ -1847,7 +1847,7 @@ mod tests {
             mutate(claims);
             tampered
         };
-        let one = AkitaField::from_u64(1);
+        let one = <AkitaField as jolt_field::Ring>::from_u64(1);
         assert!(
             verify(&tamper(&|claims| claims
                 .stage6b
@@ -2204,7 +2204,7 @@ mod committed_tests {
             .bytecode
             .as_mut()
             .expect("committed proofs carry the bytecode reconstruction cell");
-        bytecode_cell.pc_bytes[0] += AkitaField::from_u64(1);
+        bytecode_cell.pc_bytes[0] += <AkitaField as jolt_field::Ring>::from_u64(1);
         assert!(
             verify(&tampered).is_err(),
             "tampered bytecode reconstruction wire must be rejected"
@@ -2409,6 +2409,7 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 #[expect(clippy::unwrap_used)]
 mod advice_object_tests {
     use super::*;
+    use jolt_field::Zero;
     use jolt_poly::MultilinearPoly;
 
     /// A couple of bytes of advice must stay provable: without the packing
@@ -2436,7 +2437,7 @@ mod advice_object_tests {
 
             // Logical claim: the byte column restricted to slot zero.
             let logical_point = (0..logical_vars)
-                .map(|index| AkitaField::from_u64(index as u64 + 2))
+                .map(|index| <AkitaField as jolt_field::Ring>::from_u64(index as u64 + 2))
                 .collect::<Vec<_>>();
             let mut physical_point = vec![AkitaField::zero(); selector_vars];
             physical_point.extend_from_slice(&logical_point);

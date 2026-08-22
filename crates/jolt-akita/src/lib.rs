@@ -24,10 +24,10 @@ mod adapters;
 pub mod configs;
 mod native_batching;
 pub mod schedules;
-mod scheme;
-mod shape_guard;
 
 pub(crate) use akita_schedules::RecursiveSplitSearchPolicy;
+mod scheme;
+mod shape_guard;
 
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,

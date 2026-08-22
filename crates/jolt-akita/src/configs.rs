@@ -9,7 +9,7 @@
 //! policy on every lookup, so a policy/table drift hard-errors instead of
 //! silently planning a different schedule.
 
-use akita_config::CommitmentConfig;
+use akita_config::{honest_fold_policy_of, CommitmentConfig};
 use akita_pcs::AkitaError;
 use akita_planner::GeneratedScheduleTable;
 use akita_types::{
@@ -21,7 +21,7 @@ fn dp_planned_schedule<Cfg: CommitmentConfig>(
 ) -> Result<akita_types::FoldSchedule, AkitaError> {
     let planned = akita_planner::find_schedule(
         key,
-        Cfg::root_honest_fold_policy(),
+        honest_fold_policy_of::<Cfg>(),
         &[],
         &akita_config::policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -42,8 +42,8 @@ fn catalog_setup_capacity<Cfg: CommitmentConfig>(
 ) -> Result<Option<SetupMatrixCapacity>, AkitaError> {
     let requested_shape_is_catalogued = table.entries.iter().any(|entry| {
         entry.root.precommitted_groups.is_empty()
-            && entry.root.final_group.layout.num_vars() == max_num_vars
-            && entry.root.final_group.layout.num_polynomials() == max_num_batched_polys
+            && entry.final_group.num_vars() == max_num_vars
+            && entry.final_group.num_polynomials() == max_num_batched_polys
     });
     if !requested_shape_is_catalogued {
         return Ok(None);
@@ -52,12 +52,11 @@ fn catalog_setup_capacity<Cfg: CommitmentConfig>(
     let mut capacity = SetupMatrixCapacity::minimum();
     for entry in table.entries.iter().filter(|entry| {
         entry.root.precommitted_groups.is_empty()
-            && entry.root.final_group.layout.num_vars() <= max_num_vars
-            && entry.root.final_group.layout.num_polynomials() <= max_num_batched_polys
+            && entry.final_group.num_vars() <= max_num_vars
+            && entry.final_group.num_polynomials() <= max_num_batched_polys
     }) {
-        let row = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            entry.root.final_group.layout,
-        ))?;
+        let row =
+            Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(entry.final_group))?;
         let entry_capacity = setup_matrix_capacity_for_schedule(row.schedule())?;
         capacity.num_field_elements = capacity
             .num_field_elements
@@ -73,7 +72,7 @@ macro_rules! delegate_preset {
         $(#[$doc:meta])*
         $name:ident,
         $base:ty,
-        $root_honest_fold_policy:expr,
+        $committed_source_class:expr,
         $catalog:expr
     ) => {
         $(#[$doc])*
@@ -83,7 +82,6 @@ macro_rules! delegate_preset {
         impl CommitmentConfig for $name {
             type Field = <$base as CommitmentConfig>::Field;
             type ExtField = <$base as CommitmentConfig>::ExtField;
-            const D: usize = <$base as CommitmentConfig>::D;
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
                 <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
@@ -143,8 +141,8 @@ macro_rules! delegate_preset {
                 <$base>::inner_basis_range()
             }
 
-            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-                $root_honest_fold_policy
+            fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+                $committed_source_class
             }
 
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
@@ -166,9 +164,9 @@ delegate_preset!(
     /// Adaptive one-hot config with the Jolt-generated K=16 schedule catalog.
     JoltOneHotK16,
     akita_config::proof_optimized::fp128::OneHot,
-    akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-        akita_types::sis::UnitOneHotFoldPolicy::new(128, 1, 16),
-    ),
+    akita_types::sis::CommittedSourceClass::UnitOneHot {
+        source_chunk_size: 16,
+    },
     crate::schedules::jolt_fp128_onehot_k16_table()
 );
 
@@ -176,7 +174,7 @@ delegate_preset!(
     /// Adaptive one-hot config with the Jolt-generated K=256 schedule catalog.
     JoltOneHotK256,
     akita_config::proof_optimized::fp128::OneHot,
-    akita_config::proof_optimized::fp128::OneHot::root_honest_fold_policy(),
+    akita_config::proof_optimized::fp128::OneHot::committed_source_class(),
     crate::schedules::jolt_fp128_onehot_k256_table()
 );
 
@@ -184,7 +182,7 @@ delegate_preset!(
     /// Adaptive dense config with the Jolt-generated advice/program byte-object catalog.
     JoltDense,
     akita_config::proof_optimized::fp128::Dense,
-    akita_config::proof_optimized::fp128::Dense::root_honest_fold_policy(),
+    akita_config::proof_optimized::fp128::Dense::committed_source_class(),
     crate::schedules::jolt_fp128_dense_table()
 );
 
@@ -202,7 +200,6 @@ mod tests {
     #[test]
     #[expect(clippy::unwrap_used)]
     fn k256_policy_uses_adaptive_dimensions() {
-        assert_eq!(JoltOneHotK256::D, 256);
         assert_eq!(JoltOneHotK256::inner_basis_range(), (3, 11));
         assert_eq!(JoltOneHotK256::opening_basis_range(), (3, 6));
         assert!(matches!(
@@ -213,8 +210,14 @@ mod tests {
         let layout = akita_types::OpeningClaimsLayout::new(39, 1).unwrap();
         let row = JoltOneHotK256::resolve_catalog_row_for_opening(&layout).unwrap();
         let schedule = row.schedule();
-        let commitment = &schedule.root.params.final_group.commitment;
-        assert!([64, 128, 256].contains(&commitment.inner_commit_matrix.ring_dimension()));
-        assert!([64, 128].contains(&commitment.outer_commit_matrix.ring_dimension()));
+        let commitment = schedule.root.params.final_group();
+        assert!(
+            akita_config::proof_optimized::fp128::OneHot::A_RING_DIMENSIONS
+                .contains(&commitment.inner_commit_matrix_params().ring_dimension())
+        );
+        assert!(
+            akita_config::proof_optimized::fp128::OneHot::B_RING_DIMENSIONS
+                .contains(&commitment.profile.outer.matrix.ring_dimension())
+        );
     }
 }

@@ -261,8 +261,7 @@ fn prove_one_hot<'a, P>(
 ) -> Result<AkitaBackendProof, OpeningsError>
 where
     P: akita_prover::RootPolyMeta<AkitaField>,
-    PreparedProverGroup<'a, P>:
-        PreparedGroupProveOps<AkitaField, AkitaBackendExtField, CpuBackend, CpuBackend>,
+    PreparedProverGroup<'a, P>: PreparedGroupProveOps<AkitaField, AkitaBackendExtField, CpuBackend>,
 {
     let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
     let backend_point = reverse_point(point);
