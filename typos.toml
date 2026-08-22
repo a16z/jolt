@@ -28,3 +28,5 @@ extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
 # HOL Light names and theorem type.
 "ASSUM" = "ASSUM"
 "thm" = "thm"
+# x86 instruction byte strings contain this immediate byte token.
+"ba" = "ba"
