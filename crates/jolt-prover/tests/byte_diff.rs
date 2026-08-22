@@ -1012,6 +1012,59 @@ mod muldiv {
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
         }
 
+        #[cfg(feature = "cuda")]
+        {
+            use jolt_kernels::cuda::CudaDoryScheme;
+
+            let cuda_preprocessing = JoltProverPreprocessing::<CudaDoryScheme, Pedersen<Bn254G1>> {
+                verifier: CudaDoryScheme::adopt_verifier_preprocessing(
+                    prover_preprocessing.verifier.clone(),
+                )
+                .expect("the CUDA scheme adopts the verifier preprocessing"),
+                pcs_setup: CudaDoryScheme::setup_prover(support::setup_total_vars(
+                    memory_layout,
+                    &[],
+                    support::MAX_PADDED_TRACE_LENGTH,
+                )),
+                committed_program: None,
+            };
+            let cuda_proof =
+                jolt_prover::prove::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                    &JoltBackend::<Fr, CudaDoryScheme>::cuda(),
+                    &cuda_preprocessing,
+                    &config,
+                    None,
+                    Arc::clone(&witness),
+                    &public_io,
+                )
+                .expect("cuda Dory prove");
+            jolt_verifier::verify::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                &cuda_preprocessing.verifier,
+                &public_io,
+                &cuda_proof,
+                None,
+            )
+            .expect("the cuda Dory proof must verify end-to-end");
+            assert_eq!(
+                cuda_proof.commitments, legacy_proof.commitments,
+                "the cuda Dory commitments diverged from legacy"
+            );
+            assert_eq!(
+                cuda_proof.joint_opening_proof, legacy_proof.joint_opening_proof,
+                "the cuda Dory joint opening proof diverged from legacy"
+            );
+            let cuda_bytes =
+                bincode::serde::encode_to_vec(&cuda_proof, bincode::config::standard())
+                    .expect("serialize the cuda Dory proof");
+            let legacy_bytes =
+                bincode::serde::encode_to_vec(&legacy_proof, bincode::config::standard())
+                    .expect("serialize the legacy proof");
+            assert_eq!(
+                cuda_bytes, legacy_bytes,
+                "the cuda Dory proof diverged from legacy"
+            );
+        }
+
         let chaos_proof =
             jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                 &chaos_backend,

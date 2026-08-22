@@ -13,6 +13,8 @@ use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
+#[cfg(feature = "cuda")]
+use jolt_kernels::cuda::CudaDoryScheme;
 use jolt_program::execution::JoltProgram;
 use jolt_prover_legacy::host;
 use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
@@ -235,53 +237,48 @@ pub fn run(args: &CompareArgs) -> Comparison {
     let total_vars = total_vars
         .max(advice_vars(memory_layout.max_trusted_advice_size))
         .max(advice_vars(memory_layout.max_untrusted_advice_size));
-    let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
-        verifier: verifier_preprocessing,
-        pcs_setup: DoryScheme::setup_prover(total_vars),
-        committed_program: None,
-    };
-
-    let backend = match args.backend {
-        BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
-        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
-        #[cfg(feature = "cuda")]
-        BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
-    };
-
-    let mut modular_proof_bytes = None;
-    let mut runs = Vec::with_capacity(args.runs);
-    for index in 0..args.runs {
-        let now = Instant::now();
-        let proof = crate::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            Arc::clone(&witness),
-            &public_io,
-        )
-        .expect("modular prove");
-        runs.push(now.elapsed());
-        println!(
-            "  {:<8} run {}: {:.2}s",
-            args.backend.as_str(),
-            index + 1,
-            runs[index].as_secs_f64()
-        );
-        if modular_proof_bytes.is_none() {
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                &prover_preprocessing.verifier,
+    let (runs, modular_proof_bytes) = match args.backend {
+        BackendKind::Reference | BackendKind::Optimized => {
+            let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+                verifier: verifier_preprocessing,
+                pcs_setup: DoryScheme::setup_prover(total_vars),
+                committed_program: None,
+            };
+            let backend = if matches!(args.backend, BackendKind::Reference) {
+                JoltBackend::<Fr, DoryScheme>::reference()
+            } else {
+                JoltBackend::<Fr, DoryScheme>::optimized()
+            };
+            measure_runs(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                &witness,
                 &public_io,
-                &proof,
-                None,
+                args.backend.as_str(),
+                args.runs,
             )
-            .expect("modular proof must verify");
-            modular_proof_bytes = Some(
-                bincode::serde::encode_to_vec(&proof, bincode::config::standard())
-                    .expect("serialize modular proof"),
-            );
         }
-    }
+        #[cfg(feature = "cuda")]
+        BackendKind::Cuda => {
+            let prover_preprocessing = JoltProverPreprocessing::<CudaDoryScheme, Pedersen<Bn254G1>> {
+                verifier: CudaDoryScheme::adopt_verifier_preprocessing(verifier_preprocessing)
+                    .expect("the CUDA scheme adopts the verifier preprocessing"),
+                pcs_setup: CudaDoryScheme::setup_prover(total_vars),
+                committed_program: None,
+            };
+            let backend = JoltBackend::<Fr, CudaDoryScheme>::cuda();
+            measure_runs(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                &witness,
+                &public_io,
+                args.backend.as_str(),
+                args.runs,
+            )
+        }
+    };
 
     let comparison = Comparison {
         modular: Some(Timings {
@@ -298,4 +295,57 @@ pub fn run(args: &CompareArgs) -> Comparison {
         panic!("modular proof bytes diverged from legacy — timings are meaningless");
     }
     comparison
+}
+
+fn measure_runs<PCS, W>(
+    backend: &JoltBackend<Fr, PCS>,
+    preprocessing: &JoltProverPreprocessing<PCS, Pedersen<Bn254G1>>,
+    config: &ProverConfig,
+    witness: &Arc<W>,
+    public_io: &common::jolt_device::JoltDevice,
+    label: &str,
+    runs: usize,
+) -> (Vec<Duration>, Option<Vec<u8>>)
+where
+    PCS: jolt_openings::CommitmentScheme<Field = Fr>
+        + jolt_openings::AdditivelyHomomorphic
+        + jolt_openings::ZkOpeningScheme<HidingCommitment = Bn254G1, Blind = Fr>,
+    PCS::Output: jolt_transcript::AppendToTranscript + jolt_crypto::HomomorphicCommitment<Fr>,
+    W: jolt_witness::JoltWitnessPlane<Fr> + 'static,
+{
+    let mut proof_bytes = None;
+    let mut elapsed = Vec::with_capacity(runs);
+    for index in 0..runs {
+        let now = Instant::now();
+        let proof = crate::prove::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript, W>(
+            backend,
+            preprocessing,
+            config,
+            None,
+            Arc::clone(witness),
+            public_io,
+        )
+        .expect("modular prove");
+        elapsed.push(now.elapsed());
+        println!(
+            "  {:<8} run {}: {:.2}s",
+            label,
+            index + 1,
+            elapsed[index].as_secs_f64()
+        );
+        if proof_bytes.is_none() {
+            jolt_verifier::verify::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript>(
+                &preprocessing.verifier,
+                public_io,
+                &proof,
+                None,
+            )
+            .expect("modular proof must verify");
+            proof_bytes = Some(
+                bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+                    .expect("serialize modular proof"),
+            );
+        }
+    }
+    (elapsed, proof_bytes)
 }
