@@ -751,10 +751,10 @@ impl CommitmentScheme for AkitaScheme {
 }
 
 impl TransparentObjectSetup for AkitaScheme {
-    /// The singleton commitment-object setup convention (advice byte columns,
-    /// `ProgramOneHot`): one polynomial at `num_vars`, seeded by the object
-    /// plan's layout digest. Auxiliary packed objects use the sparse-unit/dense
-    /// flavor, so their setup omits the costly one-hot backend.
+    /// The singleton commitment-object setup convention for advice and direct
+    /// committed-program objects: one polynomial at `num_vars`, seeded by the
+    /// object plan's layout digest. Every bounded-dense object commits through
+    /// the dense flavor, so the costly one-hot backend setup is never built.
     fn transparent_object_setup(
         num_vars: usize,
         layout_digest: [u8; 32],
@@ -845,6 +845,13 @@ mod tests {
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
     use jolt_transcript::Blake2bTranscript;
+
+    #[test]
+    fn grouped_setup_params_accept_the_260_polynomial_boundary() {
+        let params =
+            AkitaSetupParams::one_hot_only_grouped(34, 1, 260, [7; 32], AKITA_ONE_HOT_K256);
+        assert_eq!(params.max_total_batch_polys(), 260);
+    }
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {

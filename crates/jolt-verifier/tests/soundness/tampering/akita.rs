@@ -12,9 +12,9 @@
 //!   — layout digest, declared dimensions, backend flavor, backend bytes — is
 //!   perturbed; a deserialization failure or a verifier rejection both count.
 //! - Proof-shape tampers ([`akita_proof_shape_tampers_reject`],
-//!   [`akita_advice_commitment_presence_rejects`]): dropped reconstruction /
-//!   auxiliary proofs, a swapped phase proof, an auxiliary evaluation offset,
-//!   and an absent trusted-advice commitment.
+//!   [`akita_advice_commitment_presence_rejects`]): a swapped phase proof,
+//!   reordered direct-program commitments, and an absent trusted-advice
+//!   commitment.
 //!
 //! Together these are the active coverage behind the akita
 //! `TamperCoverage::Active` manifest entries.
@@ -26,12 +26,10 @@
 )]
 
 use jolt_claims::protocols::jolt::lattice::relations::{
-    booleanity::LatticeBooleanityOutputClaims,
-    bytecode_reconstruction::BytecodeChunkReconstructionOutputClaims,
-    program_image_reconstruction::ProgramImageReconstructionOutputClaims,
-    read_raf::LatticeBytecodeReadRafOutputClaims,
+    booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
 };
-use jolt_field::JoltField;
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
+use jolt_field::Field;
 use jolt_prover_legacy::zkvm::packed::{AkitaField, AkitaJoltProof, AkitaScheme};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
@@ -76,7 +74,6 @@ use jolt_verifier::stages::{
         hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
         outputs::Stage7OutputClaims,
     },
-    stage8::reconstruction::ReconstructionOutputClaims,
 };
 
 use crate::support::akita_fixtures::{
@@ -103,7 +100,7 @@ fn clear_claims_mut(proof: &mut AkitaJoltProof) -> &mut ClearProofClaims<AkitaFi
 /// a fixed order. Each aggregate is fully destructured (no `..`), so a new
 /// claim field is a compile error here until it is threaded through — the wire
 /// coverage the sweep depends on cannot silently regress.
-fn for_each_scalar_mut<F: JoltField>(claims: &mut ClearProofClaims<F>, f: &mut impl FnMut(&mut F)) {
+fn for_each_scalar_mut<F: Field>(claims: &mut ClearProofClaims<F>, f: &mut impl FnMut(&mut F)) {
     let f: &mut dyn FnMut(&mut F) = f;
     let ClearProofClaims {
         stage1,
@@ -114,7 +111,6 @@ fn for_each_scalar_mut<F: JoltField>(claims: &mut ClearProofClaims<F>, f: &mut i
         stage6a,
         stage6b,
         stage7,
-        reconstruction,
     } = claims;
     visit_stage1(stage1, f);
     visit_stage2(stage2, f);
@@ -124,10 +120,9 @@ fn for_each_scalar_mut<F: JoltField>(claims: &mut ClearProofClaims<F>, f: &mut i
     visit_stage6a(stage6a, f);
     visit_stage6b(stage6b, f);
     visit_stage7(stage7, f);
-    visit_reconstruction(reconstruction, f);
 }
 
-fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage1<F: Field>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage1OutputClaims {
         uniskip_output_claim,
         outer,
@@ -212,7 +207,7 @@ fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn Fn
     }
 }
 
-fn visit_stage2<F: JoltField>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage2<F: Field>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage2OutputClaims {
         product_uniskip_output_claim,
         batch_outputs,
@@ -269,7 +264,7 @@ fn visit_stage2<F: JoltField>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn Fn
     }
 }
 
-fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage3<F: Field>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage3OutputClaims {
         shift,
         instruction_input,
@@ -319,7 +314,7 @@ fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn Fn
     }
 }
 
-fn visit_stage4<F: JoltField>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage4<F: Field>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage4OutputClaims {
         registers_read_write,
         ram_val_check,
@@ -352,7 +347,7 @@ fn visit_stage4<F: JoltField>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn Fn
     }
 }
 
-fn visit_stage5<F: JoltField>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage5<F: Field>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage5OutputClaims {
         instruction_read_raf,
         ram_ra_claim_reduction,
@@ -378,7 +373,7 @@ fn visit_stage5<F: JoltField>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn Fn
     }
 }
 
-fn visit_stage6a<F: JoltField>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage6a<F: Field>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6aOutputClaims {
         bytecode_read_raf,
         booleanity,
@@ -397,7 +392,7 @@ fn visit_stage6a<F: JoltField>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn 
     f(booleanity_intermediate);
 }
 
-fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6bOutputClaims {
         bytecode_read_raf,
         booleanity,
@@ -476,7 +471,7 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
     }
 }
 
-fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage7OutputClaims {
         hamming_weight_claim_reduction,
         trusted_advice,
@@ -519,43 +514,6 @@ fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn Fn
         program_image_address_phase
     {
         f(program_image);
-    }
-}
-
-fn visit_reconstruction<F: JoltField>(
-    claims: &mut ReconstructionOutputClaims<F>,
-    f: &mut dyn FnMut(&mut F),
-) {
-    let ReconstructionOutputClaims {
-        bytecode,
-        program_image,
-    } = claims;
-    if let Some(BytecodeChunkReconstructionOutputClaims {
-        register_selectors,
-        circuit_flags,
-        instruction_flags,
-        lookup_selectors,
-        raf_flags,
-        pc_bytes,
-        imm_bytes,
-    }) = bytecode
-    {
-        for lane in [
-            register_selectors,
-            circuit_flags,
-            instruction_flags,
-            lookup_selectors,
-            raf_flags,
-            pc_bytes,
-            imm_bytes,
-        ] {
-            for scalar in lane.iter_mut() {
-                f(scalar);
-            }
-        }
-    }
-    if let Some(ProgramImageReconstructionOutputClaims { bytes }) = program_image {
-        f(bytes);
     }
 }
 
@@ -716,9 +674,8 @@ fn every_commitment_wire_rejects_perturbation() {
     }
 }
 
-/// Proof-shape tampers: a swapped phase proof, a spurious auxiliary proof on a
-/// case that has none, dropped committed-program reconstruction / auxiliary
-/// proofs, and swapped auxiliary object proofs — each fail-closed.
+/// A swapped phase proof and reordered direct-program commitments both fail
+/// closed.
 #[test]
 fn akita_proof_shape_tampers_reject() {
     let muldiv = akita_muldiv_case();
@@ -726,30 +683,47 @@ fn akita_proof_shape_tampers_reject() {
     proof.stages.stage6b_sumcheck_proof = proof.stages.stage3_sumcheck_proof.clone();
     assert_rejects(muldiv.verify_proof(&proof));
 
-    // Both advice objects are precommitted batch groups, so the advice case
-    // carries no auxiliary proofs at all — a spurious one must be rejected on
-    // count. (Clearing the list would be a no-op here, hence a vacuous tamper.)
-    let advice = akita_advice_case();
-    let mut proof = advice.proof.clone();
-    assert!(proof.joint_opening_proof.auxiliary.is_empty());
-    proof
-        .joint_opening_proof
-        .auxiliary
-        .push(proof.joint_opening_proof.main_batch.clone());
-    assert_rejects(advice.verify_proof(&proof));
-
     let committed = akita_committed_muldiv_case();
-    let mut proof = committed.proof.clone();
-    proof.stages.reconstruction_sumcheck_proof = None;
-    assert_rejects(committed.verify_proof(&proof));
+    let mut preprocessing = committed.preprocessing.clone();
+    let jolt_verifier::preprocessing::ProgramPreprocessing::Committed(program) =
+        &mut preprocessing.program
+    else {
+        panic!("committed fixture must carry committed preprocessing");
+    };
+    program.direct_program_commitments.swap(0, 1);
+    assert_rejects(jolt_verifier::verify::<
+        AkitaField,
+        AkitaScheme,
+        jolt_prover_legacy::zkvm::packed::AkitaVc,
+        jolt_prover_legacy::zkvm::packed::AkitaTranscript,
+    >(
+        &preprocessing,
+        &committed.public_io,
+        &committed.proof,
+        None,
+    ));
 
-    let mut proof = committed.proof.clone();
-    proof.joint_opening_proof.auxiliary.clear();
-    assert_rejects(committed.verify_proof(&proof));
-
-    let mut proof = committed.proof.clone();
-    proof.joint_opening_proof.auxiliary.swap(0, 1);
-    assert_rejects(committed.verify_proof(&proof));
+    let mut preprocessing = committed.preprocessing.clone();
+    let jolt_verifier::preprocessing::ProgramPreprocessing::Committed(program) =
+        &mut preprocessing.program
+    else {
+        panic!("committed fixture must carry committed preprocessing");
+    };
+    program.trace_order = match program.trace_order {
+        TracePolynomialOrder::CycleMajor => TracePolynomialOrder::AddressMajor,
+        TracePolynomialOrder::AddressMajor => TracePolynomialOrder::CycleMajor,
+    };
+    assert_rejects(jolt_verifier::verify::<
+        AkitaField,
+        AkitaScheme,
+        jolt_prover_legacy::zkvm::packed::AkitaVc,
+        jolt_prover_legacy::zkvm::packed::AkitaTranscript,
+    >(
+        &preprocessing,
+        &committed.public_io,
+        &committed.proof,
+        None,
+    ));
 }
 
 /// The advice case fails closed when its trusted-advice commitment is absent:

@@ -1,29 +1,22 @@
-//! The Akita prove path. Stage 8 opens dense advice and the packed one-hot
-//! trace in one heterogeneous batch; committed-program objects remain
-//! auxiliary openings.
+//! The Akita prove path. Stage 8 opens dense advice, direct committed-program
+//! objects, and the packed one-hot trace in one heterogeneous batch.
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalBytes, JoltField};
-use jolt_kernels::{JoltBackend, KernelSlots, PrepareKernel, ProofSession, ReferenceBackend};
+use jolt_field::{CanonicalBytes, Field};
+use jolt_kernels::{JoltBackend, KernelSlots, ProofSession, ReferenceBackend};
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltProof;
-use jolt_verifier::stages::stage8::reconstruction::{
-    BytecodeChunkReconstructionInstance, ProgramImageReconstructionInstance,
-};
-use jolt_witness::{JoltWitnessPlane, RowSource};
+use jolt_witness::JoltWitnessPlane;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
-use witness::AdviceObject;
 
 mod prover;
 mod setup;
 pub use setup::one_hot_trace_setup_shape;
-mod reconstruction;
 mod stage0;
 mod stage8;
 pub mod witness;
@@ -45,14 +38,11 @@ pub mod witness;
 #[derive(KernelSlots)]
 pub struct JoltAkitaBackend<F, PCS>
 where
-    F: JoltField,
+    F: Field,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
-    pub bytecode_reconstruction: Box<dyn PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>>,
-    pub program_image_reconstruction:
-        Box<dyn PrepareKernel<F, ProgramImageReconstructionInstance<F>>>,
 }
 
 /// The packed path's stand-in for the streaming witness-commit slot: stage 0
@@ -62,13 +52,13 @@ struct PackedCommitStub;
 
 impl<F, PCS> jolt_kernels::CommitWitness<F, PCS> for PackedCommitStub
 where
-    F: JoltField,
+    F: Field,
     PCS: CommitmentScheme<Field = F>,
 {
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        _source: &dyn RowSource,
+        _source: &dyn jolt_witness::RowSource,
         _ids: &[jolt_claims::protocols::jolt::JoltCommittedPolynomial],
         _grid: jolt_kernels::CommitmentGrid,
         _setup: &PCS::ProverSetup,
@@ -96,7 +86,7 @@ where
 
 impl<F, PCS> JoltAkitaBackend<F, PCS>
 where
-    F: JoltField,
+    F: Field,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The always-present packed reference registry: every shared stage 1–7
@@ -106,8 +96,6 @@ where
     /// reference reconstruction kernels.
     pub fn reference() -> Self {
         Self {
-            bytecode_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
-            program_image_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
                 round_scheduler: Box::new(ReferenceBackend),
@@ -188,13 +176,13 @@ pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    trusted_advice: Option<&AdviceObject<PCS>>,
+    trusted_advice: Option<&witness::AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField + CanonicalBytes + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
+    F: Field + CanonicalBytes + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,

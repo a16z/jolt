@@ -1,11 +1,10 @@
 //! Packed stage 0: input validation, commitments, and transcript setup.
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
+use jolt_field::Field;
 use jolt_openings::{
     CommitmentScheme, GroupSetupMetadata, PrecommittedRole, TransparentObjectSetup,
 };
@@ -41,8 +40,8 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
@@ -58,22 +57,29 @@ where
         != preprocessing.verifier.program.committed().is_some()
     {
         return Err(ProverError::Unsupported {
-            reason: "retained ProgramOneHot presence disagrees with the preprocessing mode",
+            reason: "retained direct-program presence disagrees with the preprocessing mode",
         });
     }
     if let (Some(data), Some(committed)) = (
         preprocessing.committed_program.as_ref(),
         preprocessing.verifier.program.committed(),
     ) {
-        let objects = &data.program_one_hot.objects;
-        if objects.len() != committed.program_one_hot_commitments.len()
+        let objects = &data.direct_program.objects;
+        if data.trace_order != config.trace_polynomial_order
+            || committed.trace_order != config.trace_polynomial_order
+        {
+            return Err(ProverError::Unsupported {
+                reason: "committed-program trace order disagrees with the proof configuration",
+            });
+        }
+        if objects.len() != committed.direct_program_commitments.len()
             || objects
                 .iter()
-                .zip(&committed.program_one_hot_commitments)
+                .zip(&committed.direct_program_commitments)
                 .any(|(object, commitment)| object.commitment != *commitment)
         {
             return Err(ProverError::Unsupported {
-                reason: "the retained ProgramOneHot commitments disagree with the preprocessing",
+                reason: "the retained direct-program commitments disagree with the preprocessing",
             });
         }
     }
@@ -141,24 +147,47 @@ where
     };
 
     // Canonical public batch order: [UntrustedAdvice, TrustedAdvice, OneHotTrace].
-    let precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> = untrusted_advice
+    let mut precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> =
+        untrusted_advice
+            .as_ref()
+            .map(|object| {
+                (
+                    PrecommittedRole::UntrustedAdvice,
+                    &object.commitment,
+                    &object.hint,
+                )
+            })
+            .into_iter()
+            .chain(trusted_advice.map(|object| {
+                (
+                    PrecommittedRole::TrustedAdvice,
+                    &object.commitment,
+                    &object.hint,
+                )
+            }))
+            .collect();
+    if let Some(program) = preprocessing
+        .committed_program
         .as_ref()
-        .map(|object| {
-            (
-                JoltAdviceKind::Untrusted.precommitted_role(),
-                &object.commitment,
-                &object.hint,
-            )
-        })
-        .into_iter()
-        .chain(trusted_advice.map(|object| {
-            (
-                JoltAdviceKind::Trusted.precommitted_role(),
-                &object.commitment,
-                &object.hint,
-            )
-        }))
-        .collect();
+        .map(|data| &data.direct_program)
+    {
+        for object in &program.objects {
+            let role = match object.plan.packing().ids()[0] {
+                jolt_claims::protocols::jolt::JoltCommittedPolynomial::BytecodeChunk(index) => {
+                    PrecommittedRole::BytecodeChunk(index)
+                }
+                jolt_claims::protocols::jolt::JoltCommittedPolynomial::ProgramImageInit => {
+                    PrecommittedRole::ProgramImageInit
+                }
+                _ => {
+                    return Err(ProverError::InvariantViolation {
+                        reason: "unexpected direct committed-program object role",
+                    })
+                }
+            };
+            precommitted.push((role, &object.commitment, &object.hint));
+        }
+    }
     let required_batch_polys = precommitted.len() + 1;
     // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
@@ -210,7 +239,7 @@ where
             .verifier
             .program
             .committed()
-            .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
+            .map_or(&[][..], |committed| &committed.direct_program_commitments),
         &mut transcript,
     );
 

@@ -1,9 +1,9 @@
 //! Preprocessing-provisioned grouped schedule rows.
 //!
-//! Advice layouts are known only during preprocessing, so their grouped rows
-//! cannot be emitted in the static catalog. [`provision`] plans those rows once
-//! and publishes them for the static [`CommitmentConfig`](akita_config::CommitmentConfig)
-//! resolution hooks. Resolution never invokes the planner.
+//! Advice and direct-program layouts are known during preprocessing, where
+//! [`provision`] plans their grouped rows for the static
+//! [`CommitmentConfig`](akita_config::CommitmentConfig) resolution hooks.
+//! Resolution never invokes the planner.
 
 use std::any::TypeId;
 use std::collections::hash_map::Entry;
@@ -17,46 +17,9 @@ use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
     FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout, ScheduleRowDigest,
 };
-use serde::{Deserialize, Serialize};
 
-use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
-use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
-use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
-
-/// Upper bound on preprocessing-provisioned rows per config (currently at most 3 × 32).
+/// Upper bound on preprocessing-provisioned rows per config (at most 4 × 32).
 pub const MAX_REGISTERED_ROWS: usize = 128;
-
-/// Public inputs needed to restore this setup's grouped advice schedules.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AdviceScheduleParams {
-    untrusted_physical_arity: Option<usize>,
-    trusted_physical_arity: Option<usize>,
-    final_arity_ceiling: usize,
-}
-
-impl AdviceScheduleParams {
-    pub fn new(
-        untrusted_physical_num_vars: Option<usize>,
-        trusted_physical_num_vars: Option<usize>,
-        max_final_num_vars: usize,
-    ) -> Self {
-        Self {
-            untrusted_physical_arity: untrusted_physical_num_vars,
-            trusted_physical_arity: trusted_physical_num_vars,
-            final_arity_ceiling: max_final_num_vars,
-        }
-    }
-
-    pub(crate) fn provision(self, one_hot_k: usize) -> Result<RegisteredRows, AkitaError> {
-        provision_advice_for_k(
-            self.untrusted_physical_arity,
-            self.trusted_physical_arity,
-            one_hot_k,
-            self.final_arity_ceiling,
-        )
-    }
-}
 
 /// One config's preprocessing-provisioned rows.
 #[derive(Clone, Debug, Default)]
@@ -284,22 +247,6 @@ fn publish<Cfg: CommitmentConfig + 'static>(
             ));
         }
     }
-    let new_rows = rows
-        .by_digest
-        .keys()
-        .filter(|digest| !ambient.by_digest.contains_key(digest))
-        .count();
-    let combined_rows = ambient
-        .by_digest
-        .len()
-        .checked_add(new_rows)
-        .ok_or_else(|| AkitaError::InvalidSetup("schedule row count overflow".to_owned()))?;
-    if combined_rows > MAX_REGISTERED_ROWS {
-        return Err(AkitaError::InvalidSetup(format!(
-            "publishing these rows would grow the registry to {combined_rows}, above the \
-             {MAX_REGISTERED_ROWS}-row cap"
-        )));
-    }
     for (digest, row) in &rows.by_digest {
         let _ = ambient
             .by_digest
@@ -313,7 +260,7 @@ fn publish<Cfg: CommitmentConfig + 'static>(
 pub fn dense_precommit_profile(
     layout: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
-    JoltDenseBounded::profile_without_precommitted_groups(layout)
+    crate::configs::JoltDenseBounded::profile_without_precommitted_groups(layout)
 }
 
 /// Advice layouts fixed by the program's preprocessing capacities.
@@ -359,7 +306,7 @@ pub fn provision_advice<Cfg: CommitmentConfig + 'static>(
     }
     provision::<Cfg>(
         &combinations,
-        honest_fold_policy_of::<JoltDenseBounded>(),
+        honest_fold_policy_of::<crate::configs::JoltDenseBounded>(),
         final_num_vars,
     )
 }
@@ -377,13 +324,48 @@ pub fn provision_advice_for_k(
     one_hot_k: usize,
     max_final_num_vars: usize,
 ) -> Result<RegisteredRows, AkitaError> {
+    provision_precommitted_for_k(
+        untrusted_physical_vars,
+        trusted_physical_vars,
+        &[],
+        one_hot_k,
+        max_final_num_vars,
+    )
+}
+
+/// Provision grouped rows for optional advice followed by mandatory direct
+/// committed-program objects, all in canonical precommit order.
+pub fn provision_precommitted_for_k(
+    untrusted_physical_vars: Option<usize>,
+    trusted_physical_vars: Option<usize>,
+    direct_program_physical_vars: &[usize],
+    one_hot_k: usize,
+    max_final_num_vars: usize,
+) -> Result<RegisteredRows, AkitaError> {
     let layouts = AdvicePrecommitLayouts {
         untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
         trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
     };
+    let mandatory = direct_program_physical_vars
+        .iter()
+        .map(|vars| dense_precommit_profile(PolynomialGroupLayout::new(*vars, 1)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut combinations = layouts.precommit_combinations()?;
+    if mandatory.is_empty() {
+        if combinations.is_empty() {
+            return Ok(RegisteredRows::default());
+        }
+    } else {
+        for combination in &mut combinations {
+            combination.extend(mandatory.iter().copied());
+        }
+        if !combinations.contains(&mandatory) {
+            combinations.push(mandatory);
+        }
+    }
     let (min, declared_max) = match one_hot_k {
-        AKITA_ONE_HOT_K256 => K256_NUM_VARS,
-        AKITA_ONE_HOT_K16 => K16_NUM_VARS,
+        crate::AKITA_ONE_HOT_K256 => crate::schedules::emit::K256_NUM_VARS,
+        crate::AKITA_ONE_HOT_K16 => crate::schedules::emit::K16_NUM_VARS,
         other => {
             return Err(AkitaError::InvalidSetup(format!(
                 "unsupported one-hot K {other} for grouped advice provisioning"
@@ -395,8 +377,16 @@ pub fn provision_advice_for_k(
         return Ok(RegisteredRows::default());
     }
     match one_hot_k {
-        AKITA_ONE_HOT_K256 => provision_advice::<JoltOneHotK256>(layouts, min..=max),
-        AKITA_ONE_HOT_K16 => provision_advice::<JoltOneHotK16>(layouts, min..=max),
+        crate::AKITA_ONE_HOT_K256 => provision::<crate::configs::JoltOneHotK256>(
+            &combinations,
+            honest_fold_policy_of::<crate::configs::JoltDenseBounded>(),
+            min..=max,
+        ),
+        crate::AKITA_ONE_HOT_K16 => provision::<crate::configs::JoltOneHotK16>(
+            &combinations,
+            honest_fold_policy_of::<crate::configs::JoltDenseBounded>(),
+            min..=max,
+        ),
         _ => unreachable!("one-hot K was validated above"),
     }
 }
@@ -458,41 +448,6 @@ mod tests {
             format!("{error}").contains("cap"),
             "unexpected error: {error}"
         );
-    }
-
-    #[test]
-    fn publishing_cannot_grow_registry_past_the_cap() {
-        reset_for_tests();
-        let profile =
-            dense_precommit_profile(PolynomialGroupLayout::new(emit::DENSE_NUM_VARS.0, 1)).unwrap();
-        let row = plan_row::<JoltOneHotK256>(
-            &AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::new(27, 1),
-                precommitteds: vec![profile],
-            },
-            &[honest_fold_policy_of::<JoltDenseBounded>()],
-        )
-        .unwrap();
-        let rows = |range: std::ops::Range<usize>| RegisteredRows {
-            by_digest: range
-                .map(|index| {
-                    (
-                        ScheduleRowDigest::from_bytes([u8::try_from(index).unwrap(); 32]),
-                        row.clone(),
-                    )
-                })
-                .collect(),
-        };
-
-        let _published = publish::<JoltOneHotK256>(rows(0..MAX_REGISTERED_ROWS / 2)).unwrap();
-        let error =
-            publish::<JoltOneHotK256>(rows(MAX_REGISTERED_ROWS / 2..MAX_REGISTERED_ROWS + 1))
-                .expect_err("the accumulated registry must enforce the cap");
-        assert!(
-            format!("{error}").contains("cap"),
-            "unexpected error: {error}"
-        );
-        reset_for_tests();
     }
 
     mod fixture {

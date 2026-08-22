@@ -1,4 +1,3 @@
-#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
@@ -12,10 +11,10 @@ use jolt_verifier::JoltVerifierPreprocessing;
 /// commitments' opening material (the stage-8 openings). Mirrors legacy's
 /// `CommittedProgramProverData`.
 ///
-/// On the packed (`akita`) build the per-chunk/image hints are replaced by
-/// the precommitted `ProgramOneHot` objects themselves — witnesses, plans,
+/// On the packed (`akita`) build the per-chunk/image hints are retained in
+/// direct bounded-dense program objects — witnesses, plans,
 /// setups, and hints — built once at preprocessing time
-/// ([`crate::akita::witness::commit_program_one_hot`]) so proving consumes
+/// ([`crate::akita::witness::commit_direct_program`]) so proving consumes
 /// them directly instead of re-deriving them per proof.
 #[derive(Clone)]
 pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
@@ -25,18 +24,17 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     pub bytecode_chunk_hints: Vec<PCS::OpeningHint>,
     #[cfg(not(feature = "akita"))]
     pub program_image_hint: PCS::OpeningHint,
-    /// The precommitted `ProgramOneHot` objects in canonical order (bytecode,
-    /// then program image); their commitments must match the verifier
-    /// preprocessing's `program_one_hot_commitments` (stage 0 checks
+    /// Direct program objects in canonical order (bytecode chunks, then
+    /// program image); their commitments must match the verifier
+    /// preprocessing's `direct_program_commitments` (stage 0 checks
     /// fail-closed).
     #[cfg(feature = "akita")]
-    pub program_one_hot: crate::akita::witness::ProgramOneHot<PCS>,
+    pub direct_program: crate::akita::witness::DirectProgramObjects<PCS>,
     /// The trace order the chunk commitments' coefficient grids were built
     /// under at preprocessing time (legacy couples the two through one
     /// process-global layout). Stage 0 rejects a proof config whose order
     /// disagrees — the chunk tables stages 6b/8 rebuild would transpose
     /// against the absorbed commitments and fail only at verification.
-    #[cfg(not(feature = "akita"))]
     pub trace_order: TracePolynomialOrder,
 }
 

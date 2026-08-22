@@ -14,8 +14,8 @@
 //! are built here once and shared.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
-    is_valid_committed_bytecode_chunking_for_len, total_lanes, BYTECODE_LANE_LAYOUT,
-    COMMITTED_BYTECODE_LANE_CAPACITY,
+    is_valid_committed_bytecode_chunking_for_len, total_lanes,
+    validate_committed_program_immediates, BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
@@ -93,6 +93,11 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     chunk_count: usize,
     order: TracePolynomialOrder,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
+    if let Err(reason) = validate_committed_program_immediates(instructions) {
+        return Err(KernelError::InvalidGeometry {
+            reason: reason.to_owned(),
+        });
+    }
     let bytecode_len = instructions.len();
     if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
         return Err(KernelError::InvalidGeometry {

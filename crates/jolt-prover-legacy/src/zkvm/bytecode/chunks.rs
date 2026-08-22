@@ -153,6 +153,24 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     instructions: &[JoltInstructionRow],
     chunk_count: usize,
 ) -> Vec<Vec<F>> {
+    build_committed_bytecode_chunk_coeffs_with_layout(
+        instructions,
+        chunk_count,
+        DoryGlobals::get_layout(),
+    )
+}
+
+pub fn build_committed_bytecode_chunk_coeffs_with_layout<F: JoltField>(
+    instructions: &[JoltInstructionRow],
+    chunk_count: usize,
+    layout: crate::poly::commitment::dory::DoryLayout,
+) -> Vec<Vec<F>> {
+    assert!(
+        instructions
+            .iter()
+            .all(|instruction| instruction.operands.imm.unsigned_abs() <= u64::MAX as u128),
+        "committed-program immediate magnitude exceeds u64::MAX"
+    );
     let bytecode_len = instructions.len();
     let chunk_cycle_len = committed_bytecode_chunk_cycle_len(bytecode_len, chunk_count);
     let lane_capacity = committed_lanes();
@@ -166,7 +184,7 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
         let coeffs = &mut chunk_coeffs[cycle_chunk_idx];
 
         for_each_active_lane_value::<F>(instr, |global_lane, lane_val| {
-            let idx = DoryGlobals::get_layout().address_cycle_to_index(
+            let idx = layout.address_cycle_to_index(
                 global_lane,
                 chunk_cycle,
                 lane_capacity,

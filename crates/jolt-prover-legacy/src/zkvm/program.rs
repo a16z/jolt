@@ -17,6 +17,8 @@ use crate::zkvm::bytecode::{
 };
 use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
 use tracer::instruction::Cycle;
 
@@ -97,6 +99,8 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub meta: ProgramMetadata,
     pub bytecode_commitments: TrustedBytecodeCommitments<PCS>,
     pub program_commitments: TrustedProgramCommitments<PCS>,
+    #[cfg(feature = "akita")]
+    pub trace_order: TracePolynomialOrder,
 }
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -137,6 +141,9 @@ where
                 committed
                     .program_commitments
                     .serialize_with_mode(&mut writer, compress)?;
+                #[cfg(feature = "akita")]
+                (committed.trace_order.transcript_scalar() as u8)
+                    .serialize_with_mode(&mut writer, compress)?;
             }
         }
         Ok(())
@@ -149,6 +156,7 @@ where
                 committed.meta.serialized_size(compress)
                     + committed.bytecode_commitments.serialized_size(compress)
                     + committed.program_commitments.serialized_size(compress)
+                    + if cfg!(feature = "akita") { 1 } else { 0 }
             }
         }
     }
@@ -199,6 +207,12 @@ where
                     compress,
                     validate,
                 )?,
+                #[cfg(feature = "akita")]
+                trace_order: match u8::deserialize_with_mode(&mut reader, compress, validate)? {
+                    0 => TracePolynomialOrder::CycleMajor,
+                    1 => TracePolynomialOrder::AddressMajor,
+                    _ => return Err(SerializationError::InvalidData),
+                },
             })),
             _ => Err(SerializationError::InvalidData),
         }
@@ -250,6 +264,8 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                 meta,
                 bytecode_commitments,
                 program_commitments,
+                #[cfg(feature = "akita")]
+                trace_order: TracePolynomialOrder::CycleMajor,
             }),
             CommittedProgramProverData {
                 full,
@@ -344,6 +360,8 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                 meta: committed.meta.clone(),
                 bytecode_commitments: committed.bytecode_commitments.clone(),
                 program_commitments: committed.program_commitments.clone(),
+                #[cfg(feature = "akita")]
+                trace_order: committed.trace_order,
             }),
         }
     }

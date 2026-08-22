@@ -145,7 +145,7 @@ mod support {
 
     /// Rebuild the full program preprocessing from the legacy prover data's
     /// retained copy (the verifier preprocessing carries only the
-    /// `ProgramOneHot` commitment in committed mode).
+    /// direct-program commitments in committed mode).
     pub fn rebuild_full_program(
         prover_data: &LegacyCommittedProgramProverData<AkitaPackedScheme>,
         memory_layout: &MemoryLayout,
@@ -210,17 +210,8 @@ mod support {
             "stage-7 bytes diverged (the hamming-weight inc fold runs here)",
         );
         assert_eq!(
-            proof.stages.reconstruction_sumcheck_proof,
-            legacy_proof.stages.reconstruction_sumcheck_proof,
-            "reconstruction bytes diverged (the bytecode/image settlement)",
-        );
-        assert_eq!(
-            proof.joint_opening_proof.main_batch, legacy_proof.joint_opening_proof.main_batch,
-            "the heterogeneous advice/OneHotTrace opening diverged from legacy",
-        );
-        assert_eq!(
-            proof.joint_opening_proof.auxiliary, legacy_proof.joint_opening_proof.auxiliary,
-            "the auxiliary packed opening diverged from legacy",
+            proof.joint_opening_proof, legacy_proof.joint_opening_proof,
+            "the native grouped opening diverged from legacy",
         );
         assert_eq!(proof.claims, legacy_proof.claims);
         assert_eq!(
@@ -513,7 +504,7 @@ mod committed_muldiv {
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::packed::{
-        akita_verifier_preprocessing, shared_preprocessing_with_program_one_hot, AkitaField,
+        akita_verifier_preprocessing, shared_preprocessing_with_direct_program, AkitaField,
         AkitaPackedProver, AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
     };
     use jolt_prover_legacy::zkvm::prover::{
@@ -524,7 +515,7 @@ mod committed_muldiv {
     use super::support;
 
     /// Prove muldiv under packed committed-program preprocessing with both
-    /// provers: `ProgramOneHot` joins as the auxiliary commitment object,
+    /// provers: direct-program objects join the native commitment group,
     /// assembled and committed once at preprocessing time and shared by
     /// both sides.
     #[test]
@@ -544,9 +535,9 @@ mod committed_muldiv {
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
         let guest = support::packed_guest(&mut program, &inputs, &[], &[]);
 
-        // --- Legacy side: packed committed preprocessing (ProgramOneHot is
+        // --- Legacy side: packed committed preprocessing (direct program is
         // assembled and committed here, before any proving), then prove.
-        let (shared, prover_data, program_one_hot) = shared_preprocessing_with_program_one_hot(
+        let (shared, prover_data, direct_program) = shared_preprocessing_with_direct_program(
             guest.program_data,
             guest.io_device.memory_layout.clone(),
             support::MAX_PADDED_TRACE_LENGTH,
@@ -572,16 +563,16 @@ mod committed_muldiv {
         )
         .expect("the transparent packed setup must derive");
         let legacy_proof = legacy_prover
-            .prove_packed(&object_setup, None, Some(&program_one_hot))
+            .prove_packed(&object_setup, None, Some(&direct_program))
             .expect("legacy packed prove");
         let verifier_preprocessing = akita_verifier_preprocessing(
             &legacy_preprocessing,
             verifier_setup,
-            Some(&program_one_hot),
+            Some(&direct_program),
         );
 
         // --- Modular side: the full program is rebuilt from the legacy
-        // prover data's retained copy, and the precommitted `ProgramOneHot`
+        // prover data's retained copy, and the precommitted direct-program
         // objects are independently re-committed at preprocessing time and
         // retained in the packed prover data.
         let memory_layout = &public_io.memory_layout;
@@ -611,16 +602,20 @@ mod committed_muldiv {
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &full_program, trace_output),
         );
-        let modular_program_one_hot = jolt_prover::akita::witness::commit_program_one_hot::<
-            AkitaScheme,
-        >(&full_program, bytecode_chunk_count)
-        .expect("modular ProgramOneHot objects must commit");
+        let modular_direct_program =
+            jolt_prover::akita::witness::commit_direct_program::<AkitaScheme>(
+                &full_program,
+                bytecode_chunk_count,
+                config.trace_polynomial_order,
+            )
+            .expect("modular direct program objects must commit");
         let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
             verifier: verifier_preprocessing,
             pcs_setup: object_setup,
             committed_program: Some(jolt_prover::CommittedProgramProverData {
                 full: (*full_program).clone(),
-                program_one_hot: modular_program_one_hot,
+                direct_program: modular_direct_program,
+                trace_order: config.trace_polynomial_order,
             }),
         };
 

@@ -102,8 +102,8 @@ pub struct AkitaSetupParams {
     /// one-hot commitment object never touches it.
     pub(crate) one_hot_only: bool,
     /// When set, only the dense flavor's backend setup is built — the one-hot
-    /// flavor dominates the setup cost (~30x the dense flavor at advice
-    /// shapes), and a sparse-unit or dense commitment object never touches it.
+    /// flavor dominates the setup cost at these shapes, and a bounded-dense
+    /// commitment object never touches it.
     pub(crate) dense_only: bool,
     /// Recipe for the dynamic grouped rows accepted by this setup. Unlike the
     /// process-local row cache, this metadata survives verifier serialization.
@@ -173,8 +173,8 @@ impl AkitaSetupParams {
     }
 
     /// Setup parameters for a commitment object that only ever commits and
-    /// opens through the dense flavor (sparse-unit or dense polynomials, e.g.
-    /// the advice byte columns and the precommitted program): skips building
+    /// opens through the dense flavor (e.g. advice words and direct program
+    /// objects): skips building
     /// the one-hot backend setup of the same shape.
     pub fn dense_only(
         max_num_vars: usize,

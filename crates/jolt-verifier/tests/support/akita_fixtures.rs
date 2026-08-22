@@ -19,7 +19,7 @@ use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
 use jolt_prover_legacy::host;
 use jolt_prover_legacy::zkvm::packed::{
-    akita_verifier_preprocessing, commit_trusted_advice, shared_preprocessing_with_program_one_hot,
+    akita_verifier_preprocessing, commit_trusted_advice, shared_preprocessing_with_direct_program,
     AkitaField, AkitaJoltProof, AkitaPackedProver, AkitaPackedScheme, AkitaScheme, AkitaTranscript,
     AkitaVc,
 };
@@ -58,13 +58,14 @@ pub fn akita_muldiv_case() -> &'static AkitaFixtureCase {
 }
 
 /// The advice case: both advice kinds, three commitment objects
-/// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`) in one heterogeneous opening.
+/// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`) in one grouped opening.
 pub fn akita_advice_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_advice)
 }
 
-/// The committed-program case: `ProgramOneHot` as the auxiliary packed object.
+/// The committed-program case: direct bytecode and program-image objects in
+/// the native grouped opening.
 pub fn akita_committed_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_committed_muldiv)
@@ -167,7 +168,7 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
 
     let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry)
         .expect("program preprocessing");
-    let (shared, prover_data, program_one_hot) = shared_preprocessing_with_program_one_hot(
+    let (shared, prover_data, direct_program) = shared_preprocessing_with_direct_program(
         program_data,
         io_device.memory_layout.clone(),
         1 << 16,
@@ -193,13 +194,10 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
         <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
             .expect("transparent packed setup");
     let proof = prover
-        .prove_packed(&object_setup, None, Some(&program_one_hot))
+        .prove_packed(&object_setup, None, Some(&direct_program))
         .expect("packed prover");
-    let preprocessing = akita_verifier_preprocessing(
-        &prover_preprocessing,
-        verifier_setup,
-        Some(&program_one_hot),
-    );
+    let preprocessing =
+        akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, Some(&direct_program));
     AkitaFixtureCase {
         preprocessing,
         public_io,

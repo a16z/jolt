@@ -412,15 +412,7 @@ where
                     id,
                 )?,
                 JoltCommittedPolynomial::BalancedIncDigit(_)
-                | JoltCommittedPolynomial::BalancedIncCarry
-                | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
-                | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
-                | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
-                | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
-                | JoltCommittedPolynomial::BytecodeRafFlag { .. }
-                | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
-                | JoltCommittedPolynomial::BytecodeImmBytes { .. }
-                | JoltCommittedPolynomial::ProgramImageBytes => {
+                | JoltCommittedPolynomial::BalancedIncCarry => {
                     // Lattice-mode polynomials open through the fixed-prefix
                     // path in `stage8::packed`, never the homomorphic RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
@@ -504,18 +496,6 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    // Settle committed-program word/chunk claims against their one-hot decompositions.
-    let reconstruction = super::reconstruction::verify(
-        checked,
-        proof.stages.reconstruction_sumcheck_proof.as_ref(),
-        &proof.clear_claims()?.reconstruction,
-        transcript,
-        stage6.clear()?,
-        stage7.clear()?,
-    )?;
-
-    // OneHotTrace then opens natively at its shared point; reconstruction leaves are
-    // discharged by separate auxiliary packed openings.
     super::packed::verify(
         formula_dimensions,
         proof.one_hot_config,
@@ -528,7 +508,6 @@ where
         &checked.precommitted,
         stage6.clear()?,
         stage7.clear()?,
-        &reconstruction,
     )?;
 
     Ok(Stage8Output::Clear)
