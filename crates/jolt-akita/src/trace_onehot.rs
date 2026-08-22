@@ -24,8 +24,8 @@ use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, ExtField, MulBaseUnreduced, PseudoMersenneField};
 use akita_prover::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use akita_prover::compute::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
+    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldChunkSink, DecomposeFoldPlan,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
     SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
     SubringCoefficientPackingPlan, TensorPackedWitness, TensorProjectionBatchKernel,
     TensorProjectionKernel,
@@ -2654,6 +2654,36 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
                         num_digits,
                         log_basis,
                     },
+                )?,
+            )),
+        }
+    }
+
+    fn decompose_fold_batch_streaming(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotBatchView<'_, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+        sink: &mut dyn DecomposeFoldChunkSink,
+    ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
+        let _span = tracing::info_span!("TracePackedOneHot::decompose_fold").entered();
+        let packed = source.packed_view()?;
+        match plan {
+            DecomposeFoldBatchPlan::Sparse {
+                challenges,
+                num_positions_per_block,
+                num_digits,
+                log_basis,
+            } => Ok(BatchDecomposeFoldOutcome::Fused(
+                self.decompose_fold_packed_fp128_d512_streaming(
+                    packed,
+                    DecomposeFoldPlan {
+                        challenges,
+                        num_positions_per_block,
+                        num_digits,
+                        log_basis,
+                    },
+                    sink,
                 )?,
             )),
         }

@@ -112,6 +112,10 @@ struct PreparationRecord {
     setup_ns: u64,
     backend_prepare_ns: u64,
     commit_ns: u64,
+    #[serde(default)]
+    metal_commit_ns: Option<u64>,
+    #[serde(default)]
+    metal_commitment_parity: Option<bool>,
     commitment_digest: String,
 }
 
@@ -283,7 +287,9 @@ struct Fixture {
     prover_setup: AkitaProverSetup,
     verifier_setup: AkitaVerifierSetup,
     commitment: AkitaCommitment,
-    hint: AkitaProverHint,
+    cpu_hint: AkitaProverHint,
+    metal_hint: Option<AkitaProverHint>,
+    rows: Arc<dyn TraceOneHotRows>,
     point: Vec<AkitaField>,
     evaluation: AkitaField,
     digest: String,
@@ -567,7 +573,7 @@ fn build_fixture(case: CaseSpec) -> Result<Fixture, Box<dyn Error>> {
         &prover_setup,
         LAYOUT_DIGEST,
         COLUMN_CAPACITY,
-        rows,
+        rows.clone(),
     )?;
     let commit_ns = duration_ns(commit_start.elapsed());
     let commitment_digest = digest_bytes(&serde_json::to_vec(&commitment)?);
@@ -578,7 +584,9 @@ fn build_fixture(case: CaseSpec) -> Result<Fixture, Box<dyn Error>> {
         prover_setup,
         verifier_setup,
         commitment,
-        hint,
+        cpu_hint: hint,
+        metal_hint: None,
+        rows,
         point,
         evaluation,
         digest: fixture_digest,
@@ -589,6 +597,8 @@ fn build_fixture(case: CaseSpec) -> Result<Fixture, Box<dyn Error>> {
             setup_ns,
             backend_prepare_ns: 0,
             commit_ns,
+            metal_commit_ns: None,
+            metal_commitment_parity: None,
             commitment_digest,
         },
     })
@@ -624,7 +634,15 @@ fn measure(
     backend: &TraceCommitmentBackend,
     phases: &PhaseCollector,
 ) -> Result<(AkitaBatchProof, MeasurementRecord), Box<dyn Error>> {
-    let hint = fixture.hint.clone().with_trace_backend(backend.clone())?;
+    let hint = match backend_choice {
+        BackendChoice::Cpu => &fixture.cpu_hint,
+        BackendChoice::Metal => fixture
+            .metal_hint
+            .as_ref()
+            .ok_or("Metal measurement has no Metal-produced commitment hint")?,
+    }
+    .clone()
+    .with_trace_backend(backend.clone())?;
     let statement = statement(fixture);
     let shape = CommittedShape {
         num_vars: fixture.shape.num_vars,
@@ -763,6 +781,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         (None, 0)
     };
     fixture.preparation.backend_prepare_ns = metal_prepare_ns;
+    if let Some(backend) = metal_backend.as_ref() {
+        let start = Instant::now();
+        let (metal_commitment, metal_hint) = AkitaScheme::commit_trace_one_hot(
+            backend,
+            &fixture.prover_setup,
+            LAYOUT_DIGEST,
+            COLUMN_CAPACITY,
+            fixture.rows.clone(),
+        )?;
+        fixture.preparation.metal_commit_ns = Some(duration_ns(start.elapsed()));
+        let parity = metal_commitment == fixture.commitment;
+        fixture.preparation.metal_commitment_parity = Some(parity);
+        if !parity {
+            return Err("CPU and Metal commitments differ".into());
+        }
+        fixture.metal_hint = Some(metal_hint);
+    }
 
     let mut measurements = Vec::with_capacity(args.order.len());
     let mut proofs = Vec::with_capacity(args.order.len());
@@ -792,7 +827,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         PathBuf::from,
     );
     let mut record = HarnessRecord {
-        schema_version: 1,
+        schema_version: 2,
         evaluator: "akita_eval_proof".to_string(),
         case_id: args.case.id.to_string(),
         run_order: args
