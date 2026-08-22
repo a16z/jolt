@@ -172,10 +172,8 @@ impl AkitaSetupParams {
         }
     }
 
-    /// Setup parameters for a commitment object that only ever commits and
-    /// opens through the dense flavor (e.g. advice words and direct program
-    /// objects): skips building
-    /// the one-hot backend setup of the same shape.
+    /// Setup parameters for objects that use only the dense flavor, omitting
+    /// the one-hot backend setup.
     pub fn dense_only(
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
@@ -333,6 +331,7 @@ impl AkitaVerifierSetup {
     pub(crate) fn ensure_schedule_rows(&self) -> Result<(), OpeningsError> {
         let result = self.backend_cache.schedule_rows.get_or_init(|| {
             self.advice_schedule
+                .as_ref()
                 .map_or(Ok(()), |params| {
                     params.provision(self.one_hot_k).map(|_| ())
                 })

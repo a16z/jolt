@@ -4,6 +4,9 @@ use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::JoltVerifierPreprocessing;
 
+#[cfg(feature = "akita")]
+use crate::akita::witness::DirectProgramObjects;
+
 /// The prover-retained committed-program data: the verifier's preprocessing
 /// carries only the program COMMITMENTS in committed mode, but the prover
 /// still needs the full program (witness generation, the bytecode stage-value
@@ -11,11 +14,9 @@ use jolt_verifier::JoltVerifierPreprocessing;
 /// commitments' opening material (the stage-8 openings). Mirrors legacy's
 /// `CommittedProgramProverData`.
 ///
-/// On the packed (`akita`) build the per-chunk/image hints are retained in
-/// direct bounded-dense program objects — witnesses, plans,
-/// setups, and hints — built once at preprocessing time
-/// ([`crate::akita::witness::commit_direct_program`]) so proving consumes
-/// them directly instead of re-deriving them per proof.
+/// On the packed (`akita`) build the per-chunk/image plans and hints are
+/// retained in direct bounded-dense program objects built at preprocessing
+/// time, so proving consumes them directly instead of re-deriving them.
 #[derive(Clone)]
 pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     pub full: JoltProgramPreprocessing,
@@ -29,7 +30,7 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     /// preprocessing's `direct_program_commitments` (stage 0 checks
     /// fail-closed).
     #[cfg(feature = "akita")]
-    pub direct_program: crate::akita::witness::DirectProgramObjects<PCS>,
+    pub direct_program: DirectProgramObjects<PCS>,
     /// The trace order the chunk commitments' coefficient grids were built
     /// under at preprocessing time (legacy couples the two through one
     /// process-global layout). Stage 0 rejects a proof config whose order

@@ -54,7 +54,7 @@ pub struct SparseUnitPolynomial<F> {
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: jolt_field::Field> SparseUnitPolynomial<F> {
+impl<F: jolt_field::JoltField> SparseUnitPolynomial<F> {
     /// Sorts the positions ascending once here — the invariant
     /// `for_each_row`'s row scan and `for_each_one`'s yield order rely on.
     /// Duplicates are neither deduplicated nor rejected.
@@ -84,7 +84,7 @@ impl<F: jolt_field::Field> SparseUnitPolynomial<F> {
     }
 }
 
-impl<F: jolt_field::Field> jolt_poly::MultilinearPoly<F> for SparseUnitPolynomial<F> {
+impl<F: jolt_field::JoltField> jolt_poly::MultilinearPoly<F> for SparseUnitPolynomial<F> {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn physical_one_hot_prefix_order_matches_selector_reduction() {
-        use jolt_field::{Fr, FromPrimitiveInt};
+        use jolt_field::{Fr, Ring};
         use jolt_poly::{eq_index_msb, MultilinearPoly};
 
         let columns = vec![
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn sparse_unit_positions_sort_ascending_on_construction() {
-        use jolt_field::{Fr, FromPrimitiveInt};
+        use jolt_field::{Fr, Ring};
         use jolt_poly::MultilinearPoly;
 
         let poly = SparseUnitPolynomial::<Fr>::new(4, vec![9, 2, 11, 0, 2]);

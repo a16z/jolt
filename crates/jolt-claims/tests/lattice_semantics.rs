@@ -9,7 +9,7 @@ use jolt_claims::protocols::jolt::lattice::{
     one_hot_trace_columns, BalancedIncChunking, OneHotTraceShape,
 };
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
-use jolt_field::{Fr, FromPrimitiveInt, RingCore};
+use jolt_field::{Fr, Ring};
 use jolt_poly::{boolean_point_msb, eq_index_msb, EqPolynomial, Polynomial};
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)

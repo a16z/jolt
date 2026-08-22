@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
 use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim, PrecommittedRole,
 };
@@ -23,7 +23,7 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use super::witness::{AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-fn batch_failed<F: Field>(reason: impl ToString) -> ProverError<F> {
+fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     ProverError::Verifier(VerifierError::FinalOpeningBatchFailed {
         reason: reason.to_string(),
     })
@@ -35,7 +35,7 @@ fn reduce_auxiliary<F, T>(
     transcript: &mut T,
 ) -> Result<EvaluationClaim<F>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     T: Transcript<Challenge = F>,
 {
     let claims = object_leaf_claims(plan, leaves).map_err(ProverError::Verifier)?;
@@ -61,7 +61,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<PCS::Proof, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
@@ -99,16 +99,15 @@ where
         .map(|object| reduce_auxiliary(&object.plan, &leaves, transcript))
         .transpose()?;
 
-    // Canonical public batch order precedes OneHotTrace.
     let mut precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
     for (role, object, claim) in [
         (
-            PrecommittedRole::UntrustedAdvice,
+            JoltAdviceKind::Untrusted.precommitted_role(),
             untrusted_advice,
             untrusted_physical.as_ref(),
         ),
         (
-            PrecommittedRole::TrustedAdvice,
+            JoltAdviceKind::Trusted.precommitted_role(),
             trusted_advice,
             trusted_physical.as_ref(),
         ),
@@ -129,7 +128,7 @@ where
     }
 
     if let Some(program) = program {
-        for object in &program.objects {
+        for (object_index, object) in program.objects.iter().enumerate() {
             let physical = reduce_auxiliary(&object.plan, &leaves, transcript)?;
             let id = object
                 .plan
@@ -139,10 +138,17 @@ where
                 .copied()
                 .ok_or_else(|| batch_failed::<F>("direct program object has no polynomial id"))?;
             let role = match id {
-                JoltCommittedPolynomial::BytecodeChunk(index) => {
-                    PrecommittedRole::BytecodeChunk(index)
-                }
-                JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::ProgramImageInit,
+                JoltCommittedPolynomial::BytecodeChunk(index) => PrecommittedRole::new_indexed(
+                    2 + object_index as u64,
+                    b"bytecode_chunk",
+                    "bytecode-chunk",
+                    index as u64,
+                ),
+                JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::new(
+                    2 + object_index as u64,
+                    b"program_image_init",
+                    "program-image-init",
+                ),
                 _ => {
                     return Err(batch_failed::<F>(
                         "unexpected direct committed-program object role",

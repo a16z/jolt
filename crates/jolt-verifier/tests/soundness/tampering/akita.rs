@@ -29,8 +29,11 @@ use jolt_claims::protocols::jolt::lattice::relations::{
     booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::Field;
-use jolt_prover_legacy::zkvm::packed::{AkitaField, AkitaJoltProof, AkitaScheme};
+use jolt_field::JoltField;
+use jolt_prover_legacy::zkvm::packed::{
+    AkitaField, AkitaJoltProof, AkitaScheme, AkitaTranscript, AkitaVc,
+};
+use jolt_verifier::preprocessing::ProgramPreprocessing;
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
     stage1::{
@@ -100,7 +103,7 @@ fn clear_claims_mut(proof: &mut AkitaJoltProof) -> &mut ClearProofClaims<AkitaFi
 /// a fixed order. Each aggregate is fully destructured (no `..`), so a new
 /// claim field is a compile error here until it is threaded through — the wire
 /// coverage the sweep depends on cannot silently regress.
-fn for_each_scalar_mut<F: Field>(claims: &mut ClearProofClaims<F>, f: &mut impl FnMut(&mut F)) {
+fn for_each_scalar_mut<F: JoltField>(claims: &mut ClearProofClaims<F>, f: &mut impl FnMut(&mut F)) {
     let f: &mut dyn FnMut(&mut F) = f;
     let ClearProofClaims {
         stage1,
@@ -122,7 +125,7 @@ fn for_each_scalar_mut<F: Field>(claims: &mut ClearProofClaims<F>, f: &mut impl 
     visit_stage7(stage7, f);
 }
 
-fn visit_stage1<F: Field>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage1OutputClaims {
         uniskip_output_claim,
         outer,
@@ -207,7 +210,7 @@ fn visit_stage1<F: Field>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage2<F: Field>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage2<F: JoltField>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage2OutputClaims {
         product_uniskip_output_claim,
         batch_outputs,
@@ -264,7 +267,7 @@ fn visit_stage2<F: Field>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage3<F: Field>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage3OutputClaims {
         shift,
         instruction_input,
@@ -314,7 +317,7 @@ fn visit_stage3<F: Field>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage4<F: Field>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage4<F: JoltField>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage4OutputClaims {
         registers_read_write,
         ram_val_check,
@@ -347,7 +350,7 @@ fn visit_stage4<F: Field>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage5<F: Field>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage5<F: JoltField>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage5OutputClaims {
         instruction_read_raf,
         ram_ra_claim_reduction,
@@ -373,7 +376,7 @@ fn visit_stage5<F: Field>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage6a<F: Field>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage6a<F: JoltField>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6aOutputClaims {
         bytecode_read_raf,
         booleanity,
@@ -392,7 +395,7 @@ fn visit_stage6a<F: Field>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMu
     f(booleanity_intermediate);
 }
 
-fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6bOutputClaims {
         bytecode_read_raf,
         booleanity,
@@ -471,7 +474,7 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
     }
 }
 
-fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage7OutputClaims {
         hamming_weight_claim_reduction,
         trusted_advice,
@@ -685,17 +688,15 @@ fn akita_proof_shape_tampers_reject() {
 
     let committed = akita_committed_muldiv_case();
     let mut preprocessing = committed.preprocessing.clone();
-    let jolt_verifier::preprocessing::ProgramPreprocessing::Committed(program) =
-        &mut preprocessing.program
-    else {
+    let ProgramPreprocessing::Committed(program) = &mut preprocessing.program else {
         panic!("committed fixture must carry committed preprocessing");
     };
     program.direct_program_commitments.swap(0, 1);
     assert_rejects(jolt_verifier::verify::<
         AkitaField,
         AkitaScheme,
-        jolt_prover_legacy::zkvm::packed::AkitaVc,
-        jolt_prover_legacy::zkvm::packed::AkitaTranscript,
+        AkitaVc,
+        AkitaTranscript,
     >(
         &preprocessing,
         &committed.public_io,
@@ -704,9 +705,7 @@ fn akita_proof_shape_tampers_reject() {
     ));
 
     let mut preprocessing = committed.preprocessing.clone();
-    let jolt_verifier::preprocessing::ProgramPreprocessing::Committed(program) =
-        &mut preprocessing.program
-    else {
+    let ProgramPreprocessing::Committed(program) = &mut preprocessing.program else {
         panic!("committed fixture must carry committed preprocessing");
     };
     program.trace_order = match program.trace_order {
@@ -716,8 +715,8 @@ fn akita_proof_shape_tampers_reject() {
     assert_rejects(jolt_verifier::verify::<
         AkitaField,
         AkitaScheme,
-        jolt_prover_legacy::zkvm::packed::AkitaVc,
-        jolt_prover_legacy::zkvm::packed::AkitaTranscript,
+        AkitaVc,
+        AkitaTranscript,
     >(
         &preprocessing,
         &committed.public_io,
@@ -731,12 +730,7 @@ fn akita_proof_shape_tampers_reject() {
 #[test]
 fn akita_advice_commitment_presence_rejects() {
     let advice = akita_advice_case();
-    let result = jolt_verifier::verify::<
-        AkitaField,
-        AkitaScheme,
-        jolt_prover_legacy::zkvm::packed::AkitaVc,
-        jolt_prover_legacy::zkvm::packed::AkitaTranscript,
-    >(
+    let result = jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
         &advice.preprocessing,
         &advice.public_io,
         &advice.proof,

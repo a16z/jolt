@@ -2,15 +2,16 @@
 //! objects, and the packed one-hot trace in one heterogeneous batch.
 
 use common::jolt_device::JoltDevice;
+use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalBytes, Field};
+use jolt_field::{CanonicalBytes, JoltField};
 use jolt_kernels::{JoltBackend, KernelSlots, ProofSession, ReferenceBackend};
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltProof;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -20,25 +21,24 @@ pub use setup::one_hot_trace_setup_shape;
 mod stage0;
 mod stage8;
 pub mod witness;
+use witness::AdviceObject;
 
 /// The packed slot registry: the akita analog of a bare [`JoltBackend`]. A
 /// parallel struct rather than cfg-gated [`JoltBackend`] fields —
 /// `jolt-kernels` deliberately has no `akita` feature (a local `cfg!` there
 /// would silently read `false` and desynchronize the prover from the
 /// verifier; see `jolt_claims`'s `CANONICAL_INSTRUCTION_ADDRESS`), so the
-/// packed-only pieces live on this crate's akita-only side of the fence.
+/// packed-only pieces live on this crate's Akita-only side of the fence.
 ///
 /// The packed PIOP shares its stage 1–7 members with the base protocol, so
 /// they resolve through the embedded [`JoltBackend`] registry (whose commit
 /// slot is an unreachable stub: the packed path commits one native
 /// `OneHotTrace` group in its own stage 0, never through the streaming
-/// commit seam). The reconstruction-phase members resolve through their own
-/// replaceable slots, exactly like the shared registry's — an optimized
-/// packed backend swaps the boxes, never the type.
+/// commit seam).
 #[derive(KernelSlots)]
 pub struct JoltAkitaBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The shared stage 1–7 slot registry (naive-served).
@@ -52,13 +52,13 @@ struct PackedCommitStub;
 
 impl<F, PCS> jolt_kernels::CommitWitness<F, PCS> for PackedCommitStub
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        _source: &dyn jolt_witness::RowSource,
+        _source: &dyn RowSource,
         _ids: &[jolt_claims::protocols::jolt::JoltCommittedPolynomial],
         _grid: jolt_kernels::CommitmentGrid,
         _setup: &PCS::ProverSetup,
@@ -86,14 +86,13 @@ where
 
 impl<F, PCS> JoltAkitaBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The always-present packed reference registry: every shared stage 1–7
     /// slot naive-served (the reference kernels adapt to the packed
     /// jolt-claims shape at runtime), the commit slot stubbed out (the packed
-    /// commit lives in stage 0), and every reconstruction slot served by the
-    /// reference reconstruction kernels.
+    /// commit lives in stage 0).
     pub fn reference() -> Self {
         Self {
             base: JoltBackend {
@@ -176,13 +175,13 @@ pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    trusted_advice: Option<&witness::AdviceObject<PCS>>,
+    trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: Field + CanonicalBytes + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::TraceOneHotCommitment,
+    F: JoltField + CanonicalBytes + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,

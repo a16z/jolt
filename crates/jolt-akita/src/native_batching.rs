@@ -28,7 +28,7 @@ use akita_types::{
 };
 use jolt_openings::{
     BatchOpeningScheme, GroupOpeningClaim, OpeningsError, PrecommittedClaim, PrecommittedOpening,
-    PrecommittedRole, VerifierOpeningClaim,
+    VerifierOpeningClaim,
 };
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -172,27 +172,19 @@ where
     transcript.append(&LabelWithCount(b"akita_groups", group_count as u64));
     let groups = precommitted
         .iter()
-        .map(|entry| {
-            (
-                Some(entry.role),
-                entry.role.transcript_label(),
-                true,
-                &entry.claim,
-            )
-        })
-        .chain(std::iter::once((
-            None,
-            b"main_trace".as_slice(),
-            false,
-            main,
-        )));
-    for (index, (precommitted_role, role, is_precommitted, claim)) in groups.enumerate() {
+        .map(|entry| (Some(entry.role), &entry.claim))
+        .chain(std::iter::once((None, main)));
+    for (index, (role, claim)) in groups.enumerate() {
         transcript.append(&U64Word(index as u64));
-        transcript.append_bytes(role);
-        if let Some(role_index) = precommitted_role.and_then(PrecommittedRole::transcript_index) {
-            transcript.append(&U64Word(role_index as u64));
+        if let Some(role) = role {
+            transcript.append_bytes(role.transcript_label());
+            if let Some(role_index) = role.transcript_index() {
+                transcript.append(&U64Word(role_index));
+            }
+        } else {
+            transcript.append_bytes(b"main_trace");
         }
-        transcript.append(&U64Word(u64::from(is_precommitted)));
+        transcript.append(&U64Word(u64::from(role.is_some())));
         claim.commitment.append_to_transcript(transcript);
         transcript.append_values(b"akita_group_point", &claim.point);
         transcript.append(&LabelWithCount(
@@ -899,6 +891,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_openings::PrecommittedRole;
 
     fn commitment(
         backend_flavor: AkitaBackendFlavor,
@@ -934,18 +927,33 @@ mod tests {
             max_total_batch_polys: 260,
             default_layout_digest: layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
+            advice_schedule: None,
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);
         let mut precommitted = vec![
-            PrecommittedClaim::new(PrecommittedRole::UntrustedAdvice, claim(dense())),
-            PrecommittedClaim::new(PrecommittedRole::TrustedAdvice, claim(dense())),
+            PrecommittedClaim::new(
+                PrecommittedRole::new(0, b"untrusted_advice", "untrusted-advice"),
+                claim(dense()),
+            ),
+            PrecommittedClaim::new(
+                PrecommittedRole::new(1, b"trusted_advice", "trusted-advice"),
+                claim(dense()),
+            ),
         ];
-        precommitted.extend((0..256).map(|index| {
-            PrecommittedClaim::new(PrecommittedRole::BytecodeChunk(index), claim(dense()))
+        precommitted.extend((0_u64..256).map(|index| {
+            PrecommittedClaim::new(
+                PrecommittedRole::new_indexed(
+                    2 + index,
+                    b"bytecode_chunk",
+                    "bytecode-chunk",
+                    index,
+                ),
+                claim(dense()),
+            )
         }));
         precommitted.push(PrecommittedClaim::new(
-            PrecommittedRole::ProgramImageInit,
+            PrecommittedRole::new(258, b"program_image_init", "program-image-init"),
             claim(dense()),
         ));
         let main = claim(commitment(

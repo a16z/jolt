@@ -12,7 +12,6 @@
 use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
-use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 use jolt_utils::log2_power_of_two;
 
@@ -66,19 +65,8 @@ pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
 pub const INVALID_COMMITTED_PROGRAM_IMMEDIATE: &str =
     "committed-program immediate magnitude exceeds u64::MAX";
 
-/// Validate the immediate range shared by every committed-bytecode
-/// coefficient builder.
-pub fn validate_committed_program_immediates(
-    instructions: &[JoltInstructionRow],
-) -> Result<(), &'static str> {
-    if instructions
-        .iter()
-        .any(|instruction| instruction.operands.imm.unsigned_abs() > u64::MAX as u128)
-    {
-        Err(INVALID_COMMITTED_PROGRAM_IMMEDIATE)
-    } else {
-        Ok(())
-    }
+pub const fn is_valid_committed_program_immediate(immediate: i128) -> bool {
+    immediate.unsigned_abs() <= u64::MAX as u128
 }
 
 /// Committed bytecode chunking is valid when the chunk count is a nonzero
@@ -676,17 +664,11 @@ mod tests {
 
     #[test]
     fn committed_program_immediate_boundaries_are_explicit() {
-        let row = |imm| JoltInstructionRow {
-            operands: NormalizedOperands {
-                imm,
-                ..NormalizedOperands::default()
-            },
-            ..JoltInstructionRow::default()
-        };
         let limit = u64::MAX as i128;
-        assert!(validate_committed_program_immediates(&[row(limit), row(-limit)]).is_ok());
-        assert!(validate_committed_program_immediates(&[row(1i128 << 64)]).is_err());
-        assert!(validate_committed_program_immediates(&[row(-(1i128 << 64))]).is_err());
+        assert!(is_valid_committed_program_immediate(limit));
+        assert!(is_valid_committed_program_immediate(-limit));
+        assert!(!is_valid_committed_program_immediate(1i128 << 64));
+        assert!(!is_valid_committed_program_immediate(-(1i128 << 64)));
     }
 
     #[test]

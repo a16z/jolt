@@ -1,6 +1,6 @@
 //! Pure lattice geometry for balanced increment chunking.
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 use thiserror::Error;
 
@@ -90,13 +90,13 @@ impl BalancedIncChunking {
 
     /// The place value `2^(chunk_width * index)` weighting chunk `index` in
     /// the little-endian reconstruction of the low 64 bits.
-    pub fn place_value<F: RingCore>(self, index: usize) -> F {
+    pub fn place_value<F: Ring>(self, index: usize) -> F {
         F::pow2(self.chunk_width * index)
     }
 }
 
 /// MLE of the centered row value used by balanced increment digits.
-pub fn balanced_inc_value<F: Field>(address_point: &[F]) -> F {
+pub fn balanced_inc_value<F: JoltField>(address_point: &[F]) -> F {
     let unsigned = IdentityPolynomial::new(address_point.len()).evaluate(address_point);
     let msb = address_point.first().copied().unwrap_or_else(F::zero);
     unsigned - F::pow2(address_point.len()) * msb
@@ -106,7 +106,7 @@ pub fn balanced_inc_value<F: Field>(address_point: &[F]) -> F {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::boolean_point_msb;
 
     #[test]

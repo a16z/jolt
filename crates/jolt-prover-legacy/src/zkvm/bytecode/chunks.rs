@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::instruction::{
@@ -163,7 +163,7 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
 pub fn build_committed_bytecode_chunk_coeffs_with_layout<F: JoltField>(
     instructions: &[JoltInstructionRow],
     chunk_count: usize,
-    layout: crate::poly::commitment::dory::DoryLayout,
+    layout: DoryLayout,
 ) -> Vec<Vec<F>> {
     assert!(
         instructions

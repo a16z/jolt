@@ -3,6 +3,9 @@
 //! direct bounded-dense committed-program objects, and the shape-only
 //! stand-ins the native openings take.
 
+use std::sync::Arc;
+
+use jolt_akita::TraceOneHotRows;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, precommitted_packing_plan, PrecommittedPackingShape,
@@ -10,12 +13,12 @@ use jolt_claims::protocols::jolt::lattice::packing::{
 };
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::{Field, FromPrimitiveInt};
+use jolt_field::{JoltField, Ring};
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::witnesses::{
-    BalancedIncColumn, FusedInc, LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress,
+    BalancedIncColumn, BytecodePc, FusedInc, LookupIndex, RaChunkSelector, RemappedRamAddress,
 };
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
@@ -37,7 +40,7 @@ pub struct SparseUnitPolynomial<F> {
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> SparseUnitPolynomial<F> {
+impl<F: JoltField> SparseUnitPolynomial<F> {
     /// Sorts the positions ascending once here — the invariant
     /// `for_each_row`'s row scan and `for_each_one`'s yield order rely on.
     ///
@@ -66,7 +69,7 @@ impl<F: Field> SparseUnitPolynomial<F> {
     }
 }
 
-impl<F: Field> MultilinearPoly<F> for SparseUnitPolynomial<F> {
+impl<F: JoltField> MultilinearPoly<F> for SparseUnitPolynomial<F> {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -123,7 +126,7 @@ impl<F: Field> MultilinearPoly<F> for SparseUnitPolynomial<F> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct OneHotTraceSourceRow {
     lookup_index: LookupIndex,
-    mapped_pc: MappedPc,
+    bytecode_pc: BytecodePc,
     ram_address: RemappedRamAddress,
     fused_inc: FusedInc,
 }
@@ -144,7 +147,32 @@ struct PackedTraceRows {
     ram_digit_zero_mask: u64,
 }
 
-impl jolt_akita::TraceOneHotRows for PackedTraceRows {
+impl PackedTraceRows {
+    fn validate_dimensions<F: JoltField>(
+        plan: &OneHotTraceLayoutPlan,
+        log_k_chunk: usize,
+        log_t: usize,
+    ) -> Result<(), ProverError<F>> {
+        if !matches!(log_k_chunk, 4 | 8) {
+            return Err(ProverError::Unsupported {
+                reason: "packed one-hot trace chunk width must be 4 or 8 bits",
+            });
+        }
+        let logical_num_vars = log_t
+            .checked_add(log_k_chunk)
+            .ok_or(ProverError::Unsupported {
+                reason: "packed one-hot trace dimensions overflow",
+            })?;
+        if plan.packing().logical_num_vars() != logical_num_vars {
+            return Err(ProverError::InvariantViolation {
+                reason: "OneHotTrace plan dimensions disagree with the witness dimensions",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl TraceOneHotRows for PackedTraceRows {
     fn num_rows(&self) -> usize {
         self.num_rows
     }
@@ -176,30 +204,19 @@ impl jolt_akita::TraceOneHotRows for PackedTraceRows {
     }
 }
 
-#[derive(Clone, Copy)]
-struct TraceRowStatus {
-    bytecode_valid: bool,
-    ram_active: bool,
-}
-
+/// Fills one row's selected-row bytes; returns whether the cycle makes a
+/// remappable RAM access (the only per-row fact the caller still needs — the
+/// bytecode column is total, so no cycle can be missing its slot).
 fn fill_trace_row(
     row: OneHotTraceSourceRow,
     columns: &[OneHotTraceColumn],
     selected_rows: &mut [u8],
-) -> TraceRowStatus {
+) -> bool {
     debug_assert_eq!(columns.len(), selected_rows.len());
-    let mut valid = true;
     for (column, selected_row) in columns.iter().zip(selected_rows) {
         let row_index = match column {
             OneHotTraceColumn::Instruction(selector) => selector.chunk_u128(row.lookup_index.0),
-            OneHotTraceColumn::Bytecode(selector) => {
-                if let Some(pc) = row.mapped_pc.0 {
-                    selector.chunk_usize(pc)
-                } else {
-                    valid = false;
-                    0
-                }
-            }
+            OneHotTraceColumn::Bytecode(selector) => selector.chunk_usize(row.bytecode_pc.0),
             OneHotTraceColumn::Ram(selector) => row
                 .ram_address
                 .0
@@ -209,22 +226,20 @@ fn fill_trace_row(
         debug_assert!(row_index <= u8::MAX as usize);
         *selected_row = row_index as u8;
     }
-    TraceRowStatus {
-        bytecode_valid: valid,
-        ram_active: row.ram_address.0.is_some(),
-    }
+    row.ram_address.0.is_some()
 }
 
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
 /// plan's canonical semantic-column order.
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
-pub fn assemble_one_hot_trace_rows<F: Field>(
+pub fn assemble_one_hot_trace_rows<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
     plan: &OneHotTraceLayoutPlan,
     ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
     log_t: usize,
-) -> Result<std::sync::Arc<dyn jolt_akita::TraceOneHotRows>, ProverError<F>> {
+) -> Result<Arc<dyn TraceOneHotRows>, ProverError<F>> {
+    PackedTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
     let num_rows = 1usize << log_t;
     let num_columns = plan.packing().ids().len();
     let ram_digit_zero_mask = plan
@@ -272,7 +287,6 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
     if let Some(access) = witness.random_access() {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
-            let bytecode_rows_valid = std::sync::atomic::AtomicBool::new(true);
             selected_rows
                 .par_chunks_mut(num_columns * u64::BITS as usize)
                 .zip(ram_active_rows.par_iter_mut())
@@ -284,12 +298,7 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
                         let row_index = word_index * u64::BITS as usize + row_offset;
                         match access.window::<OneHotTraceSourceRow>(row_index) {
                             Ok(row) => {
-                                let status = fill_trace_row(row, &columns, selected_rows);
-                                if !status.bytecode_valid {
-                                    bytecode_rows_valid
-                                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                                }
-                                if status.ram_active {
+                                if fill_trace_row(row, &columns, selected_rows) {
                                     *ram_active_word |= 1u64 << row_offset;
                                 }
                             }
@@ -305,12 +314,7 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
             if let Some(error) = extraction_error.into_inner().unwrap() {
                 return Err(error.into());
             }
-            if !bytecode_rows_valid.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(ProverError::InvariantViolation {
-                    reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
-                });
-            }
-            return Ok(std::sync::Arc::new(PackedTraceRows {
+            return Ok(Arc::new(PackedTraceRows {
                 num_rows,
                 num_columns,
                 selected_rows,
@@ -326,18 +330,12 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
         .zip(selected_rows.chunks_exact_mut(num_columns))
         .enumerate()
     {
-        let status = fill_trace_row(row, &columns, selected_rows);
-        if !status.bytecode_valid {
-            return Err(ProverError::InvariantViolation {
-                reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
-            });
-        }
-        if status.ram_active {
+        if fill_trace_row(row, &columns, selected_rows) {
             ram_active_rows[row_index / u64::BITS as usize] |=
                 1u64 << (row_index % u64::BITS as usize);
         }
     }
-    Ok(std::sync::Arc::new(PackedTraceRows {
+    Ok(Arc::new(PackedTraceRows {
         num_rows,
         num_columns,
         selected_rows,
@@ -392,7 +390,7 @@ where
     })
 }
 
-fn commit_failed<F: Field>(error: impl ToString) -> ProverError<F> {
+fn commit_failed<F: JoltField>(error: impl ToString) -> ProverError<F> {
     ProverError::Verifier(
         jolt_verifier::VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
@@ -404,10 +402,8 @@ fn commit_failed<F: Field>(error: impl ToString) -> ProverError<F> {
 #[derive(Clone)]
 pub struct DirectProgramObject<PCS: CommitmentScheme> {
     pub plan: PrefixPackedObjectPlan,
-    pub witness: Polynomial<PCS::Field>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
-    pub setup: PCS::ProverSetup,
 }
 
 /// The precommitted direct program objects in canonical order: indexed
@@ -417,7 +413,6 @@ pub struct DirectProgramObject<PCS: CommitmentScheme> {
 /// directly.
 #[derive(Clone)]
 pub struct DirectProgramObjects<PCS: CommitmentScheme> {
-    pub shape: PrecommittedPackingShape,
     pub objects: Vec<DirectProgramObject<PCS>>,
 }
 
@@ -491,14 +486,12 @@ where
             let (commitment, hint) = PCS::commit(&witness, &setup).map_err(commit_failed)?;
             Ok(DirectProgramObject {
                 plan: object_plan.clone(),
-                witness,
                 commitment,
                 hint,
-                setup,
             })
         })
         .collect::<Result<Vec<_>, ProverError<PCS::Field>>>()?;
-    Ok(DirectProgramObjects { shape, objects })
+    Ok(DirectProgramObjects { objects })
 }
 
 /// The padded program-image words: the RAM preprocessing's bytecode words,

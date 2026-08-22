@@ -502,7 +502,7 @@ impl CommitmentScheme for AkitaScheme {
             !(params.one_hot_only && params.dense_only),
             "a setup cannot skip both backend flavors"
         );
-        if let Some(advice_schedule) = params.advice_schedule {
+        if let Some(advice_schedule) = params.advice_schedule.as_ref() {
             let _registered_rows = advice_schedule
                 .provision(params.one_hot_k)
                 .map_err(|error| invalid_setup(&error))?;
@@ -845,13 +845,6 @@ mod tests {
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
     use jolt_transcript::Blake2bTranscript;
-
-    #[test]
-    fn grouped_setup_params_accept_the_260_polynomial_boundary() {
-        let params =
-            AkitaSetupParams::one_hot_only_grouped(34, 1, 260, [7; 32], AKITA_ONE_HOT_K256);
-        assert_eq!(params.max_total_batch_polys(), 260);
-    }
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {

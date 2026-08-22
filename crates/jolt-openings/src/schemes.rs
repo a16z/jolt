@@ -9,7 +9,7 @@
 use std::{fmt::Debug, marker::PhantomData};
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::{Field, FromPrimitiveInt};
+use jolt_field::{JoltField, Ring};
 use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
@@ -47,7 +47,7 @@ pub trait GroupSetupMetadata {
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
 pub trait CommitmentScheme: Commitment {
-    type Field: Field;
+    type Field: JoltField;
     type Proof: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
@@ -197,7 +197,7 @@ pub trait StreamingCommitment: CommitmentScheme {
         let values: Vec<Self::Field> = chunk
             .iter()
             .copied()
-            .map(<Self::Field as FromPrimitiveInt>::from_u64)
+            .map(<Self::Field as Ring>::from_u64)
             .collect();
         Self::feed(partial, &values, setup);
     }
@@ -206,7 +206,7 @@ pub trait StreamingCommitment: CommitmentScheme {
         let values: Vec<Self::Field> = chunk
             .iter()
             .copied()
-            .map(<Self::Field as FromPrimitiveInt>::from_i128)
+            .map(<Self::Field as Ring>::from_i128)
             .collect();
         Self::feed(partial, &values, setup);
     }
@@ -373,7 +373,7 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
 /// - [`Hints`](Self::Hints) are the commit-time auxiliary data
 ///   ([`CommitmentScheme::OpeningHint`]) the PCS reuses when opening.
 pub trait BatchOpeningScheme {
-    type Field: Field;
+    type Field: JoltField;
     type ProverSetup;
     type VerifierSetup;
     /// Public opening claims plus the commitments they refer to.
@@ -572,14 +572,14 @@ where
     }
 }
 
-struct HomomorphicBatchStatement<'a, F: Field, C> {
+struct HomomorphicBatchStatement<'a, F: JoltField, C> {
     claims: &'a [VerifierOpeningClaim<F, C>],
     point: Point<HIGH_TO_LOW, F>,
 }
 
 impl<'a, F, C> HomomorphicBatchStatement<'a, F, C>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     fn new(claims: &'a [VerifierOpeningClaim<F, C>]) -> Result<Self, OpeningsError> {
@@ -617,7 +617,7 @@ where
 
 impl<F, C> AppendToTranscript for HomomorphicBatchStatement<'_, F, C>
 where
-    F: Field,
+    F: JoltField,
 {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         VerifierRlcClaims(self.claims).append_to_transcript(transcript);
@@ -745,46 +745,61 @@ impl<F, C> GroupOpeningClaim<F, C> {
     }
 }
 
-/// Identity of one precommitted group. The variant order *is* the canonical
-/// public batch order, which precedes the final trace group:
-/// `[UntrustedAdvice?, TrustedAdvice?, BytecodeChunk(0..C), ProgramImageInit,
-/// OneHotTrace]`. The role is bound into the
-/// statement transcript, so a group's semantics never rest on position alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PrecommittedRole {
-    UntrustedAdvice,
-    TrustedAdvice,
-    BytecodeChunk(usize),
-    ProgramImageInit,
+/// Protocol-supplied identity of one precommitted group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrecommittedRole {
+    order: u64,
+    transcript_label: &'static [u8],
+    diagnostic_name: &'static str,
+    transcript_index: Option<u64>,
 }
 
 impl PrecommittedRole {
-    /// Domain-separating transcript tag for this group.
+    pub const fn new(
+        order: u64,
+        transcript_label: &'static [u8],
+        diagnostic_name: &'static str,
+    ) -> Self {
+        Self {
+            order,
+            transcript_label,
+            diagnostic_name,
+            transcript_index: None,
+        }
+    }
+
+    pub const fn new_indexed(
+        order: u64,
+        transcript_label: &'static [u8],
+        diagnostic_name: &'static str,
+        transcript_index: u64,
+    ) -> Self {
+        Self {
+            order,
+            transcript_label,
+            diagnostic_name,
+            transcript_index: Some(transcript_index),
+        }
+    }
+
+    /// Protocol-defined canonical batch position.
+    pub const fn order(self) -> u64 {
+        self.order
+    }
+
+    /// Protocol-defined domain-separating transcript tag.
     pub const fn transcript_label(self) -> &'static [u8] {
-        match self {
-            Self::UntrustedAdvice => b"untrusted_advice",
-            Self::TrustedAdvice => b"trusted_advice",
-            Self::BytecodeChunk(_) => b"bytecode_chunk",
-            Self::ProgramImageInit => b"program_image_init",
-        }
+        self.transcript_label
     }
 
-    /// Human-readable role used in validation diagnostics.
+    /// Protocol-defined name used in validation diagnostics.
     pub const fn diagnostic_name(self) -> &'static str {
-        match self {
-            Self::UntrustedAdvice => "untrusted-advice",
-            Self::TrustedAdvice => "trusted-advice",
-            Self::BytecodeChunk(_) => "bytecode-chunk",
-            Self::ProgramImageInit => "program-image-init",
-        }
+        self.diagnostic_name
     }
 
-    /// Indexed roles bind their semantic index in addition to the role tag.
-    pub const fn transcript_index(self) -> Option<usize> {
-        match self {
-            Self::BytecodeChunk(index) => Some(index),
-            Self::UntrustedAdvice | Self::TrustedAdvice | Self::ProgramImageInit => None,
-        }
+    /// Optional semantic index for repeated protocol roles.
+    pub const fn transcript_index(self) -> Option<u64> {
+        self.transcript_index
     }
 }
 

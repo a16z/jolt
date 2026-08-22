@@ -22,6 +22,10 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+use jolt_akita::{AdviceScheduleParams, AkitaSetupParams};
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
+    is_valid_committed_program_immediate, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
+};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::{
     advice_packing_plan, precommitted_packing_plan, OneHotTraceLayoutPlan, OneHotTraceShape,
@@ -32,9 +36,12 @@ use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, GroupOpeningClaim,
     PrecommittedClaim, PrecommittedRole, PrefixPackedClaims, TransparentObjectSetup,
 };
+use jolt_poly::Polynomial;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
-use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
+use jolt_verifier::config::{
+    CommitmentConfig, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
+};
 use jolt_verifier::preprocessing::{
     CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
     JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
@@ -62,8 +69,9 @@ use crate::zkvm::bytecode::read_raf_checking::{
     BytecodeReadRafSumcheckParams,
 };
 use crate::zkvm::claim_reductions::{
-    AdviceClaimReductionParams, AdviceClaimReductionProver, HammingWeightClaimReductionParams,
-    HammingWeightClaimReductionProver, PrecommittedClaimReduction,
+    AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
+    HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
+    PrecommittedClaimReduction,
 };
 use crate::zkvm::fiat_shamir_preamble;
 use crate::zkvm::instruction_lookups::ra_virtual::{
@@ -427,21 +435,6 @@ fn advice_physical_num_vars(
     Ok(plan.packing().packed_num_vars())
 }
 
-fn provision_advice_schedules(
-    max_untrusted_advice_bytes: usize,
-    max_trusted_advice_bytes: usize,
-    one_hot_k: usize,
-    max_final_num_vars: usize,
-) -> Result<(), VerifierError> {
-    provision_precommitted_schedules(
-        max_untrusted_advice_bytes,
-        max_trusted_advice_bytes,
-        &[],
-        one_hot_k,
-        max_final_num_vars,
-    )
-}
-
 pub fn provision_precommitted_schedules(
     max_untrusted_advice_bytes: usize,
     max_trusted_advice_bytes: usize,
@@ -483,7 +476,7 @@ fn grouped_batch_poly_capacity(
 pub struct AdviceObject {
     pub words: Vec<u64>,
     pub plan: PrefixPackedObjectPlan,
-    pub polynomial: jolt_poly::Polynomial<AkitaField>,
+    pub polynomial: Polynomial<AkitaField>,
     pub commitment: <AkitaScheme as jolt_crypto::Commitment>::Output,
     pub hint: <AkitaScheme as VerifierCommitmentScheme>::OpeningHint,
     pub setup: <AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
@@ -514,7 +507,7 @@ pub fn commit_advice(
     for (evaluation, word) in evaluations.iter_mut().zip(&words) {
         *evaluation = AkitaField::from_u64(*word);
     }
-    let polynomial = jolt_poly::Polynomial::new(evaluations);
+    let polynomial = Polynomial::new(evaluations);
 
     let (commitment, hint) = <AkitaScheme as VerifierCommitmentScheme>::commit(&polynomial, setup)
         .map_err(|error| commit_failed(error.to_string()))?;
@@ -548,10 +541,8 @@ pub fn commit_trusted_advice(
 /// One direct bounded-dense committed-program object.
 pub struct DirectProgramObject {
     pub plan: PrefixPackedObjectPlan,
-    pub witness: jolt_poly::Polynomial<AkitaField>,
     pub commitment: <AkitaScheme as jolt_crypto::Commitment>::Output,
     pub hint: <AkitaScheme as VerifierCommitmentScheme>::OpeningHint,
-    pub setup: <AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
 }
 
 pub struct DirectProgramObjects {
@@ -566,10 +557,16 @@ pub fn commit_direct_program(
     bytecode_chunk_count: usize,
 ) -> Result<DirectProgramObjects, VerifierError> {
     let commit_failed = |reason: String| VerifierError::FinalOpeningVerificationFailed { reason };
-    jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::validate_committed_program_immediates(
-        &program.bytecode.bytecode,
-    )
-    .map_err(|reason| commit_failed(reason.to_owned()))?;
+    if program
+        .bytecode
+        .bytecode
+        .iter()
+        .any(|instruction| !is_valid_committed_program_immediate(instruction.operands.imm))
+    {
+        return Err(commit_failed(
+            INVALID_COMMITTED_PROGRAM_IMMEDIATE.to_owned(),
+        ));
+    }
     let bytecode_len = program.bytecode_len();
     assert!(
         bytecode_len.is_multiple_of(bytecode_chunk_count),
@@ -606,7 +603,7 @@ pub fn commit_direct_program(
                 })?,
                 JoltCommittedPolynomial::ProgramImageInit => image_words
                     .iter()
-                    .map(|word| <AkitaField as jolt_field::FromPrimitiveInt>::from_u64(*word))
+                    .map(|word| AkitaField::from_u64(*word))
                     .collect(),
                 _ => {
                     return Err(commit_failed(
@@ -618,7 +615,7 @@ pub fn commit_direct_program(
                 1usize << object_plan.packing().packed_num_vars(),
                 AkitaField::default(),
             );
-            let witness = jolt_poly::Polynomial::new(evaluations);
+            let witness = Polynomial::new(evaluations);
             let (setup, _verifier_setup) = transparent_object_setup(
                 object_plan.packing().packed_num_vars(),
                 object_plan.layout_digest(),
@@ -629,10 +626,8 @@ pub fn commit_direct_program(
                     .map_err(|error| commit_failed(error.to_string()))?;
             Ok(DirectProgramObject {
                 plan: object_plan.clone(),
-                witness,
                 commitment,
                 hint,
-                setup,
             })
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
@@ -684,7 +679,6 @@ pub fn shared_preprocessing_with_direct_program(
             program_image_num_columns: 0,
             program_image_num_words: full.committed_program_image_num_words(&memory_layout),
         },
-        trace_order: TracePolynomialOrder::CycleMajor,
     };
     let shared = crate::zkvm::preprocessing::JoltSharedPreprocessing::<AkitaPackedScheme> {
         program_meta: meta_for_shared,
@@ -718,7 +712,7 @@ impl AkitaPackedProver<'_> {
         reason = "consistent with the canonical-layout expects below; a program whose \
                   advice capacity cannot be scheduled is a preprocessing-time invariant break"
     )]
-    pub fn one_hot_trace_setup_params(&self) -> jolt_akita::AkitaSetupParams {
+    pub fn one_hot_trace_setup_params(&self) -> AkitaSetupParams {
         let one_hot_trace_shape = self.one_hot_trace_shape();
         let shape = ONE_HOT_TRACE_LAYOUT
             .setup_shape(&one_hot_trace_shape)
@@ -734,15 +728,10 @@ impl AkitaPackedProver<'_> {
         let direct_program_physical_vars = if self.preprocessing.is_committed_mode() {
             let bytecode_len = self.preprocessing.shared.bytecode_size();
             let chunk_count = self.preprocessing.shared.bytecode_chunk_count;
-            let crate::zkvm::program::ProgramPreprocessing::Committed(committed) =
-                &self.preprocessing.shared.program
-            else {
-                unreachable!("committed mode was checked above");
-            };
             let packing = precommitted_packing_plan(&PrecommittedPackingShape {
                 bytecode_chunks: chunk_count,
                 log_bytecode_rows: (bytecode_len / chunk_count).log_2(),
-                trace_order: committed.trace_order,
+                trace_order: TracePolynomialOrder::CycleMajor,
                 program_image_log_words: Some(
                     self.preprocessing
                         .shared
@@ -759,10 +748,10 @@ impl AkitaPackedProver<'_> {
         } else {
             Vec::new()
         };
-        if max_trusted_advice_bytes > 0
+        let has_precommitted = max_trusted_advice_bytes > 0
             || max_untrusted_advice_bytes > 0
-            || !direct_program_physical_vars.is_empty()
-        {
+            || !direct_program_physical_vars.is_empty();
+        let advice_schedule = if has_precommitted {
             // The trace this prove uses may be shorter than the program's
             // padded ceiling, but preprocessing must cover every arity a proof
             // of this program can select, so sweep up to the ceiling's arity.
@@ -773,16 +762,30 @@ impl AkitaPackedProver<'_> {
                 })
                 .expect("the padded-ceiling OneHotTrace layout must exist")
                 .num_vars;
-            provision_precommitted_schedules(
-                max_untrusted_advice_bytes,
-                max_trusted_advice_bytes,
-                &direct_program_physical_vars,
-                one_hot_k,
-                max_final_num_vars,
+            let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
+                .then(|| {
+                    advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes)
+                })
+                .transpose()
+                .expect("untrusted-advice physical arity must derive");
+            let trusted_physical_vars = (max_trusted_advice_bytes > 0)
+                .then(|| {
+                    advice_physical_num_vars(JoltAdviceKind::Trusted, max_trusted_advice_bytes)
+                })
+                .transpose()
+                .expect("trusted-advice physical arity must derive");
+            Some(
+                AdviceScheduleParams::new(
+                    untrusted_physical_vars,
+                    trusted_physical_vars,
+                    max_final_num_vars,
+                )
+                .with_direct_program_physical_arities(direct_program_physical_vars.clone()),
             )
-            .expect("advice grouped schedules must provision");
-        }
-        jolt_akita::AkitaSetupParams::one_hot_only_grouped(
+        } else {
+            None
+        };
+        AkitaSetupParams::one_hot_only_grouped(
             shape.num_vars,
             shape.num_polys,
             grouped_batch_poly_capacity(
@@ -792,6 +795,7 @@ impl AkitaPackedProver<'_> {
             ),
             layout_digest,
             one_hot_k,
+            advice_schedule,
         )
     }
 
@@ -1371,8 +1375,8 @@ impl AkitaPackedProver<'_> {
     ) -> Result<PrefixPackedClaims<AkitaField>, VerifierError> {
         let batch_failed = |reason: String| VerifierError::FinalOpeningBatchFailed { reason };
         let advice_kind = match kind {
-            JoltAdviceKind::Untrusted => crate::zkvm::claim_reductions::AdviceKind::Untrusted,
-            JoltAdviceKind::Trusted => crate::zkvm::claim_reductions::AdviceKind::Trusted,
+            JoltAdviceKind::Untrusted => AdviceKind::Untrusted,
+            JoltAdviceKind::Trusted => AdviceKind::Trusted,
         };
         let (point, value) = self
             .opening_accumulator
@@ -1464,24 +1468,23 @@ impl AkitaPackedProver<'_> {
         // committed before the trace: the final commit is conditioned on the
         // frozen profile of every precommitted group.
         let advice_object = self.generate_and_commit_untrusted_advice_packed()?;
-        // Canonical public batch order precedes OneHotTrace.
         let mut precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
         if let Some(object) = advice_object.as_ref() {
             precommitted.push((
-                PrecommittedRole::UntrustedAdvice,
+                JoltAdviceKind::Untrusted.precommitted_role(),
                 &object.commitment,
                 &object.hint,
             ));
         }
         if let Some(object) = trusted_advice {
             precommitted.push((
-                PrecommittedRole::TrustedAdvice,
+                JoltAdviceKind::Trusted.precommitted_role(),
                 &object.commitment,
                 &object.hint,
             ));
         }
         if let Some(program) = program {
-            for object in &program.objects {
+            for (object_index, object) in program.objects.iter().enumerate() {
                 let id = object
                     .plan
                     .packing()
@@ -1492,10 +1495,17 @@ impl AkitaPackedProver<'_> {
                         reason: "direct committed-program object has no polynomial id".to_owned(),
                     })?;
                 let role = match id {
-                    JoltCommittedPolynomial::BytecodeChunk(index) => {
-                        PrecommittedRole::BytecodeChunk(index)
-                    }
-                    JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::ProgramImageInit,
+                    JoltCommittedPolynomial::BytecodeChunk(index) => PrecommittedRole::new_indexed(
+                        2 + object_index as u64,
+                        b"bytecode_chunk",
+                        "bytecode-chunk",
+                        index as u64,
+                    ),
+                    JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::new(
+                        2 + object_index as u64,
+                        b"program_image_init",
+                        "program-image-init",
+                    ),
                     _ => {
                         return Err(VerifierError::FinalOpeningBatchFailed {
                             reason: "unexpected direct committed-program object role".to_owned(),
@@ -1627,16 +1637,15 @@ impl AkitaPackedProver<'_> {
             })
             .transpose()?;
 
-        // Canonical public batch order precedes OneHotTrace.
         let mut batch_precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
         for (role, object, claim) in [
             (
-                PrecommittedRole::UntrustedAdvice,
+                JoltAdviceKind::Untrusted.precommitted_role(),
                 advice_object.as_ref(),
                 untrusted_physical.as_ref(),
             ),
             (
-                PrecommittedRole::TrustedAdvice,
+                JoltAdviceKind::Trusted.precommitted_role(),
                 trusted_advice,
                 trusted_physical.as_ref(),
             ),
@@ -1656,7 +1665,7 @@ impl AkitaPackedProver<'_> {
             }
         }
         if let Some(program) = program {
-            for object in &program.objects {
+            for (object_index, object) in program.objects.iter().enumerate() {
                 let claims = self.packed_program_claims(&object.plan)?;
                 let physical = object
                     .plan
@@ -1675,10 +1684,17 @@ impl AkitaPackedProver<'_> {
                         reason: "direct committed-program object has no polynomial id".to_owned(),
                     })?;
                 let role = match id {
-                    JoltCommittedPolynomial::BytecodeChunk(index) => {
-                        PrecommittedRole::BytecodeChunk(index)
-                    }
-                    JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::ProgramImageInit,
+                    JoltCommittedPolynomial::BytecodeChunk(index) => PrecommittedRole::new_indexed(
+                        2 + object_index as u64,
+                        b"bytecode_chunk",
+                        "bytecode-chunk",
+                        index as u64,
+                    ),
+                    JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::new(
+                        2 + object_index as u64,
+                        b"program_image_init",
+                        "program-image-init",
+                    ),
                     _ => {
                         return Err(VerifierError::FinalOpeningBatchFailed {
                             reason: "unexpected direct committed-program object role".to_owned(),
@@ -1745,6 +1761,7 @@ impl AkitaPackedProver<'_> {
             protocol: JoltProtocolConfig {
                 zk: ZkConfig::Transparent,
                 commitment: CommitmentConfig::Packed,
+                scalar_challenge_endianness: ScalarChallengeEndianness::Little,
             },
             commitments: commitment,
             stages,
@@ -1805,34 +1822,53 @@ pub fn akita_verifier_preprocessing(
                     .map(|object| object.commitment.clone())
                     .collect(),
                 bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
-                trace_order: committed.trace_order,
+                trace_order: TracePolynomialOrder::CycleMajor,
             })
         }
     };
-    let committed_mode = preprocessing.shared.program.is_committed();
     let one_hot_k = akita_verifier_setup.one_hot_k();
-    // The verifier's setup is shape-exact, so its own arity is the only final
-    // arity any proof it accepts can carry — a tight bound on the sweep.
     let akita_verifier_max_final_num_vars = akita_verifier_setup.max_num_vars();
+    let layout = &preprocessing.shared.memory_layout;
+    let direct_program_plan = preprocessing.shared.program.is_committed().then(|| {
+        let bytecode_len = preprocessing.shared.bytecode_size();
+        let bytecode_chunk_count = preprocessing.shared.bytecode_chunk_count;
+        precommitted_packing_plan(&PrecommittedPackingShape {
+            bytecode_chunks: bytecode_chunk_count,
+            log_bytecode_rows: (bytecode_len / bytecode_chunk_count).log_2(),
+            trace_order: TracePolynomialOrder::CycleMajor,
+            program_image_log_words: Some(
+                preprocessing
+                    .shared
+                    .program
+                    .committed_program_image_num_words(layout)
+                    .log_2(),
+            ),
+        })
+        .expect("the canonical precommitted packing plan must exist")
+    });
+    let direct_program_physical_vars = direct_program_plan
+        .as_ref()
+        .map(|plan| {
+            plan.objects()
+                .map(|object| object.packing().packed_num_vars())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    provision_precommitted_schedules(
+        layout.max_untrusted_advice_size as usize,
+        layout.max_trusted_advice_size as usize,
+        &direct_program_physical_vars,
+        one_hot_k,
+        akita_verifier_max_final_num_vars,
+    )
+    .expect("precommitted grouped schedules must provision for the verifier");
+
     let mut verifier_preprocessing = JoltVerifierPreprocessing::new(
         program,
         preprocessing.shared.digest(),
         akita_verifier_setup,
         None,
     );
-    // The verifier owns its own copy of the grouped advice rows. A verifier in
-    // its own process re-derives them from the same public advice capacities, so
-    // the set is identical by construction rather than by trust.
-    provision_advice_schedules(
-        preprocessing.shared.memory_layout.max_untrusted_advice_size as usize,
-        preprocessing.shared.memory_layout.max_trusted_advice_size as usize,
-        one_hot_k,
-        akita_verifier_max_final_num_vars,
-    )
-    .expect("advice grouped schedules must provision for the verifier");
-    // The per-kind advice commitment-object setups are derived from the
-    // public advice shapes with the same fixed seed the prover uses (the
-    // Akita setup is transparent).
     let advice_setup = |kind: JoltAdviceKind, max_bytes: usize| {
         (max_bytes > 0).then(|| {
             let word_vars = (max_bytes / 8).next_power_of_two().log_2();
@@ -1844,7 +1880,6 @@ pub fn akita_verifier_preprocessing(
             verifier_setup
         })
     };
-    let layout = &preprocessing.shared.memory_layout;
     verifier_preprocessing.untrusted_advice_setup = advice_setup(
         JoltAdviceKind::Untrusted,
         layout.max_untrusted_advice_size as usize,
@@ -1853,43 +1888,7 @@ pub fn akita_verifier_preprocessing(
         JoltAdviceKind::Trusted,
         layout.max_trusted_advice_size as usize,
     );
-    // Direct-program setups are derived from the public program shape (transparent
-    // setup, fixed seed) — the same shape `commit_direct_program` committed
-    // at.
-    if committed_mode {
-        let bytecode_len = preprocessing.shared.bytecode_size();
-        let bytecode_chunk_count = preprocessing.shared.bytecode_chunk_count;
-        let crate::zkvm::program::ProgramPreprocessing::Committed(committed) =
-            &preprocessing.shared.program
-        else {
-            unreachable!("committed mode was checked above");
-        };
-        let shape = PrecommittedPackingShape {
-            bytecode_chunks: bytecode_chunk_count,
-            log_bytecode_rows: (bytecode_len / bytecode_chunk_count).log_2(),
-            trace_order: committed.trace_order,
-            program_image_log_words: Some(
-                preprocessing
-                    .shared
-                    .program
-                    .committed_program_image_num_words(&preprocessing.shared.memory_layout)
-                    .log_2(),
-            ),
-        };
-        let plan = precommitted_packing_plan(&shape)
-            .expect("the canonical precommitted packing plan must exist");
-        let direct_program_physical_vars = plan
-            .objects()
-            .map(|object| object.packing().packed_num_vars())
-            .collect::<Vec<_>>();
-        provision_precommitted_schedules(
-            layout.max_untrusted_advice_size as usize,
-            layout.max_trusted_advice_size as usize,
-            &direct_program_physical_vars,
-            one_hot_k,
-            akita_verifier_max_final_num_vars,
-        )
-        .expect("direct-program grouped schedules must provision for the verifier");
+    if let Some(plan) = direct_program_plan {
         verifier_preprocessing.direct_program_setups = plan
             .objects()
             .map(|object| {
@@ -1940,7 +1939,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let setup_params = prover.one_hot_trace_setup_params();
         assert_eq!(setup_params.one_hot_k(), 16);
@@ -2032,7 +2032,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let forced = crate::zkvm::config::OneHotConfig {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: 32,
@@ -2117,7 +2118,8 @@ mod advice_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2196,7 +2198,8 @@ mod advice_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2258,7 +2261,8 @@ mod committed_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2368,7 +2372,8 @@ mod committed_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         eprintln!("trace length: {}", prover.trace.len());
         let setup_params = prover.one_hot_trace_setup_params();
@@ -2464,7 +2469,7 @@ mod committed_tests {
 }
 
 use jolt_crypto::{Commitment, HomomorphicCommitment, VectorCommitment};
-use jolt_field::{CanonicalBytes, Field, FixedByteSize};
+use jolt_field::{CanonicalBytes, JoltField};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug};
 
@@ -2502,15 +2507,13 @@ pub struct NoCommitment;
 // `AppendToTranscript` comes from jolt-transcript's blanket impl over
 // `CanonicalBytes`: an empty canonical encoding, so absorbing a
 // `NoCommitment` is a no-op.
-impl FixedByteSize for NoCommitment {
-    const NUM_BYTES: usize = 0;
-}
-
 impl CanonicalBytes for NoCommitment {
+    const NUM_BYTES: usize = 0;
+
     fn to_bytes_le(&self, _out: &mut [u8]) {}
 }
 
-impl<F: Field> HomomorphicCommitment<F> for NoCommitment {
+impl<F: JoltField> HomomorphicCommitment<F> for NoCommitment {
     fn add(_c1: &Self, _c2: &Self) -> Self {
         Self
     }
@@ -2520,11 +2523,11 @@ impl<F: Field> HomomorphicCommitment<F> for NoCommitment {
     }
 }
 
-impl<F: Field> Commitment for NoVectorCommitment<F> {
+impl<F: JoltField> Commitment for NoVectorCommitment<F> {
     type Output = NoCommitment;
 }
 
-impl<F: Field> VectorCommitment for NoVectorCommitment<F> {
+impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
     type Field = F;
     type Setup = ();
 
@@ -2640,9 +2643,4 @@ mod advice_object_tests {
             .unwrap();
         }
     }
-}
-#[test]
-fn maximum_grouped_batch_capacity_is_260() {
-    assert_eq!(grouped_batch_poly_capacity(1, 1, 257), 260);
-    assert_eq!(grouped_batch_poly_capacity(0, 0, 0), 1);
 }

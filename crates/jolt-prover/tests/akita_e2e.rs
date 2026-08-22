@@ -15,6 +15,14 @@
 //! crates the merkle guest needs. The release-only `sha2_chain_akita_perf`
 //! harness has no analog here.
 
+#![cfg_attr(
+    all(feature = "prover-fixtures", feature = "akita"),
+    expect(
+        clippy::unwrap_used,
+        reason = "end-to-end fixtures fail loudly when guest construction is invalid"
+    )
+)]
+
 /// Shared scaffolding: the legacy-side guest artifacts every packed test
 /// starts from, and the modular-side trace/config/witness pipeline pieces.
 #[cfg(all(feature = "prover-fixtures", feature = "akita"))]
@@ -198,7 +206,8 @@ mod muldiv {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let public_io = legacy_prover.program_io.clone();
         let setup_params = legacy_prover.one_hot_trace_setup_params();
         assert_eq!(setup_params.one_hot_k(), 16);
@@ -320,7 +329,8 @@ mod muldiv {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         // The forced K = 256 regime; the setup params must be derived AFTER
         // the override (they carry K and the layout digest).
         let forced = LegacyOneHotConfig {
@@ -472,7 +482,8 @@ mod advice {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -624,7 +635,8 @@ mod advice {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -738,7 +750,8 @@ mod committed {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),

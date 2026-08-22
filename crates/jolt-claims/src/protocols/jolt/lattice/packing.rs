@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::XLEN;
 use jolt_openings::{EvaluationClaim, OpeningsError, PrefixPackedClaims, PrefixPackedLayout};
 use jolt_poly::eq_index_msb;
@@ -276,7 +276,7 @@ impl PrefixPackedObjectPlan {
     /// Aligns suffix-compatible logical claims at the widest point. A shorter
     /// polynomial is embedded under a zero prefix, so its evaluation is
     /// multiplied by `eq(common_prefix, 0)`.
-    pub fn packed_claims<F: Field>(
+    pub fn packed_claims<F: JoltField>(
         &self,
         claims: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
     ) -> Result<PrefixPackedClaims<F>, OpeningsError> {
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn padded_capacity_claims_reduce_to_the_slot_zero_embedding() {
-        use jolt_field::{Fr, FromPrimitiveInt};
+        use jolt_field::{Fr, Ring};
 
         let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 9).unwrap();
         let id = JoltCommittedPolynomial::UntrustedAdvice;

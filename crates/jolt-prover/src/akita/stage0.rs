@@ -1,10 +1,11 @@
 //! Packed stage 0: input validation, commitments, and transcript setup.
 
 use common::jolt_device::JoltDevice;
+use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentScheme, GroupSetupMetadata, PrecommittedRole, TransparentObjectSetup,
 };
@@ -40,8 +41,8 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
-    F: Field,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::TraceOneHotCommitment,
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
@@ -146,13 +147,12 @@ where
         None
     };
 
-    // Canonical public batch order: [UntrustedAdvice, TrustedAdvice, OneHotTrace].
     let mut precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> =
         untrusted_advice
             .as_ref()
             .map(|object| {
                 (
-                    PrecommittedRole::UntrustedAdvice,
+                    JoltAdviceKind::Untrusted.precommitted_role(),
                     &object.commitment,
                     &object.hint,
                 )
@@ -160,7 +160,7 @@ where
             .into_iter()
             .chain(trusted_advice.map(|object| {
                 (
-                    PrecommittedRole::TrustedAdvice,
+                    JoltAdviceKind::Trusted.precommitted_role(),
                     &object.commitment,
                     &object.hint,
                 )
@@ -171,14 +171,19 @@ where
         .as_ref()
         .map(|data| &data.direct_program)
     {
-        for object in &program.objects {
+        for (object_index, object) in program.objects.iter().enumerate() {
             let role = match object.plan.packing().ids()[0] {
-                jolt_claims::protocols::jolt::JoltCommittedPolynomial::BytecodeChunk(index) => {
-                    PrecommittedRole::BytecodeChunk(index)
-                }
-                jolt_claims::protocols::jolt::JoltCommittedPolynomial::ProgramImageInit => {
-                    PrecommittedRole::ProgramImageInit
-                }
+                JoltCommittedPolynomial::BytecodeChunk(index) => PrecommittedRole::new_indexed(
+                    2 + object_index as u64,
+                    b"bytecode_chunk",
+                    "bytecode-chunk",
+                    index as u64,
+                ),
+                JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::new(
+                    2 + object_index as u64,
+                    b"program_image_init",
+                    "program-image-init",
+                ),
                 _ => {
                     return Err(ProverError::InvariantViolation {
                         reason: "unexpected direct committed-program object role",
