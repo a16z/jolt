@@ -18,6 +18,7 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+pub mod advice;
 #[cfg(feature = "std")]
 pub mod attributes;
 pub mod constants;

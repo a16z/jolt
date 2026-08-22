@@ -779,21 +779,6 @@ pub(crate) fn convert_opening_id(id: prover_opening::OpeningId) -> JoltOpeningId
         prover_opening::OpeningId::Polynomial(poly, sumcheck) => {
             JoltOpeningId::polynomial(convert_polynomial_id(poly), convert_sumcheck_id(sumcheck))
         }
-        // The packed byte-column reconstructions produce COMMITTED byte-lane
-        // openings; the advice accumulator slot is just where the legacy
-        // prover carries them.
-        prover_opening::OpeningId::UntrustedAdvice(
-            prover_opening::SumcheckId::UntrustedAdviceReconstruction,
-        ) => JoltOpeningId::committed(
-            JoltCommittedPolynomial::UntrustedAdviceBytes,
-            JoltRelationId::UntrustedAdviceReconstruction,
-        ),
-        prover_opening::OpeningId::TrustedAdvice(
-            prover_opening::SumcheckId::TrustedAdviceReconstruction,
-        ) => JoltOpeningId::committed(
-            JoltCommittedPolynomial::TrustedAdviceBytes,
-            JoltRelationId::TrustedAdviceReconstruction,
-        ),
         prover_opening::OpeningId::UntrustedAdvice(sumcheck) => {
             JoltOpeningId::untrusted_advice(convert_sumcheck_id(sumcheck))
         }
@@ -872,12 +857,6 @@ pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelatio
         prover_opening::SumcheckId::IncClaimReduction => JoltRelationId::IncClaimReduction,
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
-        }
-        prover_opening::SumcheckId::UntrustedAdviceReconstruction => {
-            JoltRelationId::UntrustedAdviceReconstruction
-        }
-        prover_opening::SumcheckId::TrustedAdviceReconstruction => {
-            JoltRelationId::TrustedAdviceReconstruction
         }
         prover_opening::SumcheckId::BytecodeChunkReconstruction => {
             JoltRelationId::BytecodeChunkReconstruction

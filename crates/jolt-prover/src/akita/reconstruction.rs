@@ -1,8 +1,7 @@
 //! The packed reconstruction phase (the head of the stage-8 region): one
-//! batched sumcheck settling every virtualized word/chunk claim against its
-//! committed one-hot decomposition — members in canonical commitment-object
-//! order (untrusted advice, trusted advice, bytecode chunks, program image),
-//! present exactly when their object exists in the public shape.
+//! batched sumcheck settling committed-program chunk claims against their
+//! one-hot decomposition — members in canonical commitment-object order
+//! (bytecode chunks, program image), present exactly when their object exists.
 //!
 //! Pure orchestration mirroring `stage8::reconstruction::verify`: the batch
 //! and its consumed claims come from the verifier's promoted
@@ -21,9 +20,6 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::lattice::geometry::{byte_place_vars, BYTE_BITS, WORD_BYTES};
-use jolt_claims::protocols::jolt::lattice::relations::advice_reconstruction::{
-    trusted_advice_bytes_opening, untrusted_advice_bytes_opening,
-};
 use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
     bytecode_circuit_flag_opening, bytecode_imm_bytes_opening, bytecode_instruction_flag_opening,
     bytecode_lookup_selector_opening, bytecode_raf_flag_opening,
@@ -31,8 +27,7 @@ use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
 };
 use jolt_claims::protocols::jolt::{
     BytecodeChunkReconstructionPublic, BytecodeRegisterLane, JoltDerivedId,
-    ProgramImageReconstructionPublic, TrustedAdviceReconstructionPublic,
-    UntrustedAdviceReconstructionPublic,
+    ProgramImageReconstructionPublic,
 };
 use jolt_field::{CanonicalBytes, Field, FixedByteSize};
 use jolt_kernels::{
@@ -49,8 +44,7 @@ use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::stages::stage8::reconstruction::{
     build_reconstruction_parts, BytecodeChunkReconstructionInstance,
     ProgramImageReconstructionInstance, ReconstructionClearOutput, ReconstructionOutputClaims,
-    ReconstructionOutputPoints, ReconstructionParts, TrustedAdviceReconstructionInstance,
-    UntrustedAdviceReconstructionInstance,
+    ReconstructionOutputPoints, ReconstructionParts,
 };
 use jolt_verifier::CheckedInputs;
 use jolt_witness::JoltWitnessPlane;
@@ -64,7 +58,6 @@ mod drivers {
         BytecodeChunkReconstructionInstance, ProgramImageReconstructionInstance,
         ReconstructionChallenges, ReconstructionInputClaims, ReconstructionInputPoints,
         ReconstructionOutputClaims, ReconstructionOutputPoints, ReconstructionSumchecks,
-        TrustedAdviceReconstructionInstance, UntrustedAdviceReconstructionInstance,
     };
 
     use crate::driver::impl_stage_prover;
@@ -109,21 +102,15 @@ where
         return Ok(ReconstructionProverOutput {
             sumcheck_proof: None,
             claims: ReconstructionOutputClaims {
-                untrusted_advice: None,
-                trusted_advice: None,
                 bytecode: None,
                 program_image: None,
             },
             clear_output: ReconstructionClearOutput {
                 output_values: ReconstructionOutputClaims {
-                    untrusted_advice: None,
-                    trusted_advice: None,
                     bytecode: None,
                     program_image: None,
                 },
                 output_points: ReconstructionOutputPoints {
-                    untrusted_advice: None,
-                    trusted_advice: None,
                     bytecode: None,
                     program_image: None,
                 },
@@ -176,122 +163,6 @@ fn byte_decode_table<F: Field>(place_bits: usize) -> Vec<F> {
 /// of `jolt_kernels::ReferenceBackend`.
 pub(super) struct ReferenceReconstruction;
 
-impl<F: Field> PrepareKernel<F, UntrustedAdviceReconstructionInstance<F>>
-    for ReferenceReconstruction
-{
-    fn prepare(
-        &self,
-        _session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        inputs: ProverInputs<'_, F, UntrustedAdviceReconstructionInstance<F>>,
-    ) -> Result<
-        Box<dyn SumcheckKernel<F, Relation = UntrustedAdviceReconstructionInstance<F>>>,
-        KernelError<F>,
-    > {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-
-        let relation = inputs.relation;
-        let rounds = relation.rounds();
-        let r_word = inputs.points.word.as_slice();
-        let word_vars = rounds - byte_place_vars();
-        if r_word.len() != word_vars {
-            return Err(KernelError::InvariantViolation {
-                reason: "untrusted advice word point arity disagrees with the cell domain",
-            });
-        }
-        let r_reference = &inputs.challenges.r_reference;
-        if r_reference.len() != rounds {
-            return Err(KernelError::InvariantViolation {
-                reason: "untrusted advice reference point arity disagrees with the cell domain",
-            });
-        }
-
-        let byte_column = witness.oracle_table(untrusted_advice_bytes_opening().polynomial_id())?;
-
-        // The publics, materialized over the big-endian (byte ‖ place ‖ word)
-        // cell domain; LowToHigh binding reproduces the verifier's
-        // reversed-point evaluations.
-        let place_bits = WORD_BYTES.ilog2() as usize;
-        let cells = 1usize << rounds;
-        let eq_full = eq_table(r_reference);
-        let eq_place_word_base = eq_table(&r_reference[BYTE_BITS..]);
-        let eq_word_base = eq_table(r_word);
-        let decode_block = byte_decode_table::<F>(place_bits);
-        let mut eq_place_word = vec![F::zero(); cells];
-        let mut eq_word = vec![F::zero(); cells];
-        let mut decode = vec![F::zero(); cells];
-        let low_mask = (1usize << (rounds - BYTE_BITS)) - 1;
-        let word_mask = (1usize << word_vars) - 1;
-        for cell in 0..cells {
-            eq_place_word[cell] = eq_place_word_base[cell & low_mask];
-            eq_word[cell] = eq_word_base[cell & word_mask];
-            decode[cell] = decode_block[cell >> word_vars];
-        }
-
-        let opening_tables = BTreeMap::from([(
-            untrusted_advice_bytes_opening(),
-            Polynomial::new(byte_column),
-        )]);
-        let derived_tables = BTreeMap::from([
-            (
-                JoltDerivedId::from(UntrustedAdviceReconstructionPublic::EqBytePlaceWord),
-                Polynomial::new(eq_full),
-            ),
-            (
-                JoltDerivedId::from(UntrustedAdviceReconstructionPublic::EqPlaceWord),
-                Polynomial::new(eq_place_word),
-            ),
-            (
-                JoltDerivedId::from(UntrustedAdviceReconstructionPublic::ByteDecode),
-                Polynomial::new(decode),
-            ),
-            (
-                JoltDerivedId::from(UntrustedAdviceReconstructionPublic::EqWord),
-                Polynomial::new(eq_word),
-            ),
-        ]);
-        Ok(Box::new(NaiveSumcheckProver::new(
-            &inputs,
-            opening_tables,
-            derived_tables,
-            BindingOrder::LowToHigh,
-        )?))
-    }
-}
-
-impl<F: Field> PrepareKernel<F, TrustedAdviceReconstructionInstance<F>>
-    for ReferenceReconstruction
-{
-    fn prepare(
-        &self,
-        _session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        inputs: ProverInputs<'_, F, TrustedAdviceReconstructionInstance<F>>,
-    ) -> Result<
-        Box<dyn SumcheckKernel<F, Relation = TrustedAdviceReconstructionInstance<F>>>,
-        KernelError<F>,
-    > {
-        let r_word = inputs.points.word.as_slice();
-        let byte_column: Vec<F> =
-            witness.oracle_table(trusted_advice_bytes_opening().polynomial_id())?;
-        let folded = fold_word_dimension(&byte_column, r_word)?;
-
-        let place_bits = WORD_BYTES.ilog2() as usize;
-        let opening_tables =
-            BTreeMap::from([(trusted_advice_bytes_opening(), Polynomial::new(folded))]);
-        let derived_tables = BTreeMap::from([(
-            JoltDerivedId::from(TrustedAdviceReconstructionPublic::ByteDecode),
-            Polynomial::new(byte_decode_table::<F>(place_bits)),
-        )]);
-        Ok(Box::new(NaiveSumcheckProver::new(
-            &inputs,
-            opening_tables,
-            derived_tables,
-            BindingOrder::LowToHigh,
-        )?))
-    }
-}
-
 impl<F: Field> PrepareKernel<F, ProgramImageReconstructionInstance<F>> for ReferenceReconstruction {
     fn prepare(
         &self,
@@ -337,26 +208,6 @@ impl<F: Field> PrepareKernel<F, ProgramImageReconstructionInstance<F>> for Refer
             BindingOrder::LowToHigh,
         )?))
     }
-}
-
-/// Fold the word (low-index) dimension of a `(byte ‖ place ‖ word)` cell
-/// table at `r_word`: `out[bp] = Σ_w eq(r_word, w) · cells[(bp << wv) | w]`.
-fn fold_word_dimension<F: Field>(cells: &[F], r_word: &[F]) -> Result<Vec<F>, KernelError<F>> {
-    let word_vars = r_word.len();
-    let blocks = 1usize << byte_place_vars();
-    if cells.len() != blocks << word_vars {
-        return Err(KernelError::InvariantViolation {
-            reason: "advice byte cell table arity disagrees with the word point",
-        });
-    }
-    let eq_word = eq_table(r_word);
-    Ok((0..blocks)
-        .map(|bp| {
-            (0..1usize << word_vars)
-                .map(|w| cells[(bp << word_vars) | w] * eq_word[w])
-                .sum()
-        })
-        .collect())
 }
 
 impl<F: Field + CanonicalBytes> PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>

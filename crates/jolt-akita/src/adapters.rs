@@ -20,7 +20,7 @@ use tracing::info_span;
 use crate::trace_onehot::TracePackedOneHot;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub(crate) type AkitaConfig = crate::configs::JoltDense;
+pub(crate) type AkitaConfig = crate::configs::JoltDenseBounded;
 pub(crate) type AkitaOneHotK16Config = crate::configs::JoltOneHotK16;
 pub(crate) type AkitaOneHotK256Config = crate::configs::JoltOneHotK256;
 /// Smallest A dimension accepted by the delegated adaptive policy. Source
@@ -89,6 +89,10 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
 pub struct AkitaSetupParams {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
+    /// Capacity of the complete ordered group batch. This is passed to
+    /// Akita's setup constructor; commitment entry points still enforce the
+    /// separate group-local limit above.
+    pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
     /// When set, only the one-hot flavor's backend setup is built — the
@@ -110,6 +114,7 @@ impl AkitaSetupParams {
         Self {
             max_num_vars,
             max_num_polys_per_commitment_group,
+            max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
@@ -129,6 +134,27 @@ impl AkitaSetupParams {
         Self {
             max_num_vars,
             max_num_polys_per_commitment_group,
+            max_total_batch_polys: max_num_polys_per_commitment_group,
+            default_layout_digest,
+            one_hot_k,
+            one_hot_only: true,
+            dense_only: false,
+        }
+    }
+
+    /// Shape-exact one-hot final setup that can discharge a heterogeneous
+    /// opening containing independently committed prefix groups.
+    pub fn one_hot_only_grouped(
+        max_num_vars: usize,
+        max_num_polys_per_commitment_group: usize,
+        max_total_batch_polys: usize,
+        default_layout_digest: AkitaLayoutDigest,
+        one_hot_k: usize,
+    ) -> Self {
+        Self {
+            max_num_vars,
+            max_num_polys_per_commitment_group,
+            max_total_batch_polys,
             default_layout_digest,
             one_hot_k,
             one_hot_only: true,
@@ -148,6 +174,7 @@ impl AkitaSetupParams {
         Self {
             max_num_vars,
             max_num_polys_per_commitment_group,
+            max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
@@ -157,6 +184,10 @@ impl AkitaSetupParams {
 
     pub fn one_hot_k(&self) -> usize {
         self.one_hot_k
+    }
+
+    pub fn max_total_batch_polys(&self) -> usize {
+        self.max_total_batch_polys
     }
 }
 
@@ -176,6 +207,10 @@ impl AkitaProverSetup {
 
     pub fn max_num_polys_per_commitment_group(&self) -> usize {
         self.verifier.max_num_polys_per_commitment_group
+    }
+
+    pub fn max_total_batch_polys(&self) -> usize {
+        self.verifier.max_total_batch_polys
     }
 
     pub fn default_layout_digest(&self) -> [u8; 32] {
@@ -241,6 +276,7 @@ impl AkitaProverSetup {
 pub struct AkitaVerifierSetup {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
+    pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
     #[serde(skip)]
@@ -254,6 +290,10 @@ impl AkitaVerifierSetup {
 
     pub fn max_num_polys_per_commitment_group(&self) -> usize {
         self.max_num_polys_per_commitment_group
+    }
+
+    pub fn max_total_batch_polys(&self) -> usize {
+        self.max_total_batch_polys
     }
 
     pub fn default_layout_digest(&self) -> [u8; 32] {
@@ -307,10 +347,7 @@ impl AkitaVerifierSetup {
         match flavor {
             AkitaBackendFlavor::Dense => {
                 let prover_setup = with_backend_pool(|| {
-                    AkitaBackendScheme::setup_prover(
-                        self.max_num_vars,
-                        self.max_num_polys_per_commitment_group,
-                    )
+                    AkitaBackendScheme::setup_prover(self.max_num_vars, self.max_total_batch_polys)
                 })
                 .map_err(|err| invalid_setup(&err))?;
                 with_backend_pool(|| AkitaBackendScheme::setup_verifier(&prover_setup))
@@ -324,7 +361,7 @@ impl AkitaVerifierSetup {
                 let prover_setup = one_hot_setup_prover(
                     self.one_hot_k,
                     self.max_num_vars,
-                    self.max_num_polys_per_commitment_group,
+                    self.max_total_batch_polys,
                 )
                 .map_err(|err| invalid_setup(&err))?;
                 one_hot_setup_verifier(self.one_hot_k, &prover_setup)
@@ -369,6 +406,7 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript.append_bytes(flavor.transcript_label());
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
+    transcript.append(&U64Word(setup.max_total_batch_polys as u64));
     transcript.append(&U64Word(setup.one_hot_k as u64));
     transcript.append_bytes(&setup.default_layout_digest);
 }
@@ -453,6 +491,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaVerifierSetup {
         self.max_num_polys_per_commitment_group()
     }
 
+    fn max_total_batch_polys(&self) -> usize {
+        self.max_total_batch_polys()
+    }
+
     fn default_layout_digest(&self) -> [u8; 32] {
         self.default_layout_digest()
     }
@@ -469,6 +511,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
 
     fn max_num_polys_per_commitment_group(&self) -> usize {
         self.max_num_polys_per_commitment_group()
+    }
+
+    fn max_total_batch_polys(&self) -> usize {
+        self.max_total_batch_polys()
     }
 
     fn default_layout_digest(&self) -> [u8; 32] {
@@ -523,6 +569,10 @@ impl AppendToTranscript for AkitaCommitment {
 #[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
     pub(crate) statement_bridge: Vec<u8>,
+    /// Fixed-width public identity of the exact generated row selected by the
+    /// prover. The verifier resolves this digest under its configured catalog;
+    /// the backend proof body does not encode the selection itself.
+    pub(crate) serialized_schedule_selection: Vec<u8>,
     pub(crate) serialized_akita_proof_shape: Vec<u8>,
     pub(crate) serialized_akita_proof: Vec<u8>,
 }
@@ -910,6 +960,11 @@ impl AppendToTranscript for AkitaBatchProof {
             self.statement_bridge.len() as u64,
         ));
         transcript.append_bytes(&self.statement_bridge);
+        transcript.append(&LabelWithCount(
+            b"akita_schedule_selection",
+            self.serialized_schedule_selection.len() as u64,
+        ));
+        transcript.append_bytes(&self.serialized_schedule_selection);
         transcript.append(&LabelWithCount(
             b"akita_proof_shape",
             self.serialized_akita_proof_shape.len() as u64,
