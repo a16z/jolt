@@ -47,10 +47,11 @@ and reuse schedule.
 
 Akita exposes an exact retained-byte estimate and accepts an opening
 acceleration retention budget. Its automatic policy eagerly retains both
-indices only when the estimate fits that budget; otherwise the opening hint
-stores a small deferred marker. Each packed opening consumer builds its index,
-uses it, waits for the consuming command, and releases it before another index
-is allocated.
+indices only when the estimate fits that budget; otherwise it retains no
+index. The opening hint already carries the configured backend, and the packed
+source plus opening plan contain all geometry needed to rebuild the index.
+Each packed opening consumer builds its index, uses it, waits for the consuming
+command, and releases it before another index is allocated.
 
 Jolt supplies a zero retained-index budget for the composed max-scale path.
 The existing proof-session drop remains the boundary between PIOP residency
