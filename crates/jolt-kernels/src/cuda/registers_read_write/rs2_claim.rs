@@ -5,21 +5,23 @@ use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr_slice};
 use crate::cuda::common::error::CudaError;
 
-pub fn rs2_ra_claim<F: Field>(
+pub fn rs2_ra_claim_window<F: Field>(
     context: &CudaKernelContext,
     indices: &CudaSlice<u32>,
     cycles: usize,
     r_address: &[F],
     r_cycle: &[F],
+    shard: usize,
+    shards: usize,
 ) -> Result<F, CudaError> {
-    if cycles != 1usize << r_cycle.len() {
+    if cycles * shards != 1usize << r_cycle.len() {
         return Err(CudaError::LengthMismatch {
             expected: 1usize << r_cycle.len(),
-            got: cycles,
+            got: cycles * shards,
         });
     }
     let addresses = 1usize << r_address.len();
-    let eq_cycle = context.eq_evals(require_fr_slice(r_cycle)?)?;
+    let eq_cycle = context.eq_evals_shard(require_fr_slice(r_cycle)?, shard, shards)?;
     let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
     let mut terms = context.alloc(cycles)?;
     let cycle_count = CudaKernelContext::count_of(cycles)?;
@@ -63,7 +65,7 @@ mod tests {
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::ra_poly::COLD;
 
-    use super::rs2_ra_claim;
+    use super::rs2_ra_claim_window;
 
     const LOG_T: usize = 6;
     const ADDRESS_BITS: usize = 7;
@@ -100,6 +102,49 @@ mod tests {
     }
 
     #[test]
+    fn rs2_claim_windows_sum_to_the_whole_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let trace = trace(29);
+        let r_address: Vec<Fr> = (0..ADDRESS_BITS)
+            .map(|i| Fr::from_u64(37 + i as u64))
+            .collect();
+        let r_cycle: Vec<Fr> = (0..LOG_T).map(|i| Fr::from_u64(89 + i as u64)).collect();
+        let encoded: Vec<u32> = trace
+            .iter()
+            .map(|cycle| cycle.rs2_read().map_or(COLD, |(rs2, _)| u32::from(rs2)))
+            .collect();
+
+        let expected = one_hot_grid_mle(&encoded, &r_address, &r_cycle);
+        for shards in [2usize, 4] {
+            let len = encoded.len() / shards;
+            let mut got = Fr::from_u64(0);
+            for shard in 0..shards {
+                let indices = context
+                    .upload_u32_slice(&encoded[shard * len..(shard + 1) * len])
+                    .expect("upload window addresses");
+                got += rs2_ra_claim_window::<Fr>(
+                    context,
+                    &indices,
+                    len,
+                    &r_address,
+                    &r_cycle,
+                    shard,
+                    shards,
+                )
+                .expect("windowed rs2 claim");
+            }
+            assert_eq!(got, expected, "shards={shards}");
+        }
+        assert_ne!(
+            expected,
+            Fr::from_u64(0),
+            "a degenerate fixture would hide a divergence",
+        );
+    }
+
+    #[test]
     fn device_rs2_claim_matches_the_one_hot_grid_mle() {
         let Some(context) = shared_context() else {
             return;
@@ -123,7 +168,8 @@ mod tests {
         let indices = context
             .upload_u32_slice(&encoded)
             .expect("upload rs2 addresses");
-        let got: Fr = rs2_ra_claim(context, &indices, encoded.len(), &r_address, &r_cycle)
+        let got: Fr =
+            rs2_ra_claim_window(context, &indices, encoded.len(), &r_address, &r_cycle, 0, 1)
             .expect("device rs2 claim");
 
         assert_eq!(got, expected);

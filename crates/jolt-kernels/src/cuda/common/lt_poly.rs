@@ -65,6 +65,36 @@ impl DeviceLtPolynomial {
         })
     }
 
+    pub(crate) fn window(&self, shard: usize, shards: usize) -> Result<Self, CudaError> {
+        if shards == 0 || !shards.is_power_of_two() || shard >= shards {
+            return Err(CudaError::InvariantViolation {
+                reason: "an LT window needs a power-of-two shard count and an in-range index",
+            });
+        }
+        if self.order != BindingOrder::LowToHigh {
+            return Err(CudaError::NotImplemented {
+                kernel: "an LT window binds LowToHigh, so its shards must too",
+            });
+        }
+        let split = shards.trailing_zeros() as usize;
+        if split > self.hi_vars {
+            return Err(CudaError::InvariantViolation {
+                reason: "an LT window cannot split further than its high half",
+            });
+        }
+        let hi_vars = self.hi_vars - split;
+        let hi_len = 1usize << hi_vars;
+        Ok(Self {
+            lt_lo: self.lt_lo.try_clone()?,
+            lt_hi: self.lt_hi.slice_elements(shard * hi_len, hi_len)?,
+            eq_hi: self.eq_hi.slice_elements(shard * hi_len, hi_len)?,
+            shift: self.shift.try_clone()?,
+            order: self.order,
+            lo_vars: self.lo_vars,
+            hi_vars,
+        })
+    }
+
     pub const fn len(&self) -> usize {
         1usize << (self.hi_vars + self.lo_vars)
     }
@@ -206,6 +236,45 @@ mod tests {
                     got.final_claim(context).expect("final claim"),
                     expected.evals()[0]
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn lt_windows_match_the_whole_domain_slice() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for num_vars in 4usize..=8 {
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|i| super::super::testing::fr(17 + 11 * i as u64))
+                .collect();
+            let whole = DeviceLtPolynomial::new(context, &point, BindingOrder::LowToHigh)
+                .expect("device lt poly");
+            let expected = whole
+                .coefficients(context)
+                .expect("whole coefficients")
+                .to_host()
+                .expect("download");
+            for shards in [2usize, 4] {
+                if shards.trailing_zeros() as usize > whole.hi_vars {
+                    continue;
+                }
+                let len = expected.len() / shards;
+                for shard in 0..shards {
+                    let got = whole
+                        .window(shard, shards)
+                        .expect("lt window")
+                        .coefficients(context)
+                        .expect("window coefficients")
+                        .to_host()
+                        .expect("download");
+                    assert_eq!(
+                        got,
+                        expected[shard * len..(shard + 1) * len],
+                        "num_vars {num_vars} shards {shards} shard {shard}",
+                    );
+                }
             }
         }
     }

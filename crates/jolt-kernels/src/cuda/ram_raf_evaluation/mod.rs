@@ -9,7 +9,9 @@ use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
 use super::{require_context, CudaBackend};
-use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
+use crate::cuda::common::dense_product::{
+    DenseProductKernel, DeviceDenseProduct, ShardedDenseProduct,
+};
 use crate::cuda::common::one_hot_fold::{affine_table, FoldTuning, OneHotShards};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -67,9 +69,8 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
             relation.degree(),
         )?;
         Ok(Box::new(DenseProductKernel {
-            state,
+            state: ShardedDenseProduct::new(vec![(context.ordinal(), state)])?,
             relation: relation.clone(),
-            context,
             field: core::marker::PhantomData,
         }))
     }

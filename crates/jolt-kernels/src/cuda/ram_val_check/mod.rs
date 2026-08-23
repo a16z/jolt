@@ -9,11 +9,15 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::{session_atom_columns, session_device_trace};
+use crate::cuda::witness::session_window_residency;
 
-use super::{require_context, CudaBackend};
-use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
+use super::CudaBackend;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::dense_product::{
+    DenseProductKernel, DeviceDenseProduct, ShardedDenseProduct,
+};
 use crate::cuda::common::device::require_fr_slice;
+use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::lt_poly::DeviceLtPolynomial;
 use crate::cuda::common::ra_poly::DeviceRaPolynomial;
 use crate::{
@@ -29,7 +33,6 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamValCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
-        let context = require_context()?;
         let relation = inputs.relation;
         let log_t = relation.trace_dimensions().log_t();
         let ram_log_k = relation.ram_log_k();
@@ -43,36 +46,50 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let addresses = 1usize << ram_log_k;
-        let trace = session_device_trace(context, session, witness, cycles)?;
-        let atoms = session_atom_columns(context, session, witness, cycles)?;
-        let inc = context.i128_to_montgomery_device(&atoms.ram_inc, cycles)?;
-        let (hot, _) = trace.remapped_ram_words(addresses)?;
-
-        let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
-        let ra = DeviceRaPolynomial::from_device_columns(
-            hot,
-            eq_address,
-            cycles,
-            BindingOrder::LowToHigh,
-        )?;
-        let lt = DeviceLtPolynomial::shifted(
-            context,
-            r_cycle,
-            BindingOrder::LowToHigh,
-            Some(inputs.challenges.gamma),
-        )?;
-        let state = DeviceDenseProduct::from_device_factors(
-            None,
-            vec![inc],
-            Some(ra),
-            Some(lt),
-            log_t,
-            relation.degree(),
-        )?;
+        let windows = witness_windows(cycles);
+        let shards = windows.len();
+        let mut states = Vec::with_capacity(shards);
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a RAM value-check window names an absent device",
+            })?;
+            let (trace, atoms) =
+                session_window_residency(device, session, witness, cycles, window)?;
+            let inc = device.i128_to_montgomery_device(&atoms.ram_inc, window.len)?;
+            let (hot, _) = trace.remapped_ram_words(addresses)?;
+            let eq_address = device.eq_evals(require_fr_slice(r_address)?)?;
+            let ra = DeviceRaPolynomial::from_device_columns(
+                hot,
+                eq_address,
+                window.len,
+                BindingOrder::LowToHigh,
+            )?;
+            let lt = DeviceLtPolynomial::shifted(
+                device,
+                r_cycle,
+                BindingOrder::LowToHigh,
+                Some(inputs.challenges.gamma),
+            )?;
+            let lt = if shards == 1 {
+                lt
+            } else {
+                lt.window(ordinal, shards)?
+            };
+            states.push((
+                ordinal,
+                DeviceDenseProduct::from_device_factors(
+                    None,
+                    vec![inc],
+                    Some(ra),
+                    Some(lt),
+                    window.len.ilog2() as usize,
+                    relation.degree(),
+                )?,
+            ));
+        }
         Ok(Box::new(DenseProductKernel {
-            state,
+            state: ShardedDenseProduct::new(states)?,
             relation: relation.clone(),
-            context,
             field: core::marker::PhantomData,
         }))
     }
@@ -118,8 +135,7 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamValCheck<F>> {
         let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         let got = self
-            .state
-            .lt_final(self.context)
+            .lt_final()
             .map_err(|_| SumcheckKernelError::InvariantViolation {
                 reason: "CUDA RAM value-check split-LT readback failed",
             })?

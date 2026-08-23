@@ -4,11 +4,14 @@
 )]
 
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Field, Fr, FromPrimitiveInt};
+use jolt_poly::BindingOrder;
 
-use super::context::{CudaKernelContext, BLOCK};
-use super::device::{DeviceFrVec, LIMBS};
+use super::context::{context_for, CudaKernelContext, BLOCK};
+use super::device::{require_fr, DeviceFrVec, LIMBS};
+use super::devices::{fan_out, DeviceTask};
 use super::error::CudaError;
+use super::split_eq::DeviceSplitEq;
 
 pub const MAX_COEFFS: usize = 2;
 
@@ -59,6 +62,22 @@ impl DeviceReadWriteMatrix {
                 reason: "a single-coefficient matrix derives its write lane by scaling its read lane, and only such a matrix may",
             });
         }
+        Self::upload_entries(
+            context,
+            entries,
+            coeff_width,
+            wa_scale.unwrap_or(Fr::from_u64(0)),
+            0,
+        )
+    }
+
+    fn upload_entries(
+        context: &CudaKernelContext,
+        entries: &[MatrixEntry],
+        coeff_width: usize,
+        wa_scale: Fr,
+        rounds_bound: usize,
+    ) -> Result<Self, CudaError> {
         let count = entries.len();
         let mut rows = Vec::with_capacity(count);
         let mut cols = Vec::with_capacity(count);
@@ -81,10 +100,10 @@ impl DeviceReadWriteMatrix {
             prev_val: context.upload_u64_slice(&prev_val)?,
             next_val: context.upload_u64_slice(&next_val)?,
             coeffs: context.upload(&coeffs)?,
-            wa_scale: context.upload(&[wa_scale.unwrap_or(Fr::from_u64(0))])?,
+            wa_scale: context.upload(&[wa_scale])?,
             coeff_width,
             entries: count,
-            rounds_bound: 0,
+            rounds_bound,
         })
     }
 
@@ -376,6 +395,185 @@ impl DeviceReadWriteMatrix {
         self.rounds_bound += 1;
         Ok(())
     }
+
+    pub(crate) fn concatenate_windows(
+        context: &CudaKernelContext,
+        windows: &[(usize, Self)],
+    ) -> Result<Self, CudaError> {
+        let (_, first) = windows.first().ok_or(CudaError::InvariantViolation {
+            reason: "a windowed read-write matrix needs at least one window",
+        })?;
+        let coeff_width = first.coeff_width;
+        let rounds_bound = first.rounds_bound;
+        let mut entries: Vec<MatrixEntry> = Vec::new();
+        for (row, (ordinal, window)) in windows.iter().enumerate() {
+            if window.coeff_width != coeff_width || window.rounds_bound != rounds_bound {
+                return Err(CudaError::InvariantViolation {
+                    reason: "every read-write matrix window collapses from the same shape and the \
+                             same number of bound rounds",
+                });
+            }
+            let device = context_for(*ordinal).ok_or(CudaError::InvariantViolation {
+                reason: "a read-write matrix window names an absent device",
+            })?;
+            let mut host = window.to_host(device)?;
+            if host.iter().any(|entry| entry.row != 0) {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a read-write matrix window must bind its local cycle domain down to \
+                             one row before it collapses",
+                });
+            }
+            let row = u32::try_from(row).map_err(|_| CudaError::InvariantViolation {
+                reason: "a read-write matrix window index exceeds the row word",
+            })?;
+            for entry in &mut host {
+                entry.row = row;
+            }
+            entries.append(&mut host);
+        }
+        let wa_scale = first.wa_scale.first()?;
+        Self::upload_entries(context, &entries, coeff_width, wa_scale, rounds_bound)
+    }
+}
+
+pub(crate) struct CycleShard<F: Field> {
+    pub(crate) ordinal: usize,
+    pub(crate) matrix: DeviceReadWriteMatrix,
+    pub(crate) inc: DeviceFrVec,
+    pub(crate) eq: DeviceSplitEq<F>,
+}
+
+pub(crate) struct ShardedReadWriteMatrix<F: Field> {
+    shards: Vec<CycleShard<F>>,
+    collapsed: Option<(DeviceReadWriteMatrix, DeviceFrVec)>,
+    local_rounds: usize,
+    tail_rounds: usize,
+}
+
+impl<F: Field> ShardedReadWriteMatrix<F> {
+    pub(crate) fn new(shards: Vec<CycleShard<F>>, log_t: usize) -> Result<Self, CudaError> {
+        let count = shards.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded read-write matrix needs a power-of-two shard count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded read-write matrix cannot split more windows than cycle rounds",
+            });
+        }
+        if count == 1 {
+            let shard = shards
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-shard read-write matrix lost its state",
+                })?;
+            return Ok(Self {
+                shards: Vec::new(),
+                collapsed: Some((shard.matrix, shard.inc)),
+                local_rounds: log_t,
+                tail_rounds: 0,
+            });
+        }
+        Ok(Self {
+            shards,
+            collapsed: None,
+            local_rounds: log_t - tail_rounds,
+            tail_rounds,
+        })
+    }
+
+    pub(crate) fn quadratic_coeffs(
+        &self,
+        whole_eq: &DeviceSplitEq<F>,
+    ) -> Result<[F; 2], CudaError> {
+        if let Some((matrix, inc)) = &self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return matrix.quadratic_coeffs(context, inc, whole_eq);
+        }
+        let tasks: Vec<DeviceTask<'_, [F; 2], CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, [F; 2], CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.matrix.quadratic_coeffs(context, &shard.inc, &shard.eq)
+                });
+                task
+            })
+            .collect();
+        let mut total = [F::zero(), F::zero()];
+        for part in fan_out(tasks)? {
+            total[0] += part[0];
+            total[1] += part[1];
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn bind(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+        if let Some((matrix, inc)) = &mut self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            matrix.bind(context, challenge)?;
+            *inc = context.bind(inc, require_fr(challenge)?, BindingOrder::LowToHigh)?;
+            return Ok(());
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.matrix.bind(context, challenge)?;
+                    shard.inc =
+                        context.bind(&shard.inc, require_fr(challenge)?, BindingOrder::LowToHigh)?;
+                    shard.eq.bind(challenge);
+                    Ok(())
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let shards = std::mem::take(&mut self.shards);
+        let mut scalars = Vec::with_capacity(shards.len());
+        for shard in &shards {
+            if shard.inc.len() != 1 {
+                return Err(CudaError::LengthMismatch {
+                    expected: 1,
+                    got: shard.inc.len(),
+                });
+            }
+            scalars.push(shard.inc.first()?);
+        }
+        let windows: Vec<(usize, DeviceReadWriteMatrix)> = shards
+            .into_iter()
+            .map(|shard| (shard.ordinal, shard.matrix))
+            .collect();
+        let matrix = DeviceReadWriteMatrix::concatenate_windows(context, &windows)?;
+        let inc = context.upload(&scalars)?;
+        self.collapsed = Some((matrix, inc));
+        Ok(())
+    }
+
+    pub(crate) fn take_parts(&mut self) -> Option<(DeviceReadWriteMatrix, DeviceFrVec)> {
+        self.collapsed.take()
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a sharded read-write matrix window names an absent device",
+    }
 }
 
 #[cfg(test)]
@@ -486,6 +684,99 @@ mod tests {
                 entry_tuples(&got.to_host(context).expect("download")),
                 optimized_tuples(&expected.entries),
                 "entry sets diverged after binding round {round}",
+            );
+        }
+    }
+
+    #[test]
+    fn sharded_ram_matrix_matches_the_whole_domain_round_for_round() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let cycles = 1usize << LOG_T;
+        let gamma = fr(103);
+        let point: Vec<Fr> = (0..LOG_T).map(|i| fr(61 + i as u64)).collect();
+        let inc_host: Vec<Fr> = (0..cycles).map(|j| fr(j as u64 * 5 + 3)).collect();
+
+        for shards in [2usize, 4] {
+            let fixture = ram_fixture();
+            let mut whole = DeviceReadWriteMatrix::new(context, &fixture.device, 1, Some(gamma))
+                .expect("whole device matrix");
+            let mut whole_inc = context.upload(&inc_host).expect("upload inc");
+            let mut whole_eq = DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
+                .expect("whole split-eq");
+
+            let len = cycles / shards;
+            let windows: Vec<super::CycleShard<Fr>> = (0..shards)
+                .map(|shard| {
+                    let base = (shard * len) as u32;
+                    let entries: Vec<MatrixEntry> = fixture
+                        .device
+                        .iter()
+                        .filter(|entry| (entry.row as usize) / len == shard)
+                        .map(|entry| MatrixEntry {
+                            row: entry.row - base,
+                            ..*entry
+                        })
+                        .collect();
+                    super::CycleShard {
+                        ordinal: 0,
+                        matrix: DeviceReadWriteMatrix::new(context, &entries, 1, Some(gamma))
+                            .expect("window matrix"),
+                        inc: context
+                            .upload(&inc_host[shard * len..(shard + 1) * len])
+                            .expect("upload window inc"),
+                        eq: DeviceSplitEq::<Fr>::new_window(
+                            context,
+                            &point,
+                            BindingOrder::LowToHigh,
+                            shard,
+                            shards,
+                        )
+                        .expect("window split-eq"),
+                    }
+                })
+                .collect();
+            let mut got =
+                super::ShardedReadWriteMatrix::new(windows, LOG_T).expect("sharded matrix");
+            let mut got_eq = DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
+                .expect("tail split-eq");
+
+            for round in 0..LOG_T {
+                let want: [Fr; 2] = whole
+                    .quadratic_coeffs(context, &whole_inc, &whole_eq)
+                    .expect("whole quadratic coeffs");
+                let have: [Fr; 2] = got.quadratic_coeffs(&got_eq).expect("sharded coeffs");
+                assert_eq!(
+                    have, want,
+                    "shards={shards} round {round}: a cycle window's segment sums must add to the \
+                     whole domain's, with e_out sliced to the window and e_in shared",
+                );
+
+                let challenge = fr(19 + round as u64);
+                whole.bind(context, challenge).expect("whole bind");
+                whole_inc = context
+                    .bind(&whole_inc, challenge, BindingOrder::LowToHigh)
+                    .expect("bind whole inc");
+                whole_eq.bind(challenge);
+                got.bind(challenge, round).expect("sharded bind");
+                got_eq.bind(challenge);
+            }
+
+            let (matrix, inc) = got.take_parts().expect("collapsed parts");
+            assert_eq!(
+                entry_tuples(&matrix.to_host(context).expect("download collapsed")),
+                entry_tuples(&whole.to_host(context).expect("download whole")),
+                "shards={shards}: the collapsed entry set diverged",
+            );
+            assert_eq!(
+                inc.first().expect("collapsed inc"),
+                whole_inc.first().expect("whole inc"),
+                "shards={shards}: the collapsed increment diverged",
+            );
+            assert!(
+                !matrix.is_empty(),
+                "shards={shards}: an empty collapsed matrix would satisfy the comparison trivially",
             );
         }
     }

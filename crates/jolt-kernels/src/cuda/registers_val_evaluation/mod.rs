@@ -9,11 +9,15 @@ use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluat
 use jolt_witness::JoltWitnessPlane;
 
 use crate::cuda::common::ra_poly::COLD;
-use crate::cuda::witness::session_atom_columns;
+use crate::cuda::witness::session_window_residency;
 
-use super::{require_context, CudaBackend};
-use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
+use super::CudaBackend;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::dense_product::{
+    DenseProductKernel, DeviceDenseProduct, ShardedDenseProduct,
+};
 use crate::cuda::common::device::require_fr_slice;
+use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::lt_poly::DeviceLtPolynomial;
 use crate::cuda::common::ra_poly::DeviceRaPolynomial;
 use crate::{
@@ -32,7 +36,6 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
         inputs: ProverInputs<'_, F, RegistersValEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
     {
-        let context = require_context()?;
         let relation = inputs.relation;
         let log_t = relation.trace_dimensions().log_t();
         let point: &[F] = &inputs.points.registers_val;
@@ -45,39 +48,54 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let registers = 1usize << REGISTER_ADDRESS_BITS;
-        let atoms = session_atom_columns(context, session, witness, cycles)?;
-        let inc = context.i128_to_montgomery_device(&atoms.rd_inc, cycles)?;
-        let slots = context.download_u32(&atoms.rd_address)?;
-        if slots
-            .iter()
-            .take(cycles)
-            .any(|&slot| slot != COLD && slot as usize >= registers)
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "a register write address is outside the register file",
-            });
-        }
+        let windows = witness_windows(cycles);
+        let shards = windows.len();
+        let mut states = Vec::with_capacity(shards);
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a registers value-evaluation window names an absent device",
+            })?;
+            let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+            let inc = device.i128_to_montgomery_device(&atoms.rd_inc, window.len)?;
+            let slots = device.download_u32(&atoms.rd_address)?;
+            if slots
+                .iter()
+                .take(window.len)
+                .any(|&slot| slot != COLD && slot as usize >= registers)
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason: "a register write address is outside the register file",
+                });
+            }
 
-        let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
-        let wa = DeviceRaPolynomial::from_device_columns(
-            context.clone_u32(&atoms.rd_address)?,
-            eq_address,
-            cycles,
-            BindingOrder::LowToHigh,
-        )?;
-        let lt = DeviceLtPolynomial::new(context, r_cycle, BindingOrder::LowToHigh)?;
-        let state = DeviceDenseProduct::from_device_factors(
-            None,
-            vec![inc],
-            Some(wa),
-            Some(lt),
-            log_t,
-            relation.degree(),
-        )?;
+            let eq_address = device.eq_evals(require_fr_slice(r_address)?)?;
+            let wa = DeviceRaPolynomial::from_device_columns(
+                device.clone_u32(&atoms.rd_address)?,
+                eq_address,
+                window.len,
+                BindingOrder::LowToHigh,
+            )?;
+            let lt = DeviceLtPolynomial::new(device, r_cycle, BindingOrder::LowToHigh)?;
+            let lt = if shards == 1 {
+                lt
+            } else {
+                lt.window(ordinal, shards)?
+            };
+            states.push((
+                ordinal,
+                DeviceDenseProduct::from_device_factors(
+                    None,
+                    vec![inc],
+                    Some(wa),
+                    Some(lt),
+                    window.len.ilog2() as usize,
+                    relation.degree(),
+                )?,
+            ));
+        }
         Ok(Box::new(DenseProductKernel {
-            state,
+            state: ShardedDenseProduct::new(states)?,
             relation: relation.clone(),
-            context,
             field: core::marker::PhantomData,
         }))
     }
@@ -120,8 +138,7 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RegistersValEvaluatio
         let id = JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         let got = self
-            .state
-            .lt_final(self.context)
+            .lt_final()
             .map_err(|_| SumcheckKernelError::InvariantViolation {
                 reason: "CUDA registers value-evaluation split-LT readback failed",
             })?

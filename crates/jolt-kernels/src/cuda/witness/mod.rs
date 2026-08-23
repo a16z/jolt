@@ -151,6 +151,26 @@ pub(crate) fn park_device_trace(
     );
 }
 
+pub(crate) fn session_window_residency<F: Field>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<(Arc<DeviceTrace>, Arc<DeviceAtomColumns>), KernelError<F>> {
+    if window.start == 0 {
+        return Ok((
+            session_device_trace(context, session, witness, cycles)?,
+            session_atom_columns(context, session, witness, cycles)?,
+        ));
+    }
+    let resident = window.residency(cycles);
+    Ok((
+        session_device_trace_window(context, session, witness, cycles, &resident)?,
+        session_atom_columns_window(context, session, witness, cycles, &resident)?,
+    ))
+}
+
 pub(crate) fn session_atom_columns<F: Field>(
     context: &CudaKernelContext,
     session: &mut ProofSession,

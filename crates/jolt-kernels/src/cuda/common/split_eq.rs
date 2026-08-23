@@ -9,6 +9,7 @@ pub struct DeviceSplitEq<F: Field> {
     host: GruenSplitEqPolynomial<F>,
     e_in: Vec<DeviceFrVec>,
     e_out: Vec<DeviceFrVec>,
+    out_shards: usize,
 }
 
 pub fn split_eq_tables<F: Field>(
@@ -68,9 +69,26 @@ impl<F: Field> DeviceSplitEq<F> {
         point: &[F],
         binding_order: BindingOrder,
     ) -> Result<Self, CudaError> {
-        Self::with_host(context, point, binding_order, |point, binding_order| {
+        Self::with_host(context, point, binding_order, 0, 1, |point, binding_order| {
             GruenSplitEqPolynomial::<F>::new(point, binding_order)
         })
+    }
+
+    pub fn new_window(
+        context: &CudaKernelContext,
+        point: &[F],
+        binding_order: BindingOrder,
+        shard: usize,
+        shards: usize,
+    ) -> Result<Self, CudaError> {
+        Self::with_host(
+            context,
+            point,
+            binding_order,
+            shard,
+            shards,
+            |point, binding_order| GruenSplitEqPolynomial::<F>::new(point, binding_order),
+        )
     }
 
     pub fn new_with_scaling(
@@ -79,7 +97,7 @@ impl<F: Field> DeviceSplitEq<F> {
         binding_order: BindingOrder,
         scaling: F,
     ) -> Result<Self, CudaError> {
-        Self::with_host(context, point, binding_order, |point, binding_order| {
+        Self::with_host(context, point, binding_order, 0, 1, |point, binding_order| {
             GruenSplitEqPolynomial::<F>::new_with_scaling(point, binding_order, Some(scaling))
         })
     }
@@ -88,12 +106,19 @@ impl<F: Field> DeviceSplitEq<F> {
         context: &CudaKernelContext,
         point: &[F],
         binding_order: BindingOrder,
+        shard: usize,
+        shards: usize,
         host: impl FnOnce(&[F], BindingOrder) -> GruenSplitEqPolynomial<F>,
     ) -> Result<Self, CudaError> {
         if binding_order != BindingOrder::LowToHigh {
             return Err(CudaError::NotImplemented {
                 kernel: "the device split-eq covers LowToHigh binding only; add the \
                          HighToLow stack split and extend its equivalence test",
+            });
+        }
+        if shards == 0 || !shards.is_power_of_two() || shard >= shards {
+            return Err(CudaError::InvariantViolation {
+                reason: "a split-eq window needs a power-of-two shard count and an in-range index",
             });
         }
         let host = host(point, binding_order);
@@ -104,9 +129,33 @@ impl<F: Field> DeviceSplitEq<F> {
             let head = &point[..point.len() - 1];
             head.split_at(split.min(head.len()))
         };
-        let e_out = Self::upload_stack(context, &EqPolynomial::<F>::evals_cached(out_point, None))?;
+        let out_levels = EqPolynomial::<F>::evals_cached(out_point, None);
+        if out_levels.last().is_none_or(|level| level.len() < shards) {
+            return Err(CudaError::InvariantViolation {
+                reason: "a split-eq window cannot split further than its outer factor",
+            });
+        }
+        let e_out = out_levels
+            .iter()
+            .filter(|level| level.len() >= shards)
+            .map(|level| {
+                let len = level.len() / shards;
+                let window =
+                    level
+                        .get(shard * len..(shard + 1) * len)
+                        .ok_or(CudaError::InvariantViolation {
+                            reason: "a split-eq window lies outside its outer factor level",
+                        })?;
+                context.upload(super::device::require_fr_slice(window)?)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let e_in = Self::upload_stack(context, &EqPolynomial::<F>::evals_cached(in_point, None))?;
-        Ok(Self { host, e_in, e_out })
+        Ok(Self {
+            host,
+            e_in,
+            e_out,
+            out_shards: shards,
+        })
     }
 
     fn upload_stack(
@@ -138,7 +187,10 @@ impl<F: Field> DeviceSplitEq<F> {
     pub fn bind(&mut self, challenge: F) {
         self.host.bind(challenge);
         Self::align(&mut self.e_in, self.host.e_in_current().len());
-        Self::align(&mut self.e_out, self.host.e_out_current().len());
+        Self::align(
+            &mut self.e_out,
+            self.host.e_out_current().len() / self.out_shards,
+        );
     }
 
     fn align(stack: &mut Vec<DeviceFrVec>, len: usize) {
@@ -173,6 +225,69 @@ mod tests {
     use super::super::testing::fr;
     use super::DeviceSplitEq;
     use proptest::prelude::*;
+
+    #[test]
+    fn split_eq_windows_match_the_whole_domain_slice_round_for_round() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for log_t in 4usize..=10 {
+            let point: Vec<Fr> = (0..log_t).map(|i| fr(53 + 19 * i as u64)).collect();
+            for shards in [2usize, 4] {
+                let mut expected = DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
+                    .expect("whole split-eq");
+                if expected.e_out_current().len() < shards {
+                    continue;
+                }
+                let mut got: Vec<DeviceSplitEq<Fr>> = (0..shards)
+                    .map(|shard| {
+                        DeviceSplitEq::<Fr>::new_window(
+                            context,
+                            &point,
+                            BindingOrder::LowToHigh,
+                            shard,
+                            shards,
+                        )
+                        .expect("windowed split-eq")
+                    })
+                    .collect();
+
+                for round in 0..log_t {
+                    let whole = expected
+                        .e_out_current()
+                        .to_host()
+                        .expect("download whole e_out");
+                    if whole.len() < shards {
+                        break;
+                    }
+                    let len = whole.len() / shards;
+                    let shared = expected
+                        .e_in_current()
+                        .to_host()
+                        .expect("download whole e_in");
+                    for (shard, window) in got.iter().enumerate() {
+                        assert_eq!(
+                            window.e_out_current().to_host().expect("download e_out"),
+                            whole[shard * len..(shard + 1) * len],
+                            "log_t {log_t} shards {shards} shard {shard} round {round}: e_out",
+                        );
+                        assert_eq!(
+                            window.e_in_current().to_host().expect("download e_in"),
+                            shared,
+                            "log_t {log_t} shards {shards} shard {shard} round {round}: e_in must \
+                             stay whole — only the outer factor carries the cycle window",
+                        );
+                        assert_eq!(window.e_in_len(), expected.e_in_len());
+                    }
+                    let challenge = fr(400 + 31 * round as u64);
+                    expected.bind(challenge);
+                    for window in &mut got {
+                        window.bind(challenge);
+                    }
+                }
+            }
+        }
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(12))]

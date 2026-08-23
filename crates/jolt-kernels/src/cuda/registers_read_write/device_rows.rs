@@ -128,10 +128,6 @@ impl DeviceRegisterRows {
         &self.rd_post_value
     }
 
-    pub fn cycles(&self) -> usize {
-        self.cycles
-    }
-
     pub fn into_rs2_address(self) -> CudaSlice<u32> {
         self.rs2_address
     }
