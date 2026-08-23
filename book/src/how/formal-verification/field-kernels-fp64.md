@@ -124,6 +124,13 @@ actual field type and call path in the final binary. It must then confirm that
 the machine code at that path is the reviewed sequence or prove the complete
 compiled function that contains it.
 
+The current Jolt verifier does not instantiate `Prime64Offset59`. The legacy
+Akita verifier path still uses the external Akita Fp128 field. A final binary
+scan therefore cannot yet connect these Fp64 theorems to that verifier. Adding
+an unused call only to make the sequence appear would not close this gap. The
+first release check should run after an actual verifier path selects the Fp64
+field.
+
 ## Canonical inputs and the unsafe constructor
 
 The theorem assumes `a < p` and `b < p`. This is the field representation

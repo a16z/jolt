@@ -142,3 +142,39 @@ S2N_BIGNUM_DIR=/path/to/s2n-bignum \
 Use `aarch64` for the AArch64 byte and clean checks. The Fp64 theorem sessions
 accept `add`, `sub`, and `mul` on both architectures. The x86-64 session also
 accepts `mul_bmi2`.
+
+## Inspecting a final executable
+
+The proof checks above stop at a small inspection function. Use the final
+executable checker to inspect a linked application.
+
+```sh
+python3 scripts/check_field_proof_final_binary.py \
+  --architecture x86_64 \
+  --binary /path/to/application \
+  --require-family fp128 \
+  --json-output /path/to/final-binary-report.json
+```
+
+The checker disassembles the executable and starts a match only at a decoded
+instruction boundary. It records the executable hash, symbol, operation, and
+instruction address. `--require-family fp128` fails unless it finds exact
+instances of addition, subtraction, and multiplication. Use `fp64` for the
+Fp64 objects.
+
+Inline assembly can have the same instruction pattern with different physical
+registers. You can pass an exact proof object to find those cases.
+
+```sh
+--proof-object fp128:add=/path/to/fp128_add.o
+```
+
+The report calls these results structural candidate proof instances. They do
+not inherit the existing theorem. A completed proof still needs to cover the
+new instruction bytes and the values prepared before the matched body. In
+particular, the checker reports a Solinas constant register as an external
+input when the compiler moved its load outside the body.
+
+The checker also does not prove that program control reaches a reported
+address. A release check must start from the verifier entry point and establish
+that reachability separately.

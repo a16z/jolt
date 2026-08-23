@@ -184,6 +184,39 @@ implementation. The Jolt Fp128 theorems do not cover that runtime path. The
 field cutover and downstream binary inspection must happen before a claim about
 the complete Akita path is valid.
 
+## What a final executable scan can establish
+
+Jolt includes `scripts/check_field_proof_final_binary.py` for this last
+inspection step. An exact match means that a linked executable contains the
+proved instruction bytes at decoded instruction boundaries. The report records
+the executable hash, symbol, operation, and address. The checker can fail a
+release check when an expected operation is absent.
+
+The checker can also report the same decoded instruction pattern under a
+consistent register renaming. This result is only a candidate for another
+machine proof. The existing theorem names exact registers, and those register
+numbers are part of the instruction bytes. A report about matching structure
+does not change that theorem.
+
+The compiler can also move the Solinas constant load outside the arithmetic
+body. In that case, a proof for the body must assume a constant register value
+or prove the earlier instructions that prepared it. The report marks that
+register as an external input. Reviewers must not treat an unproved input value
+as a checked constant.
+
+The current external Akita path demonstrates both issues. Its AArch64 compiler
+output contains many addition and multiplication bodies with the same decoded
+pattern as the Jolt proof objects. LLVM chose different registers and moved the
+A7F7 constant load. Its subtraction allocation also differs in how input and
+output registers share storage. The exact Jolt object theorem therefore does
+not apply to those copies.
+
+The scan proves neither reachability nor completeness by itself. A matching
+sequence can belong to prover code, unused generic code, or another operation
+with the same short instruction shape. A release claim still needs a path from
+the verifier entry point to the matched code. It also needs evidence that every
+external value, including the reduction constant, has the required value.
+
 ## Claim language
 
 Use this form.
