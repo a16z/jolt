@@ -4,8 +4,9 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 use jolt_poly::BindingOrder;
 
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
@@ -52,7 +53,7 @@ impl DevicePackedRamRa {
                          one 32-bit word and evaluate at most eight round-polynomial lanes",
             });
         }
-        if packed.len() != cycles {
+        if packed.len() < cycles {
             return Err(CudaError::LengthMismatch {
                 expected: cycles,
                 got: packed.len(),
@@ -241,6 +242,47 @@ impl DevicePackedRamRa {
         Ok(())
     }
 
+    fn from_dense(
+        context: &CudaKernelContext,
+        dense: Vec<DeviceFrVec>,
+        chunk_bits: usize,
+        tail_rounds: usize,
+    ) -> Result<Self, CudaError> {
+        let cycles = 1usize << tail_rounds;
+        if dense.is_empty() || dense.iter().any(|table| table.len() != cycles) {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: dense.first().map_or(0, DeviceFrVec::len),
+            });
+        }
+        Ok(Self {
+            packed: Arc::new(context.alloc_u32(0)?),
+            tables: context.alloc(0)?,
+            polys: dense.len(),
+            dense,
+            addresses: 1usize << chunk_bits.min(31),
+            chunk_bits,
+            cycles,
+            rounds_bound: 0,
+        })
+    }
+
+    fn window_scalars(&self, context: &CudaKernelContext) -> Result<Vec<Fr>, CudaError> {
+        if self.len() != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len(),
+            });
+        }
+        if !self.dense.is_empty() {
+            return self.dense.iter().map(DeviceFrVec::first).collect();
+        }
+        self.gather(context)?
+            .iter()
+            .map(DeviceFrVec::first)
+            .collect()
+    }
+
     pub fn final_claims<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
         if self.len() != 1 {
             return Err(CudaError::LengthMismatch {
@@ -371,6 +413,183 @@ impl DevicePackedRamRa {
                 })
             })
             .collect()
+    }
+}
+
+pub(crate) struct RamRaShard<F: Field> {
+    pub(crate) ordinal: usize,
+    pub(crate) one_hot: DevicePackedRamRa,
+    pub(crate) eq: DeviceSplitEq<F>,
+}
+
+pub(crate) struct ShardedPackedRamRa<F: Field> {
+    shards: Vec<RamRaShard<F>>,
+    collapsed: Option<DevicePackedRamRa>,
+    chunk_bits: usize,
+    local_rounds: usize,
+    tail_rounds: usize,
+}
+
+impl<F: Field> ShardedPackedRamRa<F> {
+    pub(crate) fn new(shards: Vec<RamRaShard<F>>, log_t: usize) -> Result<Self, CudaError> {
+        let count = shards.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded RAM one-hot family needs a power-of-two shard count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        let chunk_bits = shards.first().map(|shard| shard.one_hot.chunk_bits).ok_or(
+            CudaError::InvariantViolation {
+                reason: "a sharded RAM one-hot family needs at least one shard",
+            },
+        )?;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded RAM one-hot family cannot split more windows than cycle rounds",
+            });
+        }
+        if count == 1 {
+            let shard = shards
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-shard RAM one-hot family lost its state",
+                })?;
+            return Ok(Self {
+                shards: Vec::new(),
+                collapsed: Some(shard.one_hot),
+                chunk_bits,
+                local_rounds: log_t,
+                tail_rounds: 0,
+            });
+        }
+        Ok(Self {
+            shards,
+            collapsed: None,
+            chunk_bits,
+            local_rounds: log_t - tail_rounds,
+            tail_rounds,
+        })
+    }
+
+    pub(crate) fn round_evals(&self, whole_eq: &DeviceSplitEq<F>) -> Result<Vec<F>, CudaError> {
+        if let Some(collapsed) = &self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.round_evals(context, whole_eq);
+        }
+        let tasks: Vec<DeviceTask<'_, Vec<F>, CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<F>, CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.round_evals(context, &shard.eq)
+                });
+                task
+            })
+            .collect();
+        let parts = fan_out(tasks)?;
+        let mut total = parts
+            .first()
+            .cloned()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded RAM one-hot round produced no window",
+            })?;
+        for part in parts.iter().skip(1) {
+            if part.len() != total.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: total.len(),
+                    got: part.len(),
+                });
+            }
+            for (lane, addend) in total.iter_mut().zip(part) {
+                *lane += *addend;
+            }
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn bind(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+        if let Some(collapsed) = &mut self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.bind(context, challenge);
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.bind(context, challenge)?;
+                    shard.eq.bind(challenge);
+                    Ok(())
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let shards = std::mem::take(&mut self.shards);
+        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.window_scalars(context)
+                });
+                task
+            })
+            .collect();
+        let mut columns: Vec<Vec<Fr>> = Vec::new();
+        for scalars in fan_out(tasks)? {
+            if columns.is_empty() {
+                columns = scalars.iter().map(|_| Vec::new()).collect();
+            }
+            if scalars.len() != columns.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: columns.len(),
+                    got: scalars.len(),
+                });
+            }
+            for (column, value) in columns.iter_mut().zip(&scalars) {
+                column.push(*value);
+            }
+        }
+        let dense = columns
+            .iter()
+            .map(|column| context.upload(column))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.collapsed = Some(DevicePackedRamRa::from_dense(
+            context,
+            dense,
+            self.chunk_bits,
+            self.tail_rounds,
+        )?);
+        Ok(())
+    }
+
+    pub(crate) fn final_claims(&self) -> Result<Vec<F>, CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        self.collapsed
+            .as_ref()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded RAM one-hot family was asked for claims before its tail rounds",
+            })?
+            .final_claims(context)
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a sharded RAM one-hot window names an absent device",
     }
 }
 

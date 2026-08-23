@@ -9,7 +9,10 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_device_trace;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::devices::{witness_windows, CycleWindow};
+use crate::cuda::common::prefix_suffix::PrefixSuffixWindow;
+use crate::cuda::witness::session_window_residency;
 
 use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -131,8 +134,32 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let trace = session_device_trace(context, session, witness, cycles)?;
-        let columns = device_columns_from_trace::<F>(context, &trace, cycles)?;
+        let prefix_len = 1usize << prefix_rounds;
+        let windows = witness_windows(cycles);
+        let windows = if windows
+            .iter()
+            .all(|window| window.len.is_multiple_of(prefix_len))
+        {
+            windows
+        } else {
+            vec![CycleWindow {
+                start: 0,
+                len: cycles,
+            }]
+        };
+        let mut column_windows = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a registers reduction window names an absent device",
+            })?;
+            let (trace, _) = session_window_residency(device, session, witness, cycles, window)?;
+            column_windows.push(PrefixSuffixWindow {
+                ordinal,
+                columns: device_columns_from_trace::<F>(device, &trace, window.len)?,
+                suffix_offset: window.start / prefix_len,
+                suffix_len: window.len / prefix_len,
+            });
+        }
 
         let gamma = inputs.challenges.gamma;
         let mut powers = Vec::with_capacity(COLUMNS);
@@ -148,7 +175,13 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
         };
 
         Ok(Box::new(RegistersClaimReductionKernel {
-            rounds: PrefixSuffixRounds::new(context, columns, vec![group], prefix_rounds)?,
+            rounds: PrefixSuffixRounds::new_windowed(
+                context,
+                column_windows,
+                vec![group],
+                prefix_rounds,
+                log_t,
+            )?,
             total: log_t,
             bound: 0,
         }))

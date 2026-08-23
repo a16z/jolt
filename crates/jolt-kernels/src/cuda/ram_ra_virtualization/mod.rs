@@ -11,20 +11,20 @@ use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use super::{require_context, CudaBackend};
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device_columns::device_ram_words;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-use one_hot::DevicePackedRamRa;
+use one_hot::{DevicePackedRamRa, RamRaShard, ShardedPackedRamRa};
 
 pub(crate) mod one_hot;
 
 pub struct RamRaVirtualizationKernel<F: Field> {
-    context: &'static CudaKernelContext,
     relation: RamRaVirtualization<F>,
-    one_hot: DevicePackedRamRa,
+    one_hot: ShardedPackedRamRa<F>,
     eq: DeviceSplitEq<F>,
     rounds_bound: usize,
     finals: Option<Vec<F>>,
@@ -48,17 +48,12 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda RAM RA virtualization bind",
         };
-        self.one_hot
-            .bind(self.context, challenge)
-            .map_err(|_| failed())?;
+        let bound = self.rounds_bound;
+        self.one_hot.bind(challenge, bound).map_err(|_| failed())?;
         self.eq.bind(challenge);
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
-            self.finals = Some(
-                self.one_hot
-                    .final_claims(self.context)
-                    .map_err(|_| failed())?,
-            );
+            self.finals = Some(self.one_hot.final_claims().map_err(|_| failed())?);
         }
         Ok(())
     }
@@ -78,12 +73,11 @@ impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let evals = self
-            .one_hot
-            .round_evals(self.context, &self.eq)
-            .map_err(|_| SumcheckError::MissingEvaluationSource {
+        let evals = self.one_hot.round_evals(&self.eq).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
                 kind: "cuda RAM RA virtualization round",
-            })?;
+            }
+        })?;
         let mut coefficients = self
             .eq
             .gruen_poly_from_evals(&evals, previous_claim)
@@ -152,14 +146,47 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
         } else {
             1usize << address_bits
         };
-        let packed = device_ram_words::<F>(context, session, witness, cycles, addresses)?;
-
-        let one_hot = DevicePackedRamRa::new(context, packed, cycles, chunk_bits, &address_point)
-            .map_err(|_| KernelError::Unsupported {
-            reason: "the CUDA RAM RA virtualization kernel packs the remapped address \
+        let log_t = dimensions.log_t();
+        let windows = witness_windows(cycles);
+        let shards = windows.len();
+        let mut one_hot_shards = Vec::with_capacity(shards);
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a RAM RA virtualization window names an absent device",
+            })?;
+            let packed = windowed_trace_columns::<F>(
+                device,
+                session,
+                witness,
+                cycles,
+                window,
+                [0, 0, 1],
+                addresses,
+            )?
+            .ram;
+            one_hot_shards.push(RamRaShard {
+                ordinal,
+                one_hot: DevicePackedRamRa::new(
+                    device,
+                    packed,
+                    window.len,
+                    chunk_bits,
+                    &address_point,
+                )
+                .map_err(|_| KernelError::Unsupported {
+                    reason: "the CUDA RAM RA virtualization kernel packs the remapped address \
                              into one 32-bit word and evaluates at most eight round-polynomial \
                              lanes",
-        })?;
+                })?,
+                eq: DeviceSplitEq::new_window(
+                    device,
+                    relation.ram_reduced_cycle(),
+                    BindingOrder::LowToHigh,
+                    ordinal,
+                    shards,
+                )?,
+            });
+        }
         let eq = DeviceSplitEq::new(
             context,
             relation.ram_reduced_cycle(),
@@ -167,9 +194,8 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
         )?;
 
         Ok(Box::new(RamRaVirtualizationKernel {
-            context,
             relation: relation.clone(),
-            one_hot,
+            one_hot: ShardedPackedRamRa::new(one_hot_shards, log_t)?,
             eq,
             rounds_bound: 0,
             finals: None,

@@ -11,22 +11,22 @@ use jolt_witness::backend::cuda::FLAG_BIT_RAM_HAMMING;
 use jolt_witness::JoltWitnessPlane;
 
 use super::{require_context, CudaBackend};
-use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::split_eq::DeviceSplitEq;
-use crate::cuda::witness::{session_atom_columns, session_device_trace};
+use crate::cuda::witness::session_window_residency;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-use hamming_weight::DeviceHammingWeight;
+use hamming_weight::{DeviceHammingWeight, HammingShard, ShardedHammingWeight};
 
 pub(crate) mod hamming_weight;
 #[cfg(test)]
 pub(crate) mod witness;
 
 pub struct RamHammingBooleanityKernel<F: Field> {
-    context: &'static CudaKernelContext,
     relation: RamHammingBooleanity<F>,
-    weights: DeviceHammingWeight,
+    weights: ShardedHammingWeight<F>,
     eq: DeviceSplitEq<F>,
     rounds_bound: usize,
     final_claim: Option<F>,
@@ -46,9 +46,8 @@ impl<F: Field> RamHammingBooleanityKernel<F> {
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda RAM Hamming-booleanity bind",
         };
-        self.weights
-            .bind(self.context, challenge)
-            .map_err(|_| failed())?;
+        let bound = self.rounds_bound;
+        self.weights.bind(challenge, bound).map_err(|_| failed())?;
         self.eq.bind(challenge);
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
@@ -72,12 +71,11 @@ impl<F: Field> ProveRounds<F> for RamHammingBooleanityKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let (constant, quadratic) = self
-            .weights
-            .round_coefficients(self.context, &self.eq)
-            .map_err(|_| SumcheckError::MissingEvaluationSource {
+        let (constant, quadratic) = self.weights.round_coefficients(&self.eq).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
                 kind: "cuda RAM Hamming-booleanity round",
-            })?;
+            }
+        })?;
         let mut coefficients = self
             .eq
             .gruen_poly_deg_3(constant, quadratic, previous_claim)
@@ -111,16 +109,34 @@ impl<F: Field> SumcheckKernel<F> for RamHammingBooleanityKernel<F> {
     }
 }
 
-fn device_hamming_weights<F: Field>(
-    context: &'static CudaKernelContext,
+fn hamming_shards<F: Field>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
-) -> Result<DeviceHammingWeight, KernelError<F>> {
-    let trace = session_device_trace(context, session, witness, cycles)?;
-    let columns = session_atom_columns(context, session, witness, cycles)?;
-    let bits = trace.flag_bit_column(&columns.flags, FLAG_BIT_RAM_HAMMING)?;
-    Ok(DeviceHammingWeight::from_device(context, &bits, cycles)?)
+    eq_point: &[F],
+) -> Result<Vec<HammingShard<F>>, KernelError<F>> {
+    let windows = witness_windows(cycles);
+    let shards = windows.len();
+    let mut out = Vec::with_capacity(shards);
+    for (ordinal, window) in windows.iter().enumerate() {
+        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "a RAM hamming-booleanity window names an absent device",
+        })?;
+        let (trace, columns) = session_window_residency(device, session, witness, cycles, window)?;
+        let bits = trace.flag_bit_column(&columns.flags, FLAG_BIT_RAM_HAMMING)?;
+        out.push(HammingShard {
+            ordinal,
+            weights: DeviceHammingWeight::from_device(device, &bits, window.len)?,
+            eq: DeviceSplitEq::new_window(
+                device,
+                eq_point,
+                BindingOrder::LowToHigh,
+                ordinal,
+                shards,
+            )?,
+        });
+    }
+    Ok(out)
 }
 
 impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for CudaBackend {
@@ -141,20 +157,18 @@ impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for CudaBackend {
         }
 
         let cycles = 1usize << log_t;
-        let weights = device_hamming_weights::<F>(context, session, witness, cycles)?;
-
         let eq_point: Vec<F> = relation
             .stage1_cycle_binding()
             .iter()
             .rev()
             .copied()
             .collect();
+        let shards = hamming_shards::<F>(session, witness, cycles, &eq_point)?;
         let eq = DeviceSplitEq::new(context, &eq_point, BindingOrder::LowToHigh)?;
 
         Ok(Box::new(RamHammingBooleanityKernel {
-            context,
             relation: relation.clone(),
-            weights,
+            weights: ShardedHammingWeight::new(shards, log_t)?,
             eq,
             rounds_bound: 0,
             final_claim: None,
@@ -238,7 +252,7 @@ mod tests {
                  pass",
             );
 
-            let trace = super::session_device_trace(
+            let trace = crate::cuda::witness::session_device_trace(
                 context,
                 &mut ProofSession::default(),
                 witness as &dyn jolt_witness::JoltWitnessPlane<Fr>,

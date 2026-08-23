@@ -9,12 +9,12 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device::DeviceFrVec;
-use crate::cuda::witness::session_atom_columns;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::devices::{witness_windows, CycleWindow};
+use crate::cuda::witness::session_window_residency;
 
 use super::common::prefix_suffix::{
-    eq_pair, prefix_rounds_floor, PrefixSuffixGroup, PrefixSuffixRounds,
+    eq_pair, prefix_rounds_floor, PrefixSuffixGroup, PrefixSuffixRounds, PrefixSuffixWindow,
 };
 use super::{require_context, CudaBackend};
 use crate::reference::ReferenceBackend;
@@ -97,17 +97,41 @@ impl<F: Field> SumcheckKernel<F> for IncClaimReductionKernel<F> {
     }
 }
 
-fn device_increment_columns<F: Field>(
-    context: &'static CudaKernelContext,
+fn increment_windows<F: Field>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
-) -> Result<Vec<DeviceFrVec>, KernelError<F>> {
-    let atoms = session_atom_columns(context, session, witness, cycles)?;
-    Ok(vec![
-        context.i128_to_montgomery_device(&atoms.ram_inc, cycles)?,
-        context.i128_to_montgomery_device(&atoms.rd_inc, cycles)?,
-    ])
+    prefix_len: usize,
+) -> Result<Vec<PrefixSuffixWindow>, KernelError<F>> {
+    let windows = witness_windows(cycles);
+    let windows = if windows
+        .iter()
+        .all(|window| window.len.is_multiple_of(prefix_len))
+    {
+        windows
+    } else {
+        vec![CycleWindow {
+            start: 0,
+            len: cycles,
+        }]
+    };
+    let mut out = Vec::with_capacity(windows.len());
+    for (ordinal, window) in windows.iter().enumerate() {
+        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "an increment reduction window names an absent device",
+        })?;
+        let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+        out.push(PrefixSuffixWindow {
+            ordinal,
+            columns: vec![
+                device.i128_to_montgomery_device(&atoms.ram_inc, window.len)?,
+                device.i128_to_montgomery_device(&atoms.rd_inc, window.len)?,
+            ],
+            suffix_offset: window.start / prefix_len,
+            suffix_len: window.len / prefix_len,
+        });
+    }
+    Ok(out)
 }
 
 impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
@@ -131,7 +155,7 @@ impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let columns = device_increment_columns::<F>(context, session, witness, cycles)?;
+        let windows = increment_windows::<F>(session, witness, cycles, 1usize << prefix_rounds)?;
 
         let gamma = inputs.challenges.gamma;
         let mut power = F::one();
@@ -146,7 +170,13 @@ impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
         }
 
         Ok(Box::new(IncClaimReductionKernel {
-            rounds: PrefixSuffixRounds::new(context, columns, groups, prefix_rounds)?,
+            rounds: PrefixSuffixRounds::new_windowed(
+                context,
+                windows,
+                groups,
+                prefix_rounds,
+                log_t,
+            )?,
             total: log_t,
             bound: 0,
         }))
