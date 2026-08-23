@@ -87,9 +87,6 @@ jobs:
     name: Prove Linux AArch64 add, sub, and mul
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
-    env:
-      CARGO_INCREMENTAL: ""
-      RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -119,7 +116,8 @@ jobs:
           HOL_LIGHT_DIR: ${{ runner.temp }}/hol-light
           S2N_BIGNUM_DIR: ${{ runner.temp }}/s2n-bignum
         run: |
-          ./proofs/hol-light/check-fp64.sh all aarch64 \
+          env -u CARGO_INCREMENTAL -u RUSTFLAGS \
+            ./proofs/hol-light/check-fp64.sh all aarch64 \
             --matrix-entry aarch64-unknown-linux-gnu \
             --evidence-out "$RUNNER_TEMP/fp64-aarch64-linux-gnu.json" \
             --clean
@@ -135,9 +133,6 @@ jobs:
     name: Prove Apple Silicon add, sub, and mul
     runs-on: macos-15
     timeout-minutes: 60
-    env:
-      CARGO_INCREMENTAL: ""
-      RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -172,7 +167,8 @@ jobs:
           HOL_LIGHT_DIR: ${{ runner.temp }}/hol-light
           S2N_BIGNUM_DIR: ${{ runner.temp }}/s2n-bignum
         run: |
-          ./proofs/hol-light/check-fp64.sh all aarch64 \
+          env -u CARGO_INCREMENTAL -u RUSTFLAGS \
+            ./proofs/hol-light/check-fp64.sh all aarch64 \
             --matrix-entry aarch64-apple-darwin \
             --evidence-out "$RUNNER_TEMP/fp64-aarch64-apple-darwin.json" \
             --clean
@@ -188,9 +184,6 @@ jobs:
     name: Prove x86-64 baseline and BMI2 arithmetic
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      CARGO_INCREMENTAL: ""
-      RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -220,7 +213,8 @@ jobs:
           HOL_LIGHT_DIR: ${{ runner.temp }}/hol-light
           S2N_BIGNUM_DIR: ${{ runner.temp }}/s2n-bignum
         run: |
-          ./proofs/hol-light/check-fp64.sh all x86_64 \
+          env -u CARGO_INCREMENTAL -u RUSTFLAGS \
+            ./proofs/hol-light/check-fp64.sh all x86_64 \
             --matrix-entry x86_64-unknown-linux-gnu \
             --evidence-out "$RUNNER_TEMP/fp64-x86-64-linux-gnu.json" \
             --clean
