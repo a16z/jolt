@@ -87,6 +87,9 @@ jobs:
     name: Prove Linux AArch64 add, sub, and mul
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: ""
+      RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -132,6 +135,9 @@ jobs:
     name: Prove Apple Silicon add, sub, and mul
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: ""
+      RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -182,6 +188,9 @@ jobs:
     name: Prove x86-64 baseline and BMI2 arithmetic
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: ""
+      RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
