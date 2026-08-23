@@ -330,12 +330,11 @@ mod tests {
                 cycles,
             )
             .expect("atom columns");
-            let got: Vec<Vec<Fr>> =
-                super::device_columns_from_atoms::<Fr>(context, &atoms, cycles)
-                    .expect("device-gathered columns")
-                    .iter()
-                    .map(|column| column.to_host().expect("download"))
-                    .collect();
+            let got: Vec<Vec<Fr>> = super::device_columns_from_atoms::<Fr>(context, &atoms, cycles)
+                .expect("device-gathered columns")
+                .iter()
+                .map(|column| column.to_host().expect("download"))
+                .collect();
 
             assert!(
                 expected.iter().all(|column| column.len() == cycles),

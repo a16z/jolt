@@ -15,7 +15,9 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::context::{current_device, CudaKernelContext};
+#[cfg(test)]
+use super::context::current_device;
+use super::context::CudaKernelContext;
 use super::device::{DeviceFrVec, LIMBS};
 use super::pack::COLD;
 use crate::cuda::common::devices::CycleWindow;
@@ -69,10 +71,17 @@ struct Entry {
     bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ColumnKey {
+    ordinal: usize,
+    column: DeviceColumn,
+    base: usize,
+}
+
 #[derive(Default)]
 pub(crate) struct DeviceColumns {
     source: usize,
-    entries: HashMap<(usize, DeviceColumn), Entry>,
+    entries: HashMap<ColumnKey, Entry>,
 }
 
 impl DeviceColumns {
@@ -83,29 +92,18 @@ impl DeviceColumns {
         }
     }
 
-    fn get<T: DeviceBytes>(
-        &self,
-        column: DeviceColumn,
-        cycles: usize,
-        span: usize,
-    ) -> Option<Arc<T>> {
-        let entry = self.entries.get(&(current_device(), column))?;
+    fn get<T: DeviceBytes>(&self, key: ColumnKey, cycles: usize, span: usize) -> Option<Arc<T>> {
+        let entry = self.entries.get(&key)?;
         if entry.cycles != cycles || entry.span > span {
             return None;
         }
         Arc::clone(&entry.value).downcast::<T>().ok()
     }
 
-    fn put<T: DeviceBytes>(
-        &mut self,
-        column: DeviceColumn,
-        cycles: usize,
-        span: usize,
-        value: Arc<T>,
-    ) {
+    fn put<T: DeviceBytes>(&mut self, key: ColumnKey, cycles: usize, span: usize, value: Arc<T>) {
         let bytes = value.device_bytes();
         let _ = self.entries.insert(
-            (current_device(), column),
+            key,
             Entry {
                 value,
                 cycles,
@@ -120,8 +118,8 @@ impl DeviceColumns {
         let mut resident: Vec<(DeviceColumn, usize, usize)> = self
             .entries
             .iter()
-            .filter(|&(&(ordinal, _), _)| ordinal == current_device())
-            .map(|(&(_, column), entry)| (column, entry.cycles, entry.span))
+            .filter(|&(key, _)| key.ordinal == current_device())
+            .map(|(key, entry)| (key.column, entry.cycles, entry.span))
             .collect();
         resident
             .sort_unstable_by_key(|&(column, cycles, span)| (format!("{column:?}"), cycles, span));
@@ -130,7 +128,8 @@ impl DeviceColumns {
 
     #[cfg(test)]
     pub(crate) fn evict(&mut self, column: DeviceColumn) {
-        let _ = self.entries.remove(&(current_device(), column));
+        self.entries
+            .retain(|key, _| key.ordinal != current_device() || key.column != column);
     }
 }
 
@@ -138,8 +137,8 @@ impl DeviceColumns {
 impl allocative::Allocative for DeviceColumns {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        for (&(_, column), entry) in &self.entries {
-            visitor.visit_simple(allocative::Key::new(column_key(column)), entry.bytes);
+        for (key, entry) in &self.entries {
+            visitor.visit_simple(allocative::Key::new(column_key(key.column)), entry.bytes);
         }
         visitor.exit();
     }
@@ -172,19 +171,26 @@ pub(crate) fn device_columns_for<'a, T: ?Sized>(
 pub(crate) fn park_device_column<S: ?Sized, T: DeviceBytes>(
     session: &mut ProofSession,
     source: &S,
+    ordinal: usize,
     column: DeviceColumn,
-    cycles: usize,
+    window: &CycleWindow,
     span: usize,
     value: Arc<T>,
 ) {
-    device_columns_for(session, source).put(column, cycles, span, value);
+    let key = ColumnKey {
+        ordinal,
+        column,
+        base: window.start,
+    };
+    device_columns_for(session, source).put(key, window.len, span, value);
 }
 
 pub(crate) fn device_column<S, T, E>(
     session: &mut ProofSession,
     source: &S,
+    ordinal: usize,
     column: DeviceColumn,
-    cycles: usize,
+    window: &CycleWindow,
     required_span: usize,
     build: impl FnOnce(&mut ProofSession) -> Result<(T, usize), E>,
 ) -> Result<Arc<T>, E>
@@ -192,20 +198,41 @@ where
     S: ?Sized,
     T: DeviceBytes,
 {
+    let key = ColumnKey {
+        ordinal,
+        column,
+        base: window.start,
+    };
     if let Some(resident) =
-        device_columns_for(session, source).get::<T>(column, cycles, required_span)
+        device_columns_for(session, source).get::<T>(key, window.len, required_span)
     {
         return Ok(resident);
     }
     let (built, span) = tracing::info_span!(
         "cuda_device_column_build",
         column = tracing::field::debug(column),
-        cycles
+        base = window.start,
+        cycles = window.len
     )
     .in_scope(|| build(session))?;
     let value = Arc::new(built);
-    park_device_column(session, source, column, cycles, span, Arc::clone(&value));
+    park_device_column(
+        session,
+        source,
+        ordinal,
+        column,
+        window,
+        span,
+        Arc::clone(&value),
+    );
     Ok(value)
+}
+
+pub(crate) const fn whole_domain(cycles: usize) -> CycleWindow {
+    CycleWindow {
+        start: 0,
+        len: cycles,
+    }
 }
 
 pub(crate) struct DeviceTraceColumns {
@@ -238,8 +265,9 @@ where
     device_column(
         session,
         witness,
+        context.ordinal(),
         DeviceColumn::LookupIndexLimbs,
-        cycles,
+        &whole_domain(cycles),
         ANY_SPAN,
         |session| {
             let trace = session_device_trace(context, session, witness, cycles)?;
@@ -260,8 +288,9 @@ where
     device_column(
         session,
         witness,
+        context.ordinal(),
         DeviceColumn::MappedPcWord,
-        cycles,
+        &whole_domain(cycles),
         ANY_SPAN,
         |session| {
             let trace = session_device_trace(context, session, witness, cycles)?;
@@ -283,8 +312,9 @@ where
     device_column(
         session,
         witness,
+        context.ordinal(),
         DeviceColumn::RemappedRamWord,
-        cycles,
+        &whole_domain(cycles),
         addresses,
         |session| {
             let trace = session_device_trace(context, session, witness, cycles)?;
@@ -308,20 +338,56 @@ where
     if window.start == 0 {
         return device_trace_columns(context, session, witness, cycles, families, addresses);
     }
-    let trace =
-        session_device_trace_window(context, session, witness, cycles, &window.residency(cycles))?;
+    let residency = window.residency(cycles);
+    let ordinal = context.ordinal();
     let lookup = if families[0] > 0 {
-        Arc::new(trace.lookup_index_limbs()?)
+        device_column::<_, _, KernelError<F>>(
+            session,
+            witness,
+            ordinal,
+            DeviceColumn::LookupIndexLimbs,
+            &residency,
+            ANY_SPAN,
+            |session| {
+                let trace =
+                    session_device_trace_window(context, session, witness, cycles, &residency)?;
+                Ok((trace.lookup_index_limbs()?, NO_SPAN))
+            },
+        )?
     } else {
         Arc::new(context.alloc_u64(0)?)
     };
     let pc = if families[1] > 0 {
-        Arc::new(trace.mapped_pc_words()?)
+        device_column::<_, _, KernelError<F>>(
+            session,
+            witness,
+            ordinal,
+            DeviceColumn::MappedPcWord,
+            &residency,
+            ANY_SPAN,
+            |session| {
+                let trace =
+                    session_device_trace_window(context, session, witness, cycles, &residency)?;
+                Ok((trace.mapped_pc_words()?, NO_SPAN))
+            },
+        )?
     } else {
         Arc::new(context.alloc_u32(0)?)
     };
     let ram = if families[2] > 0 {
-        Arc::new(trace.remapped_ram_words(addresses)?.0)
+        device_column::<_, _, KernelError<F>>(
+            session,
+            witness,
+            ordinal,
+            DeviceColumn::RemappedRamWord,
+            &residency,
+            addresses,
+            |session| {
+                let trace =
+                    session_device_trace_window(context, session, witness, cycles, &residency)?;
+                Ok(trace.remapped_ram_words(addresses)?)
+            },
+        )?
     } else {
         Arc::new(context.alloc_u32(0)?)
     };
@@ -369,9 +435,11 @@ mod tests {
     use jolt_field::Fr;
 
     use super::{
-        device_column, device_columns_for, device_trace_columns, DeviceColumn, ANY_SPAN, NO_SPAN,
+        current_device, device_column, device_columns_for, device_trace_columns, whole_domain,
+        DeviceColumn, ANY_SPAN, NO_SPAN,
     };
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::devices::CycleWindow;
     use crate::cuda::common::error::CudaError;
     use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
     use crate::cuda::common::pack::COLD;
@@ -397,8 +465,9 @@ mod tests {
             let column = device_column(
                 &mut session,
                 &source,
+                current_device(),
                 DeviceColumn::CommittedHot(JoltCommittedPolynomial::RdInc),
-                CYCLES,
+                &whole_domain(CYCLES),
                 ANY_SPAN,
                 |_| -> Result<_, CudaError> {
                     builds += 1;
@@ -419,6 +488,62 @@ mod tests {
     }
 
     #[test]
+    fn each_window_of_a_column_is_its_own_entry() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let source = [0u8; 8];
+        let mut session = ProofSession::default();
+        let half = CYCLES / 2;
+        let mut builds = 0usize;
+        let ask = |session: &mut ProofSession, window: &CycleWindow, builds: &mut usize| {
+            device_column(
+                session,
+                &source,
+                current_device(),
+                DeviceColumn::MappedPcWord,
+                window,
+                ANY_SPAN,
+                |_| -> Result<_, CudaError> {
+                    *builds += 1;
+                    Ok((
+                        context.upload_u32_slice(&hot(window.len, window.start as u32))?,
+                        NO_SPAN,
+                    ))
+                },
+            )
+            .expect("device column window")
+        };
+
+        let windows = [
+            CycleWindow {
+                start: 0,
+                len: half,
+            },
+            CycleWindow {
+                start: half,
+                len: half,
+            },
+        ];
+        for round in 0..2 {
+            for window in &windows {
+                let column = ask(&mut session, window, &mut builds);
+                assert_eq!(
+                    context.download_u32(&column).expect("download"),
+                    hot(window.len, window.start as u32),
+                    "round {round}: the window at {} was served another window's contents",
+                    window.start,
+                );
+            }
+        }
+        assert_eq!(
+            builds, 2,
+            "the two windows must build once each: a shared key would serve one window's buffer \
+             for the other, and an unkeyed miss would rebuild on every ask",
+        );
+    }
+
+    #[test]
     fn a_foreign_witness_clears_the_cabinet() {
         let Some(context) = shared_context() else {
             return;
@@ -430,8 +555,9 @@ mod tests {
         let _ = device_column(
             &mut session,
             &first,
+            current_device(),
             key,
-            CYCLES,
+            &whole_domain(CYCLES),
             ANY_SPAN,
             |_| -> Result<_, CudaError> {
                 Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))
@@ -442,8 +568,9 @@ mod tests {
         let served = device_column(
             &mut session,
             &second,
+            current_device(),
             key,
-            CYCLES,
+            &whole_domain(CYCLES),
             ANY_SPAN,
             |_| -> Result<_, CudaError> {
                 builds += 1;
@@ -478,8 +605,9 @@ mod tests {
         let _ = device_column(
             &mut session,
             &source,
+            current_device(),
             neighbour,
-            CYCLES,
+            &whole_domain(CYCLES),
             ANY_SPAN,
             |_| -> Result<_, CudaError> {
                 Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))
@@ -490,8 +618,9 @@ mod tests {
         let _ = device_column(
             &mut session,
             &source,
+            current_device(),
             DeviceColumn::RemappedRamWord,
-            2 * CYCLES,
+            &whole_domain(2 * CYCLES),
             ANY_SPAN,
             |_| -> Result<_, CudaError> {
                 builds += 1;
@@ -519,8 +648,9 @@ mod tests {
         let _ = device_column(
             &mut session,
             &source,
+            current_device(),
             key,
-            CYCLES,
+            &whole_domain(CYCLES),
             ANY_SPAN,
             |_| -> Result<_, CudaError> {
                 Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, 1 << 12))
@@ -531,8 +661,9 @@ mod tests {
         let _ = device_column(
             &mut session,
             &source,
+            current_device(),
             key,
-            CYCLES,
+            &whole_domain(CYCLES),
             1 << 6,
             |_| -> Result<_, CudaError> {
                 builds += 1;
@@ -549,8 +680,9 @@ mod tests {
         let _ = device_column(
             &mut session,
             &source,
+            current_device(),
             key,
-            CYCLES,
+            &whole_domain(CYCLES),
             1 << 20,
             |_| -> Result<_, CudaError> {
                 builds += 1;
@@ -575,8 +707,9 @@ mod tests {
         let failed = device_column::<_, cudarc::driver::CudaSlice<u32>, CudaError>(
             &mut session,
             &source,
+            current_device(),
             DeviceColumn::LookupIndexLimbs,
-            CYCLES,
+            &whole_domain(CYCLES),
             ANY_SPAN,
             |_| {
                 Err(CudaError::InvariantViolation {
@@ -702,8 +835,9 @@ mod tests {
         let first = device_column(
             &mut session,
             &source,
+            current_device(),
             key,
-            CYCLES,
+            &whole_domain(CYCLES),
             ANY_SPAN,
             |_| -> Result<_, CudaError> {
                 Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))
@@ -713,8 +847,9 @@ mod tests {
         let second = device_column(
             &mut session,
             &source,
+            current_device(),
             key,
-            CYCLES,
+            &whole_domain(CYCLES),
             ANY_SPAN,
             |_| -> Result<_, CudaError> {
                 Ok((context.upload_u32_slice(&hot(CYCLES, 0))?, NO_SPAN))

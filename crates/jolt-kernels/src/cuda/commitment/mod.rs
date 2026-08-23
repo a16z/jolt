@@ -19,7 +19,9 @@ use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, Stream
 
 use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
-use super::common::device_columns::{park_device_column, witness_identity, DeviceColumn};
+use super::common::device_columns::{
+    park_device_column, whole_domain, witness_identity, DeviceColumn,
+};
 use super::common::error::CudaError;
 use super::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs, FQ_LIMBS};
 use super::common::pack::COLD;
@@ -307,8 +309,9 @@ fn device_hot_columns<F: Field>(
                 park_device_column(
                     session,
                     source,
+                    context.ordinal(),
                     DeviceColumn::CommittedHot(id),
-                    cycles,
+                    &whole_domain(cycles),
                     span,
                     Arc::clone(&column),
                 );

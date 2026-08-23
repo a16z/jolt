@@ -11,7 +11,7 @@ use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 
 use super::common::context::CudaKernelContext;
 use super::common::device::{fr_into, fr_vec_into, require_fr_slice, DeviceFrVec};
-use super::common::device_columns::{device_column, DeviceColumn};
+use super::common::device_columns::{device_column, whole_domain, DeviceColumn};
 use super::common::error::CudaError;
 use super::{require_context, CudaBackend};
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
@@ -280,8 +280,9 @@ pub(crate) fn sparse_hot_columns<F: Field>(
         let hot = device_column(
             session,
             witness,
+            context.ordinal(),
             DeviceColumn::CommittedHot(id),
-            cycles,
+            &whole_domain(cycles),
             one_hot_k,
             |_| walk_hot_column::<F>(context, witness, kind, cycles, one_hot_k),
         )?;
