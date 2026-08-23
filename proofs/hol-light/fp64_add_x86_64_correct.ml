@@ -53,7 +53,7 @@ let JOLT_FP64_ADD_X86_64_CORRECT = time prove
   (LABEL_TAC "compare") THENL
    [REWRITE_TAC[GSYM REAL_OF_NUM_CLAUSES] THEN
     MATCH_MP_TAC JOLT_FP64_X86_COMPARE_REORIENT THEN
-    ACCUMULATOR_ASSUM_LIST(fun ths -> ACCEPT_TAC(hd ths));
+    ACCUMULATOR_ASSUM_LIST(fun theorems -> ACCEPT_TAC(hd theorems));
     ALL_TAC] THEN
   SUBGOAL_THEN
    `val(sum_s1:int64) < 2 EXP 64 /\ val(sum_s2:int64) < 2 EXP 64 /\
@@ -71,9 +71,9 @@ let JOLT_FP64_ADD_X86_64_CORRECT = time prove
     ALL_TAC] THEN
   ACCUMULATOR_POP_ASSUM_LIST(K ALL_TAC) THEN DISCARD_STATE_TAC "s6" THEN
   ASSUM_LIST
-   (fun ths ->
+   (fun theorems ->
       let th = find
-       (fun th -> aconv (concl th) `(carry_s5:bool) = carry_s4`) ths in
+       (fun th -> aconv (concl th) `(carry_s5:bool) = carry_s4`) theorems in
       ONCE_REWRITE_TAC[th] THEN
       GEN_REWRITE_TAC LAND_CONV [COND_RAND] THEN
       GEN_REWRITE_TAC (LAND_CONV o RAND_CONV) [COND_RAND]) THEN

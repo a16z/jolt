@@ -122,7 +122,7 @@ let JOLT_FP64_MUL_X86_64_CORRECT = time prove
    [REWRITE_TAC[GSYM REAL_OF_NUM_CLAUSES] THEN
     MATCH_MP_TAC JOLT_FP64_X86_ADD59_FROM_SUBP THEN
     REWRITE_TAC[jolt_fp64_p] THEN
-    ACCUMULATOR_ASSUM_LIST(fun ths -> ACCEPT_TAC(el 1 ths));
+    ACCUMULATOR_ASSUM_LIST(fun theorems -> ACCEPT_TAC(el 1 theorems));
     ALL_TAC] THEN
   SUBGOAL_THEN
    `2 EXP 64 * bitval carry_s20 + val(sum_s17:int64) =
@@ -131,7 +131,8 @@ let JOLT_FP64_MUL_X86_64_CORRECT = time prove
    [REWRITE_TAC[GSYM REAL_OF_NUM_CLAUSES] THEN
     MATCH_MP_TAC JOLT_FP64_X86_COMPARE_REORIENT THEN
     ACCUMULATOR_ASSUM_LIST
-     (fun ths -> ACCEPT_TAC(REWRITE_RULE[REAL_SUB_RZERO] (hd ths)));
+     (fun theorems ->
+       ACCEPT_TAC(REWRITE_RULE[REAL_SUB_RZERO] (hd theorems)));
     ALL_TAC] THEN
   SUBGOAL_THEN
    `val(sum_s16:int64) < 2 EXP 64 /\ val(sum_s17:int64) < 2 EXP 64 /\
