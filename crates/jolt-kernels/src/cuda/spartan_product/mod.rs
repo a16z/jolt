@@ -5,9 +5,10 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_atom_columns;
+use crate::cuda::witness::session_window_residency;
 
-use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::devices::witness_windows;
 use crate::cuda::{require_context, CudaBackend};
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -23,8 +24,7 @@ use columns::DeviceProductColumns;
 use remainder::{DeviceProductRemainder, SpartanProductRemainderKernel};
 
 pub struct SpartanProductState<F: Field> {
-    context: &'static CudaKernelContext,
-    columns: DeviceProductColumns,
+    columns: Vec<(usize, DeviceProductColumns)>,
     tau_low: Vec<F>,
     log_t: usize,
     matrix: Vec<F>,
@@ -54,7 +54,6 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
         tau_low: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let context = require_context::<F>()?;
         if log_t == 0 || tau_low.len() != log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "the Spartan product tau_low spans the cycle variables",
@@ -62,12 +61,21 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
         }
 
         let cycles = 1usize << log_t;
-        let atoms = session_atom_columns(context, session, witness, cycles)?;
-        let columns = DeviceProductColumns::from_device(context, &atoms, cycles)?;
-        let matrix = uniskip::product_matrix(context, &columns, tau_low)?;
+        let windows = witness_windows(cycles);
+        let mut columns = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a Spartan product window names an absent device",
+            })?;
+            let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+            columns.push((
+                ordinal,
+                DeviceProductColumns::from_device(device, &atoms, window.len)?,
+            ));
+        }
+        let matrix = uniskip::product_matrix_windows(&columns, tau_low)?;
 
         session.park(SpartanProductState {
-            context,
             columns,
             tau_low: tau_low.to_vec(),
             log_t,
@@ -118,8 +126,9 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for CudaBackend {
                          slot prepared",
             });
         }
+        let context = require_context::<F>()?;
         let device = DeviceProductRemainder::new(
-            state.context,
+            context,
             state.columns,
             &state.tau_low,
             inputs.relation.tau_high(),
@@ -127,7 +136,7 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for CudaBackend {
             state.log_t,
         )?;
         Ok(Box::new(SpartanProductRemainderKernel::new(
-            state.context,
+            context,
             device,
             symbolic.degree(),
         )))

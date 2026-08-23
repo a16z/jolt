@@ -14,11 +14,12 @@ use std::collections::BTreeMap;
 
 use super::columns::DeviceProductColumns;
 use super::witness::{self, BRANCH_BIT, CLAIM_COLUMNS, JUMP_BIT, NEXT_IS_NOOP_BIT, SIGN_BIT_BASE};
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
-use crate::cuda::common::split_eq::{split_eq_tables, DeviceSplitEq};
+use crate::cuda::common::split_eq::{split_eq_tables_window, DeviceSplitEq};
 
 pub const CLAIM_LANES: usize = 4;
 
@@ -39,19 +40,27 @@ pub fn claim_openings() -> [JoltOpeningId; CLAIM_COLUMNS] {
     ]
 }
 
+pub(crate) struct ProductShard<F: Field> {
+    pub(crate) ordinal: usize,
+    pub(crate) columns: DeviceProductColumns,
+    pub(crate) left: DeviceFrVec,
+    pub(crate) right: DeviceFrVec,
+    pub(crate) eq: Option<DeviceSplitEq<F>>,
+}
+
 pub struct DeviceProductRemainder<F: Field> {
-    columns: DeviceProductColumns,
-    left: DeviceFrVec,
-    right: DeviceFrVec,
+    shards: Vec<ProductShard<F>>,
+    collapsed: Option<(DeviceFrVec, DeviceFrVec)>,
     eq: DeviceSplitEq<F>,
     log_t: usize,
+    local_rounds: usize,
     challenges: Vec<F>,
 }
 
 impl<F: Field> DeviceProductRemainder<F> {
     pub fn new(
         context: &CudaKernelContext,
-        columns: DeviceProductColumns,
+        columns: Vec<(usize, DeviceProductColumns)>,
         tau_low: &[F],
         tau_high: F,
         uniskip_challenge: F,
@@ -60,9 +69,75 @@ impl<F: Field> DeviceProductRemainder<F> {
         let invalid_domain = || CudaError::InvariantViolation {
             reason: "the Spartan product uni-skip domain is not a valid centered integer domain",
         };
+        let count = columns.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "the Spartan product remainder needs a power-of-two window count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "the Spartan product remainder cannot split more windows than cycle rounds",
+            });
+        }
         let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)
             .map_err(|_| invalid_domain())?;
-        let device_weights = context.upload(require_fr_slice(&weights)?)?;
+        let kernel =
+            centered_lagrange_kernel::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high, uniskip_challenge)
+                .map_err(|_| invalid_domain())?;
+
+        let weights = &weights;
+        let tasks: Vec<DeviceTask<'_, ProductShard<F>, CudaError>> = columns
+            .into_iter()
+            .enumerate()
+            .map(|(shard, (ordinal, columns))| {
+                let task: DeviceTask<'_, ProductShard<F>, CudaError> = Box::new(move || {
+                    let device = context_for(ordinal).ok_or(absent())?;
+                    let (left, right) = Self::window_factors(device, &columns, weights)?;
+                    let eq = if count == 1 {
+                        None
+                    } else {
+                        Some(DeviceSplitEq::new_window_with_scaling(
+                            device,
+                            tau_low,
+                            BindingOrder::LowToHigh,
+                            kernel,
+                            shard,
+                            count,
+                        )?)
+                    };
+                    Ok(ProductShard {
+                        ordinal,
+                        columns,
+                        left,
+                        right,
+                        eq,
+                    })
+                });
+                task
+            })
+            .collect();
+        let shards = fan_out(tasks)?;
+        let eq =
+            DeviceSplitEq::new_with_scaling(context, tau_low, BindingOrder::LowToHigh, kernel)?;
+
+        Ok(Self {
+            shards,
+            collapsed: None,
+            eq,
+            log_t,
+            local_rounds: log_t - tail_rounds,
+            challenges: Vec::with_capacity(log_t),
+        })
+    }
+
+    fn window_factors(
+        context: &CudaKernelContext,
+        columns: &DeviceProductColumns,
+        weights: &[F],
+    ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
+        let device_weights = context.upload(require_fr_slice(weights)?)?;
 
         let cycles = columns.cycles();
         let mut left = context.alloc(cycles)?;
@@ -86,21 +161,7 @@ impl<F: Field> DeviceProductRemainder<F> {
         // inside both `cycles`-element allocations; `left` and `right` are
         // fresh and distinct.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-
-        let kernel =
-            centered_lagrange_kernel::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high, uniskip_challenge)
-                .map_err(|_| invalid_domain())?;
-        let eq =
-            DeviceSplitEq::new_with_scaling(context, tau_low, BindingOrder::LowToHigh, kernel)?;
-
-        Ok(Self {
-            columns,
-            left,
-            right,
-            eq,
-            log_t,
-            challenges: Vec::with_capacity(log_t),
-        })
+        Ok((left, right))
     }
 
     pub const fn rounds(&self) -> usize {
@@ -113,21 +174,112 @@ impl<F: Field> DeviceProductRemainder<F> {
 
     fn bind(&mut self, context: &CudaKernelContext, challenge: F) -> Result<(), CudaError> {
         let scalar = require_fr(challenge)?;
-        self.left = context.bind_rows(&self.left, self.left.len(), scalar)?;
-        self.right = context.bind_rows(&self.right, self.right.len(), scalar)?;
+        if let Some((left, right)) = &mut self.collapsed {
+            *left = context.bind_rows(left, left.len(), scalar)?;
+            *right = context.bind_rows(right, right.len(), scalar)?;
+        } else {
+            let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+                .shards
+                .iter_mut()
+                .map(|shard| {
+                    let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                        let device = context_for(shard.ordinal).ok_or(absent())?;
+                        shard.left = device.bind_rows(&shard.left, shard.left.len(), scalar)?;
+                        shard.right = device.bind_rows(&shard.right, shard.right.len(), scalar)?;
+                        if let Some(eq) = &mut shard.eq {
+                            eq.bind(challenge);
+                        }
+                        Ok(())
+                    });
+                    task
+                })
+                .collect();
+            let _ = fan_out(tasks)?;
+        }
         self.eq.bind(challenge);
         self.challenges.push(challenge);
+        if self.shards.len() > 1
+            && self.collapsed.is_none()
+            && self.challenges.len() == self.local_rounds
+        {
+            self.collapse(context)?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self, context: &CudaKernelContext) -> Result<(), CudaError> {
+        type Tables = (Vec<Fr>, Vec<Fr>);
+        let tasks: Vec<DeviceTask<'_, Tables, CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Tables, CudaError> = Box::new(move || {
+                    let _ = context_for(shard.ordinal).ok_or(absent())?;
+                    Ok((shard.left.to_host()?, shard.right.to_host()?))
+                });
+                task
+            })
+            .collect();
+        let mut left = Vec::new();
+        let mut right = Vec::new();
+        for (window_left, window_right) in fan_out(tasks)? {
+            if window_left.len() != window_right.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: window_left.len(),
+                    got: window_right.len(),
+                });
+            }
+            left.extend_from_slice(&window_left);
+            right.extend_from_slice(&window_right);
+        }
+        self.collapsed = Some((context.upload(&left)?, context.upload(&right)?));
+        for shard in &mut self.shards {
+            let device = context_for(shard.ordinal).ok_or(absent())?;
+            shard.left = device.alloc(0)?;
+            shard.right = device.alloc(0)?;
+            shard.eq = None;
+        }
         Ok(())
     }
 
     fn endpoints(&self, context: &CudaKernelContext) -> Result<[F; 2], CudaError> {
-        let half = self.left.len() / 2;
+        if let Some((left, right)) = &self.collapsed {
+            return Self::window_endpoints(context, left, right, &self.eq);
+        }
+        let whole = &self.eq;
+        let tasks: Vec<DeviceTask<'_, [F; 2], CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, [F; 2], CudaError> = Box::new(move || {
+                    let device = context_for(shard.ordinal).ok_or(absent())?;
+                    let eq = shard.eq.as_ref().unwrap_or(whole);
+                    Self::window_endpoints(device, &shard.left, &shard.right, eq)
+                });
+                task
+            })
+            .collect();
+        let mut total = [F::zero(), F::zero()];
+        for part in fan_out(tasks)? {
+            total[0] += part[0];
+            total[1] += part[1];
+        }
+        Ok(total)
+    }
+
+    fn window_endpoints(
+        context: &CudaKernelContext,
+        left: &DeviceFrVec,
+        right: &DeviceFrVec,
+        eq: &DeviceSplitEq<F>,
+    ) -> Result<[F; 2], CudaError> {
+        let half = left.len() / 2;
         if half == 0 {
             return Err(CudaError::InvariantViolation {
                 reason: "the Spartan product remainder has no pairs left to reduce",
             });
         }
-        let e_in_len = self.eq.e_in_len();
+        let e_in_len = eq.e_in_len();
         let in_bits = e_in_len.max(1).ilog2();
         let threads = half.div_ceil(MESSAGE_STRIP);
         let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
@@ -144,10 +296,10 @@ impl<F: Field> DeviceProductRemainder<F> {
         let mut builder = context
             .stream()
             .launch_builder(context.gruen_pair_message());
-        let _ = builder.arg(self.left.limbs());
-        let _ = builder.arg(self.right.limbs());
-        let _ = builder.arg(self.eq.e_in_current().limbs());
-        let _ = builder.arg(self.eq.e_out_current().limbs());
+        let _ = builder.arg(left.limbs());
+        let _ = builder.arg(right.limbs());
+        let _ = builder.arg(eq.e_in_current().limbs());
+        let _ = builder.arg(eq.e_out_current().limbs());
         let _ = builder.arg(&inner_len);
         let _ = builder.arg(&bits);
         let _ = builder.arg(&count);
@@ -182,10 +334,47 @@ impl<F: Field> DeviceProductRemainder<F> {
     }
 
     pub fn claims(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+        let _ = context;
         let point: Vec<F> = self.challenges.iter().rev().copied().collect();
-        let (e_in, e_out, in_bits) = split_eq_tables(context, &point)?;
+        let point = &point;
+        let shards = self.shards.len();
+        let tasks: Vec<DeviceTask<'_, Vec<F>, CudaError>> = self
+            .shards
+            .iter()
+            .enumerate()
+            .map(|(shard, window)| {
+                let task: DeviceTask<'_, Vec<F>, CudaError> = Box::new(move || {
+                    let device = context_for(window.ordinal).ok_or(absent())?;
+                    Self::window_claims(device, &window.columns, point, shard, shards)
+                });
+                task
+            })
+            .collect();
+        let mut total = vec![F::zero(); CLAIM_COLUMNS];
+        for part in fan_out(tasks)? {
+            if part.len() != CLAIM_COLUMNS {
+                return Err(CudaError::LengthMismatch {
+                    expected: CLAIM_COLUMNS,
+                    got: part.len(),
+                });
+            }
+            for (slot, value) in total.iter_mut().zip(&part) {
+                *slot += *value;
+            }
+        }
+        Ok(total)
+    }
 
-        let cycles = self.columns.cycles();
+    fn window_claims(
+        context: &CudaKernelContext,
+        columns: &DeviceProductColumns,
+        point: &[F],
+        shard: usize,
+        shards: usize,
+    ) -> Result<Vec<F>, CudaError> {
+        let (e_in, e_out, in_bits) = split_eq_tables_window(context, point, shard, shards)?;
+
+        let cycles = columns.cycles();
         let threads = cycles.div_ceil(CLAIM_STRIP);
         let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
             CudaError::InvariantViolation {
@@ -204,10 +393,10 @@ impl<F: Field> DeviceProductRemainder<F> {
             let strip = CudaKernelContext::count_of(CLAIM_STRIP)?;
             let bits = CudaKernelContext::count_of(in_bits)?;
             let mut builder = context.stream().launch_builder(context.sp_claims());
-            let _ = builder.arg(self.columns.narrow());
-            let _ = builder.arg(self.columns.wide());
-            let _ = builder.arg(self.columns.flags());
-            let _ = builder.arg(self.columns.layout());
+            let _ = builder.arg(columns.narrow());
+            let _ = builder.arg(columns.wide());
+            let _ = builder.arg(columns.flags());
+            let _ = builder.arg(columns.layout());
             let _ = builder.arg(e_in.limbs());
             let _ = builder.arg(e_out.limbs());
             let _ = builder.arg(&bits);
@@ -248,6 +437,20 @@ impl<F: Field> DeviceProductRemainder<F> {
         Ok(claims)
     }
 
+    #[cfg(test)]
+    pub(crate) fn window_factors_host(
+        &self,
+        shard: usize,
+    ) -> Result<(Vec<Fr>, Vec<Fr>), CudaError> {
+        let window = self
+            .shards
+            .get(shard)
+            .ok_or(CudaError::InvariantViolation {
+                reason: "the Spartan product remainder has no such window",
+            })?;
+        Ok((window.left.to_host()?, window.right.to_host()?))
+    }
+
     pub fn opening_values(
         &self,
         context: &CudaKernelContext,
@@ -260,6 +463,12 @@ impl<F: Field> DeviceProductRemainder<F> {
             });
         }
         Ok(claim_openings().into_iter().zip(claims).collect())
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a Spartan product remainder window names an absent device",
     }
 }
 
@@ -352,7 +561,8 @@ mod tests {
     use super::{
         branch_flag_product, centered_lagrange_evals, jump_flag_product,
         left_instruction_input_product, lookup_output_product, next_is_noop_product,
-        right_instruction_input_product, DeviceProductRemainder, PRODUCT_UNISKIP_DOMAIN_SIZE,
+        right_instruction_input_product, DeviceProductRemainder, CLAIM_COLUMNS,
+        PRODUCT_UNISKIP_DOMAIN_SIZE,
     };
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{arb_point, fr, with_r1cs_witness};
@@ -368,6 +578,70 @@ mod tests {
         JoltOneHotConfig {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: 32,
+        }
+    }
+
+    #[test]
+    fn windowed_product_remainder_matches_the_whole_domain_round_for_round() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let cycles = 1usize << LOG_T;
+        let rows = witness::sample_rows(0x9E3D, cycles);
+        let tau_low: Vec<Fr> = (0..LOG_T).map(|i| fr(23 + 5 * i as u64)).collect();
+        let tau_high = fr(61);
+        let uniskip_challenge = fr(97);
+
+        let build = |base: usize, len: usize| {
+            DeviceProductColumns::new(context, &witness::pack(&rows[base..base + len]))
+                .expect("upload a packed product window")
+        };
+
+        for shards in [2usize, 4, 8] {
+            let mut expected = DeviceProductRemainder::<Fr>::new(
+                context,
+                vec![(0, build(0, cycles))],
+                &tau_low,
+                tau_high,
+                uniskip_challenge,
+                LOG_T,
+            )
+            .expect("whole-domain product remainder");
+            let len = cycles / shards;
+            let windows: Vec<(usize, DeviceProductColumns)> = (0..shards)
+                .map(|shard| (0usize, build(shard * len, len)))
+                .collect();
+            let mut got = DeviceProductRemainder::<Fr>::new(
+                context,
+                windows,
+                &tau_low,
+                tau_high,
+                uniskip_challenge,
+                LOG_T,
+            )
+            .expect("windowed product remainder");
+
+            for round in 0..LOG_T {
+                let want = expected.endpoints(context).expect("whole endpoints");
+                let have = got.endpoints(context).expect("windowed endpoints");
+                assert_eq!(
+                    have, want,
+                    "shards={shards} round {round}: the endpoint pair diverged",
+                );
+                let challenge = fr(500 + 23 * round as u64);
+                expected.bind(context, challenge).expect("whole bind");
+                got.bind(context, challenge).expect("windowed bind");
+            }
+
+            let want = expected.claims(context).expect("whole claims");
+            let have = got.claims(context).expect("windowed claims");
+            assert_eq!(have, want, "shards={shards}: the claim pass diverged");
+            assert_eq!(want.len(), CLAIM_COLUMNS);
+            assert_ne!(
+                want.first().copied(),
+                Some(Fr::from_u64(0)),
+                "a degenerate fixture would hide a divergence",
+            );
         }
     }
 
@@ -389,8 +663,11 @@ mod tests {
                 let columns = DeviceProductColumns::new(context, &packed)
                     .expect("upload the packed product columns");
                 let device = DeviceProductRemainder::<Fr>::new(
-                    context, columns, &tau_low, tau_high, uniskip_challenge, LOG_T,
+                    context, vec![(0, columns)], &tau_low, tau_high, uniskip_challenge, LOG_T,
                 ).expect("the device product remainder");
+                let (got_left, got_right) = device
+                    .window_factors_host(0)
+                    .expect("download the factor tables");
 
                 let weights =
                     centered_lagrange_evals::<Fr>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)
@@ -424,12 +701,12 @@ mod tests {
                 };
 
                 prop_assert_eq!(
-                    device.left.to_host().expect("download the left factor"),
+                    got_left,
                     collapse(&left_columns),
                     "the left factor table diverged"
                 );
                 prop_assert_eq!(
-                    device.right.to_host().expect("download the right factor"),
+                    got_right,
                     collapse(&right_columns),
                     "the right factor table diverged"
                 );
@@ -451,8 +728,11 @@ mod tests {
             let columns = DeviceProductColumns::new(context, &packed)
                 .expect("upload the packed product columns");
             let device = DeviceProductRemainder::<Fr>::new(
-                context, columns, &tau_low, tau_high, uniskip_challenge, LOG_T,
+                context, vec![(0, columns)], &tau_low, tau_high, uniskip_challenge, LOG_T,
             ).expect("the device product remainder");
+            let (got_left, got_right) = device
+                .window_factors_host(0)
+                .expect("download the factor tables");
 
             let weights =
                 centered_lagrange_evals::<Fr>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)
@@ -482,12 +762,12 @@ mod tests {
             };
 
             prop_assert_eq!(
-                device.left.to_host().expect("download the left factor"),
+                got_left,
                 collapse(&left_columns),
                 "the left factor table diverged on signed rows"
             );
             prop_assert_eq!(
-                device.right.to_host().expect("download the right factor"),
+                got_right,
                 collapse(&right_columns),
                 "the right factor table diverged on signed rows"
             );

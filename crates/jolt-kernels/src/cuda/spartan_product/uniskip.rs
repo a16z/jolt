@@ -6,11 +6,12 @@ use jolt_poly::UnivariatePoly;
 
 use super::columns::DeviceProductColumns;
 use super::witness::{BRANCH_BIT, JUMP_BIT, NEXT_IS_NOOP_BIT, SIGN_BIT_BASE};
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, LIMBS};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
-use crate::cuda::common::split_eq::split_eq_tables;
+use crate::cuda::common::split_eq::split_eq_tables_window;
 
 pub const LANES: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
 
@@ -28,12 +29,47 @@ pub fn node_field<F: Field>(node: i64) -> F {
     }
 }
 
+pub fn product_matrix_windows<F: Field>(
+    columns: &[(usize, DeviceProductColumns)],
+    tau_low: &[F],
+) -> Result<Vec<F>, CudaError> {
+    let shards = columns.len();
+    let tasks: Vec<DeviceTask<'_, Vec<F>, CudaError>> = columns
+        .iter()
+        .enumerate()
+        .map(|(shard, (ordinal, window))| {
+            let task: DeviceTask<'_, Vec<F>, CudaError> = Box::new(move || {
+                let device = context_for(*ordinal).ok_or(CudaError::InvariantViolation {
+                    reason: "a Spartan product window names an absent device",
+                })?;
+                product_matrix(device, window, tau_low, shard, shards)
+            });
+            task
+        })
+        .collect();
+    let mut total = vec![F::zero(); MATRIX_LANES];
+    for part in fan_out(tasks)? {
+        if part.len() != MATRIX_LANES {
+            return Err(CudaError::LengthMismatch {
+                expected: MATRIX_LANES,
+                got: part.len(),
+            });
+        }
+        for (slot, value) in total.iter_mut().zip(&part) {
+            *slot += *value;
+        }
+    }
+    Ok(total)
+}
+
 pub fn product_matrix<F: Field>(
     context: &CudaKernelContext,
     columns: &DeviceProductColumns,
     tau_low: &[F],
+    shard: usize,
+    shards: usize,
 ) -> Result<Vec<F>, CudaError> {
-    let (e_in, e_out, in_bits) = split_eq_tables(context, tau_low)?;
+    let (e_in, e_out, in_bits) = split_eq_tables_window(context, tau_low, shard, shards)?;
 
     let cycles = columns.cycles();
     let threads = cycles.div_ceil(STRIP);
@@ -170,6 +206,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn product_matrix_windows_sum_to_the_whole_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let cycles = 1usize << LOG_T;
+        let rows = witness::sample_rows(0x7C0D, cycles);
+        let tau_low: Vec<Fr> = (0..LOG_T)
+            .map(|i| Fr::from_u64(17 + 4 * i as u64))
+            .collect();
+        let build = |base: usize, len: usize| {
+            DeviceProductColumns::new(context, &witness::pack(&rows[base..base + len]))
+                .expect("upload a packed product window")
+        };
+
+        let whole = product_matrix::<Fr>(context, &build(0, cycles), &tau_low, 0, 1)
+            .expect("the whole-domain product matrix");
+        assert_eq!(whole.len(), MATRIX_LANES);
+        assert!(
+            whole.iter().any(|value| *value != Fr::from_u64(0)),
+            "a degenerate fixture would hide a divergence",
+        );
+
+        for shards in [2usize, 4, 8] {
+            let len = cycles / shards;
+            let windows: Vec<(usize, DeviceProductColumns)> = (0..shards)
+                .map(|shard| (0usize, build(shard * len, len)))
+                .collect();
+            let got = super::product_matrix_windows::<Fr>(&windows, &tau_low)
+                .expect("the windowed product matrix");
+            assert_eq!(got, whole, "shards={shards}: the product matrix diverged");
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(2))]
         #[test]
@@ -185,7 +255,7 @@ mod tests {
                 let packed = witness::pack(&rows);
                 let columns = DeviceProductColumns::new(context, &packed)
                     .expect("upload the packed product columns");
-                let got = product_matrix::<Fr>(context, &columns, &tau_low)
+                let got = product_matrix::<Fr>(context, &columns, &tau_low, 0, 1)
                     .expect("the device product matrix");
 
                 let view = |opening| {
@@ -232,7 +302,7 @@ mod tests {
             let packed = witness::pack(&rows);
             let columns = DeviceProductColumns::new(context, &packed)
                 .expect("upload the packed product columns");
-            let got = product_matrix::<Fr>(context, &columns, &tau_low)
+            let got = product_matrix::<Fr>(context, &columns, &tau_low, 0, 1)
                 .expect("the device product matrix");
 
             let left: [Vec<Fr>; LANES] = [

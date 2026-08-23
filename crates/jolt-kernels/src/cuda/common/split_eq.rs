@@ -12,13 +12,6 @@ pub struct DeviceSplitEq<F: Field> {
     out_shards: usize,
 }
 
-pub fn split_eq_tables<F: Field>(
-    context: &CudaKernelContext,
-    point: &[F],
-) -> Result<(DeviceFrVec, DeviceFrVec, usize), CudaError> {
-    split_eq_tables_window(context, point, 0, 1)
-}
-
 pub fn split_eq_tables_window<F: Field>(
     context: &CudaKernelContext,
     point: &[F],
