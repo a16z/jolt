@@ -9,10 +9,15 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_atom_columns;
+use jolt_witness::backend::cuda::DeviceAtomColumns;
 
+use crate::cuda::witness::session_window_residency;
+
+use super::common::context::{context_for, CudaKernelContext};
+use super::common::device::DeviceFrVec;
+use super::common::devices::{witness_windows, CycleWindow};
 use super::common::prefix_suffix::{
-    eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
+    eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds, PrefixSuffixWindow,
 };
 use super::{require_context, CudaBackend};
 use crate::reference::ReferenceBackend;
@@ -119,14 +124,32 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let atoms = session_atom_columns(context, session, witness, cycles)?;
-        let columns = vec![
-            context.u64_to_montgomery_device(&atoms.lookup_output, cycles)?,
-            context.u64_to_montgomery_device(&atoms.left_lookup_operand, cycles)?,
-            context.u128_to_montgomery_device(&atoms.right_lookup_operand, cycles)?,
-            context.u64_to_montgomery_device(&atoms.left_instruction_input, cycles)?,
-            context.i128_to_montgomery_device(&atoms.right_instruction_input, cycles)?,
-        ];
+        let prefix_len = 1usize << prefix_rounds;
+        let windows = witness_windows(cycles);
+        let windows = if windows
+            .iter()
+            .all(|window| window.len.is_multiple_of(prefix_len))
+        {
+            windows
+        } else {
+            vec![CycleWindow {
+                start: 0,
+                len: cycles,
+            }]
+        };
+        let mut column_windows = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "an instruction reduction window names an absent device",
+            })?;
+            let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+            column_windows.push(PrefixSuffixWindow {
+                ordinal,
+                columns: device_columns_from_atoms::<F>(device, &atoms, window.len)?,
+                suffix_offset: window.start / prefix_len,
+                suffix_len: window.len / prefix_len,
+            });
+        }
 
         let gamma = inputs.challenges.gamma;
         let mut powers = Vec::with_capacity(COLUMNS);
@@ -142,11 +165,31 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBackend {
         };
 
         Ok(Box::new(InstructionClaimReductionKernel {
-            rounds: PrefixSuffixRounds::new(context, columns, vec![group], prefix_rounds)?,
+            rounds: PrefixSuffixRounds::new_windowed(
+                context,
+                column_windows,
+                vec![group],
+                prefix_rounds,
+                log_t,
+            )?,
             total: log_t,
             bound: 0,
         }))
     }
+}
+
+pub(crate) fn device_columns_from_atoms<F: Field>(
+    context: &CudaKernelContext,
+    atoms: &DeviceAtomColumns,
+    cycles: usize,
+) -> Result<Vec<DeviceFrVec>, KernelError<F>> {
+    Ok(vec![
+        context.u64_to_montgomery_device(&atoms.lookup_output, cycles)?,
+        context.u64_to_montgomery_device(&atoms.left_lookup_operand, cycles)?,
+        context.u128_to_montgomery_device(&atoms.right_lookup_operand, cycles)?,
+        context.u64_to_montgomery_device(&atoms.left_instruction_input, cycles)?,
+        context.i128_to_montgomery_device(&atoms.right_instruction_input, cycles)?,
+    ])
 }
 
 #[cfg(test)]
@@ -287,26 +330,12 @@ mod tests {
                 cycles,
             )
             .expect("atom columns");
-            let got: Vec<Vec<Fr>> = [
-                context
-                    .u64_to_montgomery_device(&atoms.lookup_output, cycles)
-                    .expect("lookup output"),
-                context
-                    .u64_to_montgomery_device(&atoms.left_lookup_operand, cycles)
-                    .expect("left lookup operand"),
-                context
-                    .u128_to_montgomery_device(&atoms.right_lookup_operand, cycles)
-                    .expect("right lookup operand"),
-                context
-                    .u64_to_montgomery_device(&atoms.left_instruction_input, cycles)
-                    .expect("left instruction input"),
-                context
-                    .i128_to_montgomery_device(&atoms.right_instruction_input, cycles)
-                    .expect("right instruction input"),
-            ]
-            .iter()
-            .map(|column| column.to_host().expect("download"))
-            .collect();
+            let got: Vec<Vec<Fr>> =
+                super::device_columns_from_atoms::<Fr>(context, &atoms, cycles)
+                    .expect("device-gathered columns")
+                    .iter()
+                    .map(|column| column.to_host().expect("download"))
+                    .collect();
 
             assert!(
                 expected.iter().all(|column| column.len() == cycles),
