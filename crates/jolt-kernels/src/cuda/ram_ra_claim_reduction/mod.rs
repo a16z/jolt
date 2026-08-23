@@ -11,9 +11,10 @@ use jolt_witness::JoltWitnessPlane;
 
 use self::reduction::{CyclePoints, DeviceRamRaReduction};
 use super::{require_context, CudaBackend};
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device::{fr_into, require_fr_slice};
-use crate::cuda::common::device_columns::device_ram_words;
+use crate::cuda::common::context::{context_for, CudaKernelContext};
+use crate::cuda::common::device::fr_into;
+use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::devices::witness_windows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -62,12 +63,27 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
         };
         let addresses = 1usize << ram_log_k;
         let cycles = 1usize << log_t;
-        let words = device_ram_words::<F>(context, session, witness, cycles, addresses)?;
-        let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
-        let state = DeviceRamRaReduction::new(
+        let windows = witness_windows(cycles);
+        let mut packed = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a RAM RA claim-reduction window names an absent device",
+            })?;
+            let columns = windowed_trace_columns::<F>(
+                device,
+                session,
+                witness,
+                cycles,
+                window,
+                [0, 0, 1],
+                addresses,
+            )?;
+            packed.push((ordinal, columns.ram));
+        }
+        let state = DeviceRamRaReduction::new_windowed(
             context,
-            &words,
-            &eq_address,
+            &packed,
+            r_address,
             &cycle_points,
             inputs.challenges.gamma,
             log_t,

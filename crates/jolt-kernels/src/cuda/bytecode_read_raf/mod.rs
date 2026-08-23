@@ -10,14 +10,15 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::JoltWitnessPlane;
 
-use super::{require_context, CudaBackend};
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device_columns::device_pc_words;
+use super::CudaBackend;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::devices::witness_windows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 use coefficient::DeviceCoefficient;
-use one_hot::DeviceBytecodeRa;
+use one_hot::{BytecodeShard, DeviceBytecodeRa, ShardedBytecodeRa};
 
 pub(crate) mod address;
 pub(crate) mod coefficient;
@@ -25,10 +26,8 @@ pub(crate) mod one_hot;
 pub(crate) mod pushforward;
 
 pub struct BytecodeReadRafCycleKernel<F: Field> {
-    context: &'static CudaKernelContext,
     relation: BytecodeReadRafCycle<F>,
-    one_hot: DeviceBytecodeRa,
-    coefficient: DeviceCoefficient,
+    one_hot: ShardedBytecodeRa,
     rounds_bound: usize,
     finals: Option<Vec<F>>,
 }
@@ -51,18 +50,11 @@ impl<F: Field> BytecodeReadRafCycleKernel<F> {
             kind: "cuda bytecode read-RAF cycle-phase bind",
         };
         self.one_hot
-            .bind(self.context, challenge)
-            .map_err(|_| failed())?;
-        self.coefficient
-            .bind(self.context, challenge)
+            .bind(challenge, self.rounds_bound)
             .map_err(|_| failed())?;
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
-            self.finals = Some(
-                self.one_hot
-                    .final_claims(self.context)
-                    .map_err(|_| failed())?,
-            );
+            self.finals = Some(self.one_hot.final_claims().map_err(|_| failed())?);
         }
         Ok(())
     }
@@ -82,12 +74,12 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafCycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let evals = self
-            .one_hot
-            .round_evals(self.context, self.coefficient.values())
-            .map_err(|_| SumcheckError::MissingEvaluationSource {
-                kind: "cuda bytecode read-RAF cycle-phase round",
-            })?;
+        let evals =
+            self.one_hot
+                .round_evals()
+                .map_err(|_| SumcheckError::MissingEvaluationSource {
+                    kind: "cuda bytecode read-RAF cycle-phase round",
+                })?;
         let mut toom = Vec::with_capacity(evals.len() + 1);
         toom.push(previous_claim - evals[0]);
         toom.extend_from_slice(&evals);
@@ -152,7 +144,6 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
         inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
     {
-        let context = require_context()?;
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let addresses = 1usize << dimensions.log_k();
@@ -218,31 +209,56 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
 
         let log_t = dimensions.log_t();
         let cycles = 1usize << log_t;
-        let column = device_pc_words::<F>(context, session, witness, cycles)?;
 
         let unsupported = || KernelError::Unsupported {
             reason: "the CUDA bytecode read-RAF kernel supports only the BN254 scalar field",
         };
-        let one_hot = DeviceBytecodeRa::new(
-            context,
-            column,
-            cycles,
-            relation.committed_chunk_bits(),
-            &chunks,
-        )
-        .map_err(|_| KernelError::Unsupported {
-            reason: "the CUDA bytecode read-RAF kernel packs every committed chunk index into one \
-                     word per cycle and evaluates at most eight round-polynomial lanes",
-        })?;
-        let coefficient =
-            DeviceCoefficient::new(context, points.as_slice(), &weights, entry, log_t)
-                .map_err(|_| unsupported())?;
+        let windows = witness_windows(cycles);
+        let shards = windows.len();
+        let mut one_hot_shards = Vec::with_capacity(shards);
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a bytecode read-RAF cycle window names an absent device",
+            })?;
+            let columns = windowed_trace_columns::<F>(
+                device,
+                session,
+                witness,
+                cycles,
+                window,
+                [0, 1, 0],
+                0,
+            )?;
+            one_hot_shards.push(BytecodeShard {
+                ordinal,
+                one_hot: DeviceBytecodeRa::new(
+                    device,
+                    columns.pc,
+                    window.len,
+                    relation.committed_chunk_bits(),
+                    &chunks,
+                )
+                .map_err(|_| KernelError::Unsupported {
+                    reason: "the CUDA bytecode read-RAF kernel packs every committed chunk index \
+                             into one word per cycle and evaluates at most eight round-polynomial \
+                             lanes",
+                })?,
+                coefficient: DeviceCoefficient::new_window(
+                    device,
+                    points.as_slice(),
+                    &weights,
+                    entry,
+                    log_t,
+                    ordinal,
+                    shards,
+                )
+                .map_err(|_| unsupported())?,
+            });
+        }
 
         Ok(Box::new(BytecodeReadRafCycleKernel {
-            context,
             relation: relation.clone(),
-            one_hot,
-            coefficient,
+            one_hot: ShardedBytecodeRa::new(one_hot_shards, log_t)?,
             rounds_bound: 0,
             finals: None,
         }))

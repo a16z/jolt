@@ -1,5 +1,5 @@
 use cudarc::driver::PushKernelArg;
-use jolt_field::Field;
+use jolt_field::{Field, Fr};
 use jolt_poly::EqPolynomial;
 
 use crate::cuda::common::context::CudaKernelContext;
@@ -77,8 +77,114 @@ impl DeviceCoefficient {
         Ok(Self { values })
     }
 
+    pub fn new_window<F: Field>(
+        context: &CudaKernelContext,
+        stage_points: &[Vec<F>],
+        weights: &[F],
+        entry: F,
+        log_t: usize,
+        shard: usize,
+        shards: usize,
+    ) -> Result<Self, CudaError> {
+        if shards == 1 {
+            return Self::new(context, stage_points, weights, entry, log_t);
+        }
+        let stages = stage_points.len();
+        if stages == 0 || weights.len() != stages {
+            return Err(CudaError::InvariantViolation {
+                reason: "the bytecode coefficient needs one weight per stage cycle point",
+            });
+        }
+        if log_t == 0 || stage_points.iter().any(|point| point.len() != log_t) {
+            return Err(CudaError::InvariantViolation {
+                reason: "every bytecode stage cycle point spans the cycle variables",
+            });
+        }
+        if shards == 0 || !shards.is_power_of_two() || shard >= shards {
+            return Err(CudaError::InvariantViolation {
+                reason: "a bytecode coefficient window needs a power-of-two shard count",
+            });
+        }
+
+        let split = log_t / 2;
+        let in_bits = log_t - split;
+        let e_out_len = 1usize << split;
+        let e_in_len = 1usize << in_bits;
+        if e_out_len < shards {
+            return Err(CudaError::InvariantViolation {
+                reason: "a bytecode coefficient window needs one outer eq entry per shard",
+            });
+        }
+        let outer_window = e_out_len / shards;
+
+        let mut e_in = Vec::with_capacity(stages * e_in_len);
+        let mut e_out = Vec::with_capacity(stages * outer_window);
+        for point in stage_points {
+            let (outer, inner) = point.split_at(split);
+            let evals = EqPolynomial::<F>::evals(outer, None);
+            let start = shard * outer_window;
+            e_out.extend_from_slice(evals.get(start..start + outer_window).ok_or(
+                CudaError::InvariantViolation {
+                    reason: "a bytecode coefficient window falls outside the outer eq table",
+                },
+            )?);
+            e_in.extend(EqPolynomial::<F>::evals(inner, None));
+        }
+
+        let len = e_in_len * outer_window;
+        let boundary = if shard == 0 { entry } else { F::zero() };
+        let device_in = context.upload(require_fr_slice(&e_in)?)?;
+        let device_out = context.upload(require_fr_slice(&e_out)?)?;
+        let device_weights = context.upload(require_fr_slice(weights)?)?;
+        let device_entry = context.upload(&[require_fr(boundary)?])?;
+        let mut values = context.alloc(len)?;
+
+        let stage_count = CudaKernelContext::count_of(stages)?;
+        let inner_len = CudaKernelContext::count_of(e_in_len)?;
+        let outer_len = CudaKernelContext::count_of(outer_window)?;
+        let bits = CudaKernelContext::count_of(in_bits)?;
+        let count = CudaKernelContext::count_of(len)?;
+        let mut builder = context.stream().launch_builder(context.brr_coefficient());
+        let _ = builder.arg(device_in.limbs());
+        let _ = builder.arg(device_out.limbs());
+        let _ = builder.arg(device_weights.limbs());
+        let _ = builder.arg(device_entry.limbs());
+        let _ = builder.arg(values.limbs_mut());
+        let _ = builder.arg(&stage_count);
+        let _ = builder.arg(&inner_len);
+        let _ = builder.arg(&outer_len);
+        let _ = builder.arg(&bits);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `j < len` reads `e_in[s * e_in_len + (j & (2^in_bits - 1))]`
+        // and `e_out[s * outer_window + (j >> in_bits)]` for every `s < stages` — both
+        // inside their `stages * e_in_len` and `stages * outer_window` elements because
+        // `len == e_in_len * outer_window` — plus `weights[s]` of `stages` and, at
+        // `j == 0` only, the single-element `entry`. It writes only `out[j]`, one slot
+        // per thread, inside `out`'s `len`; `out` is a fresh allocation.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+
+        Ok(Self { values })
+    }
+
+    pub fn from_host(context: &CudaKernelContext, values: &[Fr]) -> Result<Self, CudaError> {
+        Ok(Self {
+            values: context.upload(values)?,
+        })
+    }
+
     pub const fn values(&self) -> &DeviceFrVec {
         &self.values
+    }
+
+    pub fn window_scalar(&self) -> Result<Fr, CudaError> {
+        let host = self.values.to_host()?;
+        match host.as_slice() {
+            [value] => Ok(*value),
+            other => Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: other.len(),
+            }),
+        }
     }
 
     pub fn bind<F: Field>(

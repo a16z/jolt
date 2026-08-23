@@ -1,14 +1,19 @@
+use std::sync::Arc;
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::fold_lanes_by_halving;
 
 pub const TERMS: usize = 3;
 
 const DEGREE: usize = 2;
+
+type SuffixFold = (DeviceFrVec, Vec<Vec<Fr>>);
 
 pub struct CyclePoints<'a, F> {
     pub raf: &'a [F],
@@ -34,13 +39,14 @@ enum Phase {
 }
 
 pub struct DeviceRamRaReduction {
-    h: DeviceFrVec,
+    h: Vec<DeviceFrVec>,
     suffix_points: Vec<Vec<Fr>>,
     prefix_points: Vec<Vec<Fr>>,
     coefficients: [Fr; TERMS],
     phase: Phase,
     log_t: usize,
     prefix_vars: usize,
+    tail_rounds: usize,
     rounds_bound: usize,
     challenges: Vec<Fr>,
 }
@@ -94,6 +100,147 @@ impl DeviceRamRaReduction {
         }
 
         Ok(Self {
+            h: vec![h],
+            suffix_points,
+            prefix_points,
+            coefficients,
+            phase: Phase::Prefix { p, q },
+            log_t,
+            prefix_vars,
+            tail_rounds: 0,
+            rounds_bound: 0,
+            challenges: Vec::with_capacity(log_t),
+        })
+    }
+
+    pub fn new_windowed<F: Field>(
+        context: &CudaKernelContext,
+        windows: &[(usize, Arc<CudaSlice<u32>>)],
+        r_address: &[F],
+        cycle_points: &CyclePoints<'_, F>,
+        gamma: F,
+        log_t: usize,
+    ) -> Result<Self, CudaError> {
+        let count = windows.len();
+        let address = require_fr_slice(r_address)?;
+        if count == 1 {
+            let (_, words) = windows.first().ok_or(CudaError::InvariantViolation {
+                reason: "a single-window RAM RA reduction lost its packed column",
+            })?;
+            let eq_address = context.eq_evals(address)?;
+            return Self::new(context, words, &eq_address, cycle_points, gamma, log_t);
+        }
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a windowed RAM RA reduction needs a power-of-two window count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        let prefix_vars = log_t / 2;
+        let suffix_vars = log_t - prefix_vars;
+        if tail_rounds > suffix_vars {
+            return Err(CudaError::InvariantViolation {
+                reason: "a windowed RAM RA reduction cannot split more windows than the suffix \
+                         phase has cycle variables",
+            });
+        }
+        for point in cycle_points.all() {
+            if point.len() != log_t {
+                return Err(CudaError::LengthMismatch {
+                    expected: log_t,
+                    got: point.len(),
+                });
+            }
+        }
+        let window_log_t = log_t - tail_rounds;
+        let window_cycles = 1usize << window_log_t;
+        for (_, words) in windows {
+            if words.len() < window_cycles {
+                return Err(CudaError::LengthMismatch {
+                    expected: window_cycles,
+                    got: words.len(),
+                });
+            }
+        }
+
+        let mut suffix_points = Vec::with_capacity(TERMS);
+        let mut prefix_points = Vec::with_capacity(TERMS);
+        for point in cycle_points.all() {
+            let point = require_fr_slice(point)?;
+            suffix_points.push(point[..suffix_vars].to_vec());
+            prefix_points.push(point[suffix_vars..].to_vec());
+        }
+        let gamma = require_fr(gamma)?;
+        let coefficients = [Fr::from(1u64), gamma, gamma * gamma];
+
+        let suffix = &suffix_points;
+        let tasks: Vec<DeviceTask<'_, SuffixFold, CudaError>> = windows
+            .iter()
+            .enumerate()
+            .map(|(shard, (ordinal, words))| {
+                let task: DeviceTask<'_, SuffixFold, CudaError> = Box::new(move || {
+                    let device = context_for(*ordinal).ok_or(absent())?;
+                    let eq_address = device.eq_evals(address)?;
+                    let h = Self::gather_h(device, words, &eq_address, window_cycles)?;
+                    let mut parts = Vec::with_capacity(TERMS);
+                    for point in suffix {
+                        let eq_hi = device.eq_evals_shard(point, shard, count)?;
+                        parts.push(
+                            Self::fold_suffix(device, &h, &eq_hi, prefix_vars, window_log_t)?
+                                .to_host()?,
+                        );
+                    }
+                    Ok((h, parts))
+                });
+                task
+            })
+            .collect();
+
+        let mut h = Vec::with_capacity(count);
+        let mut sums: Option<Vec<Vec<Fr>>> = None;
+        for (window, parts) in fan_out(tasks)? {
+            match &mut sums {
+                None => sums = Some(parts),
+                Some(totals) => {
+                    if totals.len() != parts.len() {
+                        return Err(CudaError::LengthMismatch {
+                            expected: totals.len(),
+                            got: parts.len(),
+                        });
+                    }
+                    for (total, part) in totals.iter_mut().zip(&parts) {
+                        if total.len() != part.len() {
+                            return Err(CudaError::LengthMismatch {
+                                expected: total.len(),
+                                got: part.len(),
+                            });
+                        }
+                        for (slot, value) in total.iter_mut().zip(part) {
+                            *slot += *value;
+                        }
+                    }
+                }
+            }
+            h.push(window);
+        }
+        let sums = sums.ok_or(CudaError::InvariantViolation {
+            reason: "a windowed RAM RA reduction produced no suffix folds",
+        })?;
+
+        let mut p = Vec::with_capacity(TERMS);
+        let mut q = Vec::with_capacity(TERMS);
+        for (point, sum) in prefix_points.iter().zip(&sums) {
+            p.push(context.eq_evals(point)?);
+            q.push(context.upload(sum)?);
+        }
+        if q.len() != TERMS {
+            return Err(CudaError::LengthMismatch {
+                expected: TERMS,
+                got: q.len(),
+            });
+        }
+
+        Ok(Self {
             h,
             suffix_points,
             prefix_points,
@@ -101,6 +248,7 @@ impl DeviceRamRaReduction {
             phase: Phase::Prefix { p, q },
             log_t,
             prefix_vars,
+            tail_rounds,
             rounds_bound: 0,
             challenges: Vec::with_capacity(log_t),
         })
@@ -219,9 +367,7 @@ impl DeviceRamRaReduction {
 
     fn enter_suffix_phase(&mut self, context: &CudaKernelContext) -> Result<(), CudaError> {
         let reduced: Vec<Fr> = self.challenges.iter().rev().copied().collect();
-        let eq_prefix = context.eq_evals(&reduced)?;
-        let h_prime =
-            Self::fold_prefix(context, &self.h, &eq_prefix, self.prefix_vars, self.log_t)?;
+        let h_prime = self.fold_h_prime(context, &reduced)?;
 
         let mut eq_hi = Vec::with_capacity(TERMS);
         for index in 0..TERMS {
@@ -230,9 +376,43 @@ impl DeviceRamRaReduction {
             eq_hi.push(context.mul_scalar(&table, self.coefficients[index] * scale)?);
         }
 
-        self.h = context.alloc(0)?;
+        self.h = Vec::new();
         self.phase = Phase::Suffix { h_prime, eq_hi };
         Ok(())
+    }
+
+    fn fold_h_prime(
+        &self,
+        context: &CudaKernelContext,
+        reduced: &[Fr],
+    ) -> Result<DeviceFrVec, CudaError> {
+        match self.h.as_slice() {
+            [h] => {
+                let eq_prefix = context.eq_evals(reduced)?;
+                Self::fold_prefix(context, h, &eq_prefix, self.prefix_vars, self.log_t)
+            }
+            windows => {
+                let window_log_t = self.log_t - self.tail_rounds;
+                let prefix_vars = self.prefix_vars;
+                let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = windows
+                    .iter()
+                    .map(|h| {
+                        let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
+                            let device = context_for(h.ordinal()).ok_or(absent())?;
+                            let eq_prefix = device.eq_evals(reduced)?;
+                            Self::fold_prefix(device, h, &eq_prefix, prefix_vars, window_log_t)?
+                                .to_host()
+                        });
+                        task
+                    })
+                    .collect();
+                let mut flat = Vec::new();
+                for part in fan_out(tasks)? {
+                    flat.extend_from_slice(&part);
+                }
+                context.upload(&flat)
+            }
+        }
     }
 
     pub fn round_evals<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
@@ -414,6 +594,12 @@ impl DeviceRamRaReduction {
     }
 }
 
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a RAM RA reduction window names an absent device",
+    }
+}
+
 fn eq_mle(left: &[Fr], right: &[Fr]) -> Fr {
     let one = Fr::from(1u64);
     left.iter()
@@ -434,7 +620,7 @@ mod tests {
     use super::{CyclePoints, DeviceRamRaReduction};
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::pack::COLD;
-    use crate::cuda::common::testing::arb_point;
+    use crate::cuda::common::testing::{arb_point, fr};
 
     const LOG_T: usize = 6;
     const LOG_K: usize = 3;
@@ -492,6 +678,90 @@ mod tests {
 
     fn eq_table(point: &[Fr]) -> Vec<Fr> {
         EqPolynomial::new(point.to_vec()).evaluations()
+    }
+
+    #[test]
+    fn windowed_ram_ra_reduction_matches_the_whole_domain_round_for_round() {
+        use std::sync::Arc;
+
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let cycles = 1usize << LOG_T;
+        let indices = hot_indices(0x5A1D);
+        let words = packed(&indices);
+        let address: Vec<Fr> = (0..LOG_K).map(|i| fr(11 + 3 * i as u64)).collect();
+        let raf: Vec<Fr> = (0..LOG_T).map(|i| fr(29 + 7 * i as u64)).collect();
+        let read_write: Vec<Fr> = (0..LOG_T).map(|i| fr(31 + 13 * i as u64)).collect();
+        let val_check: Vec<Fr> = (0..LOG_T).map(|i| fr(37 + 17 * i as u64)).collect();
+        let gamma = fr(83);
+        let points = || CyclePoints {
+            raf: &raf,
+            read_write: &read_write,
+            val_check: &val_check,
+        };
+
+        for shards in [2usize, 4, 8] {
+            let device_words = context
+                .upload_u32_slice(&words)
+                .expect("upload the packed ram words");
+            let device_eq = context
+                .eq_evals(&address)
+                .expect("device eq over the address point");
+            let mut expected = DeviceRamRaReduction::new(
+                context,
+                &device_words,
+                &device_eq,
+                &points(),
+                gamma,
+                LOG_T,
+            )
+            .expect("whole-domain ram ra reduction");
+
+            let len = cycles / shards;
+            let windows: Vec<(usize, Arc<cudarc::driver::CudaSlice<u32>>)> = (0..shards)
+                .map(|shard| {
+                    (
+                        0usize,
+                        Arc::new(
+                            context
+                                .upload_u32_slice(&words[shard * len..(shard + 1) * len])
+                                .expect("upload a packed ram window"),
+                        ),
+                    )
+                })
+                .collect();
+            let mut got = DeviceRamRaReduction::new_windowed(
+                context,
+                &windows,
+                &address,
+                &points(),
+                gamma,
+                LOG_T,
+            )
+            .expect("windowed ram ra reduction");
+
+            for round in 0..LOG_T {
+                let want: Vec<Fr> = expected.round_evals(context).expect("whole round evals");
+                let have: Vec<Fr> = got.round_evals(context).expect("windowed round evals");
+                assert_eq!(
+                    have, want,
+                    "shards={shards} round {round}: the windowed reduction diverged",
+                );
+                let challenge = fr(600 + 19 * round as u64);
+                expected.bind(context, challenge).expect("whole bind");
+                got.bind(context, challenge).expect("windowed bind");
+            }
+
+            let want = expected.final_claim(context).expect("whole final claim");
+            let have = got.final_claim(context).expect("windowed final claim");
+            assert_eq!(have, want, "shards={shards}: the reduced claim diverged");
+            assert_ne!(
+                want,
+                Fr::from_u64(0),
+                "a degenerate fixture would hide a divergence",
+            );
+        }
     }
 
     proptest! {

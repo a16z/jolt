@@ -3,9 +3,12 @@ use std::sync::Arc;
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
+
+use super::coefficient::DeviceCoefficient;
 
 pub const COLLAPSE_AFTER_ROUNDS: usize = 5;
 
@@ -51,7 +54,7 @@ impl DeviceBytecodeRa {
                          word and evaluate at most eight round-polynomial lanes",
             });
         }
-        if pc.len() != cycles {
+        if pc.len() < cycles {
             return Err(CudaError::LengthMismatch {
                 expected: cycles,
                 got: pc.len(),
@@ -98,6 +101,49 @@ impl DeviceBytecodeRa {
             cycles,
             rounds_bound: 0,
         })
+    }
+
+    fn from_dense(
+        context: &CudaKernelContext,
+        columns: &[Vec<Fr>],
+        chunk_bits: usize,
+        tail_rounds: usize,
+    ) -> Result<Self, CudaError> {
+        let cycles = 1usize << tail_rounds;
+        let polys = columns.len();
+        if polys == 0 || columns.iter().any(|column| column.len() != cycles) {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: columns.first().map_or(0, Vec::len),
+            });
+        }
+        let mut flat = Vec::with_capacity(polys * cycles);
+        for column in columns {
+            flat.extend_from_slice(column);
+        }
+        Ok(Self {
+            pc: Arc::new(context.alloc_u32(0)?),
+            tables: context.alloc(0)?,
+            dense: Some(context.upload(&flat)?),
+            polys,
+            addresses: 1usize << chunk_bits,
+            chunk_bits,
+            cycles,
+            rounds_bound: 0,
+        })
+    }
+
+    fn window_scalars(&self, context: &CudaKernelContext) -> Result<Vec<Fr>, CudaError> {
+        if self.len() != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len(),
+            });
+        }
+        match &self.dense {
+            Some(dense) => dense.to_host(),
+            None => self.gather(context)?.to_host(),
+        }
     }
 
     pub const fn lanes(&self) -> usize {
@@ -356,6 +402,193 @@ impl DeviceBytecodeRa {
     }
 }
 
+pub(crate) struct BytecodeShard {
+    pub(crate) ordinal: usize,
+    pub(crate) one_hot: DeviceBytecodeRa,
+    pub(crate) coefficient: DeviceCoefficient,
+}
+
+pub(crate) struct ShardedBytecodeRa {
+    shards: Vec<BytecodeShard>,
+    collapsed: Option<BytecodeShard>,
+    chunk_bits: usize,
+    local_rounds: usize,
+    tail_rounds: usize,
+}
+
+impl ShardedBytecodeRa {
+    pub(crate) fn new(shards: Vec<BytecodeShard>, log_t: usize) -> Result<Self, CudaError> {
+        let count = shards.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded bytecode read-RAF family needs a power-of-two shard count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded bytecode read-RAF family cannot split more windows than cycle \
+                         rounds",
+            });
+        }
+        let chunk_bits = shards.first().map(|shard| shard.one_hot.chunk_bits).ok_or(
+            CudaError::InvariantViolation {
+                reason: "a sharded bytecode read-RAF family needs at least one shard",
+            },
+        )?;
+        if count == 1 {
+            let shard = shards
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-shard bytecode read-RAF family lost its state",
+                })?;
+            return Ok(Self {
+                shards: Vec::new(),
+                collapsed: Some(shard),
+                chunk_bits,
+                local_rounds: log_t,
+                tail_rounds: 0,
+            });
+        }
+        Ok(Self {
+            shards,
+            collapsed: None,
+            chunk_bits,
+            local_rounds: log_t - tail_rounds,
+            tail_rounds,
+        })
+    }
+
+    pub(crate) fn round_evals<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+        if let Some(shard) = &self.collapsed {
+            let context = context_for(shard.ordinal).ok_or(absent())?;
+            return shard
+                .one_hot
+                .round_evals(context, shard.coefficient.values());
+        }
+        let tasks: Vec<DeviceTask<'_, Vec<F>, CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<F>, CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard
+                        .one_hot
+                        .round_evals(context, shard.coefficient.values())
+                });
+                task
+            })
+            .collect();
+        let mut total: Vec<F> = Vec::new();
+        for part in fan_out(tasks)? {
+            if total.is_empty() {
+                total = part;
+                continue;
+            }
+            if part.len() != total.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: total.len(),
+                    got: part.len(),
+                });
+            }
+            for (slot, value) in total.iter_mut().zip(&part) {
+                *slot += *value;
+            }
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn bind<F: Field>(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+        if let Some(shard) = &mut self.collapsed {
+            let context = context_for(shard.ordinal).ok_or(absent())?;
+            shard.one_hot.bind(context, challenge)?;
+            return shard.coefficient.bind(context, challenge);
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.bind(context, challenge)?;
+                    shard.coefficient.bind(context, challenge)
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let shards = std::mem::take(&mut self.shards);
+        let tasks: Vec<DeviceTask<'_, (Vec<Fr>, Fr), CudaError>> = shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, (Vec<Fr>, Fr), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    Ok((
+                        shard.one_hot.window_scalars(context)?,
+                        shard.coefficient.window_scalar()?,
+                    ))
+                });
+                task
+            })
+            .collect();
+        let mut columns: Vec<Vec<Fr>> = Vec::new();
+        let mut coefficients = Vec::with_capacity(shards.len());
+        for (scalars, coefficient) in fan_out(tasks)? {
+            if columns.is_empty() {
+                columns = scalars.iter().map(|_| Vec::new()).collect();
+            }
+            if scalars.len() != columns.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: columns.len(),
+                    got: scalars.len(),
+                });
+            }
+            for (column, value) in columns.iter_mut().zip(&scalars) {
+                column.push(*value);
+            }
+            coefficients.push(coefficient);
+        }
+        self.collapsed = Some(BytecodeShard {
+            ordinal: 0,
+            one_hot: DeviceBytecodeRa::from_dense(
+                context,
+                &columns,
+                self.chunk_bits,
+                self.tail_rounds,
+            )?,
+            coefficient: DeviceCoefficient::from_host(context, &coefficients)?,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn final_claims<F: Field>(&self) -> Result<Vec<F>, CudaError> {
+        let shard = self
+            .collapsed
+            .as_ref()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded bytecode read-RAF family was asked for claims before its tail \
+                         rounds",
+            })?;
+        let context = context_for(shard.ordinal).ok_or(absent())?;
+        shard.one_hot.final_claims(context)
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a sharded bytecode read-RAF window names an absent device",
+    }
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -369,9 +602,108 @@ mod tests {
     use proptest::prelude::*;
 
     use super::{DeviceBytecodeRa, COLLAPSE_AFTER_ROUNDS};
+    use crate::cuda::bytecode_read_raf::coefficient::DeviceCoefficient;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::pack::COLD;
     use crate::cuda::common::testing::{arb_point, fr};
+
+    #[test]
+    fn sharded_bytecode_ra_matches_the_whole_domain_round_for_round() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        const LOG_T: usize = 8;
+        const CHUNK_BITS: usize = 4;
+        const POLYS: usize = 3;
+        const STAGES: usize = 3;
+        let cycles = 1usize << LOG_T;
+        let pc = column(0xB17E, cycles, 1u32 << (CHUNK_BITS * POLYS - 1), 3);
+        let chunk_points: Vec<Vec<Fr>> = (0..POLYS)
+            .map(|p| {
+                (0..CHUNK_BITS)
+                    .map(|i| fr(19 + 7 * (p * CHUNK_BITS + i) as u64))
+                    .collect()
+            })
+            .collect();
+        let stage_points: Vec<Vec<Fr>> = (0..STAGES)
+            .map(|s| {
+                (0..LOG_T)
+                    .map(|i| fr(53 + 11 * (s * LOG_T + i) as u64))
+                    .collect()
+            })
+            .collect();
+        let weights: Vec<Fr> = (0..STAGES).map(|s| fr(97 + 5 * s as u64)).collect();
+        let entry = fr(1_234);
+
+        let build = |base: usize, len: usize| {
+            DeviceBytecodeRa::new(
+                context,
+                Arc::new(
+                    context
+                        .upload_u32_slice(&pc[base..base + len])
+                        .expect("upload the pc window"),
+                ),
+                len,
+                CHUNK_BITS,
+                &chunk_points,
+            )
+            .expect("window bytecode one-hot family")
+        };
+
+        for shards in [2usize, 4, 8] {
+            let mut expected = build(0, cycles);
+            let mut expected_coefficient =
+                DeviceCoefficient::new(context, &stage_points, &weights, entry, LOG_T)
+                    .expect("whole coefficient");
+            let len = cycles / shards;
+            let windows: Vec<super::BytecodeShard> = (0..shards)
+                .map(|shard| super::BytecodeShard {
+                    ordinal: 0,
+                    one_hot: build(shard * len, len),
+                    coefficient: DeviceCoefficient::new_window(
+                        context,
+                        &stage_points,
+                        &weights,
+                        entry,
+                        LOG_T,
+                        shard,
+                        shards,
+                    )
+                    .expect("window coefficient"),
+                })
+                .collect();
+            let mut got =
+                super::ShardedBytecodeRa::new(windows, LOG_T).expect("sharded bytecode family");
+
+            for round in 0..LOG_T {
+                let want: Vec<Fr> = expected
+                    .round_evals(context, expected_coefficient.values())
+                    .expect("whole round evals");
+                let have: Vec<Fr> = got.round_evals().expect("sharded round evals");
+                assert_eq!(
+                    have, want,
+                    "shards={shards} round {round}: a bytecode window's coefficient-weighted lane \
+                     sums must add to the whole domain's",
+                );
+                let challenge = fr(400 + 17 * round as u64);
+                expected.bind(context, challenge).expect("whole bind");
+                expected_coefficient
+                    .bind(context, challenge)
+                    .expect("whole coefficient bind");
+                got.bind(challenge, round).expect("sharded bind");
+            }
+
+            let want: Vec<Fr> = expected.final_claims(context).expect("whole final claims");
+            let have: Vec<Fr> = got.final_claims().expect("sharded final claims");
+            assert_eq!(have, want, "shards={shards}: the final claims diverged");
+            assert_eq!(want.len(), POLYS);
+            assert_ne!(
+                want.first().copied(),
+                Some(Fr::from_u64(0)),
+                "a degenerate fixture would hide a divergence",
+            );
+        }
+    }
 
     fn mix(seed: u64, cycle: usize) -> u64 {
         let value = seed
