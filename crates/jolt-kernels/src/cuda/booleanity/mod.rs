@@ -10,22 +10,22 @@ use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_witness::JoltWitnessPlane;
 
 use super::{require_context, CudaBackend};
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device_columns::{device_trace_columns, ANY_SPAN};
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::device_columns::{windowed_trace_columns, ANY_SPAN};
+use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-use one_hot::DeviceBooleanityRa;
+use one_hot::{BooleanityShard, DeviceBooleanityRa, ShardedBooleanityRa};
 
 pub(crate) mod address;
 pub(crate) mod masses;
 pub(crate) mod one_hot;
 
 pub struct BooleanityCycleKernel<F: Field> {
-    context: &'static CudaKernelContext,
     relation: Booleanity<F>,
-    one_hot: DeviceBooleanityRa,
+    one_hot: ShardedBooleanityRa<F>,
     eq: DeviceSplitEq<F>,
     gamma: F,
     rounds_bound: usize,
@@ -50,17 +50,12 @@ impl<F: Field> BooleanityCycleKernel<F> {
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda booleanity cycle-phase bind",
         };
-        self.one_hot
-            .bind(self.context, challenge)
-            .map_err(|_| failed())?;
+        let bound = self.rounds_bound;
+        self.one_hot.bind(challenge, bound).map_err(|_| failed())?;
         self.eq.bind(challenge);
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
-            self.finals = Some(
-                self.one_hot
-                    .final_claims(self.context)
-                    .map_err(|_| failed())?,
-            );
+            self.finals = Some(self.one_hot.final_claims().map_err(|_| failed())?);
         }
         Ok(())
     }
@@ -80,12 +75,11 @@ impl<F: Field> ProveRounds<F> for BooleanityCycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let (constant, quadratic) = self
-            .one_hot
-            .round_coefficients(self.context, &self.eq)
-            .map_err(|_| SumcheckError::MissingEvaluationSource {
+        let (constant, quadratic) = self.one_hot.round_coefficients(&self.eq).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
                 kind: "cuda booleanity cycle-phase round",
-            })?;
+            }
+        })?;
         let mut coefficients = self
             .eq
             .gruen_poly_deg_3(constant, quadratic, previous_claim)
@@ -152,7 +146,6 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
-        let context = require_context()?;
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         if relation.r_address().len() != dimensions.log_k_chunk
@@ -178,25 +171,46 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
 
         let layout = dimensions.layout;
         let families = [layout.instruction(), layout.bytecode(), layout.ram()];
-        let cycles = 1usize << dimensions.log_t;
-        let columns =
-            device_trace_columns::<F>(context, session, witness, cycles, families, ANY_SPAN)?;
-
-        let one_hot = DeviceBooleanityRa::from_device(
-            context,
-            columns,
-            cycles,
-            dimensions.log_k_chunk,
-            families,
-            relation.r_address(),
-            inputs.challenges.gamma,
-        )
-        .map_err(|_| KernelError::Unsupported {
-            reason: "the CUDA booleanity kernel packs each family's committed chunk indices into \
-                     one word per cycle",
-        })?;
+        let log_t = dimensions.log_t;
+        let cycles = 1usize << log_t;
+        let windows = witness_windows(cycles);
+        let shards = windows.len();
+        let mut one_hot_shards = Vec::with_capacity(shards);
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a booleanity window names an absent device",
+            })?;
+            let columns = windowed_trace_columns::<F>(
+                device, session, witness, cycles, window, families, ANY_SPAN,
+            )?;
+            one_hot_shards.push(BooleanityShard {
+                ordinal,
+                one_hot: DeviceBooleanityRa::from_device(
+                    device,
+                    columns,
+                    window.len,
+                    dimensions.log_k_chunk,
+                    families,
+                    relation.r_address(),
+                    inputs.challenges.gamma,
+                )
+                .map_err(|_| KernelError::Unsupported {
+                    reason: "the CUDA booleanity kernel packs each family's committed chunk \
+                             indices into one word per cycle",
+                })?,
+                eq: DeviceSplitEq::new_window_with_scaling(
+                    device,
+                    relation.reference_cycle(),
+                    BindingOrder::LowToHigh,
+                    address_scalar,
+                    ordinal,
+                    shards,
+                )
+                .map_err(|_| unsupported())?,
+            });
+        }
         let eq = DeviceSplitEq::new_with_scaling(
-            context,
+            require_context()?,
             relation.reference_cycle(),
             BindingOrder::LowToHigh,
             address_scalar,
@@ -204,9 +218,8 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
         .map_err(|_| unsupported())?;
 
         Ok(Box::new(BooleanityCycleKernel {
-            context,
             relation: relation.clone(),
-            one_hot,
+            one_hot: ShardedBooleanityRa::new(one_hot_shards, log_t)?,
             eq,
             gamma: inputs.challenges.gamma,
             rounds_bound: 0,

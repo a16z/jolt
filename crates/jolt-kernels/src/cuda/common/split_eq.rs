@@ -114,6 +114,26 @@ impl<F: Field> DeviceSplitEq<F> {
         )
     }
 
+    pub fn new_window_with_scaling(
+        context: &CudaKernelContext,
+        point: &[F],
+        binding_order: BindingOrder,
+        scaling: F,
+        shard: usize,
+        shards: usize,
+    ) -> Result<Self, CudaError> {
+        Self::with_host(
+            context,
+            point,
+            binding_order,
+            shard,
+            shards,
+            |point, binding_order| {
+                GruenSplitEqPolynomial::<F>::new_with_scaling(point, binding_order, Some(scaling))
+            },
+        )
+    }
+
     fn with_host(
         context: &CudaKernelContext,
         point: &[F],

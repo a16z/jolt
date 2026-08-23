@@ -3,9 +3,10 @@ use std::sync::Arc;
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::device_columns::DeviceTraceColumns;
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
@@ -61,9 +62,9 @@ impl DeviceBooleanityRa {
                          word address into one 32-bit word each",
             });
         }
-        if columns.pc.len() != cycles
-            || columns.ram.len() != cycles
-            || columns.lookup.len() != 2 * cycles
+        if columns.pc.len() < cycles
+            || columns.ram.len() < cycles
+            || columns.lookup.len() < 2 * cycles
         {
             return Err(CudaError::LengthMismatch {
                 expected: cycles,
@@ -144,6 +145,58 @@ impl DeviceBooleanityRa {
             table = next;
         }
         Ok(table)
+    }
+
+    fn from_dense(
+        context: &CudaKernelContext,
+        columns: &[Vec<Fr>],
+        rho: &DeviceFrVec,
+        families: [usize; 3],
+        chunk_bits: usize,
+        tail_rounds: usize,
+    ) -> Result<Self, CudaError> {
+        let cycles = 1usize << tail_rounds;
+        let polys = families.iter().sum::<usize>();
+        if columns.len() != polys || columns.iter().any(|column| column.len() != cycles) {
+            return Err(CudaError::LengthMismatch {
+                expected: polys,
+                got: columns.len(),
+            });
+        }
+        let mut flat = Vec::with_capacity(polys * cycles);
+        for column in columns {
+            flat.extend_from_slice(column);
+        }
+        Ok(Self {
+            lookup: Arc::new(context.alloc_u64(0)?),
+            pc: Arc::new(context.alloc_u32(0)?),
+            ram: Arc::new(context.alloc_u32(0)?),
+            tables: context.alloc(0)?,
+            rho: rho.try_clone()?,
+            dense: Some(context.upload(&flat)?),
+            families,
+            addresses: 1usize << chunk_bits,
+            chunk_bits,
+            cycles,
+            rounds_bound: 0,
+        })
+    }
+
+    fn window_scalars(&self, context: &CudaKernelContext) -> Result<Vec<Fr>, CudaError> {
+        if self.len() != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len(),
+            });
+        }
+        match &self.dense {
+            Some(dense) => dense.to_host(),
+            None => self.gather(context)?.to_host(),
+        }
+    }
+
+    fn rho(&self) -> &DeviceFrVec {
+        &self.rho
     }
 
     pub fn polys(&self) -> usize {
@@ -427,6 +480,180 @@ impl DeviceBooleanityRa {
     }
 }
 
+pub(crate) struct BooleanityShard<F: Field> {
+    pub(crate) ordinal: usize,
+    pub(crate) one_hot: DeviceBooleanityRa,
+    pub(crate) eq: DeviceSplitEq<F>,
+}
+
+pub(crate) struct ShardedBooleanityRa<F: Field> {
+    shards: Vec<BooleanityShard<F>>,
+    collapsed: Option<DeviceBooleanityRa>,
+    families: [usize; 3],
+    chunk_bits: usize,
+    local_rounds: usize,
+    tail_rounds: usize,
+}
+
+impl<F: Field> ShardedBooleanityRa<F> {
+    pub(crate) fn new(shards: Vec<BooleanityShard<F>>, log_t: usize) -> Result<Self, CudaError> {
+        let count = shards.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded booleanity family needs a power-of-two shard count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        let (families, chunk_bits) = shards
+            .first()
+            .map(|shard| (shard.one_hot.families, shard.one_hot.chunk_bits))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded booleanity family needs at least one shard",
+            })?;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded booleanity family cannot split more windows than cycle rounds",
+            });
+        }
+        if count == 1 {
+            let shard = shards
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-shard booleanity family lost its state",
+                })?;
+            return Ok(Self {
+                shards: Vec::new(),
+                collapsed: Some(shard.one_hot),
+                families,
+                chunk_bits,
+                local_rounds: log_t,
+                tail_rounds: 0,
+            });
+        }
+        Ok(Self {
+            shards,
+            collapsed: None,
+            families,
+            chunk_bits,
+            local_rounds: log_t - tail_rounds,
+            tail_rounds,
+        })
+    }
+
+    pub(crate) fn round_coefficients(
+        &self,
+        whole_eq: &DeviceSplitEq<F>,
+    ) -> Result<(F, F), CudaError> {
+        if let Some(collapsed) = &self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.round_coefficients(context, whole_eq);
+        }
+        let tasks: Vec<DeviceTask<'_, (F, F), CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, (F, F), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.round_coefficients(context, &shard.eq)
+                });
+                task
+            })
+            .collect();
+        let mut total = (F::zero(), F::zero());
+        for part in fan_out(tasks)? {
+            total.0 += part.0;
+            total.1 += part.1;
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn bind(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+        if let Some(collapsed) = &mut self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.bind(context, challenge);
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.bind(context, challenge)?;
+                    shard.eq.bind(challenge);
+                    Ok(())
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let shards = std::mem::take(&mut self.shards);
+        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.window_scalars(context)
+                });
+                task
+            })
+            .collect();
+        let mut columns: Vec<Vec<Fr>> = Vec::new();
+        for scalars in fan_out(tasks)? {
+            if columns.is_empty() {
+                columns = scalars.iter().map(|_| Vec::new()).collect();
+            }
+            if scalars.len() != columns.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: columns.len(),
+                    got: scalars.len(),
+                });
+            }
+            for (column, value) in columns.iter_mut().zip(&scalars) {
+                column.push(*value);
+            }
+        }
+        let rho = shards.first().map(|shard| shard.one_hot.rho()).ok_or(
+            CudaError::InvariantViolation {
+                reason: "a sharded booleanity family lost its shards before collapsing",
+            },
+        )?;
+        self.collapsed = Some(DeviceBooleanityRa::from_dense(
+            context,
+            &columns,
+            rho,
+            self.families,
+            self.chunk_bits,
+            self.tail_rounds,
+        )?);
+        Ok(())
+    }
+
+    pub(crate) fn final_claims(&self) -> Result<Vec<F>, CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        self.collapsed
+            .as_ref()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded booleanity family was asked for claims before its tail rounds",
+            })?
+            .final_claims(context)
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a sharded booleanity window names an absent device",
+    }
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -444,7 +671,119 @@ mod tests {
     use crate::cuda::common::device_columns::DeviceTraceColumns;
     use crate::cuda::common::one_hot_witness::PackedColumns;
     use crate::cuda::common::pack::COLD;
+    use crate::cuda::common::split_eq::DeviceSplitEq;
     use crate::cuda::common::testing::{arb_point, fr};
+
+    #[test]
+    fn sharded_booleanity_ra_matches_the_whole_domain_round_for_round() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        const LOG_T: usize = 8;
+        const CHUNK_BITS: usize = 3;
+        const FAMILIES: [usize; 3] = [2, 1, 1];
+        let cycles = 1usize << LOG_T;
+        let gamma = fr(37);
+        let all = columns(0xB001, cycles, 5, 6, 4);
+        let address_point: Vec<Fr> = (0..CHUNK_BITS).map(|i| fr(13 + 5 * i as u64)).collect();
+        let cycle_point: Vec<Fr> = (0..LOG_T).map(|i| fr(47 + 9 * i as u64)).collect();
+        let scaling = fr(101);
+
+        let build = |base: usize, len: usize| {
+            let window = DeviceTraceColumns {
+                lookup: Arc::new(
+                    context
+                        .upload_u64_slice(&all.lookup[base * 2..(base + len) * 2])
+                        .expect("upload lookup window"),
+                ),
+                pc: Arc::new(
+                    context
+                        .upload_u32_slice(&all.pc[base..base + len])
+                        .expect("upload pc window"),
+                ),
+                ram: Arc::new(
+                    context
+                        .upload_u32_slice(&all.ram[base..base + len])
+                        .expect("upload ram window"),
+                ),
+            };
+            DeviceBooleanityRa::from_device(
+                context,
+                window,
+                len,
+                CHUNK_BITS,
+                FAMILIES,
+                &address_point,
+                gamma,
+            )
+            .expect("window booleanity family")
+        };
+
+        for shards in [2usize, 4] {
+            let mut expected = build(0, cycles);
+            let mut expected_eq = DeviceSplitEq::<Fr>::new_with_scaling(
+                context,
+                &cycle_point,
+                BindingOrder::LowToHigh,
+                scaling,
+            )
+            .expect("whole split-eq");
+            let len = cycles / shards;
+            let windows: Vec<super::BooleanityShard<Fr>> = (0..shards)
+                .map(|shard| super::BooleanityShard {
+                    ordinal: 0,
+                    one_hot: build(shard * len, len),
+                    eq: DeviceSplitEq::<Fr>::new_window_with_scaling(
+                        context,
+                        &cycle_point,
+                        BindingOrder::LowToHigh,
+                        scaling,
+                        shard,
+                        shards,
+                    )
+                    .expect("window split-eq"),
+                })
+                .collect();
+            let mut got =
+                super::ShardedBooleanityRa::new(windows, LOG_T).expect("sharded booleanity");
+            let mut got_eq = DeviceSplitEq::<Fr>::new_with_scaling(
+                context,
+                &cycle_point,
+                BindingOrder::LowToHigh,
+                scaling,
+            )
+            .expect("tail split-eq");
+
+            for round in 0..LOG_T {
+                let want: (Fr, Fr) = expected
+                    .round_coefficients(context, &expected_eq)
+                    .expect("whole round coefficients");
+                let have: (Fr, Fr) = got
+                    .round_coefficients(&got_eq)
+                    .expect("sharded round coefficients");
+                assert_eq!(
+                    have, want,
+                    "shards={shards} round {round}: a booleanity window's eq-weighted mass sums \
+                     must add to the whole domain's",
+                );
+                let challenge = fr(700 + 13 * round as u64);
+                expected.bind(context, challenge).expect("whole bind");
+                expected_eq.bind(challenge);
+                got.bind(challenge, round).expect("sharded bind");
+                got_eq.bind(challenge);
+            }
+
+            let want: Vec<Fr> = expected.final_claims(context).expect("whole final claims");
+            let have: Vec<Fr> = got.final_claims().expect("sharded final claims");
+            assert_eq!(have, want, "shards={shards}: the final claims diverged");
+            assert_eq!(want.len(), FAMILIES.iter().sum::<usize>());
+            assert_ne!(
+                want.first().copied(),
+                Some(Fr::from_u64(0)),
+                "a degenerate fixture would hide a divergence",
+            );
+        }
+    }
 
     fn mix(seed: u64, cycle: usize, salt: u64) -> u64 {
         let value = seed

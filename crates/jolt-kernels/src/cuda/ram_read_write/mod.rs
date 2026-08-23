@@ -10,14 +10,15 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_device_trace;
+use crate::cuda::witness::session_window_residency;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
-use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
+use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
+use crate::cuda::common::read_write_matrix::{CycleShard, ShardedReadWriteMatrix};
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -31,9 +32,9 @@ pub struct RamReadWriteKernel<F: Field> {
     relation: RamReadWriteChecking<F>,
     log_t: usize,
     log_k: usize,
-    cycle: Option<DeviceReadWriteMatrix>,
+    cycle: Option<ShardedReadWriteMatrix<F>>,
     address: Option<DeviceAddressMajorMatrix>,
-    inc: DeviceFrVec,
+    inc: Option<DeviceFrVec>,
     eq: DeviceSplitEq<F>,
     merged_eq: Option<DeviceFrVec>,
     val_init: Vec<Fr>,
@@ -45,7 +46,10 @@ pub struct RamReadWriteKernel<F: Field> {
 impl<F: Field> allocative::Allocative for RamReadWriteKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("inc"), self.inc.device_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("inc"),
+            self.inc.as_ref().map_or(0, DeviceFrVec::device_bytes),
+        );
         visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
         visitor.visit_simple(
             allocative::Key::new("merged_eq"),
@@ -65,16 +69,9 @@ impl<F: Field> RamReadWriteKernel<F> {
             kind: "cuda RAM read-write bind",
         };
         if self.rounds_bound < self.log_t {
+            let bound = self.rounds_bound;
             let cycle = self.cycle.as_mut().ok_or_else(failed)?;
-            cycle.bind(self.context, challenge).map_err(|_| failed())?;
-            self.inc = self
-                .context
-                .bind(
-                    &self.inc,
-                    require_fr(challenge).map_err(|_| failed())?,
-                    BindingOrder::LowToHigh,
-                )
-                .map_err(|_| failed())?;
+            cycle.bind(challenge, bound).map_err(|_| failed())?;
             self.eq.bind(challenge);
             self.rounds_bound += 1;
             if self.rounds_bound == self.log_t {
@@ -95,10 +92,16 @@ impl<F: Field> RamReadWriteKernel<F> {
 
     fn transition(&mut self) -> Result<(), CudaError> {
         self.merged_eq = Some(self.eq.merge(self.context)?);
-        let cycle = self.cycle.take().ok_or(CudaError::InvariantViolation {
-            reason: "RAM read-write phase 1 ended without a cycle-major matrix",
-        })?;
+        let (cycle, inc) = self
+            .cycle
+            .as_mut()
+            .and_then(ShardedReadWriteMatrix::take_parts)
+            .ok_or(CudaError::InvariantViolation {
+                reason: "RAM read-write phase 1 ended without a cycle-major matrix",
+            })?;
+        self.cycle = None;
         self.address = Some(cycle.to_address_major(self.context, &self.val_init)?);
+        self.inc = Some(inc);
         Ok(())
     }
 
@@ -136,17 +139,16 @@ impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
         };
         if round < self.log_t {
             let cycle = self.cycle.as_ref().ok_or_else(failed)?;
-            let coeffs: [F; 2] = cycle
-                .quadratic_coeffs(self.context, &self.inc, &self.eq)
-                .map_err(|_| failed())?;
+            let coeffs: [F; 2] = cycle.quadratic_coeffs(&self.eq).map_err(|_| failed())?;
             return Ok(self
                 .eq
                 .gruen_poly_deg_3(coeffs[0], coeffs[1], previous_claim));
         }
         let address = self.address.as_ref().ok_or_else(failed)?;
         let merged_eq = self.merged_eq.as_ref().ok_or_else(failed)?;
+        let inc = self.inc.as_ref().ok_or_else(failed)?;
         let evals: [F; 2] = address
-            .round_evals(self.context, &self.inc, merged_eq)
+            .round_evals(self.context, inc, merged_eq)
             .map_err(|_| failed())?;
         let mut coefficients =
             UnivariatePoly::from_evals_and_hint(previous_claim, &evals).into_coefficients();
@@ -173,11 +175,14 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
         let [ra, val] = self.finals.ok_or(SumcheckKernelError::InvariantViolation {
             reason: "CUDA RAM read-write never materialized its bound tables",
         })?;
-        let inc = self.inc.first().ok().and_then(fr_into).ok_or(
-            SumcheckKernelError::InvariantViolation {
+        let inc = self
+            .inc
+            .as_ref()
+            .and_then(|inc| inc.first().ok())
+            .and_then(fr_into)
+            .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "CUDA RAM read-write increment readback failed",
-            },
-        )?;
+            })?;
         Ok(RamReadWriteOutputClaims { val, ra, inc })
     }
 }
@@ -212,10 +217,29 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
             reason: "CUDA kernels support only the BN254 scalar field",
         })?;
         let cycles = 1usize << log_t;
-        let trace = session_device_trace(context, session, witness, cycles)?;
-        let rows = device_rows::DeviceRamRows::from_device(&trace, 1usize << log_k, cycles)?;
-        let cycle = rows.matrix(context, gamma)?;
-        let inc = rows.inc(context)?;
+        let windows = witness_windows(cycles);
+        let shards = windows.len();
+        let mut cycle_shards = Vec::with_capacity(shards);
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a RAM read-write window names an absent device",
+            })?;
+            let (trace, _) = session_window_residency(device, session, witness, cycles, window)?;
+            let rows =
+                device_rows::DeviceRamRows::from_device(&trace, 1usize << log_k, window.len)?;
+            cycle_shards.push(CycleShard {
+                ordinal,
+                matrix: rows.matrix(device, gamma)?,
+                inc: rows.inc(device)?,
+                eq: DeviceSplitEq::new_window(
+                    device,
+                    tau_low,
+                    BindingOrder::LowToHigh,
+                    ordinal,
+                    shards,
+                )?,
+            });
+        }
         let val_init = require_fr_slice(
             &witness.oracle_table(JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamValInit))?,
         )?
@@ -231,9 +255,9 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
             relation: relation.clone(),
             log_t,
             log_k,
-            cycle: Some(cycle),
+            cycle: Some(ShardedReadWriteMatrix::new(cycle_shards, log_t)?),
             address: None,
-            inc,
+            inc: None,
             eq: DeviceSplitEq::new(context, tau_low, BindingOrder::LowToHigh)?,
             merged_eq: None,
             val_init,
