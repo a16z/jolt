@@ -3,12 +3,191 @@ use jolt_field::Field;
 use jolt_riscv::InstructionFlags as InstructionFlagKind;
 use jolt_witness::backend::cuda::{instruction_flag_bit, DeviceAtomColumns, DeviceTrace};
 
+pub(crate) struct ColumnShard<F: Field> {
+    pub(crate) ordinal: usize,
+    pub(crate) columns: DeviceInstructionColumns,
+    pub(crate) eq: DeviceSplitEq<F>,
+    pub(crate) form: DeviceSumOfProducts,
+}
+
+pub(crate) struct ShardedInstructionColumns<F: Field> {
+    shards: Vec<ColumnShard<F>>,
+    collapsed: Option<DeviceInstructionColumns>,
+    local_rounds: usize,
+    tail_rounds: usize,
+}
+
+impl<F: Field> ShardedInstructionColumns<F> {
+    pub(crate) fn new(shards: Vec<ColumnShard<F>>, log_t: usize) -> Result<Self, CudaError> {
+        let count = shards.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded instruction-input column set needs a power-of-two shard count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded instruction-input column set cannot split more windows than \
+                         cycle rounds",
+            });
+        }
+        if count == 1 {
+            let shard = shards
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-shard instruction-input column set lost its state",
+                })?;
+            return Ok(Self {
+                shards: Vec::new(),
+                collapsed: Some(shard.columns),
+                local_rounds: log_t,
+                tail_rounds: 0,
+            });
+        }
+        Ok(Self {
+            shards,
+            collapsed: None,
+            local_rounds: log_t - tail_rounds,
+            tail_rounds,
+        })
+    }
+
+    pub(crate) fn round_endpoints(
+        &self,
+        form: &DeviceSumOfProducts,
+        whole_eq: &DeviceSplitEq<F>,
+    ) -> Result<(F, F), CudaError> {
+        if let Some(collapsed) = &self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            let half = collapsed.len() / 2;
+            return form.round_gruen_endpoints(context, &collapsed.handles(), half, whole_eq);
+        }
+        let tasks: Vec<DeviceTask<'_, (F, F), CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, (F, F), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    let half = shard.columns.len() / 2;
+                    shard.form.round_gruen_endpoints(
+                        context,
+                        &shard.columns.handles(),
+                        half,
+                        &shard.eq,
+                    )
+                });
+                task
+            })
+            .collect();
+        let mut total = (F::zero(), F::zero());
+        for part in fan_out(tasks)? {
+            total.0 += part.0;
+            total.1 += part.1;
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn whole(&self) -> Result<&DeviceInstructionColumns, CudaError> {
+        self.collapsed.as_ref().ok_or(CudaError::NotImplemented {
+            kernel: "the instruction-input eval-point basis is the single-device correctness \
+                         reference; it does not drive a windowed column set",
+        })
+    }
+
+    pub(crate) fn bind(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+        if let Some(collapsed) = &mut self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.bind(context, challenge);
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.columns.bind(context, challenge)?;
+                    shard.eq.bind(challenge);
+                    Ok(())
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let shards = std::mem::take(&mut self.shards);
+        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
+                    let _ = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.columns.window_scalars()
+                });
+                task
+            })
+            .collect();
+        let mut columns: Vec<Vec<Fr>> = Vec::new();
+        for scalars in fan_out(tasks)? {
+            if columns.is_empty() {
+                columns = scalars.iter().map(|_| Vec::new()).collect();
+            }
+            if scalars.len() != columns.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: columns.len(),
+                    got: scalars.len(),
+                });
+            }
+            for (column, value) in columns.iter_mut().zip(&scalars) {
+                column.push(*value);
+            }
+        }
+        let expected = 1usize << self.tail_rounds;
+        if columns.iter().any(|column| column.len() != expected) {
+            return Err(CudaError::LengthMismatch {
+                expected,
+                got: columns.first().map_or(0, Vec::len),
+            });
+        }
+        self.collapsed = Some(DeviceInstructionColumns::from_dense(context, &columns)?);
+        Ok(())
+    }
+
+    pub(crate) fn finals<G: Field>(&self) -> Result<Vec<G>, CudaError> {
+        self.collapsed
+            .as_ref()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded instruction-input column set was asked for finals before its \
+                         tail rounds",
+            })?
+            .finals()
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a sharded instruction-input window names an absent device",
+    }
+}
+
 #[cfg(test)]
 use super::witness::Packed;
 use super::witness::{self, COLUMNS, LAYOUT, NARROW, SIGN_BIT_BASE, WIDE};
+use crate::cuda::common::context::context_for;
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::split_eq::DeviceSplitEq;
+use crate::cuda::common::sum_of_products::DeviceSumOfProducts;
+use jolt_field::Fr;
 
 pub struct DeviceInstructionColumns {
     columns: Vec<DeviceFrVec>,
@@ -152,6 +331,43 @@ impl DeviceInstructionColumns {
             *column = context.bind_rows(column, len, scalar)?;
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_dense_for_test(
+        context: &CudaKernelContext,
+        columns: &[Vec<Fr>],
+    ) -> Result<Self, CudaError> {
+        Self::from_dense(context, columns)
+    }
+
+    fn from_dense(context: &CudaKernelContext, columns: &[Vec<Fr>]) -> Result<Self, CudaError> {
+        if columns.len() != COLUMNS {
+            return Err(CudaError::LengthMismatch {
+                expected: COLUMNS,
+                got: columns.len(),
+            });
+        }
+        Ok(Self {
+            columns: columns
+                .iter()
+                .map(|column| context.upload(column))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+
+    fn window_scalars(&self) -> Result<Vec<Fr>, CudaError> {
+        let mut scalars = Vec::with_capacity(self.columns.len());
+        for column in &self.columns {
+            if column.len() != 1 {
+                return Err(CudaError::LengthMismatch {
+                    expected: 1,
+                    got: column.len(),
+                });
+            }
+            scalars.push(column.first()?);
+        }
+        Ok(scalars)
     }
 
     pub fn finals<F: Field>(&self) -> Result<Vec<F>, CudaError> {

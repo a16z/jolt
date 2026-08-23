@@ -214,6 +214,11 @@ impl DeviceSumOfProducts {
                 got: eq.e_out_current().len() * e_in_len,
             });
         }
+        context.require_owned(self.offsets.ordinal())?;
+        for table in tables {
+            context.require_owned(table.ordinal())?;
+        }
+        context.require_owned(eq.e_out_current().ordinal())?;
 
         let half_count = CudaKernelContext::count_of(half)?;
         let terms = CudaKernelContext::count_of(self.terms)?;

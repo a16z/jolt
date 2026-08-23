@@ -9,24 +9,27 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::{session_atom_columns, session_device_trace};
+use crate::cuda::witness::session_window_residency;
 
 use super::{require_context, CudaBackend};
-use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::context::{context_for, CudaKernelContext};
+use crate::cuda::common::devices::witness_windows;
+use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::SumcheckKernelError;
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use jolt_poly::BindingOrder;
 
 pub(crate) mod columns;
 pub(crate) mod rounds;
 pub(crate) mod witness;
 
-use columns::DeviceInstructionColumns;
+use columns::{ColumnShard, DeviceInstructionColumns, ShardedInstructionColumns};
 use rounds::{Basis, RoundBasis};
 
 pub struct InstructionInputKernel<F: Field> {
     context: &'static CudaKernelContext,
     relation: InstructionInput<F>,
-    columns: DeviceInstructionColumns,
+    columns: ShardedInstructionColumns<F>,
     basis: Basis<F>,
     rounds_bound: usize,
     finals: Option<Vec<F>>,
@@ -49,9 +52,8 @@ impl<F: Field> InstructionInputKernel<F> {
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda instruction input-virtualization bind",
         };
-        self.columns
-            .bind(self.context, challenge)
-            .map_err(|_| failed())?;
+        let bound = self.rounds_bound;
+        self.columns.bind(challenge, bound).map_err(|_| failed())?;
         self.basis
             .bind(self.context, challenge)
             .map_err(|_| failed())?;
@@ -149,20 +151,35 @@ pub(crate) fn prepare_with_basis<F: Field>(
     }
 
     let cycles = 1usize << log_t;
-    let trace = session_device_trace(context, session, witness, cycles)?;
-    let atoms = session_atom_columns(context, session, witness, cycles)?;
-    let columns = DeviceInstructionColumns::from_device(context, &trace, &atoms, cycles)?;
-    let basis = Basis::new(
-        context,
-        basis,
-        relation.product_remainder_opening_point(),
-        inputs.challenges.gamma,
-    )?;
+    let point = relation.product_remainder_opening_point();
+    let windows = if basis == RoundBasis::Gruen {
+        witness_windows(cycles)
+    } else {
+        vec![crate::cuda::common::devices::CycleWindow {
+            start: 0,
+            len: cycles,
+        }]
+    };
+    let shards = windows.len();
+    let mut column_shards = Vec::with_capacity(shards);
+    for (ordinal, window) in windows.iter().enumerate() {
+        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "an instruction-input window names an absent device",
+        })?;
+        let (trace, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+        column_shards.push(ColumnShard {
+            ordinal,
+            columns: DeviceInstructionColumns::from_device(device, &trace, &atoms, window.len)?,
+            eq: DeviceSplitEq::new_window(device, point, BindingOrder::LowToHigh, ordinal, shards)?,
+            form: rounds::gruen_form(device, inputs.challenges.gamma)?,
+        });
+    }
+    let basis = Basis::new(context, basis, point, inputs.challenges.gamma)?;
 
     Ok(InstructionInputKernel {
         context,
         relation: relation.clone(),
-        columns,
+        columns: ShardedInstructionColumns::new(column_shards, log_t)?,
         basis,
         rounds_bound: 0,
         finals: None,
