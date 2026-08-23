@@ -7,8 +7,10 @@ instruction fragments imported by those proofs.
 The Fp64 proofs cover scalar addition, subtraction, and multiplication for
 `Prime64Offset59` on AArch64 and x86-64. They include baseline x86-64 and BMI2
 multiplication. Production keeps its faster generic Rust implementation. An
-artifact checker confirms byte identity for Linux x86-64 and for both Darwin
-and Linux AArch64. Darwin and Linux AArch64 use separate exact objects and
+artifact checker confirms exact code through `ret` for Linux x86-64 and exact
+byte identity for both Darwin and Linux AArch64. Linux x86-64 permits only
+decoded one byte `int3` alignment padding after `ret`. Darwin and Linux
+AArch64 use separate exact objects and
 separate theorems because Rust can schedule independent instructions and choose
 temporary registers differently on each target. On Darwin x86-64, the checker
 checks one exact compiler frame around the proved sequence. No Fp64 proof uses

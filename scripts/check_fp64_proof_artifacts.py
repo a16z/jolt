@@ -181,14 +181,23 @@ def require_post_return(
     if policy == "none":
         require(f"{label} instructions after ret", trailing, [])
         return
-    if policy != "nop-padding-only":
-        raise SystemExit(f"unknown post-return policy {policy!r}")
-    non_nops = [
-        (raw, mnemonic)
-        for raw, mnemonic in trailing
-        if not mnemonic.lower().startswith("nop")
-    ]
-    require(f"{label} non-NOP instructions after ret", non_nops, [])
+    if policy == "nop-padding-only":
+        rejected = [
+            (raw, mnemonic)
+            for raw, mnemonic in trailing
+            if not mnemonic.lower().startswith("nop")
+        ]
+        require(f"{label} non-NOP instructions after ret", rejected, [])
+        return
+    if policy == "int3-padding-only":
+        rejected = [
+            (raw, mnemonic)
+            for raw, mnemonic in trailing
+            if raw != b"\xcc" or mnemonic.strip().lower() != "int3"
+        ]
+        require(f"{label} non-INT3 instructions after ret", rejected, [])
+        return
+    raise SystemExit(f"unknown post-return policy {policy!r}")
 
 
 def require_format(label: str, disassembly: str, marker: str) -> None:

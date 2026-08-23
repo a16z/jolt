@@ -189,7 +189,7 @@
       "object_format_marker": "file format elf64-x86-64",
       "certification_scope": "complete-inspection-symbol",
       "wrapper_policy": "exact",
-      "post_return_policy": "none",
+      "post_return_policy": "int3-padding-only",
       "ci_required": true,
       "profiles": [
         {

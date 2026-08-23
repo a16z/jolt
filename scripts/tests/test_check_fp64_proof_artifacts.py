@@ -72,6 +72,24 @@ class CheckFp64ProofArtifactsTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             CHECKER.require_post_return("test", [(b"\x90", "nop")], "none")
 
+    def test_post_return_policy_accepts_only_exact_int3_padding(self) -> None:
+        CHECKER.require_post_return(
+            "test",
+            [(b"\xcc", "int3"), (b"\xcc", "int3")],
+            "int3-padding-only",
+        )
+        for trailing in (
+            [(b"\x90", "nop")],
+            [(b"\xcc", "nop")],
+            [(b"\xcd\x03", "int $3")],
+        ):
+            with self.assertRaises(SystemExit):
+                CHECKER.require_post_return(
+                    "test",
+                    trailing,
+                    "int3-padding-only",
+                )
+
     def test_format_marker_must_match(self) -> None:
         with self.assertRaises(SystemExit):
             CHECKER.require_format(

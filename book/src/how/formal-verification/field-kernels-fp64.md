@@ -65,6 +65,13 @@ the matching proof files.
 | `x86_64-unknown-linux-gnu` | Complete baseline symbols, plus a BMI2 multiplication symbol | Yes |
 | `x86_64-apple-darwin-inspection-only` | Exact compiler frame around a proved inner sequence | No |
 
+The Linux x86-64 compiler can place `int3` alignment bytes after the proved
+`ret`. The registered policy accepts only the one byte `0xcc` encoding decoded
+as `int3`. These bytes are not reachable through the callable theorem. The
+function bytes through and including `ret` must still match exactly. Darwin
+x86-64 has a separate policy that permits only decoded NOP padding after its
+checked frame.
+
 The matrix fixes these inputs.
 
 * The exact Rust, Cargo, and LLVM versions.

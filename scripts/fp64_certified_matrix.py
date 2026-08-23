@@ -22,7 +22,7 @@ CERTIFICATION_SCOPES = {
     "checked-wrapper-proved-inner-sequence",
 }
 WRAPPER_POLICIES = {"exact", "darwin-frame"}
-POST_RETURN_POLICIES = {"none", "nop-padding-only"}
+POST_RETURN_POLICIES = {"none", "nop-padding-only", "int3-padding-only"}
 RUNNER_PROFILE_IDS = {
     "aarch64": ["baseline"],
     "x86_64": ["baseline", "bmi2-mul"],
