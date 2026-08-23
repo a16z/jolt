@@ -4,9 +4,11 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PROOF_DIR="$REPO_ROOT/proofs/hol-light"
+MATRIX_PATH="$PROOF_DIR/fp64-certified-builds.json"
+MATRIX_TOOL="$REPO_ROOT/scripts/fp64_certified_matrix.py"
 
 usage() {
-  echo "usage: $0 [all|bytes] [aarch64|x86_64] [--clean]" >&2
+  echo "usage: $0 [all|bytes] [aarch64|x86_64] [--matrix-entry ID] [--evidence-out PATH] [--clean]" >&2
 }
 
 normalize_architecture() {
@@ -19,51 +21,106 @@ normalize_architecture() {
 
 MODE=all
 ARCHITECTURE=""
+MATRIX_ENTRY_ID=""
+EVIDENCE_OUT=""
 CLEAN=false
-for argument in "$@"; do
-  case "$argument" in
-    all | bytes) MODE=$argument ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    all | bytes) MODE=$1 ;;
     aarch64 | arm64 | x86_64 | amd64)
-      ARCHITECTURE=$(normalize_architecture "$argument")
+      ARCHITECTURE=$(normalize_architecture "$1")
+      ;;
+    --matrix-entry)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      MATRIX_ENTRY_ID=$2
+      shift
+      ;;
+    --evidence-out)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      EVIDENCE_OUT=$2
+      shift
       ;;
     --clean) CLEAN=true ;;
     -h | --help) usage; exit 0 ;;
     *) usage; exit 2 ;;
   esac
+  shift
 done
 
-if [[ -z "$ARCHITECTURE" ]]; then
-  ARCHITECTURE=$(normalize_architecture "$(uname -m)") || {
-    echo "unsupported host architecture: $(uname -m)" >&2
-    exit 2
-  }
-fi
+python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" validate
+HOST_TRIPLE=$(rustc -Vv | sed -n 's/^host: //p')
+HOST_ARCHITECTURE=$(normalize_architecture "${HOST_TRIPLE%%-*}") || {
+  echo "unsupported Rust host architecture: $HOST_TRIPLE" >&2
+  exit 2
+}
 
-HOST_ARCHITECTURE=$(normalize_architecture "$(uname -m)") || true
-case "$(uname -s)" in
-  Darwin) TARGET_OS=darwin ;;
-  Linux) TARGET_OS=linux ;;
-  *)
-    echo "unsupported host operating system: $(uname -s)" >&2
-    exit 2
-    ;;
-esac
-CARGO_BUILD_ARGS=(build --locked -p jolt-field --release)
-TARGET_TRIPLE=""
-if [[ "$ARCHITECTURE" != "$HOST_ARCHITECTURE" ]]; then
-  if [[ "$(uname -s)" == Darwin && "$ARCHITECTURE" == x86_64 ]]; then
-    TARGET_TRIPLE=x86_64-apple-darwin
-    CARGO_BUILD_ARGS+=(--target "$TARGET_TRIPLE")
-  else
-    echo "cross checking $ARCHITECTURE is not configured on this host" >&2
+if [[ -n "$MATRIX_ENTRY_ID" ]]; then
+  TARGET_TRIPLE=$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" get \
+    --target-id "$MATRIX_ENTRY_ID" --field target_triple)
+  MATRIX_ARCHITECTURE=$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" get \
+    --target-id "$MATRIX_ENTRY_ID" --field architecture)
+  if [[ -n "$ARCHITECTURE" && "$ARCHITECTURE" != "$MATRIX_ARCHITECTURE" ]]; then
+    echo "matrix entry $MATRIX_ENTRY_ID is for $MATRIX_ARCHITECTURE, not $ARCHITECTURE" >&2
     exit 2
   fi
+  ARCHITECTURE=$MATRIX_ARCHITECTURE
+else
+  if [[ -z "$ARCHITECTURE" ]]; then
+    ARCHITECTURE=$HOST_ARCHITECTURE
+  fi
+  if [[ "$ARCHITECTURE" == "$HOST_ARCHITECTURE" ]]; then
+    TARGET_TRIPLE=$HOST_TRIPLE
+  elif [[ "$HOST_TRIPLE" == aarch64-apple-darwin && "$ARCHITECTURE" == x86_64 ]]; then
+    TARGET_TRIPLE=x86_64-apple-darwin
+  else
+    echo "cross checking $ARCHITECTURE from $HOST_TRIPLE is not configured" >&2
+    exit 2
+  fi
+  MATRIX_ENTRY_ID=$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" resolve \
+    --target-triple "$TARGET_TRIPLE")
 fi
+
+CERTIFICATION_SCOPE=$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" get \
+  --target-id "$MATRIX_ENTRY_ID" --field certification_scope)
+python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" check-environment \
+  --target-id "$MATRIX_ENTRY_ID"
+MATRIX_CONTRACT_ID=$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" contract-id)
+build_field() {
+  python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" build-field --field "$1"
+}
+RELEASE_OPT_LEVEL=$(build_field release_profile.opt_level)
+RELEASE_LTO=$(build_field release_profile.lto)
+RELEASE_CODEGEN_UNITS=$(build_field release_profile.codegen_units)
+RELEASE_DEBUG=$(build_field release_profile.debug)
+RELEASE_DEBUG_ASSERTIONS=$(build_field release_profile.debug_assertions)
+RELEASE_OVERFLOW_CHECKS=$(build_field release_profile.overflow_checks)
+RELEASE_SPLIT_DEBUGINFO=$(build_field release_profile.split_debuginfo)
+RELEASE_STRIP=$(build_field release_profile.strip)
+RELEASE_RPATH=$(build_field release_profile.rpath)
+RELEASE_INCREMENTAL=$(build_field release_profile.incremental)
+RELEASE_PANIC=$(build_field release_profile.panic)
+if [[ -z "$EVIDENCE_OUT" ]]; then
+  EVIDENCE_OUT="$REPO_ROOT/target/fp64-formal-verification/evidence/$MATRIX_ENTRY_ID.json"
+fi
+CARGO_BUILD_ARGS=(
+  --config "profile.release.opt-level=$RELEASE_OPT_LEVEL"
+  --config "profile.release.lto=\"$RELEASE_LTO\""
+  --config "profile.release.codegen-units=$RELEASE_CODEGEN_UNITS"
+  --config "profile.release.debug=$RELEASE_DEBUG"
+  --config "profile.release.debug-assertions=$RELEASE_DEBUG_ASSERTIONS"
+  --config "profile.release.overflow-checks=$RELEASE_OVERFLOW_CHECKS"
+  --config "profile.release.split-debuginfo=\"$RELEASE_SPLIT_DEBUGINFO\""
+  --config "profile.release.strip=\"$RELEASE_STRIP\""
+  --config "profile.release.rpath=$RELEASE_RPATH"
+  --config "profile.release.incremental=$RELEASE_INCREMENTAL"
+  --config "profile.release.panic=\"$RELEASE_PANIC\""
+  build --locked -p jolt-field --release --target "$TARGET_TRIPLE"
+)
 
 if $CLEAN; then
   PROOF_TARGET=$(mktemp -d)
 else
-  PROOF_TARGET="$REPO_ROOT/target/fp64-formal-verification/$ARCHITECTURE"
+  PROOF_TARGET="$REPO_ROOT/target/fp64-formal-verification/$MATRIX_ENTRY_ID"
   mkdir -p "$PROOF_TARGET"
 fi
 
@@ -79,11 +136,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ -n "$TARGET_TRIPLE" ]]; then
-  PROFILE_ROOT="$PROOF_TARGET/$TARGET_TRIPLE/release"
-else
-  PROFILE_ROOT="$PROOF_TARGET/release"
-fi
+PROFILE_ROOT="$PROOF_TARGET/$TARGET_TRIPLE/release"
 
 find_newest_object() {
   local name=$1
@@ -106,6 +159,7 @@ if [[ "$MODE" == bytes ]]; then
 else
   echo "[1/5] Building the $ARCHITECTURE Fp64 inspection witnesses"
 fi
+JOLT_FP64_PROOF_MATRIX_CONTRACT="$MATRIX_CONTRACT_ID" \
 CARGO_TARGET_DIR="$PROOF_TARGET" \
   cargo "${CARGO_BUILD_ARGS[@]}" \
     --no-default-features \
@@ -121,12 +175,9 @@ BMI2_MUL_OBJECT=""
 BMI2_PRODUCTION_WITNESS=""
 if [[ "$ARCHITECTURE" == x86_64 ]]; then
   BMI2_TARGET="$PROOF_TARGET/bmi2"
-  if [[ -n "$TARGET_TRIPLE" ]]; then
-    BMI2_PROFILE_ROOT="$BMI2_TARGET/$TARGET_TRIPLE/release"
-  else
-    BMI2_PROFILE_ROOT="$BMI2_TARGET/release"
-  fi
-  RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+bmi2" \
+  BMI2_PROFILE_ROOT="$BMI2_TARGET/$TARGET_TRIPLE/release"
+  JOLT_FP64_PROOF_MATRIX_CONTRACT="$MATRIX_CONTRACT_ID" \
+  RUSTFLAGS="-C target-feature=+bmi2" \
   CARGO_TARGET_DIR="$BMI2_TARGET" \
     cargo "${CARGO_BUILD_ARGS[@]}" \
       --no-default-features \
@@ -142,8 +193,8 @@ else
   echo "[2/5] Checking exact Fp64 object and inspection witness bytes"
 fi
 CHECKER_ARGS=(
-  --architecture "$ARCHITECTURE"
-  --target-os "$TARGET_OS"
+  --matrix "$MATRIX_PATH"
+  --target-id "$MATRIX_ENTRY_ID"
   --add-object "$ADD_OBJECT"
   --sub-object "$SUB_OBJECT"
   --mul-object "$MUL_OBJECT"
@@ -163,6 +214,25 @@ fi
 
 : "${HOL_LIGHT_DIR:?set HOL_LIGHT_DIR to a module-built HOL Light checkout}"
 : "${S2N_BIGNUM_DIR:?set S2N_BIGNUM_DIR to an s2n-bignum checkout}"
+
+operation_value() {
+  local profile=$1
+  local operation=$2
+  local field=$3
+  python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" operation \
+    --target-id "$MATRIX_ENTRY_ID" --profile "$profile" \
+    --operation "$operation" --field "$field"
+}
+
+ADD_OBJECT_SOURCE=$(operation_value baseline add object_source)
+ADD_CORRECT_SOURCE=$(operation_value baseline add correctness_source)
+ADD_THEOREM=$(operation_value baseline add subroutine_theorem)
+SUB_OBJECT_SOURCE=$(operation_value baseline sub object_source)
+SUB_CORRECT_SOURCE=$(operation_value baseline sub correctness_source)
+SUB_THEOREM=$(operation_value baseline sub subroutine_theorem)
+MUL_OBJECT_SOURCE=$(operation_value baseline mul object_source)
+MUL_CORRECT_SOURCE=$(operation_value baseline mul correctness_source)
+MUL_THEOREM=$(operation_value baseline mul subroutine_theorem)
 
 ADD_PROOF_OBJECT=$ADD_OBJECT
 SUB_PROOF_OBJECT=$SUB_OBJECT
@@ -230,53 +300,31 @@ CACHE_KEY_PATH="$PROOF_TARGET/fp64_${ARCHITECTURE}_all.cache-key"
 
 if [[ "$ARCHITECTURE" == x86_64 ]]; then
   ARCHITECTURE_LABEL=x86-64
-  ADD_THEOREM=JOLT_FP64_ADD_X86_64_SUBROUTINE_CORRECT
-  SUB_THEOREM=JOLT_FP64_SUB_X86_64_SUBROUTINE_CORRECT
-  MUL_THEOREM=JOLT_FP64_MUL_X86_64_SUBROUTINE_CORRECT
-  BMI2_MUL_THEOREM=JOLT_FP64_MUL_X86_64_BMI2_SUBROUTINE_CORRECT
+  BMI2_MUL_OBJECT_SOURCE=$(operation_value bmi2-mul mul object_source)
+  BMI2_MUL_CORRECT_SOURCE=$(operation_value bmi2-mul mul correctness_source)
+  BMI2_MUL_THEOREM=$(operation_value bmi2-mul mul subroutine_theorem)
   {
     printf 'loadt "x86/proofs/base.ml";;\n'
     printf 'loadt "%s/fp64_common.ml";;\n' "$PROOF_DIR"
     printf 'loadt "%s/fp64_x86_64_common.ml";;\n' "$PROOF_DIR"
     printf 'print_endline "[HOL 1/5] Proving x86-64 Fp64 addition";;\n'
-    printf 'loadt "%s/fp64_add_x86_64_object.ml";;\n' "$PROOF_DIR"
-    printf 'loadt "%s/fp64_add_x86_64_correct.ml";;\n' "$PROOF_DIR"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$ADD_OBJECT_SOURCE"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$ADD_CORRECT_SOURCE"
     printf 'print_endline "[HOL 2/5] Proving x86-64 Fp64 subtraction";;\n'
-    printf 'loadt "%s/fp64_sub_x86_64_object.ml";;\n' "$PROOF_DIR"
-    printf 'loadt "%s/fp64_sub_x86_64_correct.ml";;\n' "$PROOF_DIR"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$SUB_OBJECT_SOURCE"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$SUB_CORRECT_SOURCE"
     printf 'print_endline "[HOL 3/5] Proving baseline x86-64 Fp64 multiplication";;\n'
-    printf 'loadt "%s/fp64_mul_x86_64_object.ml";;\n' "$PROOF_DIR"
-    printf 'loadt "%s/fp64_mul_x86_64_correct.ml";;\n' "$PROOF_DIR"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$MUL_OBJECT_SOURCE"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$MUL_CORRECT_SOURCE"
     printf 'print_endline "[HOL 4/5] Proving BMI2 x86-64 Fp64 multiplication";;\n'
-    printf 'loadt "%s/fp64_mul_x86_64_bmi2_object.ml";;\n' "$PROOF_DIR"
-    printf 'loadt "%s/fp64_mul_x86_64_bmi2_correct.ml";;\n' "$PROOF_DIR"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$BMI2_MUL_OBJECT_SOURCE"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$BMI2_MUL_CORRECT_SOURCE"
     printf 'print_endline "[HOL 5/5] Checking the Fp64 modulus primality certificate";;\n'
     printf 'loadt "%s/fp64_prime.ml";;\n' "$PROOF_DIR"
   } >"$COMBINED_SOURCE"
   PROOF_SOURCES=("$COMBINED_SOURCE" "$PROOF_DIR"/fp64_*.ml)
 else
   ARCHITECTURE_LABEL=AArch64
-  if [[ "$TARGET_OS" == linux ]]; then
-    ADD_OBJECT_SOURCE=fp64_add_aarch64_linux_object.ml
-    ADD_CORRECT_SOURCE=fp64_add_aarch64_linux_correct.ml
-    SUB_OBJECT_SOURCE=fp64_sub_aarch64_linux_object.ml
-    SUB_CORRECT_SOURCE=fp64_sub_aarch64_linux_correct.ml
-    MUL_OBJECT_SOURCE=fp64_mul_aarch64_linux_object.ml
-    MUL_CORRECT_SOURCE=fp64_mul_aarch64_linux_correct.ml
-    ADD_THEOREM=JOLT_FP64_ADD_AARCH64_LINUX_SUBROUTINE_CORRECT
-    SUB_THEOREM=JOLT_FP64_SUB_AARCH64_LINUX_SUBROUTINE_CORRECT
-    MUL_THEOREM=JOLT_FP64_MUL_AARCH64_LINUX_SUBROUTINE_CORRECT
-  else
-    ADD_OBJECT_SOURCE=fp64_add_object.ml
-    ADD_CORRECT_SOURCE=fp64_add_correct.ml
-    SUB_OBJECT_SOURCE=fp64_sub_object.ml
-    SUB_CORRECT_SOURCE=fp64_sub_correct.ml
-    MUL_OBJECT_SOURCE=fp64_mul_object.ml
-    MUL_CORRECT_SOURCE=fp64_mul_correct.ml
-    ADD_THEOREM=JOLT_FP64_ADD_SUBROUTINE_CORRECT
-    SUB_THEOREM=JOLT_FP64_SUB_SUBROUTINE_CORRECT
-    MUL_THEOREM=JOLT_FP64_MUL_SUBROUTINE_CORRECT
-  fi
   BMI2_MUL_THEOREM=""
   {
     printf 'loadt "arm/proofs/base.ml";;\n'
@@ -339,4 +387,37 @@ if [[ -n "$BMI2_MUL_THEOREM" ]]; then
   grep -F "val $BMI2_MUL_THEOREM : thm" "$LOG_PATH"
 fi
 grep -F "val JOLT_FP64_PRIME : thm" "$LOG_PATH"
-echo "Fp64 $ARCHITECTURE_LABEL inspection witness proofs passed."
+
+EVIDENCE_ARGS=(
+  --matrix "$MATRIX_PATH"
+  evidence
+  --target-id "$MATRIX_ENTRY_ID"
+  --repo-root "$REPO_ROOT"
+  --hol-light-dir "$HOL_LIGHT_DIR"
+  --s2n-bignum-dir "$S2N_BIGNUM_DIR"
+  --output "$EVIDENCE_OUT"
+  --artifact "add_object=$ADD_OBJECT"
+  --artifact "add_proof_object=$ADD_PROOF_OBJECT"
+  --artifact "sub_object=$SUB_OBJECT"
+  --artifact "sub_proof_object=$SUB_PROOF_OBJECT"
+  --artifact "mul_object=$MUL_OBJECT"
+  --artifact "mul_proof_object=$MUL_PROOF_OBJECT"
+  --artifact "production_witness=$PRODUCTION_WITNESS"
+  --artifact "proof_log=$LOG_PATH"
+)
+while IFS= read -r profile; do
+  EVIDENCE_ARGS+=(--profile "$profile")
+done < <(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" profile-ids \
+  --target-id "$MATRIX_ENTRY_ID")
+if [[ "$ARCHITECTURE" == x86_64 ]]; then
+  EVIDENCE_ARGS+=(
+    --artifact "mul_bmi2_object=$BMI2_MUL_OBJECT"
+    --artifact "mul_bmi2_proof_object=$BMI2_MUL_PROOF_OBJECT"
+    --artifact "bmi2_production_witness=$BMI2_PRODUCTION_WITNESS"
+  )
+fi
+if $CLEAN; then
+  EVIDENCE_ARGS+=(--clean)
+fi
+python3 "$MATRIX_TOOL" "${EVIDENCE_ARGS[@]}"
+echo "Fp64 matrix entry $MATRIX_ENTRY_ID passed ($CERTIFICATION_SCOPE)."

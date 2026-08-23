@@ -7,7 +7,17 @@ import argparse
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fp64_certified_matrix import (  # noqa: E402
+    DEFAULT_MATRIX,
+    load_matrix,
+    profile_by_id,
+    target_by_id,
+    validate_matrix,
+)
 
 
 AARCH64 = {
@@ -61,6 +71,15 @@ X86_64 = {
     ),
 }
 
+EXPECTED_SEQUENCES = {
+    **{
+        f"aarch64-{target_os}-{operation}": sequence
+        for target_os, target_sequences in AARCH64.items()
+        for operation, sequence in target_sequences.items()
+    },
+    **{f"x86_64-{operation.replace('_', '-')}": sequence for operation, sequence in X86_64.items()},
+}
+
 SYMBOL_RE = re.compile(r"^\s*[0-9a-fA-F]+\s+<([^>]+)>:\s*$")
 AARCH64_RE = re.compile(r"^\s*[0-9a-fA-F]+:\s+([0-9a-fA-F]{8})(?:\s|$)")
 INSTRUCTION_RE = re.compile(r"^\s*[0-9a-fA-F]+:\s+(.*)$")
@@ -108,8 +127,12 @@ def parse_words(text: str, symbol: str) -> list[int]:
 
 
 def parse_byte_instructions(text: str, symbol: str) -> list[bytes]:
+    return [raw for raw, _mnemonic in parse_decoded_byte_instructions(text, symbol)]
+
+
+def parse_decoded_byte_instructions(text: str, symbol: str) -> list[tuple[bytes, str]]:
     current = False
-    result: list[bytes] = []
+    result: list[tuple[bytes, str]] = []
     for line in text.splitlines():
         if match := SYMBOL_RE.match(line):
             current = match.group(1).removeprefix("_") == symbol
@@ -117,12 +140,15 @@ def parse_byte_instructions(text: str, symbol: str) -> list[bytes]:
         if not current or not (match := INSTRUCTION_RE.match(line)):
             continue
         instruction = bytearray()
-        for token in match.group(1).split():
+        tokens = match.group(1).split()
+        byte_count = 0
+        for token in tokens:
             if not BYTE_RE.fullmatch(token):
                 break
             instruction.append(int(token, 16))
+            byte_count += 1
         if instruction:
-            result.append(bytes(instruction))
+            result.append((bytes(instruction), " ".join(tokens[byte_count:])))
     return result
 
 
@@ -130,21 +156,46 @@ def parse_bytes(text: str, symbol: str) -> bytes:
     return b"".join(parse_byte_instructions(text, symbol))
 
 
-def through_ret(text: str, symbol: str) -> bytes:
-    instructions = parse_byte_instructions(text, symbol)
+def through_ret(text: str, symbol: str) -> tuple[bytes, list[tuple[bytes, str]]]:
+    instructions = parse_decoded_byte_instructions(text, symbol)
     try:
-        end = instructions.index(b"\xc3") + 1
+        end = [raw for raw, _mnemonic in instructions].index(b"\xc3") + 1
     except ValueError as error:
         raise SystemExit(f"symbol {symbol!r} has no ret instruction") from error
-    return b"".join(instructions[:end])
+    return b"".join(raw for raw, _mnemonic in instructions[:end]), instructions[end:]
 
 
-def normalize_darwin_frame(actual: bytes) -> bytes:
+def darwin_frame(inner: bytes) -> bytes:
     frame_enter = bytes.fromhex("55 48 89 e5")
     frame_leave = bytes.fromhex("5d c3")
-    if actual.startswith(frame_enter) and actual.endswith(frame_leave):
-        return actual[len(frame_enter) : -len(frame_leave)] + b"\xc3"
-    return actual
+    if not inner.endswith(b"\xc3"):
+        raise ValueError("proved x86 sequence has no return instruction")
+    return frame_enter + inner[:-1] + frame_leave
+
+
+def require_post_return(
+    label: str,
+    trailing: list[tuple[bytes, str]],
+    policy: str,
+) -> None:
+    if policy == "none":
+        require(f"{label} instructions after ret", trailing, [])
+        return
+    if policy != "nop-padding-only":
+        raise SystemExit(f"unknown post-return policy {policy!r}")
+    non_nops = [
+        (raw, mnemonic)
+        for raw, mnemonic in trailing
+        if not mnemonic.lower().startswith("nop")
+    ]
+    require(f"{label} non-NOP instructions after ret", non_nops, [])
+
+
+def require_format(label: str, disassembly: str, marker: str) -> None:
+    if marker not in disassembly:
+        raise SystemExit(
+            f"{label} object format mismatch\nexpected marker: {marker!r}"
+        )
 
 
 def require(label: str, actual: object, expected: object) -> None:
@@ -154,8 +205,8 @@ def require(label: str, actual: object, expected: object) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--architecture", choices=("aarch64", "x86_64"), required=True)
-    parser.add_argument("--target-os", choices=("darwin", "linux"), required=True)
+    parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    parser.add_argument("--target-id", required=True)
     parser.add_argument("--add-object", type=Path, required=True)
     parser.add_argument("--sub-object", type=Path, required=True)
     parser.add_argument("--mul-object", type=Path, required=True)
@@ -164,65 +215,123 @@ def main() -> None:
     parser.add_argument("--bmi2-production-witness", type=Path)
     parser.add_argument("--llvm-objdump")
     args = parser.parse_args()
+    matrix = load_matrix(args.matrix)
+    validate_matrix(matrix)
+    try:
+        target = target_by_id(matrix, args.target_id)
+    except ValueError as error:
+        parser.error(str(error))
+    architecture = target["architecture"]
+    marker = target["object_format_marker"]
     tool = objdump(args.llvm_objdump)
 
     objects = {"add": args.add_object, "sub": args.sub_object, "mul": args.mul_object}
-    if args.architecture == "aarch64":
-        expected_sequences = AARCH64[args.target_os]
+    if architecture == "aarch64":
+        baseline = profile_by_id(target, "baseline")
         for operation, path in objects.items():
             object_symbol = f"jolt_fp64_{operation}_asm"
             witness_symbol = f"jolt_fp64_{operation}_production_witness"
-            expected = expected_sequences[operation]
+            operation_entry = next(
+                entry for entry in baseline["operations"] if entry["name"] == operation
+            )
+            expected = EXPECTED_SEQUENCES[operation_entry["expected_sequence"]]
+            object_disassembly = disassemble(tool, path, object_symbol)
+            witness_disassembly = disassemble(tool, args.production_witness, witness_symbol)
+            require_format(f"AArch64 {operation} proof object", object_disassembly, marker)
+            require_format(f"AArch64 {operation} production witness", witness_disassembly, marker)
             require(
                 f"AArch64 {operation} proof object",
-                parse_words(disassemble(tool, path, object_symbol), object_symbol),
+                parse_words(object_disassembly, object_symbol),
                 expected,
             )
             require(
                 f"AArch64 {operation} production witness",
-                parse_words(disassemble(tool, args.production_witness, witness_symbol), witness_symbol),
+                parse_words(witness_disassembly, witness_symbol),
                 expected,
             )
     else:
+        baseline = profile_by_id(target, "baseline")
         for operation, path in objects.items():
             object_symbol = f"jolt_fp64_{operation}_asm"
             witness_symbol = f"jolt_fp64_{operation}_production_witness"
-            expected = X86_64[operation]
+            operation_entry = next(
+                entry for entry in baseline["operations"] if entry["name"] == operation
+            )
+            expected = EXPECTED_SEQUENCES[operation_entry["expected_sequence"]]
+            object_disassembly = disassemble(tool, path, object_symbol)
+            witness_disassembly = disassemble(tool, args.production_witness, witness_symbol)
+            require_format(f"x86-64 {operation} proof object", object_disassembly, marker)
+            require_format(f"x86-64 {operation} production witness", witness_disassembly, marker)
             require(
                 f"x86-64 {operation} proof object",
-                parse_bytes(disassemble(tool, path, object_symbol), object_symbol),
+                parse_bytes(object_disassembly, object_symbol),
                 expected,
+            )
+            actual_witness, trailing = through_ret(witness_disassembly, witness_symbol)
+            expected_witness = (
+                darwin_frame(expected)
+                if target["wrapper_policy"] == "darwin-frame"
+                else expected
             )
             require(
                 f"x86-64 {operation} production witness",
-                normalize_darwin_frame(
-                    through_ret(disassemble(tool, args.production_witness, witness_symbol), witness_symbol)
-                ),
-                expected,
+                actual_witness,
+                expected_witness,
+            )
+            require_post_return(
+                f"x86-64 {operation} production witness",
+                trailing,
+                target["post_return_policy"],
             )
         if args.mul_bmi2_object is None or args.bmi2_production_witness is None:
             parser.error("x86_64 requires both BMI2 paths")
+        bmi2 = profile_by_id(target, "bmi2-mul")
+        bmi2_operation = bmi2["operations"][0]
+        bmi2_expected = EXPECTED_SEQUENCES[bmi2_operation["expected_sequence"]]
+        bmi2_object_disassembly = disassemble(
+            tool, args.mul_bmi2_object, "jolt_fp64_mul_bmi2_asm"
+        )
+        bmi2_witness_disassembly = disassemble(
+            tool, args.bmi2_production_witness, "jolt_fp64_mul_production_witness"
+        )
+        require_format(
+            "x86-64 BMI2 multiplication proof object",
+            bmi2_object_disassembly,
+            marker,
+        )
+        require_format(
+            "x86-64 BMI2 multiplication production witness",
+            bmi2_witness_disassembly,
+            marker,
+        )
         require(
             "x86-64 BMI2 multiplication proof object",
             parse_bytes(
-                disassemble(tool, args.mul_bmi2_object, "jolt_fp64_mul_bmi2_asm"),
+                bmi2_object_disassembly,
                 "jolt_fp64_mul_bmi2_asm",
             ),
-            X86_64["mul_bmi2"],
+            bmi2_expected,
+        )
+        bmi2_witness, bmi2_trailing = through_ret(
+            bmi2_witness_disassembly,
+            "jolt_fp64_mul_production_witness",
         )
         require(
             "x86-64 BMI2 multiplication production witness",
-            normalize_darwin_frame(through_ret(
-                disassemble(
-                    tool,
-                    args.bmi2_production_witness,
-                    "jolt_fp64_mul_production_witness",
-                ),
-                "jolt_fp64_mul_production_witness",
-            )),
-            X86_64["mul_bmi2"],
+            bmi2_witness,
+            darwin_frame(bmi2_expected)
+            if target["wrapper_policy"] == "darwin-frame"
+            else bmi2_expected,
         )
-    print(f"Fp64 {args.architecture} proof objects and production witnesses match.")
+        require_post_return(
+            "x86-64 BMI2 multiplication production witness",
+            bmi2_trailing,
+            target["post_return_policy"],
+        )
+    print(
+        f"Fp64 matrix entry {target['id']} proof objects and production witnesses match "
+        f"({target['certification_scope']})."
+    )
 
 
 if __name__ == "__main__":

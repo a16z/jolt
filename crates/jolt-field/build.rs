@@ -23,7 +23,86 @@ fn compile_asm(
     Ok(())
 }
 
+fn require_fp64_registered_target() -> Result<(), Box<dyn Error>> {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
+    let matrix_tool = manifest_dir
+        .join("../..")
+        .join("scripts/fp64_certified_matrix.py");
+    let output = Command::new("python3")
+        .arg(matrix_tool)
+        .args(["validate-build", "--target-triple"])
+        .arg(env::var("TARGET")?)
+        .arg("--architecture")
+        .arg(env::var("CARGO_CFG_TARGET_ARCH")?)
+        .arg("--vendor")
+        .arg(env::var("CARGO_CFG_TARGET_VENDOR")?)
+        .arg("--target-os")
+        .arg(env::var("CARGO_CFG_TARGET_OS")?)
+        .arg("--target-env")
+        .arg(env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default())
+        .arg("--endian")
+        .arg(env::var("CARGO_CFG_TARGET_ENDIAN")?)
+        .arg("--pointer-width")
+        .arg(env::var("CARGO_CFG_TARGET_POINTER_WIDTH")?)
+        .arg("--target-features")
+        .arg(env::var("CARGO_CFG_TARGET_FEATURE")?)
+        .arg("--profile")
+        .arg(env::var("PROFILE")?)
+        .arg("--opt-level")
+        .arg(env::var("OPT_LEVEL")?)
+        .arg("--debug")
+        .arg(env::var("DEBUG")?)
+        .arg("--rustc")
+        .arg(env::var("RUSTC")?)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "Fp64 proof build is outside the registered matrix:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+        .into());
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    println!("cargo:rerun-if-changed=../../proofs/hol-light/fp64-certified-builds.json");
+    println!("cargo:rerun-if-changed=../../scripts/fp64_certified_matrix.py");
+    for variable in [
+        "TARGET",
+        "CARGO_CFG_TARGET_ARCH",
+        "CARGO_CFG_TARGET_VENDOR",
+        "CARGO_CFG_TARGET_OS",
+        "CARGO_CFG_TARGET_ENV",
+        "CARGO_CFG_TARGET_ENDIAN",
+        "CARGO_CFG_TARGET_POINTER_WIDTH",
+        "CARGO_CFG_TARGET_FEATURE",
+        "PROFILE",
+        "OPT_LEVEL",
+        "DEBUG",
+        "RUSTC",
+        "JOLT_FP64_PROOF_MATRIX_CONTRACT",
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_BUILD_RUSTFLAGS",
+        "CARGO_BUILD_TARGET",
+        "CARGO_INCREMENTAL",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CARGO_PROFILE_RELEASE_OPT_LEVEL",
+        "CARGO_PROFILE_RELEASE_LTO",
+        "CARGO_PROFILE_RELEASE_CODEGEN_UNITS",
+        "CARGO_PROFILE_RELEASE_DEBUG",
+        "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS",
+        "CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS",
+        "CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO",
+        "CARGO_PROFILE_RELEASE_STRIP",
+        "CARGO_PROFILE_RELEASE_RPATH",
+        "CARGO_PROFILE_RELEASE_INCREMENTAL",
+        "CARGO_PROFILE_RELEASE_PANIC",
+    ] {
+        println!("cargo:rerun-if-env-changed={variable}");
+    }
     for architecture in ["aarch64", "x86_64"] {
         let asm_dir = Path::new("asm").join(architecture);
         let mut files = vec![
@@ -61,6 +140,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let fp128_linkage = env::var_os("CARGO_FEATURE_FP128_PROOF_LINKAGE").is_some();
     if !fp64_linkage && !fp128_linkage {
         return Ok(());
+    }
+
+    if fp64_linkage {
+        require_fp64_registered_target()?;
     }
 
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;

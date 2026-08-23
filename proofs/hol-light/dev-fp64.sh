@@ -4,6 +4,8 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PROOF_DIR="$REPO_ROOT/proofs/hol-light"
+MATRIX_PATH="$PROOF_DIR/fp64-certified-builds.json"
+MATRIX_TOOL="$REPO_ROOT/scripts/fp64_certified_matrix.py"
 : "${HOL_LIGHT_DIR:?set HOL_LIGHT_DIR to a HOL Light checkout}"
 : "${S2N_BIGNUM_DIR:?set S2N_BIGNUM_DIR to an s2n-bignum checkout}"
 
@@ -17,6 +19,11 @@ if [[ $# -ne 2 ]]; then
 fi
 ARCHITECTURE=$1
 OPERATION=$2
+case "$ARCHITECTURE" in
+  arm64 | aarch64) ARCHITECTURE=aarch64 ;;
+  amd64 | x86_64) ARCHITECTURE=x86_64 ;;
+  *) usage; exit 2 ;;
+esac
 if [[ "$ARCHITECTURE" == x86_64 && "$OPERATION" =~ ^(add|sub|mul|mul_bmi2)$ ]]; then
   DEV_ENTRY=fp64_x86_64_dev.ml
 elif [[ "$ARCHITECTURE" == aarch64 && "$OPERATION" =~ ^(add|sub|mul)$ ]]; then
@@ -28,12 +35,20 @@ fi
 
 "$PROOF_DIR/check-fp64.sh" bytes "$ARCHITECTURE"
 
-TARGET_DIR="$REPO_ROOT/target/fp64-formal-verification/$ARCHITECTURE"
-if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
-  PROFILE_ROOT="$TARGET_DIR/x86_64-apple-darwin/release"
+HOST_TRIPLE=$(rustc -Vv | sed -n 's/^host: //p')
+HOST_ARCHITECTURE=${HOST_TRIPLE%%-*}
+if [[ "$ARCHITECTURE" == "$HOST_ARCHITECTURE" ]]; then
+  TARGET_TRIPLE=$HOST_TRIPLE
+elif [[ "$HOST_TRIPLE" == aarch64-apple-darwin && "$ARCHITECTURE" == x86_64 ]]; then
+  TARGET_TRIPLE=x86_64-apple-darwin
 else
-  PROFILE_ROOT="$TARGET_DIR/release"
+  echo "cross checking $ARCHITECTURE from $HOST_TRIPLE is not configured" >&2
+  exit 2
 fi
+CERTIFICATE_ID=$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" resolve \
+  --target-triple "$TARGET_TRIPLE")
+TARGET_DIR="$REPO_ROOT/target/fp64-formal-verification/$CERTIFICATE_ID"
+PROFILE_ROOT="$TARGET_DIR/$TARGET_TRIPLE/release"
 
 find_newest_object() {
   local name=$1
@@ -56,16 +71,11 @@ SUB_OBJECT=$(find_newest_object fp64_sub.o)
 MUL_OBJECT=$(find_newest_object fp64_mul.o)
 BMI2_MUL_OBJECT=""
 if [[ "$ARCHITECTURE" == x86_64 ]]; then
-  BMI2_PROFILE_ROOT="$TARGET_DIR/bmi2"
-  if [[ "$(uname -s)" == Darwin ]]; then
-    BMI2_PROFILE_ROOT="$BMI2_PROFILE_ROOT/x86_64-apple-darwin/release"
-  else
-    BMI2_PROFILE_ROOT="$BMI2_PROFILE_ROOT/release"
-  fi
+  BMI2_PROFILE_ROOT="$TARGET_DIR/bmi2/$TARGET_TRIPLE/release"
   BMI2_MUL_OBJECT=$(find_newest_object fp64_mul_bmi2.o "$BMI2_PROFILE_ROOT")
 fi
 
-if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
+if [[ "$TARGET_TRIPLE" == x86_64-apple-darwin ]]; then
   ELF_OBJECT_DIR="$TARGET_DIR/x86_64-elf"
   mkdir -p "$ELF_OBJECT_DIR"
   for operation in add sub mul mul_bmi2; do
@@ -79,6 +89,20 @@ if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
   MUL_OBJECT="$ELF_OBJECT_DIR/fp64_mul.o"
   BMI2_MUL_OBJECT="$ELF_OBJECT_DIR/fp64_mul_bmi2.o"
 fi
+
+if [[ "$OPERATION" == mul_bmi2 ]]; then
+  MATRIX_PROFILE=bmi2-mul
+  MATRIX_OPERATION=mul
+else
+  MATRIX_PROFILE=baseline
+  MATRIX_OPERATION=$OPERATION
+fi
+DEV_OBJECT_SOURCE=$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" operation \
+  --target-id "$CERTIFICATE_ID" --profile "$MATRIX_PROFILE" \
+  --operation "$MATRIX_OPERATION" --field object_source)
+DEV_CORRECT_SOURCE=$(python3 "$MATRIX_TOOL" --matrix "$MATRIX_PATH" operation \
+  --target-id "$CERTIFICATE_ID" --profile "$MATRIX_PROFILE" \
+  --operation "$MATRIX_OPERATION" --field correctness_source)
 
 DEV_INIT=$(mktemp)
 cleanup() {
@@ -105,8 +129,8 @@ echo "The first load imports the processor model. Later theorem reloads reuse it
 cd "$S2N_BIGNUM_DIR"
 export JOLT_FP64_PROOF_DIR="$PROOF_DIR"
 export JOLT_FP64_DEV_OPERATION="$OPERATION"
-JOLT_FP64_TARGET_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-export JOLT_FP64_TARGET_OS
+export JOLT_FP64_DEV_OBJECT_SOURCE="$DEV_OBJECT_SOURCE"
+export JOLT_FP64_DEV_CORRECT_SOURCE="$DEV_CORRECT_SOURCE"
 export JOLT_FP64_ADD_OBJECT="$ADD_OBJECT"
 export JOLT_FP64_SUB_OBJECT="$SUB_OBJECT"
 export JOLT_FP64_MUL_OBJECT="$MUL_OBJECT"

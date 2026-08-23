@@ -14,6 +14,13 @@ temporary registers differently on each target. On Darwin x86-64, the checker
 checks one exact compiler frame around the proved sequence. No Fp64 proof uses
 AVX, AVX2, or AVX-512.
 
+The checked in Fp64 build matrix is
+[`fp64-certified-builds.json`](fp64-certified-builds.json). It is the source of
+truth for registered target triples and feature profiles. It also selects the
+wrapper policy, proof files, and theorem names. The expected instruction bytes
+remain independent constants in the artifact checker and the HOL Light
+imports. This prevents a matrix edit from approving changed code by itself.
+
 Start with the Book chapter
 [Formal verification of field kernels](../../book/src/how/formal-verification/field-kernels.md).
 It explains the arithmetic, theorem shape, production connection, and trust
@@ -124,8 +131,15 @@ and generic fallback kernels are outside the present proof scope.
 Run the fast Fp64 byte check with
 
 ```sh
-./proofs/hol-light/check-fp64.sh bytes x86_64
+./proofs/hol-light/check-fp64.sh bytes x86_64 \
+  --matrix-entry x86_64-unknown-linux-gnu
 ```
+
+The matrix entry must match the actual compilation target. Use
+`aarch64-apple-darwin` on Apple Silicon and
+`aarch64-unknown-linux-gnu` on Linux AArch64. Darwin x86-64 is registered as
+`x86_64-apple-darwin-inspection-only`. Its exact compiler frame is checked, but
+the callable frame is not covered by the current theorem.
 
 Start a persistent Fp64 proof session with
 
@@ -140,12 +154,29 @@ Run the complete clean Fp64 check with
 ```sh
 HOL_LIGHT_DIR=/path/to/hol-light \
 S2N_BIGNUM_DIR=/path/to/s2n-bignum \
-  ./proofs/hol-light/check-fp64.sh all x86_64 --clean
+  ./proofs/hol-light/check-fp64.sh all x86_64 \
+    --matrix-entry x86_64-unknown-linux-gnu \
+    --evidence-out /path/to/fp64-x86-64-linux-gnu.json \
+    --clean
 ```
 
 Use `aarch64` for the AArch64 byte and clean checks. The Fp64 theorem sessions
 accept `add`, `sub`, and `mul` on both architectures. The x86-64 session also
 accepts `mul_bmi2`.
+
+The runner rejects an unregistered target or feature set. It also rejects an
+unregistered toolchain, release profile, or ambient Rust code generation flag.
+It supplies every release profile value recorded by the matrix directly to
+Cargo and marks the build with the current matrix contract. A direct Cargo build with
+`fp64-proof-linkage` is not supported and fails without that contract. The
+exact byte comparison remains the final authority for the compiler output.
+
+A successful clean run writes an unauthenticated JSON run record when
+`--evidence-out` is present. That file records the exact build identity and
+artifact hashes. It also records the proof library commits, theorem names, and
+proof log hash. The file has no signature or attestation. A reviewer must trust
+its CI provenance or repeat the run. It does not claim that a downstream
+executable reaches the checked inspection function.
 
 ## Inspecting a final executable
 

@@ -9,9 +9,10 @@ p = 2^64 - 59
 ```
 
 HOL Light proves scalar addition, subtraction, and multiplication for exact
-Darwin AArch64, Linux AArch64, and x86-64 instruction sequences. A separate
-theorem proves that `p` is prime. The byte checker connects each proved object
-to one compiled Rust inspection function.
+Darwin AArch64, Linux AArch64, and Linux x86-64 instruction sequences. A
+separate theorem proves that `p` is prime. The byte checker connects each
+proved object to one compiled Rust inspection function. Darwin x86-64 has a
+weaker checked wrapper claim that is described below.
 
 This is not yet a proof of every Fp64 operation in Jolt. The extension field,
 the `Prime63Offset259` field, packed arithmetic, and delayed reduction remain
@@ -43,12 +44,82 @@ not listed must remain unchanged.
 | --- | --- | --- | --- |
 | Darwin AArch64 | Proved target object | Proved target object | Proved target object |
 | Linux AArch64 | Separate proved target object | Separate proved target object | Separate proved target object |
-| x86-64 | Proved baseline object | Proved baseline object | Proved baseline object |
-| x86-64 with BMI2 | Same addition theorem | Same subtraction theorem | Separate proved `mulx` object |
+| Linux x86-64 baseline | Proved target object | Proved target object | Proved target object |
+| x86-64 with BMI2 | Not separately checked | Not separately checked | Separate proved `mulx` object |
 
 The BMI2 multiplication needs BMI2 but does not need ADX. It uses `mulx` for
 the widening products. The baseline x86-64 object uses `mulq`. There is no
 AVX, AVX2, or AVX-512 code in this proof slice.
+
+## Certified build matrix
+
+An instruction theorem applies to exact bytes. A byte identity claim also
+needs an exact build identity. The checked in matrix
+`proofs/hol-light/fp64-certified-builds.json` records that identity and selects
+the matching proof files.
+
+| Matrix entry | Scope | Required in CI |
+| --- | --- | --- |
+| `aarch64-apple-darwin` | Complete inspection symbol for addition, subtraction, and multiplication | Yes |
+| `aarch64-unknown-linux-gnu` | Complete inspection symbol for addition, subtraction, and multiplication | Yes |
+| `x86_64-unknown-linux-gnu` | Complete baseline symbols, plus a BMI2 multiplication symbol | Yes |
+| `x86_64-apple-darwin-inspection-only` | Exact compiler frame around a proved inner sequence | No |
+
+The matrix fixes these inputs.
+
+* The exact Rust, Cargo, and LLVM versions.
+* The target triple and target features.
+* The object format and wrapper policy.
+* The Cargo release profile.
+* The proof library commits, proof sources, and theorem names.
+
+The proof runner rejects ambient Rust flags and profile overrides. It passes
+every release profile setting recorded by the matrix to Cargo as an explicit
+command line value. It also passes an identifier for the current matrix
+contents. The `jolt-field` build script requires that identifier whenever
+`fp64-proof-linkage` is enabled. It then checks the target, feature set, visible
+profile fields, and toolchain. An unknown target or feature set stops before
+the inspection witness is accepted.
+
+Direct Cargo use of `fp64-proof-linkage` is not a certified build path. It
+fails unless the caller deliberately supplies the current runner contract. The
+exact byte comparison remains the final check on compiler output. This matters
+because Cargo does not expose every effective profile setting to a build
+script.
+
+This is a closed list. It does not cover the following systems.
+
+* Windows.
+* Linux with musl.
+* Android, BSD, and iOS.
+* RISC-V and WebAssembly.
+* Big endian and 32 bit systems.
+
+A new target must get an explicit matrix entry. It also needs exact byte
+expectations, the right machine theorem, and a CI job before it can carry a
+complete claim.
+
+The matrix is the source of truth for build selection and proof policy. It is
+not the source of the expected instruction bytes. Those bytes remain in the
+artifact checker and in the HOL Light object imports. This duplication is
+intentional. Changing the matrix cannot make changed machine code correct.
+The byte checker must still match its independent constants, and HOL Light
+must still replay the theorem for the imported bytes.
+
+Each clean CI run writes an unauthenticated JSON run record. It contains the
+following records.
+
+* The target and feature profile.
+* The toolchain and source commit.
+* The object and witness hashes.
+* The proof library commits and theorem names.
+* The proof log hash.
+
+The runner writes this file only after it repeats the exact byte comparison
+and finds every required theorem marker in the supplied proof log. The record
+does not authenticate itself. A reviewer must trust its CI provenance or
+repeat the run. The file also states that downstream binary reachability is not
+established.
 
 ## Why the production Rust code stays unchanged
 
@@ -97,11 +168,11 @@ function. The Python checker compares those bytes with the matching standalone
 object. HOL Light independently checks the bytes that it imports from that
 object.
 
-Rust 1.95 emits different AArch64 schedules on Darwin and Linux. The formulas
-are the same, but the order of independent instructions and the temporary
-registers differ. Jolt keeps a separate exact object and a separate machine
-proof for each sequence. The checker does not rename registers or treat the
-two byte strings as interchangeable.
+The pinned Rust 1.95.0 toolchain emits different AArch64 schedules on Darwin
+and Linux. The formulas are the same, but the order of independent
+instructions and the temporary registers differ. Jolt keeps a separate exact
+object and a separate machine proof for each sequence. The checker does not
+rename registers or treat the two byte strings as interchangeable.
 
 The final executable scanner searches for both variants. Its report names the
 target in each Fp64 operation, such as `add_linux` or `add_darwin`.
@@ -238,10 +309,16 @@ Run the fast byte check after changing Rust arithmetic, proof assembly, or the
 artifact checker.
 
 ```sh
-./proofs/hol-light/check-fp64.sh bytes x86_64
+./proofs/hol-light/check-fp64.sh bytes x86_64 \
+  --matrix-entry x86_64-unknown-linux-gnu
 ```
 
-Use `aarch64` to check that architecture.
+On Apple Silicon, use this command for the native matrix entry.
+
+```sh
+./proofs/hol-light/check-fp64.sh bytes aarch64 \
+  --matrix-entry aarch64-apple-darwin
+```
 
 Start one persistent theorem session with
 
@@ -260,13 +337,17 @@ Run the clean release check with
 ```sh
 HOL_LIGHT_DIR=/path/to/hol-light \
 S2N_BIGNUM_DIR=/path/to/s2n-bignum \
-  ./proofs/hol-light/check-fp64.sh all x86_64 --clean
+  ./proofs/hol-light/check-fp64.sh all x86_64 \
+    --matrix-entry x86_64-unknown-linux-gnu \
+    --evidence-out /path/to/fp64-x86-64-linux-gnu.json \
+    --clean
 ```
 
 The clean runner builds fresh proof objects and inspection functions. It checks
 their bytes, loads the processor model once, proves every covered operation,
-and checks the primality certificate. CI runs the AArch64 and x86-64 jobs
-separately.
+and checks the primality certificate. CI runs one clean job for each complete
+matrix entry. This includes native Apple Silicon, native Linux AArch64, and
+native Linux x86-64.
 
 ## Work that remains
 

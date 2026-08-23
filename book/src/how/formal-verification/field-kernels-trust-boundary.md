@@ -26,9 +26,11 @@ possible input pair.
 | Arithmetic specification | Reviewed equations for scalar addition, subtraction, and multiplication modulo the A7F7 and `2^64 - 59` primes |
 | Exact proof object | HOL Light body and callable subroutine theorems |
 | Linux inspection witness | Complete byte equality with the proved object |
-| Darwin inspection witness | Exact wrapper bytes checked, while frame semantics remain outside the theorem |
+| Darwin AArch64 inspection witness | Complete byte equality with the proved object |
+| Darwin x86-64 inspection witness | Exact wrapper bytes checked, while frame semantics remain outside the theorem |
 | Arbitrary inlined callers | Rust and LLVM compiler contract trusted |
-| CPU feature selection | Build conditions checked by building both x86-64 paths |
+| Fp64 proof build selection | Exact registered target and feature profile checked before witness compilation |
+| CPU availability at deployment | Trusted deployment condition for optional x86 features |
 | Final downstream executable | Required for a release claim, but not performed by Jolt |
 | Complete field use | Extension fields, packed arithmetic, unreduced accumulation, squaring, and inversion have separate obligations |
 
@@ -89,9 +91,27 @@ inlined callers still rely on the compiler.
 ### A wrong dispatch path
 
 The theorem does not prove which branch the Rust program selects. Jolt builds
-and checks both x86-64 configurations. The compiler removes the unused feature
-branch when it builds the program. A downstream application must still use the
-intended field type and build settings.
+and checks both registered x86-64 configurations. The compiler removes the
+unused feature branch when it builds the program. A downstream application
+must still use the intended field type and build settings.
+
+### An unknown build identity
+
+The Fp64 proof runner does not guess from the host operating system. It resolves
+one checked in build entry from the complete Rust target triple. That entry
+also fixes the target features, Cargo release profile, object format, wrapper
+policy, Rust toolchain, proof sources, and theorem names.
+
+Proof linkage fails when the target or feature set is absent from the matrix.
+The runner also rejects ambient Rust flags and profile overrides. This prevents
+an unreviewed Windows, musl, mobile, or native CPU build from inheriting a
+nearby Linux or Darwin claim.
+
+The clean runner emits a JSON run record after byte checking and theorem marker
+checking pass. The record lists the selected identities and artifact hashes.
+It has no signature or attestation. A reviewer must trust its CI provenance or
+repeat the run. It is not proof for arbitrary inlined callers or a downstream
+executable.
 
 ### Unsupported hardware
 
@@ -171,13 +191,14 @@ Before claiming that a deployed binary uses a proved field operation, record
 the following evidence.
 
 1. The exact Jolt commit.
-2. The Rust compiler version, target triple, and target CPU features.
-3. The HOL Light and `s2n-bignum` commits.
-4. The object hash and theorem names from a clean proof run.
-5. The selected field type and operation call path.
-6. The final binary symbol or instruction location.
-7. Evidence that the claimed execution path reaches that code.
-8. Every operation and representation that remains outside the claim.
+2. The registered Fp64 build matrix entry when the Fp64 claim is used.
+3. The Rust compiler version, target triple, and target CPU features.
+4. The HOL Light and `s2n-bignum` commits.
+5. The object hash, witness hash, proof log hash, and theorem names from a clean proof run.
+6. The selected field type and operation call path.
+7. The final binary symbol or instruction location.
+8. Evidence that the claimed execution path reaches that code.
+9. Every operation and representation that remains outside the claim.
 
 The current legacy `akita` feature still reaches the external Akita field
 implementation. The Jolt Fp128 theorems do not cover that runtime path. The

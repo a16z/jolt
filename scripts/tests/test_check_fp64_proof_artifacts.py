@@ -49,16 +49,36 @@ class CheckFp64ProofArtifactsTests(unittest.TestCase):
        3: c3                      ret
        4: 90                      nop
 """
+        function, trailing = CHECKER.through_ret(disassembly, "jolt_fp64_sub_asm")
+        self.assertEqual(function, bytes.fromhex("48 29 f7 c3"))
+        self.assertEqual(trailing, [(b"\x90", "nop")])
+
+    def test_constructs_only_the_expected_darwin_frame(self) -> None:
+        body = bytes.fromhex("48 29 f7 c3")
         self.assertEqual(
-            CHECKER.through_ret(disassembly, "jolt_fp64_sub_asm"),
-            bytes.fromhex("48 29 f7 c3"),
+            CHECKER.darwin_frame(body),
+            bytes.fromhex("55 48 89 e5 48 29 f7 5d c3"),
         )
 
-    def test_normalizes_only_the_expected_darwin_frame(self) -> None:
-        body = bytes.fromhex("48 29 f7 c3")
-        framed = bytes.fromhex("55 48 89 e5 48 29 f7 5d c3")
-        self.assertEqual(CHECKER.normalize_darwin_frame(framed), body)
-        self.assertEqual(CHECKER.normalize_darwin_frame(body), body)
+    def test_post_return_policy_rejects_non_nop_instruction(self) -> None:
+        with self.assertRaises(SystemExit):
+            CHECKER.require_post_return(
+                "test",
+                [(b"\x90", "nop"), (b"\x31\xc0", "xorl %eax, %eax")],
+                "nop-padding-only",
+            )
+
+    def test_post_return_policy_rejects_any_linux_trailing_instruction(self) -> None:
+        with self.assertRaises(SystemExit):
+            CHECKER.require_post_return("test", [(b"\x90", "nop")], "none")
+
+    def test_format_marker_must_match(self) -> None:
+        with self.assertRaises(SystemExit):
+            CHECKER.require_format(
+                "test",
+                "binary: file format mach-o arm64",
+                "file format elf64-littleaarch64",
+            )
 
     def test_require_rejects_drift(self) -> None:
         with self.assertRaises(SystemExit):
