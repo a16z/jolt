@@ -40,6 +40,14 @@ if [[ -z "$ARCHITECTURE" ]]; then
 fi
 
 HOST_ARCHITECTURE=$(normalize_architecture "$(uname -m)") || true
+case "$(uname -s)" in
+  Darwin) TARGET_OS=darwin ;;
+  Linux) TARGET_OS=linux ;;
+  *)
+    echo "unsupported host operating system: $(uname -s)" >&2
+    exit 2
+    ;;
+esac
 CARGO_BUILD_ARGS=(build --locked -p jolt-field --release)
 TARGET_TRIPLE=""
 if [[ "$ARCHITECTURE" != "$HOST_ARCHITECTURE" ]]; then
@@ -135,6 +143,7 @@ else
 fi
 CHECKER_ARGS=(
   --architecture "$ARCHITECTURE"
+  --target-os "$TARGET_OS"
   --add-object "$ADD_OBJECT"
   --sub-object "$SUB_OBJECT"
   --mul-object "$MUL_OBJECT"
@@ -247,22 +256,40 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
   PROOF_SOURCES=("$COMBINED_SOURCE" "$PROOF_DIR"/fp64_*.ml)
 else
   ARCHITECTURE_LABEL=AArch64
-  ADD_THEOREM=JOLT_FP64_ADD_SUBROUTINE_CORRECT
-  SUB_THEOREM=JOLT_FP64_SUB_SUBROUTINE_CORRECT
-  MUL_THEOREM=JOLT_FP64_MUL_SUBROUTINE_CORRECT
+  if [[ "$TARGET_OS" == linux ]]; then
+    ADD_OBJECT_SOURCE=fp64_add_aarch64_linux_object.ml
+    ADD_CORRECT_SOURCE=fp64_add_aarch64_linux_correct.ml
+    SUB_OBJECT_SOURCE=fp64_sub_aarch64_linux_object.ml
+    SUB_CORRECT_SOURCE=fp64_sub_aarch64_linux_correct.ml
+    MUL_OBJECT_SOURCE=fp64_mul_aarch64_linux_object.ml
+    MUL_CORRECT_SOURCE=fp64_mul_aarch64_linux_correct.ml
+    ADD_THEOREM=JOLT_FP64_ADD_AARCH64_LINUX_SUBROUTINE_CORRECT
+    SUB_THEOREM=JOLT_FP64_SUB_AARCH64_LINUX_SUBROUTINE_CORRECT
+    MUL_THEOREM=JOLT_FP64_MUL_AARCH64_LINUX_SUBROUTINE_CORRECT
+  else
+    ADD_OBJECT_SOURCE=fp64_add_object.ml
+    ADD_CORRECT_SOURCE=fp64_add_correct.ml
+    SUB_OBJECT_SOURCE=fp64_sub_object.ml
+    SUB_CORRECT_SOURCE=fp64_sub_correct.ml
+    MUL_OBJECT_SOURCE=fp64_mul_object.ml
+    MUL_CORRECT_SOURCE=fp64_mul_correct.ml
+    ADD_THEOREM=JOLT_FP64_ADD_SUBROUTINE_CORRECT
+    SUB_THEOREM=JOLT_FP64_SUB_SUBROUTINE_CORRECT
+    MUL_THEOREM=JOLT_FP64_MUL_SUBROUTINE_CORRECT
+  fi
   BMI2_MUL_THEOREM=""
   {
     printf 'loadt "arm/proofs/base.ml";;\n'
     printf 'loadt "%s/fp64_common.ml";;\n' "$PROOF_DIR"
     printf 'print_endline "[HOL 1/4] Proving AArch64 Fp64 addition";;\n'
-    printf 'loadt "%s/fp64_add_object.ml";;\n' "$PROOF_DIR"
-    printf 'loadt "%s/fp64_add_correct.ml";;\n' "$PROOF_DIR"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$ADD_OBJECT_SOURCE"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$ADD_CORRECT_SOURCE"
     printf 'print_endline "[HOL 2/4] Proving AArch64 Fp64 subtraction";;\n'
-    printf 'loadt "%s/fp64_sub_object.ml";;\n' "$PROOF_DIR"
-    printf 'loadt "%s/fp64_sub_correct.ml";;\n' "$PROOF_DIR"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$SUB_OBJECT_SOURCE"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$SUB_CORRECT_SOURCE"
     printf 'print_endline "[HOL 3/4] Proving AArch64 Fp64 multiplication";;\n'
-    printf 'loadt "%s/fp64_mul_object.ml";;\n' "$PROOF_DIR"
-    printf 'loadt "%s/fp64_mul_correct.ml";;\n' "$PROOF_DIR"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$MUL_OBJECT_SOURCE"
+    printf 'loadt "%s/%s";;\n' "$PROOF_DIR" "$MUL_CORRECT_SOURCE"
     printf 'print_endline "[HOL 4/4] Checking the Fp64 modulus primality certificate";;\n'
     printf 'loadt "%s/fp64_prime.ml";;\n' "$PROOF_DIR"
   } >"$COMBINED_SOURCE"

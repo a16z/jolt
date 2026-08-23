@@ -12,7 +12,7 @@ import check_field_proof_final_binary as checker
 class FinalBinaryProofSequenceTests(unittest.TestCase):
     def test_aarch64_matches_only_at_instruction_boundaries(self) -> None:
         patterns = checker.expected_patterns("aarch64")
-        expected = patterns["fp64"]["sub"]
+        expected = patterns["fp64"]["sub_linux"]
         words = [
             int.from_bytes(expected[index : index + 4], "little")
             for index in range(0, len(expected), 4)
@@ -22,10 +22,26 @@ class FinalBinaryProofSequenceTests(unittest.TestCase):
             for index, word in enumerate(words)
         )
         symbols = checker.parse_disassembly(disassembly, "aarch64")
-        matches = checker.find_matches(symbols, {"fp64": {"sub": expected}})
+        matches = checker.find_matches(
+            symbols, {"fp64": {"sub_linux": expected}}
+        )
         self.assertEqual(
             matches,
-            [checker.Match("fp64", "sub", "verified", "0x1000")],
+            [checker.Match("fp64", "sub_linux", "verified", "0x1000")],
+        )
+
+    def test_aarch64_patterns_include_both_proved_targets(self) -> None:
+        operations = checker.expected_patterns("aarch64")["fp64"]
+        self.assertEqual(
+            set(operations),
+            {
+                "add_darwin",
+                "sub_darwin",
+                "mul_darwin",
+                "add_linux",
+                "sub_linux",
+                "mul_linux",
+            },
         )
 
     def test_x86_rejects_sequence_starting_inside_instruction(self) -> None:
@@ -78,6 +94,12 @@ class FinalBinaryProofSequenceTests(unittest.TestCase):
             checker.Match("fp128", "mul_bmi2_adx", "f", "0x3"),
         ]
         checker.validate_required("fp128", complete)
+        target_named = [
+            checker.Match("fp64", "add_linux", "f", "0x1"),
+            checker.Match("fp64", "sub_linux", "f", "0x2"),
+            checker.Match("fp64", "mul_linux", "f", "0x3"),
+        ]
+        checker.validate_required("fp64", target_named)
 
     def test_aarch64_template_accepts_consistent_register_renaming(self) -> None:
         expected = checker.parse_disassembly(

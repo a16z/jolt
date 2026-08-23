@@ -11,6 +11,15 @@ SPEC.loader.exec_module(CHECKER)
 
 
 class CheckFp64ProofArtifactsTests(unittest.TestCase):
+    def test_aarch64_targets_have_separate_exact_sequences(self) -> None:
+        self.assertNotEqual(
+            CHECKER.AARCH64["darwin"]["add"],
+            CHECKER.AARCH64["linux"]["add"],
+        )
+        for target_os in ("darwin", "linux"):
+            for operation in ("add", "sub", "mul"):
+                self.assertEqual(CHECKER.AARCH64[target_os][operation][-1], 0xD65F03C0)
+
     def test_parses_aarch64_words_and_macos_symbol(self) -> None:
         disassembly = """
 0000000000000000 <_jolt_fp64_sub_asm>:

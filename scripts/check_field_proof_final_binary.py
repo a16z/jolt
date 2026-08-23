@@ -87,8 +87,9 @@ def expected_patterns(architecture: str) -> dict[str, dict[str, bytes]]:
                 ),
             },
             "fp64": {
-                operation: word_bytes(words[:-1])
-                for operation, words in fp64.AARCH64.items()
+                f"{operation}_{target_os}": word_bytes(words[:-1])
+                for target_os, operations in fp64.AARCH64.items()
+                for operation, words in operations.items()
             },
         }
     return {
@@ -373,7 +374,11 @@ def validate_required(family: str, matches: list[Match]) -> None:
     operations = {
         match.operation for match in matches if match.family == family
     }
-    missing = [operation for operation in ("add", "sub") if operation not in operations]
+    missing = [
+        operation
+        for operation in ("add", "sub")
+        if not any(candidate.startswith(operation) for candidate in operations)
+    ]
     if not any(operation.startswith("mul") for operation in operations):
         missing.append("mul")
     if missing:

@@ -9,9 +9,9 @@ p = 2^64 - 59
 ```
 
 HOL Light proves scalar addition, subtraction, and multiplication for exact
-AArch64 and x86-64 instruction sequences. A separate theorem proves that `p`
-is prime. The byte checker connects each proved object to one compiled Rust
-inspection function.
+Darwin AArch64, Linux AArch64, and x86-64 instruction sequences. A separate
+theorem proves that `p` is prime. The byte checker connects each proved object
+to one compiled Rust inspection function.
 
 This is not yet a proof of every Fp64 operation in Jolt. The extension field,
 the `Prime63Offset259` field, packed arithmetic, and delayed reduction remain
@@ -41,7 +41,8 @@ not listed must remain unchanged.
 
 | Architecture | Addition | Subtraction | Multiplication |
 | --- | --- | --- | --- |
-| AArch64 | Proved baseline object | Proved baseline object | Proved baseline object |
+| Darwin AArch64 | Proved target object | Proved target object | Proved target object |
+| Linux AArch64 | Separate proved target object | Separate proved target object | Separate proved target object |
 | x86-64 | Proved baseline object | Proved baseline object | Proved baseline object |
 | x86-64 with BMI2 | Same addition theorem | Same subtraction theorem | Separate proved `mulx` object |
 
@@ -91,15 +92,25 @@ flowchart TD
     Import --> Theorem
 ```
 
-The compiler emits the same arithmetic sequence for the inspection function
-as the standalone object. The Python checker compares those bytes. HOL Light
-independently checks the bytes that it imports from the standalone object.
+The compiler emits one target specific arithmetic sequence for the inspection
+function. The Python checker compares those bytes with the matching standalone
+object. HOL Light independently checks the bytes that it imports from that
+object.
 
-For Linux x86-64 and AArch64, the checker requires the complete optimized
-inspection symbol to equal the complete proved object. On Darwin x86-64, the
-compiler adds a fixed stack frame. The checker accepts only that exact wrapper
-around the proved sequence. The current x86 theorem does not prove the Darwin
-frame instructions.
+Rust 1.95 emits different AArch64 schedules on Darwin and Linux. The formulas
+are the same, but the order of independent instructions and the temporary
+registers differ. Jolt keeps a separate exact object and a separate machine
+proof for each sequence. The checker does not rename registers or treat the
+two byte strings as interchangeable.
+
+The final executable scanner searches for both variants. Its report names the
+target in each Fp64 operation, such as `add_linux` or `add_darwin`.
+
+For Linux x86-64 and both AArch64 targets, the checker requires the complete
+optimized inspection symbol to equal the matching proved object. On Darwin
+x86-64, the compiler adds a fixed stack frame. The checker accepts only that
+exact wrapper around the proved sequence. The current x86 theorem does not
+prove the Darwin frame instructions.
 
 ## What this connection does and does not establish
 
@@ -207,8 +218,10 @@ operations such as inversion rely on this extra fact.
 | --- | --- |
 | `fp64_common.ml` | Modulus and shared arithmetic lemmas |
 | `fp64_x86_64_common.ml` | Shared facts about x86 carry and compare instructions |
-| `fp64_*_object.ml` | Exact object bytes and instruction execution rule |
-| `fp64_*_correct.ml` | Body theorem and callable subroutine theorem |
+| `fp64_*_object.ml` | Exact Darwin AArch64 object bytes and instruction execution rule |
+| `fp64_*_correct.ml` | Darwin AArch64 body theorem and callable subroutine theorem |
+| `fp64_*_aarch64_linux_object.ml` | Exact Linux AArch64 object bytes and instruction execution rule |
+| `fp64_*_aarch64_linux_correct.ml` | Linux AArch64 body theorem and callable subroutine theorem |
 | `fp64_mul_x86_64_bmi2_*.ml` | Separate BMI2 multiplication object and theorems |
 | `fp64_prime.ml` | Checked primality certificate |
 | `check-fp64.sh` | Byte check and clean combined proof runner |

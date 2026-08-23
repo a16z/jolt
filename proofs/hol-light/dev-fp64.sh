@@ -105,6 +105,8 @@ echo "The first load imports the processor model. Later theorem reloads reuse it
 cd "$S2N_BIGNUM_DIR"
 export JOLT_FP64_PROOF_DIR="$PROOF_DIR"
 export JOLT_FP64_DEV_OPERATION="$OPERATION"
+JOLT_FP64_TARGET_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+export JOLT_FP64_TARGET_OS
 export JOLT_FP64_ADD_OBJECT="$ADD_OBJECT"
 export JOLT_FP64_SUB_OBJECT="$SUB_OBJECT"
 export JOLT_FP64_MUL_OBJECT="$MUL_OBJECT"

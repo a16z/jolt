@@ -11,18 +11,34 @@ from pathlib import Path
 
 
 AARCH64 = {
-    "add": [
-        0xAB000028, 0x52800769, 0x9A9F2129, 0x8B080128,
-        0x9100ED09, 0xEB08013F, 0x9A883120, 0xD65F03C0,
-    ],
-    "sub": [0xEB010008, 0x92800749, 0x9A9F3129, 0x8B090100, 0xD65F03C0],
-    "mul": [
-        0x9B007C28, 0x9BC07C29, 0x5280076A, 0x9BCA7D2B,
-        0xCB09016B, 0x9B0A7D2C, 0xAB080188, 0x9A090169,
-        0x9BCA7D2B, 0xCB09016B, 0x9B0A7D2A, 0xAB080148,
-        0x9A090169, 0x9100ED0A, 0xB100ED1F, 0xFA1F013F,
-        0x9A8A3100, 0xD65F03C0,
-    ],
+    "darwin": {
+        "add": [
+            0xAB000028, 0x52800769, 0x9A9F2129, 0x8B080128,
+            0x9100ED09, 0xEB08013F, 0x9A883120, 0xD65F03C0,
+        ],
+        "sub": [0xEB010008, 0x92800749, 0x9A9F3129, 0x8B090100, 0xD65F03C0],
+        "mul": [
+            0x9B007C28, 0x9BC07C29, 0x5280076A, 0x9BCA7D2B,
+            0xCB09016B, 0x9B0A7D2C, 0xAB080188, 0x9A090169,
+            0x9BCA7D2B, 0xCB09016B, 0x9B0A7D2A, 0xAB080148,
+            0x9A090169, 0x9100ED0A, 0xB100ED1F, 0xFA1F013F,
+            0x9A8A3100, 0xD65F03C0,
+        ],
+    },
+    "linux": {
+        "add": [
+            0x52800768, 0xAB000029, 0x9A9F2108, 0x8B090108,
+            0x9100ED09, 0xEB08013F, 0x9A883120, 0xD65F03C0,
+        ],
+        "sub": [0x92800748, 0xEB010009, 0x9A9F3108, 0x8B080120, 0xD65F03C0],
+        "mul": [
+            0x9BC07C29, 0x52800768, 0x9B007C2A, 0x9BC87D2B,
+            0x9B087D2C, 0xCB09016B, 0xAB0A018A, 0x9A090169,
+            0x9BC87D2B, 0x9B087D28, 0xCB09016B, 0xAB0A0108,
+            0x9A090169, 0xB100ED1F, 0x9100ED0A, 0xFA1F013F,
+            0x9A8A3100, 0xD65F03C0,
+        ],
+    },
 }
 
 X86_64 = {
@@ -139,6 +155,7 @@ def require(label: str, actual: object, expected: object) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--architecture", choices=("aarch64", "x86_64"), required=True)
+    parser.add_argument("--target-os", choices=("darwin", "linux"), required=True)
     parser.add_argument("--add-object", type=Path, required=True)
     parser.add_argument("--sub-object", type=Path, required=True)
     parser.add_argument("--mul-object", type=Path, required=True)
@@ -151,10 +168,11 @@ def main() -> None:
 
     objects = {"add": args.add_object, "sub": args.sub_object, "mul": args.mul_object}
     if args.architecture == "aarch64":
+        expected_sequences = AARCH64[args.target_os]
         for operation, path in objects.items():
             object_symbol = f"jolt_fp64_{operation}_asm"
             witness_symbol = f"jolt_fp64_{operation}_production_witness"
-            expected = AARCH64[operation]
+            expected = expected_sequences[operation]
             require(
                 f"AArch64 {operation} proof object",
                 parse_words(disassemble(tool, path, object_symbol), object_symbol),

@@ -11,7 +11,11 @@
 .type C_SYMBOL(jolt_fp64_sub_asm), %function
 #endif
 C_SYMBOL(jolt_fp64_sub_asm):
+#if defined(__APPLE__)
 #include "fp64_sub_body.inc"
+#else
+#include "fp64_sub_linux_body.inc"
+#endif
 ret
 #if !defined(__APPLE__)
 .size C_SYMBOL(jolt_fp64_sub_asm), .-C_SYMBOL(jolt_fp64_sub_asm)

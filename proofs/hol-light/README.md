@@ -7,9 +7,12 @@ instruction fragments imported by those proofs.
 The Fp64 proofs cover scalar addition, subtraction, and multiplication for
 `Prime64Offset59` on AArch64 and x86-64. They include baseline x86-64 and BMI2
 multiplication. Production keeps its faster generic Rust implementation. An
-artifact checker confirms byte identity for AArch64 and Linux x86-64. On
-Darwin x86-64, it checks one exact compiler frame around the proved sequence.
-No Fp64 proof uses AVX, AVX2, or AVX-512.
+artifact checker confirms byte identity for Linux x86-64 and for both Darwin
+and Linux AArch64. Darwin and Linux AArch64 use separate exact objects and
+separate theorems because Rust can schedule independent instructions and choose
+temporary registers differently on each target. On Darwin x86-64, the checker
+checks one exact compiler frame around the proved sequence. No Fp64 proof uses
+AVX, AVX2, or AVX-512.
 
 Start with the Book chapter
 [Formal verification of field kernels](../../book/src/how/formal-verification/field-kernels.md).
@@ -20,9 +23,10 @@ The [scalar Fp64 guide](../../book/src/how/formal-verification/field-kernels-fp6
 states the precise Fp64 claim, explains the `2^64 - 59` reduction, and lists
 the remaining Fp64 work.
 
-The final theorems cover complete callable AArch64 and Linux x86-64 witness
-functions. The baseline x86-64 bodies copy their internal results to the
-System V return registers `rax:rdx`. The BMI2 and ADX multiplication body
+The final theorems cover complete callable Darwin AArch64, Linux AArch64, and
+Linux x86-64 witness functions. The baseline x86-64 bodies copy their internal
+results to the System V return registers `rax:rdx`. The BMI2 and ADX
+multiplication body
 creates its result directly in those registers. The theorems prove the result
 moves where present, the `ret` stack behavior, and an ABI safe frame. The
 Darwin x86-64 compiler adds a fixed frame wrapper. The artifact checker checks
@@ -33,14 +37,14 @@ canonical inputs and prove the canonical result modulo
 `0xffffffffffffffffffffffff00005809`. A separate certificate proves that this
 modulus is prime.
 
-The inspection witness calls the normal Rust field operation. On AArch64 and
-Linux x86-64, the artifact checker confirms that its complete optimized symbol is
-byte identical to the proved object. On Darwin x86-64, the checker requires an
-exact frame wrapper around the proved sequence. Normal field operations still
-inline the arithmetic fragment, so the theorems do not cover the machine code
-around every inlined copy. Jolt does not inspect downstream executables. A
-downstream project must perform that final binary check at its pinned Jolt
-revision.
+The inspection witness calls the normal Rust field operation. On Darwin
+AArch64, Linux AArch64, and Linux x86-64, the artifact checker confirms that
+its complete optimized symbol is byte identical to the matching proved object.
+On Darwin x86-64, the checker requires an exact frame wrapper around the proved
+sequence. Normal field operations still inline the arithmetic fragment, so the
+theorems do not cover the machine code around every inlined copy. Jolt does not
+inspect downstream executables. A downstream project must perform that final
+binary check at its pinned Jolt revision.
 
 The detailed [source-to-bytes walkthrough](../../book/src/how/formal-verification/field-kernels-source-to-bytes.md),
 [theorem guide](../../book/src/how/formal-verification/field-kernels-reading-theorem.md),
