@@ -8,12 +8,9 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::device_columns::device_pc_words;
-use crate::cuda::common::devices::{fan_out, witness_windows, DeviceTask};
-use crate::cuda::witness::{
-    session_atom_columns, session_atom_columns_window, session_device_trace,
-    session_device_trace_window,
-};
+use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
+use crate::cuda::witness::session_window_residency;
 
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::{require_context, CudaBackend};
@@ -32,7 +29,7 @@ use remainder::{DeviceRemainder, SpartanOuterRemainderKernel};
 
 pub struct SpartanOuterState<F: Field> {
     context: &'static CudaKernelContext,
-    inputs: DeviceR1csInputs,
+    inputs: Vec<(DeviceR1csInputs, CycleWindow)>,
     matrices: ConstraintMatrices<F>,
     tau: Vec<F>,
     log_t: usize,
@@ -43,7 +40,13 @@ pub struct SpartanOuterState<F: Field> {
 impl<F: Field> allocative::Allocative for SpartanOuterState<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("inputs"), self.inputs.device_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("inputs"),
+            self.inputs
+                .iter()
+                .map(|(inputs, _)| inputs.device_bytes())
+                .sum(),
+        );
         visitor.visit_simple(allocative::Key::new("tau"), self.tau.len() * size_of::<F>());
         visitor.visit_simple(
             allocative::Key::new("extended"),
@@ -53,65 +56,35 @@ impl<F: Field> allocative::Allocative for SpartanOuterState<F> {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the uni-skip reduce needs the session and witness to build each device's window \
-              alongside the inputs, matrices and point the reduce itself consumes"
-)]
 fn uniskip_extended<F: Field>(
-    context: &'static CudaKernelContext,
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessPlane<F>,
-    inputs: &DeviceR1csInputs,
+    inputs: &[(DeviceR1csInputs, CycleWindow)],
     matrices: &ConstraintMatrices<F>,
     tau: &[F],
     log_t: usize,
-    cycles: usize,
 ) -> Result<Vec<F>, KernelError<F>> {
-    let windows = witness_windows(cycles);
-    let shards = windows.len();
+    let shards = inputs.len();
+    let context = context_for(0).ok_or(KernelError::InvariantViolation {
+        reason: "a Spartan outer uni-skip window names an absent device",
+    })?;
     if shards <= 1 {
-        return Ok(uniskip::extended_evals(
-            context, inputs, matrices, tau, log_t,
-        )?);
-    }
-
-    let mut shard_inputs: Vec<DeviceR1csInputs> = Vec::with_capacity(shards - 1);
-    for (ordinal, window) in windows.iter().enumerate().skip(1) {
-        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
-            reason: "a Spartan outer uni-skip window names an absent device",
+        let (whole, _) = inputs.first().ok_or(KernelError::InvariantViolation {
+            reason: "the Spartan outer uni-skip reduce has no window",
         })?;
-        let resident = window.residency(cycles);
-        let trace = session_device_trace_window(device, session, witness, cycles, &resident)?;
-        let atoms = session_atom_columns_window(device, session, witness, cycles, &resident)?;
-        let pc_words = trace.mapped_pc_words()?;
-        shard_inputs.push(DeviceR1csInputs::from_device(
-            device,
-            &trace,
-            &atoms,
-            &pc_words,
-            resident.len,
+        return Ok(uniskip::extended_evals(
+            context, whole, matrices, tau, log_t,
         )?);
     }
 
     let mut tasks: Vec<DeviceTask<'_, Vec<F>, KernelError<F>>> = Vec::with_capacity(shards);
-    for (ordinal, window) in windows.iter().enumerate() {
-        let shard_input = if ordinal == 0 {
-            inputs
-        } else {
-            shard_inputs
-                .get(ordinal - 1)
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "a Spartan outer uni-skip window has no device inputs",
-                })?
-        };
+    for (ordinal, (shard_input, window)) in inputs.iter().enumerate() {
+        let cycles = window.len;
         tasks.push(Box::new(move || {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a Spartan outer uni-skip window names an absent device",
             })?;
             Ok(
-                tracing::info_span!("so_uniskip_window", device = ordinal, cycles = window.len)
-                    .in_scope(|| {
+                tracing::info_span!("so_uniskip_window", device = ordinal, cycles).in_scope(
+                    || {
                         uniskip::extended_evals_window(
                             device,
                             shard_input,
@@ -120,9 +93,10 @@ fn uniskip_extended<F: Field>(
                             log_t,
                             ordinal,
                             shards,
-                            window.len,
+                            cycles,
                         )
-                    })?,
+                    },
+                )?,
             )
         }));
     }
@@ -160,10 +134,6 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
         }
 
         let cycles = 1usize << log_t;
-        let trace = session_device_trace(context, session, witness, cycles)?;
-        let atoms = session_atom_columns(context, session, witness, cycles)?;
-        let pc_words = device_pc_words::<F>(context, session, witness, cycles)?;
-        let inputs = DeviceR1csInputs::from_device(context, &trace, &atoms, &pc_words, cycles)?;
         let matrices = spartan_outer_constraints::<F>();
         if matrices.num_constraints != SPARTAN_OUTER_ROWS || matrices.num_vars <= witness::VARIABLES
         {
@@ -171,9 +141,38 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
                 reason: "the CUDA Spartan outer kernels cover the 19-row RV64 constraint system                          over its 35 inputs; the field-inline system appends rows and columns",
             });
         }
-        let extended = uniskip_extended::<F>(
-            context, session, witness, &inputs, &matrices, tau, log_t, cycles,
-        )?;
+        let windows = witness_windows(cycles);
+        let mut inputs = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a Spartan outer window names an absent device",
+            })?;
+            let (trace, atoms) =
+                session_window_residency(device, session, witness, cycles, window)?;
+            let pc_words = windowed_trace_columns::<F>(
+                device,
+                session,
+                witness,
+                cycles,
+                window,
+                [0, 1, 0],
+                0,
+            )?
+            .pc;
+            let resident = if window.start == 0 {
+                cycles
+            } else {
+                window.residency(cycles).len
+            };
+            inputs.push((
+                DeviceR1csInputs::from_device(device, &trace, &atoms, &pc_words, resident)?,
+                CycleWindow {
+                    start: window.start,
+                    len: window.len,
+                },
+            ));
+        }
+        let extended = uniskip_extended(&inputs, &matrices, tau, log_t)?;
 
         session.park(SpartanOuterState {
             context,
@@ -235,7 +234,6 @@ impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for CudaBackend {
             inputs.relation.uniskip_challenge(),
         )?;
         Ok(Box::new(SpartanOuterRemainderKernel::new(
-            state.context,
             device,
             inputs.relation.symbolic().degree(),
             state.log_t,

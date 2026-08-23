@@ -12,11 +12,12 @@ use std::collections::BTreeMap;
 use super::columns::{DeviceR1csInputs, LinearForms};
 use super::uniskip::push_forms;
 use super::witness::VARIABLES;
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
+use crate::cuda::common::devices::{fan_out, CycleWindow, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
-use crate::cuda::common::split_eq::split_eq_tables;
+use crate::cuda::common::split_eq::split_eq_tables_window;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
 pub const CLAIM_LANES: usize = 4;
@@ -25,31 +26,101 @@ pub const MESSAGE_STRIP: usize = 1;
 
 pub const CLAIM_STRIP: usize = 16;
 
-pub struct DeviceRemainder<F: Field> {
+struct RemainderShard<F: Field> {
+    ordinal: usize,
     inputs: DeviceR1csInputs,
+    cycles: usize,
     az: DeviceFrVec,
     bz: DeviceFrVec,
     eq: DeviceSplitEq<F>,
+}
+
+pub struct DeviceRemainder<F: Field> {
+    shards: Vec<RemainderShard<F>>,
+    collapsed: Option<(DeviceFrVec, DeviceFrVec)>,
+    eq: DeviceSplitEq<F>,
     log_t: usize,
+    local_rounds: usize,
     challenges: Vec<F>,
 }
 
 impl<F: Field> DeviceRemainder<F> {
     pub fn new(
-        context: &CudaKernelContext,
-        inputs: DeviceR1csInputs,
+        context: &'static CudaKernelContext,
+        windows: Vec<(DeviceR1csInputs, CycleWindow)>,
         matrices: &ConstraintMatrices<F>,
         tau: &[F],
         log_t: usize,
         uniskip_challenge: F,
     ) -> Result<Self, CudaError> {
+        let count = windows.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a Spartan outer remainder needs a power-of-two window count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
         let columns: Vec<usize> = (1..=VARIABLES).collect();
         let mut forms = LinearForms::new();
         push_forms(&mut forms, matrices, &columns, uniskip_challenge, F::zero())?;
         push_forms(&mut forms, matrices, &columns, uniskip_challenge, F::one())?;
-        let device_forms = forms.upload(context)?;
 
-        let cycles = inputs.cycles();
+        let kernel = centered_lagrange_kernel::<F>(
+            OUTER_UNISKIP_DOMAIN_SIZE,
+            tau[log_t + 1],
+            uniskip_challenge,
+        )
+        .map_err(|_| CudaError::InvariantViolation {
+            reason: "the Spartan outer uni-skip domain is not a valid centered integer domain",
+        })?;
+        let cycle_point = &tau[..=log_t];
+
+        let mut shards = Vec::with_capacity(count);
+        for (ordinal, (inputs, window)) in windows.into_iter().enumerate() {
+            let device = context_for(ordinal).ok_or(absent())?;
+            if inputs.cycles() < window.len {
+                return Err(CudaError::LengthMismatch {
+                    expected: window.len,
+                    got: inputs.cycles(),
+                });
+            }
+            let (az, bz) = Self::factors(device, &forms, &inputs, window.len)?;
+            shards.push(RemainderShard {
+                ordinal,
+                inputs,
+                cycles: window.len,
+                az,
+                bz,
+                eq: DeviceSplitEq::new_window_with_scaling(
+                    device,
+                    cycle_point,
+                    BindingOrder::LowToHigh,
+                    kernel,
+                    ordinal,
+                    count,
+                )?,
+            });
+        }
+        let eq =
+            DeviceSplitEq::new_with_scaling(context, cycle_point, BindingOrder::LowToHigh, kernel)?;
+
+        Ok(Self {
+            shards,
+            collapsed: None,
+            eq,
+            log_t,
+            local_rounds: log_t + 1 - tail_rounds,
+            challenges: Vec::with_capacity(log_t + 2),
+        })
+    }
+
+    fn factors(
+        context: &CudaKernelContext,
+        forms: &LinearForms,
+        inputs: &DeviceR1csInputs,
+        cycles: usize,
+    ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
+        let device_forms = forms.upload(context)?;
         let mut az = context.alloc(2 * cycles)?;
         let mut bz = context.alloc(2 * cycles)?;
         let count = CudaKernelContext::count_of(cycles)?;
@@ -62,58 +133,110 @@ impl<F: Field> DeviceRemainder<F> {
         let _ = builder.arg(az.limbs_mut());
         let _ = builder.arg(bz.limbs_mut());
         // SAFETY: thread `t < cycles` reads row `t` of `narrow`, `wide` and
-        // `flags`, all sized `cycles` rows, and the four uploaded forms indexed
-        // `stream * 2 (+ 1)` for `stream < 2`. It writes `az[(t << 1) | stream]`
-        // and `bz[(t << 1) | stream]`, one slot per (thread, stream) inside the
-        // `2 * cycles` allocations; `az` and `bz` are fresh and distinct.
+        // `flags`, all sized at least `cycles` rows, and the four uploaded forms
+        // indexed `stream * 2 (+ 1)` for `stream < 2`. It writes
+        // `az[(t << 1) | stream]` and `bz[(t << 1) | stream]`, one slot per
+        // (thread, stream) inside the `2 * cycles` allocations; `az` and `bz` are
+        // fresh and distinct.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-
-        let kernel = centered_lagrange_kernel::<F>(
-            OUTER_UNISKIP_DOMAIN_SIZE,
-            tau[log_t + 1],
-            uniskip_challenge,
-        )
-        .map_err(|_| CudaError::InvariantViolation {
-            reason: "the Spartan outer uni-skip domain is not a valid centered integer domain",
-        })?;
-        let eq = DeviceSplitEq::new_with_scaling(
-            context,
-            &tau[..=log_t],
-            BindingOrder::LowToHigh,
-            kernel,
-        )?;
-
-        Ok(Self {
-            inputs,
-            az,
-            bz,
-            eq,
-            log_t,
-            challenges: Vec::with_capacity(log_t + 2),
-        })
+        Ok((az, bz))
     }
 
     fn rounds(&self) -> usize {
         self.log_t + 1
     }
 
-    fn bind(&mut self, context: &CudaKernelContext, challenge: F) -> Result<(), CudaError> {
+    fn bind(&mut self, challenge: F) -> Result<(), CudaError> {
         let scalar = require_fr(challenge)?;
-        self.az = context.bind_rows(&self.az, self.az.len(), scalar)?;
-        self.bz = context.bind_rows(&self.bz, self.bz.len(), scalar)?;
-        self.eq.bind(challenge);
+        let bound = self.challenges.len();
         self.challenges.push(challenge);
+        self.eq.bind(challenge);
+        if let Some((az, bz)) = &mut self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            *az = context.bind_rows(az, az.len(), scalar)?;
+            *bz = context.bind_rows(bz, bz.len(), scalar)?;
+            return Ok(());
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.az = context.bind_rows(&shard.az, shard.az.len(), scalar)?;
+                    shard.bz = context.bind_rows(&shard.bz, shard.bz.len(), scalar)?;
+                    shard.eq.bind(challenge);
+                    Ok(())
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
         Ok(())
     }
 
-    fn endpoints(&self, context: &CudaKernelContext) -> Result<[F; 2], CudaError> {
-        let half = self.az.len() / 2;
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let mut az = Vec::with_capacity(self.shards.len());
+        let mut bz = Vec::with_capacity(self.shards.len());
+        for shard in &self.shards {
+            if shard.az.len() != 1 || shard.bz.len() != 1 {
+                return Err(CudaError::LengthMismatch {
+                    expected: 1,
+                    got: shard.az.len(),
+                });
+            }
+            az.push(shard.az.first()?);
+            bz.push(shard.bz.first()?);
+        }
+        self.collapsed = Some((context.upload(&az)?, context.upload(&bz)?));
+        for shard in &mut self.shards {
+            shard.az = context_for(shard.ordinal).ok_or(absent())?.alloc(0)?;
+            shard.bz = context_for(shard.ordinal).ok_or(absent())?.alloc(0)?;
+        }
+        Ok(())
+    }
+
+    fn endpoints(&self) -> Result<[F; 2], CudaError> {
+        if let Some((az, bz)) = &self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return Self::window_endpoints(context, az, bz, &self.eq);
+        }
+        let tasks: Vec<DeviceTask<'_, [F; 2], CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, [F; 2], CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    Self::window_endpoints(context, &shard.az, &shard.bz, &shard.eq)
+                });
+                task
+            })
+            .collect();
+        let mut total = [F::zero(), F::zero()];
+        for part in fan_out(tasks)? {
+            total[0] += part[0];
+            total[1] += part[1];
+        }
+        Ok(total)
+    }
+
+    fn window_endpoints(
+        context: &CudaKernelContext,
+        az: &DeviceFrVec,
+        bz: &DeviceFrVec,
+        eq: &DeviceSplitEq<F>,
+    ) -> Result<[F; 2], CudaError> {
+        let half = az.len() / 2;
         if half == 0 {
             return Err(CudaError::InvariantViolation {
                 reason: "the Spartan outer remainder has no pairs left to reduce",
             });
         }
-        let e_in_len = self.eq.e_in_len();
+        let e_in_len = eq.e_in_len();
         let in_bits = e_in_len.max(1).ilog2();
         let threads = half.div_ceil(MESSAGE_STRIP);
         let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
@@ -130,10 +253,10 @@ impl<F: Field> DeviceRemainder<F> {
         let mut builder = context
             .stream()
             .launch_builder(context.gruen_pair_message());
-        let _ = builder.arg(self.az.limbs());
-        let _ = builder.arg(self.bz.limbs());
-        let _ = builder.arg(self.eq.e_in_current().limbs());
-        let _ = builder.arg(self.eq.e_out_current().limbs());
+        let _ = builder.arg(az.limbs());
+        let _ = builder.arg(bz.limbs());
+        let _ = builder.arg(eq.e_in_current().limbs());
+        let _ = builder.arg(eq.e_out_current().limbs());
         let _ = builder.arg(&inner_len);
         let _ = builder.arg(&bits);
         let _ = builder.arg(&count);
@@ -166,15 +289,16 @@ impl<F: Field> DeviceRemainder<F> {
         Ok([convert(host[0])?, convert(host[1])?])
     }
 
-    pub fn claims(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
-        let cycle_challenges: Vec<F> = self.challenges[1..=self.log_t]
-            .iter()
-            .rev()
-            .copied()
-            .collect();
-        let (e_in, e_out, in_bits) = split_eq_tables(context, &cycle_challenges)?;
-
-        let cycles = self.inputs.cycles();
+    fn window_claims(
+        context: &CudaKernelContext,
+        inputs: &DeviceR1csInputs,
+        cycles: usize,
+        cycle_challenges: &[F],
+        shard: usize,
+        shards: usize,
+    ) -> Result<Vec<F>, CudaError> {
+        let (e_in, e_out, in_bits) =
+            split_eq_tables_window(context, cycle_challenges, shard, shards)?;
         let threads = cycles.div_ceil(CLAIM_STRIP);
         let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
             CudaError::InvariantViolation {
@@ -193,10 +317,10 @@ impl<F: Field> DeviceRemainder<F> {
             let strip = CudaKernelContext::count_of(CLAIM_STRIP)?;
             let bits = CudaKernelContext::count_of(in_bits)?;
             let mut builder = context.stream().launch_builder(context.so_claims());
-            let _ = builder.arg(self.inputs.narrow());
-            let _ = builder.arg(self.inputs.wide());
-            let _ = builder.arg(self.inputs.flags());
-            let _ = builder.arg(self.inputs.layout());
+            let _ = builder.arg(inputs.narrow());
+            let _ = builder.arg(inputs.wide());
+            let _ = builder.arg(inputs.flags());
+            let _ = builder.arg(inputs.layout());
             let _ = builder.arg(e_in.limbs());
             let _ = builder.arg(e_out.limbs());
             let _ = builder.arg(&bits);
@@ -235,23 +359,65 @@ impl<F: Field> DeviceRemainder<F> {
         Ok(claims)
     }
 
-    pub fn opening_values(
-        &self,
-        context: &CudaKernelContext,
-        log_t: usize,
-    ) -> Result<BTreeMap<JoltOpeningId, F>, CudaError> {
+    pub fn claims(&self) -> Result<Vec<F>, CudaError> {
+        let cycle_challenges: Vec<F> = self.challenges[1..=self.log_t]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        let shards = self.shards.len();
+        let tasks: Vec<DeviceTask<'_, Vec<F>, CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let cycle_challenges = &cycle_challenges;
+                let task: DeviceTask<'_, Vec<F>, CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    Self::window_claims(
+                        context,
+                        &shard.inputs,
+                        shard.cycles,
+                        cycle_challenges,
+                        shard.ordinal,
+                        shards,
+                    )
+                });
+                task
+            })
+            .collect();
+        let parts = fan_out(tasks)?;
+        let mut total = parts
+            .first()
+            .cloned()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "the Spartan outer claim reduce produced no window",
+            })?;
+        for part in parts.iter().skip(1) {
+            if part.len() != total.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: total.len(),
+                    got: part.len(),
+                });
+            }
+            for (slot, addend) in total.iter_mut().zip(part) {
+                *slot += *addend;
+            }
+        }
+        Ok(total)
+    }
+
+    pub fn opening_values(&self, log_t: usize) -> Result<BTreeMap<JoltOpeningId, F>, CudaError> {
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         Ok(dimensions
             .variables()
             .iter()
-            .zip(self.claims(context)?)
+            .zip(self.claims()?)
             .map(|(&variable, claim)| (outer_opening(variable), claim))
             .collect())
     }
 }
 
 pub struct SpartanOuterRemainderKernel<F: Field> {
-    context: &'static CudaKernelContext,
     state: DeviceRemainder<F>,
     degree: usize,
     log_t: usize,
@@ -266,14 +432,8 @@ impl<F: Field> allocative::Allocative for SpartanOuterRemainderKernel<F> {
 }
 
 impl<F: Field> SpartanOuterRemainderKernel<F> {
-    pub const fn new(
-        context: &'static CudaKernelContext,
-        state: DeviceRemainder<F>,
-        degree: usize,
-        log_t: usize,
-    ) -> Self {
+    pub const fn new(state: DeviceRemainder<F>, degree: usize, log_t: usize) -> Self {
         Self {
-            context,
             state,
             degree,
             log_t,
@@ -281,7 +441,7 @@ impl<F: Field> SpartanOuterRemainderKernel<F> {
     }
 
     pub fn openings(&self) -> Result<BTreeMap<JoltOpeningId, F>, CudaError> {
-        self.state.opening_values(self.context, self.log_t)
+        self.state.opening_values(self.log_t)
     }
 
     pub fn bound_rounds(&self) -> usize {
@@ -304,11 +464,9 @@ impl<F: Field> ProveRounds<F> for SpartanOuterRemainderKernel<F> {
             kind: "cuda Spartan outer remainder",
         };
         if let Some(challenge) = bind {
-            self.state
-                .bind(self.context, challenge)
-                .map_err(|_| failed())?;
+            self.state.bind(challenge).map_err(|_| failed())?;
         }
-        let [q0, q2] = self.state.endpoints(self.context).map_err(|_| failed())?;
+        let [q0, q2] = self.state.endpoints().map_err(|_| failed())?;
         let mut coefficients = self
             .state
             .eq
@@ -320,9 +478,15 @@ impl<F: Field> ProveRounds<F> for SpartanOuterRemainderKernel<F> {
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
         self.state
-            .bind(self.context, bind)
+            .bind(bind)
             .map_err(|_| SumcheckError::MissingEvaluationSource {
                 kind: "cuda Spartan outer remainder",
             })
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a Spartan outer remainder window names an absent device",
     }
 }
