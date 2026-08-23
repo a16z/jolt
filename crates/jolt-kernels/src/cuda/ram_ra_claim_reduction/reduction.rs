@@ -4,6 +4,7 @@ use jolt_field::{Field, Fr};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::primitives::fold_lanes_by_halving;
 
 pub const TERMS: usize = 3;
 
@@ -294,7 +295,16 @@ impl DeviceRamRaReduction {
             })
         }?;
         context.stream().synchronize()?;
-        Self::reduce_lanes(context, partials, lanes, blocks)
+        let folded = fold_lanes_by_halving(context, partials, lanes, blocks)?;
+        folded
+            .to_host()?
+            .into_iter()
+            .map(|value| {
+                crate::cuda::common::device::fr_into(value).ok_or(CudaError::NotImplemented {
+                    kernel: "CUDA kernels support only the BN254 scalar field",
+                })
+            })
+            .collect()
     }
 
     fn phase2_round_evals<F: Field>(
@@ -346,41 +356,8 @@ impl DeviceRamRaReduction {
             })
         }?;
         context.stream().synchronize()?;
-        Self::reduce_lanes(context, partials, lanes, blocks)
-    }
-
-    fn reduce_lanes<F: Field>(
-        context: &CudaKernelContext,
-        mut partials: DeviceFrVec,
-        lanes: u32,
-        mut width: u32,
-    ) -> Result<Vec<F>, CudaError> {
-        while width > 1 {
-            let next = width.div_ceil(2);
-            let mut folded = context.alloc(lanes as usize * next as usize)?;
-            let mut builder = context.stream().launch_builder(context.lane_sum_reduce());
-            let _ = builder.arg(partials.limbs());
-            let _ = builder.arg(folded.limbs_mut());
-            let _ = builder.arg(&lanes);
-            let _ = builder.arg(&width);
-            let _ = builder.arg(&next);
-            // SAFETY: thread `(i < next, lane < lanes)` reads
-            // `in[lane * width + i]` and, when `i + next < width`, its mate at
-            // `+ next` — both inside `in`'s `lanes * width` elements — and writes
-            // only `out[lane * next + i]` of `lanes * next`. Index sets are
-            // pairwise disjoint and `out` is a distinct allocation.
-            let _ = unsafe {
-                builder.launch(LaunchConfig {
-                    grid_dim: (next.div_ceil(BLOCK), lanes, 1),
-                    block_dim: (BLOCK, 1, 1),
-                    shared_mem_bytes: 0,
-                })
-            }?;
-            context.stream().synchronize()?;
-            partials = folded;
-            width = next;
-        }
-        partials
+        let folded = fold_lanes_by_halving(context, partials, lanes, blocks)?;
+        folded
             .to_host()?
             .into_iter()
             .map(|value| {
@@ -603,39 +580,6 @@ mod tests {
 
             let got = state.h_prime(context).expect("device h prime").to_host().expect("download");
             prop_assert_eq!(got, expected);
-        }
-    }
-
-    #[test]
-    fn lane_sums_match_the_host_fold() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        for lanes in [1usize, 6] {
-            for width in [1usize, 2, 3, 5, 8, 17] {
-                let values: Vec<Fr> = (0..lanes * width)
-                    .map(|index| Fr::from_u64(index as u64 * 31 + 7))
-                    .collect();
-                let partials = context.upload(&values).expect("upload partials");
-                let got = DeviceRamRaReduction::reduce_lanes::<Fr>(
-                    context,
-                    partials,
-                    lanes as u32,
-                    width as u32,
-                )
-                .expect("device lane fold");
-                let expected: Vec<Fr> = (0..lanes)
-                    .map(|lane| {
-                        values[lane * width..(lane + 1) * width]
-                            .iter()
-                            .fold(Fr::from_u64(0), |acc, &value| acc + value)
-                    })
-                    .collect();
-                assert_eq!(
-                    got, expected,
-                    "the lane fold diverged at {lanes} lanes of width {width}"
-                );
-            }
         }
     }
 }

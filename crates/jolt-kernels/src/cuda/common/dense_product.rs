@@ -14,6 +14,7 @@ use super::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
 use super::devices::{fan_out, DeviceTask};
 use super::error::CudaError;
 use super::lt_poly::DeviceLtPolynomial;
+use super::primitives::reduce_lanes;
 use super::ra_poly::DeviceRaPolynomial;
 
 pub struct DeviceDenseProduct {
@@ -455,7 +456,7 @@ impl DeviceDenseProduct {
         }?;
         drop(materialized);
 
-        let totals = Self::reduce_lanes(context, partials, lanes, blocks)?;
+        let totals = reduce_lanes(context, partials, lanes, blocks)?;
         totals
             .to_host()?
             .into_iter()
@@ -465,37 +466,6 @@ impl DeviceDenseProduct {
                 })
             })
             .collect()
-    }
-
-    pub(crate) fn reduce_lanes(
-        context: &CudaKernelContext,
-        partials: DeviceFrVec,
-        lanes: u32,
-        width: u32,
-    ) -> Result<DeviceFrVec, CudaError> {
-        if width <= 1 {
-            return Ok(partials);
-        }
-        let mut totals = context.alloc(lanes as usize)?;
-        let mut builder = context.stream().launch_builder(context.lane_sum_total());
-        let _ = builder.arg(partials.limbs());
-        let _ = builder.arg(totals.limbs_mut());
-        let _ = builder.arg(&width);
-        // SAFETY: block `lane = blockIdx.x < lanes` reads `in[lane * width + i]`
-        // for `i` striding from `threadIdx.x` by `blockDim.x` while `i < width`,
-        // so every read is inside `in`'s `lanes * width` elements, and writes only
-        // `out[lane]` of `lanes`. Shared memory is `BLOCK * LIMBS` u64s, matching
-        // `shared_mem_bytes`, every thread reaches each `__syncthreads()` because
-        // the strided loop and the tree are outside any early return, and `BLOCK`
-        // is a power of two so the tree covers the whole block.
-        let _ = unsafe {
-            builder.launch(LaunchConfig {
-                grid_dim: (lanes, 1, 1),
-                block_dim: (BLOCK, 1, 1),
-                shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
-            })
-        }?;
-        Ok(totals)
     }
 
     pub fn bind<F: Field>(
@@ -761,10 +731,8 @@ mod tests {
                 weight,
                 factors,
                 words: one_hot_words(cycles),
-                eq_address: EqPolynomial::new(
-                    (0..LOG_K).map(|i| fr(19 + 7 * i as u64)).collect(),
-                )
-                .evaluations(),
+                eq_address: EqPolynomial::new((0..LOG_K).map(|i| fr(19 + 7 * i as u64)).collect())
+                    .evaluations(),
                 cycle_point: (0..LOG_T).map(|i| fr(41 + 13 * i as u64)).collect(),
             }
         }

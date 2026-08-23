@@ -8,9 +8,9 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::Field;
 
 use super::context::{CudaKernelContext, BLOCK};
-use super::dense_product::DeviceDenseProduct;
 use super::device::{require_fr, DeviceFrVec, LIMBS};
 use super::error::CudaError;
+use super::primitives::reduce_lanes;
 use super::split_eq::DeviceSplitEq;
 
 pub struct SumOfProducts<F: Field> {
@@ -168,7 +168,7 @@ impl DeviceSumOfProducts {
             })
         }?;
 
-        let totals = DeviceDenseProduct::reduce_lanes(context, partials, lanes, blocks)?;
+        let totals = reduce_lanes(context, partials, lanes, blocks)?;
         totals
             .to_host()?
             .into_iter()
@@ -256,7 +256,7 @@ impl DeviceSumOfProducts {
             })
         }?;
 
-        let totals = DeviceDenseProduct::reduce_lanes(context, partials, 2, blocks)?;
+        let totals = reduce_lanes(context, partials, 2, blocks)?;
         let host = totals.to_host()?;
         let unsupported = || CudaError::NotImplemented {
             kernel: "CUDA kernels support only the BN254 scalar field",

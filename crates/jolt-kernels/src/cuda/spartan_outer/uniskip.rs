@@ -8,9 +8,9 @@ use jolt_r1cs::constraints::jolt::spartan_outer_row_weights;
 
 use super::columns::{DeviceR1csInputs, LinearForms};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
-use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::LIMBS;
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::split_eq_tables_window;
 
 pub const EXTENDED_SIZE: usize = 2 * OUTER_UNISKIP_DOMAIN_SIZE - 1;
@@ -152,7 +152,7 @@ pub fn extended_evals_window<F: Field>(
         })
     }?;
 
-    let totals = DeviceDenseProduct::reduce_lanes(context, partials, lanes, blocks)?;
+    let totals = reduce_lanes(context, partials, lanes, blocks)?;
     let host = totals.to_host()?;
     let mut values = vec![F::zero(); EXTENDED_SIZE];
     for (&(position, _), value) in nodes.iter().zip(&host) {

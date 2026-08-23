@@ -329,8 +329,7 @@ impl DeviceAddressMajorMatrix {
         }?;
         context.stream().synchronize()?;
 
-        let totals =
-            super::dense_product::DeviceDenseProduct::reduce_lanes(context, partials, 2, blocks)?;
+        let totals = super::primitives::reduce_lanes(context, partials, 2, blocks)?;
         let host = totals.to_host()?;
         let convert = |value: Fr| {
             super::device::fr_into(value).ok_or(CudaError::NotImplemented {

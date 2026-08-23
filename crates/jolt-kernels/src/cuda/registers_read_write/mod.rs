@@ -196,10 +196,9 @@ impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
         let shards = self.rs2_windows.len();
         let mut rs2_ra = F::zero();
         for (ordinal, indices, window) in &self.rs2_windows {
-            let device =
-                context_for(*ordinal).ok_or(SumcheckKernelError::InvariantViolation {
-                    reason: "a registers read-write rs2 window names an absent device",
-                })?;
+            let device = context_for(*ordinal).ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "a registers read-write rs2 window names an absent device",
+            })?;
             rs2_ra += rs2_claim::rs2_ra_claim_window(
                 device,
                 indices,
@@ -277,7 +276,8 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a registers read-write window names an absent device",
             })?;
-            let (trace, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+            let (trace, atoms) =
+                session_window_residency(device, session, witness, cycles, window)?;
             let rows =
                 device_rows::DeviceRegisterRows::from_device(device, &trace, &atoms, window.len)?;
             let matrix = rows.matrix(device, device_gamma)?;

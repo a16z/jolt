@@ -302,8 +302,7 @@ impl DeviceReadWriteMatrix {
         }?;
         context.stream().synchronize()?;
 
-        let totals =
-            super::dense_product::DeviceDenseProduct::reduce_lanes(context, partials, 2, blocks)?;
+        let totals = super::primitives::reduce_lanes(context, partials, 2, blocks)?;
         let host = totals.to_host()?;
         let convert = |value: Fr| {
             super::device::fr_into(value).ok_or(CudaError::NotImplemented {
@@ -500,7 +499,9 @@ impl<F: Field> ShardedReadWriteMatrix<F> {
             .map(|shard| {
                 let task: DeviceTask<'_, [F; 2], CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
-                    shard.matrix.quadratic_coeffs(context, &shard.inc, &shard.eq)
+                    shard
+                        .matrix
+                        .quadratic_coeffs(context, &shard.inc, &shard.eq)
                 });
                 task
             })
@@ -527,8 +528,11 @@ impl<F: Field> ShardedReadWriteMatrix<F> {
                 let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
                     shard.matrix.bind(context, challenge)?;
-                    shard.inc =
-                        context.bind(&shard.inc, require_fr(challenge)?, BindingOrder::LowToHigh)?;
+                    shard.inc = context.bind(
+                        &shard.inc,
+                        require_fr(challenge)?,
+                        BindingOrder::LowToHigh,
+                    )?;
                     shard.eq.bind(challenge);
                     Ok(())
                 });

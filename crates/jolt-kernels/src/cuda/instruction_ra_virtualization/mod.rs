@@ -10,22 +10,22 @@ use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRa
 use jolt_witness::JoltWitnessPlane;
 
 use super::{require_context, CudaBackend};
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device_columns::device_lookup_limbs;
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-use one_hot::DevicePackedRa;
+use one_hot::{DevicePackedRa, PackedRaShard, ShardedPackedRa};
 
 pub(crate) mod one_hot;
 
 const COMMITTED_PER_VIRTUAL: usize = 4;
 
 pub struct InstructionRaVirtualizationKernel<F: Field> {
-    context: &'static CudaKernelContext,
     relation: InstructionRaVirtualization<F>,
-    one_hot: DevicePackedRa,
+    one_hot: ShardedPackedRa<F>,
     eq: DeviceSplitEq<F>,
     virtual_polys: usize,
     unscale: Vec<F>,
@@ -55,17 +55,12 @@ impl<F: Field> InstructionRaVirtualizationKernel<F> {
         let failed = || SumcheckError::MissingEvaluationSource {
             kind: "cuda instruction RA virtualization bind",
         };
-        self.one_hot
-            .bind(self.context, challenge)
-            .map_err(|_| failed())?;
+        let bound = self.rounds_bound;
+        self.one_hot.bind(challenge, bound).map_err(|_| failed())?;
         self.eq.bind(challenge);
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
-            self.finals = Some(
-                self.one_hot
-                    .final_claims(self.context)
-                    .map_err(|_| failed())?,
-            );
+            self.finals = Some(self.one_hot.final_claims().map_err(|_| failed())?);
         }
         Ok(())
     }
@@ -87,7 +82,7 @@ impl<F: Field> ProveRounds<F> for InstructionRaVirtualizationKernel<F> {
         }
         let evals = self
             .one_hot
-            .round_evals(self.context, self.virtual_polys, &self.eq)
+            .round_evals(self.virtual_polys, &self.eq)
             .map_err(|_| SumcheckError::MissingEvaluationSource {
                 kind: "cuda instruction RA virtualization round",
             })?;
@@ -139,7 +134,6 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for CudaBackend 
         inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
     {
-        let context = require_context()?;
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         if dimensions.num_committed_per_virtual() != COMMITTED_PER_VIRTUAL {
@@ -193,28 +187,53 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for CudaBackend 
             }
         }
 
-        let cycles = 1usize << dimensions.log_t();
-        let packed = device_lookup_limbs::<F>(context, session, witness, cycles)?;
-
-        let one_hot = DevicePackedRa::new(
-            context,
-            packed,
-            cycles,
-            chunk_bits,
-            relation.instruction_address(),
-            &seeds,
-        )
-        .map_err(|_| unsupported())?;
+        let log_t = dimensions.log_t();
+        let cycles = 1usize << log_t;
+        let windows = witness_windows(cycles);
+        let shards = windows.len();
+        let mut one_hot_shards = Vec::with_capacity(shards);
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "an instruction RA virtualization window names an absent device",
+            })?;
+            let columns = windowed_trace_columns::<F>(
+                device,
+                session,
+                witness,
+                cycles,
+                window,
+                [1, 0, 0],
+                0,
+            )?;
+            one_hot_shards.push(PackedRaShard {
+                ordinal,
+                one_hot: DevicePackedRa::new(
+                    device,
+                    columns.lookup,
+                    window.len,
+                    chunk_bits,
+                    relation.instruction_address(),
+                    &seeds,
+                )
+                .map_err(|_| unsupported())?,
+                eq: DeviceSplitEq::new_window(
+                    device,
+                    relation.instruction_read_raf_cycle(),
+                    BindingOrder::LowToHigh,
+                    ordinal,
+                    shards,
+                )?,
+            });
+        }
         let eq = DeviceSplitEq::new(
-            context,
+            require_context()?,
             relation.instruction_read_raf_cycle(),
             BindingOrder::LowToHigh,
         )?;
 
         Ok(Box::new(InstructionRaVirtualizationKernel {
-            context,
             relation: relation.clone(),
-            one_hot,
+            one_hot: ShardedPackedRa::new(one_hot_shards, log_t)?,
             eq,
             virtual_polys,
             unscale,

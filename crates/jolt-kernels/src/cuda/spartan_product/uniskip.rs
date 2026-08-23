@@ -7,9 +7,9 @@ use jolt_poly::UnivariatePoly;
 use super::columns::DeviceProductColumns;
 use super::witness::{BRANCH_BIT, JUMP_BIT, NEXT_IS_NOOP_BIT, SIGN_BIT_BASE};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
-use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::{fr_into, LIMBS};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::split_eq_tables;
 
 pub const LANES: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
@@ -86,7 +86,7 @@ pub fn product_matrix<F: Field>(
     let lanes = u32::try_from(MATRIX_LANES).map_err(|_| CudaError::InvariantViolation {
         reason: "the Spartan product matrix launch exceeds a u32 lane count",
     })?;
-    let totals = DeviceDenseProduct::reduce_lanes(context, partials, lanes, blocks)?;
+    let totals = reduce_lanes(context, partials, lanes, blocks)?;
     let mut matrix = Vec::with_capacity(MATRIX_LANES);
     for value in totals.to_host()? {
         matrix.push(fr_into(value).ok_or(CudaError::NotImplemented {

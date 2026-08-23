@@ -305,6 +305,9 @@ pub(crate) fn windowed_trace_columns<F>(
 where
     F: Field,
 {
+    if window.start == 0 {
+        return device_trace_columns(context, session, witness, cycles, families, addresses);
+    }
     let trace =
         session_device_trace_window(context, session, witness, cycles, &window.residency(cycles))?;
     let lookup = if families[0] > 0 {

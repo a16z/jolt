@@ -69,9 +69,14 @@ impl<F: Field> DeviceSplitEq<F> {
         point: &[F],
         binding_order: BindingOrder,
     ) -> Result<Self, CudaError> {
-        Self::with_host(context, point, binding_order, 0, 1, |point, binding_order| {
-            GruenSplitEqPolynomial::<F>::new(point, binding_order)
-        })
+        Self::with_host(
+            context,
+            point,
+            binding_order,
+            0,
+            1,
+            |point, binding_order| GruenSplitEqPolynomial::<F>::new(point, binding_order),
+        )
     }
 
     pub fn new_window(
@@ -97,9 +102,16 @@ impl<F: Field> DeviceSplitEq<F> {
         binding_order: BindingOrder,
         scaling: F,
     ) -> Result<Self, CudaError> {
-        Self::with_host(context, point, binding_order, 0, 1, |point, binding_order| {
-            GruenSplitEqPolynomial::<F>::new_with_scaling(point, binding_order, Some(scaling))
-        })
+        Self::with_host(
+            context,
+            point,
+            binding_order,
+            0,
+            1,
+            |point, binding_order| {
+                GruenSplitEqPolynomial::<F>::new_with_scaling(point, binding_order, Some(scaling))
+            },
+        )
     }
 
     fn with_host(
@@ -140,12 +152,11 @@ impl<F: Field> DeviceSplitEq<F> {
             .filter(|level| level.len() >= shards)
             .map(|level| {
                 let len = level.len() / shards;
-                let window =
-                    level
-                        .get(shard * len..(shard + 1) * len)
-                        .ok_or(CudaError::InvariantViolation {
-                            reason: "a split-eq window lies outside its outer factor level",
-                        })?;
+                let window = level.get(shard * len..(shard + 1) * len).ok_or(
+                    CudaError::InvariantViolation {
+                        reason: "a split-eq window lies outside its outer factor level",
+                    },
+                )?;
                 context.upload(super::device::require_fr_slice(window)?)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -234,8 +245,9 @@ mod tests {
         for log_t in 4usize..=10 {
             let point: Vec<Fr> = (0..log_t).map(|i| fr(53 + 19 * i as u64)).collect();
             for shards in [2usize, 4] {
-                let mut expected = DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
-                    .expect("whole split-eq");
+                let mut expected =
+                    DeviceSplitEq::<Fr>::new(context, &point, BindingOrder::LowToHigh)
+                        .expect("whole split-eq");
                 if expected.e_out_current().len() < shards {
                     continue;
                 }

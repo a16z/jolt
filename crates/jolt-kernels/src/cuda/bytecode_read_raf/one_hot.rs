@@ -342,9 +342,8 @@ impl DeviceBytecodeRa {
             let _ = unsafe { builder.launch(config) }?;
         }
 
-        let totals = crate::cuda::common::dense_product::DeviceDenseProduct::reduce_lanes(
-            context, partials, lane_count, blocks,
-        )?;
+        let totals =
+            crate::cuda::common::primitives::reduce_lanes(context, partials, lane_count, blocks)?;
         totals
             .to_host()?
             .into_iter()

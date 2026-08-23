@@ -18,6 +18,7 @@ use super::prefixes::{default_checkpoints, prefix_mle_round, update_checkpoints,
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr_slice, DeviceFrVec};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::primitives::fold_lanes_by_halving;
 use crate::cuda::common::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
 
 const RAF_TERMS: usize = 3;
@@ -350,7 +351,7 @@ impl DeviceAddressPhase {
         context.stream().synchronize()?;
 
         let partials = finalize_slots(context, &slots, lanes as usize * blocks as usize)?;
-        let totals = reduce_lanes(context, partials, lanes, blocks)?.to_host()?;
+        let totals = fold_lanes_by_halving(context, partials, lanes, blocks)?.to_host()?;
         let gamma_sqr = gamma * gamma;
         let mut evals = [Fr::from(0u64); HINT_POINTS];
         for (point, eval) in evals.iter_mut().enumerate() {
@@ -502,38 +503,4 @@ fn flatten(
         context.copy_into(&mut out, index * CHUNK_SIZE, column)?;
     }
     Ok(out)
-}
-
-fn reduce_lanes(
-    context: &CudaKernelContext,
-    mut partials: DeviceFrVec,
-    lanes: u32,
-    mut width: u32,
-) -> Result<DeviceFrVec, CudaError> {
-    while width > 1 {
-        let next = width.div_ceil(2);
-        let mut folded = context.alloc(lanes as usize * next as usize)?;
-        let mut builder = context.stream().launch_builder(context.lane_sum_reduce());
-        let _ = builder.arg(partials.limbs());
-        let _ = builder.arg(folded.limbs_mut());
-        let _ = builder.arg(&lanes);
-        let _ = builder.arg(&width);
-        let _ = builder.arg(&next);
-        // SAFETY: thread `(i < next, lane < lanes)` reads `in[lane * width + i]`
-        // and, when `i + next < width`, its mate at `+ next` — both inside `in`'s
-        // `lanes * width` elements — and writes only `out[lane * next + i]` of
-        // `lanes * next`. Index sets are pairwise disjoint and `out` is a
-        // distinct allocation.
-        let _ = unsafe {
-            builder.launch(LaunchConfig {
-                grid_dim: (next.div_ceil(BLOCK), lanes, 1),
-                block_dim: (BLOCK, 1, 1),
-                shared_mem_bytes: 0,
-            })
-        }?;
-        context.stream().synchronize()?;
-        partials = folded;
-        width = next;
-    }
-    Ok(partials)
 }

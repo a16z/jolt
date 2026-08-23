@@ -125,13 +125,7 @@ mod tests {
                     .upload_u32_slice(&encoded[shard * len..(shard + 1) * len])
                     .expect("upload window addresses");
                 got += rs2_ra_claim_window::<Fr>(
-                    context,
-                    &indices,
-                    len,
-                    &r_address,
-                    &r_cycle,
-                    shard,
-                    shards,
+                    context, &indices, len, &r_address, &r_cycle, shard, shards,
                 )
                 .expect("windowed rs2 claim");
             }
@@ -170,7 +164,7 @@ mod tests {
             .expect("upload rs2 addresses");
         let got: Fr =
             rs2_ra_claim_window(context, &indices, encoded.len(), &r_address, &r_cycle, 0, 1)
-            .expect("device rs2 claim");
+                .expect("device rs2 claim");
 
         assert_eq!(got, expected);
     }

@@ -2,10 +2,10 @@ use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_field::Field;
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
-use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::one_hot_fold::{FoldTuning, OneHotShards};
+use crate::cuda::common::primitives::reduce_lanes;
 
 const LANES: usize = 2;
 
@@ -124,7 +124,7 @@ impl DeviceHammingWeightReduction {
         }?;
         context.stream().synchronize()?;
 
-        let totals = DeviceDenseProduct::reduce_lanes(
+        let totals = reduce_lanes(
             context,
             partials,
             CudaKernelContext::count_of(LANES)?,

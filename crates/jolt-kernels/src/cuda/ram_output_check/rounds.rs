@@ -3,9 +3,9 @@ use jolt_field::Field;
 use jolt_poly::{BindingOrder, UnivariatePoly};
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
-use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
 const LANES: usize = 2;
@@ -97,7 +97,7 @@ impl<F: Field> DeviceOutputCheck<F> {
         }?;
         context.stream().synchronize()?;
 
-        let totals = DeviceDenseProduct::reduce_lanes(
+        let totals = reduce_lanes(
             context,
             partials,
             CudaKernelContext::count_of(LANES)?,

@@ -10,6 +10,7 @@ use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::primitives::fold_lanes_by_halving;
 
 const MAX_FACTORS: usize = 9;
 
@@ -125,41 +126,7 @@ impl DeviceCycleRounds {
         }?;
         context.stream().synchronize()?;
 
-        Self::reduce_lanes(context, partials, lanes, blocks)?.to_host()
-    }
-
-    fn reduce_lanes(
-        context: &CudaKernelContext,
-        mut partials: DeviceFrVec,
-        lanes: u32,
-        mut width: u32,
-    ) -> Result<DeviceFrVec, CudaError> {
-        while width > 1 {
-            let next = width.div_ceil(2);
-            let mut folded = context.alloc(lanes as usize * next as usize)?;
-            let mut builder = context.stream().launch_builder(context.lane_sum_reduce());
-            let _ = builder.arg(partials.limbs());
-            let _ = builder.arg(folded.limbs_mut());
-            let _ = builder.arg(&lanes);
-            let _ = builder.arg(&width);
-            let _ = builder.arg(&next);
-            // SAFETY: thread `(i < next, lane < lanes)` reads
-            // `in[lane * width + i]` and, when `i + next < width`, its mate at
-            // `+ next` — both inside `in`'s `lanes * width` elements — and writes
-            // only `out[lane * next + i]` of `lanes * next`. Index sets are
-            // pairwise disjoint and `out` is a distinct allocation.
-            let _ = unsafe {
-                builder.launch(LaunchConfig {
-                    grid_dim: (next.div_ceil(BLOCK), lanes, 1),
-                    block_dim: (BLOCK, 1, 1),
-                    shared_mem_bytes: 0,
-                })
-            }?;
-            context.stream().synchronize()?;
-            partials = folded;
-            width = next;
-        }
-        Ok(partials)
+        fold_lanes_by_halving(context, partials, lanes, blocks)?.to_host()
     }
 
     pub fn round_message<F: Field>(

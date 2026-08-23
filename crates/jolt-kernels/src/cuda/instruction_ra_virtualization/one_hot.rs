@@ -4,9 +4,11 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 use jolt_poly::BindingOrder;
 
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::split_eq::DeviceSplitEq;
 
 pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
 
@@ -37,7 +39,7 @@ impl DevicePackedRa {
                          width dividing 64, so no chunk straddles a word boundary",
             });
         }
-        if packed.len() != cycles * 2 {
+        if packed.len() < cycles * 2 {
             return Err(CudaError::LengthMismatch {
                 expected: cycles * 2,
                 got: packed.len(),
@@ -84,6 +86,36 @@ impl DevicePackedRa {
             tables,
             dense: Vec::new(),
             polys,
+            addresses: 1usize << chunk_bits,
+            chunk_bits,
+            cycles,
+            rounds_bound: 0,
+        })
+    }
+
+    fn from_dense(
+        context: &CudaKernelContext,
+        dense: Vec<DeviceFrVec>,
+        chunk_bits: usize,
+        tail_rounds: usize,
+    ) -> Result<Self, CudaError> {
+        let cycles = 1usize << tail_rounds;
+        if dense.iter().any(|table| table.len() != cycles) {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: dense.first().map_or(0, DeviceFrVec::len),
+            });
+        }
+        if dense.is_empty() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a collapsed one-hot family needs at least one dense column",
+            });
+        }
+        Ok(Self {
+            packed: Arc::new(context.alloc_u64(0)?),
+            tables: context.alloc(0)?,
+            polys: dense.len(),
+            dense,
             addresses: 1usize << chunk_bits,
             chunk_bits,
             cycles,
@@ -236,6 +268,22 @@ impl DevicePackedRa {
         Ok(())
     }
 
+    fn window_scalars(&self, context: &CudaKernelContext) -> Result<Vec<Fr>, CudaError> {
+        if self.len() != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len(),
+            });
+        }
+        if self.is_collapsed() {
+            return self.dense.iter().map(DeviceFrVec::first).collect();
+        }
+        self.gather(context)?
+            .iter()
+            .map(DeviceFrVec::first)
+            .collect()
+    }
+
     pub fn final_claims<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
         if self.len() != 1 {
             return Err(CudaError::LengthMismatch {
@@ -353,9 +401,7 @@ impl DevicePackedRa {
         }
         context.stream().synchronize()?;
 
-        let totals = crate::cuda::common::dense_product::DeviceDenseProduct::reduce_lanes(
-            context, partials, 4, blocks,
-        )?;
+        let totals = crate::cuda::common::primitives::reduce_lanes(context, partials, 4, blocks)?;
         let host = totals.to_host()?;
         let mut evals = [F::from_u64(0); 4];
         for (slot, value) in evals.iter_mut().zip(host) {
@@ -365,6 +411,175 @@ impl DevicePackedRa {
                 })?;
         }
         Ok(evals)
+    }
+}
+
+pub(crate) struct PackedRaShard<F: Field> {
+    pub(crate) ordinal: usize,
+    pub(crate) one_hot: DevicePackedRa,
+    pub(crate) eq: DeviceSplitEq<F>,
+}
+
+pub(crate) struct ShardedPackedRa<F: Field> {
+    shards: Vec<PackedRaShard<F>>,
+    collapsed: Option<DevicePackedRa>,
+    chunk_bits: usize,
+    local_rounds: usize,
+    tail_rounds: usize,
+}
+
+impl<F: Field> ShardedPackedRa<F> {
+    pub(crate) fn new(shards: Vec<PackedRaShard<F>>, log_t: usize) -> Result<Self, CudaError> {
+        let count = shards.len();
+        if count == 0 || !count.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded one-hot family needs a power-of-two shard count",
+            });
+        }
+        let tail_rounds = count.trailing_zeros() as usize;
+        let chunk_bits = shards.first().map(|shard| shard.one_hot.chunk_bits).ok_or(
+            CudaError::InvariantViolation {
+                reason: "a sharded one-hot family needs at least one shard",
+            },
+        )?;
+        if tail_rounds > log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a sharded one-hot family cannot split more windows than cycle rounds",
+            });
+        }
+        if count == 1 {
+            let shard = shards
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-shard one-hot family lost its state",
+                })?;
+            return Ok(Self {
+                shards: Vec::new(),
+                collapsed: Some(shard.one_hot),
+                chunk_bits,
+                local_rounds: log_t,
+                tail_rounds: 0,
+            });
+        }
+        Ok(Self {
+            shards,
+            collapsed: None,
+            chunk_bits,
+            local_rounds: log_t - tail_rounds,
+            tail_rounds,
+        })
+    }
+
+    pub(crate) fn round_evals(
+        &self,
+        virtual_polys: usize,
+        whole_eq: &DeviceSplitEq<F>,
+    ) -> Result<[F; 4], CudaError> {
+        if let Some(collapsed) = &self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.round_evals(context, virtual_polys, whole_eq);
+        }
+        let tasks: Vec<DeviceTask<'_, [F; 4], CudaError>> = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, [F; 4], CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.round_evals(context, virtual_polys, &shard.eq)
+                });
+                task
+            })
+            .collect();
+        let mut total = [F::zero(); 4];
+        for part in fan_out(tasks)? {
+            for (lane, addend) in total.iter_mut().zip(part) {
+                *lane += addend;
+            }
+        }
+        Ok(total)
+    }
+
+    pub(crate) fn bind(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+        if let Some(collapsed) = &mut self.collapsed {
+            let context = context_for(0).ok_or(absent())?;
+            return collapsed.bind(context, challenge);
+        }
+        let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
+            .shards
+            .iter_mut()
+            .map(|shard| {
+                let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.bind(context, challenge)?;
+                    shard.eq.bind(challenge);
+                    Ok(())
+                });
+                task
+            })
+            .collect();
+        let _ = fan_out(tasks)?;
+        if bound + 1 == self.local_rounds {
+            self.collapse()?;
+        }
+        Ok(())
+    }
+
+    fn collapse(&mut self) -> Result<(), CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        let shards = std::mem::take(&mut self.shards);
+        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
+                    let context = context_for(shard.ordinal).ok_or(absent())?;
+                    shard.one_hot.window_scalars(context)
+                });
+                task
+            })
+            .collect();
+        let mut columns: Vec<Vec<Fr>> = Vec::new();
+        for scalars in fan_out(tasks)? {
+            if columns.is_empty() {
+                columns = scalars.iter().map(|_| Vec::new()).collect();
+            }
+            if scalars.len() != columns.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: columns.len(),
+                    got: scalars.len(),
+                });
+            }
+            for (column, value) in columns.iter_mut().zip(&scalars) {
+                column.push(*value);
+            }
+        }
+        let dense = columns
+            .iter()
+            .map(|column| context.upload(column))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.collapsed = Some(DevicePackedRa::from_dense(
+            context,
+            dense,
+            self.chunk_bits,
+            self.tail_rounds,
+        )?);
+        Ok(())
+    }
+
+    pub(crate) fn final_claims(&self) -> Result<Vec<F>, CudaError> {
+        let context = context_for(0).ok_or(absent())?;
+        self.collapsed
+            .as_ref()
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a sharded one-hot family was asked for claims before its tail rounds",
+            })?
+            .final_claims(context)
+    }
+}
+
+const fn absent() -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "a sharded one-hot window names an absent device",
     }
 }
 
@@ -382,6 +597,7 @@ mod tests {
 
     use super::{DevicePackedRa, COLLAPSE_AFTER_ROUNDS};
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::split_eq::DeviceSplitEq;
     use crate::cuda::common::testing::{arb_point, fr};
 
     fn packed_index(seed: u64, cycle: usize) -> u128 {
@@ -391,6 +607,93 @@ mod tests {
         let lo = mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29);
         let hi = mix.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (mix >> 31);
         (u128::from(hi) << 64) | u128::from(lo)
+    }
+
+    #[test]
+    fn sharded_packed_ra_matches_the_whole_domain_round_for_round() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        const LOG_T: usize = 8;
+        const CHUNK_BITS: usize = 4;
+        const POLYS: usize = 4;
+        let cycles = 1usize << LOG_T;
+        let seed = 0x5EED_u64;
+        let words: Vec<u64> = (0..cycles)
+            .flat_map(|cycle| {
+                let index = packed_index(seed, cycle);
+                [index as u64, (index >> 64) as u64]
+            })
+            .collect();
+        let point: Vec<Fr> = (0..POLYS * CHUNK_BITS)
+            .map(|i| fr(71 + i as u64 * 13))
+            .collect();
+        let seeds: Vec<Fr> = (0..POLYS).map(|p| fr(101 + p as u64 * 7)).collect();
+        let cycle_point: Vec<Fr> = (0..LOG_T).map(|i| fr(29 + i as u64 * 11)).collect();
+
+        let build = |base: usize, len: usize| {
+            let packed = Arc::new(
+                context
+                    .upload_u64_slice(&words[base * 2..(base + len) * 2])
+                    .expect("upload window index"),
+            );
+            DevicePackedRa::new(context, packed, len, CHUNK_BITS, &point, &seeds)
+                .expect("window one-hot family")
+        };
+
+        for shards in [2usize, 4] {
+            let mut expected = build(0, cycles);
+            let mut expected_eq =
+                DeviceSplitEq::<Fr>::new(context, &cycle_point, BindingOrder::LowToHigh)
+                    .expect("whole split-eq");
+            let len = cycles / shards;
+            let windows: Vec<super::PackedRaShard<Fr>> = (0..shards)
+                .map(|shard| super::PackedRaShard {
+                    ordinal: 0,
+                    one_hot: build(shard * len, len),
+                    eq: DeviceSplitEq::<Fr>::new_window(
+                        context,
+                        &cycle_point,
+                        BindingOrder::LowToHigh,
+                        shard,
+                        shards,
+                    )
+                    .expect("window split-eq"),
+                })
+                .collect();
+            let mut got = super::ShardedPackedRa::new(windows, LOG_T).expect("sharded one-hot");
+            let mut got_eq =
+                DeviceSplitEq::<Fr>::new(context, &cycle_point, BindingOrder::LowToHigh)
+                    .expect("tail split-eq");
+
+            for round in 0..LOG_T {
+                let want: [Fr; 4] = expected
+                    .round_evals(context, POLYS / 4, &expected_eq)
+                    .expect("whole round evals");
+                let have: [Fr; 4] = got
+                    .round_evals(POLYS / 4, &got_eq)
+                    .expect("sharded round evals");
+                assert_eq!(
+                    have, want,
+                    "shards={shards} round {round}: a one-hot window's eq-weighted lane sums must \
+                     add to the whole domain's",
+                );
+                let challenge = fr(500 + 19 * round as u64);
+                expected.bind(context, challenge).expect("whole bind");
+                expected_eq.bind(challenge);
+                got.bind(challenge, round).expect("sharded bind");
+                got_eq.bind(challenge);
+            }
+
+            let want: Vec<Fr> = expected.final_claims(context).expect("whole final claims");
+            let have: Vec<Fr> = got.final_claims().expect("sharded final claims");
+            assert_eq!(have, want, "shards={shards}: the final claims diverged");
+            assert_ne!(
+                want.first().copied(),
+                Some(fr(0)),
+                "a degenerate fixture would hide a divergence",
+            );
+        }
     }
 
     proptest! {

@@ -5,9 +5,9 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 
 use super::context::{CudaKernelContext, BLOCK};
-use super::dense_product::DeviceDenseProduct;
 use super::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use super::error::CudaError;
+use super::primitives::reduce_lanes;
 use crate::precommitted_reduction::{lsb_permutation, permute_challenges};
 use crate::{KernelError, SumcheckKernelError};
 
@@ -143,7 +143,7 @@ impl<F: Field> DevicePrecommittedTables<F> {
                 shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
             })
         }?;
-        let totals = DeviceDenseProduct::reduce_lanes(self.context, partials, 2, blocks)?;
+        let totals = reduce_lanes(self.context, partials, 2, blocks)?;
         let host = totals.to_host()?;
         let convert = |value: Fr| {
             fr_into(value).ok_or(CudaError::NotImplemented {

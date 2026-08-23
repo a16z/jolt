@@ -13,9 +13,9 @@ use super::columns::{DeviceR1csInputs, LinearForms};
 use super::uniskip::push_forms;
 use super::witness::VARIABLES;
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
-use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::split_eq_tables;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
@@ -156,7 +156,7 @@ impl<F: Field> DeviceRemainder<F> {
             })
         }?;
 
-        let totals = DeviceDenseProduct::reduce_lanes(context, partials, 2, blocks)?;
+        let totals = reduce_lanes(context, partials, 2, blocks)?;
         let host = totals.to_host()?;
         let convert = |value: Fr| {
             fr_into(value).ok_or(CudaError::NotImplemented {
@@ -224,7 +224,7 @@ impl<F: Field> DeviceRemainder<F> {
             }?;
 
             let lanes_u32 = CudaKernelContext::count_of(lanes)?;
-            let totals = DeviceDenseProduct::reduce_lanes(context, partials, lanes_u32, blocks)?;
+            let totals = reduce_lanes(context, partials, lanes_u32, blocks)?;
             for value in totals.to_host()? {
                 claims.push(fr_into(value).ok_or(CudaError::NotImplemented {
                     kernel: "CUDA kernels support only the BN254 scalar field",

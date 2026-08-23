@@ -411,7 +411,7 @@ impl DeviceBooleanityRa {
             let _ = unsafe { builder.launch(config) }?;
         }
 
-        let totals = crate::cuda::common::dense_product::DeviceDenseProduct::reduce_lanes(
+        let totals = crate::cuda::common::primitives::reduce_lanes(
             context,
             partials,
             CudaKernelContext::count_of(LANES)?,
