@@ -2,8 +2,11 @@ use jolt_field::Field;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 
-use super::context::CudaKernelContext;
+use jolt_field::Fr;
+
+use super::context::{context_for, CudaKernelContext};
 use super::device::{require_fr_slice, DeviceFrVec};
+use super::devices::{fan_out, DeviceTask};
 use super::error::CudaError;
 use super::half_fold::{half_fold, half_fold_into, SummedHalf};
 use super::sum_of_products::{DeviceSumOfProducts, SumOfProducts};
@@ -82,6 +85,46 @@ fn split_point<F: Field>(point: &[F], prefix_rounds: usize) -> Result<(&[F], &[F
     Ok(point.split_at(point.len() - prefix_rounds))
 }
 
+fn window_accumulators<F: Field>(
+    context: &CudaKernelContext,
+    window: &PrefixSuffixWindow,
+    groups: &[PrefixSuffixGroup<F>],
+    prefix_len: usize,
+) -> Result<Vec<Vec<Fr>>, CudaError> {
+    let mut out = Vec::new();
+    for group in groups {
+        for pair in &group.pairs {
+            let slice = pair
+                .suffix
+                .get(window.suffix_offset..window.suffix_offset + window.suffix_len)
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a prefix-suffix window lies outside the suffix table",
+                })?;
+            let suffix = context.upload(require_fr_slice(slice)?)?;
+            let mut suffix_sum = F::zero();
+            for value in slice {
+                suffix_sum += *value;
+            }
+            let bias = group.constant * suffix_sum;
+            let mut accumulator = context.alloc(prefix_len)?;
+            for (index, &(column, coefficient)) in group.columns.iter().enumerate() {
+                half_fold_into(
+                    context,
+                    &window.columns[column],
+                    &suffix,
+                    &mut accumulator,
+                    SummedHalf::High,
+                    coefficient,
+                    bias,
+                    index > 0,
+                )?;
+            }
+            out.push(accumulator.to_host()?);
+        }
+    }
+    Ok(out)
+}
+
 struct PhaseOne {
     tables: Vec<DeviceFrVec>,
     form: DeviceSumOfProducts,
@@ -99,10 +142,18 @@ enum Phase {
     Two(PhaseTwo),
 }
 
+pub struct PrefixSuffixWindow {
+    pub ordinal: usize,
+    pub columns: Vec<DeviceFrVec>,
+    pub suffix_offset: usize,
+    pub suffix_len: usize,
+}
+
 pub struct PrefixSuffixRounds<F: Field> {
     context: &'static CudaKernelContext,
     groups: Vec<PrefixSuffixGroup<F>>,
     columns: Vec<DeviceFrVec>,
+    windows: Vec<PrefixSuffixWindow>,
     phase: Phase,
     challenges: Vec<F>,
     log_t: usize,
@@ -160,6 +211,153 @@ impl<F: Field> PrefixSuffixRounds<F> {
             context,
             groups,
             columns,
+            windows: Vec::new(),
+            phase: Phase::One(PhaseOne { tables, form }),
+            challenges: Vec::with_capacity(log_t),
+            log_t,
+            prefix_rounds,
+            len: prefix_len,
+        })
+    }
+
+    pub fn new_windowed(
+        context: &'static CudaKernelContext,
+        windows: Vec<PrefixSuffixWindow>,
+        groups: Vec<PrefixSuffixGroup<F>>,
+        prefix_rounds: usize,
+        log_t: usize,
+    ) -> Result<Self, CudaError> {
+        if windows.len() == 1 {
+            let window = windows
+                .into_iter()
+                .next()
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a single-window prefix-suffix driver lost its columns",
+                })?;
+            return Self::new(context, window.columns, groups, prefix_rounds);
+        }
+        if prefix_rounds == 0 || prefix_rounds >= log_t {
+            return Err(CudaError::InvariantViolation {
+                reason: "a prefix-suffix split needs at least one round in each phase",
+            });
+        }
+        let prefix_len = 1usize << prefix_rounds;
+        let suffix_len = 1usize << (log_t - prefix_rounds);
+        let column_count = windows.first().map(|window| window.columns.len()).ok_or(
+            CudaError::InvariantViolation {
+                reason: "a windowed prefix-suffix driver needs at least one window",
+            },
+        )?;
+        let mut covered = 0;
+        for window in &windows {
+            if window.suffix_offset != covered || window.columns.len() != column_count {
+                return Err(CudaError::InvariantViolation {
+                    reason: "prefix-suffix windows must tile the suffix domain in order with the \
+                             same column set",
+                });
+            }
+            if window
+                .columns
+                .iter()
+                .any(|column| column.len() != prefix_len * window.suffix_len)
+            {
+                return Err(CudaError::LengthMismatch {
+                    expected: prefix_len * window.suffix_len,
+                    got: window.columns.first().map_or(0, DeviceFrVec::len),
+                });
+            }
+            covered += window.suffix_len;
+        }
+        if covered != suffix_len {
+            return Err(CudaError::LengthMismatch {
+                expected: suffix_len,
+                got: covered,
+            });
+        }
+        for group in &groups {
+            if group.columns.is_empty() || group.pairs.is_empty() {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a prefix-suffix group needs at least one pair and one column term",
+                });
+            }
+            if group
+                .columns
+                .iter()
+                .any(|&(column, _)| column >= column_count)
+            {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a prefix-suffix group names a column outside the claimed set",
+                });
+            }
+            for pair in &group.pairs {
+                if pair.prefix.len() != prefix_len || pair.suffix.len() != suffix_len {
+                    return Err(CudaError::LengthMismatch {
+                        expected: prefix_len,
+                        got: pair.prefix.len(),
+                    });
+                }
+            }
+        }
+
+        let tasks: Vec<DeviceTask<'_, Vec<Vec<Fr>>, CudaError>> = windows
+            .iter()
+            .map(|window| {
+                let groups = &groups;
+                let task: DeviceTask<'_, Vec<Vec<Fr>>, CudaError> = Box::new(move || {
+                    let device =
+                        context_for(window.ordinal).ok_or(CudaError::InvariantViolation {
+                            reason: "a prefix-suffix window names an absent device",
+                        })?;
+                    window_accumulators(device, window, groups, prefix_len)
+                });
+                task
+            })
+            .collect();
+        let mut summed: Vec<Vec<Fr>> = Vec::new();
+        for part in fan_out(tasks)? {
+            if summed.is_empty() {
+                summed = part;
+                continue;
+            }
+            if part.len() != summed.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: summed.len(),
+                    got: part.len(),
+                });
+            }
+            for (total, addend) in summed.iter_mut().zip(&part) {
+                if addend.len() != total.len() {
+                    return Err(CudaError::LengthMismatch {
+                        expected: total.len(),
+                        got: addend.len(),
+                    });
+                }
+                for (slot, value) in total.iter_mut().zip(addend) {
+                    *slot += *value;
+                }
+            }
+        }
+
+        let mut tables = Vec::with_capacity(2 * summed.len());
+        let mut form = SumOfProducts::<F>::new();
+        let mut accumulators = summed.into_iter();
+        for group in &groups {
+            for pair in &group.pairs {
+                let accumulator = accumulators.next().ok_or(CudaError::InvariantViolation {
+                    reason: "a windowed prefix-suffix accumulator is missing for a pair",
+                })?;
+                let base = tables.len();
+                tables.push(context.upload(require_fr_slice(&pair.prefix)?)?);
+                tables.push(context.upload(&accumulator)?);
+                form.push(F::one(), &[base, base + 1])?;
+            }
+        }
+        let form = form.upload(context)?;
+        Ok(Self {
+            context,
+            groups,
+            columns: Vec::new(),
+            windows,
             phase: Phase::One(PhaseOne { tables, form }),
             challenges: Vec::with_capacity(log_t),
             log_t,
@@ -327,14 +525,20 @@ impl<F: Field> PrefixSuffixRounds<F> {
             tables.push(self.context.upload(require_fr_slice(&weight)?)?);
         }
         let column_offset = tables.len();
-        for column in &self.columns {
-            tables.push(half_fold(
-                self.context,
-                column,
-                &device_eq_lo,
-                SummedHalf::Low,
-                F::one(),
-            )?);
+        if self.windows.is_empty() {
+            for column in &self.columns {
+                tables.push(half_fold(
+                    self.context,
+                    column,
+                    &device_eq_lo,
+                    SummedHalf::Low,
+                    F::one(),
+                )?);
+            }
+        } else {
+            for folded in self.windowed_column_folds(&eq_lo)? {
+                tables.push(self.context.upload(&folded)?);
+            }
         }
         let column_count = tables.len() - column_offset;
 
@@ -361,6 +565,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
         let form = form.upload(self.context)?;
 
         self.columns = Vec::new();
+        self.windows = Vec::new();
         self.len = suffix_len;
         self.phase = Phase::Two(PhaseTwo {
             tables,
@@ -369,6 +574,51 @@ impl<F: Field> PrefixSuffixRounds<F> {
             form,
         });
         Ok(())
+    }
+
+    fn windowed_column_folds(&self, eq_lo: &[F]) -> Result<Vec<Vec<Fr>>, CudaError> {
+        let column_count = self
+            .windows
+            .first()
+            .map(|window| window.columns.len())
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a windowed prefix-suffix transition lost its windows",
+            })?;
+        let tasks: Vec<DeviceTask<'_, Vec<Vec<Fr>>, CudaError>> = self
+            .windows
+            .iter()
+            .map(|window| {
+                let task: DeviceTask<'_, Vec<Vec<Fr>>, CudaError> = Box::new(move || {
+                    let device =
+                        context_for(window.ordinal).ok_or(CudaError::InvariantViolation {
+                            reason: "a prefix-suffix window names an absent device",
+                        })?;
+                    let weights = device.upload(require_fr_slice(eq_lo)?)?;
+                    let mut folded = Vec::with_capacity(window.columns.len());
+                    for column in &window.columns {
+                        folded.push(
+                            half_fold(device, column, &weights, SummedHalf::Low, F::one())?
+                                .to_host()?,
+                        );
+                    }
+                    Ok(folded)
+                });
+                task
+            })
+            .collect();
+        let mut out: Vec<Vec<Fr>> = vec![Vec::new(); column_count];
+        for part in fan_out(tasks)? {
+            if part.len() != column_count {
+                return Err(CudaError::LengthMismatch {
+                    expected: column_count,
+                    got: part.len(),
+                });
+            }
+            for (whole, piece) in out.iter_mut().zip(part) {
+                whole.extend(piece);
+            }
+        }
+        Ok(out)
     }
 
     fn ingest(&mut self, challenge: F) -> Result<(), CudaError> {
@@ -427,6 +677,7 @@ mod tests {
     use super::super::testing::fr;
     use super::{
         eq_pair, eq_plus_one_pairs, PrefixSuffixGroup, PrefixSuffixPair, PrefixSuffixRounds,
+        PrefixSuffixWindow,
     };
 
     fn zero() -> Fr {
@@ -642,6 +893,122 @@ mod tests {
             "column claims diverged"
         );
         Ok(())
+    }
+
+    fn drive_windowed(
+        log_t: usize,
+        prefix_rounds: usize,
+        shards: usize,
+        groups: Vec<PrefixSuffixGroup<Fr>>,
+        columns: Vec<Vec<Fr>>,
+        seed: u64,
+    ) -> Result<(), TestCaseError> {
+        let Some(context) = shared_context() else {
+            return Ok(());
+        };
+        let prefix_len = 1usize << prefix_rounds;
+        let suffix_len = 1usize << (log_t - prefix_rounds);
+        let mut oracle = Oracle {
+            weights: groups
+                .iter()
+                .map(|group| dense_weight(&group.pairs, prefix_len, suffix_len))
+                .collect(),
+            columns: columns.clone(),
+            terms: groups.iter().map(|group| group.columns.clone()).collect(),
+            constants: groups.iter().map(|group| group.constant).collect(),
+        };
+        let window_suffix = suffix_len / shards;
+        let windows: Vec<PrefixSuffixWindow> = (0..shards)
+            .map(|shard| {
+                let base = shard * window_suffix * prefix_len;
+                PrefixSuffixWindow {
+                    ordinal: 0,
+                    columns: columns
+                        .iter()
+                        .map(|column| {
+                            context
+                                .upload(&column[base..base + window_suffix * prefix_len])
+                                .expect("upload window column")
+                        })
+                        .collect(),
+                    suffix_offset: shard * window_suffix,
+                    suffix_len: window_suffix,
+                }
+            })
+            .collect();
+        let mut got =
+            PrefixSuffixRounds::<Fr>::new_windowed(context, windows, groups, prefix_rounds, log_t)
+                .expect("windowed prefix-suffix driver");
+
+        prop_assert_eq!(got.num_rounds(), log_t);
+        let mut claim = oracle.claim();
+        let mut bind = None;
+        for round in 0..log_t {
+            let expected = oracle.round_poly();
+            let message = got
+                .prove_round(bind, round, claim)
+                .expect("windowed round polynomial");
+            prop_assert_eq!(
+                message.coefficients().to_vec(),
+                expected.coefficients().to_vec(),
+                "shards {} round {}: the windowed round polynomial diverged",
+                shards,
+                round
+            );
+            let challenge = fr(seed ^ (round as u64 * 977 + 13));
+            claim = expected.evaluate(challenge);
+            oracle.bind(challenge);
+            bind = Some(challenge);
+        }
+        got.finish_rounds(bind.expect("a final challenge"))
+            .expect("windowed finish");
+
+        let expected: Vec<Fr> = oracle.columns.iter().map(|column| column[0]).collect();
+        prop_assert_eq!(
+            got.column_claims().expect("windowed column claims"),
+            expected,
+            "shards {}: the windowed column claims diverged",
+            shards
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn windowed_prefix_suffix_matches_the_whole_domain_round_for_round() {
+        for log_t in 4usize..8 {
+            let prefix_rounds = log_t - log_t / 2;
+            let suffix_rounds = log_t - prefix_rounds;
+            let seed = 0xA11Cu64;
+            let columns = random_columns(5, 1usize << log_t, seed);
+            let outer: Vec<Fr> = (0..log_t).map(|i| fr(seed ^ (i as u64 * 53 + 7))).collect();
+            let product: Vec<Fr> = (0..log_t)
+                .map(|i| fr(seed ^ (i as u64 * 97 + 19)))
+                .collect();
+            let gamma = fr(seed ^ 0xbeef);
+            let mut powers = vec![one()];
+            for index in 1..5 {
+                powers.push(powers[index - 1] * gamma);
+            }
+            for shards in [2usize, 4] {
+                if shards > 1usize << suffix_rounds {
+                    continue;
+                }
+                let groups = vec![
+                    PrefixSuffixGroup {
+                        pairs: eq_plus_one_pairs(&outer, prefix_rounds).expect("eq+1 outer"),
+                        columns: (0..4).map(|c| (c, powers[c])).collect(),
+                        constant: zero(),
+                    },
+                    PrefixSuffixGroup {
+                        pairs: eq_plus_one_pairs(&product, prefix_rounds).expect("eq+1 product"),
+                        columns: vec![(4, -powers[4])],
+                        constant: powers[4],
+                    },
+                ];
+                drive_windowed(log_t, prefix_rounds, shards, groups, columns.clone(), seed)
+                    .expect("windowed drive");
+            }
+        }
     }
 
     fn random_columns(count: usize, len: usize, seed: u64) -> Vec<Vec<Fr>> {

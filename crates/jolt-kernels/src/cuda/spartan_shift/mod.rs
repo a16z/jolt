@@ -12,8 +12,11 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::SpartanShift;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::device_columns::device_pc_words;
-use crate::cuda::witness::{session_atom_columns, session_device_trace};
+use crate::cuda::common::context::context_for;
+use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::devices::witness_windows;
+use crate::cuda::common::prefix_suffix::PrefixSuffixWindow;
+use crate::cuda::witness::session_window_residency;
 
 use super::common::prefix_suffix::{
     eq_plus_one_pairs, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -131,16 +134,49 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let trace = session_device_trace(context, session, witness, cycles)?;
-        let atoms = session_atom_columns(context, session, witness, cycles)?;
-        let pc_words = device_pc_words::<F>(context, session, witness, cycles)?;
-        let device_columns = columns::upload_from_device::<F>(
-            context,
-            trace.unexpanded_pc(),
-            &pc_words,
-            &atoms.flags,
-            cycles,
-        )?;
+        let prefix_len = 1usize << prefix_rounds;
+        let windows = witness_windows(cycles);
+        let windows = if windows
+            .iter()
+            .all(|window| window.len.is_multiple_of(prefix_len))
+        {
+            windows
+        } else {
+            vec![crate::cuda::common::devices::CycleWindow {
+                start: 0,
+                len: cycles,
+            }]
+        };
+        let mut column_windows = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "a Spartan shift window names an absent device",
+            })?;
+            let (trace, atoms) =
+                session_window_residency(device, session, witness, cycles, window)?;
+            let pc = windowed_trace_columns::<F>(
+                device,
+                session,
+                witness,
+                cycles,
+                window,
+                [0, 1, 0],
+                0,
+            )?
+            .pc;
+            column_windows.push(PrefixSuffixWindow {
+                ordinal,
+                columns: columns::upload_from_device::<F>(
+                    device,
+                    trace.unexpanded_pc(),
+                    &pc,
+                    &atoms.flags,
+                    window.len,
+                )?,
+                suffix_offset: window.start / prefix_len,
+                suffix_len: window.len / prefix_len,
+            });
+        }
 
         let mut powers = [F::one(); GAMMA_POWERS];
         for index in 1..GAMMA_POWERS {
@@ -165,7 +201,13 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
         ];
 
         Ok(Box::new(SpartanShiftKernel {
-            rounds: PrefixSuffixRounds::new(context, device_columns, groups, prefix_rounds)?,
+            rounds: PrefixSuffixRounds::new_windowed(
+                context,
+                column_windows,
+                groups,
+                prefix_rounds,
+                log_t,
+            )?,
             log_t,
             bound: 0,
         }))
