@@ -517,24 +517,27 @@ fn fp64_accum_limbs(lo128: u128, hi_carry: u128) -> [u128; 2] {
 /// - `NR = 2`: `c0 = p00 + 2·p11 < 3P² < 2^130`, carry ∈ {0, 1, 2}.
 /// - `c1 = p01 + p10 < 2P² < 2^129`, carry ∈ {0, 1}.
 ///
-/// Only these two non-residues are supported (debug-asserted); a third
-/// `Ext2Config` would need its own carry analysis. (The baseline compiled
-/// the same two-case body for arbitrary configs without checking.)
+/// The specialized carry analysis applies to these two non-residues. Other
+/// configurations reduce each product first and lift its canonical
+/// coordinates into the same exact accumulator representation.
 #[inline(always)]
 fn fp_ext2_mul_to_accum_fp64<const P: u64, C: Ext2Config<Fp64<P>>>(
     a: [Fp64<P>; 2],
     b: [Fp64<P>; 2],
 ) -> FpExt2Fp64ProductAccum {
-    debug_assert!(
-        C::IS_NEG_ONE || C::non_residue() == Fp64::<P>::from_u64(2),
-        "fp_ext2_mul_to_accum_fp64 supports NR ∈ {{−1, 2}} only"
-    );
+    let subtract_p11 = match C::NON_RESIDUE_KIND {
+        crate::Ext2NonResidueKind::Generic => {
+            return fp_ext2_reduced_product_accum::<P, C>(a, b);
+        }
+        crate::Ext2NonResidueKind::NegOne => true,
+        crate::Ext2NonResidueKind::Two => false,
+    };
     let p00 = a[0].mul_wide(b[0]);
     let p11 = a[1].mul_wide(b[1]);
     let p01 = a[0].mul_wide(b[1]);
     let p10 = a[1].mul_wide(b[0]);
 
-    let [c0_lo, c0_hi] = if C::IS_NEG_ONE {
+    let [c0_lo, c0_hi] = if subtract_p11 {
         // c0 = p00 + P² − p11 (the P² bias keeps it non-negative and is
         // invisible mod p).
         let modulus_sq = (P as u128) * (P as u128);
@@ -552,6 +555,23 @@ fn fp_ext2_mul_to_accum_fp64<const P: u64, C: Ext2Config<Fp64<P>>>(
     let [c1_lo, c1_hi] = fp64_accum_limbs(c1_sum, c1_carry as u128);
 
     FpExt2Fp64ProductAccum([c0_lo, c0_hi, c1_lo, c1_hi])
+}
+
+#[inline(always)]
+fn fp_ext2_reduced_product_accum<const P: u64, C: Ext2Config<Fp64<P>>>(
+    a: [Fp64<P>; 2],
+    b: [Fp64<P>; 2],
+) -> FpExt2Fp64ProductAccum {
+    // An arbitrary non-residue can make NR*p11 wider than the two-limb
+    // coefficient accumulator. Reduce this uncommon configuration first,
+    // then lift the canonical coordinates into the exact split-limb sum.
+    let product = FpExt2::<Fp64<P>, C>::new(a[0], a[1]) * FpExt2::new(b[0], b[1]);
+    FpExt2Fp64ProductAccum([
+        product.coeffs[0].0 as u128,
+        0,
+        product.coeffs[1].0 as u128,
+        0,
+    ])
 }
 
 impl<const P: u64, C: Ext2Config<Fp64<P>>> Unreduced for FpExt2<Fp64<P>, C> {
