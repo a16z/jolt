@@ -28,8 +28,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-pub(crate) mod witness;
-
 const RAM_COLUMN: usize = 0;
 
 const RD_COLUMN: usize = 1;

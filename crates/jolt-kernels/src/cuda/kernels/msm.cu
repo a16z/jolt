@@ -1145,6 +1145,83 @@ extern "C" __global__ void msm_one_hot_scatter_kernel(const unsigned int *__rest
     indices[position] = i % chunk_len;
 }
 
+extern "C" __global__ void msm_one_hot_count_shared_kernel(const unsigned int *__restrict__ hot,
+                                                           unsigned int cycles,
+                                                           unsigned int chunk_len,
+                                                           unsigned int chunk_count,
+                                                           unsigned int one_hot_k,
+                                                           unsigned int slots,
+                                                           unsigned int *__restrict__ counts) {
+    extern __shared__ unsigned int one_hot_tally[];
+    unsigned int *tally = one_hot_tally;
+    unsigned int origin = blockIdx.x * blockDim.x;
+    unsigned int first = origin / chunk_len;
+    for (unsigned int s = threadIdx.x; s < slots; s += blockDim.x) tally[s] = 0u;
+    __syncthreads();
+
+    unsigned int i = origin + threadIdx.x;
+    if (i < cycles) {
+        unsigned int address = hot[i];
+        if (address == MSM_COLD) {
+            // a cold cycle selects no address
+        } else if (address >= one_hot_k) {
+            atomicAdd(&counts[one_hot_k * chunk_count], 1u);
+        } else {
+            atomicAdd(&tally[(i / chunk_len - first) * one_hot_k + address], 1u);
+        }
+    }
+    __syncthreads();
+
+    for (unsigned int s = threadIdx.x; s < slots; s += blockDim.x) {
+        unsigned int n = tally[s];
+        unsigned int chunk = first + s / one_hot_k;
+        if (n == 0u || chunk >= chunk_count) continue;
+        atomicAdd(&counts[(s % one_hot_k) * chunk_count + chunk], n);
+    }
+}
+
+extern "C" __global__ void msm_one_hot_scatter_shared_kernel(const unsigned int *__restrict__ hot,
+                                                             unsigned int cycles,
+                                                             unsigned int chunk_len,
+                                                             unsigned int chunk_count,
+                                                             unsigned int one_hot_k,
+                                                             unsigned int slots,
+                                                             unsigned int *__restrict__ cursor,
+                                                             unsigned int *__restrict__ indices) {
+    extern __shared__ unsigned int one_hot_slots[];
+    unsigned int *tally = one_hot_slots;
+    unsigned int *reserved = one_hot_slots + slots;
+    unsigned int origin = blockIdx.x * blockDim.x;
+    unsigned int first = origin / chunk_len;
+    for (unsigned int s = threadIdx.x; s < slots; s += blockDim.x) tally[s] = 0u;
+    __syncthreads();
+
+    unsigned int i = origin + threadIdx.x;
+    unsigned int slot = slots;
+    if (i < cycles) {
+        unsigned int address = hot[i];
+        if (address != MSM_COLD && address < one_hot_k) {
+            slot = (i / chunk_len - first) * one_hot_k + address;
+            atomicAdd(&tally[slot], 1u);
+        }
+    }
+    __syncthreads();
+
+    for (unsigned int s = threadIdx.x; s < slots; s += blockDim.x) {
+        unsigned int n = tally[s];
+        unsigned int chunk = first + s / one_hot_k;
+        reserved[s] = (n != 0u && chunk < chunk_count)
+                          ? atomicAdd(&cursor[(s % one_hot_k) * chunk_count + chunk], n)
+                          : 0u;
+        tally[s] = 0u;
+    }
+    __syncthreads();
+
+    if (slot < slots) {
+        indices[reserved[slot] + atomicAdd(&tally[slot], 1u)] = i % chunk_len;
+    }
+}
+
 extern "C" __global__ void msm_segment_sum_kernel(const u64 *__restrict__ bases,
                                                   const unsigned int *__restrict__ indices,
                                                   const unsigned int *__restrict__ offsets,
@@ -1189,6 +1266,142 @@ extern "C" __global__ void msm_segment_sum_kernel(const u64 *__restrict__ bases,
         for (int limb = 0; limb < 3; limb++) {
             store4(out + ((unsigned long long)segment * 3 + limb) * LIMBS,
                    scratch + limb * LIMBS);
+        }
+    }
+}
+
+#define MSM_SEGMENT_WARP 32u
+
+extern "C" __global__ void msm_segment_sum_warp_kernel(const u64 *__restrict__ bases,
+                                                       const unsigned int *__restrict__ indices,
+                                                       const unsigned int *__restrict__ offsets,
+                                                       const unsigned int *__restrict__ counts,
+                                                       unsigned int segments,
+                                                       u64 *__restrict__ out) {
+    extern __shared__ u64 scratch[];
+    unsigned int lane = threadIdx.x & (MSM_SEGMENT_WARP - 1u);
+    unsigned int segment =
+        blockIdx.x * (blockDim.x / MSM_SEGMENT_WARP) + threadIdx.x / MSM_SEGMENT_WARP;
+    if (segment >= segments) return;
+    unsigned int start = offsets[segment];
+    unsigned int end = start + counts[segment];
+
+    u64 acc[3 * LIMBS], tmp[3 * LIMBS];
+    jac_set_zero(acc);
+    for (unsigned int i = start + lane; i < end; i += MSM_SEGMENT_WARP) {
+        unsigned int index = indices[i];
+        unsigned int negate = index >> 31;
+        index &= 0x7fffffffu;
+        u64 bx[LIMBS], by[LIMBS];
+        load4(bases + (unsigned long long)index * 2 * LIMBS, bx);
+        load4(bases + ((unsigned long long)index * 2 + 1) * LIMBS, by);
+        if (negate != 0) {
+            u64 negated[LIMBS];
+            fq_neg(by, negated);
+            jac_add_affine(acc, bx, negated, tmp);
+        } else {
+            jac_add_affine(acc, bx, by, tmp);
+        }
+        jac_copy(tmp, acc);
+    }
+
+    u64 *slot = scratch + (unsigned long long)threadIdx.x * 3 * LIMBS;
+    jac_copy(acc, slot);
+    __syncwarp();
+    for (unsigned int stride = MSM_SEGMENT_WARP >> 1; stride > 0; stride >>= 1) {
+        if (lane < stride) {
+            jac_add(slot, scratch + (unsigned long long)(threadIdx.x + stride) * 3 * LIMBS, tmp);
+            jac_copy(tmp, slot);
+        }
+        __syncwarp();
+    }
+    if (lane == 0) {
+        for (int limb = 0; limb < 3; limb++) {
+            store4(out + ((unsigned long long)segment * 3 + limb) * LIMBS, slot + limb * LIMBS);
+        }
+    }
+}
+
+__device__ __forceinline__ void msm_segment_accumulate(const u64 *__restrict__ bases,
+                                                       const unsigned int *__restrict__ indices,
+                                                       unsigned int start, unsigned int end,
+                                                       unsigned int first, unsigned int stride,
+                                                       u64 *acc) {
+    u64 tmp[3 * LIMBS];
+    jac_set_zero(acc);
+    for (unsigned int i = start + first; i < end; i += stride) {
+        unsigned int index = indices[i];
+        unsigned int negate = index >> 31;
+        index &= 0x7fffffffu;
+        u64 bx[LIMBS], by[LIMBS];
+        load4(bases + (unsigned long long)index * 2 * LIMBS, bx);
+        load4(bases + ((unsigned long long)index * 2 + 1) * LIMBS, by);
+        if (negate != 0) {
+            u64 negated[LIMBS];
+            fq_neg(by, negated);
+            jac_add_affine(acc, bx, negated, tmp);
+        } else {
+            jac_add_affine(acc, bx, by, tmp);
+        }
+        jac_copy(tmp, acc);
+    }
+}
+
+extern "C" __global__ void msm_segment_sum_classed_kernel(
+    const u64 *__restrict__ bases, const unsigned int *__restrict__ indices,
+    const unsigned int *__restrict__ offsets, const unsigned int *__restrict__ counts,
+    const unsigned int *__restrict__ ids, unsigned int fat, unsigned int thin,
+    u64 *__restrict__ out) {
+    extern __shared__ u64 scratch[];
+    u64 acc[3 * LIMBS], tmp[3 * LIMBS];
+    u64 *slot_points = scratch + (unsigned long long)threadIdx.x * 3 * LIMBS;
+
+    if (blockIdx.x < fat) {
+        unsigned int segment = ids[blockIdx.x];
+        unsigned int start = offsets[segment];
+        msm_segment_accumulate(bases, indices, start, start + counts[segment], threadIdx.x,
+                               blockDim.x, acc);
+        jac_copy(acc, slot_points);
+        __syncthreads();
+        for (unsigned int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+            if (threadIdx.x < stride) {
+                jac_add(slot_points,
+                        scratch + (unsigned long long)(threadIdx.x + stride) * 3 * LIMBS, tmp);
+                jac_copy(tmp, slot_points);
+            }
+            __syncthreads();
+        }
+        if (threadIdx.x == 0) {
+            for (int limb = 0; limb < 3; limb++) {
+                store4(out + ((unsigned long long)segment * 3 + limb) * LIMBS,
+                       scratch + limb * LIMBS);
+            }
+        }
+        return;
+    }
+
+    unsigned int warps = blockDim.x / MSM_SEGMENT_WARP;
+    unsigned int lane = threadIdx.x & (MSM_SEGMENT_WARP - 1u);
+    unsigned int slot = (blockIdx.x - fat) * warps + threadIdx.x / MSM_SEGMENT_WARP;
+    if (slot >= thin) return;
+    unsigned int segment = ids[fat + slot];
+    unsigned int start = offsets[segment];
+    msm_segment_accumulate(bases, indices, start, start + counts[segment], lane, MSM_SEGMENT_WARP,
+                           acc);
+    jac_copy(acc, slot_points);
+    __syncwarp();
+    for (unsigned int stride = MSM_SEGMENT_WARP >> 1; stride > 0; stride >>= 1) {
+        if (lane < stride) {
+            jac_add(slot_points, scratch + (unsigned long long)(threadIdx.x + stride) * 3 * LIMBS,
+                    tmp);
+            jac_copy(tmp, slot_points);
+        }
+        __syncwarp();
+    }
+    if (lane == 0) {
+        for (int limb = 0; limb < 3; limb++) {
+            store4(out + ((unsigned long long)segment * 3 + limb) * LIMBS,
+                   slot_points + limb * LIMBS);
         }
     }
 }

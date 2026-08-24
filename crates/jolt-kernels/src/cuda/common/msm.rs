@@ -10,6 +10,7 @@ use super::error::CudaError;
 #[cfg(test)]
 use super::pack::COLD;
 use super::xfer_stats::{self, Phase};
+use jolt_witness::backend::cuda::EXTRA_WORDS;
 
 pub const FQ_LIMBS: usize = 4;
 
@@ -46,6 +47,80 @@ impl JacobianLimbs {
 
     pub const fn is_identity(&self) -> bool {
         self.z[0] == 0 && self.z[1] == 0 && self.z[2] == 0 && self.z[3] == 0
+    }
+}
+
+pub struct DeviceSegments {
+    indices: CudaSlice<u32>,
+    offsets: CudaSlice<u32>,
+    counts: CudaSlice<u32>,
+    segments: usize,
+    widest: usize,
+    classes: DeviceClasses,
+}
+
+impl DeviceSegments {
+    pub const fn widest(&self) -> usize {
+        self.widest
+    }
+}
+
+pub(crate) struct DeviceClasses {
+    ids: CudaSlice<u32>,
+    fat: usize,
+    thin: usize,
+}
+
+pub(crate) struct HostClasses {
+    ids: Vec<u32>,
+    fat: usize,
+}
+
+pub(crate) fn plan_classes(counts: &[u32]) -> HostClasses {
+    let total: u64 = counts.iter().map(|&count| u64::from(count)).sum();
+    let mean = total / counts.len().max(1) as u64;
+    let limit = u32::try_from(mean.saturating_mul(2).max(CLASS_FLOOR as u64)).unwrap_or(u32::MAX);
+    let mut ids = Vec::with_capacity(counts.len());
+    for (segment, _) in counts.iter().enumerate().filter(|(_, &c)| c > limit) {
+        ids.push(u32::try_from(segment).unwrap_or(u32::MAX));
+    }
+    let fat = ids.len();
+    for (segment, _) in counts.iter().enumerate().filter(|(_, &c)| c <= limit) {
+        ids.push(u32::try_from(segment).unwrap_or(u32::MAX));
+    }
+    HostClasses { ids, fat }
+}
+
+pub struct SignedColumn {
+    magnitudes: CudaSlice<u64>,
+    signs: CudaSlice<u8>,
+    len: usize,
+}
+
+impl SignedColumn {
+    #[cfg(test)]
+    pub(crate) const fn magnitudes(&self) -> &CudaSlice<u64> {
+        &self.magnitudes
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn signs(&self) -> &CudaSlice<u8> {
+        &self.signs
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IncrementKind {
+    Rd,
+    Ram,
+}
+
+impl IncrementKind {
+    const fn code(self) -> u32 {
+        match self {
+            Self::Rd => 0,
+            Self::Ram => 1,
+        }
     }
 }
 
@@ -116,6 +191,14 @@ const MAX_BASE_INDEX: usize = 0x7fff_ffff;
 const MAX_WINDOW_BITS: usize = 16;
 
 const SMALL_SEGMENT_LIMIT: usize = 64;
+
+const WARP_LANES: u32 = 32;
+
+const WARP_WIDEST_LIMIT: usize = 4_096;
+
+const WARP_SEGMENT_FLOOR: usize = 2_048;
+
+const CLASS_FLOOR: usize = 1_024;
 
 const TARGET_REDUCE_BLOCKS: usize = 1024;
 
@@ -254,7 +337,27 @@ struct SegmentPlan<'a> {
     counts: &'a CudaSlice<u32>,
     segments: usize,
     widest: usize,
+    mode: SegmentMode,
+    classes: Option<&'a DeviceClasses>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SegmentMode {
+    Auto,
+    Small,
+    Heavy,
+    Warp,
+    Classes,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OneHotMode {
+    Auto,
+    Flat,
+    Shared,
+}
+
+const ONE_HOT_SHARED_SLOTS: usize = 4_096;
 
 fn window_bits(row_len: usize) -> usize {
     if row_len < 32 {
@@ -613,7 +716,7 @@ impl CudaKernelContext {
         row_len: usize,
     ) -> Result<Vec<JacobianLimbs>, CudaError> {
         let canonical = self.canonical_scalars(rows)?;
-        let signs = vec![0u8; rows.len()];
+        let signs = self.alloc_u8(rows.len())?;
         let accumulator = self.pippenger_device(
             bases,
             DeviceScalars {
@@ -942,37 +1045,89 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
+    pub fn signed_column(&self, rows: &[i128]) -> Result<SignedColumn, CudaError> {
+        tracing::info_span!("cuda_msm_i128_stage", len = rows.len()).in_scope(|| {
+            let mut magnitudes = vec![0u64; rows.len()];
+            let mut signs = vec![0u8; rows.len()];
+            if !split_signed_magnitudes(rows, &mut magnitudes, &mut signs) {
+                return Err(CudaError::InvariantViolation {
+                    reason: "signed MSM scalars must fit in [-u64::MAX, u64::MAX]",
+                });
+            }
+            Ok(SignedColumn {
+                magnitudes: self.upload_u64_slice(&magnitudes)?,
+                signs: self.upload_u8_slice(&signs)?,
+                len: rows.len(),
+            })
+        })
+    }
+
+    pub fn increment_column(
+        &self,
+        extras: &CudaSlice<u64>,
+        kind: IncrementKind,
+        cycles: usize,
+    ) -> Result<SignedColumn, CudaError> {
+        let words = cycles.saturating_mul(EXTRA_WORDS);
+        if extras.len() < words {
+            return Err(CudaError::LengthMismatch {
+                expected: words,
+                got: extras.len(),
+            });
+        }
+        let count = Self::count_of(cycles)?;
+        let code = kind.code();
+        let mut magnitudes = self.alloc_u64(cycles)?;
+        let mut signs = self.alloc_u8(cycles)?;
+        let mut builder = self.stream().launch_builder(self.commit_increment_column());
+        let _ = builder.arg(extras);
+        let _ = builder.arg(&code);
+        let _ = builder.arg(&mut magnitudes);
+        let _ = builder.arg(&mut signs);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `t < cycles` reads the `EXTRA_WORDS` consecutive words
+        // at `t * EXTRA_WORDS` of `extras`, checked above to hold at least
+        // `cycles * EXTRA_WORDS` u64s, and writes only `magnitudes[t]` and
+        // `signs[t]` of two fresh `cycles`-element allocations distinct from
+        // the input. Threads with `t >= cycles` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(SignedColumn {
+            magnitudes,
+            signs,
+            len: cycles,
+        })
+    }
+
+    pub fn msm_rows_signed(
+        &self,
+        bases: &DeviceG1Bases,
+        column: &SignedColumn,
+        row_len: usize,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        self.require_owned(bases.ordinal())?;
+        let accumulator = self.pippenger_device(
+            bases,
+            DeviceScalars {
+                values: &column.magnitudes,
+                limbs: 1,
+            },
+            &column.signs,
+            column.len,
+            row_len,
+            64,
+        )?;
+        tracing::info_span!("cuda_msm_i128_download", len = column.len)
+            .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&accumulator)?)))
+    }
+
     pub fn msm_rows_i128(
         &self,
         bases: &DeviceG1Bases,
         rows: &[i128],
         row_len: usize,
     ) -> Result<Vec<JacobianLimbs>, CudaError> {
-        let (device, signs) = tracing::info_span!("cuda_msm_i128_stage", len = rows.len())
-            .in_scope(|| {
-                let mut magnitudes = vec![0u64; rows.len()];
-                let mut signs = vec![0u8; rows.len()];
-                if !split_signed_magnitudes(rows, &mut magnitudes, &mut signs) {
-                    return Err(CudaError::InvariantViolation {
-                        reason: "signed MSM scalars must fit in [-u64::MAX, u64::MAX]",
-                    });
-                }
-                self.require_owned(bases.ordinal())?;
-                Ok((self.upload_u64_slice(&magnitudes)?, signs))
-            })?;
-        let accumulator = self.pippenger_device(
-            bases,
-            DeviceScalars {
-                values: &device,
-                limbs: 1,
-            },
-            &signs,
-            rows.len(),
-            row_len,
-            64,
-        )?;
-        tracing::info_span!("cuda_msm_i128_download", len = rows.len())
-            .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&accumulator)?)))
+        self.msm_rows_signed(bases, &self.signed_column(rows)?, row_len)
     }
 
     #[cfg(test)]
@@ -1021,7 +1176,8 @@ impl CudaKernelContext {
                 got: bases.count(),
             });
         }
-        self.segment_sums(bases, &indices, &offsets, &counts, one_hot_k)
+        let plan = self.upload_segments(bases, &indices, &counts)?;
+        self.segment_sums(bases, &plan, SegmentMode::Auto)
     }
 
     #[cfg(test)]
@@ -1046,7 +1202,7 @@ impl CudaKernelContext {
         }
         let chunk_count = hot.len() / chunk_len;
         let segments = one_hot_k * chunk_count;
-        let (indices, offsets, counts) =
+        let (indices, counts) =
             tracing::info_span!("cuda_commit_one_hot_csr", segments, cycles = hot.len()).in_scope(
                 || {
                     let mut counts = vec![0u32; segments];
@@ -1078,11 +1234,38 @@ impl CudaKernelContext {
                         indices[cursor[segment] as usize] = (column % chunk_len) as u32;
                         cursor[segment] += 1;
                     }
-                    Ok((indices, offsets, counts))
+                    Ok((indices, counts))
                 },
             )?;
-        tracing::info_span!("cuda_commit_one_hot_segments", segments)
-            .in_scope(|| self.segment_sums(bases, &indices, &offsets, &counts, segments))
+        tracing::info_span!("cuda_commit_one_hot_segments", segments).in_scope(|| {
+            let plan = self.upload_segments(bases, &indices, &counts)?;
+            self.segment_sums(bases, &plan, SegmentMode::Auto)
+        })
+    }
+
+    pub(crate) const fn one_hot_slots(one_hot_k: usize, chunk_len: usize) -> usize {
+        one_hot_k.saturating_mul((BLOCK as usize - 1) / chunk_len + 2)
+    }
+
+    pub(crate) const fn one_hot_shares(one_hot_k: usize, chunk_len: usize) -> bool {
+        Self::one_hot_slots(one_hot_k, chunk_len) <= ONE_HOT_SHARED_SLOTS
+    }
+
+    fn one_hot_mode(
+        mode: OneHotMode,
+        one_hot_k: usize,
+        chunk_len: usize,
+    ) -> Result<OneHotMode, CudaError> {
+        let shares = Self::one_hot_shares(one_hot_k, chunk_len);
+        match mode {
+            OneHotMode::Auto if shares => Ok(OneHotMode::Shared),
+            OneHotMode::Auto | OneHotMode::Flat => Ok(OneHotMode::Flat),
+            OneHotMode::Shared if shares => Ok(OneHotMode::Shared),
+            OneHotMode::Shared => Err(CudaError::InvariantViolation {
+                reason: "a one-hot histogram of this shape needs more per-block tally slots than \
+                         shared memory holds",
+            }),
+        }
     }
 
     pub fn one_hot_rows_device(
@@ -1092,6 +1275,18 @@ impl CudaKernelContext {
         cycles: usize,
         one_hot_k: usize,
         chunk_len: usize,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        self.one_hot_rows_device_with(bases, hot, cycles, one_hot_k, chunk_len, OneHotMode::Auto)
+    }
+
+    pub fn one_hot_rows_device_with(
+        &self,
+        bases: &DeviceG1Bases,
+        hot: &CudaView<'_, u32>,
+        cycles: usize,
+        one_hot_k: usize,
+        chunk_len: usize,
+        mode: OneHotMode,
     ) -> Result<Vec<JacobianLimbs>, CudaError> {
         if one_hot_k == 0 || chunk_len == 0 || !cycles.is_multiple_of(chunk_len) {
             return Err(CudaError::LengthMismatch {
@@ -1119,31 +1314,67 @@ impl CudaKernelContext {
         let chunk_count_arg = Self::count_of(chunk_count)?;
         let one_hot_k_arg = Self::count_of(one_hot_k)?;
 
+        let mode = Self::one_hot_mode(mode, one_hot_k, chunk_len)?;
+
         let count_span =
-            tracing::info_span!("cuda_commit_one_hot_count", segments, cycles).entered();
+            tracing::info_span!("cuda_commit_one_hot_count", segments, cycles, ?mode).entered();
+        let slots = Self::one_hot_slots(one_hot_k, chunk_len);
+        let slots_arg = Self::count_of(slots)?;
         let mut counts = self.alloc_u32(segments + 1)?;
-        let mut builder = self.stream().launch_builder(self.msm_one_hot_count());
-        let _ = builder.arg(hot);
-        let _ = builder.arg(&cycle_count);
-        let _ = builder.arg(&chunk_len_arg);
-        let _ = builder.arg(&chunk_count_arg);
-        let _ = builder.arg(&one_hot_k_arg);
-        let _ = builder.arg(&mut counts);
-        // SAFETY: thread `i < cycles` reads only `hot[i]`, of a buffer whose
-        // length is checked against `cycles` above. A live address below
-        // `one_hot_k` atomically increments
-        // `counts[address * chunk_count + i / chunk_len]`, which is `< segments`
-        // because `i / chunk_len < chunk_count`; an out-of-range address
-        // increments the one extra trailing slot instead, and a cold cycle
-        // increments nothing. `counts` holds `segments + 1` u32s zeroed by
-        // `alloc_u32`, so every increment is in bounds and concurrent hits on
-        // one counter are atomic.
-        let _ = unsafe { builder.launch(Self::launch_config(cycle_count)) }?;
+        if mode == OneHotMode::Shared {
+            let mut builder = self
+                .stream()
+                .launch_builder(self.msm_one_hot_count_shared());
+            let _ = builder.arg(hot);
+            let _ = builder.arg(&cycle_count);
+            let _ = builder.arg(&chunk_len_arg);
+            let _ = builder.arg(&chunk_count_arg);
+            let _ = builder.arg(&one_hot_k_arg);
+            let _ = builder.arg(&slots_arg);
+            let _ = builder.arg(&mut counts);
+            let mut config = Self::launch_config(cycle_count);
+            config.shared_mem_bytes = Self::count_of(slots * size_of::<u32>())?;
+            // SAFETY: the block is `BLOCK` wide, so thread `i < cycles` reads
+            // only `hot[i]` of a buffer checked against `cycles` above. The
+            // dynamic shared array holds exactly `slots` u32s, matching
+            // `shared_mem_bytes`, and every index into it is
+            // `(i / chunk_len - first) * one_hot_k + address` with
+            // `address < one_hot_k` and `i` inside `[first * chunk_len,
+            // first * chunk_len + BLOCK)`, so the chunk term is at most
+            // `(BLOCK - 1) / chunk_len + 1` and the index stays below the
+            // `one_hot_k * ((BLOCK - 1) / chunk_len + 2)` that `one_hot_slots`
+            // allocates; the zeroing and merge loops stride the same range.
+            // Both `__syncthreads()` sit outside every early return, so all
+            // `BLOCK` threads reach them. The merge writes
+            // `counts[address * chunk_count + chunk]` only for `chunk <
+            // chunk_count`, and an out-of-range address hits the one trailing
+            // slot, so every atomic lands inside the `segments + 1` u32s
+            // `alloc_u32` zeroed.
+            let _ = unsafe { builder.launch(config) }?;
+        } else {
+            let mut builder = self.stream().launch_builder(self.msm_one_hot_count());
+            let _ = builder.arg(hot);
+            let _ = builder.arg(&cycle_count);
+            let _ = builder.arg(&chunk_len_arg);
+            let _ = builder.arg(&chunk_count_arg);
+            let _ = builder.arg(&one_hot_k_arg);
+            let _ = builder.arg(&mut counts);
+            // SAFETY: thread `i < cycles` reads only `hot[i]`, of a buffer whose
+            // length is checked against `cycles` above. A live address below
+            // `one_hot_k` atomically increments
+            // `counts[address * chunk_count + i / chunk_len]`, which is `< segments`
+            // because `i / chunk_len < chunk_count`; an out-of-range address
+            // increments the one extra trailing slot instead, and a cold cycle
+            // increments nothing. `counts` holds `segments + 1` u32s zeroed by
+            // `alloc_u32`, so every increment is in bounds and concurrent hits on
+            // one counter are atomic.
+            let _ = unsafe { builder.launch(Self::launch_config(cycle_count)) }?;
+        }
         self.stream().synchronize()?;
         drop(count_span);
 
-        let (offsets, total, widest) = tracing::info_span!("cuda_commit_one_hot_scan", segments)
-            .in_scope(|| {
+        let (offsets, classes, total, widest) =
+            tracing::info_span!("cuda_commit_one_hot_scan", segments).in_scope(|| {
                 let histogram = self.download_u32(&counts)?;
                 if histogram[segments] != 0 {
                     return Err(CudaError::InvariantViolation {
@@ -1162,8 +1393,10 @@ impl CudaKernelContext {
                             reason: "a one-hot segment plan holds more than u32::MAX entries",
                         })?;
                 }
+                let classes = self.upload_classes(&plan_classes(&histogram[..segments]))?;
                 Ok((
                     self.upload_u32_slice(&offsets)?,
+                    classes,
                     running as usize,
                     widest as usize,
                 ))
@@ -1173,23 +1406,55 @@ impl CudaKernelContext {
             tracing::info_span!("cuda_commit_one_hot_scatter", segments, entries = total).entered();
         let mut cursor = self.clone_u32(&offsets)?;
         let mut indices = self.alloc_u32(total.max(1))?;
-        let mut builder = self.stream().launch_builder(self.msm_one_hot_scatter());
-        let _ = builder.arg(hot);
-        let _ = builder.arg(&cycle_count);
-        let _ = builder.arg(&chunk_len_arg);
-        let _ = builder.arg(&chunk_count_arg);
-        let _ = builder.arg(&one_hot_k_arg);
-        let _ = builder.arg(&mut cursor);
-        let _ = builder.arg(&mut indices);
-        // SAFETY: thread `i < cycles` reads `hot[i]` and, for a live in-range
-        // address, atomically bumps `cursor[segment]` for the same `segment
-        // < segments` the count kernel used, inside the `segments`-element copy
-        // of the scan offsets. Because the cursor starts at the exclusive scan
-        // of the very histogram those threads produced, the slots handed out are
-        // exactly the `total` positions of `indices`, one per thread, so the
-        // writes are disjoint and in bounds. Cold and out-of-range cycles were
-        // excluded from the histogram and return without writing.
-        let _ = unsafe { builder.launch(Self::launch_config(cycle_count)) }?;
+        if mode == OneHotMode::Shared {
+            let mut builder = self
+                .stream()
+                .launch_builder(self.msm_one_hot_scatter_shared());
+            let _ = builder.arg(hot);
+            let _ = builder.arg(&cycle_count);
+            let _ = builder.arg(&chunk_len_arg);
+            let _ = builder.arg(&chunk_count_arg);
+            let _ = builder.arg(&one_hot_k_arg);
+            let _ = builder.arg(&slots_arg);
+            let _ = builder.arg(&mut cursor);
+            let _ = builder.arg(&mut indices);
+            let mut config = Self::launch_config(cycle_count);
+            config.shared_mem_bytes = Self::count_of(2 * slots * size_of::<u32>())?;
+            // SAFETY: the shared array holds `2 * slots` u32s, matching
+            // `shared_mem_bytes`, split into a `slots`-element tally and a
+            // `slots`-element reservation table; every index into either is the
+            // same `(i / chunk_len - first) * one_hot_k + address` bounded by
+            // `slots` as argued for the count kernel, or a strided sweep of
+            // `0..slots`. All three `__syncthreads()` sit outside every early
+            // return. A block reserves `tally[s]` consecutive positions per
+            // segment with one `atomicAdd` on `cursor[segment]`, and because
+            // `cursor` starts at the exclusive scan of the histogram those very
+            // cycles produced, the reservations across all blocks exactly tile
+            // `[offsets[segment], offsets[segment] + counts[segment])`. Each
+            // thread then takes a distinct offset inside its own block's
+            // reservation from the re-zeroed tally, so the `total` writes to
+            // `indices` are disjoint and in bounds. Cold and out-of-range cycles
+            // keep `slot == slots` and write nothing.
+            let _ = unsafe { builder.launch(config) }?;
+        } else {
+            let mut builder = self.stream().launch_builder(self.msm_one_hot_scatter());
+            let _ = builder.arg(hot);
+            let _ = builder.arg(&cycle_count);
+            let _ = builder.arg(&chunk_len_arg);
+            let _ = builder.arg(&chunk_count_arg);
+            let _ = builder.arg(&one_hot_k_arg);
+            let _ = builder.arg(&mut cursor);
+            let _ = builder.arg(&mut indices);
+            // SAFETY: thread `i < cycles` reads `hot[i]` and, for a live in-range
+            // address, atomically bumps `cursor[segment]` for the same `segment
+            // < segments` the count kernel used, inside the `segments`-element copy
+            // of the scan offsets. Because the cursor starts at the exclusive scan
+            // of the very histogram those threads produced, the slots handed out are
+            // exactly the `total` positions of `indices`, one per thread, so the
+            // writes are disjoint and in bounds. Cold and out-of-range cycles were
+            // excluded from the histogram and return without writing.
+            let _ = unsafe { builder.launch(Self::launch_config(cycle_count)) }?;
+        }
         self.stream().synchronize()?;
         drop(scatter_span);
 
@@ -1198,7 +1463,9 @@ impl CudaKernelContext {
             "cuda_commit_one_hot_segments",
             segments,
             widest,
-            entries = total
+            entries = total,
+            fat = classes.fat,
+            thin = classes.thin
         )
         .in_scope(|| {
             self.launch_segment_sums(
@@ -1209,6 +1476,8 @@ impl CudaKernelContext {
                     counts: &counts,
                     segments,
                     widest,
+                    mode: SegmentMode::Auto,
+                    classes: Some(&classes),
                 },
                 &mut output,
             )
@@ -1234,38 +1503,6 @@ impl CudaKernelContext {
         let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
         self.stream().synchronize()?;
         Ok(output)
-    }
-
-    #[cfg(test)]
-    fn segment_sums(
-        &self,
-        bases: &DeviceG1Bases,
-        indices: &[u32],
-        offsets: &[u32],
-        counts: &[u32],
-        segments: usize,
-    ) -> Result<Vec<JacobianLimbs>, CudaError> {
-        let device_indices = if indices.is_empty() {
-            self.alloc_u32(1)?
-        } else {
-            self.upload_u32_slice(indices)?
-        };
-        let device_offsets = self.upload_u32_slice(offsets)?;
-        let device_counts = self.upload_u32_slice(counts)?;
-        let widest = counts.iter().copied().max().unwrap_or(0) as usize;
-        let mut output = self.alloc_u64(segments * 3 * FQ_LIMBS)?;
-        self.launch_segment_sums(
-            bases,
-            SegmentPlan {
-                indices: &device_indices,
-                offsets: &device_offsets,
-                counts: &device_counts,
-                segments,
-                widest,
-            },
-            &mut output,
-        )?;
-        Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
     fn reduce_chunks(rows: usize, buckets: usize) -> usize {
@@ -1799,7 +2036,8 @@ impl CudaKernelContext {
             let _span = tracing::info_span!("g1r_scalars", len = count).entered();
             let uploaded = self.upload(scalars)?;
             let canonical = self.canonical_scalars(&uploaded)?;
-            self.glv_decompose_2d(&canonical, count)?
+            let (split, signs) = self.glv_decompose_2d(&canonical, count)?;
+            (split, self.upload_u8_slice(&signs)?)
         };
         let accumulator = {
             let _span = tracing::info_span!("g1r_pippenger", len = count).entered();
@@ -1914,6 +2152,90 @@ impl CudaKernelContext {
         })
     }
 
+    pub fn upload_segments(
+        &self,
+        bases: &DeviceG1Bases,
+        indices: &[u32],
+        counts: &[u32],
+    ) -> Result<DeviceSegments, CudaError> {
+        let mut offsets = Vec::with_capacity(counts.len());
+        let mut running = 0u32;
+        let mut widest = 0u32;
+        for &count in counts {
+            offsets.push(running);
+            widest = widest.max(count);
+            running = running
+                .checked_add(count)
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a segment plan holds more than u32::MAX entries",
+                })?;
+        }
+        if running as usize != indices.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: running as usize,
+                got: indices.len(),
+            });
+        }
+        let base_count = u32::try_from(bases.count()).unwrap_or(u32::MAX);
+        if indices
+            .iter()
+            .any(|&index| (index & 0x7fff_ffff) >= base_count)
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "a segment plan names a base outside the uploaded table",
+            });
+        }
+        let classes = self.upload_classes(&plan_classes(counts))?;
+        Ok(DeviceSegments {
+            indices: if indices.is_empty() {
+                self.alloc_u32(1)?
+            } else {
+                self.upload_u32_slice(indices)?
+            },
+            offsets: self.upload_u32_slice(&offsets)?,
+            counts: self.upload_u32_slice(counts)?,
+            segments: counts.len(),
+            widest: widest as usize,
+            classes,
+        })
+    }
+
+    pub(crate) fn upload_classes(&self, plan: &HostClasses) -> Result<DeviceClasses, CudaError> {
+        Ok(DeviceClasses {
+            ids: if plan.ids.is_empty() {
+                self.alloc_u32(1)?
+            } else {
+                self.upload_u32_slice(&plan.ids)?
+            },
+            fat: plan.fat,
+            thin: plan.ids.len() - plan.fat,
+        })
+    }
+
+    pub fn segment_sums(
+        &self,
+        bases: &DeviceG1Bases,
+        plan: &DeviceSegments,
+        mode: SegmentMode,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        self.require_owned(bases.ordinal())?;
+        let mut output = self.alloc_u64(plan.segments * 3 * FQ_LIMBS)?;
+        self.launch_segment_sums(
+            bases,
+            SegmentPlan {
+                indices: &plan.indices,
+                offsets: &plan.offsets,
+                counts: &plan.counts,
+                segments: plan.segments,
+                widest: plan.widest,
+                mode,
+                classes: Some(&plan.classes),
+            },
+            &mut output,
+        )?;
+        Ok(unflatten_jacobian(&self.download_u64(&output)?))
+    }
+
     fn pippenger_pass(
         &self,
         plan: PassPlan<'_>,
@@ -1955,6 +2277,8 @@ impl CudaKernelContext {
                 counts: &index.counts,
                 segments,
                 widest: index.widest,
+                mode: SegmentMode::Auto,
+                classes: None,
             },
             &mut bucket_points,
         )?;
@@ -1998,6 +2322,119 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    const fn segment_mode(segments: usize, widest: usize, classed: bool) -> SegmentMode {
+        if widest <= SMALL_SEGMENT_LIMIT {
+            SegmentMode::Small
+        } else if classed {
+            SegmentMode::Classes
+        } else if widest <= WARP_WIDEST_LIMIT && segments >= WARP_SEGMENT_FLOOR {
+            SegmentMode::Warp
+        } else {
+            SegmentMode::Heavy
+        }
+    }
+
+    fn launch_classed_segments(
+        &self,
+        bases: &DeviceG1Bases,
+        indices: &CudaSlice<u32>,
+        offsets: &CudaSlice<u32>,
+        counts: &CudaSlice<u32>,
+        classes: &DeviceClasses,
+        output: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let warps = POINT_BLOCK / WARP_LANES;
+        let fat = Self::count_of(classes.fat)?;
+        let thin = Self::count_of(classes.thin)?;
+        let blocks = fat + thin.div_ceil(warps);
+        if blocks == 0 {
+            return Ok(());
+        }
+        let mut builder = self.stream().launch_builder(self.msm_segment_sum_classed());
+        let _ = builder.arg(bases.limbs());
+        let _ = builder.arg(indices);
+        let _ = builder.arg(offsets);
+        let _ = builder.arg(counts);
+        let _ = builder.arg(&classes.ids);
+        let _ = builder.arg(&fat);
+        let _ = builder.arg(&thin);
+        let _ = builder.arg(output);
+        // SAFETY: `ids` holds the `fat + thin` segment ids the host wrote, the
+        // fat class first, and the two classes partition the segments. A block
+        // `b < fat` takes `ids[b]` and reduces that segment across all
+        // `blockDim.x` threads through the `POINT_BLOCK * 3 * LIMBS` u64s of
+        // dynamic shared memory declared here and matching the kernel's
+        // `extern __shared__`, with `__syncthreads()` on both sides of every
+        // tree level (the branch is block-uniform, so no thread skips a
+        // barrier); only its thread 0 writes. Every other block gives each of
+        // its warps slot `(b - fat) * warps + w`, returns unless that is
+        // `< thin` — warp-uniform, so no live warp reaches a `__syncwarp()` its
+        // siblings skipped — takes `ids[fat + slot]`, and reduces inside the
+        // warp, reading only lanes of the same warp (`threadIdx.x + stride`
+        // with `stride < WARP_LANES` and `lane < stride`); only its lane 0
+        // writes. Either way the segment's `offsets`/`counts` entry delimits the
+        // only `indices` window read, and the host builds those as a partition
+        // of `indices`, so windows are disjoint across blocks and warps;
+        // `bases` is read at the affine points those indices name (masked to 31
+        // bits, checked against `bases.count()` on the host). Writes go to
+        // `out[segment]` (12 limbs) of a `segments * 12` u64 allocation distinct
+        // from every input, and the class partition makes exactly one writer per
+        // slot.
+        let _ = unsafe {
+            builder.launch(cudarc::driver::LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (POINT_BLOCK, 1, 1),
+                shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+        self.stream().synchronize()?;
+        Ok(())
+    }
+
+    fn launch_warp_segments(
+        &self,
+        bases: &DeviceG1Bases,
+        indices: &CudaSlice<u32>,
+        offsets: &CudaSlice<u32>,
+        counts: &CudaSlice<u32>,
+        segments: u32,
+        output: &mut CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let warps = POINT_BLOCK / WARP_LANES;
+        let mut builder = self.stream().launch_builder(self.msm_segment_sum_warp());
+        let _ = builder.arg(bases.limbs());
+        let _ = builder.arg(indices);
+        let _ = builder.arg(offsets);
+        let _ = builder.arg(counts);
+        let _ = builder.arg(&segments);
+        let _ = builder.arg(output);
+        // SAFETY: the warp `w` of block `b` owns segment `b * warps + w`, read
+        // from `offsets`/`counts` and skipped entirely when it is `>= segments`
+        // — a warp-uniform guard, so no live warp can reach a `__syncwarp()` its
+        // siblings skipped. Its lanes read only the `indices` window that
+        // segment delimits, which the host builds as a partition of `indices`
+        // (whether the segments are the caller's or the pieces of a split), so
+        // windows are disjoint across warps, and `bases` at the affine points
+        // those indices name (masked to 31 bits, checked against
+        // `bases.count()` on the host). Each lane owns `scratch[threadIdx.x]` of
+        // the `POINT_BLOCK * 3 * LIMBS` u64s declared in the launch config and
+        // matching the kernel's `extern __shared__`; the tree only ever reads
+        // lanes of the same warp (`threadIdx.x + stride` with
+        // `stride < WARP_LANES` and `lane < stride`), with `__syncwarp()` after
+        // every level. Only lane 0 writes, to `out[segment]` (12 limbs) of a
+        // `segments * 12` u64 allocation distinct from every input, so writes
+        // are one per warp and non-aliasing.
+        let _ = unsafe {
+            builder.launch(cudarc::driver::LaunchConfig {
+                grid_dim: (segments.div_ceil(warps), 1, 1),
+                block_dim: (POINT_BLOCK, 1, 1),
+                shared_mem_bytes: POINT_BLOCK * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+        self.stream().synchronize()?;
+        Ok(())
+    }
+
     fn launch_segment_sums(
         &self,
         bases: &DeviceG1Bases,
@@ -2010,12 +2447,41 @@ impl CudaKernelContext {
             counts,
             segments,
             widest,
+            mode,
+            classes,
         } = plan;
         let segment_count = Self::count_of(segments)?;
         if segment_count == 0 {
             return Ok(());
         }
-        if widest <= SMALL_SEGMENT_LIMIT {
+        let mode = match mode {
+            SegmentMode::Auto => Self::segment_mode(segments, widest, classes.is_some()),
+            forced => forced,
+        };
+        if mode == SegmentMode::Classes {
+            let classes = classes.ok_or(CudaError::InvariantViolation {
+                reason: "the size-classed segment sum needs a host-built class plan",
+            })?;
+            if classes.fat + classes.thin != segments {
+                return Err(CudaError::LengthMismatch {
+                    expected: segments,
+                    got: classes.fat + classes.thin,
+                });
+            }
+            self.launch_classed_segments(bases, indices, offsets, counts, classes, output)?;
+            return Ok(());
+        }
+        if mode == SegmentMode::Warp {
+            return self.launch_warp_segments(
+                bases,
+                indices,
+                offsets,
+                counts,
+                segment_count,
+                output,
+            );
+        }
+        if mode == SegmentMode::Small {
             let mut builder = self.stream().launch_builder(self.msm_segment_sum_small());
             let _ = builder.arg(bases.limbs());
             let _ = builder.arg(indices);
@@ -2069,7 +2535,7 @@ impl CudaKernelContext {
         &self,
         bases: &DeviceG1Bases,
         scalars: DeviceScalars<'_>,
-        signs: &[u8],
+        signs: &CudaSlice<u8>,
         len: usize,
         row_len: usize,
         scalar_bits: usize,
@@ -2112,11 +2578,7 @@ impl CudaKernelContext {
                 lanes = signs.len() * windows
             )
             .entered();
-            let mut lanes = Vec::with_capacity(signs.len() * windows);
-            for _ in 0..windows {
-                lanes.extend_from_slice(signs);
-            }
-            let device_lane_signs = self.upload_u8_slice(&lanes)?;
+            let device_lane_signs = self.replicate_u8(signs, windows)?;
             let shifts: Vec<usize> = (0..windows).map(|window| window * window_bits).collect();
             let mut all_window_points = self.alloc_u64(windows * rows * 3 * FQ_LIMBS)?;
             self.pippenger_pass(
@@ -2146,7 +2608,6 @@ impl CudaKernelContext {
 
         let _looped =
             tracing::info_span!("cuda_pippenger_looped", rows, windows, buckets).entered();
-        let device_signs = self.upload_u8_slice(signs)?;
         let mut window_points = self.alloc_u64(rows * 3 * FQ_LIMBS)?;
         for window in (0..windows).rev() {
             self.pippenger_pass(
@@ -2154,7 +2615,7 @@ impl CudaKernelContext {
                     bases,
                     scalars,
                     scalar_limbs,
-                    signs: &device_signs,
+                    signs,
                     row_len,
                     buckets,
                     rows,
@@ -2607,7 +3068,8 @@ mod tests {
         point, projective, projectives,
     };
     use super::{
-        take_limbs, unflatten_jacobian, AffineLimbs, JacobianLimbs, FQ_LIMBS, GLV4_SCALAR_BITS,
+        take_limbs, unflatten_jacobian, AffineLimbs, JacobianLimbs, OneHotMode, SegmentMode,
+        FQ_LIMBS, GLV4_SCALAR_BITS, ONE_HOT_SHARED_SLOTS, SMALL_SEGMENT_LIMIT,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
 
@@ -2635,6 +3097,38 @@ mod tests {
 
     const CSR_GEOMETRIES: [(usize, usize, usize); 4] =
         [(16, 4, 5), (64, 16, 4), (4096, 2048, 8), (256, 256, 3)];
+
+    const SEGMENT_BASES: usize = 64;
+
+    fn segment_shapes() -> Vec<Vec<u32>> {
+        vec![
+            vec![0, 1, 31, 32, 33, 63, 64, 100, 7],
+            vec![0, 0, 0],
+            vec![0, 500, 0],
+            vec![3; 100],
+            vec![1024, 0, 0, 0, 1],
+            vec![65; 4],
+            vec![1025],
+            vec![4096],
+            vec![2049, 1, 0, 3000, 1024],
+            vec![9000, 1, 0, 4096, 5000],
+            vec![16384, 512],
+        ]
+    }
+
+    fn segment_indices(counts: &[u32], seed: u64) -> Vec<u32> {
+        let total: usize = counts.iter().map(|&count| count as usize).sum();
+        let mut state = seed | 1;
+        (0..total)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let index = (state % SEGMENT_BASES as u64) as u32;
+                index | (u32::from(state & (1 << 40) != 0) << 31)
+            })
+            .collect()
+    }
 
     fn csr_hot(cycles: usize, one_hot_k: usize, seed: u64) -> Vec<u32> {
         (0..cycles)
@@ -3144,6 +3638,93 @@ mod tests {
         }
 
         #[test]
+        fn classed_segment_sums_match_the_block_kernel(seed in any::<u64>()) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
+                .map(|column| affine_limbs(affine(column as u64 + 1)))
+                .collect();
+            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+            let mut mixed = 0usize;
+            for (index, counts) in segment_shapes().into_iter().enumerate() {
+                let indices = segment_indices(&counts, seed ^ index as u64);
+                let plan = context
+                    .upload_segments(&device_bases, &indices, &counts)
+                    .expect("upload segment plan");
+                mixed += usize::from(plan.widest() > super::CLASS_FLOOR);
+                let expected = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
+                        .expect("block segment sums"),
+                );
+                let got = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Classes)
+                        .expect("classed segment sums"),
+                );
+                prop_assert_eq!(
+                    got,
+                    expected,
+                    "shape {} ({} segments, widest {}): the classed kernels diverged from the \
+                     block kernel",
+                    index,
+                    counts.len(),
+                    plan.widest()
+                );
+            }
+            prop_assert!(
+                mixed > 0,
+                "no shape exceeds CLASS_FLOOR, so the fat-class launch is untested"
+            );
+        }
+
+        #[test]
+        fn warp_segment_sums_match_the_block_kernels(seed in any::<u64>()) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
+                .map(|column| affine_limbs(affine(column as u64 + 1)))
+                .collect();
+            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+            for (index, counts) in segment_shapes().into_iter().enumerate() {
+                let indices = segment_indices(&counts, seed ^ index as u64);
+                let plan = context
+                    .upload_segments(&device_bases, &indices, &counts)
+                    .expect("upload segment plan");
+                let expected = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
+                        .expect("block segment sums"),
+                );
+                let got = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Warp)
+                        .expect("warp segment sums"),
+                );
+                prop_assert_eq!(
+                    got,
+                    expected.clone(),
+                    "shape {} ({} segments, widest {}): the warp kernel diverged from the \
+                     block kernel",
+                    index,
+                    counts.len(),
+                    plan.widest()
+                );
+                if plan.widest() <= SMALL_SEGMENT_LIMIT {
+                    let small = projectives(
+                        &context
+                            .segment_sums(&device_bases, &plan, SegmentMode::Small)
+                            .expect("thread segment sums"),
+                    );
+                    prop_assert_eq!(
+                        small,
+                        expected,
+                        "shape {}: the thread-per-segment kernel diverged from the block kernel",
+                        index
+                    );
+                }
+            }
+        }
+
+        #[test]
         fn one_hot_rows_device_matches_the_host_csr(seed in any::<u64>()) {
             let Some(context) = device() else { return Ok(()); };
             for (index, &(cycles, chunk_len, one_hot_k)) in CSR_GEOMETRIES.iter().enumerate() {
@@ -3163,28 +3744,123 @@ mod tests {
                         .one_hot_rows(&device_bases, &hot, one_hot_k, chunk_len)
                         .expect("host one_hot_rows"),
                 );
-                let got = projectives(
-                    &context
-                        .one_hot_rows_device(
-                            &device_bases,
-                            &device_hot.slice(..),
-                            cycles,
-                            one_hot_k,
-                            chunk_len,
-                        )
-                        .expect("device one_hot_rows"),
-                );
-                prop_assert_eq!(
-                    got,
-                    expected,
-                    "geometry {} (cycles {}, chunk_len {}, one_hot_k {}): the device segment \
-                     plan diverged from the host one",
-                    index,
-                    cycles,
-                    chunk_len,
-                    one_hot_k
-                );
+                for mode in [OneHotMode::Flat, OneHotMode::Shared] {
+                    if mode == OneHotMode::Shared
+                        && !CudaKernelContext::one_hot_shares(one_hot_k, chunk_len)
+                    {
+                        continue;
+                    }
+                    let got = projectives(
+                        &context
+                            .one_hot_rows_device_with(
+                                &device_bases,
+                                &device_hot.slice(..),
+                                cycles,
+                                one_hot_k,
+                                chunk_len,
+                                mode,
+                            )
+                            .expect("device one_hot_rows"),
+                    );
+                    prop_assert_eq!(
+                        got,
+                        expected.clone(),
+                        "geometry {} (cycles {}, chunk_len {}, one_hot_k {}) in {:?} mode: the \
+                         device segment plan diverged from the host one",
+                        index,
+                        cycles,
+                        chunk_len,
+                        one_hot_k,
+                        mode
+                    );
+                }
             }
+        }
+
+        #[test]
+        fn the_shared_one_hot_histogram_covers_every_commitment_grid(
+            log_t in 8usize..33,
+            log_k_chunk in prop::sample::select(vec![0usize, 4, 8]),
+        ) {
+            use crate::commitment::CommitmentGrid;
+            use jolt_claims::protocols::jolt::TracePolynomialOrder;
+
+            let grid = CommitmentGrid {
+                total_vars: log_t + log_k_chunk,
+                log_t,
+                log_k_chunk,
+                order: TracePolynomialOrder::CycleMajor,
+            };
+            let one_hot_k = 1usize << log_k_chunk;
+            let chunk_len = grid.num_columns();
+            prop_assert!(
+                CudaKernelContext::one_hot_shares(one_hot_k, chunk_len),
+                "a 2^{} trace with a {}-bit committed chunk needs {} tally slots, more than the \
+                 {} the shared histogram holds, so the commit arm would silently fall back to \
+                 the flat kernels",
+                log_t,
+                log_k_chunk,
+                CudaKernelContext::one_hot_slots(one_hot_k, chunk_len),
+                ONE_HOT_SHARED_SLOTS,
+            );
+        }
+
+        #[test]
+        fn the_shared_one_hot_histogram_declines_a_shape_it_cannot_hold(seed in any::<u64>()) {
+            let Some(context) = device() else { return Ok(()); };
+            let (cycles, chunk_len, one_hot_k) = (2048usize, 8usize, 256usize);
+            prop_assert!(
+                CudaKernelContext::one_hot_slots(one_hot_k, chunk_len) > ONE_HOT_SHARED_SLOTS,
+                "this geometry no longer overflows the per-block tally, so it cannot exercise \
+                 the fallback",
+            );
+            let hot = csr_hot(cycles, one_hot_k, seed);
+            let bases: Vec<G1Affine> = (0..chunk_len)
+                .map(|column| affine(column as u64 + 1))
+                .collect();
+            let device_bases = context
+                .upload_g1_bases(&bases.iter().copied().map(affine_limbs).collect::<Vec<_>>())
+                .expect("upload bases");
+            let device_hot = context
+                .upload_u32_slice(&hot)
+                .expect("upload the hot column");
+            prop_assert!(
+                context
+                    .one_hot_rows_device_with(
+                        &device_bases,
+                        &device_hot.slice(..),
+                        cycles,
+                        one_hot_k,
+                        chunk_len,
+                        OneHotMode::Shared,
+                    )
+                    .is_err(),
+                "the shared histogram accepted {} tally slots, more than the {} it can hold",
+                CudaKernelContext::one_hot_slots(one_hot_k, chunk_len),
+                ONE_HOT_SHARED_SLOTS,
+            );
+            let expected = projectives(
+                &context
+                    .one_hot_rows(&device_bases, &hot, one_hot_k, chunk_len)
+                    .expect("host one_hot_rows"),
+            );
+            let got = projectives(
+                &context
+                    .one_hot_rows_device(
+                        &device_bases,
+                        &device_hot.slice(..),
+                        cycles,
+                        one_hot_k,
+                        chunk_len,
+                    )
+                    .expect("device one_hot_rows"),
+            );
+            prop_assert_eq!(
+                got,
+                expected,
+                "the automatic mode did not fall back to the flat histogram for {} tally slots",
+                CudaKernelContext::one_hot_slots(one_hot_k, chunk_len),
+            );
         }
 
         #[test]

@@ -89,31 +89,46 @@ impl DeviceTier1Commitment for CudaDoryScheme {
     const BATCHES_TIER2: bool = !cfg!(feature = "zk");
 
     #[cfg(not(feature = "zk"))]
-    fn tier2_columns(
+    fn tier2_selected(
+        context: &crate::cuda::common::context::CudaKernelContext,
         setup: &Self::ProverSetup,
         columns: &[Vec<JacobianLimbs>],
-    ) -> Result<Vec<crate::cuda::commitment::FinishedColumn<Self>>, CudaError> {
-        let commitments = tier2::tier2_columns(setup, columns)?;
+        selection: &[usize],
+    ) -> Result<Vec<(usize, crate::cuda::commitment::FinishedColumn<Self>)>, CudaError> {
+        let commitments = tier2::tier2_selected(context, setup, columns, selection)?;
         let blind = <Fr as jolt_field::FromPrimitiveInt>::from_u64(0);
-        let partials =
-            tracing::info_span!("cuda_commit_hints", columns = columns.len()).in_scope(|| {
+        let hints =
+            tracing::info_span!("cuda_commit_hints", columns = selection.len()).in_scope(|| {
                 #[cfg(feature = "parallel")]
-                let partials = columns
+                let hints = commitments
                     .par_iter()
-                    .map(|rows| DoryScheme::partial_from_rows(setup, rows))
+                    .map(|&(index, _)| {
+                        let rows = columns.get(index).ok_or(CudaError::InvariantViolation {
+                            reason: "a tier-2 selection named a column outside the batch",
+                        })?;
+                        DoryScheme::partial_from_rows(setup, rows)
+                    })
                     .collect::<Result<Vec<_>, _>>();
                 #[cfg(not(feature = "parallel"))]
-                let partials = columns
+                let hints = commitments
                     .iter()
-                    .map(|rows| DoryScheme::partial_from_rows(setup, rows))
+                    .map(|&(index, _)| {
+                        let rows = columns.get(index).ok_or(CudaError::InvariantViolation {
+                            reason: "a tier-2 selection named a column outside the batch",
+                        })?;
+                        DoryScheme::partial_from_rows(setup, rows)
+                    })
                     .collect::<Result<Vec<_>, _>>();
-                partials
+                hints
             })?;
         commitments
             .into_iter()
-            .zip(partials)
-            .map(|(commitment, partial)| {
-                Ok((commitment, DoryHint::new(partial.row_commitments, blind)))
+            .zip(hints)
+            .map(|((index, commitment), partial)| {
+                Ok((
+                    index,
+                    (commitment, DoryHint::new(partial.row_commitments, blind)),
+                ))
             })
             .collect()
     }

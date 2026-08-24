@@ -35,13 +35,13 @@ mod witness;
 
 pub use commitment::DeviceTier1Commitment;
 pub use common::context::{
-    context_for, device_count, device_memory_used, request_devices, shared_context,
+    context_for, device_count, device_memory_used, enter_device, request_devices, shared_context,
     CudaKernelContext, DEVICE_COUNT_VARIABLE,
 };
 pub use common::device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
 pub use common::error::CudaError;
 pub use common::lt_poly::DeviceLtPolynomial;
-pub use common::msm::{AffineLimbs, JacobianLimbs};
+pub use common::msm::{AffineLimbs, DeviceSegments, JacobianLimbs, SegmentMode};
 pub use common::xfer_stats;
 pub use dory::CudaDoryScheme;
 pub use instruction_read_raf::address_driver::DeviceAddressPhase;

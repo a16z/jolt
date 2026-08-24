@@ -11,11 +11,9 @@ use jolt_crypto::Bn254G1;
 use jolt_dory::DoryScheme;
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use jolt_witness::backend::cuda::{DeviceTrace, HotSource};
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, StreamConsumer};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane};
 
 use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
@@ -24,16 +22,17 @@ use super::common::device_columns::{
 };
 use super::common::devices::{committed_windows, CycleWindow};
 use super::common::error::CudaError;
-use super::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs, FQ_LIMBS};
+use super::common::msm::{
+    AffineLimbs, DeviceG1Bases, IncrementKind, JacobianLimbs, SignedColumn, FQ_LIMBS,
+};
 use super::common::pack::COLD;
 use super::{require_context, CudaBackend};
 use crate::commitment::{
     finish_streamed, CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment,
 };
-use crate::cuda::inc_claim_reduction::witness::IncClaimReductionWitness;
-use crate::cuda::witness::{park_device_trace, session_device_trace_window};
-#[cfg(feature = "parallel")]
-use crate::optimized::rows::{collect_range_into, RandomAccessRows};
+use crate::cuda::witness::{
+    park_device_trace, session_device_trace_window, session_resident_trace,
+};
 use crate::reference::commitment::{column_kinds, ColumnKind, MaterializedColumn};
 use crate::{KernelError, ProofSession};
 
@@ -52,15 +51,20 @@ pub trait DeviceTier1Commitment: CommitmentScheme + ModeStreamingCommitment {
         rows: &[JacobianLimbs],
     ) -> Result<Self::PartialCommitment, CudaError>;
 
-    fn tier2_columns(
+    fn tier2_selected(
+        _context: &CudaKernelContext,
         setup: &Self::ProverSetup,
         columns: &[Vec<JacobianLimbs>],
-    ) -> Result<Vec<FinishedColumn<Self>>, CudaError> {
-        columns
+        selection: &[usize],
+    ) -> Result<Vec<(usize, FinishedColumn<Self>)>, CudaError> {
+        selection
             .iter()
-            .map(|rows| {
+            .map(|&index| {
+                let rows = columns.get(index).ok_or(CudaError::InvariantViolation {
+                    reason: "a tier-2 selection named a column outside the batch",
+                })?;
                 let partial = Self::partial_from_rows(setup, rows)?;
-                Ok(finish_streamed::<Self>(partial, setup))
+                Ok((index, finish_streamed::<Self>(partial, setup)))
             })
             .collect()
     }
@@ -121,118 +125,29 @@ impl DeviceTier1Commitment for DoryScheme {
 
 mod partition;
 
-struct IncrementColumns {
-    kinds: Vec<ColumnKind>,
-    increments: Vec<Vec<i128>>,
-}
-
-impl IncrementColumns {
-    fn begin(kinds: &[ColumnKind], cycles: usize) -> Self {
-        let increments = kinds
-            .iter()
-            .map(|kind| {
-                if kind.is_one_hot() {
-                    Vec::new()
-                } else {
-                    Vec::with_capacity(cycles)
-                }
-            })
-            .collect();
-        Self {
-            kinds: kinds.to_vec(),
-            increments,
-        }
-    }
-}
-
-fn project_increment(kind: ColumnKind, chunk: &[IncClaimReductionWitness], out: &mut Vec<i128>) {
+pub(super) const fn increment_kind(kind: ColumnKind) -> Option<IncrementKind> {
     match kind {
-        ColumnKind::RdInc => out.extend(chunk.iter().map(|row| row.rd.0)),
-        ColumnKind::RamInc => out.extend(chunk.iter().map(|row| row.ram.0)),
-        ColumnKind::InstructionRa(_) | ColumnKind::BytecodeRa(_) | ColumnKind::RamRa(_) => {}
+        ColumnKind::RdInc => Some(IncrementKind::Rd),
+        ColumnKind::RamInc => Some(IncrementKind::Ram),
+        ColumnKind::InstructionRa(_) | ColumnKind::BytecodeRa(_) | ColumnKind::RamRa(_) => None,
     }
 }
 
-impl StreamConsumer for IncrementColumns {
-    type Witness = IncClaimReductionWitness;
-
-    fn consume(&mut self, chunk: &[IncClaimReductionWitness]) {
-        #[cfg(feature = "parallel")]
-        self.increments
-            .par_iter_mut()
-            .zip(self.kinds.par_iter())
-            .for_each(|(out, &kind)| project_increment(kind, chunk, out));
-        #[cfg(not(feature = "parallel"))]
-        for (out, &kind) in self.increments.iter_mut().zip(self.kinds.iter()) {
-            project_increment(kind, chunk, out);
-        }
-    }
-}
-
-#[cfg(feature = "parallel")]
-const SUPERCHUNK_CYCLES_MAX: usize = 1 << 21;
-
-#[cfg(feature = "parallel")]
-fn superchunk_cycles() -> usize {
-    (rayon::current_num_threads() << 15)
-        .next_power_of_two()
-        .clamp(1 << 17, SUPERCHUNK_CYCLES_MAX)
-}
-
-#[cfg(feature = "parallel")]
-fn collect_columns_pipelined<F, C>(
-    access: &RandomAccessRows<'_>,
-    collected: &mut C,
-    cycles: usize,
-    superchunk: usize,
-) -> Result<(), KernelError<F>>
-where
-    F: Field,
-    C: StreamConsumer,
-    C::Witness: Copy + Sync,
-{
-    let mut front: Vec<C::Witness> = Vec::new();
-    let mut back: Vec<C::Witness> = Vec::new();
-    let mut end = superchunk.min(cycles);
-    collect_range_into(access, 0..end, &mut front)?;
-    loop {
-        let next_end = (end + superchunk).min(cycles);
-        let (fill, ()) = rayon::join(
-            || {
-                if end < next_end {
-                    collect_range_into(access, end..next_end, &mut back).map(|()| true)
-                } else {
-                    Ok(false)
-                }
-            },
-            || collected.consume(&front),
-        );
-        if !fill? {
-            break;
-        }
-        core::mem::swap(&mut front, &mut back);
-        end = next_end;
-    }
-    Ok(())
-}
-
-fn collect_increments<F: Field>(
-    source: &dyn JoltWitnessPlane<F>,
+pub(super) fn dense_columns_from_trace<F: Field>(
+    context: &CudaKernelContext,
+    trace: &DeviceTrace,
     kinds: &[ColumnKind],
     cycles: usize,
-    row_width: usize,
-    superchunk: usize,
-) -> Result<IncrementColumns, KernelError<F>> {
-    let mut collected = IncrementColumns::begin(kinds, cycles);
-    #[cfg(feature = "parallel")]
-    if let Some(access) = RandomAccessRows::new(source, cycles)? {
-        collect_columns_pipelined::<F, _>(&access, &mut collected, cycles, superchunk)?;
-        return Ok(collected);
-    }
-    let _ = superchunk;
-    let mut consumers = (collected,);
-    stream_witnesses(source, 0..cycles, row_width, &mut consumers)?;
-    Ok(consumers.0)
+) -> Result<Vec<Option<SignedColumn>>, KernelError<F>> {
+    kinds
+        .iter()
+        .map(|&kind| {
+            increment_kind(kind)
+                .map(|increment| context.increment_column(trace.extras(), increment, cycles))
+                .transpose()
+                .map_err(KernelError::from)
+        })
+        .collect()
 }
 
 type HotColumnBuild = Vec<Option<(CudaSlice<u32>, usize)>>;
@@ -339,7 +254,7 @@ fn device_hot_columns<F: Field>(
     source: &dyn JoltWitnessPlane<F>,
     cycles: usize,
     plan: &HotPlan<'_>,
-) -> Result<RetainedHotColumns, KernelError<F>> {
+) -> Result<(RetainedHotColumns, Arc<DeviceTrace>), KernelError<F>> {
     let trace = session_device_trace_window(
         context,
         session,
@@ -353,13 +268,16 @@ fn device_hot_columns<F: Field>(
         plan.one_hot_k,
         plan.window,
     )?);
-    Ok(park_hot_columns(
-        session,
-        source,
-        context.ordinal(),
-        plan.ids,
-        plan.window,
-        built,
+    Ok((
+        park_hot_columns(
+            session,
+            source,
+            context.ordinal(),
+            plan.ids,
+            plan.window,
+            built,
+        ),
+        trace,
     ))
 }
 
@@ -471,10 +389,6 @@ where
 
         if grid.order == TracePolynomialOrder::CycleMajor && row_width <= cycles {
             let one_hot_k = 1usize << grid.log_k_chunk;
-            #[cfg(feature = "parallel")]
-            let superchunk = superchunk_cycles().max(row_width);
-            #[cfg(not(feature = "parallel"))]
-            let superchunk = row_width;
             let windows = if PCS::BATCHES_TIER2 {
                 committed_windows(cycles, row_width)
             } else {
@@ -483,82 +397,71 @@ where
             let device_window = windows.first().ok_or(KernelError::InvariantViolation {
                 reason: "the commit cycle partition produced no windows",
             })?;
-            let hot = tracing::info_span!(
-                "cuda_commit_park_hot",
-                columns = kinds.len(),
-                cycles = device_window.len
-            )
-            .in_scope(|| {
-                device_hot_columns::<F>(
-                    context,
-                    session,
-                    source,
-                    cycles,
-                    &HotPlan {
-                        kinds: &kinds,
-                        ids,
-                        one_hot_k,
-                        window: device_window,
-                    },
-                )
-            })?;
-            let collected =
-                tracing::info_span!("cuda_commit_collect_columns", cycles).in_scope(|| {
-                    collect_increments::<F>(source, &kinds, cycles, row_width, superchunk)
-                })?;
+            let resident = PCS::BATCHES_TIER2
+                .then(|| {
+                    session_resident_trace(
+                        session,
+                        context.ordinal(),
+                        witness_identity(source),
+                        &device_window.residency(cycles),
+                    )
+                })
+                .flatten();
+            let hot = (!PCS::BATCHES_TIER2)
+                .then(|| {
+                    tracing::info_span!(
+                        "cuda_commit_park_hot",
+                        columns = kinds.len(),
+                        cycles = device_window.len
+                    )
+                    .in_scope(|| {
+                        device_hot_columns::<F>(
+                            context,
+                            session,
+                            source,
+                            cycles,
+                            &HotPlan {
+                                kinds: &kinds,
+                                ids,
+                                one_hot_k,
+                                window: device_window,
+                            },
+                        )
+                    })
+                })
+                .transpose()?;
             let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
                 .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
             if PCS::BATCHES_TIER2 {
                 let plan = partition::ColumnPlan {
                     kinds: &kinds,
-                    increments: &collected.increments,
                     cycles,
                     one_hot_k,
                     row_width,
                 };
-                let mut parked: Vec<(usize, Arc<jolt_witness::backend::cuda::DeviceTrace>)> =
-                    Vec::new();
-                let mut parked_hot: Vec<(usize, WindowHotColumns)> = Vec::new();
-                let columns = if windows.len() > 1 {
-                    let rows = source.rows().ok_or(KernelError::Unsupported {
-                        reason: "the CUDA backend needs a slice-backed trace source to split a \
-                                 commitment across devices",
-                    })?;
-                    let host_bases = PCS::tier1_bases(setup, row_width)?;
-                    let (columns, traces, hots) = partition::split_columns::<F>(
-                        bases,
-                        &hot,
-                        &plan,
-                        &partition::TraceSource {
-                            rows,
-                            preprocessing: source.program_preprocessing(),
-                        },
-                        &host_bases,
-                        &windows,
-                    )?;
-                    parked.extend(
-                        traces
-                            .into_iter()
-                            .enumerate()
-                            .filter_map(|(ordinal, trace)| trace.map(|trace| (ordinal, trace))),
-                    );
-                    parked_hot.extend(
-                        hots.into_iter()
-                            .enumerate()
-                            .filter(|(_, built)| !built.is_empty()),
-                    );
-                    columns
-                } else {
-                    partition::window_columns::<F>(context, bases, &hot, &plan, device_window, 0)?
-                };
-                let columns = columns.into_iter().collect::<Option<Vec<_>>>().ok_or(
-                    KernelError::InvariantViolation {
-                        reason: "the commit pipeline finished fewer columns than it was given",
+                let rows = source.rows().ok_or(KernelError::Unsupported {
+                    reason: "the CUDA backend needs a slice-backed trace source to commit a \
+                             cycle-major grid",
+                })?;
+                let host_bases = PCS::tier1_bases(setup, row_width)?;
+                let (columns, traces, hots) = partition::split_columns::<F, PCS>(
+                    setup,
+                    bases,
+                    resident,
+                    &plan,
+                    &partition::TraceSource {
+                        rows,
+                        preprocessing: source.program_preprocessing(),
                     },
+                    &host_bases,
+                    &windows,
                 )?;
                 let identity = witness_identity(source);
-                for (ordinal, trace) in parked {
-                    if let Some(window) = windows.get(ordinal) {
+                for (ordinal, (trace, built)) in traces.into_iter().zip(hots).enumerate() {
+                    let Some(window) = windows.get(ordinal) else {
+                        continue;
+                    };
+                    if let Some(trace) = trace {
                         park_device_trace(
                             session,
                             ordinal,
@@ -567,17 +470,9 @@ where
                             trace,
                         );
                     }
+                    let _ = park_hot_columns(session, source, ordinal, ids, window, built);
                 }
-                for (ordinal, built) in parked_hot {
-                    if let Some(window) = windows.get(ordinal) {
-                        let _ = park_hot_columns(session, source, ordinal, ids, window, built);
-                    }
-                }
-                let rows: usize = columns.iter().map(Vec::len).sum();
-                let finished =
-                    tracing::info_span!("cuda_commit_tier2", columns = columns.len(), rows)
-                        .in_scope(|| PCS::tier2_columns(setup, &columns))?;
-                return finished
+                return columns
                     .into_iter()
                     .zip(ids)
                     .map(|((commitment, hint), &id)| {
@@ -590,6 +485,11 @@ where
                     .collect();
             }
 
+            let (hot, trace) = hot.ok_or(KernelError::InvariantViolation {
+                reason: "the single-device commit path never built its one-hot columns",
+            })?;
+            let dense = tracing::info_span!("cuda_commit_increments", cycles)
+                .in_scope(|| dense_columns_from_trace::<F>(context, &trace, &kinds, cycles))?;
             let parent = tracing::Span::current();
             let (tx, rx) = mpsc::channel::<(usize, Vec<JacobianLimbs>)>();
             let mut tier1 = Ok(());
@@ -633,7 +533,13 @@ where
                             })
                         }
                         None => tracing::info_span!("cuda_commit_tier1_dense").in_scope(|| {
-                            context.msm_rows_i128(bases, &collected.increments[index], row_width)
+                            let column = dense.get(index).and_then(Option::as_ref).ok_or(
+                                CudaError::InvariantViolation {
+                                    reason: "the commit pipeline has no increment column for a \
+                                             dense id",
+                                },
+                            )?;
+                            context.msm_rows_signed(bases, column, row_width)
                         }),
                     };
                     match rows {
@@ -960,46 +866,106 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "parallel")]
     #[test]
-    fn pipelined_increment_collection_matches_the_chunk_walk() {
+    fn the_increment_kernel_source_agrees_on_the_packed_layout() {
+        let source = include_str!("../kernels/commit_increments.cu");
+        for (name, value) in [
+            ("CI_EXTRA_WORDS", jolt_witness::backend::cuda::EXTRA_WORDS),
+            (
+                "CI_EXTRA_RD_POST",
+                jolt_witness::backend::cuda::EXTRA_RD_POST,
+            ),
+            (
+                "CI_EXTRA_RAM_READ",
+                jolt_witness::backend::cuda::EXTRA_RAM_READ,
+            ),
+            (
+                "CI_EXTRA_RAM_WRITE",
+                jolt_witness::backend::cuda::EXTRA_RAM_WRITE,
+            ),
+            (
+                "CI_EXTRA_REGISTERS",
+                jolt_witness::backend::cuda::EXTRA_REGISTERS,
+            ),
+            ("CI_EXTRA_RD_PRE", jolt_witness::backend::cuda::EXTRA_RD_PRE),
+            (
+                "CI_REGISTER_ABSENT",
+                jolt_witness::backend::cuda::REGISTER_ABSENT as usize,
+            ),
+        ] {
+            let expected = format!("#define {name} {value}");
+            assert!(
+                source.contains(&expected),
+                "the CUDA source must declare `{expected}`",
+            );
+        }
+    }
+
+    #[test]
+    fn device_increment_columns_match_the_host_encoder() {
+        let Some(context) = shared_context() else {
+            return;
+        };
         let log_t = 8;
         let cycles = 1usize << log_t;
         let grid = grid_at(TracePolynomialOrder::CycleMajor, log_t);
-        let row_width = grid.num_columns();
-        with_r1cs_witness(log_t, RAM_K, one_hot(), 17, |witness| {
+        with_r1cs_witness(log_t, RAM_K, one_hot(), 23, |witness| {
             let ids = trace_ids(witness);
             let kinds = super::column_kinds::<Fr>(&ids, grid).expect("column kinds");
             let plane = witness as &dyn JoltWitnessPlane<Fr>;
-            assert!(
-                super::RandomAccessRows::new::<Fr>(plane, cycles)
-                    .expect("random-access view")
-                    .is_some(),
-                "the fixture is not slice-backed, so collect_increments takes the chunk walk on \
-                 both sides and this compares the walk to itself",
-            );
-            let walked = {
-                let mut consumers = (super::IncrementColumns::begin(&kinds, cycles),);
-                jolt_witness::stream_witnesses(plane, 0..cycles, row_width, &mut consumers)
-                    .expect("chunk walk");
-                consumers.0
-            };
-            assert!(
-                walked
-                    .increments
-                    .iter()
-                    .any(|column| column.len() == cycles),
-                "the fixture commits no increment column, so the pipelined path is untested",
-            );
-            for superchunk in [row_width, 2 * row_width, cycles / 2, cycles, 2 * cycles] {
-                let got =
-                    super::collect_increments::<Fr>(plane, &kinds, cycles, row_width, superchunk)
-                        .expect("pipelined collection");
+            let rows = crate::optimized::support::collect_rows::<Fr, CommittedColumnsWitness>(
+                plane, cycles,
+            )
+            .expect("reference rows");
+
+            let mut session = ProofSession::default();
+            let trace = super::session_device_trace_window(
+                context,
+                &mut session,
+                plane,
+                cycles,
+                &super::whole_domain(cycles),
+            )
+            .expect("device residency");
+
+            let mut dense_columns = 0usize;
+            for (&id, &kind) in ids.iter().zip(&kinds) {
+                let Some(increment) = super::increment_kind(kind) else {
+                    continue;
+                };
+                dense_columns += 1;
+                let expected: Vec<i128> = rows.iter().map(|row| kind.increment(row)).collect();
+                assert!(
+                    expected.iter().any(|&value| value > 0),
+                    "{id:?}: no positive increment, so a kernel that dropped the value would pass",
+                );
+                assert!(
+                    expected.contains(&0),
+                    "{id:?}: no zero increment, so the absent-operand case is untested",
+                );
+                let expected = context.signed_column(&expected).expect("host column");
+
+                let got = context
+                    .increment_column(trace.extras(), increment, cycles)
+                    .expect("device increment column");
+
                 assert_eq!(
-                    got.increments, walked.increments,
-                    "superchunk {superchunk}: the increment columns diverge from the chunk walk",
+                    context.download_u64(got.magnitudes()).expect("magnitudes"),
+                    context
+                        .download_u64(expected.magnitudes())
+                        .expect("magnitudes"),
+                    "{id:?}: the device increment magnitudes diverge from the host encoder",
+                );
+                assert_eq!(
+                    context.download_u8(got.signs()).expect("signs"),
+                    context.download_u8(expected.signs()).expect("signs"),
+                    "{id:?}: the device increment signs diverge from the host encoder",
                 );
             }
+            assert_eq!(
+                dense_columns, 2,
+                "the fixture must commit both increment columns",
+            );
         });
     }
 
@@ -1022,7 +988,7 @@ mod tests {
             .expect("reference rows");
 
             let mut session = ProofSession::default();
-            let hot = super::device_hot_columns::<Fr>(
+            let (hot, _) = super::device_hot_columns::<Fr>(
                 context,
                 &mut session,
                 plane,

@@ -3,8 +3,7 @@ use jolt_crypto::Bn254GT;
 use jolt_dory::{DoryCommitment, DoryProverSetup};
 
 use super::{arena, curve};
-use crate::cuda::common::context::{context_for, device_count, shared_context, CudaKernelContext};
-use crate::cuda::common::devices::{fan_out, DeviceTask};
+use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::msm::{JacobianLimbs, FQ_LIMBS};
 use crate::cuda::common::pairing::FQ12_LIMBS;
@@ -90,7 +89,7 @@ fn flatten_rows(
     true
 }
 
-fn tier2_selected(
+pub(crate) fn tier2_selected(
     context: &CudaKernelContext,
     setup: &DoryProverSetup,
     columns: &[Vec<JacobianLimbs>],
@@ -154,97 +153,6 @@ fn tier2_selected(
     Ok(placed)
 }
 
-pub(crate) fn tier2_batched(
-    context: &CudaKernelContext,
-    setup: &DoryProverSetup,
-    columns: &[Vec<JacobianLimbs>],
-) -> Result<Vec<DoryCommitment>, CudaError> {
-    let selection: Vec<usize> = (0..columns.len()).collect();
-    gather(
-        tier2_selected(context, setup, columns, &selection)?,
-        columns,
-    )
-}
-
-fn gather(
-    mut placed: Vec<(usize, DoryCommitment)>,
-    columns: &[Vec<JacobianLimbs>],
-) -> Result<Vec<DoryCommitment>, CudaError> {
-    if placed.len() != columns.len() {
-        return Err(CudaError::LengthMismatch {
-            expected: columns.len(),
-            got: placed.len(),
-        });
-    }
-    placed.sort_by_key(|&(member, _)| member);
-    Ok(placed.into_iter().map(|(_, value)| value).collect())
-}
-
-fn device_selections(columns: &[Vec<JacobianLimbs>], devices: usize) -> Vec<Vec<usize>> {
-    let mut order: Vec<usize> = (0..columns.len()).collect();
-    order.sort_by_key(|&index| {
-        (
-            core::cmp::Reverse(columns.get(index).map_or(0, Vec::len)),
-            index,
-        )
-    });
-    let mut load = vec![0usize; devices];
-    let mut selections: Vec<Vec<usize>> = (0..devices).map(|_| Vec::new()).collect();
-    for index in order {
-        let rows = columns.get(index).map_or(0, Vec::len);
-        let lightest = load
-            .iter()
-            .enumerate()
-            .min_by_key(|&(device, &pending)| (pending, device))
-            .map_or(0, |(device, _)| device);
-        if let Some(pending) = load.get_mut(lightest) {
-            *pending += rows;
-        }
-        if let Some(selection) = selections.get_mut(lightest) {
-            selection.push(index);
-        }
-    }
-    for selection in &mut selections {
-        selection.sort_unstable();
-    }
-    selections
-}
-
-pub(crate) fn tier2_columns(
-    setup: &DoryProverSetup,
-    columns: &[Vec<JacobianLimbs>],
-) -> Result<Vec<DoryCommitment>, CudaError> {
-    if columns.is_empty() {
-        return Ok(Vec::new());
-    }
-    let absent = || CudaError::NotImplemented {
-        kernel: "no CUDA device is present for the batched tier-2",
-    };
-    let devices = device_count().min(columns.len());
-    if devices <= 1 {
-        return tier2_batched(shared_context().ok_or_else(absent)?, setup, columns);
-    }
-    let selections = device_selections(columns, devices);
-    let tasks: Vec<DeviceTask<'_, Vec<(usize, DoryCommitment)>, CudaError>> = selections
-        .iter()
-        .enumerate()
-        .map(|(ordinal, selection)| {
-            let task: DeviceTask<'_, Vec<(usize, DoryCommitment)>, CudaError> =
-                Box::new(move || {
-                    let context = context_for(ordinal).ok_or_else(absent)?;
-                    tracing::info_span!(
-                        "cuda_commit_tier2_window",
-                        device = ordinal,
-                        columns = selection.len()
-                    )
-                    .in_scope(|| tier2_selected(context, setup, columns, selection))
-                });
-            task
-        })
-        .collect();
-    gather(fan_out(tasks)?.concat(), columns)
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -252,12 +160,13 @@ pub(crate) fn tier2_columns(
 )]
 mod tests {
     use ark_ec::PrimeGroup;
-    use jolt_dory::DoryScheme;
+    use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_openings::StreamingCommitment;
 
-    use super::{device_selections, gather, tier2_batched, tier2_selected};
+    use super::tier2_selected;
     use crate::cuda::commitment::DeviceTier1Commitment;
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::devices::device_selections;
     use crate::cuda::common::msm::{JacobianLimbs, FQ_LIMBS};
 
     const NUM_VARS: usize = 8;
@@ -291,8 +200,32 @@ mod tests {
             .collect()
     }
 
+    fn reference(
+        setup: &jolt_dory::DoryProverSetup,
+        source: &[Vec<JacobianLimbs>],
+    ) -> Vec<DoryCommitment> {
+        source
+            .iter()
+            .map(|rows| {
+                let partial = DoryScheme::partial_from_rows(setup, rows).expect("partial");
+                DoryScheme::finish_with_hint(partial, setup).0
+            })
+            .collect()
+    }
+
+    fn ordered(mut placed: Vec<(usize, DoryCommitment)>, columns: usize) -> Vec<DoryCommitment> {
+        assert_eq!(
+            placed.len(),
+            columns,
+            "the tier-2 selections covered {} of {columns} columns",
+            placed.len(),
+        );
+        placed.sort_by_key(|&(index, _)| index);
+        placed.into_iter().map(|(_, value)| value).collect()
+    }
+
     #[test]
-    fn tier2_batched_matches_reference_dory() {
+    fn tier2_selected_matches_reference_dory() {
         let Some(context) = shared_context() else {
             return;
         };
@@ -304,35 +237,28 @@ mod tests {
             vec![8, 8, 8, 8, 8],
         ] {
             let source = columns(&shape);
-            let expected: Vec<_> = source
-                .iter()
-                .map(|rows| {
-                    let partial = DoryScheme::partial_from_rows(&setup, rows).expect("partial");
-                    DoryScheme::finish_with_hint(partial, &setup).0
-                })
-                .collect();
+            let expected = reference(&setup, &source);
+            let selection: Vec<usize> = (0..source.len()).collect();
 
-            let got = tier2_batched(context, &setup, &source).expect("batched tier-2");
-
-            assert_eq!(
-                got.len(),
-                expected.len(),
-                "column count diverged for shape {shape:?}"
+            let got = ordered(
+                tier2_selected(context, &setup, &source, &selection).expect("selected tier-2"),
+                source.len(),
             );
+
             let divergence = got
                 .iter()
                 .zip(&expected)
                 .position(|(got, expected)| got != expected);
             assert_eq!(
                 divergence, None,
-                "batched tier-2 diverged for shape {shape:?}"
+                "the batched tier-2 diverged from reference Dory for shape {shape:?}"
             );
         }
         assert_eq!(FQ_LIMBS, 4, "the row limb layout assumes four-limb Fq");
     }
 
     #[test]
-    fn tier2_device_selections_match_the_whole_batch() {
+    fn tier2_selections_match_reference_dory_when_split_across_devices() {
         let Some(context) = shared_context() else {
             return;
         };
@@ -340,59 +266,31 @@ mod tests {
         let mut shape = vec![16usize; 7];
         shape.extend([8, 8, 4]);
         let source = columns(&shape);
-        let expected = tier2_batched(context, &setup, &source).expect("whole batch");
+        let expected = reference(&setup, &source);
+        let row_counts: Vec<usize> = source.iter().map(Vec::len).collect();
 
-        for devices in [2usize, 3, 4] {
-            let selections = device_selections(&source, devices);
-            let placed: Vec<_> = selections
+        for devices in [1usize, 2, 3, 4] {
+            let placed: Vec<_> = device_selections(&row_counts, devices)
                 .iter()
                 .flat_map(|selection| {
                     tier2_selected(context, &setup, &source, selection).expect("selected tier-2")
                 })
                 .collect();
-            let got = gather(placed, &source).expect("gather");
+            let got = ordered(placed, source.len());
             let divergence = got
                 .iter()
                 .zip(&expected)
                 .position(|(got, expected)| got != expected);
             assert_eq!(
                 divergence, None,
-                "splitting tier-2 across {devices} devices changed a column commitment; each \
+                "splitting tier-2 across {devices} devices diverged from reference Dory; each \
                  column's Miller batch is independent, so the partition must be exact",
             );
         }
     }
 
     #[test]
-    fn device_selections_cover_every_column_once_and_balance_rows() {
-        let shape = [1024usize, 1024, 1024, 512, 512, 16];
-        let source = columns(&shape);
-        for devices in [1usize, 2, 3, 5, 8] {
-            let selections = device_selections(&source, devices);
-            let mut seen: Vec<usize> = selections.concat();
-            seen.sort_unstable();
-            assert_eq!(
-                seen,
-                (0..shape.len()).collect::<Vec<_>>(),
-                "every column must land on exactly one device",
-            );
-            let loads: Vec<usize> = selections
-                .iter()
-                .map(|selection| selection.iter().map(|&index| shape[index]).sum())
-                .collect();
-            let spread =
-                loads.iter().max().copied().unwrap_or(0) - loads.iter().min().copied().unwrap_or(0);
-            let widest = shape.iter().max().copied().unwrap_or(0);
-            assert!(
-                spread <= widest,
-                "row load spread {spread} exceeds the widest column {widest} across {devices} \
-                 devices: {loads:?}",
-            );
-        }
-    }
-
-    #[test]
-    fn tier2_batched_matches_reference_dory_over_many_columns() {
+    fn tier2_selected_matches_reference_dory_over_many_columns() {
         let Some(context) = shared_context() else {
             return;
         };
@@ -400,16 +298,13 @@ mod tests {
         shape.extend([512, 512]);
         let setup = DoryScheme::setup_prover(20);
         let source = columns(&shape);
+        let expected = reference(&setup, &source);
+        let selection: Vec<usize> = (0..source.len()).collect();
 
-        let expected: Vec<_> = source
-            .iter()
-            .map(|rows| {
-                let partial = DoryScheme::partial_from_rows(&setup, rows).expect("partial");
-                DoryScheme::finish_with_hint(partial, &setup).0
-            })
-            .collect();
-
-        let got = tier2_batched(context, &setup, &source).expect("batched tier-2");
+        let got = ordered(
+            tier2_selected(context, &setup, &source, &selection).expect("selected tier-2"),
+            source.len(),
+        );
 
         let divergence = got
             .iter()
@@ -418,7 +313,7 @@ mod tests {
         assert_eq!(
             divergence,
             None,
-            "batched tier-2 diverged over {} columns",
+            "the batched tier-2 diverged from reference Dory over {} columns",
             shape.len()
         );
     }

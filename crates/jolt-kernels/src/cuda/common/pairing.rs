@@ -29,7 +29,7 @@ struct Constants {
 }
 
 thread_local! {
-    static CONSTANTS: RefCell<Option<Constants>> = const { RefCell::new(None) };
+    static CONSTANTS: RefCell<Vec<Option<Constants>>> = const { RefCell::new(Vec::new()) };
 }
 
 fn fq_words(value: &Fq) -> [u64; FQ_LIMBS] {
@@ -71,7 +71,16 @@ impl CudaKernelContext {
         &self,
         act: impl FnOnce(&Constants) -> Result<R, CudaError>,
     ) -> Result<R, CudaError> {
-        CONSTANTS.with_borrow_mut(|slot| {
+        CONSTANTS.with_borrow_mut(|cached| {
+            let ordinal = self.ordinal();
+            if cached.len() <= ordinal {
+                cached.resize_with(ordinal + 1, || None);
+            }
+            let slot = cached
+                .get_mut(ordinal)
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "the per-device pairing constant cache was just sized",
+                })?;
             if slot.is_none() {
                 let words = constant_words();
                 if words.len() != PC_WORDS {

@@ -127,9 +127,14 @@ pub struct CudaKernelContext {
     msm_digits: CudaFunction,
     msm_bucket_count: CudaFunction,
     msm_bucket_scatter: CudaFunction,
+    commit_increment_column: CudaFunction,
     msm_one_hot_count: CudaFunction,
+    msm_one_hot_count_shared: CudaFunction,
     msm_one_hot_scatter: CudaFunction,
+    msm_one_hot_scatter_shared: CudaFunction,
     msm_segment_sum: CudaFunction,
+    msm_segment_sum_warp: CudaFunction,
+    msm_segment_sum_classed: CudaFunction,
     msm_segment_sum_small: CudaFunction,
     msm_bucket_reduce_chunked: CudaFunction,
     msm_point_rows_sum: CudaFunction,
@@ -301,9 +306,15 @@ impl CudaKernelContext {
             msm_digits: module.load_function("msm_digits_kernel")?,
             msm_bucket_count: module.load_function("msm_bucket_count_kernel")?,
             msm_bucket_scatter: module.load_function("msm_bucket_scatter_kernel")?,
+            commit_increment_column: module.load_function("commit_increment_column_kernel")?,
             msm_one_hot_count: module.load_function("msm_one_hot_count_kernel")?,
+            msm_one_hot_count_shared: module.load_function("msm_one_hot_count_shared_kernel")?,
             msm_one_hot_scatter: module.load_function("msm_one_hot_scatter_kernel")?,
+            msm_one_hot_scatter_shared: module
+                .load_function("msm_one_hot_scatter_shared_kernel")?,
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
+            msm_segment_sum_warp: module.load_function("msm_segment_sum_warp_kernel")?,
+            msm_segment_sum_classed: module.load_function("msm_segment_sum_classed_kernel")?,
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
             msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
             msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
@@ -491,6 +502,28 @@ impl CudaKernelContext {
 
     pub(crate) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
         Ok(self.stream.alloc_zeros::<u32>(len)?)
+    }
+
+    pub(crate) fn alloc_u8(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u8>(len)?)
+    }
+
+    pub(crate) fn replicate_u8(
+        &self,
+        buffer: &CudaSlice<u8>,
+        copies: usize,
+    ) -> Result<CudaSlice<u8>, CudaError> {
+        let len = buffer.len();
+        let mut out = self.alloc_u8(len * copies)?;
+        xfer_stats::timed(Phase::D2d, len * copies, || -> Result<(), CudaError> {
+            for copy in 0..copies {
+                let source = buffer.slice(..);
+                let mut target = out.slice_mut(copy * len..(copy + 1) * len);
+                self.stream.memcpy_dtod(&source, &mut target)?;
+            }
+            Ok(())
+        })?;
+        Ok(out)
     }
 
     pub(crate) const fn dense_product_round(&self) -> &CudaFunction {
@@ -697,16 +730,36 @@ impl CudaKernelContext {
         &self.msm_bucket_scatter
     }
 
+    pub(crate) const fn commit_increment_column(&self) -> &CudaFunction {
+        &self.commit_increment_column
+    }
+
     pub(crate) const fn msm_one_hot_count(&self) -> &CudaFunction {
         &self.msm_one_hot_count
+    }
+
+    pub(crate) const fn msm_one_hot_count_shared(&self) -> &CudaFunction {
+        &self.msm_one_hot_count_shared
     }
 
     pub(crate) const fn msm_one_hot_scatter(&self) -> &CudaFunction {
         &self.msm_one_hot_scatter
     }
 
+    pub(crate) const fn msm_one_hot_scatter_shared(&self) -> &CudaFunction {
+        &self.msm_one_hot_scatter_shared
+    }
+
     pub(crate) const fn msm_segment_sum(&self) -> &CudaFunction {
         &self.msm_segment_sum
+    }
+
+    pub(crate) const fn msm_segment_sum_warp(&self) -> &CudaFunction {
+        &self.msm_segment_sum_warp
+    }
+
+    pub(crate) const fn msm_segment_sum_classed(&self) -> &CudaFunction {
+        &self.msm_segment_sum_classed
     }
 
     pub(crate) const fn msm_segment_sum_small(&self) -> &CudaFunction {

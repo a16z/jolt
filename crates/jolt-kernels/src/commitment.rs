@@ -24,7 +24,9 @@ use crate::{KernelError, ProofSession};
 /// proof config; the bundle carries only the trace-derived values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct CommittedColumnsWitness {
+    #[opening(committed = RdInc)]
     pub rd_inc: RdInc,
+    #[opening(committed = RamInc)]
     pub ram_inc: RamInc,
     pub lookup_index: LookupIndex,
     pub bytecode_pc: MappedPc,
