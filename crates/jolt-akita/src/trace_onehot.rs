@@ -592,12 +592,7 @@ impl<const D: usize> TracePackedOneHotView<'_, D> {
                 "Metal trace opening requires aligned packed row storage".to_string(),
             )
         })?;
-        PackedOneHotView::new(
-            packed.onehot_k(),
-            packed.column_capacity(),
-            packed.num_columns(),
-            packed.lanes(),
-        )
+        packed.view()
     }
 }
 
@@ -622,12 +617,7 @@ impl<const D: usize> TracePackedOneHotBatchView<'_, D> {
                 "Metal trace opening requires aligned packed row storage".to_string(),
             )
         })?;
-        PackedOneHotView::new(
-            packed.onehot_k(),
-            packed.column_capacity(),
-            packed.num_columns(),
-            packed.lanes(),
-        )
+        packed.view()
     }
 }
 
@@ -2242,7 +2232,7 @@ fn decompose_fold_packed_with_mode<const D: usize>(
     rotation_mode: DecomposeRotationMode,
 ) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
     let _span = tracing::info_span!(
-        "TracePackedOneHot::decompose_fold",
+        "TracePackedOneHot::decompose_fold_cpu",
         ring_dimension = D,
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
@@ -2622,7 +2612,7 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         source: TracePackedOneHotView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
-        let _span = tracing::info_span!("TracePackedOneHot::decompose_fold").entered();
+        let _span = tracing::info_span!("TracePackedOneHot::decompose_fold_metal_single").entered();
         self.decompose_fold_packed_fp128_d512(source.packed_view()?, plan)
     }
 }
@@ -2637,7 +2627,7 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
         source: TracePackedOneHotBatchView<'_, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
-        let _span = tracing::info_span!("TracePackedOneHot::decompose_fold").entered();
+        let _span = tracing::info_span!("TracePackedOneHot::decompose_fold_metal_batch").entered();
         let packed = source.packed_view()?;
         match plan {
             DecomposeFoldBatchPlan::Sparse {
@@ -2666,7 +2656,8 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
         plan: DecomposeFoldBatchPlan<'_>,
         sink: &mut dyn DecomposeFoldChunkSink,
     ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
-        let _span = tracing::info_span!("TracePackedOneHot::decompose_fold").entered();
+        let _span =
+            tracing::info_span!("TracePackedOneHot::decompose_fold_metal_streaming").entered();
         let packed = source.packed_view()?;
         match plan {
             DecomposeFoldBatchPlan::Sparse {
@@ -3199,6 +3190,18 @@ impl<const D: usize>
         source: TracePackedOneHotBatchView<'_, D>,
         plan: SubringCoefficientPackingPlan<'_, AkitaField>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<AkitaField>>, AkitaError> {
+        if let Some(packed) = source
+            .rows
+            .as_deref()
+            .and_then(TraceOneHotRows::packed_one_hot)
+        {
+            if let Some(partials) =
+                self.retained_packed_onehot_coefficient_packing(packed.view::<D>()?, plan.point)?
+            {
+                return Ok(vec![partials]);
+            }
+        }
+
         let work_units = source.sources.first().map_or(0, |source| {
             source.num_rows.saturating_mul(source.num_columns)
         });

@@ -56,6 +56,9 @@ pub struct TraceMetalCommitMetrics {
     pub modeled_matrix_read_bytes: u64,
     pub modeled_lane_read_bytes: u64,
     pub scratch_bytes: usize,
+    pub opening_index_time: Duration,
+    pub opening_index_gpu_time: Duration,
+    pub opening_index_bytes: usize,
     pub buffer_setup_time: Duration,
     pub command_wall_time: Duration,
     pub gpu_time: Option<Duration>,
@@ -78,8 +81,30 @@ pub struct TraceMetalCommitMetrics {
 pub struct TraceMetalOpeningMetrics {
     pub command_wall_time: Duration,
     pub gpu_active_time: Duration,
+    pub opening_index_time: Duration,
+    pub opening_index_gpu_time: Duration,
+    pub opening_index_bytes: usize,
+    pub packed_decompose_wall_time: Duration,
+    pub packed_decompose_gpu_time: Duration,
+    pub packed_decompose_consumer_time: Duration,
+    pub packed_decompose_prepare_time: Duration,
+    pub packed_decompose_postprocess_time: Duration,
+    pub packed_decompose_total_time: Duration,
+    pub packed_decompose_indexed_calls: usize,
+    pub packed_decompose_direct_digit_bytes: usize,
+    pub recursive_commit_matrix_cache_hits: usize,
+    pub recursive_commit_matrix_cache_misses: usize,
+    pub recursive_commit_matrix_ntt_time: Duration,
+    pub recursive_commit_matrix_ntt_gpu_time: Duration,
+    pub recursive_commit_matrix_ntt_bytes: usize,
     pub linear_source_command_wall_time: Duration,
     pub linear_source_gpu_time: Duration,
+    pub direct_range_command_wall_time: Duration,
+    pub direct_range_gpu_time: Duration,
+    pub direct_range_buffer_setup_time: Duration,
+    pub direct_relation_command_wall_time: Duration,
+    pub direct_relation_gpu_time: Duration,
+    pub direct_relation_buffer_setup_time: Duration,
     pub upload_time: Duration,
     pub readback_time: Duration,
     pub allocation_bytes: usize,
@@ -111,6 +136,9 @@ pub(crate) struct RequiredMetalTraceCommitment {
     stream_buffers: Arc<Mutex<HashMap<usize, PackedOneHotStreamBuffer>>>,
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+const MAX_RETAINED_OPENING_ACCELERATION_BYTES: usize = 32 * 1024 * 1024 * 1024;
+
 impl std::fmt::Debug for TraceCommitmentBackend {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -130,8 +158,11 @@ impl TraceCommitmentBackend {
     pub fn metal_required() -> Result<Self, akita_metal::MetalCommitError> {
         Ok(Self {
             kind: TraceCommitmentBackendKind::MetalRequired(RequiredMetalTraceCommitment {
-                backend: akita_metal::MetalCommitBackend::new(
+                backend: akita_metal::MetalCommitBackend::new_with_opening_acceleration_policy(
                     akita_metal::MetalExecutionPolicy::RequireMetal,
+                    akita_metal::OpeningAccelerationPolicy::RetainUpToBytes(
+                        MAX_RETAINED_OPENING_ACCELERATION_BYTES,
+                    ),
                 )?,
                 prepared: Arc::new(Mutex::new(HashMap::new())),
                 stream_buffers: Arc::new(Mutex::new(HashMap::new())),
@@ -204,6 +235,9 @@ impl TraceCommitmentBackend {
                         modeled_matrix_read_bytes: metrics.modeled_matrix_read_bytes,
                         modeled_lane_read_bytes: metrics.modeled_lane_read_bytes,
                         scratch_bytes: metrics.scratch_bytes,
+                        opening_index_time: metrics.opening_index_time,
+                        opening_index_gpu_time: metrics.opening_index_gpu_time,
+                        opening_index_bytes: metrics.opening_index_bytes,
                         buffer_setup_time: metrics.buffer_setup_time,
                         command_wall_time: metrics.command_wall_time,
                         gpu_time: metrics.gpu_time,
@@ -239,8 +273,38 @@ impl TraceCommitmentBackend {
                     metrics.map(|metrics| TraceMetalOpeningMetrics {
                         command_wall_time: metrics.command_wall_time,
                         gpu_active_time: metrics.gpu_active_time,
+                        opening_index_time: metrics.opening_index_time,
+                        opening_index_gpu_time: metrics.opening_index_gpu_time,
+                        opening_index_bytes: metrics.opening_index_bytes,
+                        packed_decompose_wall_time: metrics.packed_decompose_wall_time,
+                        packed_decompose_gpu_time: metrics.packed_decompose_gpu_time,
+                        packed_decompose_consumer_time: metrics.packed_decompose_consumer_time,
+                        packed_decompose_prepare_time: metrics.packed_decompose_prepare_time,
+                        packed_decompose_postprocess_time: metrics
+                            .packed_decompose_postprocess_time,
+                        packed_decompose_total_time: metrics.packed_decompose_total_time,
+                        packed_decompose_indexed_calls: metrics.packed_decompose_indexed_calls,
+                        packed_decompose_direct_digit_bytes: metrics
+                            .packed_decompose_direct_digit_bytes,
+                        recursive_commit_matrix_cache_hits: metrics
+                            .recursive_commit_matrix_cache_hits,
+                        recursive_commit_matrix_cache_misses: metrics
+                            .recursive_commit_matrix_cache_misses,
+                        recursive_commit_matrix_ntt_time: metrics.recursive_commit_matrix_ntt_time,
+                        recursive_commit_matrix_ntt_gpu_time: metrics
+                            .recursive_commit_matrix_ntt_gpu_time,
+                        recursive_commit_matrix_ntt_bytes: metrics
+                            .recursive_commit_matrix_ntt_bytes,
                         linear_source_command_wall_time: metrics.linear_source_command_wall_time,
                         linear_source_gpu_time: metrics.linear_source_gpu_time,
+                        direct_range_command_wall_time: metrics.direct_range_command_wall_time,
+                        direct_range_gpu_time: metrics.direct_range_gpu_time,
+                        direct_range_buffer_setup_time: metrics.direct_range_buffer_setup_time,
+                        direct_relation_command_wall_time: metrics
+                            .direct_relation_command_wall_time,
+                        direct_relation_gpu_time: metrics.direct_relation_gpu_time,
+                        direct_relation_buffer_setup_time: metrics
+                            .direct_relation_buffer_setup_time,
                         upload_time: metrics.upload_time,
                         readback_time: metrics.readback_time,
                         allocation_bytes: metrics.allocation_bytes,

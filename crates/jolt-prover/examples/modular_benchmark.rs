@@ -765,8 +765,9 @@ mod akita_benchmark {
                     "AKITA_TRACE_COMMIT_METRICS qualified=true used_metal=true \
                      input_zero_copy={} matrix_cache_hit={} cpu_work_units={} \
                      metal_work_units={} cpu_blocks={} columns={} metal_blocks={} hot_entries={} \
-                     index_bytes={} matrix_bytes={} \
+                     index_bytes={} matrix_bytes={} opening_index_bytes={} \
                      matrix_read_bytes={} lane_read_bytes={} scratch_bytes={} \
+                     opening_index_ms={:.6} opening_index_gpu_ms={:.6} \
                      buffer_setup_ms={:.6} command_wall_ms={:.6} gpu_ms={} \
                      cpu_ms={:.6} readback_ms={:.6} reconstruction_ms={:.6} \
                      merge_ms={:.6} inner_total_ms={:.6} \
@@ -784,9 +785,12 @@ mod akita_benchmark {
                     metrics.hot_entries,
                     metrics.index_bytes,
                     metrics.matrix_bytes,
+                    metrics.opening_index_bytes,
                     metrics.modeled_matrix_read_bytes,
                     metrics.modeled_lane_read_bytes,
                     metrics.scratch_bytes,
+                    metrics.opening_index_time.as_secs_f64() * 1_000.0,
+                    metrics.opening_index_gpu_time.as_secs_f64() * 1_000.0,
                     metrics.buffer_setup_time.as_secs_f64() * 1_000.0,
                     metrics.command_wall_time.as_secs_f64() * 1_000.0,
                     metrics.gpu_time.map_or_else(
@@ -814,6 +818,29 @@ mod akita_benchmark {
                 );
                 println!("AKITA_TRACE_COMMIT_METRICS qualified=false used_metal=false route=cpu");
             }
+
+            let opening = backend
+                .last_trace_opening_metrics()
+                .expect("Metal trace opening metrics should be readable")
+                .expect("Metal trace opening metrics should be present");
+            println!(
+                "AKITA_TRACE_OPENING_METRICS opening_index_bytes={} \
+                 opening_index_ms={:.6} opening_index_gpu_ms={:.6} \
+                 allocation_bytes={} command_wall_ms={:.6} gpu_ms={:.6} \
+                 packed_indexed_calls={} cpu_fallback_calls={} \
+                 planned_cpu_calls={} planned_cpu_work_units={} cpu_tail_work_units={}",
+                opening.opening_index_bytes,
+                opening.opening_index_time.as_secs_f64() * 1_000.0,
+                opening.opening_index_gpu_time.as_secs_f64() * 1_000.0,
+                opening.allocation_bytes,
+                opening.command_wall_time.as_secs_f64() * 1_000.0,
+                opening.gpu_active_time.as_secs_f64() * 1_000.0,
+                opening.packed_decompose_indexed_calls,
+                opening.cpu_fallback_calls,
+                opening.planned_cpu_calls,
+                opening.planned_cpu_work_units,
+                opening.cpu_tail_work_units,
+            );
         }
 
         // The Akita field uses its own canonical serializer, while the Jolt

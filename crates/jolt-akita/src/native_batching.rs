@@ -346,6 +346,8 @@ fn prove_trace_one_hot_metal<'a>(
     )
     .map_err(akita_error)?;
     let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
+    let proving_stack =
+        akita_prover::RootFoldNttPrewarm::when(releasing_stack, setup.max_num_vars() >= 41);
     let backend_point = reverse_point(point);
     let claims = single_group_batch::<AkitaOneHotK256Config, _>(
         &backend_point,
@@ -364,7 +366,7 @@ fn prove_trace_one_hot_metal<'a>(
         AkitaOneHotK256BackendScheme::batched_prove(
             backend_prover_setup,
             claims,
-            &releasing_stack,
+            &proving_stack,
             akita_transcript,
             BasisMode::Lagrange,
         )

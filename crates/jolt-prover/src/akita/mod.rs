@@ -208,6 +208,12 @@ where
     ) -> Result<Option<jolt_akita::TraceMetalCommitMetrics>, jolt_openings::OpeningsError> {
         self.trace_commitment.last_metal_commit_metrics()
     }
+
+    pub fn last_trace_opening_metrics(
+        &self,
+    ) -> Result<Option<jolt_akita::TraceMetalOpeningMetrics>, jolt_openings::OpeningsError> {
+        self.trace_commitment.last_metal_opening_metrics()
+    }
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]

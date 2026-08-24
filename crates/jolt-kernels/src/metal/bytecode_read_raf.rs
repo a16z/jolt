@@ -64,6 +64,10 @@ impl Default for BytecodeReadRafAddressMetalConfig {
     }
 }
 
+pub(super) fn bytecode_address_major_supported(witness: &dyn JoltWitnessPlane<AkitaField>) -> bool {
+    witness.program_preprocessing().bytecode.bytecode.len() == 1usize << ADDRESS_LOG2
+}
+
 struct BytecodeAddressEqTables {
     e_lo: Vec<Vec<AkitaField>>,
     e_hi: Vec<Vec<AkitaField>>,
@@ -241,6 +245,11 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
         if trace_elements < config.trace_cutoff_elements {
             let _ = route_span.record("realized_route", "cpu");
             let _ = route_span.record("fallback_reason", "trace_cutoff");
+            return Ok(Box::new(cpu(session)?));
+        }
+        if address_elements != 1usize << ADDRESS_LOG2 {
+            let _ = route_span.record("realized_route", "cpu");
+            let _ = route_span.record("fallback_reason", "address_domain");
             return Ok(Box::new(cpu(session)?));
         }
         let _ = route_span.record("realized_route", "address_major_fused_stage1_grouped_v1");
@@ -593,6 +602,39 @@ mod tests {
             BytecodeReadRafAddressMetalConfig::default().implementation,
             BytecodeReadRafAddressImplementation::Cpu
         );
+    }
+
+    #[test]
+    fn unsupported_bytecode_domain_skips_the_stage1_carrier() {
+        let log_t = 15;
+        with_sample_backend_at_geometry(log_t, 14, 8, |witness| {
+            assert!(!bytecode_address_major_supported(witness));
+            let backend = MetalBackend::new(super::super::MetalConfig {
+                instruction_read_raf: super::super::InstructionReadRafMetalConfig {
+                    address_cutoff_elements: 1 << log_t,
+                    ..Default::default()
+                },
+                bytecode_read_raf_address: BytecodeReadRafAddressMetalConfig {
+                    implementation: BytecodeReadRafAddressImplementation::AddressMajor,
+                    trace_cutoff_elements: 1 << log_t,
+                },
+                ..Default::default()
+            })
+            .unwrap();
+            let mut session = ProofSession::default();
+            <MetalBackend as UniskipKernel<AkitaField, OuterRemainder<AkitaField>>>::prepare_witness(
+                &backend,
+                &mut session,
+                log_t,
+                witness,
+            )
+            .unwrap();
+
+            assert!(session.state::<InstructionReadRafStage1Owner>().is_some());
+            assert!(session
+                .state::<BytecodeAddressStage1TopologyOwner>()
+                .is_none());
+        });
     }
 
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {

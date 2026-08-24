@@ -1,5 +1,8 @@
 # Akita Metal evaluation-proof goal
 
+The resulting protocol and public-schedule changes are tracked separately in
+[akita-metal-protocol-changes.md](akita-metal-protocol-changes.md).
+
 ## Objective
 
 Accelerate Akita's fp128 evaluation/opening proof by at least **5x over its CPU

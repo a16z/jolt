@@ -47,16 +47,19 @@ and reuse schedule.
 
 Akita exposes an exact retained-byte estimate and accepts an opening
 acceleration retention budget. Its automatic policy eagerly retains both
-indices only when the estimate fits that budget; otherwise it retains no
-index. The opening hint already carries the configured backend, and the packed
-source plus opening plan contain all geometry needed to rebuild the index.
-Each packed opening consumer builds its index, uses it, waits for the consuming
-command, and releases it before another index is allocated.
+indices only when the estimate fits that budget; otherwise it stores two
+zero-sized, one-shot markers with the packed source. The opening hint already
+carries the configured backend, and the packed source plus opening plan contain
+all geometry needed to rebuild each index. A consumer removes its marker,
+builds and uses that index, waits for the consuming command, and releases it
+before another index is allocated.
 
-Jolt supplies a zero retained-index budget for the composed max-scale path.
-The existing proof-session drop remains the boundary between PIOP residency
-and deferred opening allocation. A later device-wide reservation ledger may
-replace the caller budget, but is not required to test this decision.
+Jolt supplies a 32 GiB retained-index budget. The exact combined estimate fits
+through T27 (23.70 GiB) and exceeds the budget at T28 (47.40 GiB), so only the
+max-scale path defers construction. The existing proof-session drop remains the
+boundary between PIOP residency and deferred opening allocation. A later
+device-wide reservation ledger may replace the caller budget, but is not
+required to test this decision.
 
 ## Falsification and acceptance
 
@@ -71,7 +74,31 @@ to the evaluation-proof cost. T25 and T27 complete-proof time may not regress
 by more than 3%. The first T28 performance gate is no slower than the prior
 70.62-second verified combined-Metal proof.
 
-Unverified before implementation: whether Metal releases both private index
-buffers immediately after their final command, and the exact stage-8 peak
-after moving construction. If either fails the memory gate, construction will
-be partitioned by position with a 2 GiB temporary-buffer budget.
+The exact device-only stage-8 residency peak remains unmeasured. If later
+device telemetry exceeds the memory gate, construction will be partitioned by
+position with a 2 GiB temporary-buffer budget.
+
+## Measured result
+
+On 2026-08-23, the full modular BTreeMap proof at `T = 2^28` and a 150,000,000
+cycle target completed and verified with the production Metal backend:
+
+```text
+cargo run --release -p jolt-prover --example modular_benchmark \
+  --features prover-fixtures,metal -- \
+  --name btreemap --scale 28 --target-trace-size 150000000 --backend metal
+```
+
+The prover took 56.52 seconds and reached 80.08 GiB peak RSS. Commit telemetry
+reported zero retained opening-index bytes. Opening telemetry reported the
+exact 50,897,879,040 deferred bytes, 2.9999 seconds of index construction, and
+one indexed fold call. The proof verifier accepted. `/usr/bin/time -l` reported
+zero process swaps. Host-wide swap use moved from 3.69 MiB to 6.44 MiB during
+the run, so the stricter host-global no-growth sentinel remains inconclusive.
+
+This is 20.0% faster than the prior 70.62-second combined-Metal run and below
+the 90 GiB RSS guard by 9.92 GiB. The same-day optimized CPU control was 166.55
+seconds, making the full-prover ratio 2.95x; this change fixes max-scale
+residency but does not by itself establish a 5x end-to-end proof ratio. Opening's
+62.21 GiB `allocation_bytes` counter is cumulative traffic, not a simultaneous
+device-residency peak.

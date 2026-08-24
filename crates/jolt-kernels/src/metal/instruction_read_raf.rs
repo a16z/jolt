@@ -153,7 +153,10 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let rows = owner.receipt().rows();
         let fuse_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == crate::metal::BytecodeReadRafAddressImplementation::AddressMajor
-            && rows >= self.config.bytecode_read_raf_address.trace_cutoff_elements;
+            && rows >= self.config.bytecode_read_raf_address.trace_cutoff_elements
+            && session
+                .state::<BytecodeAddressStage1TopologyOwner>()
+                .is_some();
         let can_prefetch_scatter = session
             .state::<Stage5InstructionReadRafPrefetch<AkitaField>>()
             .is_some()
@@ -310,9 +313,12 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             };
         let use_metal_address =
             trace_elements >= self.config.instruction_read_raf.address_cutoff_elements;
-        let fuse_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
-            == crate::metal::BytecodeReadRafAddressImplementation::AddressMajor
-            && trace_elements >= self.config.bytecode_read_raf_address.trace_cutoff_elements;
+        let fuse_bytecode_carrier = session
+            .state::<BytecodeAddressStage1TopologyOwner>()
+            .is_some()
+            || prefetched_scatter
+                .as_ref()
+                .is_some_and(|prefetched| prefetched.bytecode_carrier.is_some());
         let share_registers_val_source = prefetched_scatter
             .as_ref()
             .is_some_and(|prefetched| prefetched.registers_val_lease.is_some())

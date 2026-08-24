@@ -1,11 +1,18 @@
 # Akita Metal end-to-end integration
 
+The protocol-facing delta ledger for the combined commit and evaluation-proof
+work is [akita-metal-protocol-changes.md](akita-metal-protocol-changes.md). This
+document records the commit-backend checkpoint; statements below that the
+protocol is unchanged mean that CPU and Metal use the same fixed protocol and
+schedule, not that later Metal-motivated protocol revisions are absent.
+
 ## Status
 
 The combined Metal prover passes the commit-phase acceptance gate on the
 standard Jolt workloads through `T = 2^28`. One `JoltAkitaBackend::metal()`
 selects both the existing Metal PIOP kernels and Akita's fp128 packed one-hot
-commit backend. The verifier and proof protocol are unchanged.
+commit backend. The commit backend itself does not change verifier equations or
+proof messages.
 
 Jolt pins the Akita fork revision
 `30e99fed9a2885bcc66d8f20693b81fe6d4374e4` from branch

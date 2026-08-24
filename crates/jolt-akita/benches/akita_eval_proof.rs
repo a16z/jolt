@@ -111,11 +111,18 @@ struct PreparationRecord {
     fixture_ns: u64,
     setup_ns: u64,
     backend_prepare_ns: u64,
-    commit_ns: u64,
+    #[serde(default)]
+    commit_ns: Option<u64>,
     #[serde(default)]
     metal_commit_ns: Option<u64>,
     #[serde(default)]
     metal_commitment_parity: Option<bool>,
+    #[serde(default)]
+    metal_opening_index_ns: Option<u64>,
+    #[serde(default)]
+    metal_opening_index_gpu_ns: Option<u64>,
+    #[serde(default)]
+    metal_opening_index_bytes: Option<usize>,
     commitment_digest: String,
 }
 
@@ -131,9 +138,53 @@ struct MeasurementRecord {
     gpu_active_ns: Option<u64>,
     command_wall_ns: Option<u64>,
     #[serde(default)]
+    opening_index_ns: Option<u64>,
+    #[serde(default)]
+    opening_index_gpu_ns: Option<u64>,
+    #[serde(default)]
+    opening_index_bytes: Option<usize>,
+    #[serde(default)]
+    packed_decompose_wall_ns: Option<u64>,
+    #[serde(default)]
+    packed_decompose_gpu_ns: Option<u64>,
+    #[serde(default)]
+    packed_decompose_consumer_ns: Option<u64>,
+    #[serde(default)]
+    packed_decompose_prepare_ns: Option<u64>,
+    #[serde(default)]
+    packed_decompose_postprocess_ns: Option<u64>,
+    #[serde(default)]
+    packed_decompose_total_ns: Option<u64>,
+    #[serde(default)]
+    packed_decompose_indexed_calls: Option<usize>,
+    #[serde(default)]
+    packed_decompose_direct_digit_bytes: Option<usize>,
+    #[serde(default)]
+    recursive_commit_matrix_cache_hits: Option<usize>,
+    #[serde(default)]
+    recursive_commit_matrix_cache_misses: Option<usize>,
+    #[serde(default)]
+    recursive_commit_matrix_ntt_ns: Option<u64>,
+    #[serde(default)]
+    recursive_commit_matrix_ntt_gpu_ns: Option<u64>,
+    #[serde(default)]
+    recursive_commit_matrix_ntt_bytes: Option<usize>,
+    #[serde(default)]
     linear_source_command_wall_ns: Option<u64>,
     #[serde(default)]
     linear_source_gpu_ns: Option<u64>,
+    #[serde(default)]
+    direct_range_command_wall_ns: Option<u64>,
+    #[serde(default)]
+    direct_range_gpu_ns: Option<u64>,
+    #[serde(default)]
+    direct_range_buffer_setup_ns: Option<u64>,
+    #[serde(default)]
+    direct_relation_command_wall_ns: Option<u64>,
+    #[serde(default)]
+    direct_relation_gpu_ns: Option<u64>,
+    #[serde(default)]
+    direct_relation_buffer_setup_ns: Option<u64>,
     upload_ns: Option<u64>,
     readback_ns: Option<u64>,
     allocation_bytes: Option<usize>,
@@ -177,8 +228,12 @@ struct PhaseCollector {
     elapsed: Arc<Mutex<BTreeMap<String, Duration>>>,
 }
 
-#[derive(Clone, Copy)]
-struct PhaseStart(Instant);
+#[derive(Default)]
+struct PhaseTiming {
+    active_entries: usize,
+    active_start: Option<Instant>,
+    elapsed: Duration,
+}
 
 impl PhaseCollector {
     fn clear(&self) {
@@ -207,7 +262,40 @@ where
             return;
         };
         if phase_bucket(span.name()).is_some() {
-            span.extensions_mut().insert(PhaseStart(Instant::now()));
+            span.extensions_mut().insert(PhaseTiming::default());
+        }
+    }
+
+    fn on_enter(&self, id: &Id, context: Context<'_, S>) {
+        let Some(span) = context.span(id) else {
+            return;
+        };
+        let mut extensions = span.extensions_mut();
+        let Some(timing) = extensions.get_mut::<PhaseTiming>() else {
+            return;
+        };
+        if timing.active_entries == 0 {
+            timing.active_start = Some(Instant::now());
+        }
+        timing.active_entries += 1;
+    }
+
+    fn on_exit(&self, id: &Id, context: Context<'_, S>) {
+        let Some(span) = context.span(id) else {
+            return;
+        };
+        let mut extensions = span.extensions_mut();
+        let Some(timing) = extensions.get_mut::<PhaseTiming>() else {
+            return;
+        };
+        if timing.active_entries == 0 {
+            return;
+        }
+        timing.active_entries -= 1;
+        if timing.active_entries == 0 {
+            if let Some(started) = timing.active_start.take() {
+                timing.elapsed += started.elapsed();
+            }
         }
     }
 
@@ -218,16 +306,19 @@ where
         let Some(bucket) = phase_bucket(span.name()) else {
             return;
         };
-        let started = span.extensions().get::<PhaseStart>().map(|value| value.0);
-        let Some(started) = started else {
+        let mut extensions = span.extensions_mut();
+        let Some(mut timing) = extensions.remove::<PhaseTiming>() else {
             return;
         };
+        if let Some(started) = timing.active_start.take() {
+            timing.elapsed += started.elapsed();
+        }
         *self
             .elapsed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(bucket.to_string())
-            .or_default() += started.elapsed();
+            .or_default() += timing.elapsed;
     }
 }
 
@@ -235,11 +326,37 @@ fn phase_bucket(name: &str) -> Option<&'static str> {
     match name {
         "prepare_ntt_cache" => Some("ntt_prepare"),
         "TracePackedOneHot::evaluate_and_fold" => Some("root_evaluate_fold"),
-        "TracePackedOneHot::decompose_fold" => Some("root_decompose_fold"),
+        "TracePackedOneHot::decompose_fold_cpu" => Some("root_decompose_fold_cpu"),
+        "TracePackedOneHot::decompose_fold_metal_single" => {
+            Some("root_decompose_fold_metal_single")
+        }
+        "TracePackedOneHot::decompose_fold_metal_batch" => Some("root_decompose_fold_metal_batch"),
+        "TracePackedOneHot::decompose_fold_metal_streaming" => {
+            Some("root_decompose_fold_metal_streaming")
+        }
         "coefficient_packing_trace_onehot_partials" => Some("root_coefficient_packing"),
         "coefficient_packing_partials" | "MetalCommitBackend::suffix_coefficient_packing" => {
             Some("recursive_coefficient_packing")
         }
+        "RingRelationProver::new" => Some("ring_relation_prepare_total"),
+        "ring_relation_prepare_inputs" => Some("diag_relation_prepare_inputs"),
+        "ring_relation_opening_rows" => Some("diag_relation_opening_rows"),
+        "coefficient_packing_d_input" => Some("diag_relation_d_input"),
+        "coefficient_packing_d_concat" => Some("diag_relation_d_concat"),
+        "compute_relation_v" => Some("diag_relation_compute_v"),
+        "relation_compression_witness" => Some("diag_relation_compression"),
+        "ring_relation_fold_grind" => Some("diag_relation_fold_grind"),
+        "fold_grind_sample" => Some("diag_fold_grind_sample"),
+        "fold_grind_acceptance_check" => Some("diag_fold_grind_acceptance"),
+        "fold_grind_live_replay" => Some("diag_fold_grind_live_replay"),
+        "root_commit_prefix_merge" => Some("diag_root_commit_prefix_merge"),
+        "root_z_digit_decompose" => Some("diag_root_z_digit_decompose"),
+        "root_z_digit_append" => Some("diag_root_z_digit_append"),
+        "root_z_commit_prefix" => Some("diag_root_z_commit_prefix"),
+        "root_static_et_commit_prefix" => Some("root_static_et_commit_prefix"),
+        "recursive_commit_output_decode" => Some("diag_recursive_commit_output_decode"),
+        "ring_relation_build_instance" => Some("diag_relation_build_instance"),
+        "ring_relation_build_witness" => Some("diag_relation_build_witness"),
         "ring_switch_build_w" => Some("ring_switch_build_w"),
         "ring_switch_allocate_output" => Some("diag_ring_allocate"),
         "ring_switch_emit_group_segments" => Some("diag_ring_emit_groups"),
@@ -255,7 +372,14 @@ fn phase_bucket(name: &str) -> Option<&'static str> {
         "ring_switch_finalize" => Some("ring_switch_finalize"),
         "stage1_sumcheck" => Some("stage1_sumcheck"),
         "stage2_opening_preparation" => Some("stage2_preparation"),
+        "stage2_additional_terms_prepare" => Some("diag_stage2_additional_terms"),
         "stage2_sumcheck" => Some("stage2_sumcheck"),
+        "direct_relation_state_prepare" => Some("diag_stage2_state_prepare"),
+        "direct_relation_host_prepare" => Some("diag_stage2_host_prepare"),
+        "direct_relation_two_round_prefix_host" => Some("diag_stage2_prefix_host"),
+        "direct_relation_session_setup" => Some("diag_stage2_session_setup"),
+        "direct_relation_host_round" => Some("diag_stage2_host_round"),
+        "direct_relation_host_bind" => Some("diag_stage2_host_bind"),
         "fold_evaluate_claims" => Some("recursive_fold_evaluation"),
         _ => None,
     }
@@ -286,8 +410,8 @@ impl MultilinearPoly<AkitaField> for CommittedShape {
 struct Fixture {
     prover_setup: AkitaProverSetup,
     verifier_setup: AkitaVerifierSetup,
-    commitment: AkitaCommitment,
-    cpu_hint: AkitaProverHint,
+    commitment: Option<AkitaCommitment>,
+    cpu_hint: Option<AkitaProverHint>,
     metal_hint: Option<AkitaProverHint>,
     rows: Arc<dyn TraceOneHotRows>,
     point: Vec<AkitaField>,
@@ -566,25 +690,14 @@ fn build_fixture(case: CaseSpec) -> Result<Fixture, Box<dyn Error>> {
     ))?;
     let setup_ns = duration_ns(setup_start.elapsed());
 
-    let cpu_backend = TraceCommitmentBackend::cpu();
-    let commit_start = Instant::now();
-    let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
-        &cpu_backend,
-        &prover_setup,
-        LAYOUT_DIGEST,
-        COLUMN_CAPACITY,
-        rows.clone(),
-    )?;
-    let commit_ns = duration_ns(commit_start.elapsed());
-    let commitment_digest = digest_bytes(&serde_json::to_vec(&commitment)?);
     let fixture_digest = fixture_digest(&shape, &point);
     let schedule_digest = schedule_digest(num_vars)?;
 
     Ok(Fixture {
         prover_setup,
         verifier_setup,
-        commitment,
-        cpu_hint: hint,
+        commitment: None,
+        cpu_hint: None,
         metal_hint: None,
         rows,
         point,
@@ -596,10 +709,13 @@ fn build_fixture(case: CaseSpec) -> Result<Fixture, Box<dyn Error>> {
             fixture_ns,
             setup_ns,
             backend_prepare_ns: 0,
-            commit_ns,
+            commit_ns: None,
             metal_commit_ns: None,
             metal_commitment_parity: None,
-            commitment_digest,
+            metal_opening_index_ns: None,
+            metal_opening_index_gpu_ns: None,
+            metal_opening_index_bytes: None,
+            commitment_digest: String::new(),
         },
     })
 }
@@ -621,11 +737,16 @@ fn metal_backend(
     Err("the Metal measurement requires --features metal on macOS".into())
 }
 
-fn statement(fixture: &Fixture) -> Vec<VerifierOpeningClaim<AkitaField, AkitaCommitment>> {
-    vec![VerifierOpeningClaim {
-        commitment: fixture.commitment.clone(),
+fn statement(
+    fixture: &Fixture,
+) -> Result<Vec<VerifierOpeningClaim<AkitaField, AkitaCommitment>>, Box<dyn Error>> {
+    Ok(vec![VerifierOpeningClaim {
+        commitment: fixture
+            .commitment
+            .clone()
+            .ok_or("fixture has no commitment")?,
         evaluation: EvaluationClaim::new(fixture.point.clone(), fixture.evaluation),
-    }]
+    }])
 }
 
 fn measure(
@@ -635,7 +756,10 @@ fn measure(
     phases: &PhaseCollector,
 ) -> Result<(AkitaBatchProof, MeasurementRecord), Box<dyn Error>> {
     let hint = match backend_choice {
-        BackendChoice::Cpu => &fixture.cpu_hint,
+        BackendChoice::Cpu => fixture
+            .cpu_hint
+            .as_ref()
+            .ok_or("CPU measurement has no CPU-produced commitment hint")?,
         BackendChoice::Metal => fixture
             .metal_hint
             .as_ref()
@@ -643,7 +767,7 @@ fn measure(
     }
     .clone()
     .with_trace_backend(backend.clone())?;
-    let statement = statement(fixture);
+    let statement = statement(fixture)?;
     let shape = CommittedShape {
         num_vars: fixture.shape.num_vars,
     };
@@ -699,12 +823,78 @@ fn measure(
             command_wall_ns: metal_metrics
                 .as_ref()
                 .map(|metrics| duration_ns(metrics.command_wall_time)),
+            opening_index_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.opening_index_time)),
+            opening_index_gpu_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.opening_index_gpu_time)),
+            opening_index_bytes: metal_metrics
+                .as_ref()
+                .map(|metrics| metrics.opening_index_bytes),
+            packed_decompose_wall_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.packed_decompose_wall_time)),
+            packed_decompose_gpu_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.packed_decompose_gpu_time)),
+            packed_decompose_consumer_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.packed_decompose_consumer_time)),
+            packed_decompose_prepare_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.packed_decompose_prepare_time)),
+            packed_decompose_postprocess_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.packed_decompose_postprocess_time)),
+            packed_decompose_total_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.packed_decompose_total_time)),
+            packed_decompose_indexed_calls: metal_metrics
+                .as_ref()
+                .map(|metrics| metrics.packed_decompose_indexed_calls),
+            packed_decompose_direct_digit_bytes: metal_metrics
+                .as_ref()
+                .map(|metrics| metrics.packed_decompose_direct_digit_bytes),
+            recursive_commit_matrix_cache_hits: metal_metrics
+                .as_ref()
+                .map(|metrics| metrics.recursive_commit_matrix_cache_hits),
+            recursive_commit_matrix_cache_misses: metal_metrics
+                .as_ref()
+                .map(|metrics| metrics.recursive_commit_matrix_cache_misses),
+            recursive_commit_matrix_ntt_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.recursive_commit_matrix_ntt_time)),
+            recursive_commit_matrix_ntt_gpu_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.recursive_commit_matrix_ntt_gpu_time)),
+            recursive_commit_matrix_ntt_bytes: metal_metrics
+                .as_ref()
+                .map(|metrics| metrics.recursive_commit_matrix_ntt_bytes),
             linear_source_command_wall_ns: metal_metrics
                 .as_ref()
                 .map(|metrics| duration_ns(metrics.linear_source_command_wall_time)),
             linear_source_gpu_ns: metal_metrics
                 .as_ref()
                 .map(|metrics| duration_ns(metrics.linear_source_gpu_time)),
+            direct_range_command_wall_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.direct_range_command_wall_time)),
+            direct_range_gpu_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.direct_range_gpu_time)),
+            direct_range_buffer_setup_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.direct_range_buffer_setup_time)),
+            direct_relation_command_wall_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.direct_relation_command_wall_time)),
+            direct_relation_gpu_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.direct_relation_gpu_time)),
+            direct_relation_buffer_setup_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.direct_relation_buffer_setup_time)),
             upload_ns: metal_metrics
                 .as_ref()
                 .map(|metrics| duration_ns(metrics.upload_time)),
@@ -750,8 +940,9 @@ fn apply_anchor(record: &mut HarnessRecord, anchor_path: &Path) -> Result<(), Bo
     if anchor.fixture_digest != record.fixture_digest
         || anchor.schedule_digest != record.schedule_digest
         || anchor.shape != record.shape
+        || anchor.preparation.commitment_digest != record.preparation.commitment_digest
     {
-        return Err("CPU anchor fixture or schedule does not match this run".into());
+        return Err("CPU anchor fixture, schedule, or commitment does not match this run".into());
     }
     let cpu = anchor
         .measurements
@@ -766,6 +957,21 @@ fn apply_anchor(record: &mut HarnessRecord, anchor_path: &Path) -> Result<(), Bo
     Ok(())
 }
 
+fn validate_anchor_fixture(fixture: &Fixture, anchor_path: &Path) -> Result<bool, Box<dyn Error>> {
+    let anchor: HarnessRecord = serde_json::from_slice(&std::fs::read(anchor_path)?)?;
+    if anchor.fixture_digest != fixture.digest
+        || anchor.schedule_digest != fixture.schedule_digest
+        || anchor.shape != fixture.shape
+        || anchor.preparation.commitment_digest != fixture.preparation.commitment_digest
+    {
+        return Err("CPU anchor fixture, schedule, or commitment does not match this run".into());
+    }
+    Ok(anchor
+        .measurements
+        .iter()
+        .any(|measurement| measurement.backend == "cpu"))
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
     validate_oracle();
@@ -773,6 +979,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::registry().with(phases.clone()).init();
 
     let mut fixture = build_fixture(args.case)?;
+    let wants_cpu = args.order.contains(&BackendChoice::Cpu);
+    let wants_metal = args.order.contains(&BackendChoice::Metal);
     let cpu_backend = TraceCommitmentBackend::cpu();
     let (metal_backend, metal_prepare_ns) = if args.order.contains(&BackendChoice::Metal) {
         let (backend, elapsed) = metal_backend(&fixture.prover_setup)?;
@@ -781,6 +989,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         (None, 0)
     };
     fixture.preparation.backend_prepare_ns = metal_prepare_ns;
+
+    if wants_cpu {
+        let start = Instant::now();
+        let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
+            &cpu_backend,
+            &fixture.prover_setup,
+            LAYOUT_DIGEST,
+            COLUMN_CAPACITY,
+            fixture.rows.clone(),
+        )?;
+        fixture.preparation.commit_ns = Some(duration_ns(start.elapsed()));
+        fixture.commitment = Some(commitment);
+        fixture.cpu_hint = Some(hint);
+    }
     if let Some(backend) = metal_backend.as_ref() {
         let start = Instant::now();
         let (metal_commitment, metal_hint) = AkitaScheme::commit_trace_one_hot(
@@ -791,12 +1013,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             fixture.rows.clone(),
         )?;
         fixture.preparation.metal_commit_ns = Some(duration_ns(start.elapsed()));
-        let parity = metal_commitment == fixture.commitment;
-        fixture.preparation.metal_commitment_parity = Some(parity);
-        if !parity {
-            return Err("CPU and Metal commitments differ".into());
+        if let Some(metrics) = backend.last_metal_commit_metrics()? {
+            fixture.preparation.metal_opening_index_ns =
+                Some(duration_ns(metrics.opening_index_time));
+            fixture.preparation.metal_opening_index_gpu_ns =
+                Some(duration_ns(metrics.opening_index_gpu_time));
+            fixture.preparation.metal_opening_index_bytes = Some(metrics.opening_index_bytes);
+        }
+        if let Some(cpu_commitment) = fixture.commitment.as_ref() {
+            let parity = metal_commitment == *cpu_commitment;
+            fixture.preparation.metal_commitment_parity = Some(parity);
+            if !parity {
+                return Err("CPU and Metal commitments differ".into());
+            }
+        } else {
+            fixture.commitment = Some(metal_commitment);
         }
         fixture.metal_hint = Some(metal_hint);
+    }
+    let commitment = fixture
+        .commitment
+        .as_ref()
+        .ok_or("selected backends produced no commitment")?;
+    fixture.preparation.commitment_digest = digest_bytes(&serde_json::to_vec(commitment)?);
+
+    if let Some(anchor_path) = args.anchor.as_deref() {
+        if !validate_anchor_fixture(&fixture, anchor_path)? {
+            return Err("CPU anchor contains no CPU measurement".into());
+        }
+        if wants_metal && !wants_cpu {
+            fixture.preparation.metal_commitment_parity = Some(true);
+        }
     }
 
     let mut measurements = Vec::with_capacity(args.order.len());
@@ -827,7 +1074,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         PathBuf::from,
     );
     let mut record = HarnessRecord {
-        schema_version: 2,
+        schema_version: 3,
         evaluator: "akita_eval_proof".to_string(),
         case_id: args.case.id.to_string(),
         run_order: args
