@@ -11,6 +11,10 @@ This page focuses on `Prime128OffsetA7F7`. The
 [scalar Fp64 page](field-kernels-fp64.md) describes the separate
 `Prime64Offset59` proofs.
 
+The `jolt-field/asm` feature opts into these architecture kernels. A `solinas`
+build without `asm` uses portable Rust even on AArch64 and x86-64. The
+inspection-only `fp128-proof-linkage` feature implies `asm`.
+
 The Fp128 field modulus is
 
 ```text
@@ -364,6 +368,14 @@ operations, and boundary examples. They are not a formal proof. Closing this
 part of the field claim requires three layers: prove each widening and
 reduction schedule, prove or enforce the caller's term and scale bounds, and
 connect the compiled implementation to those theorems.
+
+The proved scalar kernels have an additional differential fuzz target. It
+compares assembly with portable addition, subtraction, and multiplication on
+AArch64, baseline x86-64, and x86-64 with BMI2 and ADX. The AArch64 target also
+compares squaring and fused multiply-add. This testing exercises dispatch,
+inline assembly constraints, and edge cases around the proof boundary; the HOL
+Light theorem and exact-byte checks remain the exhaustive correctness and
+linkage evidence for the proved sequences.
 
 ## Trust boundary
 

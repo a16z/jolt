@@ -31,6 +31,12 @@ in the original Jolt migration branch.
 Jolt owns the field implementation, exact AArch64 and x86-64 bodies, proof
 objects, HOL Light theorems, inspection witness, and proof workflow.
 
+The architecture kernels are opt-in through the `jolt-field/asm` feature.
+`solinas` without `asm` uses portable Rust, while `fp128-proof-linkage` implies
+`asm` so proof artifact checks cannot accidentally inspect the portable path.
+Differential fuzzing compares the selected assembly kernels with portable
+arithmetic on AArch64, baseline x86-64, and x86-64 with BMI2 and ADX.
+
 Akita owns the check that its final verifier executable contains the proved
 operation from the exact Jolt revision selected by Cargo. This downstream
 check cannot be performed by the Jolt repository alone.

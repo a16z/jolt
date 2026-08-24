@@ -35,6 +35,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  fp128-asm-fuzz-aarch64:
+    name: Differential fuzz AArch64 assembly
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Compare assembly with portable arithmetic
+        working-directory: crates/jolt-field
+        run: cargo +nightly fuzz run fp128_asm_differential -- -max_total_time=120
+
+  fp128-asm-fuzz-x86-64-bmi2-adx:
+    name: Differential fuzz x86-64 BMI2+ADX assembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Require BMI2 and ADX
+        run: |
+          grep -Eq '(^|[[:space:]])bmi2([[:space:]]|$)' /proc/cpuinfo
+          grep -Eq '(^|[[:space:]])adx([[:space:]]|$)' /proc/cpuinfo
+      - name: Compare assembly with portable arithmetic
+        working-directory: crates/jolt-field
+        env:
+          RUSTFLAGS: -C target-feature=+bmi2,+adx
+        run: cargo +nightly fuzz run fp128_asm_differential -- -max_total_time=120
+
   fp128-aarch64:
     name: Prove AArch64 add, sub, and mul
     runs-on: ubuntu-24.04-arm
