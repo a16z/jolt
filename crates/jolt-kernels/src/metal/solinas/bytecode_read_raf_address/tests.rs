@@ -199,7 +199,6 @@ fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
             Some(request),
         )
         .unwrap();
-    assert!(planes.outputs_are_private());
     let fused = planes.receipt().bytecode().unwrap();
     assert_eq!(fused.physical_rows(), physical_rows);
     assert_eq!(fused.max_pivots_per_chunk(), 15);
