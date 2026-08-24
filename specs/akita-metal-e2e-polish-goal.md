@@ -26,11 +26,13 @@ The paired worktrees are:
 - Akita: `perf/metal-commit-eval-proof` at
   `/Users/mgeorghiades/worktrees/akita-metal-eval-proof`.
 
-The accepted runtime sources are Jolt `9fb538461` and Akita `a454c7575`. Later heads
-contain documentation, rejected experiments, and exact reverts: Jolt `cf4672902` and
-Akita `573e38d42` after the first three polish tranches. Audit the actual heads and trees
-before resuming. Jolt's modified `Cargo.lock` and untracked `.cargo/config.toml` are
-intentional local Akita path overrides. Do not commit or remove them. Do not push.
+The accepted runtime sources are Jolt `9fb538461` and Akita `a454c7575`. At the
+recorded C4 gate, Jolt tree `6c705b5c5` and Akita tree `58523a7b0` differed from
+those sources only by documentation, rejected experiments, and exact reverts. Audit
+the actual heads and trees before resuming because edits to this document advance the
+Jolt head without changing runtime code. Jolt's modified `Cargo.lock` and untracked
+`.cargo/config.toml` are intentional local Akita path overrides. Do not commit or
+remove them. Do not push.
 
 The current release binary was built from rejected C3 before its source revert. Rebuild
 from the accepted runtime trees before another measurement; rebuild again only after a
@@ -269,8 +271,9 @@ perf/metal-commit-eval-proof Akita worktree at
 intentional local Cargo.lock and .cargo/config.toml path overrides. Audit both heads,
 trees, and runtime diffs first. The accepted runtime sources are Jolt 9fb538461 and
 Akita a454c7575; later commits contain documentation, rejected candidates, and exact
-reverts. The current release binary matches those accepted runtime sources; rebuild
-after any runtime-source edit.
+reverts. The current release binary was built from rejected C3 before its exact source
+revert. Rebuild it from the accepted runtime trees before measuring, then rebuild only
+after a runtime-source edit.
 
 The hard objective is at least 5x complete jolt_prover::prove speedup over optimized
 CPU for BTreeMap, Fibonacci, and SHA-2 chain at T=2^28, maximizing the worst ratio
