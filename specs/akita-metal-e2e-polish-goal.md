@@ -111,7 +111,8 @@ real occupancy and device work; window tuning is not eligible without a new mode
    alternate between the existing span and one hot-only auxiliary plane. Preserve
    per-address cycle order, odd-boundary behavior, round challenges, message values,
    transcript, proof bytes, and verifier behavior. Keep message extraction ordered
-   before compaction. Do not combine this with Stage 4/5 retiming or commit work.
+   after the completed compaction, matching the current bound-then-message phase.
+   Do not combine this with Stage 4/5 retiming or commit work.
 4. **Gate the RAM candidate cheaply.** First run focused CPU/Metal kernel parity over
    skewed, multi-chunk, odd-length, and boundary-crossing segments. Then run one
    verified BTreeMap T25 sentinel. Admit one BTreeMap T28 treatment only if telemetry
@@ -328,7 +329,7 @@ Evaluate one bounded design: leave cold addresses in place; split only public-
 geometry-selected hot segments across multiple groups with disjoint output ownership,
 using count/prefix/scatter and one hot-only auxiliary state plane if the exact model
 confirms it. Preserve address and cycle order, cross-chunk pairs, odd tails, challenge
-binding, message-before-compaction ordering, transcript, proof bytes, and verifier
+binding, compaction-before-message ordering, transcript, proof bytes, and verifier
 behavior. The route must be generic and activity-based, not keyed to BTreeMap. Do not
 mix Stage 4/5 retiming, commit work, or protocol changes into this candidate.
 

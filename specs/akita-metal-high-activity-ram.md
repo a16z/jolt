@@ -151,6 +151,79 @@ misses the 1.7 s terminal RAM bar. The out-of-place design remains eligible, but
 roughly 1.25 s absolute ceiling now ranks below the 2--3.5 s deferred-opening
 opportunity shared by all three workloads.
 
+## Hot-only out-of-place compaction candidate
+
+The next candidate replaces only the one-group-per-hot-address bind. Cold segments,
+the cycle frontier, equality weights, reductions, address-tail handoff, transcript,
+and verifier stay unchanged. Each bind will count parent leaders in fixed 4,096-entry
+hot chunks, prefix those counts once per hot address, and scatter bound records into
+the other state plane. The existing hot-message kernel then reads the completed
+destination frontier. The protocol observes the same two message coefficients and
+terminal address roots; no work moves outside proving.
+
+Every hot segment keeps its primary offset and receives an auxiliary offset. One
+round-parity bit, derived from the public number of completed binds, selects the
+source plane for all hot segments; the destination is the other plane. A prefix
+kernel saves the old length, writes deterministic exclusive chunk offsets, and then
+publishes the new segment length. Scatter reads the saved length, so it cannot race
+that metadata update. A chunk's first entry compares its parent with the preceding
+global source entry. Thus a pair crossing a chunk boundary is emitted once by the
+earlier chunk, while prefix offsets keep all outputs in cycle order. After scatter,
+message evaluation reads the destination plane. Odd `log_T` leaves roots in the
+auxiliary plane and must be handled explicitly at the CPU handoff.
+
+The accepted denominator is 1.823 s GPU-active for the complete address/cycle
+sequence. A later run reproduced 1.832 s: 1.565 s occurred in rounds 0--11 and
+0.267 s in rounds 12--27. These command intervals include cycle work, messages, and
+reductions, so 1.25 s is only an absolute ceiling (`1.823 - 0.57`), not a measured
+compaction subtotal.
+
+The prior occupancy model gives
+`S_in = sum(N_0..N_27) = 1.443 billion` input records and
+`S_out = sum(N_1..N_28) = 1.378 billion` bound records. Compaction must read each
+input block, value, and `ra`, read two boundary words per output, and write the
+52-byte SoA output record. Message evaluation must at least reread each current
+block, value, and `ra`. This is
+
+`(36*S_in + 68*S_out) + 36*S_in = 184.1 GiB`.
+
+At the measured 412.5 GiB/s, the compulsory traffic floor is 0.446 s. Charging the
+new four-byte count read to every input raises it by only 0.013 s; cold entries do
+not pay that pass. Bind plus message requires at least
+`6*S_out = 8.27 billion` full fp128 multiplications, or 0.506 s at the measured
+16.36 billion multiplications/s. The unchanged cycle frontier adds about 0.06 s, so
+the bottom remains mildly compute-bound near 0.57 s. Its address operational
+intensity is about 0.0419 multiplication/byte; the measured bandwidth/compute rates
+cross at 0.0369. Count, prefix, and scatter use 256-thread groups and less than
+1 KiB static threadgroup memory, avoiding the one-group-per-core occupancy failure
+seen in the rejected coefficient-fusion experiment.
+
+The auxiliary allocation is five SoA buffers: block `u32`, previous/next `u64`, and
+two 16-byte fp128 fields, exactly 52 bytes per initially hot entry. Even charging all
+65,195,206 accesses gives 3,390,150,712 bytes (3.157 GiB). Counts, offsets, saved
+lengths, and hot descriptors add under 0.2 MiB at the conservative 18,310-chunk
+bound. Added to the accepted 82.03 GiB peak, the worst projection is 85.19 GiB,
+leaving 4.81 GiB under the guard. Capacity rejection remains legal before round zero;
+once selected, the route fails closed.
+
+Prediction: RAM GPU-active time falls to 0.75--1.15 s and complete BTreeMap T28
+saves 0.6--1.0 s. Exact lockstep parity must cover multiple hot chunks, a pair split
+at the 4,096-entry boundary, odd live lengths, cold and hot segments together, and an
+odd `log_T` final auxiliary root. Pipeline telemetry must show the multi-group route,
+256 threads, and at most 1 KiB static threadgroup memory. Reject before T28 if the
+verified T25 sentinel exceeds 0.260 s RAM GPU-active. At T28, reject or revert if the
+complete prover exceeds 48.92 s against the accepted 49.42 s mean, RAM GPU-active
+exceeds 1.25 s, RSS exceeds 90 GiB, or any fallback or exactness check fails. A
+retained intermediate is not a finished kernel: closing this component still
+requires at most 0.71 s, 80% efficiency against the 0.57 s floor.
+
+Atomic output reservation was rejected because threadgroup arrival order would
+scramble the sorted frontier. Fixed padded output slices avoid a prefix but turn one
+contiguous segment into a fragmented tree and carry empty capacity through later
+rounds. A global segmented scan touches cold entries and adds a larger scheduling
+surface. The per-address prefix is the smallest design that gives deterministic,
+disjoint multi-group output ownership.
+
 ## Falsification and validation
 
 Before promotion, the address/cycle kernels must measure at most 0.75 s GPU-active at
