@@ -29,9 +29,18 @@ mod add_sub;
 
 #[cfg(feature = "asm")]
 const A7F7_OFFSET: u64 = 0xffff_a7f7;
-#[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
+#[cfg(all(
+    feature = "fuzzing",
+    target_arch = "x86_64",
+    not(all(target_feature = "bmi2", target_feature = "adx"))
+))]
 const X86_64_BASELINE_BACKEND: u8 = 1;
-#[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
+#[cfg(all(
+    feature = "fuzzing",
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
 const X86_64_BMI2_ADX_BACKEND: u8 = 2;
 #[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
 static LAST_X86_64_MUL_BACKEND: AtomicU8 = AtomicU8::new(0);
