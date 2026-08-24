@@ -68,3 +68,17 @@ the result; do not tune threadgroup width or worker timing under the same candid
 
 This is a prover-local resource-policy change. It changes no protocol message,
 challenge, polynomial, proof byte, verifier code, or soundness assumption.
+
+## B1 result
+
+The focused oracle passed and the T28 proof verified with exactly 9,932,111,872
+private grouped-output bytes. The compatibility scatter took 1.5439 s, only 0.0107 s
+below the 1.5546 s trace anchor, while address prefetch rose from 0.1805 s to
+0.2571 s. Complete proving regressed from 48.08 s to 50.25 s at 80.09 GiB RSS.
+This misses the 47.58 s promotion bar by 2.67 s and was reverted in `a3709b12b`.
+
+Private storage did not remove the construction cost on this unified-memory system.
+The first-two-round difference cannot be attributed to CPU mapping or coherence of
+the four outputs. Do not retry storage modes, cache flags, or hazard flags without a
+new mechanism and a separately measured ceiling. Any further Stage 4/5 candidate
+must address scheduling or eliminate work rather than relabel the same allocations.
