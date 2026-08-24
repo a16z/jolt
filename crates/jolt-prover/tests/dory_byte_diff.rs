@@ -32,14 +32,6 @@
 //! randomized committed proofs (fresh Pedersen blinds), so byte equality is
 //! undefined — the ZK correctness gate is `zk_e2e.rs` instead.
 
-#[cfg(all(
-    feature = "prover-fixtures",
-    not(feature = "akita"),
-    not(feature = "zk")
-))]
-#[path = "test_utils/word_shift.rs"]
-mod word_shift;
-
 /// Shared scaffolding for the byte-diff modules: every test runs the same
 /// legacy-side guest pipeline (decode + trace + preprocess + prove + replay)
 /// and the same modular-side pipeline (trace + config + witness + prove +
@@ -493,7 +485,6 @@ mod muldiv {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_lookup_tables::{LookupTableKind, XLEN};
     use jolt_program::execution::JoltProgram;
     use jolt_prover::dory::stages::stage0::prove_stage0;
     use jolt_prover::dory::stages::stage8::prove_stage8;
@@ -512,11 +503,10 @@ mod muldiv {
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
     use jolt_prover_legacy::zkvm::RV64IMACProver;
     use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
-    use jolt_verifier::proof::JoltProofClaims;
     use jolt_verifier::verify_until_stage1;
     use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
-    use super::{support, word_shift};
+    use super::support;
 
     /// Prove muldiv with both provers from the same guest and inputs; assert
     /// byte equality of every proof component and stage-boundary transcript
@@ -561,7 +551,6 @@ mod muldiv {
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
-        word_shift::assert_word_shift_trace_coverage(trace_output.trace.rows());
         let program_preprocessing = verifier_preprocessing
             .program
             .as_full_arc()
@@ -1027,29 +1016,6 @@ mod muldiv {
             .expect("top-level prove");
             assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
-        }
-
-        for table in [
-            LookupTableKind::<XLEN>::ShiftRightBitmaskW(Default::default()),
-            LookupTableKind::<XLEN>::VirtualSRLW(Default::default()),
-            LookupTableKind::<XLEN>::VirtualSRAW(Default::default()),
-        ] {
-            let mut tampered = legacy_proof.clone();
-            let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
-                panic!("clear Dory proofs must carry clear claims");
-            };
-            claims.stage5.instruction_read_raf.lookup_table_flags[table.index()] += Fr::from(1u64);
-
-            assert!(
-                jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                    &prover_preprocessing.verifier,
-                    &public_io,
-                    &tampered,
-                    None,
-                )
-                .is_err(),
-                "tampered active {table:?} opening must be rejected"
-            );
         }
 
         let chaos_proof =

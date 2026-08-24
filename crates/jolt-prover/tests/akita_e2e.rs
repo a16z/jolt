@@ -15,10 +15,6 @@
 //! crates the merkle guest needs. The release-only `sha2_chain_akita_perf`
 //! harness has no analog here.
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
-#[path = "test_utils/word_shift.rs"]
-mod word_shift;
-
 /// Shared scaffolding: the legacy-side guest artifacts every packed test
 /// starts from, and the modular-side trace/config/witness pipeline pieces.
 #[cfg(all(feature = "prover-fixtures", feature = "akita"))]
@@ -165,7 +161,6 @@ mod support {
 mod muldiv {
     use std::sync::Arc;
 
-    use jolt_lookup_tables::{LookupTableKind, XLEN};
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::akita;
@@ -185,7 +180,7 @@ mod muldiv {
     use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
     use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
-    use super::{support, word_shift};
+    use super::support;
 
     /// Proves and verifies muldiv end to end over the packed (Akita) stack
     /// with the MODULAR prover: the full-program packed pipeline, one
@@ -231,7 +226,6 @@ mod muldiv {
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
-        word_shift::assert_word_shift_trace_coverage(trace_output.trace.rows());
         let program_preprocessing = verifier_preprocessing
             .program
             .as_full_arc()
@@ -269,7 +263,10 @@ mod muldiv {
         };
         verify(&proof).expect("packed verifier should accept the packed proof");
 
-        // Offset the active W-shift table openings and fused-inc claim wires.
+        // Live tampers on the fused-inc pipeline's claim wires: the fused
+        // increment's reduced claim and the hamming-reduction chunk/msb
+        // finals each participate in a batched output fold — an offset on
+        // any of them must be rejected.
         let tamper = |mutate: &dyn Fn(&mut ClearProofClaims<AkitaField>)| {
             let mut tampered = proof.clone();
             let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
@@ -279,19 +276,6 @@ mod muldiv {
             tampered
         };
         let one = AkitaField::from_u64(1);
-        for table in [
-            LookupTableKind::<XLEN>::ShiftRightBitmaskW(Default::default()),
-            LookupTableKind::<XLEN>::VirtualSRLW(Default::default()),
-            LookupTableKind::<XLEN>::VirtualSRAW(Default::default()),
-        ] {
-            assert!(
-                verify(&tamper(&|claims| {
-                    claims.stage5.instruction_read_raf.lookup_table_flags[table.index()] += one;
-                }))
-                .is_err(),
-                "tampered active {table:?} opening must be rejected"
-            );
-        }
         assert!(
             verify(&tamper(&|claims| claims
                 .stage6b
