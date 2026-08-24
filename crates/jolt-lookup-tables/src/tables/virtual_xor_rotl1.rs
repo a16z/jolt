@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -21,7 +21,7 @@ impl<const XLEN: usize> LookupTable for VirtualXORROTL1Table<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
@@ -54,7 +54,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualXORROTL1Table
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         let [one, pairs, top_y, bottom_x] = suffixes.try_into().unwrap();
         prefixes[Prefixes::XorRotL1Acc] * one
             + pairs

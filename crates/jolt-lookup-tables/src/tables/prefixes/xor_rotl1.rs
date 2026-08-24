@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 
@@ -10,7 +10,7 @@ struct PrefixState<F> {
     wrap: F,
 }
 
-fn evaluate_state<F: Field>(
+fn evaluate_state<F: JoltField>(
     checkpoints: &[PrefixEval<F>],
     b: LookupBits,
     suffix_len: usize,
@@ -72,7 +72,7 @@ macro_rules! impl_prefix {
     ($name:ident, $field:ident) => {
         pub enum $name {}
 
-        impl<F: Field> SparseDensePrefix<F> for $name {
+        impl<F: JoltField> SparseDensePrefix<F> for $name {
             fn default_checkpoint() -> F {
                 F::zero()
             }
