@@ -49,6 +49,8 @@
 //! - `solinas` — the pseudo-Mersenne backend (scalar, extension, unreduced,
 //!   packed, and the conditional-parallelism helpers in
 //!   `solinas::parallel`).
+//! - `asm` — opts into architecture-specific Fp128 assembly kernels on
+//!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
 //! - `parallel` — activates rayon behind the `cfg_*!` helper macros.
 //! - `allocative` — `Allocative` derives on the concrete field types for
 //!   memory profiling.

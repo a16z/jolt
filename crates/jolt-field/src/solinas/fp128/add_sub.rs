@@ -1,26 +1,26 @@
 //! Architecture-specific Fp128 addition and subtraction kernels.
 
 use super::{join, pack, split, Fp128};
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))]
 use std::arch::asm;
 
 impl<const P: u128> Fp128<P> {
     #[inline(always)]
     pub(super) fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(feature = "asm", target_arch = "aarch64"))]
         {
             // Keep the reduction predicate in flags through `ccmp`.
             Self::add_raw_aarch64_dispatch(a, b)
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(feature = "asm", target_arch = "x86_64"))]
         {
             // Materialize the carry as a mask, then use `cmovne` for the
             // final branchless selection.
             Self::add_raw_x86_64_dispatch(a, b)
         }
 
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+        #[cfg(not(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64"))))]
         {
             Self::add_raw_portable(a, b)
         }
@@ -28,8 +28,10 @@ impl<const P: u128> Fp128<P> {
 
     #[cfg_attr(
         all(
+            feature = "asm",
             any(target_arch = "aarch64", target_arch = "x86_64"),
-            not(all(test, target_arch = "aarch64"))
+            not(feature = "fuzzing"),
+            not(test)
         ),
         expect(
             dead_code,
@@ -55,7 +57,7 @@ impl<const P: u128> Fp128<P> {
         )
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn add_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         // AArch64 add immediates are limited to 12 bits. List the built-in
@@ -83,7 +85,7 @@ impl<const P: u128> Fp128<P> {
     /// uses the same assumption. This function adds no runtime range check.
     /// The formal verification workflow checks the exact object and optimized
     /// public operation witness words.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn add_raw_aarch64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, mut out_hi] = a;
@@ -109,7 +111,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn add_raw_aarch64_imm<const C: u64>(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let out_lo: u64;
@@ -146,7 +148,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn add_raw_aarch64_reg(a: [u64; 2], b: [u64; 2], c: u64) -> [u64; 2] {
         let out_lo: u64;
@@ -183,7 +185,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn add_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         // x86-64 sign extends 32 bit immediate operands. A7F7 and any other
@@ -211,7 +213,7 @@ impl<const P: u128> Fp128<P> {
     /// uses the same assumption. This function adds no runtime range check.
     /// The formal verification workflow checks the exact object bytes and the
     /// optimized public operation witness.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn add_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, mut out_hi] = a;
@@ -235,7 +237,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn add_raw_x86_64_imm<const C: i32>(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let mut out_lo = a[0];
@@ -271,7 +273,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn add_raw_x86_64_reg(a: [u64; 2], b: [u64; 2], c: u64) -> [u64; 2] {
         let mut out_lo = a[0];
@@ -306,19 +308,19 @@ impl<const P: u128> Fp128<P> {
 
     #[inline(always)]
     pub(super) fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(feature = "asm", target_arch = "aarch64"))]
         {
             // Keep the borrow in flags and reduce by subtracting C.
             Self::sub_raw_aarch64_dispatch(a, b)
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(feature = "asm", target_arch = "x86_64"))]
         {
             // Turn the borrow into a mask, select 0 or C, and subtract it.
             Self::sub_raw_x86_64_dispatch(a, b)
         }
 
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+        #[cfg(not(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64"))))]
         {
             Self::sub_raw_portable(a, b)
         }
@@ -326,8 +328,10 @@ impl<const P: u128> Fp128<P> {
 
     #[cfg_attr(
         all(
+            feature = "asm",
             any(target_arch = "aarch64", target_arch = "x86_64"),
-            not(all(test, target_arch = "aarch64"))
+            not(feature = "fuzzing"),
+            not(test)
         ),
         expect(
             dead_code,
@@ -340,7 +344,7 @@ impl<const P: u128> Fp128<P> {
         split(if borrow { diff.wrapping_add(P) } else { diff })
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn sub_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         // List the built-in small immediates and use a register otherwise.
@@ -367,7 +371,7 @@ impl<const P: u128> Fp128<P> {
     /// uses the same assumption. This function adds no runtime range check.
     /// The formal verification workflow checks the exact object and optimized
     /// public operation witness words.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn sub_raw_aarch64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, mut out_hi] = a;
@@ -391,7 +395,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn sub_raw_aarch64_imm<const C: u64>(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let out_lo: u64;
@@ -422,7 +426,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn sub_raw_aarch64_reg(a: [u64; 2], b: [u64; 2], c: u64) -> [u64; 2] {
         let out_lo: u64;
@@ -450,7 +454,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn sub_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         // The immediate form is valid for the built-in small offsets. Larger
@@ -478,7 +482,7 @@ impl<const P: u128> Fp128<P> {
     /// uses the same assumption. This function adds no runtime range check.
     /// The formal verification workflow checks the exact object bytes and the
     /// optimized public operation witness.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn sub_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, mut out_hi] = a;
@@ -500,7 +504,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn sub_raw_x86_64_imm<const C: i32>(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let mut out_lo = a[0];
@@ -527,7 +531,7 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn sub_raw_x86_64_reg(a: [u64; 2], b: [u64; 2], c: u64) -> [u64; 2] {
         let mut out_lo = a[0];

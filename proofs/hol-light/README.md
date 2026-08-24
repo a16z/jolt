@@ -5,6 +5,12 @@ These proofs cover scalar addition, subtraction, and multiplication for
 words or bytes from standalone objects. Production Rust includes the same
 instruction body files.
 
+The assembly kernels are opt-in through the `jolt-field/asm` feature. Builds
+that enable `solinas` without `asm` use the portable Rust implementation on
+every architecture. The inspection-only `fp128-proof-linkage` feature implies
+`asm`, so the byte checker always inspects the assembly path it is intended to
+connect to the proof objects.
+
 Start with the Book chapter
 [Formal verification of field kernels](../../book/src/how/formal-verification/field-kernels.md).
 It explains the arithmetic, theorem shape, production connection, and trust
@@ -63,6 +69,25 @@ symbol have the expected bytes. It does not start HOL Light. The default target
 directory is persistent, so unchanged dependencies are reused.
 
 Use `aarch64` instead of `x86_64` to check the AArch64 path.
+
+## Differential fuzzing
+
+The `fp128_asm_differential` target compares assembly with portable arithmetic
+for addition, subtraction, and multiplication. On AArch64 it also compares the
+assembly square and fused multiply-add kernels. CI fuzzes the target natively
+on AArch64, on baseline x86-64 through the general fuzz workflow, and on
+x86-64 with BMI2 and ADX enabled through this proof workflow.
+
+Run it locally from `crates/jolt-field` on a supported architecture.
+
+```sh
+cargo +nightly fuzz run fp128_asm_differential -- -max_total_time=120
+```
+
+Fuzzing complements the theorem and byte checks. It does not replace either:
+the theorem covers every canonical input for the proved instruction sequence,
+while fuzzing continuously tests the Rust dispatch and assembly interface
+against an independent portable implementation.
 
 ## Interactive theorem development
 

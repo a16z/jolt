@@ -287,6 +287,7 @@ mod sampling_tests {
         let mut fp128_bytes = Vec::from(fp128_modulus.to_le_bytes());
         fp128_bytes.extend_from_slice(&42u128.to_le_bytes());
         let mut fp128_rng = ScriptedRng::new(fp128_bytes);
+        // SAFETY: 42 is below the field modulus.
         assert_eq!(Prime128OffsetA7F7::random(&mut fp128_rng), unsafe {
             Prime128OffsetA7F7::from_canonical_u128(42)
         });
