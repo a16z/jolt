@@ -13,6 +13,8 @@ pub(crate) use runtime::{RamReadWriteFinish, RamReadWriteSequence};
 
 pub const RAM_READ_WRITE_ADDRESS_PIPELINE: &str = "solinas_ram_read_write_address";
 pub const RAM_READ_WRITE_ADDRESS_HOT_PIPELINE: &str = "solinas_ram_read_write_address_hot";
+pub const RAM_READ_WRITE_ADDRESS_HOT_MESSAGE_PIPELINE: &str =
+    "solinas_ram_read_write_address_hot_message";
 pub const RAM_READ_WRITE_CYCLE_PIPELINE: &str = "solinas_ram_read_write_cycle";
 pub const RAM_READ_WRITE_REDUCTION_PIPELINE: &str = "solinas_ram_read_write_reduce";
 pub const RAM_READ_WRITE_THREADS: usize = 256;
@@ -20,6 +22,7 @@ pub const RAM_READ_WRITE_SIMD_WIDTH: usize = 32;
 pub const RAM_READ_WRITE_REDUCTION_WIDTH: usize = 32;
 pub const RAM_READ_WRITE_CYCLE_TILE_LOG2: usize = 12;
 pub const RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD: usize = 1 << 12;
+pub const RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE: usize = 1 << 12;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -31,6 +34,15 @@ struct Segment {
 }
 
 const _: [(); 16] = [(); size_of::<Segment>()];
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct HotChunk {
+    segment_index: u32,
+    local_offset: u32,
+}
+
+const _: [(); 8] = [(); size_of::<HotChunk>()];
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

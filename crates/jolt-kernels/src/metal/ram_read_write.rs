@@ -791,6 +791,7 @@ impl MetalBackend {
             p95_segment = stats.p95_segment,
             p99_segment = stats.p99_segment,
             hot_addresses = stats.hot_addresses,
+            hot_message_chunks = stats.hot_message_chunks,
             address_bytes = stats.address_bytes,
             cycle_bytes = stats.cycle_bytes,
             resident_bytes = sequence.resident_bytes(),
@@ -1267,6 +1268,7 @@ mod tests {
             ops[cycle] = RamOp::Read { word: 3 };
         }
         ops[511] = RamOp::Read { word: 3 };
+        ops[8189] = RamOp::Read { word: 3 };
         let termination_cycle = ops.len();
         with_ram_fixture_backend(shape, ops, |witness| {
             let tau_low = point(43, shape.log_t);
