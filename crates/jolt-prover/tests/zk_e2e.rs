@@ -10,6 +10,10 @@
 //! ZK deployment's preprocessing would.
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[path = "test_utils/word_shift.rs"]
+mod word_shift;
+
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -328,7 +332,7 @@ mod zk {
     use jolt_verifier::proof::JoltProofClaims;
     use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
 
-    use super::support;
+    use super::{support, word_shift};
 
     const KECCAK_ROTRI_ROWS: usize = 696;
 
@@ -406,7 +410,7 @@ mod zk {
             "muldiv-guest",
             postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
             backend,
-            |_| {},
+            word_shift::assert_word_shift_trace_coverage,
         )
     }
 
