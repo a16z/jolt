@@ -33,12 +33,14 @@ initial analytical anchors. They are single observed runs, not final release cla
 | Fibonacci | 215.18 s | 45.72 s | 4.71x | 43.04 s | 2.68 s |
 | SHA-2 chain | 213.70 s | 42.45 s | 5.03x | 42.74 s | clears by 0.29 s |
 
-The current evidence ranks the initial work as follows. Ranges are planning
-estimates to falsify, not measured promises.
+These are the frozen starting controls. The current accepted Jolt checkpoint has
+already improved BTreeMap to 52.20 s (3.190x), leaving 18.89 s to the 5x ceiling;
+Fibonacci and SHA-2 retain the frozen values until the next milestone sweep. Ranges
+below are planning estimates to falsify, not measured promises.
 
 | Priority | Mechanism | Initial predicted opportunity |
 |---|---|---:|
-| 1 | High-activity RAM route shared across Stages 2, 4, 5, and 6b | BTreeMap 8--12 s; SHA-2 1--3 s |
+| 1 | Parallelize the accepted high-activity RAM route's hot-address message work | BTreeMap 1.0--1.8 s e2e, subject to measurement |
 | 2 | Stream/fuse the deferred opening index, decompose, and coefficient packing | Fibonacci/SHA-2 1.5--2 s; BTreeMap 2--3.5 s |
 | 3 | Measure and retime the Stage 4/5 compatibility-scatter prefetch | up to 1.2 s on BTreeMap |
 | 4 | Generalize the bytecode address carrier from `log_K = 13` to 14 | at most 1.34 s on SHA-2 |
@@ -46,13 +48,21 @@ estimates to falsify, not measured promises.
 | 6 | Reduce BTreeMap commit traffic/locality cost | at least 1.8 s needed for 5x commit |
 | 7 | Remove remaining lazy-first-bind, product-output, and command gaps | reprice after priorities 1--6 |
 
-The high-activity RAM path is required work, not optional polish. BTreeMap spends
-5.29 s more than CPU in the Stage-2 RAM family and first wastes 1.45 s attempting
-an unusable sparse owner. SHA-2 also reports `missing_owner`. Record the exact owner
-rejection reason and access count, avoid a known-doomed sparse collection, then build
-the address-segmented path in
-[akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md). Do not merely
-raise the `2^18` retained-access cap.
+The first high-activity RAM tranche is complete at Jolt `1799ff816`: stable address
+bucketing, a cycle-tiled frontier, scalar cold-address owners, cooperative hot-address
+compaction, and the CPU address tail preserve the existing relation and yield a
+verified 4.14 s BTreeMap improvement. Peak RSS is 80.08 GiB. The implementation is
+not finished: the hottest address contains 20,729,173 of 65,195,206 accesses, so one
+threadgroup still serializes 31.8% of the message work. RAM kernels remain 2.97 s
+GPU-active against a 0.57 s analytical floor.
+
+The immediate candidate is a fixed hot-chunk message worklist: one group per fixed
+chunk, constant-size per-chunk partials, then a separate hot-column reduction. Keep the
+verified in-place compaction unchanged for this candidate. If message chunking leaves
+more than roughly 1 s of RAM GPU time, separately model a hot-only multi-group
+out-of-place compaction; do not combine the two mechanisms. Full design, measurements,
+and the corrected chunk-boundary invariant live in
+[akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md).
 
 ## Main execution plan
 
@@ -60,13 +70,14 @@ raise the `2^18` retained-access cap.
    workload construction, compiler flags, machine state, proof-timing boundary, and
    one optimized-CPU anchor per workload. Treat a run without successful proof
    verification or complete backend-route telemetry as invalid.
-2. **Close BTreeMap's RAM gap first.** Measure the high-activity RAM frontier, write
-   the byte-traffic and residency bound, and implement stable address spans plus a
-   tiled cycle-only frontier. Bind each address independently in place, fuse message
-   generation with binding, and return only the at-most-`K` address tail to the CPU.
-   Reuse useful state across Stages 2, 4, 5, and 6b. Reject the design if it scans or
-   sorts all `T` rows per round, exceeds 90 GiB RSS, or cannot plausibly save 2 s end
-   to end.
+2. **Finish BTreeMap's RAM parallelism first.** Retain the accepted address-segmented
+   route and parallelize only the hot-address message boundary with a fixed chunk
+   worklist and hierarchical reduction. First prove exact cold/hot parity, then use
+   one T25 sentinel to catch dispatch or occupancy regressions and one T28 treatment
+   only if the affected-span model remains credible. If the residual kernel time is
+   still material, model hot-only multi-group compaction as a separate candidate.
+   Reject any design that scans or sorts all `T` rows per round, exceeds 90 GiB RSS,
+   or cannot plausibly save 0.5 s end to end.
 3. **Remove shared opening overhead.** Stream or fuse deferred opening-index
    generation, decomposition, and coefficient packing so intermediates stay resident
    and are not materialized or transferred twice. Screen on Fibonacci first, then
@@ -162,9 +173,11 @@ For each candidate:
    implementation cost, and falsifying observation;
 2. reject it analytically if its ceiling cannot move an end-to-end decision;
 3. make one scoped edit and run the smallest exact parity/correctness test;
-4. run normally one warm candidate-only sentinel: BTreeMap `T = 2^28` for RAM or
-   scheduling, SHA-2 `T = 2^28` for `log_K = 14`, Fibonacci `T = 2^25` first for
-   opening work, or `T = 2^20` for fixed-cost routing;
+4. run normally one warm candidate-only sentinel: BTreeMap `T = 2^25` first for a
+   RAM kernel and `T = 2^28` only after affected-span telemetry is credible;
+   BTreeMap `T = 2^28` for cross-stage scheduling, SHA-2 `T = 2^28` for
+   `log_K = 14`, Fibonacci `T = 2^25` first for opening work, or `T = 2^20` for
+   fixed-cost routing;
 5. compare with the frozen reference or accepted Metal parent, update only the
    affected model terms, and keep, discard, or mark the result invalid;
 6. rerun once only when the result is near the decision threshold, surprising, or
@@ -215,9 +228,12 @@ analytical floors rather than hiding negative results.
 
 ## Copy/paste launch prompt
 
-> Create and pursue the goal in `specs/akita-metal-e2e-polish-goal.md`. Optimize the
-> composed Akita Metal prover across the Jolt `feat/akita-metal` work and the Akita
-> fork's `perf/metal-commit-eval-proof` work. The hard bar is at least 5x complete
+> Create and pursue the goal in `specs/akita-metal-e2e-polish-goal.md`. Resume from
+> Jolt `1799ff816` on `feat/akita-metal` and Akita `4ccde218b` on
+> `perf/metal-commit-eval-proof`; first audit both worktrees and preserve the local
+> Jolt `Cargo.lock` and `.cargo/config.toml` path-override state. Optimize the
+> composed Akita Metal prover across those two worktrees. The hard bar is at least
+> 5x complete
 > `jolt_prover::prove` speedup over the optimized CPU backend for BTreeMap,
 > Fibonacci, and SHA-2 chain at `T = 2^28`; maximize the worst workload first. Once
 > all three clear 5x with a credible margin, continue reducing total wall time while
@@ -233,7 +249,12 @@ analytical floors rather than hiding negative results.
 > timed proving boundary.
 >
 > Start from the existing Perfetto analysis and maintain a disjoint end-to-end
-> latency model. Begin with high-activity RAM routing, deferred opening-index and
+> latency model. The accepted high-activity RAM route has already moved BTreeMap
+> from 56.34 s to a verified 52.20 s at 80.08 GiB RSS; do not reimplement that
+> tranche. First parallelize its hot-address message work with fixed chunks and a
+> hierarchical reduction while leaving the verified compaction unchanged. Run
+> focused cold/hot parity, a T25 sentinel, and only then a T28 treatment if the
+> affected-span model is credible. Next consider deferred opening-index and
 > coefficient fusion, the Stage 4/5 scheduling discrepancy, the `log_K = 14`
 > bytecode carrier, and commit wrapper/traffic residue; rerank after every result.
 > Use an analysis-led sequential loop with one scoped change, one prediction and

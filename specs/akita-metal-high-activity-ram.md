@@ -83,6 +83,43 @@ the existing checked address-major code.
 Generic fp128 arithmetic and reductions stay in Akita only if a reusable primitive
 is actually needed there. The Jolt RAM layout and schedule remain in `jolt-kernels`.
 
+## Fixed-chunk hot-message candidate
+
+The next candidate changes only message production for hot address spans. The
+verified one-group-per-address kernel continues to own in-place compaction. After it
+finishes, a read-only kernel assigns one 256-thread group to each fixed 4,096-entry
+chunk of every initially hot span. A chunk recognizes leaders against the preceding
+global entry, so a pair crossing a chunk boundary is evaluated exactly once. Each
+chunk writes two field-element partials; the existing column reducer sums all hot
+chunks directly because the protocol observes only the sum across addresses. Cold
+address partials remain a disjoint reduction. Empty fixed chunks must overwrite their
+partials with zero after the live span shrinks.
+
+At T28, `R = 65,195,206` and there are 2,392 hot addresses. The fixed descriptor
+count is bounded by `R / 4096 + 2392 <= 18,310`. An 8-byte descriptor plus two
+double-buffered columns of 16-byte partials costs at most `72 * 18,310 = 1,318,320`
+bytes (1.26 MiB), so this candidate does not threaten the 90 GiB guard. The fixed
+worklist also adds under 1 MiB of descriptor and partial traffic per round.
+
+A message leader performs at most five full fp128 multiplications. Using the existing
+uniform-frontier upper model of 1.443 billion live entries gives at most 7.22 billion
+multiplications, or 0.44 s at the measured 16.36 billion multiplications/s. A
+conservative 108 bytes read per leader gives 145.1 GiB, or 0.35 s at the measured
+412.5 GiB/s. Compute therefore remains the lower-bound term. Chunking does not change
+that work; it removes the longest address as a serial scheduling unit. Because bind
+compaction still has one group per hot address, this candidate is predicted to reduce
+the measured 2.97 s RAM sequence to 1.2--1.8 s, saving roughly 1.0--1.8 s from the
+complete BTreeMap prover. It is an intermediate schedule, not a claim that the
+0.57 s full-sequence floor has been reached.
+
+Exact parity must cover an evaluated pair split across the 4,096-entry message
+boundary as well as the existing 256-entry compaction boundary. Admit one T28 run
+only if the verified T25 sentinel does not exceed the accepted 0.279 s RAM GPU time.
+Retain the candidate only if T28 saves at least 0.5 s end to end with RSS below
+90 GiB; treat RAM GPU time above 1.8 s as evidence that hot compaction, rather than
+message scheduling, is the next bound. No protocol, variable order, claim, or
+verifier change is permitted in this candidate.
+
 ## Falsification and validation
 
 Before promotion, the address/cycle kernels must measure at most 0.75 s GPU-active at
