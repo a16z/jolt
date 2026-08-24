@@ -33,10 +33,11 @@ initial analytical anchors. They are single observed runs, not final release cla
 | Fibonacci | 215.18 s | 45.72 s | 4.71x | 43.04 s | 2.68 s |
 | SHA-2 chain | 213.70 s | 42.45 s | 5.03x | 42.74 s | clears by 0.29 s |
 
-These are the frozen starting controls. The current provisional Jolt checkpoint has
-improved BTreeMap to 50.46 s (3.301x), leaving 17.15 s to the 5x ceiling. Fibonacci
-and SHA-2 retain the frozen values until the next milestone sweep. Ranges below are
-planning estimates to falsify, not measured promises.
+These are the frozen starting controls. The accepted paired checkpoint now measures
+49.29 s and 49.55 s for BTreeMap, or 3.361x using the slower observation, leaving
+16.24 s to the 5x ceiling. Fibonacci and SHA-2 retain the frozen T28 values until the
+next milestone sweep. Ranges below are planning estimates to falsify, not measured
+promises.
 
 | Priority | Mechanism | Initial predicted opportunity |
 |---|---|---:|
@@ -65,19 +66,24 @@ queued rather than being combined with opening work. Full RAM design and measure
 live in
 [akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md).
 
-The next shared boundary is now measured well enough to choose a first tranche. At
-BTreeMap T28, Akita reports 50,897,879,040 bytes (47.402 GiB) of one-shot deferred
-opening indices: 30.469 GiB for fold records/counts and 16.934 GiB for coefficient
-records/offsets. Their construction takes about 3.00 s, of which about 1.10 s is
-GPU-active. The full opening command interval is about 5.54 s against 2.62 s of
-GPU-active work. These counters overlap and therefore are not additive, but they show
-that raw shader throughput is not the sole limit. Materialization, allocation, host
-preparation, command gaps, and waits are all eligible. Writing and rereading the two
-full-capacity indices would move 94.8 GiB, but the allocated capacity is not itself a
-traffic measurement: sparse fold records and private-buffer residency can leave pages
-untouched. The first tranche must therefore count valid records and touched bytes as
-well as capacity. A useful design must remove lifecycle and command overhead as well
-as measured traffic, not merely replace one copy kernel with another.
+The shared opening boundary is now measured well enough to isolate its two index
+lifecycles. Before fusion, Akita reported 50,897,879,040 bytes (47.402 GiB) of
+one-shot deferred opening indices at BTreeMap T28: 30.469 GiB for fold records/counts
+and 16.934 GiB for coefficient records/offsets. Their construction took about 3.00 s,
+of which about 1.10 s was GPU-active, while the opening command interval was about
+5.54 s against 2.62 s of GPU-active work.
+
+The accepted fold candidate now partitions records in the decompose/fold consumer,
+removes the 30.469 GiB global fold index, and leaves the retained-index route intact
+for smaller geometries. It passes exact retained/fused parity, reconstructs every
+digit, verifies the full proof, and measures 49.29--49.55 s at BTreeMap T28 with
+81.93--82.03 GiB peak RSS. The fixed T28 harness measures 1.813 s GPU-active for the
+fused packed fold, 87% of its 1.58 s modeled floor. The remaining opening index is
+exactly 18,182,307,840 bytes (16.934 GiB), with about 0.99 s integrated index wall
+time; the opening command interval is 4.53--4.57 s against 2.82--2.84 s GPU-active.
+These counters overlap and are not additive. The next candidate must remove the
+coefficient-index lifecycle without destroying the accepted chunk-local weight
+reuse; deleting allocated capacity alone is not evidence of a latency improvement.
 
 ## Main execution plan
 
@@ -86,19 +92,19 @@ as measured traffic, not merely replace one copy kernel with another.
    overrides. The frozen CPU anchors remain valid until CPU code, protocol, workload
    generation, flags, machine, or timing boundary changes. A treatment without
    successful proof verification and complete route/fallback telemetry is invalid.
-2. **Model the deferred-opening boundary before editing it.** In Akita, trace the
-   ownership and exact use of the fold index, coefficient index, packed source, root
-   buffers, and seven `RingRelationProver::new` calls. Separate compulsory fp128 work
-   from allocation, index construction, buffer traffic, command submission, and
-   synchronization. Commit the exact boundary, traffic/compute floor, invariant, one
-   predicted saving, and falsifier before changing a kernel.
-3. **Remove opening materialization in bounded candidates.** First stream or generate
-   fold records at their decompose/fold consumer instead of retaining the 30.469 GiB
-   fold index. Then apply the same primitive to the 16.934 GiB coefficient index only
-   if the first result supports the model. Preserve record order, counts, claimed
-   evaluation, proof bytes, transcript, and verifier behavior. Do not combine root
-   buffer reuse or command batching with the first materialization change: those are
-   separate candidates if the command-wall/GPU gap remains after index removal.
+2. **Model each deferred-opening boundary before editing it.** Fold-index fusion is
+   accepted. In Akita, now trace the coefficient selector, per-tile bucket records,
+   chunk-local weight window, partial roots, reduction, allocation, submission, and
+   synchronization. Commit its exact boundary, compulsory traffic/compute floor,
+   invariant, one predicted saving, and falsifier before changing a kernel.
+3. **Remove the remaining coefficient materialization as one bounded candidate.**
+   Generate each tile's coefficient bucket records in the chunk-local consumer while
+   preserving the accepted bounded weight working set and retained-index route. The
+   deferred T28 route must allocate zero coefficient-index bytes. Preserve selector
+   order, bucket order, root coefficients, claimed evaluation, proof bytes,
+   transcript, and verifier behavior. Do not combine root-buffer reuse or command
+   batching with this change; those remain separate candidates if the command-wall /
+   GPU-active gap survives index removal.
 4. **Gate opening work cheaply.** Run focused Akita CPU/Metal parity first, then one
    verified Fibonacci T25 sentinel. Admit one BTreeMap T28 treatment only when the
    affected counters show the intended index and command-boundary change. Retain a
@@ -263,11 +269,11 @@ analytical floors rather than hiding negative results.
 ```text
 Create and pursue the goal in specs/akita-metal-e2e-polish-goal.md. Work from the
 current feat/akita-metal Jolt branch at
-/Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt, whose retained source candidate
-is e3bd59d3b, and Akita 4ccde218b on perf/metal-commit-eval-proof at
-/Users/mgeorghiades/worktrees/akita-metal-eval-proof. First audit both worktrees and
-preserve the local Jolt Cargo.lock and .cargo/config.toml path-override state. Do not
-push.
+/Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt (documented parent e25da7ca9,
+retained runtime source e3bd59d3b) and Akita perf/metal-commit-eval-proof at
+/Users/mgeorghiades/worktrees/akita-metal-eval-proof (documented parent a012d75e4,
+retained runtime source a454c7575). First audit both worktrees and preserve the local
+Jolt Cargo.lock and .cargo/config.toml path-override state. Do not push.
 
 Optimize the composed Akita Metal prover across those two worktrees. The hard bar is
 at least 5x complete jolt_prover::prove speedup over the optimized CPU backend for
@@ -283,15 +289,24 @@ accepted result must print successful proof verification. Do not move witness- o
 transcript-dependent work outside the timed proving boundary. Reuse the frozen CPU
 anchors unless an explicit invalidation condition changes.
 
-The retained RAM work moved BTreeMap from 56.34 s to 50.46 s at 80.10 GiB RSS. Fixed
-hot-message chunks and 1,024-thread compaction are already implemented; do not redo
-them. Start by auditing Akita's deferred opening path and commit a pre-code model of
-the exact ownership boundary, compulsory work, traffic/compute floor, predicted
-complete-prover saving, and falsifier. The fresh BTreeMap counters report 47.402 GiB
-of one-shot opening indices, about 3.00 s of index construction, and a 5.54 s command
-interval against 2.62 s GPU-active. First isolate fold-index streaming/fusion; keep
-coefficient-index fusion, root-buffer reuse, and command batching as separate
-candidates so each result identifies a cause.
+The retained RAM work, fixed hot-message chunks, and 1,024-thread compaction are
+already implemented; do not redo them. The accepted Akita fold candidate fuses the
+deferred fold index into its consumer, removes 30.469 GiB of one-shot storage, passes
+exact retained/fused parity and proof verification, and brings BTreeMap T28 to
+49.29--49.55 s at 81.93--82.03 GiB RSS. Treat the slower 49.55 s observation as the
+current Metal parent; it is 3.361x against the frozen 166.548 s CPU anchor and is
+16.24 s above the 5x ceiling.
+
+Start with the remaining deferred coefficient index. Commit a pre-code model of its
+selector/index/consumer ownership boundary, compulsory lane and weight traffic,
+partition and arithmetic floor, predicted complete-prover saving, and falsifier.
+The remaining index is exactly 18,182,307,840 bytes, its integrated build/allocation
+wall time is about 0.99 s, and the current opening command interval is 4.53--4.57 s
+against 2.82--2.84 s GPU-active. Design one fused source route that builds tile-local
+buckets inside the accepted chunk-local coefficient consumer without losing its
+bounded weight reuse; retain the existing indexed route for geometries where it is
+already resident. Keep root-buffer reuse and command batching as later, separate
+candidates so each result identifies one cause.
 
 For opening candidates, run focused Akita CPU/Metal parity, one Fibonacci T25
 sentinel, and only then one BTreeMap T28 treatment when affected-span telemetry is
