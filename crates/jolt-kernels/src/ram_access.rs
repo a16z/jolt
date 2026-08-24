@@ -55,10 +55,6 @@ impl RamAccessTape {
         self.access_count
     }
 
-    pub(crate) const fn log_t(&self) -> usize {
-        self.log_t
-    }
-
     pub(crate) fn records(&self) -> Option<&[RamAccessRecord]> {
         self.records.as_deref()
     }

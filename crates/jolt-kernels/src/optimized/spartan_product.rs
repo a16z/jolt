@@ -43,7 +43,7 @@ use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::{
     InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, RightInstructionInput,
 };
-use jolt_witness::{JoltWitnessPlane, OwnedRows, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -545,99 +545,67 @@ impl<F: Field> ProductRemainderKernel<F> {
     /// The eight produced opening values at the bound cycle point: one
     /// eq-weighted walk over the typed rows, in the output claims' canonical
     /// field order.
-    fn claimed_inputs(&self) -> Result<[F; 8], WitnessError> {
+    fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
+        let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
+        let weights = EqPolynomial::<F>::evals(&reversed, None);
+        let cycles = weights.len();
         let access = self.rows.access();
-        product_remainder_openings(&access, &self.challenges)
-    }
-}
 
-pub(crate) fn product_remainder_openings_from_owned_rows<F: Field>(
-    rows: &OwnedRows,
-    challenges: &[F],
-) -> Result<[F; 8], WitnessError> {
-    let cycles = 1usize.checked_shl(challenges.len() as u32).ok_or_else(|| {
-        WitnessError::InvalidDimensions {
-            label: "SpartanProductRow",
-            reason: "opening point exceeds the host cycle domain".to_string(),
-        }
-    })?;
-    if rows.cycles() != cycles {
-        return Err(WitnessError::InvalidDimensions {
-            label: "SpartanProductRow",
-            reason: format!(
-                "owned rows cover {} cycles, expected {cycles}",
-                rows.cycles()
-            ),
-        });
-    }
-    product_remainder_openings(
-        &BundleAccess::<SpartanProductRow>::View(rows.view()),
-        challenges,
-    )
-}
+        let block_size = 1usize << 12;
+        let blocks = cycles.div_ceil(block_size);
+        let block = |index: usize| -> Result<Vec<F>, WitnessError> {
+            let start = index * block_size;
+            let end = (start + block_size).min(cycles);
+            let mut words: [<F as WithSignedProductAccumulator>::SignedProductAccumulator; 3] =
+                [Default::default(), Default::default(), Default::default()];
+            let mut flags: [<F as WithSmallScalarAccumulator>::SmallScalarAccumulator; 5] =
+                Default::default();
+            for (t, &weight) in (start..end).zip(&weights[start..end]) {
+                let row = access.row(t)?;
+                words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
+                words[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
+                words[2].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));
+                flags[0].fmadd_u64(weight, u64::from(row.jump_flag.0));
+                flags[1].fmadd_u64(weight, u64::from(row.write_lookup_output_to_rd.0));
+                flags[2].fmadd_u64(weight, u64::from(row.branch_flag.0));
+                flags[3].fmadd_u64(weight, u64::from(row.next_is_noop.0));
+                flags[4].fmadd_u64(weight, u64::from(row.virtual_instruction.0));
+            }
+            let [left_input, right_input, lookup_output] = words;
+            let [jump, write_lookup, branch, noop, virtual_instruction] = flags;
+            Ok(vec![
+                left_input.reduce(),
+                right_input.reduce(),
+                jump.reduce(),
+                write_lookup.reduce(),
+                lookup_output.reduce(),
+                branch.reduce(),
+                noop.reduce(),
+                virtual_instruction.reduce(),
+            ])
+        };
+        let merge = |mut left: Vec<F>, right: Vec<F>| {
+            for (left, right) in left.iter_mut().zip(right) {
+                *left += right;
+            }
+            left
+        };
 
-fn product_remainder_openings<F: Field>(
-    access: &BundleAccess<'_, SpartanProductRow>,
-    challenges: &[F],
-) -> Result<[F; 8], WitnessError> {
-    let reversed: Vec<F> = challenges.iter().rev().copied().collect();
-    let weights = EqPolynomial::<F>::evals(&reversed, None);
-    let cycles = weights.len();
-
-    let block_size = 1usize << 12;
-    let blocks = cycles.div_ceil(block_size);
-    let block = |index: usize| -> Result<[F; 8], WitnessError> {
-        let start = index * block_size;
-        let end = (start + block_size).min(cycles);
-        let mut words: [<F as WithSignedProductAccumulator>::SignedProductAccumulator; 3] =
-            [Default::default(), Default::default(), Default::default()];
-        let mut flags: [<F as WithSmallScalarAccumulator>::SmallScalarAccumulator; 5] =
-            Default::default();
-        for (t, &weight) in (start..end).zip(&weights[start..end]) {
-            let row = access.row(t)?;
-            words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
-            words[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
-            words[2].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));
-            flags[0].fmadd_u64(weight, u64::from(row.jump_flag.0));
-            flags[1].fmadd_u64(weight, u64::from(row.write_lookup_output_to_rd.0));
-            flags[2].fmadd_u64(weight, u64::from(row.branch_flag.0));
-            flags[3].fmadd_u64(weight, u64::from(row.next_is_noop.0));
-            flags[4].fmadd_u64(weight, u64::from(row.virtual_instruction.0));
+        #[cfg(feature = "parallel")]
+        {
+            (0..blocks)
+                .into_par_iter()
+                .map(block)
+                .try_reduce(|| vec![F::zero(); 8], |left, right| Ok(merge(left, right)))
         }
-        let [left_input, right_input, lookup_output] = words;
-        let [jump, write_lookup, branch, noop, virtual_instruction] = flags;
-        Ok([
-            left_input.reduce(),
-            right_input.reduce(),
-            jump.reduce(),
-            write_lookup.reduce(),
-            lookup_output.reduce(),
-            branch.reduce(),
-            noop.reduce(),
-            virtual_instruction.reduce(),
-        ])
-    };
-    let merge = |mut left: [F; 8], right: [F; 8]| {
-        for (left, right) in left.iter_mut().zip(right) {
-            *left += right;
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut folded = vec![F::zero(); 8];
+            for index in 0..blocks {
+                folded = merge(folded, block(index)?);
+            }
+            Ok(folded)
         }
-        left
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        (0..blocks)
-            .into_par_iter()
-            .map(block)
-            .try_reduce(|| [F::zero(); 8], |left, right| Ok(merge(left, right)))
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut folded = [F::zero(); 8];
-        for index in 0..blocks {
-            folded = merge(folded, block(index)?);
-        }
-        Ok(folded)
     }
 }
 
