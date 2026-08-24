@@ -19,6 +19,7 @@ use super::ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
 use super::ram_ra_claim_reduction::RamRaClaimReductionMetalConfig;
 use super::ram_ra_virtualization::RamRaVirtualizationMetalConfig;
 use super::ram_raf_evaluation::RamRafEvaluationMetalConfig;
+use super::ram_read_write::RamReadWriteMetalConfig;
 use super::ram_val_check::RamValCheckMetalConfig;
 use super::registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
@@ -58,6 +59,8 @@ pub struct MetalConfig {
     pub registers_val_evaluation: RegistersValEvaluationMetalConfig,
     /// Stage-2 RAM RAF-evaluation settings.
     pub ram_raf_evaluation: RamRafEvaluationMetalConfig,
+    /// Stage-2 high-activity RAM read-write settings.
+    pub ram_read_write: RamReadWriteMetalConfig,
     /// Stage-4 RAM value-check settings.
     pub ram_val_check: RamValCheckMetalConfig,
     /// Stage-5 RAM RA claim-reduction settings.
@@ -124,6 +127,7 @@ pub(super) struct MetalTestCounters {
     pub(super) registers_val_sequences: AtomicUsize,
     pub(super) ram_val_sparse_sequences: AtomicUsize,
     pub(super) ram_read_write_sparse_sequences: AtomicUsize,
+    pub(super) ram_read_write_metal_sequences: AtomicUsize,
     pub(super) ram_ra_claim_sparse_sequences: AtomicUsize,
     pub(super) ram_ra_virtualization_sparse_sequences: AtomicUsize,
     pub(super) ram_hamming_sparse_sequences: AtomicUsize,
@@ -245,6 +249,7 @@ impl MetalBackend {
             config.registers_val_evaluation.trace_cutoff_elements,
             config.registers_val_evaluation.cutoff_elements,
             config.ram_raf_evaluation.dispatch.trace_cutoff,
+            config.ram_read_write.trace_cutoff_elements,
             config.ram_val_check.trace_cutoff_elements,
             config.ram_ra_claim_reduction.trace_cutoff_elements,
             config.ram_ra_virtualization.trace_cutoff_elements,
@@ -293,6 +298,7 @@ impl MetalBackend {
         registers_val_sequences,
         ram_val_sparse_sequences,
         ram_read_write_sparse_sequences,
+        ram_read_write_metal_sequences,
         ram_ra_claim_sparse_sequences,
         ram_ra_virtualization_sparse_sequences,
         ram_hamming_sparse_sequences,

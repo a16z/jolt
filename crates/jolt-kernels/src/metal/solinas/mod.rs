@@ -61,6 +61,7 @@ mod product_uniskip;
 #[doc(hidden)]
 pub mod ram_cycle_family;
 mod ram_raf_evaluation;
+mod ram_read_write;
 pub mod registers_claim_reduction;
 mod registers_val;
 mod runtime;
@@ -164,6 +165,7 @@ pub use ram_raf_evaluation::{
     RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS, RAM_RAF_SIMD_WIDTH,
     RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
 };
+pub(crate) use ram_read_write::{RamReadWriteFinish, RamReadWriteSequence, SparseCycleProduct};
 pub(crate) use registers_val::PendingRegistersValFirstMessage;
 pub use registers_val::{
     RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
@@ -504,6 +506,8 @@ pub enum MetalError {
     },
     #[error("invalid resident product remainder state: {0}")]
     InvalidProductRemainderState(&'static str),
+    #[error("invalid resident RAM read-write state: {0}")]
+    InvalidRamReadWriteState(&'static str),
     #[error(
         "product remainder pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]

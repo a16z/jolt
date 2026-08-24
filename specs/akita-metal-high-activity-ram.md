@@ -69,9 +69,12 @@ fallback's 3.40 GiB matrix projects A0's 79.88 GiB peak near 82.4 GiB, below the
 ## Mechanism and ownership
 
 Jolt owns stable bucketing, RAM certificates, routing, transcript round trips, and
-the CPU address tail. The first implementation uses direct shared-buffer scatter and
-one in-place worker per address; it records maximum and percentile segment lengths so
-hot-address skew is visible. A fixed 4096-cycle tile owns the `inc`/Hamming frontier;
+the CPU address tail. Direct shared-buffer scatter records maximum and percentile
+segment lengths. Initial spans of at most 4,096 entries use one in-place worker per
+address; larger spans use one 256-thread cooperative group. The hot group uses SIMD
+prefix counts to compact each chunk stably in place, then reduces its message across
+the group. Ownership is fixed by initial capacity so a shrinking hot span never
+falls into the scalar kernel. A fixed 4096-cycle tile owns the `inc`/Hamming frontier;
 after 12 binds its at-most-65,536 roots move to the CPU tail. Both kernels fuse the
 previous bind with the next message and reduce to constant-size round output on the
 GPU. After all cycle variables bind, a gather returns at most `K` address entries to
@@ -95,7 +98,17 @@ must verify, report the qualified route with no fallback, and retain the unchang
 Fibonacci sparse route. The first BTreeMap treatment is one warm candidate-only run
 under the frozen evaluator; SHA-2 is tested only after BTreeMap promotes.
 
-Unverified before implementation: the actual BTreeMap `N_r` sequence, address-count
-skew, direct-scatter cost, and Metal compiler occupancy. The candidate must emit
-these counters; a missed bar updates or kills the mechanism rather than silently
-weakening it.
+The first T25 measurement found p99 segment length 609 but maximum length 914,071;
+this falsified the original scalar-per-address schedule despite its favorable
+aggregate roofline. The cooperative hot schedule reduced total RAM GPU-active time
+from roughly 7.7s to 0.279s, with a 37.2ms worst round.
+
+The first T28 attempt exposed an in-place chunk-boundary hazard: a chunk could
+overwrite its final source block before the next chunk classified a pair against
+that block. Carrying the original boundary parent through threadgroup memory fixed
+the cause. An optimized-CPU shadow then matched every T27 round and terminal claim,
+and the complete proof verified. The corrected T28 treatment verified in 52.20s,
+down from the 56.34s accepted Metal parent, at 80.08GiB peak RSS. Bucketing and
+setup took 1.36s and the RAM kernels used 2.97s GPU-active. The candidate is a
+material improvement but misses the 0.75s kernel bar, so hot-message parallelism
+must be redesigned rather than treating the current kernel as finished.

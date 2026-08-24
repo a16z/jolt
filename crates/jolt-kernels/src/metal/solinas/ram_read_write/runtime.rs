@@ -1,0 +1,1137 @@
+use std::{
+    mem::size_of,
+    slice,
+    time::{Duration, Instant},
+};
+
+use jolt_field::{AkitaField, FromPrimitiveInt};
+use metal::{
+    objc::rc::autoreleasepool, Buffer, CommandBuffer, ComputePipelineState, MTLResourceOptions,
+    MTLSize,
+};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+use super::{
+    CycleProductRoot, PhaseParams, Segment, RAM_READ_WRITE_ADDRESS_HOT_PIPELINE,
+    RAM_READ_WRITE_ADDRESS_PIPELINE, RAM_READ_WRITE_CYCLE_PIPELINE, RAM_READ_WRITE_CYCLE_TILE_LOG2,
+    RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD, RAM_READ_WRITE_REDUCTION_PIPELINE,
+    RAM_READ_WRITE_REDUCTION_WIDTH, RAM_READ_WRITE_SIMD_WIDTH, RAM_READ_WRITE_THREADS,
+};
+use crate::metal::solinas::{
+    completed_command_gpu_time, encode_column_reductions, set_inline_bytes, Fp128, MetalError,
+    SolinasMetal,
+};
+use crate::optimized::ram_trace::NO_ACCESS;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RamReadWriteBucketStats {
+    pub accesses: usize,
+    pub active_addresses: usize,
+    pub maximum_segment: usize,
+    pub p50_segment: usize,
+    pub p95_segment: usize,
+    pub p99_segment: usize,
+    pub hot_addresses: usize,
+    pub address_bytes: usize,
+    pub cycle_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AddressCycleRoot {
+    pub address: usize,
+    pub previous: u64,
+    pub next: u64,
+    pub value: AkitaField,
+    pub ra: AkitaField,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RamReadWriteSequenceObservation {
+    pub address_quadratic: [AkitaField; 2],
+    pub cycle_quadratic: Option<[AkitaField; 2]>,
+    pub cycle_roots: Option<Vec<CycleProductRoot>>,
+    pub address_live_entries: usize,
+    pub cycle_live_entries: usize,
+    pub wall: Duration,
+    pub gpu_active: Duration,
+}
+
+pub(crate) struct RamReadWriteFinish {
+    pub address_roots: Vec<AddressCycleRoot>,
+    pub cycle_roots: Option<Vec<CycleProductRoot>>,
+    pub gpu_active: Duration,
+}
+
+struct AddressBuffers {
+    hot_addresses: Buffer,
+    segments: Buffer,
+    blocks: Buffer,
+    previous: Buffer,
+    next: Buffer,
+    values: Buffer,
+    ra: Buffer,
+    partial_a: Buffer,
+    partial_b: Buffer,
+}
+
+struct CycleBuffers {
+    segments: Buffer,
+    blocks: Buffer,
+    hamming: Buffer,
+    increments: Buffer,
+    partial_a: Buffer,
+    partial_b: Buffer,
+}
+
+struct RamReadWriteBuffers {
+    address: AddressBuffers,
+    cycle: CycleBuffers,
+    e_in: Buffer,
+    e_out: Buffer,
+}
+
+struct RamReadWritePipelines {
+    address: ComputePipelineState,
+    address_hot: ComputePipelineState,
+    cycle: ComputePipelineState,
+    reduction: ComputePipelineState,
+}
+
+pub(crate) struct RamReadWriteSequence {
+    context: SolinasMetal,
+    pipelines: RamReadWritePipelines,
+    buffers: RamReadWriteBuffers,
+    log_t: usize,
+    address_count: usize,
+    hot_address_count: usize,
+    tile_count: usize,
+    tile_log: usize,
+    rounds_bound: usize,
+    initial_message_emitted: bool,
+    cycle_resident: bool,
+    finished: bool,
+    stats: RamReadWriteBucketStats,
+    timing_wall: Duration,
+    timing_gpu_active: Duration,
+}
+
+struct SequenceCommand {
+    command_buffer: CommandBuffer,
+    address_output: Option<Buffer>,
+    cycle_output: Option<Buffer>,
+    submitted_at: Instant,
+}
+
+#[derive(Clone, Copy)]
+struct BucketWriters {
+    address_blocks: *mut u32,
+    address_previous: *mut u64,
+    address_next: *mut u64,
+    address_values: *mut Fp128,
+    address_ra: *mut Fp128,
+    cycle_blocks: *mut u32,
+    cycle_hamming: *mut Fp128,
+    cycle_increments: *mut Fp128,
+}
+
+// SAFETY: each scatter worker owns disjoint destination ranges assigned by
+// `bucket_plan`; the buffers outlive every worker.
+unsafe impl Send for BucketWriters {}
+// SAFETY: sharing only copies buffer base pointers. Writes remain confined to
+// the disjoint ranges assigned to each worker.
+unsafe impl Sync for BucketWriters {}
+
+impl BucketWriters {
+    unsafe fn write_address(self, index: usize, cycle: u32, previous: u64, next: u64) {
+        // SAFETY: `bucket_plan` assigns this record a unique initialized slot
+        // inside every equally sized address plane.
+        unsafe {
+            self.address_blocks.add(index).write(cycle);
+            self.address_previous.add(index).write(previous);
+            self.address_next.add(index).write(next);
+            self.address_values
+                .add(index)
+                .write(Fp128::from_u128(u128::from(previous)));
+            self.address_ra.add(index).write(Fp128::ONE);
+        }
+    }
+
+    unsafe fn write_cycle(self, index: usize, cycle: u32, previous: u64, next: u64) {
+        let increment = if previous == next {
+            Fp128::ZERO
+        } else {
+            Fp128::from_jolt_field(&AkitaField::from_i128(
+                i128::from(next) - i128::from(previous),
+            ))
+        };
+        // SAFETY: chronological worker prefixes assign every access record one
+        // unique slot inside all three cycle planes.
+        unsafe {
+            self.cycle_blocks.add(index).write(cycle);
+            self.cycle_hamming.add(index).write(Fp128::ONE);
+            self.cycle_increments.add(index).write(increment);
+        }
+    }
+}
+
+struct WorkerCounts {
+    addresses: Vec<u32>,
+    tiles: Vec<u32>,
+    accesses: u32,
+}
+
+struct WorkerPlan {
+    address_cursors: Vec<u32>,
+    cycle_cursor: u32,
+}
+
+struct BucketPlan {
+    workers: Vec<WorkerPlan>,
+    chunk_length: usize,
+    address_lengths: Vec<u32>,
+    tile_lengths: Vec<u32>,
+    hot_addresses: Vec<u32>,
+    stats: RamReadWriteBucketStats,
+}
+
+impl SolinasMetal {
+    pub(crate) fn prepare_ram_read_write_sequence(
+        &self,
+        addresses: &[u32],
+        previous: &[u64],
+        next: &[u64],
+        log_t: usize,
+        address_count: usize,
+    ) -> Result<RamReadWriteSequence, MetalError> {
+        if addresses.len() != previous.len() || addresses.len() != next.len() {
+            return Err(MetalError::LengthMismatch {
+                lhs: addresses.len(),
+                rhs: previous.len().min(next.len()),
+            });
+        }
+        if log_t == 0
+            || log_t > u32::BITS as usize
+            || addresses.len() != 1usize.checked_shl(log_t as u32).unwrap_or(0)
+            || address_count == 0
+        {
+            return Err(MetalError::InvalidRamReadWriteState(
+                "RAM read-write source has inconsistent geometry",
+            ));
+        }
+        let tile_log = log_t.min(RAM_READ_WRITE_CYCLE_TILE_LOG2);
+        let tile_count = 1usize << (log_t - tile_log);
+        let mut plan = bucket_plan(addresses, address_count, tile_log, tile_count)?;
+        let record_capacity = plan.stats.accesses.max(1);
+        let maximum_eq_fields = 1usize << log_t.div_ceil(2);
+        self.validate_additional_working_set(ram_read_write_buffer_bytes(
+            record_capacity,
+            address_count,
+            tile_count,
+            maximum_eq_fields,
+            plan.hot_addresses.len(),
+        )?)?;
+        let address = AddressBuffers {
+            hot_addresses: self
+                .new_ram_read_write_buffer::<u32>(plan.hot_addresses.len().max(1))?,
+            segments: self.new_ram_read_write_buffer::<Segment>(address_count)?,
+            blocks: self.new_ram_read_write_buffer::<u32>(record_capacity)?,
+            previous: self.new_ram_read_write_buffer::<u64>(record_capacity)?,
+            next: self.new_ram_read_write_buffer::<u64>(record_capacity)?,
+            values: self.new_ram_read_write_buffer::<Fp128>(record_capacity)?,
+            ra: self.new_ram_read_write_buffer::<Fp128>(record_capacity)?,
+            partial_a: self.new_ram_read_write_buffer::<Fp128>(2 * address_count)?,
+            partial_b: self.new_ram_read_write_buffer::<Fp128>(2 * address_count)?,
+        };
+        let cycle = CycleBuffers {
+            segments: self.new_ram_read_write_buffer::<Segment>(tile_count)?,
+            blocks: self.new_ram_read_write_buffer::<u32>(record_capacity)?,
+            hamming: self.new_ram_read_write_buffer::<Fp128>(record_capacity)?,
+            increments: self.new_ram_read_write_buffer::<Fp128>(record_capacity)?,
+            partial_a: self.new_ram_read_write_buffer::<Fp128>(2 * tile_count)?,
+            partial_b: self.new_ram_read_write_buffer::<Fp128>(2 * tile_count)?,
+        };
+        let e_in = self.new_ram_read_write_buffer::<Fp128>(maximum_eq_fields)?;
+        let e_out = self.new_ram_read_write_buffer::<Fp128>(maximum_eq_fields)?;
+        buffer_slice_mut::<u32>(&address.hot_addresses, plan.hot_addresses.len())
+            .copy_from_slice(&plan.hot_addresses);
+
+        initialize_segments(
+            &address.segments,
+            &cycle.segments,
+            &plan,
+            address_count,
+            tile_count,
+        );
+        let writers = BucketWriters {
+            address_blocks: address.blocks.contents().cast::<u32>(),
+            address_previous: address.previous.contents().cast::<u64>(),
+            address_next: address.next.contents().cast::<u64>(),
+            address_values: address.values.contents().cast::<Fp128>(),
+            address_ra: address.ra.contents().cast::<Fp128>(),
+            cycle_blocks: cycle.blocks.contents().cast::<u32>(),
+            cycle_hamming: cycle.hamming.contents().cast::<Fp128>(),
+            cycle_increments: cycle.increments.contents().cast::<Fp128>(),
+        };
+        scatter_buckets(
+            addresses,
+            previous,
+            next,
+            plan.chunk_length,
+            std::mem::take(&mut plan.workers),
+            writers,
+        );
+
+        let address_pipeline = self.compile_named_pipeline(RAM_READ_WRITE_ADDRESS_PIPELINE)?;
+        let address_hot_pipeline =
+            self.compile_named_pipeline(RAM_READ_WRITE_ADDRESS_HOT_PIPELINE)?;
+        let cycle_pipeline = self.compile_named_pipeline(RAM_READ_WRITE_CYCLE_PIPELINE)?;
+        let reduction = self.compile_named_pipeline(RAM_READ_WRITE_REDUCTION_PIPELINE)?;
+        let address_threads = Self::resolve_threadgroup_width(
+            Some(RAM_READ_WRITE_THREADS),
+            Self::limits(&address_pipeline),
+        )?;
+        let cycle_threads = Self::resolve_threadgroup_width(
+            Some(RAM_READ_WRITE_THREADS),
+            Self::limits(&cycle_pipeline),
+        )?;
+        let address_hot_limits = Self::limits(&address_hot_pipeline);
+        let address_hot_threads =
+            Self::resolve_threadgroup_width(Some(RAM_READ_WRITE_THREADS), address_hot_limits)?;
+        let reduction_threads = Self::resolve_threadgroup_width(
+            Some(RAM_READ_WRITE_REDUCTION_WIDTH),
+            Self::limits(&reduction),
+        )?;
+        if address_hot_limits.thread_execution_width != RAM_READ_WRITE_SIMD_WIDTH
+            || address_threads != RAM_READ_WRITE_THREADS
+            || address_hot_threads != RAM_READ_WRITE_THREADS
+            || cycle_threads != RAM_READ_WRITE_THREADS
+            || reduction_threads != RAM_READ_WRITE_REDUCTION_WIDTH
+        {
+            return Err(MetalError::InvalidRamReadWriteState(
+                "RAM read-write pipeline width differs from its checked schedule",
+            ));
+        }
+
+        Ok(RamReadWriteSequence {
+            context: self.clone(),
+            pipelines: RamReadWritePipelines {
+                address: address_pipeline,
+                address_hot: address_hot_pipeline,
+                cycle: cycle_pipeline,
+                reduction,
+            },
+            buffers: RamReadWriteBuffers {
+                address,
+                cycle,
+                e_in,
+                e_out,
+            },
+            log_t,
+            address_count,
+            hot_address_count: plan.hot_addresses.len(),
+            tile_count,
+            tile_log,
+            rounds_bound: 0,
+            initial_message_emitted: false,
+            cycle_resident: true,
+            finished: false,
+            stats: plan.stats,
+            timing_wall: Duration::ZERO,
+            timing_gpu_active: Duration::ZERO,
+        })
+    }
+
+    fn new_ram_read_write_buffer<T>(&self, elements: usize) -> Result<Buffer, MetalError> {
+        let bytes = elements
+            .checked_mul(size_of::<T>())
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(elements))?;
+        self.validate_buffer_length(bytes)?;
+        Ok(self
+            .device
+            .new_buffer(bytes, MTLResourceOptions::StorageModeShared))
+    }
+}
+
+impl RamReadWriteSequence {
+    pub(crate) const fn bucket_stats(&self) -> RamReadWriteBucketStats {
+        self.stats
+    }
+
+    pub(crate) fn resident_bytes(&self) -> usize {
+        self.stats.address_bytes
+            + self.stats.cycle_bytes
+            + self.buffers.e_in.length() as usize
+            + self.buffers.e_out.length() as usize
+    }
+
+    pub(crate) fn apply_initial_memory(&self, memory: &mut [u64]) -> Result<(), MetalError> {
+        if memory.len() != self.address_count {
+            return Err(MetalError::InvalidRamReadWriteState(
+                "RAM read-write initial memory has the wrong address domain",
+            ));
+        }
+        let segments = buffer_slice::<Segment>(&self.buffers.address.segments, self.address_count);
+        let previous =
+            buffer_slice::<u64>(&self.buffers.address.previous, self.stats.accesses.max(1));
+        for (address, segment) in segments.iter().enumerate() {
+            if segment.length != 0 {
+                memory[address] = previous[segment.offset as usize];
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn message(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<RamReadWriteSequenceObservation, MetalError> {
+        if self.initial_message_emitted || self.finished {
+            return Err(MetalError::InvalidRamReadWriteState(
+                "RAM read-write initial message was emitted twice",
+            ));
+        }
+        self.write_weights(0, e_in, e_out)?;
+        let command = self.submit_phase(None, true, true, e_in.len())?;
+        let observation = self.complete_phase(command, false)?;
+        self.initial_message_emitted = true;
+        Ok(observation)
+    }
+
+    pub(crate) fn bind_and_message(
+        &mut self,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<RamReadWriteSequenceObservation, MetalError> {
+        if !self.initial_message_emitted || self.finished || self.rounds_bound + 1 >= self.log_t {
+            return Err(MetalError::InvalidRamReadWriteState(
+                "RAM read-write transition is outside the cycle-message phase",
+            ));
+        }
+        let new_rounds_bound = self.rounds_bound + 1;
+        self.write_weights(new_rounds_bound, e_in, e_out)?;
+        let cycle_message = self.cycle_resident && new_rounds_bound < self.tile_log;
+        let handoff_cycle = self.cycle_resident && new_rounds_bound == self.tile_log;
+        let command = self.submit_phase(Some(challenge), true, cycle_message, e_in.len())?;
+        let mut observation = self.complete_phase(command, handoff_cycle)?;
+        self.rounds_bound = new_rounds_bound;
+        if handoff_cycle {
+            self.cycle_resident = false;
+            observation.cycle_quadratic = None;
+        }
+        Ok(observation)
+    }
+
+    pub(crate) fn finish(
+        &mut self,
+        challenge: AkitaField,
+    ) -> Result<RamReadWriteFinish, MetalError> {
+        if !self.initial_message_emitted || self.finished || self.rounds_bound + 1 != self.log_t {
+            return Err(MetalError::InvalidRamReadWriteState(
+                "RAM read-write finish needs the final cycle challenge",
+            ));
+        }
+        let handoff_cycle = self.cycle_resident;
+        let command = self.submit_phase(Some(challenge), false, false, 0)?;
+        let observation = self.complete_phase(command, handoff_cycle)?;
+        self.rounds_bound += 1;
+        self.cycle_resident = false;
+        self.finished = true;
+        let address_roots = self.read_address_roots()?;
+        Ok(RamReadWriteFinish {
+            address_roots,
+            cycle_roots: observation.cycle_roots,
+            gpu_active: observation.gpu_active,
+        })
+    }
+
+    fn submit_phase(
+        &self,
+        challenge: Option<AkitaField>,
+        emit_address_message: bool,
+        emit_cycle_message: bool,
+        e_in_length: usize,
+    ) -> Result<SequenceCommand, MetalError> {
+        let bind = u32::from(challenge.is_some());
+        let challenge = challenge
+            .as_ref()
+            .map_or(Fp128::ZERO, Fp128::from_jolt_field);
+        self.context
+            .validate_inputs("RAM read-write challenge", &[challenge])?;
+        let address_params = PhaseParams {
+            work_items: u32::try_from(self.address_count)
+                .map_err(|_| MetalError::InputTooLong(self.address_count))?,
+            output_stride: u32::try_from(self.address_count)
+                .map_err(|_| MetalError::InputTooLong(self.address_count))?,
+            e_in_length: u32::try_from(e_in_length)
+                .map_err(|_| MetalError::InputTooLong(e_in_length))?,
+            bind,
+            emit_message: u32::from(emit_address_message),
+        };
+        let cycle_params = PhaseParams {
+            work_items: u32::try_from(self.tile_count)
+                .map_err(|_| MetalError::InputTooLong(self.tile_count))?,
+            output_stride: u32::try_from(self.tile_count)
+                .map_err(|_| MetalError::InputTooLong(self.tile_count))?,
+            e_in_length: address_params.e_in_length,
+            bind,
+            emit_message: u32::from(emit_cycle_message),
+        };
+        let submitted_at = Instant::now();
+        autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer().to_owned();
+            let encoder = command_buffer.new_compute_command_encoder();
+            self.encode_address(encoder, challenge, address_params);
+            self.encode_hot_addresses(encoder, challenge, address_params);
+            if self.cycle_resident {
+                self.encode_cycle(encoder, challenge, cycle_params);
+            }
+            let address_output = if emit_address_message {
+                let final_in_a = encode_column_reductions(
+                    encoder,
+                    &self.pipelines.reduction,
+                    &self.buffers.address.partial_a,
+                    &self.buffers.address.partial_b,
+                    self.address_count,
+                    2,
+                    RAM_READ_WRITE_REDUCTION_WIDTH,
+                )?;
+                Some(if final_in_a {
+                    self.buffers.address.partial_a.clone()
+                } else {
+                    self.buffers.address.partial_b.clone()
+                })
+            } else {
+                None
+            };
+            let cycle_output = if emit_cycle_message {
+                let final_in_a = encode_column_reductions(
+                    encoder,
+                    &self.pipelines.reduction,
+                    &self.buffers.cycle.partial_a,
+                    &self.buffers.cycle.partial_b,
+                    self.tile_count,
+                    2,
+                    RAM_READ_WRITE_REDUCTION_WIDTH,
+                )?;
+                Some(if final_in_a {
+                    self.buffers.cycle.partial_a.clone()
+                } else {
+                    self.buffers.cycle.partial_b.clone()
+                })
+            } else {
+                None
+            };
+            encoder.end_encoding();
+            command_buffer.commit();
+            Ok(SequenceCommand {
+                command_buffer,
+                address_output,
+                cycle_output,
+                submitted_at,
+            })
+        })
+    }
+
+    fn encode_address(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        challenge: Fp128,
+        params: PhaseParams,
+    ) {
+        encoder.set_compute_pipeline_state(&self.pipelines.address);
+        encoder.set_buffer(0, Some(&self.buffers.address.segments), 0);
+        encoder.set_buffer(1, Some(&self.buffers.address.blocks), 0);
+        encoder.set_buffer(2, Some(&self.buffers.address.previous), 0);
+        encoder.set_buffer(3, Some(&self.buffers.address.next), 0);
+        encoder.set_buffer(4, Some(&self.buffers.address.values), 0);
+        encoder.set_buffer(5, Some(&self.buffers.address.ra), 0);
+        encoder.set_buffer(6, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(7, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(8, Some(&self.buffers.address.partial_a), 0);
+        set_inline_bytes(encoder, 9, &challenge);
+        set_inline_bytes(encoder, 10, &params);
+        dispatch_segments(encoder, self.address_count);
+    }
+
+    fn encode_cycle(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        challenge: Fp128,
+        params: PhaseParams,
+    ) {
+        encoder.set_compute_pipeline_state(&self.pipelines.cycle);
+        encoder.set_buffer(0, Some(&self.buffers.cycle.segments), 0);
+        encoder.set_buffer(1, Some(&self.buffers.cycle.blocks), 0);
+        encoder.set_buffer(2, Some(&self.buffers.cycle.hamming), 0);
+        encoder.set_buffer(3, Some(&self.buffers.cycle.increments), 0);
+        encoder.set_buffer(4, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(5, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(6, Some(&self.buffers.cycle.partial_a), 0);
+        set_inline_bytes(encoder, 7, &challenge);
+        set_inline_bytes(encoder, 8, &params);
+        dispatch_segments(encoder, self.tile_count);
+    }
+
+    fn encode_hot_addresses(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        challenge: Fp128,
+        mut params: PhaseParams,
+    ) {
+        if self.hot_address_count == 0 {
+            return;
+        }
+        params.work_items = self.hot_address_count as u32;
+        encoder.set_compute_pipeline_state(&self.pipelines.address_hot);
+        encoder.set_buffer(0, Some(&self.buffers.address.hot_addresses), 0);
+        encoder.set_buffer(1, Some(&self.buffers.address.segments), 0);
+        encoder.set_buffer(2, Some(&self.buffers.address.blocks), 0);
+        encoder.set_buffer(3, Some(&self.buffers.address.previous), 0);
+        encoder.set_buffer(4, Some(&self.buffers.address.next), 0);
+        encoder.set_buffer(5, Some(&self.buffers.address.values), 0);
+        encoder.set_buffer(6, Some(&self.buffers.address.ra), 0);
+        encoder.set_buffer(7, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(8, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(9, Some(&self.buffers.address.partial_a), 0);
+        set_inline_bytes(encoder, 10, &challenge);
+        set_inline_bytes(encoder, 11, &params);
+        encoder.dispatch_thread_groups(
+            MTLSize {
+                width: self.hot_address_count as u64,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: RAM_READ_WRITE_THREADS as u64,
+                height: 1,
+                depth: 1,
+            },
+        );
+    }
+
+    fn complete_phase(
+        &mut self,
+        command: SequenceCommand,
+        read_cycle_roots: bool,
+    ) -> Result<RamReadWriteSequenceObservation, MetalError> {
+        command.command_buffer.wait_until_completed();
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
+        let wall = command.submitted_at.elapsed();
+        let address_quadratic = command
+            .address_output
+            .as_ref()
+            .map_or(Ok([AkitaField::zero(); 2]), |buffer| {
+                read_quadratic(&self.context, buffer, "RAM read-write address message")
+            })?;
+        let cycle_quadratic = command
+            .cycle_output
+            .as_ref()
+            .map(|buffer| read_quadratic(&self.context, buffer, "RAM read-write cycle message"))
+            .transpose()?;
+        let cycle_roots = read_cycle_roots
+            .then(|| self.read_cycle_roots())
+            .transpose()?;
+        let address_live_entries =
+            read_segment_total(&self.buffers.address.segments, self.address_count);
+        let cycle_live_entries = if self.cycle_resident {
+            read_segment_total(&self.buffers.cycle.segments, self.tile_count)
+        } else {
+            0
+        };
+        self.timing_wall += wall;
+        self.timing_gpu_active += gpu_active;
+        Ok(RamReadWriteSequenceObservation {
+            address_quadratic,
+            cycle_quadratic,
+            cycle_roots,
+            address_live_entries,
+            cycle_live_entries,
+            wall,
+            gpu_active,
+        })
+    }
+
+    fn write_weights(
+        &self,
+        rounds_bound: usize,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<(), MetalError> {
+        if e_in.is_empty()
+            || e_out.is_empty()
+            || e_in.len() * e_out.len() != 1usize << (self.log_t - rounds_bound - 1)
+        {
+            return Err(MetalError::InvalidRamReadWriteState(
+                "RAM read-write equality weights do not cover the current cycle pairs",
+            ));
+        }
+        write_fields(&self.buffers.e_in, e_in)?;
+        write_fields(&self.buffers.e_out, e_out)
+    }
+
+    fn read_cycle_roots(&self) -> Result<Vec<CycleProductRoot>, MetalError> {
+        let segments = buffer_slice::<Segment>(&self.buffers.cycle.segments, self.tile_count);
+        let blocks = buffer_slice::<u32>(&self.buffers.cycle.blocks, self.stats.accesses.max(1));
+        let hamming =
+            buffer_slice::<Fp128>(&self.buffers.cycle.hamming, self.stats.accesses.max(1));
+        let increments =
+            buffer_slice::<Fp128>(&self.buffers.cycle.increments, self.stats.accesses.max(1));
+        let mut roots = Vec::with_capacity(self.tile_count);
+        for segment in segments {
+            if segment.length == 0 {
+                continue;
+            }
+            if segment.length != 1 {
+                return Err(MetalError::InvalidRamReadWriteState(
+                    "RAM read-write cycle tile did not compact to one root",
+                ));
+            }
+            let index = segment.offset as usize;
+            validate_field(&self.context, hamming[index], index)?;
+            validate_field(&self.context, increments[index], index)?;
+            roots.push(CycleProductRoot {
+                block: blocks[index] as usize,
+                hamming: hamming[index].into_jolt_field(),
+                increment: increments[index].into_jolt_field(),
+            });
+        }
+        Ok(roots)
+    }
+
+    fn read_address_roots(&self) -> Result<Vec<AddressCycleRoot>, MetalError> {
+        let segments = buffer_slice::<Segment>(&self.buffers.address.segments, self.address_count);
+        let capacity = self.stats.accesses.max(1);
+        let previous = buffer_slice::<u64>(&self.buffers.address.previous, capacity);
+        let next = buffer_slice::<u64>(&self.buffers.address.next, capacity);
+        let values = buffer_slice::<Fp128>(&self.buffers.address.values, capacity);
+        let ra = buffer_slice::<Fp128>(&self.buffers.address.ra, capacity);
+        let mut roots = Vec::with_capacity(self.stats.active_addresses);
+        for (address, segment) in segments.iter().enumerate() {
+            if segment.length == 0 {
+                continue;
+            }
+            if segment.length != 1 {
+                return Err(MetalError::InvalidRamReadWriteState(
+                    "RAM read-write address segment did not compact to one root",
+                ));
+            }
+            let index = segment.offset as usize;
+            validate_field(&self.context, values[index], index)?;
+            validate_field(&self.context, ra[index], index)?;
+            roots.push(AddressCycleRoot {
+                address,
+                previous: previous[index],
+                next: next[index],
+                value: values[index].into_jolt_field(),
+                ra: ra[index].into_jolt_field(),
+            });
+        }
+        Ok(roots)
+    }
+}
+
+fn bucket_plan(
+    addresses: &[u32],
+    address_count: usize,
+    tile_log: usize,
+    tile_count: usize,
+) -> Result<BucketPlan, MetalError> {
+    let worker_count = worker_count(addresses.len());
+    let chunk_length = addresses.len().div_ceil(worker_count);
+    #[cfg(feature = "parallel")]
+    let mut counts = addresses
+        .par_chunks(chunk_length)
+        .enumerate()
+        .map(|(worker, chunk)| {
+            count_worker(
+                chunk,
+                worker * chunk_length,
+                address_count,
+                tile_log,
+                tile_count,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    #[cfg(not(feature = "parallel"))]
+    let mut counts = vec![count_worker(
+        addresses,
+        0,
+        address_count,
+        tile_log,
+        tile_count,
+    )?];
+
+    let mut address_lengths = vec![0u32; address_count];
+    let mut address_offset = 0u32;
+    for (address, address_length) in address_lengths.iter_mut().enumerate() {
+        let length = counts.iter().try_fold(0u32, |sum, worker| {
+            sum.checked_add(worker.addresses[address])
+        });
+        let Some(length) = length else {
+            return Err(MetalError::InputTooLong(addresses.len()));
+        };
+        *address_length = length;
+        let mut cursor = address_offset;
+        for worker in &mut counts {
+            let count = worker.addresses[address];
+            worker.addresses[address] = cursor;
+            cursor = cursor
+                .checked_add(count)
+                .ok_or(MetalError::InputTooLong(addresses.len()))?;
+        }
+        address_offset = cursor;
+    }
+
+    let mut tile_lengths = vec![0u32; tile_count];
+    for (tile, length) in tile_lengths.iter_mut().enumerate() {
+        *length = counts
+            .iter()
+            .try_fold(0u32, |sum, worker| sum.checked_add(worker.tiles[tile]))
+            .ok_or(MetalError::InputTooLong(addresses.len()))?;
+    }
+    let accesses = address_offset as usize;
+    if counts
+        .iter()
+        .map(|worker| worker.accesses as usize)
+        .sum::<usize>()
+        != accesses
+        || tile_lengths
+            .iter()
+            .map(|&length| length as usize)
+            .sum::<usize>()
+            != accesses
+    {
+        return Err(MetalError::InvalidRamReadWriteState(
+            "RAM read-write bucket counts disagree",
+        ));
+    }
+    let mut cycle_cursor = 0u32;
+    let workers = counts
+        .into_iter()
+        .map(|worker| {
+            let start = cycle_cursor;
+            cycle_cursor += worker.accesses;
+            WorkerPlan {
+                address_cursors: worker.addresses,
+                cycle_cursor: start,
+            }
+        })
+        .collect();
+    let hot_addresses = address_lengths
+        .iter()
+        .enumerate()
+        .filter(|(_, length)| **length as usize > RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD)
+        .map(|(address, _)| address as u32)
+        .collect::<Vec<_>>();
+    let stats = bucket_stats(
+        &address_lengths,
+        accesses,
+        &tile_lengths,
+        hot_addresses.len(),
+    );
+    Ok(BucketPlan {
+        workers,
+        chunk_length,
+        address_lengths,
+        tile_lengths,
+        hot_addresses,
+        stats,
+    })
+}
+
+fn count_worker(
+    addresses: &[u32],
+    base: usize,
+    address_count: usize,
+    tile_log: usize,
+    tile_count: usize,
+) -> Result<WorkerCounts, MetalError> {
+    let mut address_counts = vec![0u32; address_count];
+    let mut tile_counts = vec![0u32; tile_count];
+    let mut accesses = 0u32;
+    for (offset, &address) in addresses.iter().enumerate() {
+        if address == NO_ACCESS {
+            continue;
+        }
+        let address = address as usize;
+        if address >= address_count {
+            return Err(MetalError::InvalidRamReadWriteState(
+                "RAM read-write access exceeds the address domain",
+            ));
+        }
+        address_counts[address] = address_counts[address]
+            .checked_add(1)
+            .ok_or(MetalError::InputTooLong(addresses.len()))?;
+        let tile = (base + offset) >> tile_log;
+        tile_counts[tile] = tile_counts[tile]
+            .checked_add(1)
+            .ok_or(MetalError::InputTooLong(addresses.len()))?;
+        accesses = accesses
+            .checked_add(1)
+            .ok_or(MetalError::InputTooLong(addresses.len()))?;
+    }
+    Ok(WorkerCounts {
+        addresses: address_counts,
+        tiles: tile_counts,
+        accesses,
+    })
+}
+
+fn bucket_stats(
+    address_lengths: &[u32],
+    accesses: usize,
+    tile_lengths: &[u32],
+    hot_addresses: usize,
+) -> RamReadWriteBucketStats {
+    let mut nonzero = address_lengths
+        .iter()
+        .copied()
+        .filter(|&length| length != 0)
+        .collect::<Vec<_>>();
+    nonzero.sort_unstable();
+    let percentile = |percent: usize| {
+        nonzero
+            .get((nonzero.len().saturating_sub(1) * percent) / 100)
+            .copied()
+            .unwrap_or(0) as usize
+    };
+    let address_bytes = accesses
+        .saturating_mul(size_of::<u32>() + 2 * size_of::<u64>() + 2 * size_of::<Fp128>())
+        .saturating_add(address_lengths.len() * size_of::<Segment>())
+        .saturating_add(4 * address_lengths.len() * size_of::<Fp128>())
+        .saturating_add(hot_addresses * size_of::<u32>());
+    let cycle_bytes = accesses
+        .saturating_mul(size_of::<u32>() + 2 * size_of::<Fp128>())
+        .saturating_add(tile_lengths.len() * size_of::<Segment>())
+        .saturating_add(4 * tile_lengths.len() * size_of::<Fp128>());
+    RamReadWriteBucketStats {
+        accesses,
+        active_addresses: nonzero.len(),
+        maximum_segment: nonzero.last().copied().unwrap_or(0) as usize,
+        p50_segment: percentile(50),
+        p95_segment: percentile(95),
+        p99_segment: percentile(99),
+        hot_addresses,
+        address_bytes,
+        cycle_bytes,
+    }
+}
+
+fn initialize_segments(
+    address_buffer: &Buffer,
+    cycle_buffer: &Buffer,
+    plan: &BucketPlan,
+    address_count: usize,
+    tile_count: usize,
+) {
+    let address_segments = buffer_slice_mut::<Segment>(address_buffer, address_count);
+    let mut offset = 0u32;
+    for (segment, &length) in address_segments.iter_mut().zip(&plan.address_lengths) {
+        *segment = Segment {
+            offset,
+            length,
+            capacity: length,
+            reserved: 0,
+        };
+        offset += length;
+    }
+    let cycle_segments = buffer_slice_mut::<Segment>(cycle_buffer, tile_count);
+    offset = 0;
+    for (segment, &length) in cycle_segments.iter_mut().zip(&plan.tile_lengths) {
+        *segment = Segment {
+            offset,
+            length,
+            capacity: length,
+            reserved: 0,
+        };
+        offset += length;
+    }
+}
+
+fn scatter_buckets(
+    addresses: &[u32],
+    previous: &[u64],
+    next: &[u64],
+    chunk_length: usize,
+    workers: Vec<WorkerPlan>,
+    writers: BucketWriters,
+) {
+    #[cfg(feature = "parallel")]
+    addresses
+        .par_chunks(chunk_length)
+        .zip(previous.par_chunks(chunk_length))
+        .zip(next.par_chunks(chunk_length))
+        .zip(workers.into_par_iter())
+        .enumerate()
+        .for_each(|(worker, (((addresses, previous), next), mut plan))| {
+            scatter_worker(
+                worker * chunk_length,
+                addresses,
+                previous,
+                next,
+                &mut plan,
+                writers,
+            );
+        });
+    #[cfg(not(feature = "parallel"))]
+    {
+        if let Some(mut plan) = workers.into_iter().next() {
+            scatter_worker(0, addresses, previous, next, &mut plan, writers);
+        }
+    }
+}
+
+fn scatter_worker(
+    base: usize,
+    addresses: &[u32],
+    previous: &[u64],
+    next: &[u64],
+    plan: &mut WorkerPlan,
+    writers: BucketWriters,
+) {
+    let mut cycle_cursor = plan.cycle_cursor as usize;
+    for (offset, ((&address, &previous), &next)) in
+        addresses.iter().zip(previous).zip(next).enumerate()
+    {
+        if address == NO_ACCESS {
+            continue;
+        }
+        let address_cursor = &mut plan.address_cursors[address as usize];
+        let address_index = *address_cursor as usize;
+        *address_cursor += 1;
+        let cycle = (base + offset) as u32;
+        // SAFETY: the prefix plan gives this worker disjoint, in-range slots.
+        unsafe {
+            writers.write_address(address_index, cycle, previous, next);
+            writers.write_cycle(cycle_cursor, cycle, previous, next);
+        }
+        cycle_cursor += 1;
+    }
+}
+
+fn worker_count(elements: usize) -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        rayon::current_num_threads().min(elements.max(1))
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = elements;
+        1
+    }
+}
+
+fn dispatch_segments(encoder: &metal::ComputeCommandEncoderRef, segments: usize) {
+    encoder.dispatch_thread_groups(
+        MTLSize {
+            width: segments.div_ceil(RAM_READ_WRITE_THREADS) as u64,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: RAM_READ_WRITE_THREADS as u64,
+            height: 1,
+            depth: 1,
+        },
+    );
+}
+
+fn write_fields(buffer: &Buffer, values: &[AkitaField]) -> Result<(), MetalError> {
+    let required = values
+        .len()
+        .checked_mul(size_of::<Fp128>())
+        .ok_or(MetalError::InputTooLong(values.len()))?;
+    if required > buffer.length() as usize {
+        return Err(MetalError::InputTooLong(values.len()));
+    }
+    let destination = buffer_slice_mut::<Fp128>(buffer, values.len());
+    for (destination, value) in destination.iter_mut().zip(values) {
+        *destination = Fp128::from_jolt_field(value);
+    }
+    Ok(())
+}
+
+fn read_quadratic(
+    context: &SolinasMetal,
+    buffer: &Buffer,
+    name: &'static str,
+) -> Result<[AkitaField; 2], MetalError> {
+    let values = buffer_slice::<Fp128>(buffer, 2);
+    context.validate_inputs(name, values)?;
+    Ok([values[0].into_jolt_field(), values[1].into_jolt_field()])
+}
+
+fn validate_field(context: &SolinasMetal, value: Fp128, index: usize) -> Result<(), MetalError> {
+    if value.is_canonical(context.offset) {
+        Ok(())
+    } else {
+        Err(MetalError::NonCanonicalOutput {
+            index,
+            offset: context.offset,
+        })
+    }
+}
+
+fn read_segment_total(buffer: &Buffer, count: usize) -> usize {
+    buffer_slice::<Segment>(buffer, count)
+        .iter()
+        .map(|segment| segment.length as usize)
+        .sum()
+}
+
+fn buffer_slice<T>(buffer: &Buffer, length: usize) -> &[T] {
+    debug_assert!(length * size_of::<T>() <= buffer.length() as usize);
+    // SAFETY: callers use the allocation's element type and a checked length.
+    unsafe { slice::from_raw_parts(buffer.contents().cast::<T>(), length) }
+}
+
+#[expect(
+    clippy::mut_from_ref,
+    reason = "Metal shared buffers provide interior-mutable mapped storage"
+)]
+fn buffer_slice_mut<T>(buffer: &Buffer, length: usize) -> &mut [T] {
+    debug_assert!(length * size_of::<T>() <= buffer.length() as usize);
+    // SAFETY: callers exclusively initialize or update the shared allocation
+    // before any overlapping CPU or GPU access.
+    unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<T>(), length) }
+}
+
+fn ram_read_write_buffer_bytes(
+    records: usize,
+    addresses: usize,
+    tiles: usize,
+    eq_fields: usize,
+    hot_addresses: usize,
+) -> Result<u64, MetalError> {
+    let typed = |elements: usize, element_bytes: usize| {
+        elements
+            .checked_mul(element_bytes)
+            .and_then(|bytes| u64::try_from(bytes).ok())
+    };
+    [
+        typed(hot_addresses.max(1), size_of::<u32>()),
+        typed(addresses, size_of::<Segment>()),
+        typed(records, size_of::<u32>()),
+        typed(records, size_of::<u64>()),
+        typed(records, size_of::<u64>()),
+        typed(records, size_of::<Fp128>()),
+        typed(records, size_of::<Fp128>()),
+        typed(2 * addresses, size_of::<Fp128>()),
+        typed(2 * addresses, size_of::<Fp128>()),
+        typed(tiles, size_of::<Segment>()),
+        typed(records, size_of::<u32>()),
+        typed(records, size_of::<Fp128>()),
+        typed(records, size_of::<Fp128>()),
+        typed(2 * tiles, size_of::<Fp128>()),
+        typed(2 * tiles, size_of::<Fp128>()),
+        typed(eq_fields, size_of::<Fp128>()),
+        typed(eq_fields, size_of::<Fp128>()),
+    ]
+    .into_iter()
+    .try_fold(0u64, |sum, bytes| sum.checked_add(bytes?))
+    .ok_or(MetalError::InputTooLong(records))
+}

@@ -88,7 +88,7 @@ impl MetalBackend {
         let witness_span = tracing::info_span!(
             "MetalRamCycleFamily::witness_prepare",
             schema_version = super::solinas::ram_cycle_family::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
-            requested = "host_sparse_v1",
+            requested = tracing::field::Empty,
             selected = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
             log_t,
@@ -112,14 +112,46 @@ impl MetalBackend {
             complete_publication = tracing::field::Empty,
         );
         let _witness_guard = witness_span.enter();
-        let owner = shared_ram_cycle_family_owner(session, witness, log_t, log_k)?;
+        let columns = RamAccessColumns::shared(session, witness, log_t)?;
+        let (access_count, increment_compatible, ram_ra_compatible, hamming_exact) = {
+            let tape = session
+                .state::<RamAccessTape>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "RAM access collection did not publish its sparse tape",
+                })?;
+            (
+                tape.access_count(),
+                tape.increment_compatible(),
+                tape.ram_ra_compatible(),
+                tape.hamming_exact(),
+            )
+        };
+        let read_write_config = self.config.ram_read_write;
+        let high_activity = cycles >= read_write_config.trace_cutoff_elements
+            && access_count >= read_write_config.minimum_accesses
+            && increment_compatible
+            && ram_ra_compatible
+            && hamming_exact;
+        let requested = if high_activity {
+            "metal_address_segmented_v1"
+        } else {
+            "host_sparse_v1"
+        };
+        let _ = witness_span.record("requested", requested);
+        let owner = if high_activity {
+            None
+        } else {
+            shared_ram_cycle_family_owner(session, witness, log_t, log_k)?
+        };
         if let Some(owner) = &owner {
             let _ = witness_span.record("source_generation", owner.receipt().source_generation());
             let _ = witness_span.record("source_fingerprint", owner.receipt().fingerprint());
             let _ = witness_span.record("owner_published", true);
+        } else {
+            let _ = witness_span.record("owner_published", false);
         }
         if let Some(plane) = session.state::<RamRafAddressPlane>() {
-            let _ = witness_span.record("selected", "host_sparse_v1");
+            let _ = witness_span.record("selected", requested);
             let _ = witness_span.record("fallback_reason", "none");
             let _ = witness_span.record("address_plane_storage_id", plane.storage_id());
             let _ = witness_span.record(
@@ -131,23 +163,10 @@ impl MetalBackend {
             let _ = witness_span.record("address_plane_allocations", 0);
             let _ = witness_span.record("address_validation_passes", 0);
             let _ = witness_span.record("address_plane_published", true);
-            let _ = witness_span.record("complete_publication", owner.is_some());
+            let _ = witness_span.record("complete_publication", high_activity || owner.is_some());
             return Ok(());
         }
-        let columns = RamAccessColumns::shared(session, witness, log_t)?;
         let addresses = columns.validated_addresses::<AkitaField>(RAM_RAF_ADDRESS_DOMAIN)?;
-        let (access_count, increment_compatible, ram_ra_compatible) = {
-            let tape = session
-                .state::<RamAccessTape>()
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "RAM access collection did not publish its sparse tape",
-                })?;
-            (
-                tape.access_count(),
-                tape.increment_compatible(),
-                tape.ram_ra_compatible(),
-            )
-        };
         tracing::info!(
             target: "jolt::metal",
             access_count,
@@ -171,7 +190,7 @@ impl MetalBackend {
             }
             Err(error) => return Err(metal_prepare_error(error)),
         };
-        let _ = witness_span.record("selected", "host_sparse_v1");
+        let _ = witness_span.record("selected", requested);
         let _ = witness_span.record("fallback_reason", "none");
         let _ = witness_span.record("address_plane_storage_id", plane.storage_id());
         let _ = witness_span.record(
@@ -183,7 +202,7 @@ impl MetalBackend {
         let _ = witness_span.record("address_plane_allocations", 1);
         let _ = witness_span.record("address_validation_passes", 0);
         let _ = witness_span.record("address_plane_published", true);
-        let _ = witness_span.record("complete_publication", owner.is_some());
+        let _ = witness_span.record("complete_publication", high_activity || owner.is_some());
         session.park(plane);
         Ok(())
     }

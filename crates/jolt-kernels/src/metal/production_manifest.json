@@ -19,6 +19,7 @@
     "product_instruction_round_service",
     "product_uniskip",
     "ram_raf_evaluation",
+    "ram_read_write",
     "registers_val",
     "booleanity",
     "booleanity_address",

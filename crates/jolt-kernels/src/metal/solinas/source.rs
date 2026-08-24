@@ -18,6 +18,7 @@ const PRODUCT_INSTRUCTION_SERVICE_SOURCE: &str =
     super::instruction_claim_reduction_successor::SOURCE;
 const PRODUCT_UNISKIP_SOURCE: &str = super::product_uniskip::SOURCE;
 const RAM_RAF_EVALUATION_SOURCE: &str = super::ram_raf_evaluation::SOURCE;
+const RAM_READ_WRITE_SOURCE: &str = super::ram_read_write::SOURCE;
 const REGISTERS_VAL_SOURCE: &str = include_str!("registers_val/shader.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity/shader.metal");
 const BOOLEANITY_ADDRESS_SOURCE: &str = include_str!("booleanity_address/shader.metal");
@@ -94,6 +95,7 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     ),
     SourceFragment::new("product_uniskip", PRODUCT_UNISKIP_SOURCE),
     SourceFragment::new("ram_raf_evaluation", RAM_RAF_EVALUATION_SOURCE),
+    SourceFragment::new("ram_read_write", RAM_READ_WRITE_SOURCE),
     SourceFragment::new("registers_val", REGISTERS_VAL_SOURCE),
     SourceFragment::new("booleanity", BOOLEANITY_SOURCE),
     SourceFragment::new("booleanity_address", BOOLEANITY_ADDRESS_SOURCE),
