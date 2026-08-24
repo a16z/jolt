@@ -57,10 +57,15 @@ pub(super) fn shared_ram_cycle_family_owner(
         log_k,
         cycles,
         address_domain,
+        access_count = tracing::field::Empty,
+        increment_count = tracing::field::Empty,
         access_records = tracing::field::Empty,
         increment_records = tracing::field::Empty,
-        hamming_exact = tracing::field::Empty,
         retained_records = tracing::field::Empty,
+        increment_compatible = tracing::field::Empty,
+        ram_ra_compatible = tracing::field::Empty,
+        hamming_exact = tracing::field::Empty,
+        rejection_reason = tracing::field::Empty,
         final_memory_elements = address_domain,
         record_bytes = tracing::field::Empty,
         final_memory_bytes = tracing::field::Empty,
@@ -89,13 +94,34 @@ pub(super) fn shared_ram_cycle_family_owner(
             .ok_or(KernelError::InvariantViolation {
                 reason: "RAM access collection did not publish its retained tape",
             })?;
-        if tape.validate(log_t, address_domain).is_err() || !tape.hamming_exact() {
+        let _ = owner_span.record("access_count", tape.access_count());
+        let _ = owner_span.record("increment_count", activity.len());
+        let _ = owner_span.record(
+            "retained_records",
+            tape.records()
+                .map_or(0, <[crate::ram_access::RamAccessRecord]>::len),
+        );
+        let _ = owner_span.record("increment_compatible", tape.increment_compatible());
+        let _ = owner_span.record("ram_ra_compatible", tape.ram_ra_compatible());
+        let _ = owner_span.record("hamming_exact", tape.hamming_exact());
+        if let Err(error) = tape.validate(log_t, address_domain) {
+            let _ = owner_span.record("rejection_reason", tracing::field::display(error));
+            let _ = owner_span.record("complete_publication", false);
+            return Ok(None);
+        }
+        if !tape.hamming_exact() {
+            let _ = owner_span.record("rejection_reason", "hamming_inexact");
+            let _ = owner_span.record("complete_publication", false);
             return Ok(None);
         }
         if tape.access_count().max(activity.len()) > MAX_RETAINED_RAM_ACCESSES {
+            let _ = owner_span.record("rejection_reason", "retained_access_cap");
+            let _ = owner_span.record("complete_publication", false);
             return Ok(None);
         }
         let Some(records) = tape.records() else {
+            let _ = owner_span.record("rejection_reason", "records_unretained");
+            let _ = owner_span.record("complete_publication", false);
             return Ok(None);
         };
         records
@@ -184,8 +210,7 @@ pub(super) fn shared_ram_cycle_family_owner(
     let _ = owner_span.record("source_fingerprint", receipt.fingerprint());
     let _ = owner_span.record("access_records", receipt.access_count());
     let _ = owner_span.record("increment_records", receipt.increment_count());
-    let _ = owner_span.record("hamming_exact", true);
-    let _ = owner_span.record("retained_records", receipt.access_count());
+    let _ = owner_span.record("rejection_reason", "none");
     let _ = owner_span.record("record_bytes", record_bytes);
     let _ = owner_span.record("final_memory_bytes", final_memory_bytes);
     let _ = owner_span.record("block_topology_nodes", block_topology_nodes);

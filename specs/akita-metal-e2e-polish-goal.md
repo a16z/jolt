@@ -50,8 +50,76 @@ The high-activity RAM path is required work, not optional polish. BTreeMap spend
 5.29 s more than CPU in the Stage-2 RAM family and first wastes 1.45 s attempting
 an unusable sparse owner. SHA-2 also reports `missing_owner`. Record the exact owner
 rejection reason and access count, avoid a known-doomed sparse collection, then build
-a chunked cycle-major Metal path with an address-tail reduction. Do not merely raise
-the `2^18` retained-access cap.
+the address-segmented path in
+[akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md). Do not merely
+raise the `2^18` retained-access cap.
+
+## Main execution plan
+
+1. **Freeze the evaluator and parent.** Record the paired Jolt/Akita revisions,
+   workload construction, compiler flags, machine state, proof-timing boundary, and
+   one optimized-CPU anchor per workload. Treat a run without successful proof
+   verification or complete backend-route telemetry as invalid.
+2. **Close BTreeMap's RAM gap first.** Measure the high-activity RAM frontier, write
+   the byte-traffic and residency bound, and implement stable address spans plus a
+   tiled cycle-only frontier. Bind each address independently in place, fuse message
+   generation with binding, and return only the at-most-`K` address tail to the CPU.
+   Reuse useful state across Stages 2, 4, 5, and 6b. Reject the design if it scans or
+   sorts all `T` rows per round, exceeds 90 GiB RSS, or cannot plausibly save 2 s end
+   to end.
+3. **Remove shared opening overhead.** Stream or fuse deferred opening-index
+   generation, decomposition, and coefficient packing so intermediates stay resident
+   and are not materialized or transferred twice. Screen on Fibonacci first, then
+   check that the same mechanism helps BTreeMap and SHA-2.
+4. **Resolve the remaining geometry-specific gaps.** Reprice the Stage 4/5
+   compatibility-scatter schedule, extend the bytecode address carrier to
+   `log_K = 14` when public geometry qualifies, and remove commit wrapper,
+   row-generation, synchronization, and traffic residue. Keep only changes with a
+   measured complete-prover effect or an obvious no-cost removal of waste.
+5. **Rerank at milestones.** Run all three `T = 2^28` workloads only after the model
+   predicts a material change to the worst-workload score. Preserve one accepted
+   paired parent and use the new stage deltas to choose the next mechanism; do not
+   continue optimizing a locally hot kernel after its end-to-end ceiling becomes
+   immaterial.
+6. **Fit the deployment envelope.** Once all three workloads clear 5x with margin,
+   check `T = 2^25` through `2^28`, fit geometry/activity-based CPU/Metal crossovers,
+   and probe `T = 2^20` plus the scales bracketing each crossover. Then run final
+   parity, verification, memory, formatting, test, and lint gates and remove search
+   variants and obsolete telemetry.
+
+The plan is deliberately sequential: BTreeMap sets the first objective, while
+Fibonacci and SHA-2 act as regression and shared-overhead witnesses. A new protocol
+change is not a substitute for an unexplained implementation gap; only a bounded
+public schedule or batching change with a written ceiling argument is eligible.
+
+## Fixed evaluator contract
+
+Build once outside the measurement gate:
+
+```bash
+cargo build --release -p jolt-prover --example modular_benchmark \
+  --features prover-fixtures,metal
+```
+
+Run the resulting binary without `--format` for ordinary timings:
+
+```bash
+./target/release/examples/modular_benchmark \
+  --name fibonacci --scale 28 --backend {optimized|metal}
+./target/release/examples/modular_benchmark \
+  --name sha2-chain --scale 28 --backend {optimized|metal}
+./target/release/examples/modular_benchmark \
+  --name btreemap --scale 28 --target-trace-size 150000000 \
+  --backend {optimized|metal}
+```
+
+The BTreeMap override is part of the workload identity: its default 90%-of-domain
+target overflows the `2^28` trace domain. Score the reported `jolt_prover::prove`
+wall time, require `PROOF_VERIFIED ... value=true`, and retain route/fallback and peak
+RSS telemetry. Shape-only preparation may remain outside the score only when it is
+witness- and transcript-independent and reusable across proofs; all per-proof work
+must stay inside the timed boundary. Use `--format chrome` only for a decision-blocking
+trace, never as a treatment timing.
 
 ## Architecture and boundaries
 
@@ -157,6 +225,12 @@ analytical floors rather than hiding negative results.
 > and the 90 GiB RSS guard. Also reduce fixed costs and fit public
 > geometry/activity-based hybrid switchovers around smaller workloads, including
 > `T = 2^20`.
+>
+> Freeze and use the evaluator commands in the document. In particular, BTreeMap
+> `T = 2^28` must include `--target-trace-size 150000000`, routine treatment runs
+> must omit `--format`, and every accepted result must print successful proof
+> verification. Do not shift witness- or transcript-dependent work outside the
+> timed proving boundary.
 >
 > Start from the existing Perfetto analysis and maintain a disjoint end-to-end
 > latency model. Begin with high-activity RAM routing, deferred opening-index and
