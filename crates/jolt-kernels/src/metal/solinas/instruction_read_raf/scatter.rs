@@ -206,6 +206,18 @@ impl InstructionReadRafDenseGroupedPlanes {
         &self.receipt
     }
 
+    #[cfg(test)]
+    pub(crate) fn outputs_are_private(&self) -> bool {
+        [
+            &self.packed_rows,
+            &self.lookups,
+            &self.inverse,
+            &self.weights,
+        ]
+        .into_iter()
+        .all(|buffer| buffer.storage_mode() == metal::MTLStorageMode::Private)
+    }
+
     pub(crate) fn into_parts(self) -> InstructionReadRafDenseGroupedParts {
         InstructionReadRafDenseGroupedParts {
             packed_rows: self.packed_rows,
@@ -397,16 +409,16 @@ impl SolinasMetal {
 
         let packed_rows = self
             .device
-            .new_buffer(packed_rows_bytes, MTLResourceOptions::StorageModeShared);
+            .new_buffer(packed_rows_bytes, MTLResourceOptions::StorageModePrivate);
         let lookups = self
             .device
-            .new_buffer(lookups_bytes, MTLResourceOptions::StorageModeShared);
+            .new_buffer(lookups_bytes, MTLResourceOptions::StorageModePrivate);
         let inverse = self
             .device
-            .new_buffer(inverse_bytes, MTLResourceOptions::StorageModeShared);
+            .new_buffer(inverse_bytes, MTLResourceOptions::StorageModePrivate);
         let weights = self
             .device
-            .new_buffer(weights_bytes, MTLResourceOptions::StorageModeShared);
+            .new_buffer(weights_bytes, MTLResourceOptions::StorageModePrivate);
         let bytecode_output_buffers = bytecode.as_ref().map(|_| {
             (
                 self.device.new_buffer(

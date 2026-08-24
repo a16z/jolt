@@ -1,5 +1,6 @@
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::AkitaField;
@@ -191,6 +192,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                     start_receiver.recv().map_err(|_| {
                         "Instruction Read-RAF scatter release was dropped".to_owned()
                     })?;
+                    let scatter_started = Instant::now();
                     let source = owner
                         .lease(rows, context.device_registry_id())
                         .map_err(|error| error.to_string())?;
@@ -227,6 +229,8 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                             bytecode_request,
                         )
                         .map_err(|error| error.to_string())?;
+                    let scatter_wall_ns =
+                        u64::try_from(scatter_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
                     let receipt = planes.receipt().clone();
                     let bytecode_carrier = planes.take_bytecode_carrier();
                     let span = tracing::info_span!(
@@ -236,6 +240,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                         complete = tracing::field::Empty,
                     );
                     let _entered = span.enter();
+                    let address_prefetch_started = Instant::now();
                     let mut sequence = context
                         .prepare_address_phase_sequence_from_resident_grouped(
                             planes,
@@ -245,6 +250,23 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                     let initial_sums = sequence
                         .phase(INITIAL_ADDRESS_SUFFIX_BITS, None)
                         .map_err(|error| error.to_string())?;
+                    let address_prefetch_wall_ns =
+                        u64::try_from(address_prefetch_started.elapsed().as_nanos())
+                            .unwrap_or(u64::MAX);
+                    let grouped_output_bytes = receipt
+                        .packed_rows_bytes()
+                        .saturating_add(receipt.lookups_bytes())
+                        .saturating_add(receipt.inverse_bytes())
+                        .saturating_add(receipt.weights_bytes());
+                    tracing::info!(
+                        target: "jolt::metal",
+                        rows,
+                        output_storage = "private",
+                        grouped_output_bytes,
+                        scatter_wall_ns,
+                        address_prefetch_wall_ns,
+                        "completed Instruction Read-RAF Stage-4 prefetch"
+                    );
                     let _ = span.record("complete", true);
                     Ok(PrefetchedInstructionReadRafScatter {
                         sequence: Box::new(sequence),
