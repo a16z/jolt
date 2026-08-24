@@ -23,75 +23,92 @@ Worktrees:
 - Akita: `perf/metal-commit-eval-proof` at
   `/Users/mgeorghiades/worktrees/akita-metal-eval-proof`.
 
-Accepted runtime sources are Jolt `9fb53846188b6cb9481c39f74fb99007c2cfa8aa`
-and Akita `a454c757597608ba20ad593be108557219103d6e`. Later commits are
-documentation or exact reverts of rejected candidates. Audit revision and tree IDs
-before resuming. Jolt's modified `Cargo.lock` and untracked `.cargo/config.toml` are
-intentional local Akita path overrides; do not commit or remove them. Do not push.
+The frozen runtime parent is Jolt `6ec86d08a77d2210676c4f299d55cf7f0ab46892`
+and Akita `8291c2dbcd75f413e9697b7cb7ff89942a0c9005`. At handoff, their
+tree IDs were `c109b3e925f58fe0e9553eca0a17439280cd02c8` and
+`58523a7b0546b540c7636248a31906074ae1e136`. Audit revisions, tree IDs,
+and runtime diffs before resuming. Jolt's modified `Cargo.lock` and untracked
+`.cargo/config.toml` are intentional local Akita path overrides; do not commit or
+remove them. Do not push.
 
-The current release binary contains rejected C5 code and is not a valid evaluator.
-Rebuild after the next runtime edit, or rebuild the accepted tree first if a baseline
-measurement is needed. Compilation is not part of an experiment's time gate.
+The current release binary contains rejected S3 code and is not a valid evaluator.
+Rebuild the accepted source before the next measurement. Compilation is not part of
+an experiment's time gate.
 
-| Workload | Optimized CPU | Accepted Metal | Speedup | 5x target | Remaining gap |
+| Workload | Optimized CPU | Last credible Metal | Speedup | 5x target | Remaining gap |
 |---|---:|---:|---:|---:|---:|
-| BTreeMap | 166.548 s | 48.08 s | 3.464x | 33.310 s | 14.770 s |
-| Fibonacci | 215.18 s | 45.72 s | 4.71x | 43.036 s | 2.684 s |
-| SHA-2 chain | 213.70 s | 42.45 s | 5.03x | 42.740 s | clears by 0.29 s |
+| BTreeMap | 166.548 s | 46.99 s | 3.544x | 33.310 s | 13.680 s |
+| Fibonacci | 215.177 s | 45.719 s | 4.71x | 43.035 s | 2.684 s |
+| SHA-2 chain | 213.703 s | 42.452 s | 5.03x | 42.741 s | clears by 0.289 s |
 
-The accepted BTreeMap trace localizes 48.984 seconds as 14.219 seconds commit,
-28.842 seconds PIOP, and 5.897 seconds eval proof. It is diagnostic; retain the
-48.08-second untraced run as the score. Deleting all commit time would still leave
-35.47 seconds, so 5x necessarily requires both commit and PIOP/cross-stage gains.
+BTreeMap is the post-S1 score. Fibonacci and SHA-2 are the last credible results
+from the preceding accepted parent; do not spend a matrix run merely to refresh
+them. Remeasure them at the next material milestone.
+
+The accepted post-S1 BTreeMap trace is 47.389 seconds: 14.149 seconds commit,
+27.211 seconds PIOP, 6.001 seconds eval proof, and about 0.028 seconds other work.
+S1 overlaps independent host and Metal Stage-6b members, cutting that stage from
+7.043 to 4.994 seconds; its untraced confirmation is 46.99 seconds at 80.07 GiB.
+Deleting all commit time would still leave roughly 32.84 seconds, leaving only
+0.47 seconds of margin against the 5x target. The remaining plan therefore needs
+both a major commit gain and non-commit critical-path savings.
 
 ## Main plan
 
-### 1. Freeze the evaluator and build a disjoint budget
+### 1. Freeze the evaluator and refresh the disjoint budget
 
 Keep the CPU controls frozen unless the CPU implementation, protocol, workload,
 compiler, machine, flags, or timed boundary changes. Preserve one accepted paired
 parent and an append-only ignored ledger under
 `benchmark-runs/akita-metal-e2e-polish/`.
 
-Before another implementation, update a disjoint BTreeMap latency model from the
-accepted trace and existing counters. Identify enough non-overlapping credible upside
-to cover the 14.77-second gap; use roughly 20% gross headroom as a planning target for
-noise and overlap, not as a promotion requirement. A candidate whose complete
-disjoint ceiling cannot materially move the remaining gap is rejected analytically.
+Rebuild the accepted source, but do not rerun a baseline unless a candidate needs a
+fresh paired control. Update the BTreeMap model from the accepted S1 trace and
+existing counters. Identify enough non-overlapping credible upside to cover the
+13.68-second gap; use about 16.4 seconds of gross modeled upside as a planning target
+for noise and interaction. A candidate whose complete disjoint ceiling is below
+0.5 seconds or cannot materially move the remaining gap is rejected analytically.
 Take a new Perfetto trace only when existing telemetry cannot identify the owner.
 
-### 2. Remove PIOP ownership and materialization costs
+### 2. Remove cross-stage ownership and residency costs
 
-Analyze these two mechanisms first, then implement the one with the larger credible
-end-to-end saving per correctness and engineering risk:
+Analyze the following as complete chains, not isolated child spans, and implement
+only the largest mechanism with a credible net saving:
 
-1. **ProductRemainder output fusion.** Stage 2 spends 1.897 seconds extracting the
-   product output. A CPU treatment reduced that span to about 0.762 seconds but
-   materialized and walked a 4 GiB equality table. Complete proving regressed to a
-   49.59-second mean, consistent with later unified-memory displacement. Derive
-   whether the required opening evaluations can be accumulated during the existing
-   Metal binds or recovered from final resident state without that table. Price added
-   arithmetic, traffic, command boundaries, and downstream residency before code.
+1. **Stage-1 source residency chain.** ProductRemainder output, the immediately
+   following Instruction opening, and the Stage-3 shift prefix share a large Stage-1
+   source. S3 cut Product output from 2.003 to 0.527 seconds on CPU, yet complete
+   proving regressed by 0.703 seconds because Instruction output, Stage 3, and later
+   Metal work inherited the residency bill. Standalone CPU Product opening routes
+   are closed. Price either a late asynchronous source primer overlapped with useful
+   preceding work or a compact retained Product+Instruction opening view built while
+   Stage 1 is hot. Charge contention, all retained bytes, Instruction, Shift, and the
+   later accelerator spans. Proceed only if the whole chain credibly saves at least
+   0.5 seconds.
 2. **Direct Stage-5 source consumption.** The Stage-4/5 compatibility path builds
    four dense planes totaling about 9.25 GiB. Construction costs roughly 1.55 seconds
-   plus 0.18 seconds of address prefetch and overlaps Stage 4; the trace is consistent
-   with contention. Retiming and private grouped storage are closed failures. Specify
-   a direct cycle-major or resident-source consumer that eliminates the planes rather
-   than relabeling or moving them, including the exact Stage-5 address-phase access
-   pattern and any replacement work.
+   plus 0.18 seconds of address prefetch and overlaps Stage 4. Retiming and private
+   grouped storage are closed failures. Specify a direct cycle-major or resident
+   consumer that eliminates the planes, including the exact Stage-5 address-phase
+   access pattern and every replacement read or computation.
+3. **Integrated eval-proof fixed costs.** Isolated T28 eval proof is about 5.175
+   seconds, while integrated eval is 6.001 seconds. Localize the roughly 0.83-second
+   integration tax around root coefficient packing, D-role relation construction,
+   and root folding. Treat 0.83 seconds as a ceiling, not an additive prediction.
 
-After either treatment, remeasure Stage 2 and Stage 4 once. Current discrepancies are
-Stage 2 RAM preparation and product output, plus Stage 4 register preparation and
-rounds. Stage 6b already contains large Metal wins; do not optimize its total merely
-because it is large.
+The accepted two-lane scheduler leaves only about 9 ms of host work exposed in
+Stage 6b. Do not optimize its total merely because it is large. The lazy Bytecode
+width-8 treatment is also closed: it improved T25 but regressed the T28 Bytecode
+member and Stage 6b.
 
 ### 3. Redesign the Akita commit root at the schedule or representation level
 
-The accepted D512 root uses one task per SIMDgroup, two coefficient bands, sixteen
-position partials, and about forty persistent 32-bit accumulator values per lane. At
-T28 it performs about 1.019 trillion fp128 coefficient additions. Modeled traffic is
+The accepted commit takes 14.149 seconds, including about 12.51 seconds in the D512
+root. It uses one task per SIMDgroup, two coefficient bands, sixteen position
+partials, and about forty persistent 32-bit accumulator values per lane. At T28 it
+performs about 1.019 trillion fp128 coefficient additions. Modeled traffic is
 1,810 GiB, with a 4.39-second bandwidth floor; the calibrated arithmetic term is
-about 7.77 seconds versus 12.51 seconds observed root GPU time.
+about 7.77 seconds.
 
 The tested local instruction and accumulator variants are closed: two tasks per
 group, wider carry-free digits, two live carry chains, and C5 sign-quadrant
@@ -101,12 +118,14 @@ The next commit candidate must remove dominant work, change reuse/ownership, or 
 bounded public schedule/configuration change. Generic fp128, residency, and scheduling
 work lives in Akita; workload geometry and orchestration stay in Jolt.
 
-### 4. Re-rank shared fixed costs and bounded protocol knobs
+### 4. Re-rank the composed prover and bounded protocol knobs
 
-After each retained treatment, recompute the complete critical path. Prefer work that
-helps all three workloads and creates margin for Fibonacci and SHA-2. Route only on
-public geometry or activity, never workload names. Hybrid execution is allowed when
-fully timed.
+After each retained treatment, recompute the complete critical path and remove
+overlapping ceilings. Prefer work that helps all three workloads and creates margin
+for Fibonacci and SHA-2. Route only on public geometry or activity, never workload
+names. Hybrid execution is allowed when fully timed. Cross-component scheduling and
+layout changes are preferred when they remove allocations, source scans, queue
+serialization, or unified-memory migration paid by more than one stage.
 
 Minor public schedule, batching, or layout changes are in scope only when a written
 ceiling shows that prover-only work cannot reach the target. They must preserve the
@@ -124,9 +143,10 @@ T25--T28, fit CPU/Metal crossovers from public geometry/activity, and test T20 p
 the scales bracketing every threshold.
 
 Before handoff, remove rejected variants, search-only switches, obsolete telemetry,
-and raw artifacts. Run formatting, focused exact-parity tests, relevant nextest
-suites, and both required clippy modes. Document remaining caveats and anything not
-verified.
+and raw artifacts. Keep the generic Metal backend and protocol-facing changes
+reviewable as separate logical diffs. Run formatting, focused exact-parity tests,
+relevant nextest suites, and both required clippy modes. Document remaining caveats
+and anything not verified.
 
 ## Fast candidate loop
 
@@ -196,9 +216,11 @@ Do not claim 5x or finish the goal until all of these hold:
 ## Copy/paste goal prompt
 
 ```text
-Create and pursue the goal in specs/akita-metal-e2e-polish-goal.md. Read the document
-fully before acting and treat its evaluator, accepted state, invariants, fast candidate
-loop, closed paths, and completion gate as binding.
+Create a persistent goal to execute specs/akita-metal-e2e-polish-goal.md through its
+completion gate. Read the entire document before acting. Treat its evaluator,
+accepted state, main plan, fast candidate loop, closed paths, and completion gate as
+binding; keep working across continuations until the objective is achieved or a real
+external blocker satisfies the goal-mode blocked threshold.
 
 Work in Jolt branch feat/akita-metal at
 /Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt and Akita branch
@@ -206,11 +228,12 @@ perf/metal-commit-eval-proof at
 /Users/mgeorghiades/worktrees/akita-metal-eval-proof. Do not push. Preserve Jolt's
 intentional Cargo.lock and .cargo/config.toml path overrides and never commit them.
 Audit both heads, tree IDs, and runtime diffs first. Accepted runtime sources are Jolt
-9fb53846188b6cb9481c39f74fb99007c2cfa8aa and Akita
-a454c757597608ba20ad593be108557219103d6e. The current release binary contains
-rejected C5 code; do not score it. Rebuild after the next runtime edit, or rebuild the
-accepted tree first only if a fresh baseline is genuinely needed. Compilation time is
-unrestricted and excluded from experiment gates.
+6ec86d08a77d2210676c4f299d55cf7f0ab46892 and Akita
+8291c2dbcd75f413e9697b7cb7ff89942a0c9005. Their recorded tree IDs are
+c109b3e925f58fe0e9553eca0a17439280cd02c8 and
+58523a7b0546b540c7636248a31906074ae1e136. The current release binary contains
+rejected S3 code; do not score it. Rebuild the accepted source before the next
+measurement. Compilation time is unrestricted and excluded from execution gates.
 
 The hard objective is at least 5x complete jolt_prover::prove speedup over optimized
 CPU for BTreeMap, Fibonacci, and SHA-2 chain at T=2^28, maximizing the worst ratio
@@ -220,14 +243,26 @@ all per-proof CPU, GPU, allocation, transfer, synchronization, and assembly work
 After all three clear 5x with credible margin, continue while a bounded non-invasive
 candidate has at least 0.5 seconds or 1% of plausible T28 upside.
 
-Begin with an analytical refresh, not a benchmark sweep. Using the accepted trace and
-counters, make a disjoint latency/ceiling ledger for the 14.77-second BTreeMap gap.
-Analyze ProductRemainder output fusion without a materialized equality table and
-direct Stage-5 consumption that eliminates the 9.25-GiB compatibility scatter. Pick
-one only after stating its exact algebra/dataflow boundary, compulsory work and
-traffic, credible end-to-end saving, memory effect, and numerical falsifier. If both
-ceilings are inadequate, re-rank before coding. Take a new Perfetto trace only when
-existing evidence cannot identify ownership.
+The current post-S1 BTreeMap score is 46.99 seconds versus 166.548 seconds CPU, or
+3.544x, leaving 13.68 seconds to the 5x threshold. Its accepted trace is 47.389
+seconds: 14.149 commit, 27.211 PIOP, 6.001 eval proof, and about 0.028 other. S1's
+two-lane scheduler is accepted and leaves only about 9 ms of Stage-6b host work
+exposed. Fibonacci and SHA-2 have not been rerun after S1; their last credible scores
+are 4.71x and 5.03x. Do not refresh them until a material milestone.
+
+Begin with an analytical refresh, not a benchmark sweep. Build a disjoint
+latency/ceiling ledger with about 16.4 seconds of gross credible upside for the
+13.68-second BTreeMap gap. First price the complete shared-residency chain spanning
+ProductRemainder output, Instruction opening, and the Stage-3 shift prefix. S3 proved
+that making Product output fast in isolation only moves the residency cost: Product
+fell by 1.476 seconds while complete proving regressed by 0.703 seconds. Do not retry
+standalone CPU Product opening routes. Compare a late asynchronous source primer and
+a compact retained Product+Instruction opening view, charging contention, retained
+memory, Instruction, Shift, and downstream Metal effects. In parallel in the model,
+price direct Stage-5 consumption that actually deletes the 9.25-GiB compatibility
+planes and the roughly 0.83-second integrated eval-proof tax. Implement only a
+mechanism with at least 0.5 seconds of credible disjoint end-to-end saving. If none
+qualifies, reject them analytically and re-rank.
 
 For commit, do not retry two-task reuse, wide carry-free accumulation, two-chain
 interleaving, sign-quadrant specialization, or other local variants of those closed
@@ -238,6 +273,11 @@ orchestration in Jolt. Minor documented protocol/config changes are allowed only
 an explicit necessity and ceiling argument, synchronized prover/verifier changes,
 and unchanged soundness. Do not make invasive protocol changes.
 
+Also treat S2's lazy Bytecode width-8 path as closed: it helped T25 but regressed the
+T28 Bytecode member and Stage 6b. Do not retry any closed path without a materially
+new work-elimination or ownership argument. Take a new Perfetto trace only when the
+accepted trace and existing counters cannot identify ownership.
+
 Use a lean sequential loop: one candidate, one prediction and falsifier, one red
 correctness test, one scoped implementation, focused parity, and normally one warm
 T25 sentinel. Promote to one T28 run only when affected-span telemetry supports the
@@ -246,10 +286,18 @@ rerun frozen CPU controls, broad workload matrices, Criterion, or Perfetto in or
 iterations. Repeat a measurement only for ambiguity, surprise, or final promotion.
 Keep or exactly revert each candidate and preserve an append-only evidence ledger.
 
+After every retained result, update the accepted parent, disjoint critical path, and
+ranked queue before selecting more code. Prefer cross-component scheduling or layouts
+that remove repeated source scans, allocations, queue serialization, or unified-memory
+migration. Route by public geometry/activity only. Keep all proof and transcript
+semantics exact and fail closed on verifier errors, missing telemetry, fallback,
+swapping, evaluator drift, or unrelated source changes.
+
 Run the full three-workload T28 matrix only at material milestones. Final acceptance
 requires two order-reversed CPU/Metal pairs per workload with the worse valid ratio
 above 5x, exact verification, no undocumented fallback, no swapping, RSS <=90 GiB,
 verified T25--T28 guards, calibrated lower-scale crossovers, production cleanup,
 formatting, relevant nextest suites, and both required clippy modes. Do not stop merely
-because one isolated kernel or one workload reaches 5x.
+because one isolated kernel or one workload reaches 5x. After the milestone, continue
+only while the document's bounded polish rule admits another candidate.
 ```
