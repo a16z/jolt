@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787601691043,
+  "lastUpdate": 1787605158519,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -143266,6 +143266,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866208,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d068fba061217971ab6171c745c96c0b8fcf7aff",
+          "message": "perf(zkvm): W-aware right-shift lookup tables — SRLW/SRAW 5->2 rows, SRLIW/SRAIW 3->1 (#1753)\n\n* feat: add W-aware right shift tables\n\n* test: force W-shift coverage in muldiv guest\n\n* test: draw kernel fixture lookup indices from each table's valid domain\n\nThe instruction read-raf kernel parity fixture assigned arbitrary random\nlookup indices to whatever tables sit at fixed enum positions. With the\nW-aware right-shift tables appended, the last variant (VirtualSRAW) has a\nconstrained operand domain: its prefix-suffix decomposition only matches\nmaterialize_entry when the right operand is bitmask-shaped, so the\nfirst-principles input claim diverged from the kernels' round sums\n(RoundCheckFailed at round 0).\n\nExpose per-table in-domain index generation behind a new\njolt-lookup-tables test-utils feature (random_lookup_index takes &self and\ndispatches through LookupTableKind; the bitmask generators move to an\nindex_gen module shared between cfg(test) and the feature). The fixture\nnow draws each table row's index from that table's domain and keeps the\nedge indices (0, all-ones, all-ones upper half) on table-less rows, since\nthe RAF operand paths they target are table-independent. This also lets\nthe fixture exercise constrained tables at all — previously any fixture\nposition landing on SRA/SRL/ROTR would have failed the same way.\n\nRegenerate the registered-inline expansion parity hashes: SHA-256 inlines\nexpand SRLIW/SRAIW sites, so the shrunk sequences change row counts\n(2436 -> 2244 per block) and row-stream hashes.\n\n* refactor(zkvm): clean up W-shift table changes\n\n* test(program): remove redundant W-shift row-count test\n\n* feat(jolt-tracer-x86): emit W-aware right-shift virtuals in the AOT backend\n\nThe W-shift tables PR adds five virtual kinds (VirtualShiftRightBitmaskW,\nVirtualSrlw/Srliw/Sraw/Sraiw); the exhaustive emitter match must cover them.\nEmit them natively (32-bit shifts + movsxd, tzcnt for the bitmask-register\nforms) and add per-instruction difftests drawing from the W bitmask domain.\n\n* test: re-baseline W-shift parity hashes after virtual tag renumber\n\n* fix(riscv): keep W-shift helpers in RV64I profiles\n\n* test(zkvm): exercise and tamper W-shift lookup proofs\n\n* Revert \"test(zkvm): exercise and tamper W-shift lookup proofs\"\n\nThis reverts commit fbee1d717de3a261e1771800d74f533add8c754e.\n\n---------\n\nCo-authored-by: Markos Georghiades <mgeorghiades@a16z.com>",
+          "timestamp": "2026-08-24T16:06:43-04:00",
+          "tree_id": "99f217c599fdf8c954fac52b36f296b66c665e22",
+          "url": "https://github.com/a16z/jolt/commit/d068fba061217971ab6171c745c96c0b8fcf7aff"
+        },
+        "date": 1787605151374,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 1.9887,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862364,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.8887,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 501136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 492592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5148,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 493012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.4048,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 501456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.5795,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 497156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 2.6987,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.0215,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.3955,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 501732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.324,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 493068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 14.3088,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 493332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.1956,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 20.6531,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1081508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 9.1813,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 627308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 58.5366,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2123804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0.9104,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 501572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.1463,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 493488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 9.8126,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861464,
             "unit": "KB",
             "extra": ""
           }
