@@ -22,44 +22,65 @@ impl CycleWindow {
 
 const MIN_WITNESS_WINDOW: usize = 1 << 12;
 
-pub(crate) fn witness_windows(cycles: usize) -> Vec<CycleWindow> {
-    let devices = device_count().max(1);
-    let whole = || {
-        vec![CycleWindow {
-            start: 0,
-            len: cycles,
-        }]
-    };
-    if devices == 1
-        || !cycles.is_power_of_two()
-        || !devices.is_power_of_two()
-        || cycles < devices * MIN_WITNESS_WINDOW
-    {
-        return whole();
+fn whole_domain(cycles: usize) -> Vec<CycleWindow> {
+    vec![CycleWindow {
+        start: 0,
+        len: cycles,
+    }]
+}
+
+pub(crate) fn plan_witness_windows(cycles: usize, devices: usize) -> Vec<CycleWindow> {
+    if devices < 2 || !cycles.is_power_of_two() {
+        return whole_domain(cycles);
     }
-    let len = cycles / devices;
-    (0..devices)
-        .map(|device| CycleWindow {
-            start: device * len,
+    let windows = 1usize << devices.ilog2();
+    if cycles < windows * MIN_WITNESS_WINDOW {
+        return whole_domain(cycles);
+    }
+    let len = cycles / windows;
+    (0..windows)
+        .map(|window| CycleWindow {
+            start: window * len,
             len,
         })
         .collect()
 }
 
-pub(crate) fn device_windows(cycles: usize, alignment: usize) -> Vec<CycleWindow> {
-    let devices = device_count().max(1);
-    if devices == 1 || alignment == 0 || !cycles.is_multiple_of(alignment) {
-        return vec![CycleWindow {
-            start: 0,
-            len: cycles,
-        }];
+pub(crate) fn witness_windows(cycles: usize) -> Vec<CycleWindow> {
+    plan_witness_windows(cycles, device_count().max(1))
+}
+
+pub(crate) fn plan_committed_windows(
+    cycles: usize,
+    row_width: usize,
+    devices: usize,
+) -> Vec<CycleWindow> {
+    let canonical = plan_witness_windows(cycles, devices);
+    if row_width > 0
+        && canonical
+            .iter()
+            .all(|window| window.len.is_multiple_of(row_width))
+    {
+        return canonical;
+    }
+    whole_domain(cycles)
+}
+
+pub(crate) fn committed_windows(cycles: usize, row_width: usize) -> Vec<CycleWindow> {
+    plan_committed_windows(cycles, row_width, device_count().max(1))
+}
+
+pub(crate) fn plan_device_windows(
+    cycles: usize,
+    alignment: usize,
+    devices: usize,
+) -> Vec<CycleWindow> {
+    if devices < 2 || alignment == 0 || !cycles.is_multiple_of(alignment) {
+        return whole_domain(cycles);
     }
     let blocks = cycles / alignment;
     if blocks < devices {
-        return vec![CycleWindow {
-            start: 0,
-            len: cycles,
-        }];
+        return whole_domain(cycles);
     }
     let base = blocks / devices;
     let remainder = blocks % devices;
@@ -72,6 +93,10 @@ pub(crate) fn device_windows(cycles: usize, alignment: usize) -> Vec<CycleWindow
         start += len;
     }
     windows
+}
+
+pub(crate) fn device_windows(cycles: usize, alignment: usize) -> Vec<CycleWindow> {
+    plan_device_windows(cycles, alignment, device_count().max(1))
 }
 
 pub(crate) fn fan_out<T, E>(tasks: Vec<DeviceTask<'_, T, E>>) -> Result<Vec<T>, E>
@@ -117,4 +142,164 @@ where
         }
         outcome.map(|()| results)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        plan_committed_windows, plan_device_windows, plan_witness_windows, CycleWindow,
+        MIN_WITNESS_WINDOW,
+    };
+
+    const COUNTS: [usize; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 64];
+
+    fn covers(windows: &[CycleWindow], cycles: usize) {
+        let mut next = 0;
+        for window in windows {
+            assert_eq!(
+                window.start, next,
+                "the windows leave a gap or overlap at cycle {next}",
+            );
+            next = window.end();
+        }
+        assert_eq!(next, cycles, "the windows do not cover the cycle domain");
+    }
+
+    #[test]
+    fn a_witness_plan_splits_every_device_count_into_equal_power_of_two_windows() {
+        for log_t in [13usize, 16, 20, 22, 25] {
+            let cycles = 1usize << log_t;
+            for devices in COUNTS {
+                let windows = plan_witness_windows(cycles, devices);
+                covers(&windows, cycles);
+                assert!(
+                    windows.len() <= devices,
+                    "the plan for {devices} device(s) at 2^{log_t} asked for {} windows",
+                    windows.len(),
+                );
+                assert!(
+                    windows.len().is_power_of_two(),
+                    "the eq-table shard split needs a power-of-two window count, got {}",
+                    windows.len(),
+                );
+                for window in &windows {
+                    assert_eq!(
+                        window.len,
+                        cycles / windows.len(),
+                        "the windows are not an even split across {devices} device(s)",
+                    );
+                    assert!(
+                        window.len.is_power_of_two(),
+                        "a window of {} cycles cannot carry a cycle-variable binding",
+                        window.len,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_witness_plan_uses_the_largest_power_of_two_device_subset() {
+        let cycles = 1usize << 22;
+        for devices in COUNTS {
+            assert_eq!(
+                plan_witness_windows(cycles, devices).len(),
+                1usize << devices.ilog2(),
+                "{devices} device(s) did not fill the largest power-of-two subset available",
+            );
+        }
+    }
+
+    #[test]
+    fn a_witness_plan_declines_a_domain_too_small_or_unaligned_to_split() {
+        for devices in COUNTS {
+            let windows = 1usize << devices.ilog2();
+            let smallest = plan_witness_windows(windows * MIN_WITNESS_WINDOW / 2, devices);
+            assert_eq!(
+                smallest.len(),
+                1,
+                "{devices} device(s) split a domain below the {MIN_WITNESS_WINDOW}-cycle floor",
+            );
+            assert_eq!(
+                plan_witness_windows(3 * MIN_WITNESS_WINDOW * windows, devices).len(),
+                1,
+                "{devices} device(s) split a domain that is not a power of two",
+            );
+        }
+    }
+
+    #[test]
+    fn a_witness_window_carries_a_halo_on_every_boundary_but_the_last() {
+        let cycles = 1usize << 22;
+        for devices in COUNTS {
+            let windows = plan_witness_windows(cycles, devices);
+            let last = windows.len() - 1;
+            for (index, window) in windows.iter().enumerate() {
+                let resident = window.residency(cycles);
+                assert_eq!(resident.start, window.start);
+                assert_eq!(
+                    resident.len,
+                    window.len + usize::from(index != last),
+                    "window {index} of {} on {devices} device(s) has the wrong halo; Spartan's \
+                     R1CS columns read cycle t + 1",
+                    windows.len(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_committed_plan_matches_the_witness_plan_whenever_the_rows_divide_it() {
+        for log_t in [13usize, 16, 22] {
+            let cycles = 1usize << log_t;
+            for devices in COUNTS {
+                let witness = plan_witness_windows(cycles, devices);
+                for row_width in [1usize, 8, 64, 1 << 12] {
+                    let committed = plan_committed_windows(cycles, row_width, devices);
+                    covers(&committed, cycles);
+                    let aligned = witness
+                        .iter()
+                        .all(|window| window.len.is_multiple_of(row_width));
+                    assert_eq!(
+                        committed.len(),
+                        if aligned { witness.len() } else { 1 },
+                        "a {row_width}-column row over {devices} device(s) at 2^{log_t} neither                          followed the witness split nor fell back to the whole domain; the commit                          and the stage-8 opening must derive the SAME list from (cycles,                          row_width) or the opening misses every parked column",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_device_plan_splits_aligned_blocks_evenly_across_every_device_count() {
+        for alignment in [1usize, 8, 1 << 10] {
+            for blocks in [1usize, 5, 8, 12, 64] {
+                let cycles = blocks * alignment;
+                for devices in COUNTS {
+                    let windows = plan_device_windows(cycles, alignment, devices);
+                    covers(&windows, cycles);
+                    assert!(windows.len() <= devices.max(1));
+                    let mut counts: Vec<usize> = windows
+                        .iter()
+                        .map(|window| {
+                            assert!(
+                                window.len.is_multiple_of(alignment),
+                                "a window of {} cycles splits an alignment block",
+                                window.len,
+                            );
+                            window.len / alignment
+                        })
+                        .collect();
+                    counts.sort_unstable();
+                    let spread = counts.last().copied().unwrap_or_default()
+                        - counts.first().copied().unwrap_or_default();
+                    assert!(
+                        spread <= 1,
+                        "{blocks} block(s) over {devices} device(s) landed {spread} blocks apart, \
+                         so the resident set is not evenly split",
+                    );
+                }
+            }
+        }
+    }
 }

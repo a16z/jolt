@@ -13,7 +13,7 @@ use jolt_verifier::stages::stage3::outputs::SpartanShift;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::cuda::common::context::context_for;
-use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::prefix_suffix::PrefixSuffixWindow;
 use crate::cuda::witness::session_window_residency;
@@ -154,16 +154,9 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
             })?;
             let (trace, atoms) =
                 session_window_residency(device, session, witness, cycles, window)?;
-            let pc = windowed_trace_columns::<F>(
-                device,
-                session,
-                witness,
-                cycles,
-                window,
-                [0, 1, 0],
-                0,
-            )?
-            .pc;
+            let pc =
+                device_trace_columns::<F>(device, session, witness, cycles, window, [0, 1, 0], 0)?
+                    .pc;
             column_windows.push(PrefixSuffixWindow {
                 ordinal,
                 columns: ColumnSet::Field(columns::upload_from_device::<F>(

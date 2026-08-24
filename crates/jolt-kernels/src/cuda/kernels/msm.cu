@@ -1283,15 +1283,22 @@ extern "C" __global__ void msm_scatter_one_hot_kernel(const u64 *__restrict__ sr
 }
 
 extern "C" __global__ void msm_fold_rows_kernel(const u64 *__restrict__ table,
-                                                const u64 *__restrict__ left, unsigned int rows,
+                                                const u64 *__restrict__ left,
+                                                unsigned long long base, unsigned long long len,
+                                                unsigned int sigma, unsigned int rows,
                                                 unsigned int columns, u64 *__restrict__ out) {
     unsigned int column = blockIdx.x * blockDim.x + threadIdx.x;
     if (column >= columns) return;
     u64 acc[LIMBS] = {0, 0, 0, 0};
-    for (unsigned int row = 0; row < rows; row++) {
+    unsigned long long span = (unsigned long long)columns;
+    unsigned long long mask = span - 1ull;
+    unsigned long long first = ((unsigned long long)column + span - (base & mask)) & mask;
+    unsigned long long row = (base + first) >> sigma;
+    for (unsigned long long local = first; local < len; local += span, row++) {
+        if (row >= rows) break;
         u64 weight[LIMBS], value[LIMBS], term[LIMBS], sum[LIMBS];
-        load4(left + (unsigned long long)row * LIMBS, weight);
-        load4(table + ((unsigned long long)row * columns + column) * LIMBS, value);
+        load4(left + row * LIMBS, weight);
+        load4(table + local * LIMBS, value);
         fr_mul(weight, value, term);
         fr_add(acc, term, sum);
         for (int limb = 0; limb < LIMBS; limb++) acc[limb] = sum[limb];

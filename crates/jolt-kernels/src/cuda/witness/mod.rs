@@ -35,20 +35,25 @@ pub(crate) struct ResidentTrace {
 
 #[derive(Default)]
 pub(crate) struct ResidentTraces {
-    devices: Vec<Option<ResidentTrace>>,
+    devices: Vec<Vec<ResidentTrace>>,
 }
 
 impl ResidentTraces {
-    fn get(&self, ordinal: usize) -> Option<&ResidentTrace> {
-        self.devices.get(ordinal)?.as_ref()
+    fn get(&self, ordinal: usize, source: usize, window: &CycleWindow) -> Option<&ResidentTrace> {
+        self.devices.get(ordinal)?.iter().find(|resident| {
+            resident.source == source
+                && resident.base == window.start
+                && resident.cycles >= window.len
+        })
     }
 
     fn park(&mut self, ordinal: usize, resident: ResidentTrace) {
         if self.devices.len() <= ordinal {
-            self.devices.resize_with(ordinal + 1, || None);
+            self.devices.resize_with(ordinal + 1, Vec::new);
         }
         if let Some(slot) = self.devices.get_mut(ordinal) {
-            *slot = Some(resident);
+            slot.retain(|held| held.source == resident.source && held.base != resident.base);
+            slot.push(resident);
         }
     }
 }
@@ -71,6 +76,7 @@ impl allocative::Allocative for ResidentTraces {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn session_device_trace<F: Field>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
@@ -100,14 +106,9 @@ pub(crate) fn session_device_trace_window<F: Field>(
     let ordinal = context.ordinal();
     if let Some(resident) = session
         .state::<ResidentTraces>()
-        .and_then(|traces| traces.get(ordinal))
+        .and_then(|traces| traces.get(ordinal, identity, window))
     {
-        if resident.source == identity
-            && resident.cycles == window.len
-            && resident.base == window.start
-        {
-            return Ok(Arc::clone(&resident.trace));
-        }
+        return Ok(Arc::clone(&resident.trace));
     }
     let rows = witness.rows().ok_or(KernelError::Unsupported {
         reason: "the CUDA backend needs a slice-backed trace source to build its device residency",
@@ -158,12 +159,6 @@ pub(crate) fn session_window_residency<F: Field>(
     cycles: usize,
     window: &CycleWindow,
 ) -> Result<(Arc<DeviceTrace>, Arc<DeviceAtomColumns>), KernelError<F>> {
-    if window.start == 0 {
-        return Ok((
-            session_device_trace(context, session, witness, cycles)?,
-            session_atom_columns(context, session, witness, cycles)?,
-        ));
-    }
     let resident = window.residency(cycles);
     Ok((
         session_device_trace_window(context, session, witness, cycles, &resident)?,
@@ -171,6 +166,7 @@ pub(crate) fn session_window_residency<F: Field>(
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn session_atom_columns<F: Field>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
@@ -197,9 +193,10 @@ pub(crate) fn session_atom_columns_window<F: Field>(
     window: &CycleWindow,
 ) -> Result<Arc<DeviceAtomColumns>, KernelError<F>> {
     let trace = session_device_trace_window(context, session, witness, cycles, window)?;
+    let identity = witness_identity(witness);
     let resident = session
         .state::<ResidentTraces>()
-        .and_then(|traces| traces.get(context.ordinal()))
+        .and_then(|traces| traces.get(context.ordinal(), identity, window))
         .ok_or(KernelError::InvariantViolation {
             reason: "the device residency was parked without an atom-column cache",
         })?;

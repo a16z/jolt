@@ -117,9 +117,21 @@ pub fn warm_shared_witness<F: jolt_field::Field>(
     witness: &dyn jolt_witness::JoltWitnessPlane<F>,
     log_t: usize,
 ) -> Result<(), crate::KernelError<F>> {
-    let context = require_context()?;
-    let _ = self::witness::session_atom_columns(context, session, witness, 1usize << log_t)?;
-    context.stream().synchronize().map_err(CudaError::from)?;
+    let cycles = 1usize << log_t;
+    let _ = require_context::<F>()?;
+    for (ordinal, window) in self::common::devices::witness_windows(cycles)
+        .iter()
+        .enumerate()
+    {
+        let _device = common::context::enter_device(ordinal);
+        let device = common::context::context_for(ordinal).ok_or(
+            crate::KernelError::InvariantViolation {
+                reason: "a witness warm-up window names an absent device",
+            },
+        )?;
+        let _ = self::witness::session_window_residency(device, session, witness, cycles, window)?;
+        device.stream().synchronize().map_err(CudaError::from)?;
+    }
     Ok(())
 }
 

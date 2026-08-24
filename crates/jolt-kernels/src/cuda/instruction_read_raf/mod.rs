@@ -24,16 +24,16 @@ use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_witness::backend::cuda::FLAG_BIT_RAF;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::{session_atom_columns, session_device_trace, session_window_residency};
+use crate::cuda::witness::session_window_residency;
 
-use self::address_driver::DeviceAddressPhase;
-use self::address_phase::{flag_claims, DeviceRows};
+use self::address_driver::{AddressShard, DeviceAddressPhase};
+use self::address_phase::{flag_claims, DeviceRows, NO_TABLE};
 use self::cycle_handoff::{build_cycle_tables, HandoffInputs};
 use self::cycle_rounds::{CycleShard, DeviceCycleRounds};
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
-use crate::cuda::common::device_columns::{device_lookup_limbs, windowed_trace_columns};
+use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::{fan_out, witness_windows, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::{
@@ -281,74 +281,70 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             });
         }
         let cycles = 1usize << dimensions.log_t();
-        let bits = device_lookup_limbs::<F>(context, session, witness, cycles)?;
         let unsupported = || KernelError::Unsupported {
             reason: "the CUDA instruction read-RAF kernel supports only the BN254 scalar field",
         };
-        let trace = session_device_trace(context, session, witness, cycles)?;
-        let atoms = session_atom_columns(context, session, witness, cycles)?;
-        let raf_flags = trace
-            .flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)
-            .map_err(|_| unsupported())?;
-        let table_index = context.download_u32(&atoms.table_index)?;
-        let device_rows = Arc::new(
-            DeviceRows::from_device_columns(
-                bits,
-                context.clone_u32(&atoms.table_index)?,
-                raf_flags,
-                cycles,
-            )
-            .map_err(|_| unsupported())?,
-        );
+        let r_reduction = require_fr_slice(&inputs.points.lookup_output)
+            .map_err(|_| unsupported())?
+            .to_vec();
 
         let windows = witness_windows(cycles);
-        let mut row_shards = Vec::with_capacity(windows.len());
+        let shards = windows.len();
+        let mut row_shards = Vec::with_capacity(shards);
+        let mut address_shards = Vec::with_capacity(shards);
+        let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
         for (ordinal, window) in windows.iter().enumerate() {
-            if ordinal == 0 {
-                row_shards.push(RowShard {
-                    ordinal,
-                    rows: Arc::clone(&device_rows),
-                    cycles: window.len,
-                });
-                continue;
-            }
             let shard = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "an instruction read-RAF cycle window names an absent device",
             })?;
             let (trace, atoms) = session_window_residency(shard, session, witness, cycles, window)?;
             let limbs =
-                windowed_trace_columns::<F>(shard, session, witness, cycles, window, [1, 0, 0], 0)?
+                device_trace_columns::<F>(shard, session, witness, cycles, window, [1, 0, 0], 0)?
                     .lookup;
             let flags = trace
                 .flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)
                 .map_err(|_| unsupported())?;
+            let table_index = shard.download_u32(&atoms.table_index)?;
+            for &index in table_index
+                .get(..window.len)
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "an instruction read-RAF window has fewer table slots than cycles",
+                })?
+            {
+                if index != NO_TABLE {
+                    *used
+                        .get_mut(index as usize)
+                        .ok_or(KernelError::InvariantViolation {
+                            reason: "a stage-5 row selects an unknown lookup table",
+                        })? = true;
+                }
+            }
+            let rows = Arc::new(
+                DeviceRows::from_device_columns(
+                    limbs,
+                    shard.clone_u32(&atoms.table_index)?,
+                    flags,
+                    window.len,
+                )
+                .map_err(|_| unsupported())?,
+            );
             row_shards.push(RowShard {
                 ordinal,
-                rows: Arc::new(
-                    DeviceRows::from_device_columns(
-                        limbs,
-                        shard.clone_u32(&atoms.table_index)?,
-                        flags,
-                        window.len,
-                    )
-                    .map_err(|_| unsupported())?,
-                ),
+                rows: Arc::clone(&rows),
                 cycles: window.len,
+            });
+            address_shards.push(AddressShard {
+                ordinal,
+                rows,
+                u_evals: shard
+                    .eq_evals_shard(&r_reduction, ordinal, shards)
+                    .map_err(|_| unsupported())?,
             });
         }
 
-        let device = DeviceAddressPhase::with_rows(
-            context,
-            Arc::clone(&device_rows),
-            &table_index,
-            &inputs.points.lookup_output,
-            ADDRESS_BITS,
-        )
-        .map_err(|_| unsupported())?;
+        let device = DeviceAddressPhase::with_shards(context, address_shards, &used, ADDRESS_BITS)
+            .map_err(|_| unsupported())?;
 
-        let r_reduction = require_fr_slice(&inputs.points.lookup_output)
-            .map_err(|_| unsupported())?
-            .to_vec();
         Ok(Box::new(DeviceInstructionReadRaf {
             device: Some(device),
             cycle: None,

@@ -2302,19 +2302,63 @@ impl CudaKernelContext {
                 got: left.len(),
             });
         }
-        let device_left = self.upload(left)?;
+        self.fold_rows_window(table, 0, table.len(), left, sigma)
+    }
+
+    pub(crate) fn fold_rows_window(
+        &self,
+        table: &DeviceFrVec,
+        base: usize,
+        len: usize,
+        left: &[Fr],
+        sigma: usize,
+    ) -> Result<Vec<Fr>, CudaError> {
+        let columns = 1usize << sigma;
         let mut output = self.alloc(columns)?;
-        let rows_arg = Self::count_of(rows)?;
+        if len == 0 {
+            return output.to_host();
+        }
+        let reach = base
+            .checked_add(len)
+            .ok_or(CudaError::LengthMismatch {
+                expected: usize::MAX,
+                got: len,
+            })?
+            .div_ceil(columns);
+        if table.len() < len || left.len() < reach {
+            return Err(CudaError::LengthMismatch {
+                expected: reach,
+                got: left.len().min(table.len()),
+            });
+        }
+        let device_left = self.upload(left)?;
+        let base_arg = u64::try_from(base).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: base,
+        })?;
+        let len_arg = u64::try_from(len).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: len,
+        })?;
+        let sigma_arg = u32::try_from(sigma).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: sigma,
+        })?;
+        let rows_arg = Self::count_of(left.len())?;
         let columns_arg = Self::count_of(columns)?;
         let mut builder = self.stream().launch_builder(self.msm_fold_rows());
         let _ = builder.arg(table.limbs());
         let _ = builder.arg(device_left.limbs());
+        let _ = builder.arg(&base_arg);
+        let _ = builder.arg(&len_arg);
+        let _ = builder.arg(&sigma_arg);
         let _ = builder.arg(&rows_arg);
         let _ = builder.arg(&columns_arg);
         let _ = builder.arg(output.limbs_mut());
-        // SAFETY: thread `c < columns` reads `left[row]` and
-        // `table[row * columns + c]` for every `row < rows` — inside buffers of
-        // `rows` and `rows * columns` elements respectively — and writes only
+        // SAFETY: thread `c < columns` reads `table[i]` for `i` stepping by
+        // `columns` from its own residue class strictly below `len`, checked above
+        // against `table`'s length, and `left[row]` for `row = (base + i) >> sigma`
+        // only while `row < rows`, which is `left`'s own length. It writes only
         // `out[c]` of a `columns`-element fresh allocation distinct from both
         // inputs. Threads with `c >= columns` return before any access.
         let _ = unsafe { builder.launch(Self::launch_config(columns_arg)) }?;
@@ -2362,25 +2406,38 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    pub(crate) fn one_hot_fold_device(
+    pub(crate) fn one_hot_fold_window(
         &self,
         device_hot: &CudaSlice<u32>,
         cycles: usize,
+        base: usize,
+        len: usize,
         left: &[Fr],
         sigma: usize,
     ) -> Result<Vec<Fr>, CudaError> {
         let columns = 1usize << sigma;
         let mut output = self.alloc(columns)?;
-        if cycles == 0 {
+        if cycles == 0 || len == 0 {
             return output.to_host();
         }
-        if columns > cycles || device_hot.len() < cycles {
+        if columns > cycles
+            || base.checked_add(len).is_none_or(|end| end > cycles)
+            || device_hot.len() < len
+        {
             return Err(CudaError::LengthMismatch {
                 expected: columns,
                 got: cycles.min(device_hot.len()),
             });
         }
         let device_left = self.upload(left)?;
+        let base = u64::try_from(base).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: base,
+        })?;
+        let len_arg = u64::try_from(len).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: len,
+        })?;
         let cycles = u64::try_from(cycles).map_err(|_| CudaError::LengthMismatch {
             expected: u32::MAX as usize,
             got: cycles,
@@ -2402,12 +2459,15 @@ impl CudaKernelContext {
         let _ = builder.arg(device_hot);
         let _ = builder.arg(device_left.limbs());
         let _ = builder.arg(&cycles);
+        let _ = builder.arg(&base);
+        let _ = builder.arg(&len_arg);
         let _ = builder.arg(&columns_u64);
         let _ = builder.arg(&sigma_arg);
         let _ = builder.arg(&rows);
         let _ = builder.arg(output.limbs_mut());
-        // SAFETY: thread `c < columns` reads `hot[t]` for `t = c, c+columns, …`
-        // strictly below `cycles`, and `left[row]` only after bounds-checking
+        // SAFETY: thread `c < columns` reads `hot[i]` for `i` stepping by
+        // `columns` from its own residue class strictly below `len`, checked above
+        // against `hot`'s length, and `left[row]` only after bounds-checking
         // `row < rows` against `left`'s own length. It writes only `out[c]` of a
         // `columns`-element fresh allocation distinct from both inputs. Threads
         // with `c >= columns` return before any access.

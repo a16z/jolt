@@ -11,7 +11,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::context_for;
-use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
@@ -196,15 +196,8 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for CudaBackend 
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "an instruction RA virtualization window names an absent device",
             })?;
-            let columns = windowed_trace_columns::<F>(
-                device,
-                session,
-                witness,
-                cycles,
-                window,
-                [1, 0, 0],
-                0,
-            )?;
+            let columns =
+                device_trace_columns::<F>(device, session, witness, cycles, window, [1, 0, 0], 0)?;
             one_hot_shards.push(PackedRaShard {
                 ordinal,
                 one_hot: DevicePackedRa::new(

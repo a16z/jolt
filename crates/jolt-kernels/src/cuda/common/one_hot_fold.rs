@@ -7,7 +7,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::context::{context_for, CudaKernelContext, BLOCK};
 use super::device::{require_fr_slice, DeviceFrVec};
-use super::device_columns::{device_trace_columns, windowed_trace_columns, DeviceTraceColumns};
+use super::device_columns::{device_trace_columns, DeviceTraceColumns};
 use super::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
 use super::error::CudaError;
 use crate::{KernelError, ProofSession};
@@ -68,13 +68,9 @@ impl OneHotShards {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a one-hot cycle-fold window names an absent device",
             })?;
-            let raw = if ordinal == 0 {
-                device_trace_columns::<F>(device, session, witness, cycles, families, addresses)?
-            } else {
-                windowed_trace_columns::<F>(
-                    device, session, witness, cycles, window, families, addresses,
-                )?
-            };
+            let raw = device_trace_columns::<F>(
+                device, session, witness, cycles, window, families, addresses,
+            )?;
             columns.push(DeviceOneHotColumns::from_device(
                 raw, families, chunk_bits, window.len,
             )?);

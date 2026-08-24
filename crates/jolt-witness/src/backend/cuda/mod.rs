@@ -92,10 +92,9 @@ pub struct NarrowColumn {
     pub first: u64,
 }
 
-#[derive(Clone, Copy)]
 pub enum HotSource<'a> {
-    Interleaved(&'a cudarc::driver::CudaSlice<u64>),
-    Word(&'a cudarc::driver::CudaSlice<u32>),
+    Interleaved(cudarc::driver::CudaView<'a, u64>),
+    Word(cudarc::driver::CudaView<'a, u32>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use cudarc::driver::CudaSlice;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::Field;
+use jolt_witness::backend::cuda::DeviceTrace;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -21,7 +22,7 @@ use super::context::CudaKernelContext;
 use super::device::{DeviceFrVec, LIMBS};
 use super::pack::COLD;
 use crate::cuda::common::devices::CycleWindow;
-use crate::cuda::witness::{session_device_trace, session_device_trace_window};
+use crate::cuda::witness::session_device_trace_window;
 use crate::{KernelError, ProofSession};
 
 pub(crate) const ANY_SPAN: usize = usize::MAX;
@@ -185,6 +186,22 @@ pub(crate) fn park_device_column<S: ?Sized, T: DeviceBytes>(
     device_columns_for(session, source).put(key, window.len, span, value);
 }
 
+pub(crate) fn peek_device_column<S: ?Sized, T: DeviceBytes>(
+    session: &mut ProofSession,
+    source: &S,
+    ordinal: usize,
+    column: DeviceColumn,
+    window: &CycleWindow,
+    required_span: usize,
+) -> Option<Arc<T>> {
+    let key = ColumnKey {
+        ordinal,
+        column,
+        base: window.start,
+    };
+    device_columns_for(session, source).get::<T>(key, window.len, required_span)
+}
+
 pub(crate) fn device_column<S, T, E>(
     session: &mut ProofSession,
     source: &S,
@@ -253,26 +270,43 @@ fn live_span(words: &[u32]) -> usize {
     highest.map_or(NO_SPAN, |highest| highest as usize + 1)
 }
 
+fn resident_window<F>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<(Arc<DeviceTrace>, CycleWindow), KernelError<F>>
+where
+    F: Field,
+{
+    let trace = session_device_trace_window(context, session, witness, cycles, window)?;
+    let resident = CycleWindow {
+        start: window.start,
+        len: trace.cycles(),
+    };
+    Ok((trace, resident))
+}
+
 pub(crate) fn device_lookup_limbs<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
+    window: &CycleWindow,
 ) -> Result<Arc<CudaSlice<u64>>, KernelError<F>>
 where
     F: Field,
 {
+    let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
     device_column(
         session,
         witness,
         context.ordinal(),
         DeviceColumn::LookupIndexLimbs,
-        &whole_domain(cycles),
+        &resident,
         ANY_SPAN,
-        |session| {
-            let trace = session_device_trace(context, session, witness, cycles)?;
-            Ok((trace.lookup_index_limbs()?, NO_SPAN))
-        },
+        |_| Ok((trace.lookup_index_limbs()?, NO_SPAN)),
     )
 }
 
@@ -281,21 +315,20 @@ pub(crate) fn device_pc_words<F>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
+    window: &CycleWindow,
 ) -> Result<Arc<CudaSlice<u32>>, KernelError<F>>
 where
     F: Field,
 {
+    let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
     device_column(
         session,
         witness,
         context.ordinal(),
         DeviceColumn::MappedPcWord,
-        &whole_domain(cycles),
+        &resident,
         ANY_SPAN,
-        |session| {
-            let trace = session_device_trace(context, session, witness, cycles)?;
-            Ok((trace.mapped_pc_words()?, NO_SPAN))
-        },
+        |_| Ok((trace.mapped_pc_words()?, NO_SPAN)),
     )
 }
 
@@ -304,94 +337,22 @@ pub(crate) fn device_ram_words<F>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
+    window: &CycleWindow,
     addresses: usize,
 ) -> Result<Arc<CudaSlice<u32>>, KernelError<F>>
 where
     F: Field,
 {
+    let (trace, resident) = resident_window(context, session, witness, cycles, window)?;
     device_column(
         session,
         witness,
         context.ordinal(),
         DeviceColumn::RemappedRamWord,
-        &whole_domain(cycles),
+        &resident,
         addresses,
-        |session| {
-            let trace = session_device_trace(context, session, witness, cycles)?;
-            Ok(trace.remapped_ram_words(addresses)?)
-        },
+        |_| Ok(trace.remapped_ram_words(addresses)?),
     )
-}
-
-pub(crate) fn windowed_trace_columns<F>(
-    context: &CudaKernelContext,
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-    window: &CycleWindow,
-    families: [usize; 3],
-    addresses: usize,
-) -> Result<DeviceTraceColumns, KernelError<F>>
-where
-    F: Field,
-{
-    if window.start == 0 {
-        return device_trace_columns(context, session, witness, cycles, families, addresses);
-    }
-    let residency = window.residency(cycles);
-    let ordinal = context.ordinal();
-    let lookup = if families[0] > 0 {
-        device_column::<_, _, KernelError<F>>(
-            session,
-            witness,
-            ordinal,
-            DeviceColumn::LookupIndexLimbs,
-            &residency,
-            ANY_SPAN,
-            |session| {
-                let trace =
-                    session_device_trace_window(context, session, witness, cycles, &residency)?;
-                Ok((trace.lookup_index_limbs()?, NO_SPAN))
-            },
-        )?
-    } else {
-        Arc::new(context.alloc_u64(0)?)
-    };
-    let pc = if families[1] > 0 {
-        device_column::<_, _, KernelError<F>>(
-            session,
-            witness,
-            ordinal,
-            DeviceColumn::MappedPcWord,
-            &residency,
-            ANY_SPAN,
-            |session| {
-                let trace =
-                    session_device_trace_window(context, session, witness, cycles, &residency)?;
-                Ok((trace.mapped_pc_words()?, NO_SPAN))
-            },
-        )?
-    } else {
-        Arc::new(context.alloc_u32(0)?)
-    };
-    let ram = if families[2] > 0 {
-        device_column::<_, _, KernelError<F>>(
-            session,
-            witness,
-            ordinal,
-            DeviceColumn::RemappedRamWord,
-            &residency,
-            addresses,
-            |session| {
-                let trace =
-                    session_device_trace_window(context, session, witness, cycles, &residency)?;
-                Ok(trace.remapped_ram_words(addresses)?)
-            },
-        )?
-    } else {
-        Arc::new(context.alloc_u32(0)?)
-    };
-    Ok(DeviceTraceColumns { lookup, pc, ram })
 }
 
 pub(crate) fn device_trace_columns<F>(
@@ -399,24 +360,26 @@ pub(crate) fn device_trace_columns<F>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
+    window: &CycleWindow,
     families: [usize; 3],
     ram_addresses: usize,
 ) -> Result<DeviceTraceColumns, KernelError<F>>
 where
     F: Field,
 {
+    let resident = window.residency(cycles);
     let lookup = if families[0] > 0 {
-        device_lookup_limbs::<F>(context, session, witness, cycles)?
+        device_lookup_limbs::<F>(context, session, witness, cycles, &resident)?
     } else {
         Arc::new(context.alloc_u64(0)?)
     };
     let pc = if families[1] > 0 {
-        device_pc_words::<F>(context, session, witness, cycles)?
+        device_pc_words::<F>(context, session, witness, cycles, &resident)?
     } else {
         Arc::new(context.alloc_u32(0)?)
     };
     let ram = if families[2] > 0 {
-        device_ram_words::<F>(context, session, witness, cycles, ram_addresses)?
+        device_ram_words::<F>(context, session, witness, cycles, &resident, ram_addresses)?
     } else {
         Arc::new(context.alloc_u32(0)?)
     };
@@ -764,6 +727,7 @@ mod tests {
                 &mut session,
                 witness,
                 cycles,
+                &whole_domain(cycles),
                 [1, 1, 1],
                 ANY_SPAN,
             )
@@ -807,6 +771,7 @@ mod tests {
                 &mut session,
                 witness,
                 cycles,
+                &whole_domain(cycles),
                 [0, 1, 0],
                 ANY_SPAN,
             )

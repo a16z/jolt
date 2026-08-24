@@ -9,13 +9,16 @@ use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
 use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 
-use super::common::context::CudaKernelContext;
+use super::common::context::{context_for, CudaKernelContext};
 use super::common::device::{fr_into, fr_vec_into, require_fr_slice, DeviceFrVec};
-use super::common::device_columns::{device_column, whole_domain, DeviceColumn};
+use super::common::device_columns::{
+    device_column, peek_device_column, whole_domain, DeviceColumn,
+};
+use super::common::devices::{committed_windows, fan_out, CycleWindow, DeviceTask};
 use super::common::error::CudaError;
 use super::{require_context, CudaBackend};
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
-use crate::cuda::witness::{collect_rows, session_atom_columns};
+use crate::cuda::witness::{collect_rows, session_atom_columns_window};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::reference::commitment::column_kinds;
 use crate::reference::views::dense_view;
@@ -36,13 +39,24 @@ enum JointSource<F> {
         plan: EmbedPlan,
     },
     SparseOneHot {
-        hot: Arc<CudaSlice<u32>>,
+        shards: Vec<HotShard>,
         cycles: usize,
     },
     DeviceDense {
-        column: DeviceFrVec,
+        shards: Vec<DenseShard>,
         plan: EmbedPlan,
     },
+}
+
+pub(crate) struct DenseShard {
+    ordinal: usize,
+    base: usize,
+    len: usize,
+    column: DeviceFrVec,
+}
+
+fn dense_span(shards: &[DenseShard]) -> usize {
+    shards.iter().map(|shard| shard.len).sum()
 }
 
 struct JointPolynomial<F> {
@@ -57,16 +71,22 @@ impl<F: Field> JointPolynomial<F> {
             tracing::info_span!("cuda_opening_embed", vars = self.grid.total_vars).entered();
         let domain = 1usize << self.grid.total_vars;
         let (source, plan) = match &self.source {
-            JointSource::SparseOneHot { hot, cycles } => {
-                return self.context.one_hot_embed_device(hot, *cycles, domain)
+            JointSource::SparseOneHot { shards, cycles } => {
+                return self.one_hot_embed(shards, *cycles, domain)
             }
-            JointSource::DeviceDense { column, plan } => match *plan {
-                EmbedPlan::ZeroExtend if column.len() == domain => return column.try_clone(),
-                EmbedPlan::ZeroExtend => return self.context.zero_extend(column, domain),
+            JointSource::DeviceDense { shards, plan } => match *plan {
+                EmbedPlan::ZeroExtend if dense_span(shards) == domain => {
+                    return self.gather_dense(shards)
+                }
+                EmbedPlan::ZeroExtend => {
+                    let column = self.gather_dense(shards)?;
+                    return self.context.zero_extend(&column, domain);
+                }
                 EmbedPlan::AddressMajorDense => {
+                    let column = self.gather_dense(shards)?;
                     return self
                         .context
-                        .scatter_strided(column, self.grid.cycle_stride(), domain)
+                        .scatter_strided(&column, self.grid.cycle_stride(), domain);
                 }
                 _ => {
                     return Err(CudaError::InvariantViolation {
@@ -110,18 +130,200 @@ impl<F: Field> JointPolynomial<F> {
         })
     }
 
+    fn gather_dense(&self, shards: &[DenseShard]) -> Result<DeviceFrVec, CudaError> {
+        if let [shard] = shards {
+            if shard.base == 0 {
+                return shard.column.try_clone();
+            }
+        }
+        let zero = <jolt_field::Fr as jolt_field::FromPrimitiveInt>::from_u64(0);
+        let span = dense_span(shards);
+        let mut column = vec![zero; span];
+        for shard in shards {
+            let part = shard.column.to_host()?;
+            let part = part.get(..shard.len).ok_or(CudaError::LengthMismatch {
+                expected: shard.len,
+                got: part.len(),
+            })?;
+            let slot = column.get_mut(shard.base..shard.base + shard.len).ok_or(
+                CudaError::LengthMismatch {
+                    expected: span,
+                    got: shard.base + shard.len,
+                },
+            )?;
+            slot.copy_from_slice(part);
+        }
+        self.context.upload(&column)
+    }
+
+    fn dense_fold(
+        shards: &[DenseShard],
+        left: &[jolt_field::Fr],
+        sigma: usize,
+    ) -> Result<Vec<jolt_field::Fr>, CudaError> {
+        let absent = || CudaError::InvariantViolation {
+            reason: "a committed increment window names an absent device",
+        };
+        if let [shard] = shards {
+            let device = context_for(shard.ordinal).ok_or_else(absent)?;
+            return device.fold_rows_window(&shard.column, shard.base, shard.len, left, sigma);
+        }
+        let tasks: Vec<DeviceTask<'_, Vec<jolt_field::Fr>, CudaError>> = shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<jolt_field::Fr>, CudaError> = Box::new(move || {
+                    let device = context_for(shard.ordinal).ok_or_else(absent)?;
+                    tracing::info_span!("cuda_opening_prefix_fold_window", device = shard.ordinal)
+                        .in_scope(|| {
+                            device.fold_rows_window(
+                                &shard.column,
+                                shard.base,
+                                shard.len,
+                                left,
+                                sigma,
+                            )
+                        })
+                });
+                task
+            })
+            .collect();
+        let mut parts = fan_out(tasks)?.into_iter();
+        let mut total = parts.next().ok_or(CudaError::InvariantViolation {
+            reason: "the committed increment fold produced no window",
+        })?;
+        for part in parts {
+            if part.len() != total.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: total.len(),
+                    got: part.len(),
+                });
+            }
+            for (slot, value) in total.iter_mut().zip(&part) {
+                *slot += *value;
+            }
+        }
+        Ok(total)
+    }
+
+    fn one_hot_embed(
+        &self,
+        shards: &[HotShard],
+        cycles: usize,
+        domain: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        if let [shard] = shards {
+            if shard.base == 0 && shard.len >= cycles {
+                return self
+                    .context
+                    .one_hot_embed_device(&shard.hot, cycles, domain);
+            }
+        }
+        let mut hot = vec![NO_HOT; cycles];
+        for shard in shards {
+            let device = context_for(shard.ordinal).ok_or(CudaError::InvariantViolation {
+                reason: "a committed one-hot window names an absent device",
+            })?;
+            let part = device.download_u32(&shard.hot)?;
+            let part = part.get(..shard.len).ok_or(CudaError::LengthMismatch {
+                expected: shard.len,
+                got: part.len(),
+            })?;
+            let slot = hot.get_mut(shard.base..shard.base + shard.len).ok_or(
+                CudaError::LengthMismatch {
+                    expected: cycles,
+                    got: shard.base + shard.len,
+                },
+            )?;
+            slot.copy_from_slice(part);
+        }
+        let device = self.context.upload_u32_slice(&hot)?;
+        self.context.one_hot_embed_device(&device, cycles, domain)
+    }
+
+    fn one_hot_fold(
+        shards: &[HotShard],
+        cycles: usize,
+        left: &[jolt_field::Fr],
+        sigma: usize,
+    ) -> Result<Vec<jolt_field::Fr>, CudaError> {
+        let absent = || CudaError::InvariantViolation {
+            reason: "a committed one-hot window names an absent device",
+        };
+        if let [shard] = shards {
+            let device = context_for(shard.ordinal).ok_or_else(absent)?;
+            return device
+                .one_hot_fold_window(&shard.hot, cycles, shard.base, shard.len, left, sigma);
+        }
+        let tasks: Vec<DeviceTask<'_, Vec<jolt_field::Fr>, CudaError>> = shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, Vec<jolt_field::Fr>, CudaError> = Box::new(move || {
+                    let device = context_for(shard.ordinal).ok_or_else(absent)?;
+                    tracing::info_span!("cuda_opening_sparse_fold_window", device = shard.ordinal)
+                        .in_scope(|| {
+                            device.one_hot_fold_window(
+                                &shard.hot, cycles, shard.base, shard.len, left, sigma,
+                            )
+                        })
+                });
+                task
+            })
+            .collect();
+        let mut parts = fan_out(tasks)?.into_iter();
+        let mut total = parts.next().ok_or(CudaError::InvariantViolation {
+            reason: "the committed one-hot fold produced no window",
+        })?;
+        for part in parts {
+            if part.len() != total.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: total.len(),
+                    got: part.len(),
+                });
+            }
+            for (slot, value) in total.iter_mut().zip(&part) {
+                *slot += *value;
+            }
+        }
+        Ok(total)
+    }
+
     fn fold_rows_device(&self, left: &[F], sigma: usize) -> Result<Vec<F>, CudaError> {
-        if let JointSource::SparseOneHot { hot, cycles } = &self.source {
+        if let JointSource::SparseOneHot { shards, cycles } = &self.source {
             if sigma <= self.grid.log_t {
-                let folded = tracing::info_span!("cuda_opening_sparse_fold", sigma, cycles)
-                    .in_scope(|| {
-                        self.context.one_hot_fold_device(
-                            hot,
-                            *cycles,
-                            require_fr_slice(left)?,
-                            sigma,
-                        )
+                let folded = tracing::info_span!(
+                    "cuda_opening_sparse_fold",
+                    sigma,
+                    cycles,
+                    windows = shards.len()
+                )
+                .in_scope(|| Self::one_hot_fold(shards, *cycles, require_fr_slice(left)?, sigma))?;
+                return fr_vec_into(folded).ok_or(CudaError::NotImplemented {
+                    kernel: "CUDA kernels support only the BN254 scalar field",
+                });
+            }
+        }
+        if let JointSource::DeviceDense {
+            shards,
+            plan: EmbedPlan::ZeroExtend,
+        } = &self.source
+        {
+            let columns = 1usize << sigma;
+            let span = dense_span(shards);
+            if span.is_multiple_of(columns) && left.len() >= span / columns {
+                let head = left
+                    .get(..span / columns)
+                    .ok_or(CudaError::LengthMismatch {
+                        expected: span / columns,
+                        got: left.len(),
                     })?;
+                let folded = tracing::info_span!(
+                    "cuda_opening_prefix_fold",
+                    sigma,
+                    len = span,
+                    windows = shards.len(),
+                    domain = 1usize << self.grid.total_vars
+                )
+                .in_scope(|| Self::dense_fold(shards, require_fr_slice(head)?, sigma))?;
                 return fr_vec_into(folded).ok_or(CudaError::NotImplemented {
                     kernel: "CUDA kernels support only the BN254 scalar field",
                 });
@@ -163,10 +365,6 @@ impl<F: Field> JointPolynomial<F> {
     fn zero_extended_source(&self) -> Result<Option<DeviceFrVec>, CudaError> {
         let domain = 1usize << self.grid.total_vars;
         let column = match &self.source {
-            JointSource::DeviceDense {
-                column,
-                plan: EmbedPlan::ZeroExtend,
-            } => column.try_clone()?,
             JointSource::Dense {
                 table,
                 plan: EmbedPlan::ZeroExtend,
@@ -289,13 +487,50 @@ fn is_trace_derived(polynomial: JoltCommittedPolynomial) -> bool {
         )
 }
 
+pub(crate) struct HotShard {
+    ordinal: usize,
+    base: usize,
+    len: usize,
+    hot: Arc<CudaSlice<u32>>,
+}
+
+fn parked_hot_shards<S: ?Sized>(
+    session: &mut ProofSession,
+    witness: &S,
+    id: JoltCommittedPolynomial,
+    windows: &[CycleWindow],
+    one_hot_k: usize,
+) -> Option<Vec<HotShard>> {
+    if windows.len() < 2 {
+        return None;
+    }
+    let mut shards = Vec::with_capacity(windows.len());
+    for (ordinal, window) in windows.iter().enumerate() {
+        let hot = peek_device_column::<S, CudaSlice<u32>>(
+            session,
+            witness,
+            ordinal,
+            DeviceColumn::CommittedHot(id),
+            window,
+            one_hot_k,
+        )?;
+        shards.push(HotShard {
+            ordinal,
+            base: window.start,
+            len: window.len,
+            hot,
+        });
+    }
+    Some(shards)
+}
+
 pub(crate) fn sparse_hot_columns<F: Field>(
     context: &'static CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     polynomials: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
-) -> Result<BTreeMap<JoltCommittedPolynomial, Arc<CudaSlice<u32>>>, KernelError<F>> {
+) -> Result<BTreeMap<JoltCommittedPolynomial, Vec<HotShard>>, KernelError<F>> {
     let cycles = 1usize << grid.log_t;
     if grid.order != TracePolynomialOrder::CycleMajor {
         return Ok(BTreeMap::new());
@@ -314,9 +549,14 @@ pub(crate) fn sparse_hot_columns<F: Field>(
         .filter(|&id| is_trace_derived(id))
         .collect();
     let kinds = column_kinds::<F>(&trace_ids, grid)?;
+    let windows = committed_windows(cycles, grid.num_columns());
     let mut sparse = BTreeMap::new();
     for (&id, &kind) in trace_ids.iter().zip(&kinds) {
         if !kind.is_one_hot() {
+            continue;
+        }
+        if let Some(shards) = parked_hot_shards(session, witness, id, &windows, one_hot_k) {
+            let _ = sparse.insert(id, shards);
             continue;
         }
         let hot = device_column(
@@ -328,7 +568,15 @@ pub(crate) fn sparse_hot_columns<F: Field>(
             one_hot_k,
             |_| walk_hot_column::<F>(context, witness, kind, cycles, one_hot_k),
         )?;
-        let _ = sparse.insert(id, hot);
+        let _ = sparse.insert(
+            id,
+            vec![HotShard {
+                ordinal: context.ordinal(),
+                base: 0,
+                len: cycles,
+                hot,
+            }],
+        );
     }
     Ok(sparse)
 }
@@ -414,12 +662,11 @@ fn increment_plan<F: Field>(
 }
 
 fn increment_columns<F: Field>(
-    context: &'static CudaKernelContext,
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     polynomials: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
-) -> Result<BTreeMap<JoltCommittedPolynomial, DeviceFrVec>, KernelError<F>> {
+) -> Result<BTreeMap<JoltCommittedPolynomial, Vec<DenseShard>>, KernelError<F>> {
     let wanted: Vec<JoltCommittedPolynomial> = polynomials
         .iter()
         .copied()
@@ -434,14 +681,29 @@ fn increment_columns<F: Field>(
         return Ok(BTreeMap::new());
     }
     let cycles = 1usize << grid.log_t;
-    let atoms = session_atom_columns(context, session, witness, cycles)?;
-    let mut built = BTreeMap::new();
-    for id in wanted {
-        let source = match id {
-            JoltCommittedPolynomial::RdInc => &atoms.rd_inc,
-            _ => &atoms.ram_inc,
-        };
-        let _ = built.insert(id, context.i128_to_montgomery_device(source, cycles)?);
+    let windows = if grid.order == TracePolynomialOrder::CycleMajor {
+        committed_windows(cycles, grid.num_columns())
+    } else {
+        vec![whole_domain(cycles)]
+    };
+    let mut built: BTreeMap<JoltCommittedPolynomial, Vec<DenseShard>> = BTreeMap::new();
+    for (ordinal, window) in windows.iter().enumerate() {
+        let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "a committed increment window names an absent device",
+        })?;
+        let atoms = session_atom_columns_window(device, session, witness, cycles, window)?;
+        for &id in &wanted {
+            let source = match id {
+                JoltCommittedPolynomial::RdInc => &atoms.rd_inc,
+                _ => &atoms.ram_inc,
+            };
+            built.entry(id).or_default().push(DenseShard {
+                ordinal,
+                base: window.start,
+                len: window.len,
+                column: device.i128_to_montgomery_device(source, window.len)?,
+            });
+        }
     }
     Ok(built)
 }
@@ -460,15 +722,15 @@ impl<F: Field> JointOpeningPolynomials<F> for CudaBackend {
         let mut sparse = tracing::info_span!("cuda_opening_sparse_plan")
             .in_scope(|| sparse_hot_columns::<F>(context, session, witness, polynomials, grid))?;
         let mut increments = tracing::info_span!("cuda_opening_increment_plan")
-            .in_scope(|| increment_columns::<F>(context, session, witness, polynomials, grid))?;
+            .in_scope(|| increment_columns::<F>(session, witness, polynomials, grid))?;
         polynomials
             .iter()
             .map(|&polynomial| {
-                let source = if let Some(hot) = sparse.remove(&polynomial) {
-                    JointSource::SparseOneHot { hot, cycles }
-                } else if let Some(column) = increments.remove(&polynomial) {
+                let source = if let Some(shards) = sparse.remove(&polynomial) {
+                    JointSource::SparseOneHot { shards, cycles }
+                } else if let Some(shards) = increments.remove(&polynomial) {
                     JointSource::DeviceDense {
-                        column,
+                        shards,
                         plan: increment_plan::<F>(polynomial, cycles, grid)?,
                     }
                 } else {
@@ -598,6 +860,19 @@ mod tests {
         dense: Vec<Fr>,
         folded: Vec<Fr>,
         evaluation: Fr,
+    }
+
+    fn hot_addresses(shards: &[super::HotShard]) -> Vec<u32> {
+        let mut hot = Vec::new();
+        for shard in shards {
+            let device = crate::cuda::common::context::context_for(shard.ordinal)
+                .expect("a shard names a present device");
+            let part = device
+                .download_u32(&shard.hot)
+                .expect("download hot column");
+            hot.extend_from_slice(&part[..shard.len]);
+        }
+        hot
     }
 
     fn probe(order: TracePolynomialOrder, log_t: usize, seed: u64) -> OpeningProbe {
@@ -762,7 +1037,7 @@ mod tests {
             if sigma > log_t {
                 assert!(
                     context
-                        .one_hot_fold_device(&device_hot, cycles, &left, sigma)
+                        .one_hot_fold_window(&device_hot, cycles, 0, cycles, &left, sigma)
                         .is_err(),
                     "geometry {index} (sigma {sigma} > log_T {log_t}): the sparse fold accepted a \
                      geometry whose column index depends on the address, where its \
@@ -770,7 +1045,7 @@ mod tests {
                 );
             } else {
                 let got = context
-                    .one_hot_fold_device(&device_hot, cycles, &left, sigma)
+                    .one_hot_fold_window(&device_hot, cycles, 0, cycles, &left, sigma)
                     .expect("sparse fold");
                 assert_eq!(
                     got, expected,
@@ -789,6 +1064,127 @@ mod tests {
                 "geometry {index}: the sparse embed diverged from the dense grid",
             );
         }
+    }
+
+    #[test]
+    fn prefix_fold_windows_sum_to_the_whole_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let mut exercised = 0usize;
+        for (index, &(log_t, total_vars, _)) in FOLD_GEOMETRIES.iter().enumerate() {
+            let cycles = 1usize << log_t;
+            let domain = 1usize << total_vars;
+            let sigma = total_vars.div_ceil(2);
+            let columns = 1usize << sigma;
+            if cycles >= domain || !cycles.is_multiple_of(columns) {
+                continue;
+            }
+            let rows = cycles / columns;
+            let column: Vec<Fr> = (0..cycles)
+                .map(|cycle| fr((index as u64 + 3) * 6_151 + cycle as u64 + 5))
+                .collect();
+            let left: Vec<Fr> = (0..rows)
+                .map(|row| fr((index as u64 + 2) * 1_301 + row as u64 + 13))
+                .collect();
+            let device_column = context.upload(&column).expect("upload the whole column");
+            let expected = context
+                .fold_rows(&device_column, &left, sigma)
+                .expect("whole-domain prefix fold");
+            assert!(
+                expected.iter().any(|value| *value != Fr::from_u64(0)),
+                "geometry {index}: the whole-domain fold is identically zero",
+            );
+
+            for windows in [2usize, 4, 8] {
+                if cycles < windows {
+                    continue;
+                }
+                exercised += 1;
+                let len = cycles / windows;
+                let mut got = vec![Fr::from_u64(0); columns];
+                for window in 0..windows {
+                    let base = window * len;
+                    let shard = context
+                        .upload(&column[base..base + len])
+                        .expect("upload window column");
+                    let part = context
+                        .fold_rows_window(&shard, base, len, &left, sigma)
+                        .expect("window prefix fold");
+                    for (total, value) in got.iter_mut().zip(&part) {
+                        *total += *value;
+                    }
+                }
+                assert_eq!(
+                    got, expected,
+                    "geometry {index} (log_T {log_t}, sigma {sigma}, {windows} windows of {len} \
+                     cycles): the windowed folds do not sum to the whole-domain fold",
+                );
+            }
+        }
+        assert!(
+            exercised > 0,
+            "no fold geometry was split, so the windowed prefix fold was never run",
+        );
+    }
+
+    #[test]
+    fn one_hot_fold_windows_sum_to_the_whole_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let mut exercised = 0usize;
+        for (index, &(log_t, total_vars, log_k_chunk)) in FOLD_GEOMETRIES.iter().enumerate() {
+            let cycles = 1usize << log_t;
+            let sigma = total_vars.div_ceil(2);
+            if sigma > log_t {
+                continue;
+            }
+            let one_hot_k = 1usize << log_k_chunk;
+            let rows = (1usize << total_vars) >> sigma;
+            let hot = synthetic_hot(cycles, one_hot_k, 41 + index as u64);
+            let left: Vec<Fr> = (0..rows)
+                .map(|row| fr((index as u64 + 5) * 977 + row as u64 + 11))
+                .collect();
+            let device_hot = context.upload_u32_slice(&hot).expect("upload hot column");
+            let expected = context
+                .one_hot_fold_window(&device_hot, cycles, 0, cycles, &left, sigma)
+                .expect("whole-domain sparse fold");
+            assert!(
+                expected.iter().any(|value| *value != Fr::from_u64(0)),
+                "geometry {index}: the whole-domain fold is identically zero",
+            );
+
+            for windows in [2usize, 4, 8] {
+                if cycles < windows {
+                    continue;
+                }
+                exercised += 1;
+                let len = cycles / windows;
+                let mut got = vec![Fr::from_u64(0); 1usize << sigma];
+                for window in 0..windows {
+                    let base = window * len;
+                    let shard = context
+                        .upload_u32_slice(&hot[base..base + len])
+                        .expect("upload window column");
+                    let part = context
+                        .one_hot_fold_window(&shard, cycles, base, len, &left, sigma)
+                        .expect("window sparse fold");
+                    for (total, value) in got.iter_mut().zip(&part) {
+                        *total += *value;
+                    }
+                }
+                assert_eq!(
+                    got, expected,
+                    "geometry {index} (log_T {log_t}, sigma {sigma}, {windows} windows of {len} \
+                     cycles): the windowed folds do not sum to the whole-domain fold",
+                );
+            }
+        }
+        assert!(
+            exercised > 0,
+            "no fold geometry was split, so the windowed fold was never run",
+        );
     }
 
     #[test]
@@ -849,10 +1245,8 @@ mod tests {
                          one-hot polynomials",
                     );
                     let mut cold_cycle_seen = false;
-                    for (id, device_hot) in &sparse_warm {
-                        let hot = context
-                            .download_u32(device_hot)
-                            .expect("download hot column");
+                    for (id, shards) in &sparse_warm {
+                        let hot = hot_addresses(shards);
                         assert_eq!(
                             hot.len(),
                             1usize << log_t,
@@ -1013,14 +1407,14 @@ mod tests {
             let rows = collect_rows::<Fr, CommittedColumnsWitness>(witness, 1usize << log_t)
                 .expect("oracle rows");
             for (&id, &kind) in trace_derived.iter().zip(&kinds) {
-                let Some(device_hot) = served.get(&id) else {
+                let Some(shards) = served.get(&id) else {
                     assert!(
                         !kind.is_one_hot(),
                         "{id:?} is one-hot but the plan has no column for it",
                     );
                     continue;
                 };
-                let hot = context.download_u32(device_hot).expect("download");
+                let hot = hot_addresses(shards);
                 let expected: Vec<u32> = rows
                     .iter()
                     .map(|row| kind.hot_address(row).map_or(NO_HOT, |a| a as u32))
@@ -1063,12 +1457,21 @@ mod tests {
                 one_hot.len(),
                 "the second plan lost a column the first one built",
             );
-            for (&id, hot) in &second {
-                assert!(
-                    Arc::ptr_eq(hot, &first[&id]),
-                    "{id:?}: the second plan holds a different device allocation, so it \
-                     re-uploaded a column that was already resident",
+            for (&id, shards) in &second {
+                let held = &first[&id];
+                assert_eq!(
+                    shards.len(),
+                    held.len(),
+                    "{id:?}: the two plans disagree on the window count",
                 );
+                for (shard, first) in shards.iter().zip(held) {
+                    assert!(
+                        Arc::ptr_eq(&shard.hot, &first.hot),
+                        "{id:?} window at {}: the second plan holds a different device \
+                         allocation, so it re-uploaded a column that was already resident",
+                        shard.base,
+                    );
+                }
             }
         });
     }

@@ -8,7 +8,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
 use crate::cuda::witness::session_window_residency;
 
@@ -149,21 +149,10 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
             })?;
             let (trace, atoms) =
                 session_window_residency(device, session, witness, cycles, window)?;
-            let pc_words = windowed_trace_columns::<F>(
-                device,
-                session,
-                witness,
-                cycles,
-                window,
-                [0, 1, 0],
-                0,
-            )?
-            .pc;
-            let resident = if window.start == 0 {
-                cycles
-            } else {
-                window.residency(cycles).len
-            };
+            let pc_words =
+                device_trace_columns::<F>(device, session, witness, cycles, window, [0, 1, 0], 0)?
+                    .pc;
+            let resident = window.residency(cycles).len;
             inputs.push((
                 DeviceR1csInputs::from_device(device, &trace, &atoms, &pc_words, resident)?,
                 CycleWindow {

@@ -22,6 +22,7 @@ use super::common::device::require_fr_slice;
 use super::common::device_columns::{
     park_device_column, whole_domain, witness_identity, DeviceColumn,
 };
+use super::common::devices::{committed_windows, CycleWindow};
 use super::common::error::CudaError;
 use super::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs, FQ_LIMBS};
 use super::common::pack::COLD;
@@ -30,7 +31,7 @@ use crate::commitment::{
     finish_streamed, CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment,
 };
 use crate::cuda::inc_claim_reduction::witness::IncClaimReductionWitness;
-use crate::cuda::witness::{park_device_trace, session_device_trace};
+use crate::cuda::witness::{park_device_trace, session_device_trace_window};
 #[cfg(feature = "parallel")]
 use crate::optimized::rows::{collect_range_into, RandomAccessRows};
 use crate::reference::commitment::{column_kinds, ColumnKind, MaterializedColumn};
@@ -240,6 +241,7 @@ fn hot_columns_from_trace<F: Field>(
     trace: &DeviceTrace,
     kinds: &[ColumnKind],
     one_hot_k: usize,
+    window: &CycleWindow,
 ) -> Result<HotColumnBuild, KernelError<F>> {
     let wanted = |family: fn(&ColumnKind) -> bool| kinds.iter().any(family);
     let lookup = wanted(|kind| matches!(kind, ColumnKind::InstructionRa(_)))
@@ -256,24 +258,30 @@ fn hot_columns_from_trace<F: Field>(
     let missing = || KernelError::InvariantViolation {
         reason: "a committed one-hot family has no device source column",
     };
+    let words = window.start..window.end();
+    let limbs = 2 * window.start..2 * window.end();
     let mut requests = Vec::with_capacity(kinds.len());
     for &kind in kinds {
         let request = match kind {
             ColumnKind::InstructionRa(selector) => (
-                HotSource::Interleaved(lookup.as_ref().ok_or_else(missing)?),
+                HotSource::Interleaved(lookup.as_ref().ok_or_else(missing)?.slice(limbs.clone())),
                 selector,
             ),
-            ColumnKind::BytecodeRa(selector) => {
-                (HotSource::Word(pc.as_ref().ok_or_else(missing)?), selector)
-            }
-            ColumnKind::RamRa(selector) => {
-                (HotSource::Word(ram.as_ref().ok_or_else(missing)?), selector)
-            }
+            ColumnKind::BytecodeRa(selector) => (
+                HotSource::Word(pc.as_ref().ok_or_else(missing)?.slice(words.clone())),
+                selector,
+            ),
+            ColumnKind::RamRa(selector) => (
+                HotSource::Word(ram.as_ref().ok_or_else(missing)?.slice(words.clone())),
+                selector,
+            ),
             ColumnKind::RdInc | ColumnKind::RamInc => continue,
         };
         requests.push(request);
     }
-    let mut chunked = trace.hot_chunk_columns(&requests, one_hot_k)?.into_iter();
+    let mut chunked = trace
+        .hot_chunk_columns(&requests, one_hot_k, window.len)?
+        .into_iter();
 
     let mut retained = Vec::with_capacity(kinds.len());
     for &kind in kinds {
@@ -289,29 +297,25 @@ fn hot_columns_from_trace<F: Field>(
     Ok(retained)
 }
 
-fn device_hot_columns<F: Field>(
-    context: &'static CudaKernelContext,
+fn park_hot_columns<F: Field>(
     session: &mut ProofSession,
     source: &dyn JoltWitnessPlane<F>,
-    kinds: &[ColumnKind],
+    ordinal: usize,
     ids: &[JoltCommittedPolynomial],
-    cycles: usize,
-    one_hot_k: usize,
-) -> Result<RetainedHotColumns, KernelError<F>> {
-    let trace = session_device_trace(context, session, source, cycles)?;
-    let built = hot_columns_from_trace::<F>(&trace, kinds, one_hot_k)?;
+    window: &CycleWindow,
+    built: WindowHotColumns,
+) -> RetainedHotColumns {
     let mut retained = Vec::with_capacity(ids.len());
     for (&id, entry) in ids.iter().zip(built) {
         match entry {
             None => retained.push(None),
             Some((column, span)) => {
-                let column = Arc::new(column);
                 park_device_column(
                     session,
                     source,
-                    context.ordinal(),
+                    ordinal,
                     DeviceColumn::CommittedHot(id),
-                    &whole_domain(cycles),
+                    window,
                     span,
                     Arc::clone(&column),
                 );
@@ -319,7 +323,60 @@ fn device_hot_columns<F: Field>(
             }
         }
     }
-    Ok(retained)
+    retained
+}
+
+struct HotPlan<'a> {
+    kinds: &'a [ColumnKind],
+    ids: &'a [JoltCommittedPolynomial],
+    one_hot_k: usize,
+    window: &'a CycleWindow,
+}
+
+fn device_hot_columns<F: Field>(
+    context: &'static CudaKernelContext,
+    session: &mut ProofSession,
+    source: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    plan: &HotPlan<'_>,
+) -> Result<RetainedHotColumns, KernelError<F>> {
+    let trace = session_device_trace_window(
+        context,
+        session,
+        source,
+        cycles,
+        &plan.window.residency(cycles),
+    )?;
+    let built = retain_hot_columns(hot_columns_from_trace::<F>(
+        &trace,
+        plan.kinds,
+        plan.one_hot_k,
+        plan.window,
+    )?);
+    Ok(park_hot_columns(
+        session,
+        source,
+        context.ordinal(),
+        plan.ids,
+        plan.window,
+        built,
+    ))
+}
+
+pub(super) type WindowHotColumns = Vec<Option<(Arc<CudaSlice<u32>>, usize)>>;
+
+pub(super) fn retain_hot_columns(built: HotColumnBuild) -> WindowHotColumns {
+    built
+        .into_iter()
+        .map(|entry| entry.map(|(column, span)| (Arc::new(column), span)))
+        .collect()
+}
+
+pub(super) fn hot_column_views(built: &WindowHotColumns) -> RetainedHotColumns {
+    built
+        .iter()
+        .map(|entry| entry.as_ref().map(|(column, _)| Arc::clone(column)))
+        .collect()
 }
 
 type RetainedHotColumns = Vec<Option<Arc<CudaSlice<u32>>>>;
@@ -418,13 +475,33 @@ where
             let superchunk = superchunk_cycles().max(row_width);
             #[cfg(not(feature = "parallel"))]
             let superchunk = row_width;
-            let hot = tracing::info_span!("cuda_commit_park_hot", columns = kinds.len()).in_scope(
-                || {
-                    device_hot_columns::<F>(
-                        context, session, source, &kinds, ids, cycles, one_hot_k,
-                    )
-                },
-            )?;
+            let windows = if PCS::BATCHES_TIER2 {
+                committed_windows(cycles, row_width)
+            } else {
+                vec![whole_domain(cycles)]
+            };
+            let device_window = windows.first().ok_or(KernelError::InvariantViolation {
+                reason: "the commit cycle partition produced no windows",
+            })?;
+            let hot = tracing::info_span!(
+                "cuda_commit_park_hot",
+                columns = kinds.len(),
+                cycles = device_window.len
+            )
+            .in_scope(|| {
+                device_hot_columns::<F>(
+                    context,
+                    session,
+                    source,
+                    cycles,
+                    &HotPlan {
+                        kinds: &kinds,
+                        ids,
+                        one_hot_k,
+                        window: device_window,
+                    },
+                )
+            })?;
             let collected =
                 tracing::info_span!("cuda_commit_collect_columns", cycles).in_scope(|| {
                     collect_increments::<F>(source, &kinds, cycles, row_width, superchunk)
@@ -439,16 +516,16 @@ where
                     one_hot_k,
                     row_width,
                 };
-                let windows = partition::windows(cycles, row_width);
                 let mut parked: Vec<(usize, Arc<jolt_witness::backend::cuda::DeviceTrace>)> =
                     Vec::new();
+                let mut parked_hot: Vec<(usize, WindowHotColumns)> = Vec::new();
                 let columns = if windows.len() > 1 {
                     let rows = source.rows().ok_or(KernelError::Unsupported {
                         reason: "the CUDA backend needs a slice-backed trace source to split a \
                                  commitment across devices",
                     })?;
                     let host_bases = PCS::tier1_bases(setup, row_width)?;
-                    let (columns, traces) = partition::split_columns::<F>(
+                    let (columns, traces, hots) = partition::split_columns::<F>(
                         bases,
                         &hot,
                         &plan,
@@ -465,12 +542,14 @@ where
                             .enumerate()
                             .filter_map(|(ordinal, trace)| trace.map(|trace| (ordinal, trace))),
                     );
+                    parked_hot.extend(
+                        hots.into_iter()
+                            .enumerate()
+                            .filter(|(_, built)| !built.is_empty()),
+                    );
                     columns
                 } else {
-                    let window = windows.first().ok_or(KernelError::InvariantViolation {
-                        reason: "the commit cycle partition produced no windows",
-                    })?;
-                    partition::window_columns::<F>(context, bases, &hot, &plan, window, 0)?
+                    partition::window_columns::<F>(context, bases, &hot, &plan, device_window, 0)?
                 };
                 let columns = columns.into_iter().collect::<Option<Vec<_>>>().ok_or(
                     KernelError::InvariantViolation {
@@ -487,6 +566,11 @@ where
                             &window.residency(cycles),
                             trace,
                         );
+                    }
+                }
+                for (ordinal, built) in parked_hot {
+                    if let Some(window) = windows.get(ordinal) {
+                        let _ = park_hot_columns(session, source, ordinal, ids, window, built);
                     }
                 }
                 let finished = tracing::info_span!("cuda_commit_tier2", columns = columns.len())
@@ -940,10 +1024,13 @@ mod tests {
                 context,
                 &mut session,
                 plane,
-                &kinds,
-                &ids,
                 cycles,
-                one_hot_k,
+                &super::HotPlan {
+                    kinds: &kinds,
+                    ids: &ids,
+                    one_hot_k,
+                    window: &super::whole_domain(cycles),
+                },
             )
             .expect("device hot columns");
 

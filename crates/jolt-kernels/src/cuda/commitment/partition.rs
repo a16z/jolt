@@ -5,9 +5,12 @@ use jolt_program::execution::TraceRow;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::backend::cuda::DeviceTrace;
 
-use super::{hot_columns_from_trace, tier1_order, ColumnKind, RetainedHotColumns};
+use super::{
+    hot_column_views, hot_columns_from_trace, retain_hot_columns, tier1_order, ColumnKind,
+    RetainedHotColumns, WindowHotColumns,
+};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
-use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
+use crate::cuda::common::devices::{fan_out, CycleWindow, DeviceTask};
 use crate::cuda::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs};
 use crate::KernelError;
 
@@ -25,20 +28,6 @@ pub(super) struct TraceSource<'a> {
 }
 
 type Columns = Vec<Option<Vec<JacobianLimbs>>>;
-
-pub(super) fn windows(cycles: usize, row_width: usize) -> Vec<CycleWindow> {
-    let canonical = witness_windows(cycles);
-    if canonical
-        .iter()
-        .all(|window| row_width > 0 && window.len.is_multiple_of(row_width))
-    {
-        return canonical;
-    }
-    vec![CycleWindow {
-        start: 0,
-        len: cycles,
-    }]
-}
 
 pub(super) fn window_columns<F: Field>(
     context: &CudaKernelContext,
@@ -130,9 +119,13 @@ fn stitch<F: Field>(
     Ok(columns)
 }
 
-type WindowResult = (Columns, Option<Arc<DeviceTrace>>);
+type WindowResult = (Columns, Option<Arc<DeviceTrace>>, WindowHotColumns);
 
-type SplitColumns = (Columns, Vec<Option<Arc<DeviceTrace>>>);
+type SplitColumns = (
+    Columns,
+    Vec<Option<Arc<DeviceTrace>>>,
+    Vec<WindowHotColumns>,
+);
 
 pub(super) fn split_columns<F: Field>(
     bases: &DeviceG1Bases,
@@ -149,8 +142,9 @@ pub(super) fn split_columns<F: Field>(
             tasks.push(Box::new(move || {
                 let context = crate::cuda::require_context::<F>()?;
                 Ok((
-                    window_columns::<F>(context, bases, hot, plan, window, window.start)?,
+                    window_columns::<F>(context, bases, hot, plan, window, 0)?,
                     None,
+                    Vec::new(),
                 ))
             }));
             continue;
@@ -175,22 +169,38 @@ pub(super) fn split_columns<F: Field>(
                 )
             })?;
             let trace = Arc::new(trace);
-            let built = tracing::info_span!("cuda_commit_park_hot", device = ordinal)
-                .in_scope(|| hot_columns_from_trace::<F>(&trace, plan.kinds, plan.one_hot_k))?;
-            let hot: RetainedHotColumns = built
-                .into_iter()
-                .map(|entry| entry.map(|(column, _)| Arc::new(column)))
-                .collect();
+            let built =
+                tracing::info_span!("cuda_commit_park_hot", device = ordinal).in_scope(|| {
+                    hot_columns_from_trace::<F>(
+                        &trace,
+                        plan.kinds,
+                        plan.one_hot_k,
+                        &CycleWindow {
+                            start: 0,
+                            len: window.len,
+                        },
+                    )
+                })?;
+            let built = retain_hot_columns(built);
+            let hot: RetainedHotColumns = hot_column_views(&built);
             let bases = context.upload_g1_bases(host_bases)?;
             Ok((
                 window_columns::<F>(context, &bases, &hot, plan, window, 0)?,
                 Some(trace),
+                built,
             ))
         }));
     }
     let parts = fan_out(tasks)?;
-    let (columns, traces): (Vec<_>, Vec<_>) = parts.into_iter().unzip();
-    Ok((stitch::<F>(columns, windows, hot, plan)?, traces))
+    let mut columns = Vec::with_capacity(parts.len());
+    let mut traces = Vec::with_capacity(parts.len());
+    let mut hots = Vec::with_capacity(parts.len());
+    for (part, trace, built) in parts {
+        columns.push(part);
+        traces.push(trace);
+        hots.push(built);
+    }
+    Ok((stitch::<F>(columns, windows, hot, plan)?, traces, hots))
 }
 
 #[cfg(test)]
@@ -317,7 +327,7 @@ mod tests {
 
     #[test]
     fn cycle_windows_cover_the_domain_without_overlap() {
-        let windows = super::windows(CYCLES, ROW_WIDTH);
+        let windows = crate::cuda::common::devices::committed_windows(CYCLES, ROW_WIDTH);
         let mut next = 0;
         for window in &windows {
             assert_eq!(window.start, next, "windows must be contiguous");
@@ -339,8 +349,9 @@ mod tests {
             assert_eq!(windows.len(), 1);
             assert_eq!(windows[0].start, 0);
         };
-        single(super::windows(CYCLES + 1, ROW_WIDTH));
-        single(super::windows(ROW_WIDTH, ROW_WIDTH));
-        single(super::windows(CYCLES, 0));
+        let windows = crate::cuda::common::devices::committed_windows;
+        single(windows(CYCLES + 1, ROW_WIDTH));
+        single(windows(ROW_WIDTH, ROW_WIDTH));
+        single(windows(CYCLES, 0));
     }
 }

@@ -11,12 +11,13 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 
 use super::address_phase::{
     condense_u_evals, init_raf_buckets, init_suffix_buckets, DeviceRows, RafBuckets, CHUNK_LEN,
-    CHUNK_SIZE, NO_TABLE,
+    CHUNK_SIZE,
 };
 use super::combine::{combine_terms, CombineTerm};
 use super::prefixes::{default_checkpoints, prefix_mle_round, update_checkpoints, HINT_POINTS};
-use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_limbs, require_fr_slice, DeviceFrVec};
+use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
@@ -25,9 +26,14 @@ const RAF_TERMS: usize = 3;
 const RAF_CHECKPOINTS: usize = 4;
 const NO_PREFIX: u32 = u32::MAX;
 
+pub struct AddressShard {
+    pub ordinal: usize,
+    pub rows: std::sync::Arc<DeviceRows>,
+    pub u_evals: DeviceFrVec,
+}
+
 pub struct DeviceAddressPhase {
-    rows: std::sync::Arc<DeviceRows>,
-    u_evals: DeviceFrVec,
+    shards: Vec<AddressShard>,
     present: Vec<LookupTableKind<RISCV_XLEN>>,
     layout: TermLayout,
     address_bits: usize,
@@ -99,18 +105,27 @@ impl DeviceAddressPhase {
             table_index,
             raf_flag,
         )?);
-        let tables: Vec<u32> = table_index
-            .iter()
-            .map(|slot| slot.map_or(NO_TABLE, |index| index as u32))
-            .collect();
-        Self::with_rows(context, rows, &tables, r_reduction, address_bits)
+        let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
+        for slot in table_index {
+            if let Some(index) = *slot {
+                *used.get_mut(index).ok_or(CudaError::InvariantViolation {
+                    reason: "a stage-5 row selects an unknown lookup table",
+                })? = true;
+            }
+        }
+        let u_evals = context.eq_evals(require_fr_slice(r_reduction)?)?;
+        let shards = vec![AddressShard {
+            ordinal: context.ordinal(),
+            rows,
+            u_evals,
+        }];
+        Self::with_shards(context, shards, &used, address_bits)
     }
 
-    pub fn with_rows<F: Field>(
+    pub fn with_shards(
         context: &CudaKernelContext,
-        rows: std::sync::Arc<DeviceRows>,
-        table_index: &[u32],
-        r_reduction: &[F],
+        shards: Vec<AddressShard>,
+        used: &[bool; LookupTableKind::<RISCV_XLEN>::COUNT],
         address_bits: usize,
     ) -> Result<Self, CudaError> {
         if !address_bits.is_multiple_of(CHUNK_LEN) {
@@ -118,25 +133,20 @@ impl DeviceAddressPhase {
                 reason: "the device address phase supports only whole 8-variable phases",
             });
         }
-        let u_evals = context.eq_evals(require_fr_slice(r_reduction)?)?;
-        if u_evals.len() != rows.cycles() {
-            return Err(CudaError::LengthMismatch {
-                expected: rows.cycles(),
-                got: u_evals.len(),
+        if shards.is_empty() {
+            return Err(CudaError::InvariantViolation {
+                reason: "the device address phase was given no cycle window",
             });
         }
-
-        let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
-        for &index in table_index {
-            if index == NO_TABLE {
-                continue;
+        for shard in &shards {
+            if shard.u_evals.len() != shard.rows.cycles() {
+                return Err(CudaError::LengthMismatch {
+                    expected: shard.rows.cycles(),
+                    got: shard.u_evals.len(),
+                });
             }
-            *used
-                .get_mut(index as usize)
-                .ok_or(CudaError::InvariantViolation {
-                    reason: "a stage-5 row selects an unknown lookup table",
-                })? = true;
         }
+
         let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
             .filter(|table| used[table.index()])
             .collect();
@@ -150,8 +160,7 @@ impl DeviceAddressPhase {
         let raf_checkpoints = context.upload(&raf_checkpoints)?;
 
         let mut phase = Self {
-            rows,
-            u_evals,
+            shards,
             present,
             layout,
             address_bits,
@@ -181,34 +190,60 @@ impl DeviceAddressPhase {
 
     #[tracing::instrument(skip_all, name = "ap_init_phase")]
     fn init_phase(&mut self, context: &CudaKernelContext, phase: usize) -> Result<(), CudaError> {
-        if phase != 0 {
-            let v_prev = self
-                .v_tables
-                .last()
-                .ok_or(CudaError::InvariantViolation {
-                    reason: "a later address phase found no previous eq table",
-                })?
-                .try_clone()?;
-            condense_u_evals(
-                context,
-                &self.rows,
-                &mut self.u_evals,
-                &v_prev,
-                self.address_bits,
+        let v_prev = if phase == 0 {
+            None
+        } else {
+            Some(
+                self.v_tables
+                    .last()
+                    .ok_or(CudaError::InvariantViolation {
+                        reason: "a later address phase found no previous eq table",
+                    })?
+                    .to_host()?,
+            )
+        };
+
+        let Self {
+            shards,
+            present,
+            address_bits,
+            ..
+        } = self;
+        let address_bits = *address_bits;
+        let (raf, suffixes) = if let [shard] = shards.as_mut_slice() {
+            let device = context_for(shard.ordinal).ok_or(CudaError::InvariantViolation {
+                reason: "an address-phase window names an absent device",
+            })?;
+            if let Some(v_prev) = &v_prev {
+                let v_prev = device.upload(v_prev)?;
+                condense_u_evals(
+                    device,
+                    &shard.rows,
+                    &mut shard.u_evals,
+                    &v_prev,
+                    address_bits,
+                    phase,
+                )?;
+            }
+            let raf = init_raf_buckets(device, &shard.rows, &shard.u_evals, address_bits, phase)?;
+            let columns = init_suffix_buckets(
+                device,
+                &shard.rows,
+                &shard.u_evals,
+                present,
+                address_bits,
                 phase,
             )?;
-        }
-
-        let raf = init_raf_buckets(context, &self.rows, &self.u_evals, self.address_bits, phase)?;
-        let suffix_columns = init_suffix_buckets(
-            context,
-            &self.rows,
-            &self.u_evals,
-            &self.present,
-            self.address_bits,
-            phase,
-        )?;
-        let suffixes = flatten(context, suffix_columns)?;
+            (raf, flatten(context, columns)?)
+        } else {
+            let parts =
+                shard_phase_tables(shards, present, address_bits, phase, v_prev.as_deref())?;
+            let totals = sum_phase_tables(parts)?;
+            (
+                upload_raf(context, &totals.raf)?,
+                context.upload(&totals.suffixes)?,
+            )
+        };
         let suffix_count = suffixes.len() / CHUNK_SIZE;
 
         let raf_prefix = self.build_raf_prefix_tables(context, phase)?;
@@ -407,10 +442,6 @@ impl DeviceAddressPhase {
         self.raf_checkpoints.to_host()
     }
 
-    pub fn rows(&self) -> &DeviceRows {
-        &self.rows
-    }
-
     pub fn v_tables(&self) -> &[DeviceFrVec] {
         &self.v_tables
     }
@@ -534,6 +565,115 @@ pub(super) fn bind_lanes(
         **lane = out;
     }
     Ok(())
+}
+
+struct ShardPhaseTables {
+    raf: [Vec<Fr>; RAF_COLUMNS],
+    suffixes: Vec<Fr>,
+}
+
+const RAF_COLUMNS: usize = 6;
+
+fn shard_phase_tables(
+    shards: &mut [AddressShard],
+    present: &[LookupTableKind<RISCV_XLEN>],
+    address_bits: usize,
+    phase: usize,
+    v_prev: Option<&[Fr]>,
+) -> Result<Vec<ShardPhaseTables>, CudaError> {
+    let absent = || CudaError::InvariantViolation {
+        reason: "an address-phase window names an absent device",
+    };
+    let tasks: Vec<DeviceTask<'_, ShardPhaseTables, CudaError>> = shards
+        .iter_mut()
+        .map(|shard| {
+            let task: DeviceTask<'_, ShardPhaseTables, CudaError> = Box::new(move || {
+                let device = context_for(shard.ordinal).ok_or_else(absent)?;
+                if let Some(v_prev) = v_prev {
+                    let v_prev = device.upload(v_prev)?;
+                    condense_u_evals(
+                        device,
+                        &shard.rows,
+                        &mut shard.u_evals,
+                        &v_prev,
+                        address_bits,
+                        phase,
+                    )?;
+                }
+                let raf =
+                    init_raf_buckets(device, &shard.rows, &shard.u_evals, address_bits, phase)?;
+                let columns = init_suffix_buckets(
+                    device,
+                    &shard.rows,
+                    &shard.u_evals,
+                    present,
+                    address_bits,
+                    phase,
+                )?;
+                let mut suffixes = Vec::with_capacity(columns.len() * CHUNK_SIZE);
+                for column in columns.into_iter().flatten() {
+                    suffixes.extend_from_slice(&column.to_host()?);
+                }
+                Ok(ShardPhaseTables {
+                    raf: [
+                        raf.shift_half.to_host()?,
+                        raf.shift_full.to_host()?,
+                        raf.left.to_host()?,
+                        raf.right.to_host()?,
+                        raf.identity.to_host()?,
+                        raf.upper_all_ones.to_host()?,
+                    ],
+                    suffixes,
+                })
+            });
+            task
+        })
+        .collect();
+    fan_out(tasks)
+}
+
+fn sum_phase_tables(parts: Vec<ShardPhaseTables>) -> Result<ShardPhaseTables, CudaError> {
+    let mut parts = parts.into_iter();
+    let mut total = parts.next().ok_or(CudaError::InvariantViolation {
+        reason: "the address-phase reduce produced no window",
+    })?;
+    for part in parts {
+        if part.suffixes.len() != total.suffixes.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: total.suffixes.len(),
+                got: part.suffixes.len(),
+            });
+        }
+        for (slot, value) in total.suffixes.iter_mut().zip(&part.suffixes) {
+            *slot += *value;
+        }
+        for (column, addend) in total.raf.iter_mut().zip(&part.raf) {
+            if column.len() != addend.len() {
+                return Err(CudaError::LengthMismatch {
+                    expected: column.len(),
+                    got: addend.len(),
+                });
+            }
+            for (slot, value) in column.iter_mut().zip(addend) {
+                *slot += *value;
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn upload_raf(
+    context: &CudaKernelContext,
+    columns: &[Vec<Fr>; RAF_COLUMNS],
+) -> Result<RafBuckets, CudaError> {
+    Ok(RafBuckets {
+        shift_half: context.upload(&columns[0])?,
+        shift_full: context.upload(&columns[1])?,
+        left: context.upload(&columns[2])?,
+        right: context.upload(&columns[3])?,
+        identity: context.upload(&columns[4])?,
+        upper_all_ones: context.upload(&columns[5])?,
+    })
 }
 
 fn flatten(

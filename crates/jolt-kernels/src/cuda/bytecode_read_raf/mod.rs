@@ -12,7 +12,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::CudaBackend;
 use crate::cuda::common::context::context_for;
-use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::witness_windows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -220,15 +220,8 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a bytecode read-RAF cycle window names an absent device",
             })?;
-            let columns = windowed_trace_columns::<F>(
-                device,
-                session,
-                witness,
-                cycles,
-                window,
-                [0, 1, 0],
-                0,
-            )?;
+            let columns =
+                device_trace_columns::<F>(device, session, witness, cycles, window, [0, 1, 0], 0)?;
             one_hot_shards.push(BytecodeShard {
                 ordinal,
                 one_hot: DeviceBytecodeRa::new(

@@ -656,22 +656,31 @@ impl DeviceTrace {
         })
     }
 
-    #[tracing::instrument(skip_all, name = "cuda_witness_hot_chunks", fields(requests = requests.len()))]
+    #[tracing::instrument(skip_all, name = "cuda_witness_hot_chunks", fields(requests = requests.len(), cycles))]
     pub fn hot_chunk_columns(
         &self,
         requests: &[(HotSource<'_>, RaChunkSelector)],
         addresses: usize,
+        cycles: usize,
     ) -> Result<Vec<(CudaSlice<u32>, usize)>, WitnessError> {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        let count = self.count()?;
+        if cycles == 0 || cycles > self.cycles {
+            return Err(device_error(format!(
+                "a committed chunk range of {cycles} cycles does not fit this {}-cycle residency",
+                self.cycles
+            )));
+        }
+        let count = u32::try_from(cycles)
+            .map_err(|_| device_error(format!("{cycles} cycles exceed a 32-bit grid")))?;
         let mut spans = self
             .stream
             .alloc_zeros::<u64>(requests.len())
             .map_err(device_error)?;
         let mut columns = Vec::with_capacity(requests.len());
-        for (slot, &(source, selector)) in requests.iter().enumerate() {
+        for (slot, (source, selector)) in requests.iter().enumerate() {
+            let selector = *selector;
             let mask = selector.mask();
             if mask >= u128::from(COLD) {
                 return Err(device_error(format!(
@@ -686,24 +695,19 @@ impl DeviceTrace {
             let slot = u32::try_from(slot)
                 .map_err(|_| device_error("a committed chunk batch exceeds a 32-bit slot"))?;
             let (function, expected, source_len) = match source {
-                HotSource::Interleaved(limbs) => (
-                    &self.functions.hot_chunk_limbs,
-                    self.cycles * 2,
-                    limbs.len(),
-                ),
-                HotSource::Word(words) => {
-                    (&self.functions.hot_chunk_words, self.cycles, words.len())
+                HotSource::Interleaved(limbs) => {
+                    (&self.functions.hot_chunk_limbs, cycles * 2, limbs.len())
                 }
+                HotSource::Word(words) => (&self.functions.hot_chunk_words, cycles, words.len()),
             };
             if source_len < expected {
                 return Err(device_error(format!(
-                    "the chunk source holds {source_len} entries for {} cycles",
-                    self.cycles
+                    "the chunk source holds {source_len} entries for {cycles} cycles"
                 )));
             }
             let mut out = self
                 .stream
-                .alloc_zeros::<u32>(self.cycles)
+                .alloc_zeros::<u32>(cycles)
                 .map_err(device_error)?;
 
             let mut builder = self.stream.launch_builder(function);
@@ -722,8 +726,9 @@ impl DeviceTrace {
             let _ = builder.arg(&slot);
             let _ = builder.arg(&count);
             // SAFETY: thread `i < count` reads `limbs[2i]`/`limbs[2i + 1]` or
-            // `words[i]` — the source was checked above to hold at least
-            // `cycles * 2` or `cycles` entries — and writes only `out[i]` of a
+            // `words[i]` of the caller's view — the view was checked above to hold
+            // at least `cycles * 2` or `cycles` entries from its own base — and
+            // writes only `out[i]` of a
             // fresh `cycles`-element allocation. `spans[slot]` is one element of
             // a `requests.len()`-element buffer, `slot` is this request's index,
             // and it is mutated only through `atomicMax`. Every buffer is a

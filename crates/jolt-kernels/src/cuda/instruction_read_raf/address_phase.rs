@@ -616,8 +616,8 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use super::{
-        condense_u_evals, init_raf_buckets, init_raf_buckets_chunked, init_suffix_buckets_chunked,
-        DeviceRows, CHUNK_LEN, CHUNK_SIZE,
+        condense_u_evals, init_raf_buckets, init_raf_buckets_chunked, init_suffix_buckets,
+        init_suffix_buckets_chunked, DeviceRows, CHUNK_LEN, CHUNK_SIZE,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
     use crate::cuda::common::testing::fr;
@@ -890,6 +890,83 @@ mod tests {
                      over the cycles that land in it, which is what makes a cycle-range split \
                      across devices exact",
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn cycle_window_suffix_bucket_sums_match_the_whole_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for phase in [0usize, 1, 3] {
+            let host = reference_at_phase(8, 13, phase);
+            let all = host.rows();
+            let u_all = host.u_evals();
+            let present: Vec<LookupTableKind<RISCV_XLEN>> =
+                host.suffix_tables.iter().map(|(table, _)| *table).collect();
+            assert!(
+                present.len() > 1,
+                "phase {phase}: the fixture selects one table, so a per-table sum proves little",
+            );
+            let whole_rows = device_rows(context, all);
+            let whole_u = context.upload(u_all).expect("upload u_evals");
+            let whole = init_suffix_buckets(
+                context,
+                &whole_rows,
+                &whole_u,
+                &present,
+                ADDRESS_BITS,
+                phase,
+            )
+            .expect("whole-domain suffix buckets");
+
+            let half = all.len() / 2;
+            let mut summed: Vec<Vec<Vec<Fr>>> = Vec::new();
+            for window in [0..half, half..all.len()] {
+                let rows = device_rows(context, &all[window.clone()]);
+                let u_evals = context
+                    .upload(&u_all[window])
+                    .expect("upload window u_evals");
+                let part =
+                    init_suffix_buckets(context, &rows, &u_evals, &present, ADDRESS_BITS, phase)
+                        .expect("window suffix buckets");
+                let part: Vec<Vec<Vec<Fr>>> = part
+                    .iter()
+                    .map(|columns| {
+                        columns
+                            .iter()
+                            .map(|column| column.to_host().expect("download"))
+                            .collect()
+                    })
+                    .collect();
+                if summed.is_empty() {
+                    summed = part;
+                } else {
+                    for (table, addend) in summed.iter_mut().zip(&part) {
+                        for (column, values) in table.iter_mut().zip(addend) {
+                            for (slot, value) in column.iter_mut().zip(values) {
+                                *slot += *value;
+                            }
+                        }
+                    }
+                }
+            }
+
+            assert_eq!(
+                whole.len(),
+                summed.len(),
+                "phase {phase}: table count differs"
+            );
+            for (table, (columns, expected)) in whole.iter().zip(&summed).enumerate() {
+                assert_eq!(columns.len(), expected.len());
+                for (slot, (column, want)) in columns.iter().zip(expected).enumerate() {
+                    assert_eq!(
+                        &column.to_host().expect("download"),
+                        want,
+                        "phase {phase}, table {table}, suffix slot {slot}: the whole-domain suffix                          bucket must equal the sum of its two cycle windows — that identity is                          what makes the address phase's per-cycle reduce splittable across devices",
+                    );
+                }
             }
         }
     }

@@ -13,7 +13,7 @@ use self::reduction::{CyclePoints, DeviceRamRaReduction};
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::fr_into;
-use crate::cuda::common::device_columns::windowed_trace_columns;
+use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::witness_windows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -69,7 +69,7 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a RAM RA claim-reduction window names an absent device",
             })?;
-            let columns = windowed_trace_columns::<F>(
+            let columns = device_trace_columns::<F>(
                 device,
                 session,
                 witness,

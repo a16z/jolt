@@ -304,7 +304,7 @@ mod tests {
     use super::super::witness::{self, SpartanOuterWitness};
     use super::DeviceR1csInputs;
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::device_columns::device_pc_words;
+    use crate::cuda::common::device_columns::{device_pc_words, whole_domain};
     use crate::cuda::common::testing::with_r1cs_witness;
     use crate::cuda::witness::{session_atom_columns, session_device_trace};
     use crate::ProofSession;
@@ -338,8 +338,14 @@ mod tests {
                     .expect("device residency");
                 let atoms = session_atom_columns::<Fr>(context, &mut session, witness, cycles)
                     .expect("atom columns");
-                let pc_words = device_pc_words::<Fr>(context, &mut session, witness, cycles)
-                    .expect("mapped pc words");
+                let pc_words = device_pc_words::<Fr>(
+                    context,
+                    &mut session,
+                    witness,
+                    cycles,
+                    &whole_domain(cycles),
+                )
+                .expect("mapped pc words");
                 let got = DeviceR1csInputs::from_device(context, &trace, &atoms, &pc_words, cycles)
                     .expect("device-gathered inputs");
 
