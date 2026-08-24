@@ -50,7 +50,7 @@ jobs:
           tool: cargo-fuzz
       - name: Compare assembly with portable arithmetic
         working-directory: crates/jolt-field
-        run: cargo +nightly fuzz run fp128_asm_differential -- -max_total_time=120
+        run: cargo +nightly fuzz run --target aarch64-unknown-linux-gnu fp128_asm_differential -- -max_total_time=120
 
   fp128-asm-fuzz-x86-64-bmi2-adx:
     name: Differential fuzz x86-64 BMI2+ADX assembly
@@ -73,7 +73,7 @@ jobs:
         working-directory: crates/jolt-field
         env:
           RUSTFLAGS: -C target-feature=+bmi2,+adx
-        run: cargo +nightly fuzz run fp128_asm_differential -- -max_total_time=120
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu fp128_asm_differential -- -max_total_time=120
 
   fp128-aarch64:
     name: Prove AArch64 add, sub, and mul
