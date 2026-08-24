@@ -45,6 +45,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  fp64-fuzz-aarch64:
+    name: Differential fuzz Linux AArch64 arithmetic
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Compare field operations with the integer oracle
+        working-directory: crates/jolt-field
+        run: cargo +nightly fuzz run fp64_scalar_differential -- -max_total_time=120
+
+  fp64-fuzz-x86-64-bmi2:
+    name: Differential fuzz x86-64 BMI2 arithmetic
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Require BMI2
+        run: grep -Eq '(^|[[:space:]])bmi2([[:space:]]|$)' /proc/cpuinfo
+      - name: Compare field operations with the integer oracle
+        working-directory: crates/jolt-field
+        env:
+          RUSTFLAGS: -C target-feature=+bmi2
+        run: cargo +nightly fuzz run fp64_scalar_differential -- -max_total_time=120
+
   certified-matrix:
     name: Validate the registered build matrix
     runs-on: ubuntu-latest

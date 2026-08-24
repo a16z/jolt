@@ -356,6 +356,25 @@ and checks the primality certificate. CI runs one clean job for each complete
 matrix entry. This includes native Apple Silicon, native Linux AArch64, and
 native Linux x86-64.
 
+## Differential fuzzing
+
+The `fp64_scalar_differential` fuzz target compares public
+`Prime64Offset59` addition, subtraction, multiplication, and squaring with an
+independent `u128` modular-arithmetic oracle. CI runs it on Linux AArch64 and
+x86-64 with BMI2 enabled; the general field fuzz workflow also runs the
+baseline x86-64 build.
+
+Run it locally from `crates/jolt-field`.
+
+```sh
+cargo +nightly fuzz run fp64_scalar_differential -- -max_total_time=120
+```
+
+This fuzzing checks the public Rust operation under varied inputs and code
+generation paths. The HOL Light theorems and exact-byte checks remain the
+exhaustive correctness and production-linkage evidence for the certified
+instruction sequences.
+
 ## Work that remains
 
 This first slice does not cover the following code.

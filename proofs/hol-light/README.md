@@ -205,6 +205,12 @@ proof log hash. The file has no signature or attestation. A reviewer must trust
 its CI provenance or repeat the run. It does not claim that a downstream
 executable reaches the checked inspection function.
 
+The `fp64_scalar_differential` fuzz target separately compares the public
+field operations with a `u128` modular-arithmetic oracle on Linux AArch64,
+baseline x86-64, and x86-64 with BMI2. See the
+[Fp64 Book page](../../book/src/how/formal-verification/field-kernels-fp64.md#differential-fuzzing)
+for the local command and the boundary between fuzzing and proof evidence.
+
 ## Inspecting a final executable
 
 The proof checks above stop at a small inspection function. Use the final

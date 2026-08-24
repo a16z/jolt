@@ -47,3 +47,8 @@ doc = false
 name = "fp128_asm_differential"
 path = "fuzz_targets/fp128_asm_differential.rs"
 doc = false
+
+[[bin]]
+name = "fp64_scalar_differential"
+path = "fuzz_targets/fp64_scalar_differential.rs"
+doc = false
