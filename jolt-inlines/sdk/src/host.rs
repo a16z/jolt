@@ -322,7 +322,7 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
 /// | statement                  | mnemonics                                  |
 /// |----------------------------|--------------------------------------------|
 /// | `op rd, rs1, rs2;`         | `add sub and or xor andn mul mulhu sltu`   |
-/// |                            | `xorrot16/24/32/63` `xorrotw7/8/12/16`     |
+/// |                            | `xorrot16/24/32/63` `xorrotw6/7/8/12/16/19/22` |
 /// | `op rd, rs1, imm;`         | `addi andi ori xori slli srli srliw`       |
 /// | `zextw rd, rs1;`           | zero-extend low 32 bits of `rs1` into `rd` |
 /// | `op rd, base, offset;`     | `ld lw` (loads; signed byte offset)        |
@@ -418,6 +418,18 @@ macro_rules! __jolt_asm_stmt {
     ($asm:expr, xorrotw16 $rd:expr, $rs1:expr, $rs2:expr) => {{
         use $crate::host::Kind;
         $asm.emit_r(Kind::VirtualXORROTW16, $rd, $rs1, $rs2)
+    }};
+    ($asm:expr, xorrotw19 $rd:expr, $rs1:expr, $rs2:expr) => {{
+        use $crate::host::Kind;
+        $asm.emit_r(Kind::VirtualXORROTW19, $rd, $rs1, $rs2)
+    }};
+    ($asm:expr, xorrotw22 $rd:expr, $rs1:expr, $rs2:expr) => {{
+        use $crate::host::Kind;
+        $asm.emit_r(Kind::VirtualXORROTW22, $rd, $rs1, $rs2)
+    }};
+    ($asm:expr, xorrotw6 $rd:expr, $rs1:expr, $rs2:expr) => {{
+        use $crate::host::Kind;
+        $asm.emit_r(Kind::VirtualXORROTW6, $rd, $rs1, $rs2)
     }};
     // I-format: op rd, rs1, imm
     ($asm:expr, addi $rd:expr, $rs1:expr, $imm:expr) => {{

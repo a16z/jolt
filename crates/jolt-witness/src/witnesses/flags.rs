@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
 use jolt_program::execution::TraceRow;
 use jolt_riscv::{
@@ -64,7 +64,7 @@ pub struct LookupTableFlag(pub bool);
 macro_rules! bool_to_field {
     ($($name:ident),* $(,)?) => {
         $(impl ToField for $name {
-            fn to_field<F: Field>(self) -> F {
+            fn to_field<F: JoltField>(self) -> F {
                 F::from_bool(self.0)
             }
         })*

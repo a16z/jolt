@@ -16,7 +16,7 @@
 //!   integer dot products and one field fmadd per `(cycle, stream)` instead
 //!   of per-row field multiplies.
 //! - **Unreduced accumulation**: field × wide-integer products accumulate
-//!   through `jolt-field`'s `SignedProductAccumulator` /
+//!   through `jolt-field`'s `Accumulator` /
 //!   `SmallScalarAccumulator` and reduce once per block
 //!   (`FullAccumS`/`SmallAccumU`/`WideAccumS` + `barrett_reduce`).
 //! - **Split-eq (Gruen/Dao-Thaler) factoring**: `eq(τ_low, ·)` is held as an
@@ -48,10 +48,7 @@ use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOute
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::signed::{S192, S256, S64};
-use jolt_field::{
-    Field, SignedProductAccumulator as _, SignedScalarAccumulator as _,
-    WithSignedProductAccumulator, WithSmallScalarAccumulator,
-};
+use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
@@ -344,13 +341,13 @@ impl RowGroupValues {
 
     /// The bound `Az`/`Bz` values of the first stream group under the
     /// uni-skip challenge's Lagrange weights.
-    fn fold_first<F: Field>(&self, weights: &[F]) -> (F, F) {
+    fn fold_first<F: JoltField>(&self, weights: &[F]) -> (F, F) {
         fold_group(weights, &self.a_first, &self.b_first)
     }
 
     /// The bound `Az`/`Bz` values of the second stream group; only the first
     /// `SECOND_GROUP_LEN` Lagrange weights apply.
-    fn fold_second<F: Field>(&self, weights: &[F]) -> (F, F) {
+    fn fold_second<F: JoltField>(&self, weights: &[F]) -> (F, F) {
         fold_group(&weights[..SECOND_GROUP_LEN], &self.a_second, &self.b_second)
     }
 }
@@ -363,9 +360,9 @@ fn widen(value: &S192) -> S256 {
 /// Fold group row values with the uni-skip challenge's Lagrange weights into
 /// the bound `Az`/`Bz` values for one `(cycle, stream)` cell, through the
 /// unreduced accumulators.
-fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (F, F) {
-    let mut az = <F as WithSmallScalarAccumulator>::SmallScalarAccumulator::default();
-    let mut bz = <F as WithSignedProductAccumulator>::SignedProductAccumulator::default();
+fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (F, F) {
+    let mut az = <F as WithAccumulator>::SmallScalarAccumulator::default();
+    let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
     for ((&weight, &guard), magnitude) in weights.iter().zip(guards).zip(magnitudes) {
         az.fmadd_i64(weight, guard);
         bz.fmadd_s256(weight, &widen(magnitude));
@@ -377,7 +374,7 @@ fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (
 /// remainder slot reclaims — the typed-row store (reused for
 /// materialization and the final opening walk), the stage challenge vector,
 /// and the extended-node evaluations of `t1`.
-struct SpartanOuterCarry<F: Field> {
+struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
     tau: Vec<F>,
     /// Typed-row store: slice-backed witnesses stay unmaterialized (the
@@ -402,7 +399,7 @@ impl OptimizedOuterUniskip {
     /// The post-collection half of [`UniskipKernel::prepare`], for the
     /// in-module parity tests (which construct rows directly).
     #[cfg(test)]
-    fn prepare_from_rows<F: Field>(
+    fn prepare_from_rows<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
@@ -417,7 +414,7 @@ impl OptimizedOuterUniskip {
     }
 
     /// The store-generic half of `prepare`.
-    fn prepare_from_store<F: Field>(
+    fn prepare_from_store<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
@@ -443,7 +440,7 @@ impl OptimizedOuterUniskip {
     /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
     /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
     /// integer extension pipeline.
-    fn extended_t1_values<F: Field>(
+    fn extended_t1_values<F: JoltField>(
         rows: &BundleAccess<'_, SpartanOuterRow>,
         tau_low: &[F],
     ) -> Result<Vec<F>, WitnessError> {
@@ -457,9 +454,8 @@ impl OptimizedOuterUniskip {
         let coefficients = extension_coefficients();
 
         let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, |x_out| {
-            let mut accumulators: Vec<
-                <F as WithSignedProductAccumulator>::SignedProductAccumulator,
-            > = vec![Default::default(); EXTENDED_NODE_COUNT];
+            let mut accumulators: Vec<<F as WithAccumulator>::SignedProductAccumulator> =
+                vec![Default::default(); EXTENDED_NODE_COUNT];
             for pair in 0..pairs_per_block {
                 let t = x_out * pairs_per_block + pair;
                 let row = rows.row(t)?;
@@ -484,7 +480,7 @@ impl OptimizedOuterUniskip {
     }
 }
 
-impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
+impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
     #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::prepare")]
     fn prepare(
         &self,
@@ -526,7 +522,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
 /// linear-time round kernel.
 pub struct OptimizedOuterRemainder;
 
-impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
+impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -555,7 +551,7 @@ struct DerivedWeights<F> {
 
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
-struct OuterRemainderKernel<F: Field> {
+struct OuterRemainderKernel<F: JoltField> {
     az: Polynomial<F>,
     bz: Polynomial<F>,
     scratch: Vec<F>,
@@ -587,7 +583,7 @@ crate::optimized::impl_field_allocative!(OuterRemainderKernel, |kernel| {
             .sum::<usize>()
 });
 
-impl<F: Field> OuterRemainderKernel<F> {
+impl<F: JoltField> OuterRemainderKernel<F> {
     fn prepare(
         carry: SpartanOuterCarry<F>,
         inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
@@ -780,12 +776,12 @@ const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
 /// Mixed-width claim accumulators for the final opening walk: boolean inputs
 /// through the small-scalar path, word/wide inputs through the signed-product
 /// path.
-struct ClaimAccumulator<F: Field> {
-    small: Vec<<F as WithSmallScalarAccumulator>::SmallScalarAccumulator>,
-    wide: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator>,
+struct ClaimAccumulator<F: JoltField> {
+    small: Vec<<F as WithAccumulator>::SmallScalarAccumulator>,
+    wide: Vec<<F as WithAccumulator>::SignedProductAccumulator>,
 }
 
-impl<F: Field> Default for ClaimAccumulator<F> {
+impl<F: JoltField> Default for ClaimAccumulator<F> {
     fn default() -> Self {
         Self {
             small: vec![Default::default(); VARIABLE_COUNT],
@@ -794,7 +790,7 @@ impl<F: Field> Default for ClaimAccumulator<F> {
     }
 }
 
-impl<F: Field> ClaimAccumulator<F> {
+impl<F: JoltField> ClaimAccumulator<F> {
     fn add_row(&mut self, weight: F, row: &SpartanOuterRow) {
         let mut flag = |index: usize, value: bool| {
             self.small[index].fmadd_u64(weight, u64::from(value));
@@ -864,7 +860,7 @@ impl<F: Field> ClaimAccumulator<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OuterRemainderKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
         self.challenges.total()
     }
@@ -895,7 +891,7 @@ impl<F: Field> ProveRounds<F> for OuterRemainderKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
     type Relation = OuterRemainder<F>;
 
     fn output_claims(
@@ -980,7 +976,7 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltPolynomialId;
     use jolt_claims::NoChallenges;
     use jolt_field::signed::S128;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage1::outer_remainder::{
         outer_remainder_input_values_from_uniskip_output, OuterRemainderInputClaims,
     };

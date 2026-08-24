@@ -1,5 +1,7 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
@@ -8,6 +10,7 @@ use jolt_program::execution::{
     TraceInputs, TraceOutput, TraceRow,
 };
 use jolt_riscv::JoltInstructionRow;
+use rayon::prelude::*;
 
 use common::jolt_device::JoltDevice;
 
@@ -55,10 +58,7 @@ impl ExecutionBackend for TracerBackend {
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
 
-        let rows = cycles
-            .into_iter()
-            .map(trace_row_from_cycle)
-            .collect::<Result<Vec<_>, _>>()?;
+        let rows = rows_from_cycles(cycles)?;
         Ok(TraceOutput::new(
             OwnedTrace::new(rows),
             device,
@@ -67,6 +67,43 @@ impl ExecutionBackend for TracerBackend {
             }),
             Some(advice_tape.into_bytes()),
         ))
+    }
+}
+
+const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
+
+fn rows_from_cycles(cycles: Vec<Cycle>) -> Result<Vec<TraceRow>, TraceError> {
+    let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
+    let _span = tracing::info_span!(
+        "trace_rows_from_cycles",
+        rows = cycles.len(),
+        workers = if parallel {
+            rayon::current_num_threads()
+        } else {
+            1
+        }
+    )
+    .entered();
+    if !parallel {
+        return cycles.into_iter().map(trace_row_from_cycle).collect();
+    }
+
+    // Rayon's fallible collector creates temporary shard vectors. Capturing the
+    // error out of band keeps collection indexed and writes into one allocation.
+    let error = OnceLock::new();
+    let rows = cycles
+        .into_par_iter()
+        .map(|cycle| match trace_row_from_cycle(cycle) {
+            Ok(row) => row,
+            Err(worker_error) => {
+                let _ = error.set(worker_error);
+                TraceRow::default()
+            }
+        })
+        .collect();
+    match error.into_inner() {
+        Some(worker_error) => Err(worker_error),
+        None => Ok(rows),
     }
 }
 

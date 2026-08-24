@@ -196,6 +196,9 @@ pub enum Prefixes {
     Pow2OffsetW,
     WindowSign,
     WindowSignPow2,
+    XorRotW22,
+    XorRotW19,
+    XorRotW6,
     XorRotL1Acc,
     XorRotL1Straddle,
     XorRotL1Wrap,
@@ -279,6 +282,9 @@ impl Prefixes {
             Prefixes::XorRotW8 => XorRotWPrefix::<XLEN, 8>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRotW12 => XorRotWPrefix::<XLEN, 12>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRotW16 => XorRotWPrefix::<XLEN, 16>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW22 => XorRotWPrefix::<XLEN, 22>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW19 => XorRotWPrefix::<XLEN, 19>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW6 => XorRotWPrefix::<XLEN, 6>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRotL1Acc => XorRotL1AccPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRotL1Straddle => {
                 XorRotL1StraddlePrefix::prefix_mle(checkpoints, r_x, c, b, j)
@@ -494,6 +500,27 @@ impl Prefixes {
                 suffix_len,
             ),
             Prefixes::XorRotW16 => XorRotWPrefix::<XLEN, 16>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::XorRotW22 => XorRotWPrefix::<XLEN, 22>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::XorRotW19 => XorRotWPrefix::<XLEN, 19>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::XorRotW6 => XorRotWPrefix::<XLEN, 6>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
                 r_y,

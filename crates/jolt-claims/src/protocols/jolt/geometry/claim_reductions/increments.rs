@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use super::super::super::{JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId};
 use super::super::ram::{ram_inc, ram_inc_val_check};
@@ -10,7 +10,7 @@ use crate::opening;
 /// which must consume exactly the same set with the same γ order.
 pub(crate) fn inc_consumers_input<F>(gamma: JoltExpr<F>) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     opening(ram_inc())
         + gamma.clone() * opening(ram_inc_val_check())

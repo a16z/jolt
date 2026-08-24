@@ -1,6 +1,6 @@
 //! The full bytecode read-RAF symbolic sumcheck (monolith).
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::protocols::jolt::geometry::bytecode::{
     read_raf_address_input_fold, read_raf_cycle_output, BytecodeReadRafDimensions,
@@ -64,11 +64,11 @@ impl SymbolicSumcheck for ReadRaf {
         self.shape.num_committed_ra_polys() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_address_input_fold(Vec::new())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_cycle_output(self.shape, NUM_BYTECODE_VAL_STAGES)
     }
 }
@@ -88,7 +88,7 @@ mod tests {
     use crate::protocols::jolt::geometry::spartan::pc_shift;
     use crate::protocols::jolt::geometry::spartan::unexpanded_pc_shift;
     use crate::protocols::jolt::{BytecodeReadRafPublic, JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::{LookupTableKind, XLEN};
     use jolt_riscv::{CircuitFlags, InstructionFlags, CIRCUIT_FLAGS};
 

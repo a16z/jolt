@@ -52,7 +52,7 @@ pub mod xor_rot;
 pub mod xor_rotl1;
 pub mod xor_rotw;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use std::fmt::Display;
 use std::ops::Index;
 
@@ -64,7 +64,7 @@ use crate::lookup_bits::LookupBits;
 /// - `default_checkpoint()`: the initial checkpoint value before any phases
 /// - `evaluate()`: the prefix value at a binary point, given accumulated
 ///   checkpoints from previous phases
-pub trait SparseDensePrefix<F: Field>: 'static + Sync {
+pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Default checkpoint value for this prefix before any phases have run.
     fn default_checkpoint() -> F;
 
@@ -166,6 +166,9 @@ pub enum Prefixes {
     Pow2OffsetW,
     WindowSign,
     WindowSignPow2,
+    XorRotW22,
+    XorRotW19,
+    XorRotW6,
     XorRotL1Acc,
     XorRotL1Straddle,
     XorRotL1Wrap,
@@ -233,6 +236,9 @@ macro_rules! dispatch_prefix {
             Prefixes::Pow2OffsetW => pow2_offset_w::Pow2OffsetWPrefix::$method($($args),*),
             Prefixes::WindowSign => window_sign::WindowSignPrefix::$method($($args),*),
             Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
+            Prefixes::XorRotW22 => xor_rotw::XorRotWPrefix::<22>::$method($($args),*),
+            Prefixes::XorRotW19 => xor_rotw::XorRotWPrefix::<19>::$method($($args),*),
+            Prefixes::XorRotW6 => xor_rotw::XorRotWPrefix::<6>::$method($($args),*),
             Prefixes::XorRotL1Acc => xor_rotl1::XorRotL1AccPrefix::$method($($args),*),
             Prefixes::XorRotL1Straddle => xor_rotl1::XorRotL1StraddlePrefix::$method($($args),*),
             Prefixes::XorRotL1Wrap => xor_rotl1::XorRotL1WrapPrefix::$method($($args),*),
@@ -242,12 +248,12 @@ macro_rules! dispatch_prefix {
 
 impl Prefixes {
     /// Return the default checkpoint value for this prefix variant.
-    pub fn default_checkpoint<F: Field>(&self) -> PrefixEval<F> {
+    pub fn default_checkpoint<F: JoltField>(&self) -> PrefixEval<F> {
         PrefixEval(dispatch_prefix!(self, default_checkpoint))
     }
 
     /// Evaluate this prefix at binary point `b`.
-    pub fn evaluate<F: Field>(
+    pub fn evaluate<F: JoltField>(
         &self,
         checkpoints: &[PrefixEval<F>],
         b: LookupBits,

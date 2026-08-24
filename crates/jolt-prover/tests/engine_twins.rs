@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimen
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
 use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
-use jolt_field::{Field, Fr, FromPrimitiveInt};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound, ClearSumcheckRecorder,
@@ -26,7 +26,7 @@ use jolt_verifier::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
 use jolt_verifier::stages::uniskip::{self, UniskipParams};
 
 #[derive(SumcheckBatch)]
-struct TwinFixtureSumchecks<F: Field> {
+struct TwinFixtureSumchecks<F: JoltField> {
     instruction_read_raf: InstructionReadRaf<F>,
     registers_val_evaluation: RegistersValEvaluation<F>,
 }

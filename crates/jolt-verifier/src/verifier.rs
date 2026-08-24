@@ -6,9 +6,7 @@ use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
-#[cfg(not(feature = "akita"))]
-use jolt_field::{RingAccumulator, WithAccumulator};
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
@@ -40,7 +38,7 @@ pub fn verify<F, PCS, VC, T>(
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(), VerifierError>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
@@ -48,7 +46,6 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     use crate::stages::zk::{blindfold, inputs::BlindFoldInputs};
 
@@ -182,7 +179,7 @@ pub fn verify<F, PCS, VC, T>(
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(), VerifierError>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>,
     PCS::Output: Clone + AppendToTranscript + stage8::OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: stage8::OneHotTraceSetupMetadata,
@@ -563,7 +560,7 @@ pub(crate) fn validate_sumcheck_representation<F, RoundCommitment>(
     zk: bool,
 ) -> Result<(), VerifierError>
 where
-    F: Field,
+    F: JoltField,
 {
     if proof.is_committed() == zk {
         return Ok(());
