@@ -45,10 +45,12 @@ mod right_shift_w_helper;
 mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
+mod sign_extension_w;
 mod two_lsb;
 mod upper_word;
 mod window_sign;
 mod window_sign_pow2;
+mod x31_y0;
 mod xor;
 mod xor_rot;
 mod xor_rotl1;
@@ -92,11 +94,13 @@ use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use sign_extension_w::SignExtensionWSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 pub(crate) use window_sign::window_sign_bit;
 use window_sign::WindowSignSuffix;
 use window_sign_pow2::WindowSignPow2Suffix;
+use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
@@ -172,6 +176,10 @@ pub enum Suffixes {
     XorRotW22,
     XorRotW19,
     XorRotW6,
+    /// SRAW sign-fill terms whose variables remain in the suffix.
+    SignExtensionW,
+    /// The suffix-owned product `x_{XLEN/2-1} * y_0` used by SRLW.
+    X31Y0,
     XorRotL1Pairs,
     TopYBit,
     BottomXBit,
@@ -261,6 +269,8 @@ impl Suffixes {
             Suffixes::XorRotW22 => XorRotWSuffix::<22>::suffix_mle(b),
             Suffixes::XorRotW19 => XorRotWSuffix::<19>::suffix_mle(b),
             Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
+            Suffixes::SignExtensionW => SignExtensionWSuffix::suffix_mle(b),
+            Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
             Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
             Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
             Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),

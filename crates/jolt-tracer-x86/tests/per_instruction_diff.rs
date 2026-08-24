@@ -120,6 +120,12 @@ const SUPPORTED: &[&str] = &[
     "SubW",
     "MulW",
     "MulIW",
+    // W-aware right shifts:
+    "VirtualShiftRightBitmaskW",
+    "VirtualSrlw",
+    "VirtualSrliw",
+    "VirtualSraw",
+    "VirtualSraiw",
     // Byte-addressable Tier 0 (fused sub-word extraction):
     "WindowMaskW",
     "PextSigned",
@@ -297,6 +303,31 @@ fn shift_imm(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     } else {
         (1u64 << rng.gen_range(0..64)) as i128
     };
+    i
+}
+
+fn shift_imm_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
+    let mut i = base_instance(rng, kind);
+    i.row.operands.rs1 = Some(reg(rng));
+    i.row.operands.rd = Some(rd(rng));
+    // The immediate is the W bitmask 2^32 - 2^shift (shift ∈ 0..32);
+    // shift = imm.trailing_zeros(). The expander emits no other values, and
+    // the interpreter's plain `>>` rejects shifts ≥ 32 under debug asserts.
+    let shift = rng.gen_range(0u32..32);
+    i.row.operands.imm = (((1u128 << (32 - shift)) - 1) << shift) as i128;
+    i
+}
+
+fn shift_reg_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
+    let mut i = base_instance(rng, kind);
+    let rs1 = reg(rng);
+    let rs2 = rd(rng); // nonzero: x0 would make tz(0) = 64, outside the W domain
+    i.row.operands.rs1 = Some(rs1);
+    i.row.operands.rs2 = Some(rs2);
+    i.row.operands.rd = Some(rd(rng));
+    // rs2 carries the W bitmask produced by VirtualShiftRightBitmaskW.
+    let shift = rng.gen_range(0u32..32);
+    i.pre_regs[rs2 as usize] = ((1u64 << (32 - shift)) - 1) << shift;
     i
 }
 
@@ -735,6 +766,11 @@ difftests! {
     diff_mulw => |r| alu_rr(r, K::MULW);
     diff_addiw => |r| alu_ri(r, K::ADDIW, false);
     diff_muliw => |r| alu_ri(r, K::VirtualMULIW, true);
+    diff_shift_right_bitmask_w => |r| unary(r, kind_by_name("VirtualShiftRightBitmaskW"));
+    diff_srlw => |r| shift_reg_w(r, K::VirtualSRLW);
+    diff_sraw => |r| shift_reg_w(r, K::VirtualSRAW);
+    diff_srliw => |r| shift_imm_w(r, K::VirtualSRLIW);
+    diff_sraiw => |r| shift_imm_w(r, K::VirtualSRAIW);
     diff_window_mask_w => |r| unary(r, kind_by_name("VirtualWindowMaskW"));
     diff_pext_signed => |r| alu_rr(r, kind_by_name("VirtualPextSigned"));
 }
@@ -745,5 +781,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 77);
+    assert_eq!(SUPPORTED.len(), 82);
 }

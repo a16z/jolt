@@ -425,6 +425,39 @@ fn source_only_expanders_are_not_target_legal() {
 }
 
 #[test]
+fn rv64i_word_shift_expansions_are_profile_closed() -> Result<(), ExpansionError> {
+    const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
+        source_extensions: &[SourceExtension::Rv64I],
+        inline_extensions: &[],
+    };
+
+    for instruction_kind in [
+        SourceInstructionKind::SRLW,
+        SourceInstructionKind::SRAW,
+        SourceInstructionKind::SRLIW,
+        SourceInstructionKind::SRAIW,
+    ] {
+        assert!(RV64I_ONLY.supports_source(instruction_kind));
+
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = rows(expand_instruction(
+            &instruction(instruction_kind, Some(3), false),
+            &mut allocator,
+            RV64I_ONLY,
+        )?);
+
+        assert!(
+            expanded
+                .iter()
+                .all(|row| RV64I_ONLY.supports_jolt(row.instruction_kind)),
+            "{instruction_kind:?} emitted a helper outside its source profile"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::SLL, Some(3), true);

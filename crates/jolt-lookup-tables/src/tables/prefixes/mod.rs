@@ -43,10 +43,13 @@ pub mod right_shift_w;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod sign_extension_w;
+pub mod srlw_sext;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod window_sign;
 pub mod window_sign_pow2;
+pub mod word_msb;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotl1;
@@ -169,6 +172,12 @@ pub enum Prefixes {
     XorRotW22,
     XorRotW19,
     XorRotW6,
+    /// The low word's most-significant source bit, `x_{XLEN/2-1}`.
+    WordMsb,
+    /// SRAW sign-fill terms whose variables have entered the prefix.
+    SignExtensionW,
+    /// The prefix-owned portion of SRLW's `x_{XLEN/2-1} * y_0` predicate.
+    SrlwSext,
     XorRotL1Acc,
     XorRotL1Straddle,
     XorRotL1Wrap,
@@ -239,6 +248,9 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW22 => xor_rotw::XorRotWPrefix::<22>::$method($($args),*),
             Prefixes::XorRotW19 => xor_rotw::XorRotWPrefix::<19>::$method($($args),*),
             Prefixes::XorRotW6 => xor_rotw::XorRotWPrefix::<6>::$method($($args),*),
+            Prefixes::WordMsb => word_msb::WordMsbPrefix::$method($($args),*),
+            Prefixes::SignExtensionW => sign_extension_w::SignExtensionWPrefix::$method($($args),*),
+            Prefixes::SrlwSext => srlw_sext::SrlwSextPrefix::$method($($args),*),
             Prefixes::XorRotL1Acc => xor_rotl1::XorRotL1AccPrefix::$method($($args),*),
             Prefixes::XorRotL1Straddle => xor_rotl1::XorRotL1StraddlePrefix::$method($($args),*),
             Prefixes::XorRotL1Wrap => xor_rotl1::XorRotL1WrapPrefix::$method($($args),*),

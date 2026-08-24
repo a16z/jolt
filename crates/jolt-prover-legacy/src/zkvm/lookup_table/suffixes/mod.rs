@@ -29,6 +29,7 @@ use right_shift_w::RightShiftWSuffix;
 use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use sign_extension_w::SignExtensionWSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndSuffix;
@@ -41,6 +42,7 @@ use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use window_sign::WindowSignSuffix;
 use window_sign_pow2::WindowSignPow2Suffix;
+use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
@@ -81,10 +83,12 @@ pub mod right_shift_w_helper;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod sign_extension_w;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod window_sign;
 pub mod window_sign_pow2;
+pub mod x31_y0;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotl1;
@@ -151,6 +155,8 @@ pub enum Suffixes {
     XorRotW22,
     XorRotW19,
     XorRotW6,
+    SignExtensionW,
+    X31Y0,
     XorRotL1Pairs,
     TopYBit,
     BottomXBit,
@@ -242,6 +248,8 @@ impl Suffixes {
             Suffixes::XorRotW22 => XorRotWSuffix::<22>::suffix_mle(b),
             Suffixes::XorRotW19 => XorRotWSuffix::<19>::suffix_mle(b),
             Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
+            Suffixes::SignExtensionW => SignExtensionWSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::X31Y0 => X31Y0Suffix::<XLEN>::suffix_mle(b),
             Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
             Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
             Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),

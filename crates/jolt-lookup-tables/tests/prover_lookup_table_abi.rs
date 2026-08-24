@@ -240,6 +240,20 @@ fn modular_lookup_table_indices_match_prover_abi() {
             )),
         ),
         (
+            LookupTableKind::<XLEN>::ShiftRightBitmaskW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::ShiftRightBitmaskW(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualSRLW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualSRLW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualSRAW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualSRAW(Default::default())),
+        ),
+        (
             LookupTableKind::<XLEN>::VirtualXORROTL1(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::VirtualXORROTL1(
                 Default::default(),
