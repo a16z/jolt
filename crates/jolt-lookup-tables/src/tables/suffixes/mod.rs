@@ -171,6 +171,9 @@ pub enum Suffixes {
     PextHelper,
     WindowSign,
     WindowSignPow2,
+    XorRotW22,
+    XorRotW19,
+    XorRotW6,
     /// SRAW sign-fill terms whose variables remain in the suffix.
     SignExtensionW,
     /// The suffix-owned product `x_{XLEN/2-1} * y_0` used by SRLW.
@@ -256,6 +259,9 @@ impl Suffixes {
             Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
             Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::XorRotW22 => XorRotWSuffix::<22>::suffix_mle(b),
+            Suffixes::XorRotW19 => XorRotWSuffix::<19>::suffix_mle(b),
+            Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
             Suffixes::SignExtensionW => SignExtensionWSuffix::suffix_mle(b),
             Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
         }

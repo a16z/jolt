@@ -354,6 +354,15 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualXORROTW7 => {
                 LookupTables::VirtualXORROTW7(Default::default())
             }
+            JoltInstructionKind::VirtualXORROTW22 => {
+                LookupTables::VirtualXORROTW22(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW19 => {
+                LookupTables::VirtualXORROTW19(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW6 => {
+                LookupTables::VirtualXORROTW6(Default::default())
+            }
             JoltInstruction::WindowMaskW(_) => LookupTables::WindowMaskW(Default::default()),
             JoltInstruction::PextSigned(_) => LookupTables::PextSigned(Default::default()),
             JoltInstruction::VirtualShiftRightBitmaskW(_) => {
@@ -515,6 +524,7 @@ define_rv64imac_trait_impls! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+        VirtualXORROTW22, VirtualXORROTW19, VirtualXORROTW6,
         VirtualWindowMaskW, VirtualPextSigned,
         VirtualShiftRightBitmaskW, VirtualSRLW, VirtualSRLIW, VirtualSRAW, VirtualSRAIW
     ]

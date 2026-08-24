@@ -222,6 +222,24 @@ fn modular_lookup_table_indices_match_prover_abi() {
             prover_index(ProverLookupTables::<XLEN>::PextSigned(Default::default())),
         ),
         (
+            LookupTableKind::<XLEN>::VirtualXORROTW22(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW22(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTW19(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW19(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTW6(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW6(
+                Default::default(),
+            )),
+        ),
+        (
             LookupTableKind::<XLEN>::ShiftRightBitmaskW(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::ShiftRightBitmaskW(
                 Default::default(),
