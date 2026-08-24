@@ -26,7 +26,7 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::VerifierError;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, OwnedRows};
 
 use super::backend::MetalBackend;
 #[cfg(test)]
@@ -39,7 +39,10 @@ use super::solinas::{
 };
 #[cfg(test)]
 use crate::optimized::spartan_product::SpartanProductRow;
-use crate::optimized::spartan_product::{OptimizedProductRemainder, OptimizedProductUniskip};
+use crate::optimized::spartan_product::{
+    product_remainder_openings_from_owned_rows, OptimizedProductRemainder, OptimizedProductUniskip,
+};
+use crate::ram_access::RamAccessTape;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, Stage2ProductInstructionPrefetch,
@@ -108,6 +111,8 @@ impl allocative::Allocative for MetalInstructionClaimHandoff {
 pub struct SpartanProductRemainderMetalConfig {
     pub trace_cutoff_elements: usize,
     pub cpu_tail_elements: usize,
+    pub cpu_opening_trace_cutoff_elements: usize,
+    pub cpu_opening_min_ram_accesses: usize,
     pub reuse_outer_state_a: bool,
     pub dispatch: ProductRemainderSequenceConfig,
 }
@@ -117,6 +122,8 @@ impl Default for SpartanProductRemainderMetalConfig {
         Self {
             trace_cutoff_elements: 1 << 18,
             cpu_tail_elements: 1 << 12,
+            cpu_opening_trace_cutoff_elements: 1 << 28,
+            cpu_opening_min_ram_accesses: 1 << 25,
             reuse_outer_state_a: false,
             dispatch: ProductRemainderSequenceConfig::default(),
         }
@@ -672,6 +679,26 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             inputs.relation.uniskip_challenge(),
             inputs.relation.tau_high(),
         )?;
+        let cpu_opening_rows = session
+            .state::<RamAccessTape>()
+            .filter(|tape| {
+                cycles
+                    >= self
+                        .config
+                        .spartan_product_remainder
+                        .cpu_opening_trace_cutoff_elements
+                    && tape.log_t() == rounds
+                    && tape.access_count()
+                        >= self
+                            .config
+                            .spartan_product_remainder
+                            .cpu_opening_min_ram_accesses
+                    && tape.increment_compatible()
+                    && tape.ram_ra_compatible()
+                    && tape.hamming_exact()
+            })
+            .and_then(|_| witness.owned_rows())
+            .filter(|rows| rows.cycles() == cycles);
         let prefetched = session.take::<MetalProductRemainderPrefetch>();
         if prefetched.is_some() && session.state::<ProductRemainderSequence>().is_some() {
             return Err(KernelError::InvariantViolation {
@@ -852,6 +879,9 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             instruction_aliases,
             cpu_tail: None,
             cpu_tail_elements: self.config.spartan_product_remainder.cpu_tail_elements,
+            cpu_opening_rows,
+            #[cfg(any(test, feature = "test-utils"))]
+            test_counters: self.test_counters.clone(),
         }))
     }
 }
@@ -1154,6 +1184,9 @@ struct MetalProductRemainderKernel {
     instruction_aliases: Option<MetalInstructionClaimAliasSlot>,
     cpu_tail: Option<ProductRemainderCpuTail>,
     cpu_tail_elements: usize,
+    cpu_opening_rows: Option<OwnedRows>,
+    #[cfg(any(test, feature = "test-utils"))]
+    test_counters: Arc<super::backend::MetalTestCounters>,
 }
 
 #[cfg(feature = "allocative")]
@@ -1287,14 +1320,44 @@ impl SumcheckKernel<AkitaField> for MetalProductRemainderKernel {
         let (e_in, e_out) = self.host.opening_weights();
         let span = tracing::info_span!(
             "MetalProductRemainder::output_claims",
+            selected = tracing::field::Empty,
+            wall_ns = tracing::field::Empty,
             gpu_active_ns = tracing::field::Empty,
         );
         let _entered = span.enter();
-        let (values, gpu_active) = self
-            .state
-            .openings(self.cpu_tail.is_some(), &e_in, &e_out)
-            .map_err(metal_output_error)?;
+        let started = Instant::now();
+        let (values, gpu_active, selected) = if let Some(rows) = &self.cpu_opening_rows {
+            let values = product_remainder_openings_from_owned_rows::<AkitaField>(
+                rows,
+                &self.host.challenges,
+            )
+            .map_err(|_| SumcheckKernelError::InvariantViolation {
+                reason: "product opening walk re-extraction failed after the Metal rounds",
+            })?;
+            #[cfg(any(test, feature = "test-utils"))]
+            let _ = self
+                .test_counters
+                .product_remainder_cpu_openings
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            (values, Duration::ZERO, "cpu_owned_rows")
+        } else {
+            let (values, gpu_active) = self
+                .state
+                .openings(self.cpu_tail.is_some(), &e_in, &e_out)
+                .map_err(metal_output_error)?;
+            (values, gpu_active, "metal")
+        };
+        let wall = started.elapsed();
+        let _ = span.record("selected", selected);
+        let _ = span.record("wall_ns", duration_nanos(wall));
         let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
+        tracing::info!(
+            target: "jolt::metal",
+            selected,
+            wall_ns = duration_nanos(wall),
+            gpu_active_ns = duration_nanos(gpu_active),
+            "completed product-remainder opening extraction"
+        );
         if let Some(slot) = &self.instruction_aliases {
             let mut slot = slot
                 .lock()
@@ -1475,8 +1538,18 @@ mod tests {
 
                 let mut config = super::super::MetalConfig::default();
                 config.spartan_product_remainder.trace_cutoff_elements = 2;
+                config
+                    .spartan_product_remainder
+                    .cpu_opening_trace_cutoff_elements = 2;
+                config
+                    .spartan_product_remainder
+                    .cpu_opening_min_ram_accesses = 2;
                 let metal = MetalBackend::new(config).unwrap();
                 let mut metal_session = ProofSession::default();
+                let expect_cpu_opening = log_t == 5;
+                if expect_cpu_opening {
+                    metal_session.park(RamAccessTape::new(log_t, 2, None, true, true, true));
+                }
                 let stage1 =
                     crate::optimized::spartan_outer::prepare_metal_spartan_outer_witness_rows(
                         &metal.context,
@@ -1560,6 +1633,10 @@ mod tests {
                 assert_eq!(
                     actual.output_claims(&claims).unwrap(),
                     optimized.output_claims(&claims).unwrap()
+                );
+                assert_eq!(
+                    metal.product_remainder_cpu_openings(),
+                    usize::from(expect_cpu_opening)
                 );
 
                 let output_points = relation

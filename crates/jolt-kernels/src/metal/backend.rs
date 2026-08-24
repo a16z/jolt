@@ -120,6 +120,7 @@ pub(super) struct MetalTestCounters {
     pub(super) hamming_dispatches: AtomicUsize,
     pub(super) outer_remainder_sequences: AtomicUsize,
     pub(super) product_remainder_sequences: AtomicUsize,
+    pub(super) product_remainder_cpu_openings: AtomicUsize,
     pub(super) product_uniskip_dispatches: AtomicUsize,
     pub(super) product_uniskip_carrier_hits: AtomicUsize,
     pub(super) instruction_claim_sequences: AtomicUsize,
@@ -242,6 +243,12 @@ impl MetalBackend {
             config.spartan_outer_remainder.dispatch.cpu_tail_elements,
             config.spartan_product_remainder.trace_cutoff_elements,
             config.spartan_product_remainder.cpu_tail_elements,
+            config
+                .spartan_product_remainder
+                .cpu_opening_trace_cutoff_elements,
+            config
+                .spartan_product_remainder
+                .cpu_opening_min_ram_accesses,
             config.spartan_shift.trace_cutoff_elements,
             config.instruction_claim_reduction.trace_cutoff_elements,
             config.instruction_input.trace_cutoff_elements,
@@ -292,6 +299,7 @@ impl MetalBackend {
         hamming_dispatches,
         outer_remainder_sequences,
         product_remainder_sequences,
+        product_remainder_cpu_openings,
         product_uniskip_dispatches,
         product_uniskip_carrier_hits,
         instruction_claim_sequences,
