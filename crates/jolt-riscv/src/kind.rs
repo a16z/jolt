@@ -1166,19 +1166,19 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualShiftRightBitmaskW) => {
-        Some(JoltTargetExtension::BitManipulation)
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (VirtualSrlw) => {
-        Some(JoltTargetExtension::BitManipulation)
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (VirtualSrliw) => {
-        Some(JoltTargetExtension::BitManipulation)
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (VirtualSraw) => {
-        Some(JoltTargetExtension::BitManipulation)
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (VirtualSraiw) => {
-        Some(JoltTargetExtension::BitManipulation)
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (FieldAdd) => {
         Some(JoltTargetExtension::FieldInline)
