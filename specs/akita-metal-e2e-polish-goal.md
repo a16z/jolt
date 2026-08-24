@@ -34,7 +34,7 @@ Jolt head without changing runtime code. Jolt's modified `Cargo.lock` and untrac
 `.cargo/config.toml` are intentional local Akita path overrides. Do not commit or
 remove them. Do not push.
 
-The current release binary was built from rejected C3 before its source revert. Rebuild
+The current release binary was built from rejected C4 before its source revert. Rebuild
 from the accepted runtime trees before another measurement; rebuild again only after a
 later runtime-source change.
 
@@ -84,7 +84,12 @@ Do not repeat these campaigns:
 - carry-free D512 radix-`2^16` accumulation. It preserved exact output and every
   route/traffic counter, but raising live per-lane state from 40 to 64 32-bit values
   doubled T25 root GPU time from 1.473 s to 2.958 s and raised complete proving from
-  6.45 s to 8.32 s. Do not retry wide, RNS, or other larger-state accumulators.
+  6.45 s to 8.32 s. Do not retry wide, RNS, or other larger-state accumulators;
+- two-chain carry interleaving. It preserved the 40-value persistent state and exact
+  traffic, but the second live carry vector raised T25 root GPU time from 1.473 s to
+  1.604 s and complete proving from 6.45 s to 6.60 s. The compiler already exposes
+  enough instruction-level parallelism, or transient register pressure dominates.
+  Do not retry lookahead, extra chains, or other carry-scheduling variants.
 
 The detailed evidence is in
 [akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md),
@@ -105,38 +110,39 @@ before another comparison.
 Use one append-only ignored event ledger and one small current model under
 `benchmark-runs/akita-metal-e2e-polish/`. Do not build a large search harness.
 
-### 2. Current tranche: interleave the two D512 carry chains
+### 2. Current tranche: specialize the uniform D512 sign quadrant
 
-The accepted kernel holds two independent transposed accumulators per lane. For every
-selected source it currently completes all four dependent word/carry stages for the
-first accumulator, then all four for the second. The helpers are inlined but take
-mutable references one call at a time, so the source exposes no independent work
-between carry stages. C3 proves that reducing operation count by adding state is not
-viable. C4 instead preserves the exact 40-value state and every arithmetic operation.
+Each selected row is evaluated in two 256-coefficient bands, each held by two
+128-coefficient accumulators. One band has a uniform sign. In the other, the
+negacyclic boundary can intersect only one accumulator; the other accumulator is
+entirely positive or entirely negative. The accepted shader nevertheless sends both
+through the mixed-sign helper. It therefore computes a vector sign comparison, carry
+selection, four limb selections, and wrap selection for 128 coefficients whose sign
+is already known from `local_shift < 128`.
 
-Replace the two sequential helper calls with one pair helper that alternates word 0
-of accumulator 0, word 0 of accumulator 1, then words 1 through 3 in the same order.
-Do this for the existing positive, negative, and mixed-sign branches. It adds no
-lookup, temporary array, task, accumulator, matrix stream, barrier, scratch, or
-protocol work. The only hypothesis is that exposing two independent dependency chains
-lets the compiler/device hide carry latency that it cannot move across the current
-reference-taking calls.
+C5 adds one SIMDgroup-uniform branch in each variable-sign band. It keeps the one
+boundary accumulator on the mixed helper and calls the existing positive or negative
+helper for the uniform accumulator. No accumulator, carry chain, array, task, matrix
+stream, barrier, scratch byte, output, protocol, transcript, or verifier state changes.
+The operation count is independent of workload data for every nonzero selector.
 
-The T28 root still has a 4.388-second traffic floor and a 7.77-second calibrated
-compute term. If carry latency is 40--60% of that term, two-way interleaving removes
-roughly 1.6--2.3 seconds, predicting 10.2--11.0 seconds root GPU and 45.8--46.6 seconds
-complete proving. The strict upper bound is a twofold improvement of carry latency,
-not of gathers, additions, or traffic. The principal falsifier is that the compiler
-already interleaves the inlined calls or that pair temporaries increase registers.
+The T28 traffic floor remains 4.388 seconds and the calibrated hot-dependent compute
+term remains 7.77 seconds before treatment. C5 reduces mixed-sign preparation from
+256 to 128 of the 512 coefficients added for each selected row. Counting the four
+limb selections plus sign/carry/wrap selection gives a conservative 0.4--0.8-second
+T28 root saving, predicting 11.7--12.1 seconds root GPU and 47.3--47.7 seconds
+complete proving. The falsifiers are that Metal compiles uniform masks away already,
+or that the added uniform branch costs more than the removed selects.
 
-Add a red route-identity assertion while reusing the existing exact mixed-sign,
-stream-boundary, 512-block, and streaming parity suite. Then run one verified T25
-BTreeMap sentinel. Admit T28 only if root GPU time is at most 1.38 seconds from the
-1.473-second parent with identical traffic, hybrid split, and proof. At T28 require
-root GPU at most 11.0 seconds, complete proving at most 46.8 seconds, RSS at most
-90 GiB, and exact verification. Any miss restores the original call ordering without
-trying three-way chains, carry lookahead, wider words, or new accumulator state. This
-is an execution-only Akita change.
+Add a red route-identity assertion and extend the existing negacyclic-rotation test at
+shifts 1, 127, 128, 129, and 255. Reuse the exact mixed-sign, stream-boundary,
+512-block, and streaming parity suite. Run one verified T25 BTreeMap sentinel and
+admit T28 only if root GPU time is at most 1.43 seconds from the 1.473-second parent
+with identical traffic, hybrid split, and proof. At T28 require root GPU at most
+12.10 seconds plus materiality: either complete proving at most 47.58 seconds or root
+GPU at most 11.884 seconds. RSS must remain at most 90 GiB. Any miss exactly reverts
+without a shift-threshold or branch-layout sweep. This is an execution-only Akita
+change.
 
 ### 3. Recompute the complete critical path
 
@@ -157,8 +163,8 @@ localization evidence, not an additive budget after the retained RAM/eval change
 Rank candidates by credible complete-prover seconds divided by implementation and
 correctness risk. The likely queue is:
 
-1. the interleaved D512 carry chains above;
-2. commit arithmetic reduction with one task per SIMDgroup, or wrapper,
+1. the uniform D512 sign-quadrant specialization above;
+2. further commit arithmetic reduction with one task per SIMDgroup, or wrapper,
    synchronization, and CPU-tail residue, but only if new telemetry shows it on the
    critical path;
 3. the largest current BTreeMap PIOP subphase, expected among Stage 2, Stage 4, or
@@ -271,7 +277,7 @@ perf/metal-commit-eval-proof Akita worktree at
 intentional local Cargo.lock and .cargo/config.toml path overrides. Audit both heads,
 trees, and runtime diffs first. The accepted runtime sources are Jolt 9fb538461 and
 Akita a454c7575; later commits contain documentation, rejected candidates, and exact
-reverts. The current release binary was built from rejected C3 before its exact source
+reverts. The current release binary was built from rejected C4 before its exact source
 revert. Rebuild it from the accepted runtime trees before measuring, then rebuild only
 after a runtime-source edit.
 
@@ -282,25 +288,27 @@ performance, and useful public geometry/activity-based CPU/Metal crossovers at l
 scales. Once all three clear 5x with credible margin, continue while a simple bounded
 candidate has at least roughly 0.5 seconds or 1% of credible T28 upside.
 
-Do not retry C1's two-task matrix reuse, C2's 4GiB CPU opening table, or C3's wide
-signed-digit accumulator. Each preserved exactness and was exactly reverted after a
-short sentinel; C3 doubled T25 root GPU from 1.473s to 2.958s.
+Do not retry C1's two-task matrix reuse, C2's 4GiB CPU opening table, C3's wide
+signed-digit accumulator, or C4's two-live-carry interleaving. Each preserved
+exactness and was exactly reverted after its short gate; C3 doubled T25 root GPU to
+2.958s and C4 regressed it from 1.473s to 1.604s.
 
-The current tranche is two-chain instruction interleaving in Akita. Preserve the
-current two transposed accumulators, 40-value state, arithmetic, task grid, traffic,
-hybrid split, proof, transcript, and verifier. Replace each pair of sequential
-positive, negative, or mixed-sign accumulator calls with one helper that alternates
-the four word/carry stages across the two independent accumulators. Add no arrays,
-state, barriers, streams, or protocol changes. The T28 model predicts 10.2--11.0s root
-GPU from 12.510s if carry latency is exposed; the compiler-already-did-it case is the
-main falsifier.
+The current tranche is D512 sign-quadrant specialization in Akita. For each selected
+row, only one of the two 128-coefficient accumulators in the variable band can contain
+the negacyclic sign boundary. Keep that accumulator on the mixed-sign helper and route
+the other through the existing positive or negative helper using a SIMDgroup-uniform
+`local_shift < 128` branch. Preserve the two accumulators, 40-value state, arithmetic
+results, task grid, traffic, hybrid split, proof, transcript, and verifier. Add no
+state, barriers, streams, or protocol changes. The T28 model predicts 11.7--12.1s root
+GPU from 12.510s; uniform-mask compiler elimination is the main falsifier.
 
-Use the existing exact mixed-sign, stream-boundary, 512-block, and streaming tests plus
-a red route identity. Then run one verified BTreeMap T25 sentinel. Admit T28 only if
-T25 root GPU is at most 1.38s with unchanged counters. At T28 require root GPU at most
-11.0s, complete proving at most 46.8s, RSS at most 90GiB, and exact verification.
-Reject and exactly revert without trying lookahead, wider words, extra chains, or new
-accumulator state if the gate misses.
+Use a red route identity, boundary shifts 1/127/128/129/255, and the existing exact
+mixed-sign, stream-boundary, 512-block, and streaming tests. Then run one verified
+BTreeMap T25 sentinel. Admit T28 only if T25 root GPU is at most 1.43s with unchanged
+counters. At T28 require root GPU at most 12.10s and either complete proving at most
+47.58s or root GPU at most 11.884s, with RSS at most 90GiB and exact verification.
+Reject and exactly revert without a threshold or branch-layout sweep if the gate
+misses.
 
 After that result, recompute the complete critical path. Commit work alone cannot
 close BTreeMap's current 14.77-second gap to its 33.31-second 5x ceiling, so select the
