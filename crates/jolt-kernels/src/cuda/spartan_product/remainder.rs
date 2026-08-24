@@ -481,7 +481,36 @@ pub struct SpartanProductRemainderKernel<F: Field> {
 #[cfg(feature = "allocative")]
 impl<F: Field> allocative::Allocative for SpartanProductRemainderKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let visitor = visitor.enter_self_sized::<Self>();
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        let state = &self.state;
+        visitor.visit_simple(
+            allocative::Key::new("columns"),
+            state
+                .shards
+                .iter()
+                .map(|shard| shard.columns.device_bytes())
+                .sum(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("left_right"),
+            state
+                .shards
+                .iter()
+                .map(|shard| shard.left.device_bytes() + shard.right.device_bytes())
+                .sum::<usize>()
+                + state.collapsed.as_ref().map_or(0, |(left, right)| {
+                    left.device_bytes() + right.device_bytes()
+                }),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("eq"),
+            state.eq.device_bytes()
+                + state
+                    .shards
+                    .iter()
+                    .map(|shard| shard.eq.as_ref().map_or(0, DeviceSplitEq::device_bytes))
+                    .sum::<usize>(),
+        );
         visitor.exit();
     }
 }

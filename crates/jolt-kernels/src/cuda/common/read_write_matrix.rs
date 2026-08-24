@@ -46,6 +46,15 @@ pub struct DeviceReadWriteMatrix {
 }
 
 impl DeviceReadWriteMatrix {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        (self.rows.len() + self.cols.len()) * size_of::<u32>()
+            + (self.prev_val.len() + self.next_val.len()) * size_of::<u64>()
+            + self.val_coeff.device_bytes()
+            + self.coeffs.device_bytes()
+            + self.wa_scale.device_bytes()
+    }
+
     pub fn new(
         context: &CudaKernelContext,
         entries: &[MatrixEntry],
@@ -450,6 +459,19 @@ pub(crate) struct ShardedReadWriteMatrix<F: Field> {
 }
 
 impl<F: Field> ShardedReadWriteMatrix<F> {
+    #[cfg(feature = "allocative")]
+    pub(crate) fn device_bytes(&self) -> usize {
+        self.shards
+            .iter()
+            .map(|shard| {
+                shard.matrix.device_bytes() + shard.inc.device_bytes() + shard.eq.device_bytes()
+            })
+            .sum::<usize>()
+            + self.collapsed.as_ref().map_or(0, |(matrix, inc)| {
+                matrix.device_bytes() + inc.device_bytes()
+            })
+    }
+
     pub(crate) fn new(shards: Vec<CycleShard<F>>, log_t: usize) -> Result<Self, CudaError> {
         let count = shards.len();
         if count == 0 || !count.is_power_of_two() {

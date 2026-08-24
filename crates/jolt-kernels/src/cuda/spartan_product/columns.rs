@@ -19,6 +19,12 @@ pub struct DeviceProductColumns {
 }
 
 impl DeviceProductColumns {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        (self.narrow.len() + self.wide.len()) * size_of::<u64>()
+            + (self.flags.len() + self.layout.len()) * size_of::<u32>()
+    }
+
     pub fn from_device(
         context: &CudaKernelContext,
         atoms: &DeviceAtomColumns,

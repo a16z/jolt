@@ -18,6 +18,18 @@ pub(crate) struct ShardedInstructionColumns<F: Field> {
 }
 
 impl<F: Field> ShardedInstructionColumns<F> {
+    #[cfg(feature = "allocative")]
+    pub(crate) fn device_bytes(&self) -> usize {
+        self.shards
+            .iter()
+            .map(|shard| shard.columns.device_bytes() + shard.eq.device_bytes())
+            .sum::<usize>()
+            + self
+                .collapsed
+                .as_ref()
+                .map_or(0, DeviceInstructionColumns::device_bytes)
+    }
+
     pub(crate) fn new(shards: Vec<ColumnShard<F>>, log_t: usize) -> Result<Self, CudaError> {
         let count = shards.len();
         if count == 0 || !count.is_power_of_two() {
@@ -194,6 +206,11 @@ pub struct DeviceInstructionColumns {
 }
 
 impl DeviceInstructionColumns {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        self.columns.iter().map(DeviceFrVec::device_bytes).sum()
+    }
+
     pub fn from_device(
         context: &CudaKernelContext,
         trace: &DeviceTrace,

@@ -43,6 +43,7 @@ impl<F: Field> allocative::Allocative for InstructionInputKernel<F> {
             allocative::Key::new("finals"),
             self.finals.as_ref().map_or(0, |v| v.len() * size_of::<F>()),
         );
+        visitor.visit_simple(allocative::Key::new("columns"), self.columns.device_bytes());
         visitor.exit();
     }
 }

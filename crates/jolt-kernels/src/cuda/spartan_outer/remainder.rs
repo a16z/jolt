@@ -426,7 +426,37 @@ pub struct SpartanOuterRemainderKernel<F: Field> {
 #[cfg(feature = "allocative")]
 impl<F: Field> allocative::Allocative for SpartanOuterRemainderKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let visitor = visitor.enter_self_sized::<Self>();
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        let state = &self.state;
+        visitor.visit_simple(
+            allocative::Key::new("inputs"),
+            state
+                .shards
+                .iter()
+                .map(|shard| shard.inputs.device_bytes())
+                .sum(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("az_bz"),
+            state
+                .shards
+                .iter()
+                .map(|shard| shard.az.device_bytes() + shard.bz.device_bytes())
+                .sum::<usize>()
+                + state
+                    .collapsed
+                    .as_ref()
+                    .map_or(0, |(az, bz)| az.device_bytes() + bz.device_bytes()),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("eq"),
+            state.eq.device_bytes()
+                + state
+                    .shards
+                    .iter()
+                    .map(|shard| shard.eq.device_bytes())
+                    .sum::<usize>(),
+        );
         visitor.exit();
     }
 }

@@ -52,6 +52,18 @@ impl<F: Field> allocative::Allocative for RegistersReadWriteKernel<F> {
             allocative::Key::new("inc"),
             self.inc.as_ref().map_or(0, DeviceFrVec::device_bytes),
         );
+        visitor.visit_simple(
+            allocative::Key::new("cycle_matrix"),
+            self.cycle
+                .as_ref()
+                .map_or(0, ShardedReadWriteMatrix::device_bytes),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("address_matrix"),
+            self.address
+                .as_ref()
+                .map_or(0, DeviceAddressMajorMatrix::device_bytes),
+        );
         visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
         visitor.visit_simple(
             allocative::Key::new("merged_eq"),
