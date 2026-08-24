@@ -73,9 +73,11 @@ GPU-active. The full opening command interval is about 5.54 s against 2.62 s of
 GPU-active work. These counters overlap and therefore are not additive, but they show
 that raw shader throughput is not the sole limit. Materialization, allocation, host
 preparation, command gaps, and waits are all eligible. Writing and rereading the two
-indices alone moves about 94.8 GiB; at the measured 412.5 GiB/s stream rate its ideal
-traffic floor is only about 0.23 s. A useful design must remove lifecycle and command
-overhead as well as bytes, not merely replace one copy kernel with another.
+full-capacity indices would move 94.8 GiB, but the allocated capacity is not itself a
+traffic measurement: sparse fold records and private-buffer residency can leave pages
+untouched. The first tranche must therefore count valid records and touched bytes as
+well as capacity. A useful design must remove lifecycle and command overhead as well
+as measured traffic, not merely replace one copy kernel with another.
 
 ## Main execution plan
 
