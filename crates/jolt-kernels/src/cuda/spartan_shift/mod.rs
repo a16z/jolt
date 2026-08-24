@@ -19,7 +19,7 @@ use crate::cuda::common::prefix_suffix::PrefixSuffixWindow;
 use crate::cuda::witness::session_window_residency;
 
 use super::common::prefix_suffix::{
-    eq_plus_one_pairs, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
+    eq_plus_one_pairs, prefix_rounds_ceil, ColumnSet, PrefixSuffixGroup, PrefixSuffixRounds,
 };
 use super::CudaBackend;
 use crate::cuda::require_context;
@@ -166,13 +166,13 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
             .pc;
             column_windows.push(PrefixSuffixWindow {
                 ordinal,
-                columns: columns::upload_from_device::<F>(
+                columns: ColumnSet::Field(columns::upload_from_device::<F>(
                     device,
                     trace.unexpanded_pc(),
                     &pc,
                     &atoms.flags,
                     window.len,
-                )?,
+                )?),
                 suffix_offset: window.start / prefix_len,
                 suffix_len: window.len / prefix_len,
             });

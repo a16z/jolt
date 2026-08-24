@@ -9,12 +9,18 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
+use std::sync::Arc;
+
+use jolt_witness::backend::cuda::DeviceAtomColumns;
+
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::devices::{witness_windows, CycleWindow};
 use crate::cuda::witness::session_window_residency;
 
+use super::common::half_fold::{NarrowColumn, NarrowKind};
 use super::common::prefix_suffix::{
-    eq_pair, prefix_rounds_floor, PrefixSuffixGroup, PrefixSuffixRounds, PrefixSuffixWindow,
+    eq_pair, prefix_rounds_floor, ColumnSet, NarrowColumns, PrefixSuffixGroup, PrefixSuffixRounds,
+    PrefixSuffixWindow,
 };
 use super::{require_context, CudaBackend};
 use crate::reference::ReferenceBackend;
@@ -29,6 +35,34 @@ const RAM_COLUMN: usize = 0;
 const RD_COLUMN: usize = 1;
 
 const GROUP_COLUMNS: [usize; 4] = [RAM_COLUMN, RAM_COLUMN, RD_COLUMN, RD_COLUMN];
+
+struct IncrementFoldColumns {
+    atoms: Arc<DeviceAtomColumns>,
+    entries: usize,
+}
+
+impl NarrowColumns for IncrementFoldColumns {
+    fn count(&self) -> usize {
+        2
+    }
+
+    fn entries(&self) -> usize {
+        self.entries
+    }
+
+    fn column(&self, index: usize) -> Option<NarrowColumn<'_>> {
+        let words = match index {
+            RAM_COLUMN => &self.atoms.ram_inc,
+            RD_COLUMN => &self.atoms.rd_inc,
+            _ => return None,
+        };
+        Some(NarrowColumn::packed(
+            words,
+            NarrowKind::TwosI128,
+            self.entries,
+        ))
+    }
+}
 
 pub struct IncClaimReductionKernel<F: Field> {
     rounds: PrefixSuffixRounds<F>,
@@ -123,10 +157,10 @@ fn increment_windows<F: Field>(
         let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
         out.push(PrefixSuffixWindow {
             ordinal,
-            columns: vec![
-                device.i128_to_montgomery_device(&atoms.ram_inc, window.len)?,
-                device.i128_to_montgomery_device(&atoms.rd_inc, window.len)?,
-            ],
+            columns: ColumnSet::Narrow(Arc::new(IncrementFoldColumns {
+                atoms,
+                entries: window.len,
+            })),
             suffix_offset: window.start / prefix_len,
             suffix_len: window.len / prefix_len,
         });

@@ -9,13 +9,18 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
+use std::sync::Arc;
+
+use jolt_witness::backend::cuda::{DeviceTrace, EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2, EXTRA_WORDS};
+
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::devices::{witness_windows, CycleWindow};
-use crate::cuda::common::prefix_suffix::PrefixSuffixWindow;
+use crate::cuda::common::half_fold::{NarrowColumn, NarrowKind};
+use crate::cuda::common::prefix_suffix::{NarrowColumns, PrefixSuffixWindow};
 use crate::cuda::witness::session_window_residency;
 
 use super::common::prefix_suffix::{
-    eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
+    eq_pair, prefix_rounds_ceil, ColumnSet, PrefixSuffixGroup, PrefixSuffixRounds,
 };
 use super::{require_context, CudaBackend};
 use crate::reference::ReferenceBackend;
@@ -95,23 +100,31 @@ impl<F: Field> SumcheckKernel<F> for RegistersClaimReductionKernel<F> {
     }
 }
 
-fn device_columns_from_trace<F: Field>(
-    context: &crate::cuda::common::context::CudaKernelContext,
-    trace: &jolt_witness::backend::cuda::DeviceTrace,
-    cycles: usize,
-) -> Result<Vec<crate::cuda::common::device::DeviceFrVec>, KernelError<F>> {
-    let mut columns = Vec::with_capacity(3);
-    for word in [
-        jolt_witness::backend::cuda::EXTRA_RD_POST,
-        jolt_witness::backend::cuda::EXTRA_RS1,
-        jolt_witness::backend::cuda::EXTRA_RS2,
-    ] {
-        let raw = trace.extra_word_column(word)?;
-        columns.push(context.u64_to_montgomery_device(&raw, cycles)?);
-    }
-    Ok(columns)
+struct ExtraWordColumns {
+    trace: Arc<DeviceTrace>,
+    entries: usize,
 }
 
+impl NarrowColumns for ExtraWordColumns {
+    fn count(&self) -> usize {
+        COLUMNS
+    }
+
+    fn entries(&self) -> usize {
+        self.entries
+    }
+
+    fn column(&self, index: usize) -> Option<NarrowColumn<'_>> {
+        let word = *[EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2].get(index)?;
+        Some(NarrowColumn {
+            words: self.trace.extras(),
+            kind: NarrowKind::U64,
+            len: self.entries,
+            stride: EXTRA_WORDS,
+            offset: word,
+        })
+    }
+}
 impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
@@ -155,7 +168,10 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
             let (trace, _) = session_window_residency(device, session, witness, cycles, window)?;
             column_windows.push(PrefixSuffixWindow {
                 ordinal,
-                columns: device_columns_from_trace::<F>(device, &trace, window.len)?,
+                columns: ColumnSet::Narrow(Arc::new(ExtraWordColumns {
+                    trace,
+                    entries: window.len,
+                })),
                 suffix_offset: window.start / prefix_len,
                 suffix_len: window.len / prefix_len,
             });
@@ -209,6 +225,7 @@ mod tests {
 
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::half_fold::{half_fold, FoldColumn, SummedHalf};
     use crate::cuda::common::testing::{
         arb_point, drive, fr, reference_input_claim, with_r1cs_witness,
     };
@@ -323,10 +340,26 @@ mod tests {
                 cycles,
             )
             .expect("device residency");
-            let got: Vec<Vec<Fr>> = super::device_columns_from_trace::<Fr>(context, &trace, cycles)
-                .expect("device columns")
-                .iter()
-                .map(|column| column.to_host().expect("download"))
+            let narrow = super::ExtraWordColumns {
+                trace,
+                entries: cycles,
+            };
+            let one = context.upload(&[Fr::from_u64(1)]).expect("upload weight");
+            let got: Vec<Vec<Fr>> = (0..super::COLUMNS)
+                .map(|index| {
+                    let column =
+                        super::NarrowColumns::column(&narrow, index).expect("narrow column");
+                    half_fold(
+                        context,
+                        FoldColumn::Narrow(column),
+                        &one,
+                        SummedHalf::High,
+                        Fr::from_u64(1),
+                    )
+                    .expect("promote the narrow column")
+                    .to_host()
+                    .expect("download")
+                })
                 .collect();
 
             assert!(

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use jolt_field::Field;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -8,7 +10,7 @@ use super::context::{context_for, CudaKernelContext};
 use super::device::{require_fr_slice, DeviceFrVec};
 use super::devices::{fan_out, DeviceTask};
 use super::error::CudaError;
-use super::half_fold::{half_fold, half_fold_into, SummedHalf};
+use super::half_fold::{half_fold, half_fold_into, FoldColumn, NarrowColumn, SummedHalf};
 use super::sum_of_products::{DeviceSumOfProducts, SumOfProducts};
 
 #[derive(Clone, Debug)]
@@ -110,7 +112,7 @@ fn window_accumulators<F: Field>(
             for (index, &(column, coefficient)) in group.columns.iter().enumerate() {
                 half_fold_into(
                     context,
-                    &window.columns[column],
+                    window.columns.column(column)?,
                     &suffix,
                     &mut accumulator,
                     SummedHalf::High,
@@ -142,9 +144,73 @@ enum Phase {
     Two(PhaseTwo),
 }
 
+pub trait NarrowColumns: Send + Sync {
+    fn count(&self) -> usize;
+
+    fn entries(&self) -> usize;
+
+    fn column(&self, index: usize) -> Option<NarrowColumn<'_>>;
+}
+
+pub enum ColumnSet {
+    Field(Vec<DeviceFrVec>),
+    Narrow(Arc<dyn NarrowColumns>),
+}
+
+impl ColumnSet {
+    pub fn count(&self) -> usize {
+        match self {
+            Self::Field(columns) => columns.len(),
+            Self::Narrow(columns) => columns.count(),
+        }
+    }
+
+    pub fn entries(&self) -> usize {
+        match self {
+            Self::Field(columns) => columns.first().map_or(0, DeviceFrVec::len),
+            Self::Narrow(columns) => columns.entries(),
+        }
+    }
+
+    pub fn column(&self, index: usize) -> Result<FoldColumn<'_>, CudaError> {
+        let absent = || CudaError::InvariantViolation {
+            reason: "a prefix-suffix group names a column outside the claimed set",
+        };
+        match self {
+            Self::Field(columns) => columns.get(index).map(FoldColumn::Field).ok_or_else(absent),
+            Self::Narrow(columns) => columns
+                .column(index)
+                .map(FoldColumn::Narrow)
+                .ok_or_else(absent),
+        }
+    }
+
+    fn uniform(&self) -> bool {
+        match self {
+            Self::Field(columns) => {
+                let entries = self.entries();
+                columns.iter().all(|column| column.len() == entries)
+            }
+            Self::Narrow(_) => true,
+        }
+    }
+
+    fn release(&mut self) {
+        *self = Self::Field(Vec::new());
+    }
+
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        match self {
+            Self::Field(columns) => columns.iter().map(DeviceFrVec::device_bytes).sum(),
+            Self::Narrow(_) => 0,
+        }
+    }
+}
+
 pub struct PrefixSuffixWindow {
     pub ordinal: usize,
-    pub columns: Vec<DeviceFrVec>,
+    pub columns: ColumnSet,
     pub suffix_offset: usize,
     pub suffix_len: usize,
 }
@@ -152,7 +218,7 @@ pub struct PrefixSuffixWindow {
 pub struct PrefixSuffixRounds<F: Field> {
     context: &'static CudaKernelContext,
     groups: Vec<PrefixSuffixGroup<F>>,
-    columns: Vec<DeviceFrVec>,
+    columns: ColumnSet,
     windows: Vec<PrefixSuffixWindow>,
     phase: Phase,
     challenges: Vec<F>,
@@ -164,12 +230,17 @@ pub struct PrefixSuffixRounds<F: Field> {
 impl<F: Field> PrefixSuffixRounds<F> {
     #[cfg(feature = "allocative")]
     pub fn device_bytes(&self) -> usize {
-        self.columns.iter().map(DeviceFrVec::device_bytes).sum()
+        self.columns.device_bytes()
+            + self
+                .windows
+                .iter()
+                .map(|window| window.columns.device_bytes())
+                .sum::<usize>()
     }
 
     pub fn new(
         context: &'static CudaKernelContext,
-        columns: Vec<DeviceFrVec>,
+        columns: ColumnSet,
         groups: Vec<PrefixSuffixGroup<F>>,
         prefix_rounds: usize,
     ) -> Result<Self, CudaError> {
@@ -191,7 +262,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
                 for (index, &(column, coefficient)) in group.columns.iter().enumerate() {
                     half_fold_into(
                         context,
-                        &columns[column],
+                        columns.column(column)?,
                         &suffix,
                         &mut accumulator,
                         SummedHalf::High,
@@ -243,27 +314,25 @@ impl<F: Field> PrefixSuffixRounds<F> {
         }
         let prefix_len = 1usize << prefix_rounds;
         let suffix_len = 1usize << (log_t - prefix_rounds);
-        let column_count = windows.first().map(|window| window.columns.len()).ok_or(
+        let column_count = windows.first().map(|window| window.columns.count()).ok_or(
             CudaError::InvariantViolation {
                 reason: "a windowed prefix-suffix driver needs at least one window",
             },
         )?;
         let mut covered = 0;
         for window in &windows {
-            if window.suffix_offset != covered || window.columns.len() != column_count {
+            if window.suffix_offset != covered || window.columns.count() != column_count {
                 return Err(CudaError::InvariantViolation {
                     reason: "prefix-suffix windows must tile the suffix domain in order with the \
                              same column set",
                 });
             }
-            if window
-                .columns
-                .iter()
-                .any(|column| column.len() != prefix_len * window.suffix_len)
+            if window.columns.entries() != prefix_len * window.suffix_len
+                || !window.columns.uniform()
             {
                 return Err(CudaError::LengthMismatch {
                     expected: prefix_len * window.suffix_len,
-                    got: window.columns.first().map_or(0, DeviceFrVec::len),
+                    got: window.columns.entries(),
                 });
             }
             covered += window.suffix_len;
@@ -356,7 +425,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
         Ok(Self {
             context,
             groups,
-            columns: Vec::new(),
+            columns: ColumnSet::Field(Vec::new()),
             windows,
             phase: Phase::One(PhaseOne { tables, form }),
             challenges: Vec::with_capacity(log_t),
@@ -367,23 +436,23 @@ impl<F: Field> PrefixSuffixRounds<F> {
     }
 
     fn validate(
-        columns: &[DeviceFrVec],
+        columns: &ColumnSet,
         groups: &[PrefixSuffixGroup<F>],
         prefix_rounds: usize,
     ) -> Result<usize, CudaError> {
-        let Some(first) = columns.first() else {
+        if columns.count() == 0 {
             return Err(CudaError::InvariantViolation {
                 reason: "a prefix-suffix sumcheck needs at least one claimed column",
             });
-        };
-        let length = first.len();
+        }
+        let length = columns.entries();
         if length < 2 || !length.is_power_of_two() {
             return Err(CudaError::LengthMismatch {
                 expected: length.next_power_of_two().max(2),
                 got: length,
             });
         }
-        if columns.iter().any(|column| column.len() != length) {
+        if !columns.uniform() {
             return Err(CudaError::InvariantViolation {
                 reason: "every prefix-suffix column must span the same number of cycles",
             });
@@ -416,7 +485,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
             if group
                 .columns
                 .iter()
-                .any(|&(column, _)| column >= columns.len())
+                .any(|&(column, _)| column >= columns.count())
             {
                 return Err(CudaError::InvariantViolation {
                     reason: "a prefix-suffix group names a column outside the claimed set",
@@ -510,7 +579,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
         let device_eq_lo = self.context.upload(require_fr_slice(&eq_lo)?)?;
         let suffix_len = 1usize << (self.log_t - self.prefix_rounds);
 
-        let mut tables = Vec::with_capacity(self.groups.len() + self.columns.len() + 1);
+        let mut tables = Vec::with_capacity(self.groups.len() + self.columns.count() + 1);
         for group in &self.groups {
             let mut weight = vec![F::zero(); suffix_len];
             for pair in &group.pairs {
@@ -526,10 +595,10 @@ impl<F: Field> PrefixSuffixRounds<F> {
         }
         let column_offset = tables.len();
         if self.windows.is_empty() {
-            for column in &self.columns {
+            for index in 0..self.columns.count() {
                 tables.push(half_fold(
                     self.context,
-                    column,
+                    self.columns.column(index)?,
                     &device_eq_lo,
                     SummedHalf::Low,
                     F::one(),
@@ -564,7 +633,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
         }
         let form = form.upload(self.context)?;
 
-        self.columns = Vec::new();
+        self.columns.release();
         self.windows = Vec::new();
         self.len = suffix_len;
         self.phase = Phase::Two(PhaseTwo {
@@ -580,7 +649,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
         let column_count = self
             .windows
             .first()
-            .map(|window| window.columns.len())
+            .map(|window| window.columns.count())
             .ok_or(CudaError::InvariantViolation {
                 reason: "a windowed prefix-suffix transition lost its windows",
             })?;
@@ -594,11 +663,17 @@ impl<F: Field> PrefixSuffixRounds<F> {
                             reason: "a prefix-suffix window names an absent device",
                         })?;
                     let weights = device.upload(require_fr_slice(eq_lo)?)?;
-                    let mut folded = Vec::with_capacity(window.columns.len());
-                    for column in &window.columns {
+                    let mut folded = Vec::with_capacity(window.columns.count());
+                    for index in 0..window.columns.count() {
                         folded.push(
-                            half_fold(device, column, &weights, SummedHalf::Low, F::one())?
-                                .to_host()?,
+                            half_fold(
+                                device,
+                                window.columns.column(index)?,
+                                &weights,
+                                SummedHalf::Low,
+                                F::one(),
+                            )?
+                            .to_host()?,
                         );
                     }
                     Ok(folded)
@@ -676,8 +751,8 @@ mod tests {
     use super::super::context::shared_context;
     use super::super::testing::fr;
     use super::{
-        eq_pair, eq_plus_one_pairs, PrefixSuffixGroup, PrefixSuffixPair, PrefixSuffixRounds,
-        PrefixSuffixWindow,
+        eq_pair, eq_plus_one_pairs, ColumnSet, PrefixSuffixGroup, PrefixSuffixPair,
+        PrefixSuffixRounds, PrefixSuffixWindow,
     };
 
     fn zero() -> Fr {
@@ -861,8 +936,13 @@ mod tests {
             .iter()
             .map(|column| context.upload(column).expect("upload column"))
             .collect();
-        let mut got = PrefixSuffixRounds::<Fr>::new(context, uploaded, groups, prefix_rounds)
-            .expect("device prefix-suffix driver");
+        let mut got = PrefixSuffixRounds::<Fr>::new(
+            context,
+            ColumnSet::Field(uploaded),
+            groups,
+            prefix_rounds,
+        )
+        .expect("device prefix-suffix driver");
 
         prop_assert_eq!(got.num_rounds(), log_t);
         let mut claim = oracle.claim();
@@ -923,14 +1003,16 @@ mod tests {
                 let base = shard * window_suffix * prefix_len;
                 PrefixSuffixWindow {
                     ordinal: 0,
-                    columns: columns
-                        .iter()
-                        .map(|column| {
-                            context
-                                .upload(&column[base..base + window_suffix * prefix_len])
-                                .expect("upload window column")
-                        })
-                        .collect(),
+                    columns: ColumnSet::Field(
+                        columns
+                            .iter()
+                            .map(|column| {
+                                context
+                                    .upload(&column[base..base + window_suffix * prefix_len])
+                                    .expect("upload window column")
+                            })
+                            .collect(),
+                    ),
                     suffix_offset: shard * window_suffix,
                     suffix_len: window_suffix,
                 }

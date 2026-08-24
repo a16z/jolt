@@ -9,15 +9,18 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
+use std::sync::Arc;
+
 use jolt_witness::backend::cuda::DeviceAtomColumns;
 
 use crate::cuda::witness::session_window_residency;
 
-use super::common::context::{context_for, CudaKernelContext};
-use super::common::device::DeviceFrVec;
+use super::common::context::context_for;
 use super::common::devices::{witness_windows, CycleWindow};
+use super::common::half_fold::{NarrowColumn, NarrowKind};
 use super::common::prefix_suffix::{
-    eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds, PrefixSuffixWindow,
+    eq_pair, prefix_rounds_ceil, ColumnSet, NarrowColumns, PrefixSuffixGroup, PrefixSuffixRounds,
+    PrefixSuffixWindow,
 };
 use super::{require_context, CudaBackend};
 use crate::reference::ReferenceBackend;
@@ -145,7 +148,10 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBackend {
             let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
             column_windows.push(PrefixSuffixWindow {
                 ordinal,
-                columns: device_columns_from_atoms::<F>(device, &atoms, window.len)?,
+                columns: ColumnSet::Narrow(Arc::new(AtomFoldColumns {
+                    atoms,
+                    entries: window.len,
+                })),
                 suffix_offset: window.start / prefix_len,
                 suffix_len: window.len / prefix_len,
             });
@@ -178,18 +184,31 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBackend {
     }
 }
 
-pub(crate) fn device_columns_from_atoms<F: Field>(
-    context: &CudaKernelContext,
-    atoms: &DeviceAtomColumns,
-    cycles: usize,
-) -> Result<Vec<DeviceFrVec>, KernelError<F>> {
-    Ok(vec![
-        context.u64_to_montgomery_device(&atoms.lookup_output, cycles)?,
-        context.u64_to_montgomery_device(&atoms.left_lookup_operand, cycles)?,
-        context.u128_to_montgomery_device(&atoms.right_lookup_operand, cycles)?,
-        context.u64_to_montgomery_device(&atoms.left_instruction_input, cycles)?,
-        context.i128_to_montgomery_device(&atoms.right_instruction_input, cycles)?,
-    ])
+struct AtomFoldColumns {
+    atoms: Arc<DeviceAtomColumns>,
+    entries: usize,
+}
+
+impl NarrowColumns for AtomFoldColumns {
+    fn count(&self) -> usize {
+        COLUMNS
+    }
+
+    fn entries(&self) -> usize {
+        self.entries
+    }
+
+    fn column(&self, index: usize) -> Option<NarrowColumn<'_>> {
+        let (words, kind) = match index {
+            0 => (&self.atoms.lookup_output, NarrowKind::U64),
+            1 => (&self.atoms.left_lookup_operand, NarrowKind::U64),
+            2 => (&self.atoms.right_lookup_operand, NarrowKind::U128),
+            3 => (&self.atoms.left_instruction_input, NarrowKind::U64),
+            4 => (&self.atoms.right_instruction_input, NarrowKind::TwosI128),
+            _ => return None,
+        };
+        Some(NarrowColumn::packed(words, kind, self.entries))
+    }
 }
 
 #[cfg(test)]
@@ -214,6 +233,7 @@ mod tests {
 
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::half_fold::{half_fold, FoldColumn, SummedHalf};
     use crate::cuda::common::testing::{
         arb_point, drive, fr, reference_input_claim, with_r1cs_witness,
     };
@@ -330,10 +350,26 @@ mod tests {
                 cycles,
             )
             .expect("atom columns");
-            let got: Vec<Vec<Fr>> = super::device_columns_from_atoms::<Fr>(context, &atoms, cycles)
-                .expect("device-gathered columns")
-                .iter()
-                .map(|column| column.to_host().expect("download"))
+            let narrow = super::AtomFoldColumns {
+                atoms,
+                entries: cycles,
+            };
+            let one = context.upload(&[Fr::from_u64(1)]).expect("upload weight");
+            let got: Vec<Vec<Fr>> = (0..super::COLUMNS)
+                .map(|index| {
+                    let column =
+                        super::NarrowColumns::column(&narrow, index).expect("narrow column");
+                    half_fold(
+                        context,
+                        FoldColumn::Narrow(column),
+                        &one,
+                        SummedHalf::High,
+                        Fr::from_u64(1),
+                    )
+                    .expect("promote the narrow column")
+                    .to_host()
+                    .expect("download")
+                })
                 .collect();
 
             assert!(

@@ -1,3 +1,43 @@
+#define HF_KIND_U64 0u
+#define HF_KIND_U128 1u
+#define HF_KIND_TWOS_I128 2u
+#define HF_KIND_FIELD 3u
+
+__device__ __forceinline__ void hf_promote_narrow(const u64 *__restrict__ entry,
+                                                 unsigned int kind,
+                                                 u64 *out) {
+    u64 lo = entry[0];
+    u64 hi = kind == HF_KIND_U64 ? 0ull : entry[1];
+    bool negative = kind == HF_KIND_TWOS_I128 && (hi >> 63) != 0ull;
+    if (negative) {
+        u64 next = ~lo + 1ull;
+        hi = ~hi + (next == 0ull ? 1ull : 0ull);
+        lo = next;
+    }
+    u64 raw[LIMBS] = {lo, hi, 0, 0};
+    fr_to_mont(raw, out);
+    if (negative) {
+        u64 zero[LIMBS] = {0, 0, 0, 0};
+        u64 neg[LIMBS];
+        fr_sub(zero, out, neg);
+        for (int l = 0; l < LIMBS; l++) out[l] = neg[l];
+    }
+}
+
+__device__ __forceinline__ void hf_load_value(const u64 *__restrict__ words,
+                                              unsigned int kind,
+                                              unsigned int stride,
+                                              unsigned int offset,
+                                              unsigned long long index,
+                                              u64 *out) {
+    if (kind == HF_KIND_FIELD) {
+        load4(words + index * LIMBS, out);
+        return;
+    }
+    hf_promote_narrow(words + (unsigned long long)offset + index * (unsigned long long)stride,
+                      kind, out);
+}
+
 extern "C" __global__ void hf_half_fold_kernel(const u64 *__restrict__ column,
                                               const u64 *__restrict__ weights,
                                               u64 *__restrict__ out,
@@ -7,7 +47,10 @@ extern "C" __global__ void hf_half_fold_kernel(const u64 *__restrict__ column,
                                               unsigned int sum_len,
                                               unsigned int out_stride,
                                               unsigned int sum_stride,
-                                              unsigned int accumulate) {
+                                              unsigned int accumulate,
+                                              unsigned int kind,
+                                              unsigned int entry_stride,
+                                              unsigned int entry_offset) {
     unsigned int a = blockIdx.x * blockDim.x + threadIdx.x;
     if (a >= out_len) return;
 
@@ -17,7 +60,7 @@ extern "C" __global__ void hf_half_fold_kernel(const u64 *__restrict__ column,
         u64 weight[LIMBS], value[LIMBS], term[LIMBS], sum[LIMBS];
         load4(weights + (unsigned long long)b * LIMBS, weight);
         unsigned long long index = base + (unsigned long long)b * (unsigned long long)sum_stride;
-        load4(column + index * LIMBS, value);
+        hf_load_value(column, kind, entry_stride, entry_offset, index, value);
         fr_mul(weight, value, term);
         fr_add(acc, term, sum);
         for (int l = 0; l < LIMBS; l++) acc[l] = sum[l];
@@ -43,7 +86,10 @@ extern "C" __global__ void hf_row_fold_kernel(const u64 *__restrict__ column,
                                              u64 scale0, u64 scale1, u64 scale2, u64 scale3,
                                              u64 bias0, u64 bias1, u64 bias2, u64 bias3,
                                              unsigned int sum_len,
-                                             unsigned int accumulate) {
+                                             unsigned int accumulate,
+                                             unsigned int kind,
+                                             unsigned int entry_stride,
+                                             unsigned int entry_offset) {
     extern __shared__ u64 scratch[];
     unsigned int a = blockIdx.x;
     unsigned int tid = threadIdx.x;
@@ -53,7 +99,7 @@ extern "C" __global__ void hf_row_fold_kernel(const u64 *__restrict__ column,
     for (unsigned int b = tid; b < sum_len; b += blockDim.x) {
         u64 weight[LIMBS], value[LIMBS], term[LIMBS], sum[LIMBS];
         load4(weights + (unsigned long long)b * LIMBS, weight);
-        load4(column + (base + (unsigned long long)b) * LIMBS, value);
+        hf_load_value(column, kind, entry_stride, entry_offset, base + (unsigned long long)b, value);
         fr_mul(weight, value, term);
         fr_add(acc, term, sum);
         for (int l = 0; l < LIMBS; l++) acc[l] = sum[l];
