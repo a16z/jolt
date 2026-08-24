@@ -217,6 +217,29 @@ exceeds 1.25 s, RSS exceeds 90 GiB, or any fallback or exactness check fails. A
 retained intermediate is not a finished kernel: closing this component still
 requires at most 0.71 s, 80% efficiency against the 0.57 s floor.
 
+## Out-of-place compaction result
+
+Jolt `9fb538461` implements the hot-only count/prefix/scatter schedule. Focused
+optimized-CPU lockstep covers multiple chunks, a pair crossing entry 4,096, odd
+live lengths, cold/hot coexistence, and an odd-`log_T` auxiliary root. The T25
+BTreeMap sentinel verified in 6.45 s and used 0.2125 s RAM GPU-active, below the
+0.260 s admission bar. Its 2,699,044 hot entries allocated 140,350,288 auxiliary
+bytes and kept peak RSS at 16.83 GiB.
+
+The single admitted T28 treatment also verified. It used 46,343,732 hot entries,
+2,409,874,064 auxiliary bytes, a 48-byte static threadgroup footprint, and no route
+fallback. RAM GPU-active time fell from 1.823 s to 1.2246 s: rounds 0--11 fell from
+1.565 s to 0.9545 s while rounds 12--27 remained essentially flat at 0.2691 s.
+Complete proving fell from the accepted 49.42 s mean to 48.08 s at 80.08 GiB peak
+RSS. This clears the predeclared 48.92 s, 1.25 s, and 90 GiB bars and retains the
+candidate.
+
+The result localizes the gain to the intended skewed early rounds, but it is not the
+terminal RAM schedule. The 1.2246 s affected span remains 0.5146 s above the 0.71 s
+terminal bar. The original 0.75--1.15 s prediction was optimistic by 0.0746 s at its
+upper end; future work must separate count/prefix/scatter, message, cycle, and
+reduction timestamps before assigning that residue to compaction.
+
 Atomic output reservation was rejected because threadgroup arrival order would
 scramble the sorted frontier. Fixed padded output slices avoid a prefix but turn one
 contiguous segment into a fragmented tree and carry empty capacity through later

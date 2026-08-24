@@ -33,18 +33,18 @@ initial analytical anchors. They are single observed runs, not final release cla
 | Fibonacci | 215.18 s | 45.72 s | 4.71x | 43.04 s | 2.68 s |
 | SHA-2 chain | 213.70 s | 42.45 s | 5.03x | 42.74 s | clears by 0.29 s |
 
-These are the frozen starting controls. The accepted paired checkpoint now measures
-49.29 s and 49.55 s for BTreeMap, or 3.361x using the slower observation, leaving
-16.24 s to the 5x ceiling. Fibonacci and SHA-2 retain the frozen T28 values until the
-next milestone sweep. Ranges below are planning estimates to falsify, not measured
-promises.
+These are the frozen starting controls. After fold-index fusion and hot-only
+out-of-place RAM compaction, the accepted paired checkpoint measures 48.08 s for
+BTreeMap, or 3.464x against the frozen CPU anchor, leaving 14.77 s to the 5x ceiling.
+Fibonacci and SHA-2 retain the frozen T28 values until the next milestone sweep.
+Ranges below are planning estimates to falsify, not measured promises.
 
 | Priority | Mechanism | Current predicted opportunity |
 |---|---|---:|
-| 1 | Move hot-address RAM compaction to an out-of-place multi-group schedule | BTreeMap ceiling about 1.25 s |
-| 2 | Measure and retime the Stage 4/5 compatibility-scatter prefetch | up to 1.2 s on BTreeMap |
-| 3 | Reduce BTreeMap commit traffic/locality cost | at least 1.8 s needed for a 5x commit phase |
-| 4 | Remove commit wrapper, row-generation, and synchronization residue | 0.3--0.6 s per workload |
+| 1 | Measure and retime the Stage 4/5 compatibility-scatter prefetch | up to 1.2 s on BTreeMap |
+| 2 | Reduce BTreeMap commit traffic/locality cost | at least 1.8 s needed for a 5x commit phase |
+| 3 | Remove commit wrapper, row-generation, and synchronization residue | 0.3--0.6 s per workload |
+| 4 | Reprice the retained RAM message/cycle/reduction residue | at most 0.51 s to its terminal bar |
 | 5 | Generalize the bytecode address carrier from `log_K = 13` to 14 | at most 1.34 s on SHA-2 |
 | 6 | Remove remaining lazy-first-bind, product-output, and command gaps | reprice after priorities 1--5 |
 
@@ -58,11 +58,12 @@ GPU-active against a 0.57 s analytical floor.
 
 Fixed hot-message chunks and 1,024-thread compaction groups are retained, reducing
 RAM GPU-active time from 2.97 s to 1.82 s without material RSS growth. The latter
-misses its 1.7 s terminal bar, but the remaining RAM ceiling is only about 1.25 s and
-requires a second hot-only state plane. The higher-priority opening candidates have
-now been resolved: fold-index fusion was accepted and coefficient-index fusion was
-rejected. Hot-only out-of-place compaction is therefore the next isolated candidate.
-Full RAM design and measurements live in
+misses its 1.7 s terminal bar. Hot-only out-of-place count/prefix/scatter is now also
+retained: exact T25 and T28 proofs pass, RAM GPU-active time is 1.2246 s, and the
+complete BTreeMap prover is 48.08 s at 80.08 GiB. The intended early rounds account
+for the gain; their GPU time fell by 0.6105 s while the late rounds stayed flat. The
+remaining RAM residue is only about 0.51 s to its terminal bar and must be separated
+by subphase before another RAM edit. Full RAM design and measurements live in
 [akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md).
 
 The shared opening boundary is now measured well enough to isolate its two index
@@ -279,9 +280,9 @@ current feat/akita-metal Jolt branch at
 /Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt and Akita
 perf/metal-commit-eval-proof at
 /Users/mgeorghiades/worktrees/akita-metal-eval-proof. The accepted runtime sources are
-Jolt e3bd59d3b and Akita a454c7575; later commits may contain analysis, an exact
-negative experiment, and its revert. First audit both worktrees and record their
-actual heads and trees. Preserve the intentionally local Jolt Cargo.lock and
+Jolt 9fb538461 and Akita a454c7575; later commits may contain analysis, exact negative
+experiments, reverts, and result documentation. First audit both worktrees and record
+their actual heads and trees. Preserve the intentionally local Jolt Cargo.lock and
 .cargo/config.toml path overrides. Do not push. Rebuild before the first treatment;
 an existing release binary may still be linked against the reverted Akita candidate.
 
@@ -299,13 +300,14 @@ accepted result must print successful proof verification. Do not move witness- o
 transcript-dependent work outside the timed proving boundary. Reuse the frozen CPU
 anchors unless an explicit invalidation condition changes.
 
-The retained RAM work, fixed hot-message chunks, and 1,024-thread compaction are
-already implemented; do not redo them. The accepted Akita fold candidate fuses the
-deferred fold index into its consumer, removes 30.469 GiB of one-shot storage, passes
-exact retained/fused parity and proof verification, and brings BTreeMap T28 to
-49.29--49.55 s at 81.93--82.03 GiB RSS. Treat the slower 49.55 s observation as the
-current Metal parent; it is 3.361x against the frozen 166.548 s CPU anchor and is
-16.24 s above the 5x ceiling.
+The retained RAM work, fixed hot-message chunks, 1,024-thread compaction, deferred
+fold-index fusion, and hot-only out-of-place count/prefix/scatter are already
+implemented; do not redo them. The latter passes exact lockstep and full proof
+verification, reduces BTreeMap T28 RAM GPU-active time from 1.823 s to 1.2246 s, and
+brings the complete prover from the accepted 49.42 s mean to 48.08 s at 80.08 GiB
+RSS. Treat 48.08 s as the current Metal parent; it is 3.464x against the frozen
+166.548 s CPU anchor and is 14.77 s above the 5x ceiling. Its 0.5146 s remaining
+ceiling to the RAM terminal bar requires subphase telemetry before more RAM work.
 
 Do not repeat the rejected deferred-coefficient experiment. It removed the remaining
 18,182,307,840 index bytes, passed exact parity and proof verification, measured
@@ -316,31 +318,15 @@ allocation pressure for real occupancy and device work. It missed the predeclare
 0.5 s and 49.05 s bars and was reverted. Preserve this as negative evidence; do not
 tune its window without a materially different analytical ownership model.
 
-Start with hot-address RAM compaction in Jolt. The current BTreeMap T28 relation has
-65,195,206 accesses across 452,493 active addresses; its hottest segment contains
-20,729,173 accesses, so one threadgroup owns 31.8% of the work. Fixed hot-message
-chunks reduced RAM GPU-active time to about 1.82 s, but the modeled state-traffic and
-fp128 floor is about 0.57 s, leaving an absolute ceiling near 1.25 s. Before code,
-commit the exact round-transition and message ownership boundary, compulsory traffic
-and arithmetic floor, auxiliary-plane memory bound, predicted end-to-end saving, and
-falsifier.
-
-Evaluate one bounded design: leave cold addresses in place; split only public-
-geometry-selected hot segments across multiple groups with disjoint output ownership,
-using count/prefix/scatter and one hot-only auxiliary state plane if the exact model
-confirms it. Preserve address and cycle order, cross-chunk pairs, odd tails, challenge
-binding, compaction-before-message ordering, transcript, proof bytes, and verifier
-behavior. The route must be generic and activity-based, not keyed to BTreeMap. Do not
-mix Stage 4/5 retiming, commit work, or protocol changes into this candidate.
-
-Gate it with focused CPU/Metal parity over skewed multi-chunk and boundary cases, then
-one verified BTreeMap T25 sentinel. Run one BTreeMap T28 treatment only after route,
-affected-span, and memory telemetry prove that the intended design ran. Keep it only
-if it saves at least 0.5 s complete-prover time or 5% of the affected span, remains
-under 90 GiB RSS, and has no silent fallback. Otherwise revert it promptly and retain
-the result. Then rerank Stage 4/5 compatibility-scatter retiming, BTreeMap commit
-traffic/locality, wrapper and row-generation residue, the log_K=14 SHA-2 carrier, and
-remaining Stage 1/6b gaps from a disjoint critical-path model.
+Resume by reranking the disjoint post-RAM ceilings. First localize the Stage 4/5
+compatibility-scatter construction and prefetch boundary using existing traces and
+source ownership; add narrow telemetry rather than taking a new Perfetto trace if the
+missing construction interval cannot be recovered. Compare overlap with scheduling
+after Stage 4 and retain a timing change only on the combined Stage 4 + Stage 5
+critical path. Then reprice BTreeMap commit traffic/locality, commit wrapper and row-
+generation residue, the retained RAM subphases, the `log_K=14` SHA-2 carrier, and
+remaining Stage 1/6b gaps. Select one mechanism whose disjoint end-to-end ceiling is
+at least 0.5 s, and commit its boundary, floor, prediction, and falsifier before code.
 
 Use an analysis-led sequential loop: one mechanism, one prediction and falsifier,
 one scoped edit, one focused correctness check, and normally one warm affected-
