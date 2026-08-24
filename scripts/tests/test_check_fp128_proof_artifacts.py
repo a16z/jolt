@@ -67,30 +67,5 @@ class CheckFp128ProofArtifactsTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "no decoded ret"):
             CHECKER.instructions_through_ret("test", [bytes.fromhex("90")])
 
-    def test_witness_sequence_must_appear_exactly_once(self) -> None:
-        CHECKER.require_bytes_once("test", bytes.fromhex("00 aa bb ff"), bytes.fromhex("aa bb"))
-        with self.assertRaisesRegex(SystemExit, "found 2"):
-            CHECKER.require_bytes_once(
-                "test", bytes.fromhex("aa bb 00 aa bb"), bytes.fromhex("aa bb")
-            )
-
-    def test_witness_sequence_must_follow_instruction_boundaries(self) -> None:
-        instructions = [bytes.fromhex("00 aa"), bytes.fromhex("bb"), bytes.fromhex("ff")]
-        CHECKER.require_instruction_sequence_once(
-            "test", instructions, bytes.fromhex("00 aa bb")
-        )
-        with self.assertRaisesRegex(SystemExit, "found 0"):
-            CHECKER.require_instruction_sequence_once(
-                "test", instructions, bytes.fromhex("aa bb")
-            )
-
-    def test_instruction_sequence_must_appear_exactly_once(self) -> None:
-        instructions = [bytes.fromhex("aa"), bytes.fromhex("bb"), bytes.fromhex("aa"), bytes.fromhex("bb")]
-        with self.assertRaisesRegex(SystemExit, "found 2"):
-            CHECKER.require_instruction_sequence_once(
-                "test", instructions, bytes.fromhex("aa bb")
-            )
-
-
 if __name__ == "__main__":
     unittest.main()

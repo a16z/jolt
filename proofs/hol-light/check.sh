@@ -52,6 +52,11 @@ if [[ "$ARCHITECTURE" != "$HOST_ARCHITECTURE" ]]; then
   fi
 fi
 
+TARGET_OS=linux
+if [[ "$TARGET_TRIPLE" == *-apple-darwin || ( -z "$TARGET_TRIPLE" && "$(uname -s)" == Darwin ) ]]; then
+  TARGET_OS=darwin
+fi
+
 if $CLEAN; then
   PROOF_TARGET=$(mktemp -d)
 else
@@ -77,20 +82,29 @@ else
   PROFILE_ROOT="$PROOF_TARGET/release"
 fi
 
-find_newest_object() {
-  local name=$1
-  local profile_root=${2:-$PROFILE_ROOT}
-  local newest=""
-  while IFS= read -r path; do
-    if [[ -z "$newest" || "$path" -nt "$newest" ]]; then
-      newest=$path
-    fi
-  done < <(find "$profile_root/build" -path "*/out/$name" -print)
-  if [[ -z "$newest" ]]; then
-    echo "no $name object was produced" >&2
-    return 1
-  fi
-  printf '%s\n' "$newest"
+find_jolt_field_out_dir() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+
+out_dirs = []
+with open(sys.argv[1], encoding="utf-8") as messages:
+    for line in messages:
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("reason") != "build-script-executed":
+            continue
+        out_dir = message.get("out_dir", "")
+        if "/build/jolt-field-" in out_dir:
+            out_dirs.append(out_dir)
+
+out_dirs = list(dict.fromkeys(out_dirs))
+if len(out_dirs) != 1:
+    raise SystemExit(f"expected one jolt-field build output, found {out_dirs}")
+print(out_dirs[0])
+PY
 }
 
 if [[ "$MODE" == bytes ]]; then
@@ -98,33 +112,40 @@ if [[ "$MODE" == bytes ]]; then
 else
   echo "[1/5] Building the $ARCHITECTURE inspection witnesses"
 fi
+BUILD_MESSAGES="$PROOF_TARGET/build-messages.jsonl"
 CARGO_TARGET_DIR="$PROOF_TARGET" \
   cargo "${CARGO_BUILD_ARGS[@]}" \
     --no-default-features \
     --features solinas,fp128-proof-linkage \
-    --example fp128_production_witness
+    --example fp128_production_witness \
+    --message-format=json-render-diagnostics >"$BUILD_MESSAGES"
 
-ADD_OBJECT=$(find_newest_object fp128_add.o)
-SUB_OBJECT=$(find_newest_object fp128_sub.o)
-MUL_OBJECT=$(find_newest_object fp128_mul.o)
+BUILD_OUT_DIR=$(find_jolt_field_out_dir "$BUILD_MESSAGES")
+ADD_OBJECT="$BUILD_OUT_DIR/fp128_add.o"
+SUB_OBJECT="$BUILD_OUT_DIR/fp128_sub.o"
+MUL_OBJECT="$BUILD_OUT_DIR/fp128_mul.o"
 PRODUCTION_WITNESS="$PROFILE_ROOT/examples/fp128_production_witness"
 
 BMI2_ADX_MUL_OBJECT=""
 BMI2_ADX_PRODUCTION_WITNESS=""
 if [[ "$ARCHITECTURE" == x86_64 ]]; then
   BMI2_ADX_TARGET="$PROOF_TARGET/bmi2-adx"
+  mkdir -p "$BMI2_ADX_TARGET"
   if [[ -n "$TARGET_TRIPLE" ]]; then
     BMI2_ADX_PROFILE_ROOT="$BMI2_ADX_TARGET/$TARGET_TRIPLE/release"
   else
     BMI2_ADX_PROFILE_ROOT="$BMI2_ADX_TARGET/release"
   fi
+  BMI2_ADX_BUILD_MESSAGES="$BMI2_ADX_TARGET/build-messages.jsonl"
   RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+bmi2,+adx" \
   CARGO_TARGET_DIR="$BMI2_ADX_TARGET" \
     cargo "${CARGO_BUILD_ARGS[@]}" \
       --no-default-features \
       --features solinas,fp128-proof-linkage \
-      --example fp128_production_witness
-  BMI2_ADX_MUL_OBJECT=$(find_newest_object fp128_mul_bmi2_adx.o "$BMI2_ADX_PROFILE_ROOT")
+      --example fp128_production_witness \
+      --message-format=json-render-diagnostics >"$BMI2_ADX_BUILD_MESSAGES"
+  BMI2_ADX_BUILD_OUT_DIR=$(find_jolt_field_out_dir "$BMI2_ADX_BUILD_MESSAGES")
+  BMI2_ADX_MUL_OBJECT="$BMI2_ADX_BUILD_OUT_DIR/fp128_mul_bmi2_adx.o"
   BMI2_ADX_PRODUCTION_WITNESS="$BMI2_ADX_PROFILE_ROOT/examples/fp128_production_witness"
 fi
 
@@ -135,6 +156,7 @@ else
 fi
 CHECKER_ARGS=(
   --architecture "$ARCHITECTURE"
+  --target-os "$TARGET_OS"
   --add-object "$ADD_OBJECT"
   --sub-object "$SUB_OBJECT"
   --production-witness "$PRODUCTION_WITNESS"

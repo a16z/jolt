@@ -92,3 +92,8 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
           RUSTFLAGS: -D warnings -C target-feature=+avx2,+avx512f,+avx512dq
         run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-field --no-default-features --features solinas,asm --test solinas_packed_differential
+      - name: Compare scalar assembly with portable arithmetic under emulation
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
+          RUSTFLAGS: -D warnings -C target-feature=+avx2,+avx512f,+avx512dq
+        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-field --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'

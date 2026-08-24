@@ -7,7 +7,6 @@ import argparse
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 
@@ -67,24 +66,9 @@ AARCH64_MUL_BODY = [
 ]
 AARCH64_RET = 0xD65F03C0
 AARCH64_LOAD_A7F7_INTO_W4 = 0x128B0104
-AARCH64_ADD_OBJECT_WORDS = [AARCH64_LOAD_A7F7_INTO_W4, *AARCH64_ADD_BODY, AARCH64_RET]
-AARCH64_SUB_OBJECT_WORDS = [AARCH64_LOAD_A7F7_INTO_W4, *AARCH64_SUB_BODY, AARCH64_RET]
-AARCH64_MUL_OBJECT_WORDS = [
-    AARCH64_LOAD_A7F7_INTO_W4,
-    *AARCH64_MUL_BODY,
-    AARCH64_RET,
-]
-AARCH64_ADD_WITNESS_WORDS = [
-    AARCH64_LOAD_A7F7_INTO_W4,
-    *AARCH64_ADD_BODY,
-    AARCH64_RET,
-]
-AARCH64_SUB_WITNESS_WORDS = [
-    AARCH64_LOAD_A7F7_INTO_W4,
-    *AARCH64_SUB_BODY,
-    AARCH64_RET,
-]
-AARCH64_MUL_WITNESS_WORDS = [
+AARCH64_ADD_WORDS = [AARCH64_LOAD_A7F7_INTO_W4, *AARCH64_ADD_BODY, AARCH64_RET]
+AARCH64_SUB_WORDS = [AARCH64_LOAD_A7F7_INTO_W4, *AARCH64_SUB_BODY, AARCH64_RET]
+AARCH64_MUL_WORDS = [
     AARCH64_LOAD_A7F7_INTO_W4,
     *AARCH64_MUL_BODY,
     AARCH64_RET,
@@ -266,39 +250,6 @@ def instructions_through_ret(label: str, instructions: list[bytes]) -> bytes:
     raise SystemExit(f"{label} had no decoded ret instruction")
 
 
-def require_bytes_once(label: str, actual: bytes, expected: bytes) -> None:
-    occurrences = sum(
-        actual.startswith(expected, index)
-        for index in range(len(actual) - len(expected) + 1)
-    )
-    if occurrences != 1:
-        raise SystemExit(
-            f"{label} expected one exact byte sequence, found {occurrences}\n"
-            f"expected sequence: {expected.hex(' ')}\n"
-            f"actual symbol:     {actual.hex(' ')}"
-        )
-
-
-def require_instruction_sequence_once(
-    label: str, actual: list[bytes], expected: bytes
-) -> None:
-    """Require one exact sequence beginning and ending at decoded boundaries."""
-    occurrences = 0
-    for start in range(len(actual)):
-        candidate = bytearray()
-        for instruction in actual[start:]:
-            candidate.extend(instruction)
-            if len(candidate) >= len(expected):
-                occurrences += bytes(candidate) == expected
-                break
-    if occurrences != 1:
-        raise SystemExit(
-            f"{label} expected one exact instruction sequence, found {occurrences}\n"
-            f"expected sequence: {expected.hex(' ')}\n"
-            f"actual symbol:     {b''.join(actual).hex(' ')}"
-        )
-
-
 def check_aarch64(
     tool: list[str],
     add_object: Path,
@@ -321,30 +272,28 @@ def check_aarch64(
     require_words(
         "standalone addition proof object",
         add_object_words,
-        AARCH64_ADD_OBJECT_WORDS,
+        AARCH64_ADD_WORDS,
     )
-    require_words(
-        "addition inspection witness", add_witness_words, AARCH64_ADD_WITNESS_WORDS
-    )
+    require_words("addition inspection witness", add_witness_words, AARCH64_ADD_WORDS)
     require_words(
         "standalone subtraction proof object",
         sub_object_words,
-        AARCH64_SUB_OBJECT_WORDS,
+        AARCH64_SUB_WORDS,
     )
     require_words(
         "subtraction inspection witness",
         sub_witness_words,
-        AARCH64_SUB_WITNESS_WORDS,
+        AARCH64_SUB_WORDS,
     )
     require_words(
         "standalone multiplication proof object",
         mul_object_words,
-        AARCH64_MUL_OBJECT_WORDS,
+        AARCH64_MUL_WORDS,
     )
     require_words(
         "multiplication inspection witness",
         mul_witness_words,
-        AARCH64_MUL_WITNESS_WORDS,
+        AARCH64_MUL_WORDS,
     )
 
 
@@ -356,6 +305,7 @@ def check_x86_64(
     witness: Path,
     bmi2_adx_mul_object: Path,
     bmi2_adx_witness: Path,
+    target_os: str,
 ) -> None:
     add_object_bytes = read_symbol_bytes(tool, add_object, "jolt_fp128_add_asm")
     sub_object_bytes = read_symbol_bytes(tool, sub_object, "jolt_fp128_sub_asm")
@@ -435,13 +385,13 @@ def check_x86_64(
         bmi2_adx_mul_expected,
     )
     add_witness_expected = (
-        add_darwin_expected if sys.platform == "darwin" else add_expected
+        add_darwin_expected if target_os == "darwin" else add_expected
     )
     sub_witness_expected = (
-        sub_darwin_expected if sys.platform == "darwin" else sub_expected
+        sub_darwin_expected if target_os == "darwin" else sub_expected
     )
     mul_witness_expected = (
-        mul_darwin_expected if sys.platform == "darwin" else mul_expected
+        mul_darwin_expected if target_os == "darwin" else mul_expected
     )
     require_bytes(
         "addition inspection witness",
@@ -466,7 +416,7 @@ def check_x86_64(
     )
     bmi2_adx_witness_expected = (
         bmi2_adx_mul_darwin_expected
-        if sys.platform == "darwin"
+        if target_os == "darwin"
         else bmi2_adx_mul_expected
     )
     require_bytes(
@@ -484,6 +434,7 @@ def main() -> None:
     parser.add_argument(
         "--architecture", choices=["aarch64", "x86_64"], required=True
     )
+    parser.add_argument("--target-os", choices=["darwin", "linux"], required=True)
     parser.add_argument("--add-object", required=True, type=Path)
     parser.add_argument("--sub-object", required=True, type=Path)
     parser.add_argument("--mul-object", type=Path)
@@ -519,6 +470,7 @@ def main() -> None:
             args.production_witness,
             args.bmi2_adx_mul_object,
             args.bmi2_adx_production_witness,
+            args.target_os,
         )
     print(f"Fp128 {args.architecture} proof objects and inspection witnesses match.")
 

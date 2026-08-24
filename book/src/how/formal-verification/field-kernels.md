@@ -11,6 +11,11 @@ The `jolt-field/asm` feature opts into these architecture kernels. A `solinas`
 build without `asm` uses portable Rust even on AArch64 and x86-64. The
 inspection-only `fp128-proof-linkage` feature implies `asm`.
 
+No product crate in this workspace enables `jolt-field/asm` in this change.
+The benchmark, fuzz, and proof workflows enable it explicitly to validate the
+library option. A product that adopts the Solinas backend must make a separate
+rollout decision and forward `asm` from its own feature configuration.
+
 The field modulus is
 
 ```text
@@ -50,6 +55,12 @@ Rust and the standalone proof object include the same instruction fragment.
 The artifact checker and HOL Light keep independent expected byte lists. This
 small amount of duplication makes an instruction change visible to review.
 HOL Light imports the object and refuses to load it if one byte differs.
+
+When a kernel changes intentionally, update each expected list from the
+reviewed instruction source as a separate transcription. Do not make both
+lists pass by copying bytes from the compiled object. The review must compare
+the source instructions, checker list, and HOL Light import before accepting
+the new proof artifact.
 
 The inspection witness calls the normal `Prime128OffsetA7F7` operation. It does
 not call a separate proof function. The checker disassembles each optimized
@@ -256,12 +267,13 @@ x86-64 theorem covers the 31 instruction BMI2 and ADX sequence built from
 `mulx`, `adcx`, and `adox`. Each architecture has a theorem for the callable
 body followed by `ret`.
 
-The generic multiplication bodies still exist for other moduli. The A7F7
-dispatch uses a fixed register instruction fragment because HOL Light imports
-that exact byte sequence. The compiler knows the modulus for this field type,
-so it can remove the branches for other moduli. A baseline x86-64 build needs
-no optional features. A build that enables both BMI2 and ADX uses the separately
-proved fragment. It performs no feature check inside a field multiplication.
+The assembly dispatch recognizes only A7F7. Every other `Fp128` modulus uses
+portable Rust, including the retained offset-275 reference field. Adding
+assembly for another modulus therefore requires an explicit dispatch change,
+differential tests, and a separate proof obligation. A baseline x86-64 build
+needs no optional features. A build that enables both BMI2 and ADX uses the
+separately proved fragment. It performs no feature check inside a field
+multiplication.
 
 ## The modulus is prime
 
@@ -333,10 +345,10 @@ architectures use the same inspection witness and artifact checker.
 | Linux x86-64 BMI2 and ADX multiply | Complete BMI2 and ADX body with direct ABI result and `ret` | The proof object and witness built with both features are byte identical |
 | Darwin x86-64 add, subtract, and multiply | Arithmetic and ABI result sequence | The checker requires one exact unproved Darwin frame wrapper around the proved sequence |
 
-These claims cover the A7F7 register kernels. They do not cover the small
-offset immediate kernels or the generic register fallback used by other field
-types. They also do not cover packed SIMD arithmetic, squaring, inversion, the
-full proof system, or an arbitrary downstream executable.
+These claims cover the A7F7 register kernels. Other `Fp128` moduli use portable
+Rust rather than an unproved assembly fallback. The claims do not cover packed
+SIMD arithmetic, squaring, inversion, the full proof system, or an arbitrary
+downstream executable.
 
 ## Unreduced arithmetic is a separate obligation
 
