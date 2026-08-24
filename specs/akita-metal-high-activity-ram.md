@@ -120,6 +120,29 @@ Retain the candidate only if T28 saves at least 0.5 s end to end with RSS below
 message scheduling, is the next bound. No protocol, variable order, claim, or
 verifier change is permitted in this candidate.
 
+The fixed-chunk candidate verified twice at T28. RAM GPU-active time reproduced at
+2.145--2.148 s, 0.82 s below the 2.966 s parent. Complete proving measured 52.50 s
+and 50.54 s; their 51.52 s mean clears the 0.5 s provisional materiality bar by
+0.68 s, but the spread is not final validation evidence. Peak RSS remained
+80.08 GiB. The candidate is retained at Jolt `7acb4be74`, while its failure to reach
+the 1.8 s internal bar identifies hot compaction as the next bound.
+
+Before adding a second state plane, the next candidate widens only the compaction
+threadgroup from 256 threads to the largest SIMD-aligned width supported by the
+pipeline, capped at 1,024. It performs the same reads, field operations, stable
+prefixes, and writes. On the M4 Max, a 1,024-thread group reduces the hottest
+segment's sequential chunk count by four; the scalar prefix work per input stays
+constant because there are four times as many SIMD-group counts in one quarter as
+many chunks. The cost is up to four times as many inactive lanes after spans shrink
+below 1,024 entries and potentially one resident group per GPU core.
+
+The width candidate predicts 1.3--1.7 s T28 RAM GPU-active and 0.4--0.9 s complete
+prover saving. Its T25 sentinel must not exceed the accepted 0.246 s RAM time. Retain
+it only if a T28 treatment saves at least 0.5 s from the 51.52 s provisional parent
+mean with RSS below 90 GiB. A pipeline limit below 512 threads, a T25 regression, or
+T28 RAM time above 1.7 s rejects the width change and admits the modeled hot-only
+out-of-place count/prefix/scatter design.
+
 ## Falsification and validation
 
 Before promotion, the address/cycle kernels must measure at most 0.75 s GPU-active at

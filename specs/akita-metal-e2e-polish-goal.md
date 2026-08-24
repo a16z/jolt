@@ -33,14 +33,15 @@ initial analytical anchors. They are single observed runs, not final release cla
 | Fibonacci | 215.18 s | 45.72 s | 4.71x | 43.04 s | 2.68 s |
 | SHA-2 chain | 213.70 s | 42.45 s | 5.03x | 42.74 s | clears by 0.29 s |
 
-These are the frozen starting controls. The current accepted Jolt checkpoint has
-already improved BTreeMap to 52.20 s (3.190x), leaving 18.89 s to the 5x ceiling;
-Fibonacci and SHA-2 retain the frozen values until the next milestone sweep. Ranges
-below are planning estimates to falsify, not measured promises.
+These are the frozen starting controls. The current provisional Jolt checkpoint has
+improved BTreeMap to a two-run mean of 51.52 s (3.233x), leaving 18.21 s to the 5x
+ceiling; its individual runs were 52.50 s and 50.54 s. Fibonacci and SHA-2 retain the
+frozen values until the next milestone sweep. Ranges below are planning estimates to
+falsify, not measured promises.
 
 | Priority | Mechanism | Initial predicted opportunity |
 |---|---|---:|
-| 1 | Parallelize the accepted high-activity RAM route's hot-address message work | BTreeMap 1.0--1.8 s e2e, subject to measurement |
+| 1 | Widen, then if needed multi-group, hot-address RAM compaction | BTreeMap 0.4--0.9 s for width alone |
 | 2 | Stream/fuse the deferred opening index, decompose, and coefficient packing | Fibonacci/SHA-2 1.5--2 s; BTreeMap 2--3.5 s |
 | 3 | Measure and retime the Stage 4/5 compatibility-scatter prefetch | up to 1.2 s on BTreeMap |
 | 4 | Generalize the bytecode address carrier from `log_K = 13` to 14 | at most 1.34 s on SHA-2 |
@@ -56,12 +57,13 @@ not finished: the hottest address contains 20,729,173 of 65,195,206 accesses, so
 threadgroup still serializes 31.8% of the message work. RAM kernels remain 2.97 s
 GPU-active against a 0.57 s analytical floor.
 
-The immediate candidate is a fixed hot-chunk message worklist: one group per fixed
-chunk, constant-size per-chunk partials, then a separate hot-column reduction. Keep the
-verified in-place compaction unchanged for this candidate. If message chunking leaves
-more than roughly 1 s of RAM GPU time, separately model a hot-only multi-group
-out-of-place compaction; do not combine the two mechanisms. Full design, measurements,
-and the corrected chunk-boundary invariant live in
+Fixed hot-message chunks are now retained: they reduce RAM GPU-active time from
+2.97 s to 2.15 s without changing RSS, but leave one-group-per-address compaction as
+the critical schedule. The immediate candidate widens that group from 256 threads to
+the largest supported SIMD-aligned width capped at 1,024, without changing work or
+storage. If that does not reach the predeclared 1.7 s RAM bar, separately model a
+hot-only multi-group out-of-place compaction; do not combine the two mechanisms. Full
+design, measurements, and the corrected chunk-boundary invariant live in
 [akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md).
 
 ## Main execution plan
@@ -229,7 +231,7 @@ analytical floors rather than hiding negative results.
 ## Copy/paste launch prompt
 
 > Create and pursue the goal in `specs/akita-metal-e2e-polish-goal.md`. Resume from
-> Jolt `1799ff816` on `feat/akita-metal` and Akita `4ccde218b` on
+> Jolt `7acb4be74` on `feat/akita-metal` and Akita `4ccde218b` on
 > `perf/metal-commit-eval-proof`; first audit both worktrees and preserve the local
 > Jolt `Cargo.lock` and `.cargo/config.toml` path-override state. Optimize the
 > composed Akita Metal prover across those two worktrees. The hard bar is at least
@@ -249,11 +251,12 @@ analytical floors rather than hiding negative results.
 > timed proving boundary.
 >
 > Start from the existing Perfetto analysis and maintain a disjoint end-to-end
-> latency model. The accepted high-activity RAM route has already moved BTreeMap
-> from 56.34 s to a verified 52.20 s at 80.08 GiB RSS; do not reimplement that
-> tranche. First parallelize its hot-address message work with fixed chunks and a
-> hierarchical reduction while leaving the verified compaction unchanged. Run
-> focused cold/hot parity, a T25 sentinel, and only then a T28 treatment if the
+> latency model. The provisional high-activity RAM route has moved BTreeMap from
+> 56.34 s to a two-run mean of 51.52 s at 80.08 GiB RSS; fixed hot-message chunks
+> are complete, so do not reimplement them. First widen the still-serial compaction
+> group to the largest supported SIMD-aligned width capped at 1,024. If it misses
+> the document's bar, price the hot-only out-of-place count/prefix/scatter design.
+> Run focused cold/hot parity, a T25 sentinel, and only then a T28 treatment if the
 > affected-span model is credible. Next consider deferred opening-index and
 > coefficient fusion, the Stage 4/5 scheduling discrepancy, the `log_K = 14`
 > bytecode carrier, and commit wrapper/traffic residue; rerank after every result.
