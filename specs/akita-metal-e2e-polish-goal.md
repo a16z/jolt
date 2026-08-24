@@ -34,15 +34,14 @@ initial analytical anchors. They are single observed runs, not final release cla
 | SHA-2 chain | 213.70 s | 42.45 s | 5.03x | 42.74 s | clears by 0.29 s |
 
 These are the frozen starting controls. The current provisional Jolt checkpoint has
-improved BTreeMap to a two-run mean of 51.52 s (3.233x), leaving 18.21 s to the 5x
-ceiling; its individual runs were 52.50 s and 50.54 s. Fibonacci and SHA-2 retain the
-frozen values until the next milestone sweep. Ranges below are planning estimates to
-falsify, not measured promises.
+improved BTreeMap to 50.46 s (3.301x), leaving 17.15 s to the 5x ceiling. Fibonacci
+and SHA-2 retain the frozen values until the next milestone sweep. Ranges below are
+planning estimates to falsify, not measured promises.
 
 | Priority | Mechanism | Initial predicted opportunity |
 |---|---|---:|
-| 1 | Widen, then if needed multi-group, hot-address RAM compaction | BTreeMap 0.4--0.9 s for width alone |
-| 2 | Stream/fuse the deferred opening index, decompose, and coefficient packing | Fibonacci/SHA-2 1.5--2 s; BTreeMap 2--3.5 s |
+| 1 | Stream/fuse the deferred opening index, decompose, and coefficient packing | Fibonacci/SHA-2 1.5--2 s; BTreeMap 2--3.5 s |
+| 2 | Move hot-address RAM compaction to an out-of-place multi-group schedule | BTreeMap ceiling about 1.25 s |
 | 3 | Measure and retime the Stage 4/5 compatibility-scatter prefetch | up to 1.2 s on BTreeMap |
 | 4 | Generalize the bytecode address carrier from `log_K = 13` to 14 | at most 1.34 s on SHA-2 |
 | 5 | Remove commit wrapper, row-generation, and synchronization residue | 0.3--0.6 s per workload |
@@ -57,47 +56,76 @@ not finished: the hottest address contains 20,729,173 of 65,195,206 accesses, so
 threadgroup still serializes 31.8% of the message work. RAM kernels remain 2.97 s
 GPU-active against a 0.57 s analytical floor.
 
-Fixed hot-message chunks are now retained: they reduce RAM GPU-active time from
-2.97 s to 2.15 s without changing RSS, but leave one-group-per-address compaction as
-the critical schedule. The immediate candidate widens that group from 256 threads to
-the largest supported SIMD-aligned width capped at 1,024, without changing work or
-storage. If that does not reach the predeclared 1.7 s RAM bar, separately model a
-hot-only multi-group out-of-place compaction; do not combine the two mechanisms. Full
-design, measurements, and the corrected chunk-boundary invariant live in
+Fixed hot-message chunks and 1,024-thread compaction groups are retained, reducing
+RAM GPU-active time from 2.97 s to 1.82 s without material RSS growth. The latter
+misses its 1.7 s terminal bar, but the remaining RAM ceiling is only about 1.25 s and
+requires a second hot-only state plane. Deferred-opening fusion is priced higher and
+helps every workload, so it is now first. The out-of-place compaction design remains
+queued rather than being combined with opening work. Full RAM design and measurements
+live in
 [akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md).
+
+The next shared boundary is now measured well enough to choose a first tranche. At
+BTreeMap T28, Akita reports 50,897,879,040 bytes (47.402 GiB) of one-shot deferred
+opening indices: 30.469 GiB for fold records/counts and 16.934 GiB for coefficient
+records/offsets. Their construction takes about 3.00 s, of which about 1.10 s is
+GPU-active. The full opening command interval is about 5.54 s against 2.62 s of
+GPU-active work. These counters overlap and therefore are not additive, but they show
+that raw shader throughput is not the sole limit. Materialization, allocation, host
+preparation, command gaps, and waits are all eligible. Writing and rereading the two
+indices alone moves about 94.8 GiB; at the measured 412.5 GiB/s stream rate its ideal
+traffic floor is only about 0.23 s. A useful design must remove lifecycle and command
+overhead as well as bytes, not merely replace one copy kernel with another.
 
 ## Main execution plan
 
-1. **Freeze the evaluator and parent.** Record the paired Jolt/Akita revisions,
-   workload construction, compiler flags, machine state, proof-timing boundary, and
-   one optimized-CPU anchor per workload. Treat a run without successful proof
-   verification or complete backend-route telemetry as invalid.
-2. **Finish BTreeMap's RAM parallelism first.** Retain the accepted address-segmented
-   route and parallelize only the hot-address message boundary with a fixed chunk
-   worklist and hierarchical reduction. First prove exact cold/hot parity, then use
-   one T25 sentinel to catch dispatch or occupancy regressions and one T28 treatment
-   only if the affected-span model remains credible. If the residual kernel time is
-   still material, model hot-only multi-group compaction as a separate candidate.
-   Reject any design that scans or sorts all `T` rows per round, exceeds 90 GiB RSS,
-   or cannot plausibly save 0.5 s end to end.
-3. **Remove shared opening overhead.** Stream or fuse deferred opening-index
-   generation, decomposition, and coefficient packing so intermediates stay resident
-   and are not materialized or transferred twice. Screen on Fibonacci first, then
-   check that the same mechanism helps BTreeMap and SHA-2.
-4. **Resolve the remaining geometry-specific gaps.** Reprice the Stage 4/5
-   compatibility-scatter schedule, extend the bytecode address carrier to
-   `log_K = 14` when public geometry qualifies, and remove commit wrapper,
-   row-generation, synchronization, and traffic residue. Keep only changes with a
-   measured complete-prover effect or an obvious no-cost removal of waste.
-5. **Rerank at milestones.** Run all three `T = 2^28` workloads only after the model
-   predicts a material change to the worst-workload score. Preserve one accepted
-   paired parent and use the new stage deltas to choose the next mechanism; do not
-   continue optimizing a locally hot kernel after its end-to-end ceiling becomes
-   immaterial.
-6. **Fit the deployment envelope.** Once all three workloads clear 5x with margin,
-   check `T = 2^25` through `2^28`, fit geometry/activity-based CPU/Metal crossovers,
-   and probe `T = 2^20` plus the scales bracketing each crossover. Then run final
-   parity, verification, memory, formatting, test, and lint gates and remove search
+1. **Lock the accepted state without rerunning it.** Audit both worktrees, record the
+   paired revisions and evaluator/workload digests, and preserve the local Jolt path
+   overrides. The frozen CPU anchors remain valid until CPU code, protocol, workload
+   generation, flags, machine, or timing boundary changes. A treatment without
+   successful proof verification and complete route/fallback telemetry is invalid.
+2. **Model the deferred-opening boundary before editing it.** In Akita, trace the
+   ownership and exact use of the fold index, coefficient index, packed source, root
+   buffers, and seven `RingRelationProver::new` calls. Separate compulsory fp128 work
+   from allocation, index construction, buffer traffic, command submission, and
+   synchronization. Commit the exact boundary, traffic/compute floor, invariant, one
+   predicted saving, and falsifier before changing a kernel.
+3. **Remove opening materialization in bounded candidates.** First stream or generate
+   fold records at their decompose/fold consumer instead of retaining the 30.469 GiB
+   fold index. Then apply the same primitive to the 16.934 GiB coefficient index only
+   if the first result supports the model. Preserve record order, counts, claimed
+   evaluation, proof bytes, transcript, and verifier behavior. Do not combine root
+   buffer reuse or command batching with the first materialization change: those are
+   separate candidates if the command-wall/GPU gap remains after index removal.
+4. **Gate opening work cheaply.** Run focused Akita CPU/Metal parity first, then one
+   verified Fibonacci T25 sentinel. Admit one BTreeMap T28 treatment only when the
+   affected counters show the intended index and command-boundary change. Retain a
+   candidate only if it saves at least 0.5 s complete-prover time (or 5% of the
+   affected span), stays below 90 GiB RSS, and introduces no silent fallback. If
+   index bytes disappear but command wall does not move, reject the latency claim and
+   rerank root-buffer reuse, command batching, or host preparation using the observed
+   gap.
+5. **Attack the largest remaining BTreeMap ceiling.** Recompute the disjoint latency
+   budget after opening work. Choose between hot-only out-of-place RAM compaction
+   (current absolute ceiling about 1.25 s), Stage 4/5 compatibility-scatter retiming,
+   BTreeMap commit traffic, and remaining Stage 1/6b gaps. Do not add a second RAM
+   plane unless the revised complete-prover model still gives it at least 0.5 s of
+   credible upside under the memory guard.
+6. **Close shared and workload-specific residue.** Extend the bytecode address carrier
+   to `log_K = 14` using public geometry if its SHA-2 CPU island remains material;
+   remove commit wrapper, row-generation, synchronization, and lazy-bind residue in
+   measured order. Keep generic fp128 kernels and residency policy in Akita and keep
+   Jolt witness geometry and cross-stage orchestration here.
+7. **Rerank only at milestones.** Run the three-workload T28 Metal matrix only after
+   the model predicts a material change to the worst-workload score. Compare against
+   the frozen CPU anchors and the accepted Metal parent, promote one paired parent,
+   and derive the next queue from new stage deltas. Do not keep polishing a kernel
+   after its total remaining ceiling becomes immaterial.
+8. **Fit and validate the deployment envelope.** Once all three T28 workloads clear
+   5x with margin, check T25--T28, fit public geometry/activity-based CPU/Metal
+   crossovers, and probe T20 plus the scales bracketing each crossover. Finish with
+   order-reversed CPU/Metal confirmation pairs, exact proof verification, memory,
+   formatting, relevant nextest suites, both clippy modes, and removal of search
    variants and obsolete telemetry.
 
 The plan is deliberately sequential: BTreeMap sets the first objective, while
@@ -230,53 +258,71 @@ analytical floors rather than hiding negative results.
 
 ## Copy/paste launch prompt
 
-> Create and pursue the goal in `specs/akita-metal-e2e-polish-goal.md`. Resume from
-> Jolt `7acb4be74` on `feat/akita-metal` and Akita `4ccde218b` on
-> `perf/metal-commit-eval-proof`; first audit both worktrees and preserve the local
-> Jolt `Cargo.lock` and `.cargo/config.toml` path-override state. Optimize the
-> composed Akita Metal prover across those two worktrees. The hard bar is at least
-> 5x complete
-> `jolt_prover::prove` speedup over the optimized CPU backend for BTreeMap,
-> Fibonacci, and SHA-2 chain at `T = 2^28`; maximize the worst workload first. Once
-> all three clear 5x with a credible margin, continue reducing total wall time while
-> preserving that floor, `T = 2^25`--`2^28` performance, exact proof verification,
-> and the 90 GiB RSS guard. Also reduce fixed costs and fit public
-> geometry/activity-based hybrid switchovers around smaller workloads, including
-> `T = 2^20`.
->
-> Freeze and use the evaluator commands in the document. In particular, BTreeMap
-> `T = 2^28` must include `--target-trace-size 150000000`, routine treatment runs
-> must omit `--format`, and every accepted result must print successful proof
-> verification. Do not shift witness- or transcript-dependent work outside the
-> timed proving boundary.
->
-> Start from the existing Perfetto analysis and maintain a disjoint end-to-end
-> latency model. The provisional high-activity RAM route has moved BTreeMap from
-> 56.34 s to a two-run mean of 51.52 s at 80.08 GiB RSS; fixed hot-message chunks
-> are complete, so do not reimplement them. First widen the still-serial compaction
-> group to the largest supported SIMD-aligned width capped at 1,024. If it misses
-> the document's bar, price the hot-only out-of-place count/prefix/scatter design.
-> Run focused cold/hot parity, a T25 sentinel, and only then a T28 treatment if the
-> affected-span model is credible. Next consider deferred opening-index and
-> coefficient fusion, the Stage 4/5 scheduling discrepancy, the `log_K = 14`
-> bytecode carrier, and commit wrapper/traffic residue; rerank after every result.
-> Use an analysis-led sequential loop with one scoped change, one prediction and
-> falsifier, one focused correctness check, and normally one warm affected-workload
-> treatment. Reuse frozen controls. A routine measurement gate must stay under 120
-> seconds excluding compilation; do not run repeated baselines, full matrices, or
-> traces during ordinary iterations. Repeat only ambiguous, surprising, or
-> parent-promoting results.
->
-> Keep generic fp128 work in Akita and Jolt-specific geometry and orchestration in
-> Jolt. Route by geometry/activity rather than workload name, charge all hybrid CPU
-> work and shifted preparation to the proving boundary, and fail closed on qualified
-> paths. Avoid protocol changes by default; only a bounded, documented minor change
-> with a written analytical need is in scope, and it must update prover and verifier
-> together without reducing soundness. Keep accepted changes bisectable, maintain a
-> terse ignored analysis/ledger rather than new controller machinery, preserve
-> negative results, keep experimental artifacts out of production, and do not push.
-> Do not declare completion merely upon crossing 5x: finish the final validation and
-> continue until the document's analytical stop condition is met. Use the
-> `engineer`, `gpu-kernel-analysis`, `autoresearch-loop`, `experiment-design`,
-> `result-validation`, and `coding-standards` skills, with this document's lean gate
-> taking precedence over any heavier historical loop.
+```text
+Create and pursue the goal in specs/akita-metal-e2e-polish-goal.md. Work from the
+current feat/akita-metal Jolt branch at
+/Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt, whose retained source candidate
+is e3bd59d3b, and Akita 4ccde218b on perf/metal-commit-eval-proof at
+/Users/mgeorghiades/worktrees/akita-metal-eval-proof. First audit both worktrees and
+preserve the local Jolt Cargo.lock and .cargo/config.toml path-override state. Do not
+push.
+
+Optimize the composed Akita Metal prover across those two worktrees. The hard bar is
+at least 5x complete jolt_prover::prove speedup over the optimized CPU backend for
+BTreeMap, Fibonacci, and SHA-2 chain at T=2^28, maximizing the worst workload first.
+Once all three clear 5x with credible margin, continue removing material analytical
+bottlenecks while preserving that floor, T25--T28 performance, exact proof
+verification, and the 90 GiB RSS guard. Reduce fixed costs and fit public
+geometry/activity-based hybrid switchovers around smaller workloads, including T20.
+
+Freeze and use the evaluator contract in the document. BTreeMap T28 must include
+--target-trace-size 150000000. Routine treatment runs must omit --format, and every
+accepted result must print successful proof verification. Do not move witness- or
+transcript-dependent work outside the timed proving boundary. Reuse the frozen CPU
+anchors unless an explicit invalidation condition changes.
+
+The retained RAM work moved BTreeMap from 56.34 s to 50.46 s at 80.10 GiB RSS. Fixed
+hot-message chunks and 1,024-thread compaction are already implemented; do not redo
+them. Start by auditing Akita's deferred opening path and commit a pre-code model of
+the exact ownership boundary, compulsory work, traffic/compute floor, predicted
+complete-prover saving, and falsifier. The fresh BTreeMap counters report 47.402 GiB
+of one-shot opening indices, about 3.00 s of index construction, and a 5.54 s command
+interval against 2.62 s GPU-active. First isolate fold-index streaming/fusion; keep
+coefficient-index fusion, root-buffer reuse, and command batching as separate
+candidates so each result identifies a cause.
+
+For opening candidates, run focused Akita CPU/Metal parity, one Fibonacci T25
+sentinel, and only then one BTreeMap T28 treatment when affected-span telemetry is
+credible. Retain only a verified candidate that clears the document's materiality
+and memory gates. Then rerank hot-only out-of-place RAM compaction, the Stage 4/5
+compatibility-scatter discrepancy, BTreeMap commit traffic, the log_K=14 SHA-2
+bytecode carrier, and remaining wrapper/synchronization residue from a disjoint
+end-to-end model.
+
+Use an analysis-led sequential loop: one mechanism, one prediction and falsifier,
+one scoped edit, one focused correctness check, and normally one warm affected-
+workload treatment. A routine measurement gate is at most 120 seconds excluding
+compilation. Do not run repeated baselines, full workload matrices, Criterion, or
+Perfetto during ordinary iterations. Repeat only ambiguous, surprising, or parent-
+promoting results. Run a full T28 workload milestone only when the model predicts a
+material change to the worst-workload score.
+
+Keep generic fp128 kernels, opening residency, and scheduling in Akita; keep Jolt
+witness geometry, PIOP kernels, adapter logic, and cross-stage orchestration in Jolt.
+Route by public geometry/activity rather than workload name, charge all hybrid CPU
+work and shifted preparation to proving, and fail closed on qualified paths. Avoid
+protocol changes by default. Only a bounded, documented minor change with a written
+analytical need is in scope, and it must update prover and verifier together without
+reducing soundness.
+
+Keep accepted changes bisectable. Maintain only a terse ignored analytical model,
+append-only event ledger, and raw observations; preserve negative results and keep
+search machinery and obsolete telemetry out of production. Do not stop merely on
+the first 5x observations: complete the order-reversed confirmation pairs, T25--T28
+and crossover checks, proof/parity/memory gates, formatting, relevant nextest suites,
+both clippy modes, and cleanup. Continue afterward only while a bounded candidate
+has at least roughly 0.5 s or 1% credible T28 upside without an invasive protocol
+change. Use the engineer, gpu-kernel-analysis, autoresearch-loop, experiment-design,
+result-validation, and coding-standards skills, with this document's lean gate taking
+precedence over heavier historical loop defaults.
+```

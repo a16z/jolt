@@ -143,6 +143,14 @@ mean with RSS below 90 GiB. A pipeline limit below 512 threads, a T25 regression
 T28 RAM time above 1.7 s rejects the width change and admits the modeled hot-only
 out-of-place count/prefix/scatter design.
 
+The M4 Max admitted 1,024 threads. Focused parity remained exact; T25 verified in
+6.39 s with 0.230 s RAM GPU-active. T28 verified in 50.46 s at 80.10 GiB with
+1.823 s RAM GPU-active. This saves 1.06 s from the prior provisional mean and
+0.325 s from the RAM sequence, so `e3bd59d3b` is retained as an intermediate. It
+misses the 1.7 s terminal RAM bar. The out-of-place design remains eligible, but its
+roughly 1.25 s absolute ceiling now ranks below the 2--3.5 s deferred-opening
+opportunity shared by all three workloads.
+
 ## Falsification and validation
 
 Before promotion, the address/cycle kernels must measure at most 0.75 s GPU-active at
