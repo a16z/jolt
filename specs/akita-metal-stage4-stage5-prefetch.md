@@ -6,20 +6,20 @@ At BTreeMap T28, Stage 4 starts the Instruction Read-RAF compatibility worker af
 `RegistersReadWriteChecking::prepare`. The worker groups the Stage-1 resident rows,
 constructs four dense consumer planes, and computes the first address-phase message.
 Stage 5 joins an already-complete worker. The transcript point, grouped-row order,
-scatter kernel, address-phase schedule, proof, and verifier are unchanged by this
-campaign.
+scatter kernel, address-phase schedule, proof, and verifier are unchanged by the B1
+campaign below.
 
-The accepted trace measures 6.0396 s for Stage 4 and 2.6015 s for Stage 5, or
-8.6411 s combined. The untraced compatibility construction occupies 1.5546 s from
-the worker release to the visible address-prefetch span; that span adds 0.1805 s.
-Both finish before Stage 4's second register round. Treating their 1.7351 s total as
+The currently accepted trace measures 5.4600 s for Stage 4 and 2.4543 s for Stage 5,
+or 7.9143 s combined. The untraced compatibility construction occupies 1.5349 s
+from worker release to the visible address-prefetch span; that span adds 0.2684 s.
+Both finish during Stage 4's third register round. Treating their 1.8033 s total as
 additive latency is therefore invalid.
 
-The optimized-CPU trace measures 2.5317 s across the register rounds versus 4.0953 s
-in the Metal trace. Only the first two Metal rounds overlap the active worker. They
-take 1.6456 s versus 0.9366 s on CPU, a 0.7091 s difference. The later-round
-0.8545 s difference and the 0.4870 s prepare difference have no simultaneous
-compatibility work and are excluded from this candidate's causal ceiling.
+The optimized-CPU trace measures 2.5317 s across the register rounds versus 3.6151 s
+in the Metal trace. The first three Metal rounds overlap the worker and take 1.9762 s
+versus 1.3245 s on CPU, a 0.6517 s difference. Later-round differences and the
+0.4579 s prepare difference have no simultaneous compatibility work and are excluded
+from this candidate's causal ceiling.
 
 ## Traffic and storage
 
@@ -82,3 +82,90 @@ The first-two-round difference cannot be attributed to CPU mapping or coherence 
 the four outputs. Do not retry storage modes, cache flags, or hazard flags without a
 new mechanism and a separately measured ceiling. Any further Stage 4/5 candidate
 must address scheduling or eliminate work rather than relabel the same allocations.
+
+## Candidate B2: cycle-major source with one grouped index
+
+### Exact dataflow boundary
+
+The four compatibility outputs are not all semantic state. They are a byte of packed
+table/RAF metadata, a 16-byte lookup index, a four-byte cycle-to-table-major inverse,
+and a 16-byte equality weight per row. The packed byte and lookup index duplicate the
+resident Stage-1 claim and the first two column-major source words. The inverse exists
+only because later kernels must recover cycle order after consuming those copies.
+
+Only the suffix scan requires table-major iteration. The RAF scan and the Stage-5
+cycle phase are naturally cycle-major, and Stage-6b Instruction RA also asks for
+lookup indices in cycle order. B2 therefore keeps exactly one four-byte
+table-major-to-cycle index for suffix jobs and one 16-byte evolving weight per cycle.
+RAF, cycle, and Instruction RA kernels read lookup limbs directly from the existing
+Stage-1 column-major source. The claim byte supplies the table and RAF flags. The
+first RAF phase initializes the weight from the split reduction equality tables;
+later phases update it in place exactly as today.
+
+The scatter still uses the published per-chunk selector counts and the same stable
+segment partition. Its only Instruction Read-RAF output becomes
+`table_major_to_cycle[grouped] = cycle`; the fused bytecode outputs remain unchanged.
+The address/cycle challenge order, 16 eight-bit address phases, Product5 handoff,
+round polynomials, output claims, transcript, proof bytes, and verifier all remain
+unchanged. This is an ownership/layout change, not a protocol change.
+
+### Traffic, storage, and lower bound
+
+At T28 the current four planes occupy `37*T = 9.25 GiB`. B2 occupies `20*T =
+5.00 GiB`: 1 GiB of grouped indices and 4 GiB of weights. It removes exactly
+`17*T = 4.25 GiB` of live capacity. The Stage-1 source is not a new charge: its row
+buffer is already retained through Stage 6b/7 by the booleanity and other published
+consumers. A later lookup carrier must clone only that row buffer, not the owner that
+also retains the claim allocation.
+
+With fused bytecode enabled, the scatter must still read the 32-byte Stage-1 row and
+one-byte claim and write the bytecode carrier. It now writes four rather than 37
+Instruction Read-RAF bytes per row, removing `33*T = 8.25 GiB` from the overlapping
+scatter. Initializing weights in the first RAF pass preserves that pass's 33-byte
+per-row compulsory stream: 17 source bytes read and 16 weight bytes written replace
+the old 33 grouped bytes read. Later RAF phases preserve their 49-byte stream.
+
+Suffix phases add a four-byte grouped-index load per selected row. For BTreeMap's
+150-million-row physical trace, all 16 phases add at most 8.94 GiB. The first two
+Stage-5 cycle traversals each remove the old four-byte inverse load, saving 2 GiB in
+total. The five Stage-6b lazy/materialization traversals remove another 5 GiB. Thus
+the complete BTreeMap path saves about 6.3 GiB of compulsory traffic; an all-selected
+trace is approximately traffic-neutral. This candidate is not justified by a
+bandwidth roofline alone. Its mechanism is eliminating 4.25 GiB of allocation and
+residency plus an indirection from seven downstream full-domain traversals.
+
+At the accepted 412.5 GiB/s calibration, the raw traffic term is only about 0.02 s.
+The measurable ceiling comes from ownership: the scatter overlaps 0.6517 s of excess
+register-round time, and C2 showed that adding one 4 GiB resident table can displace
+at least 2.65 s of later work. Credit only 0.2--0.5 s of the overlap and 0.1--0.4 s
+from direct Stage-5/6b reads and reduced residency. The preregistered complete-prover
+prediction is therefore a 0.3--0.9 s saving, with an exact 4.25 GiB capacity saving.
+
+### Rejected nearby layouts
+
+Recomputing all prior phase weights would remove the 4 GiB weight plane but add 120
+fp128 multiplications per row across the 16 sequential phases; it is outside the
+compute floor. Scanning the cycle-major source once per table removes the grouped
+index but multiplies source traffic by up to 40. Keeping copied grouped lookups merely
+to avoid the four-byte suffix indirection preserves 4 GiB of the allocation being
+targeted. Chunk-local 16-bit indices require a much larger job/partial schedule and
+are deferred unless the simple four-byte index proves a measured bottleneck.
+
+### Falsifier and admission gates
+
+First add a resident-source parity test that compares every Stage-5 round polynomial
+and output claim with the optimized CPU kernel, plus a route assertion that fails on
+the four-plane layout. The receipt must report exactly 5.00 GiB at T28, no copied
+packed or lookup plane, one grouped-index allocation, one weight allocation, no full
+readback, and the original fused-bytecode carrier.
+
+Run one verified T25 BTreeMap sentinel after focused parity. It must exercise the
+resident-source route, preserve exact proof verification and fallback counters, and
+improve either the compatibility construction by at least 10% or Stage-6b
+Instruction RA by at least 5% without regressing complete proving by 0.2 s. Only then
+admit one T28 treatment. At T28 retain only if complete proving is at most 47.58 s,
+or if it improves by at least 0.3 s while exact telemetry confirms a 4.25 GiB capacity
+reduction and peak RSS falls by at least 2 GiB. Reject on a slower Stage-5 address
+phase that erases the downstream gain, any extra source scan, stale ownership,
+verification failure, fallback, swapping, or RSS above 90 GiB. Do not sweep index
+widths, storage modes, worker timing, or dispatch widths under B2.
