@@ -4,7 +4,7 @@
 //! All operations are generic over `P: PairingGroup`.
 
 use jolt_crypto::{JoltGroup, PairingGroup};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
 
@@ -31,7 +31,7 @@ pub(crate) fn kzg_commit<P: PairingGroup>(
 /// Uses Horner's method in reverse: `h[i-1] = f[i] + h[i] * u`.
 /// The remainder is `f(u)`, but we don't need it since the verifier
 /// can derive it from the evaluation vectors.
-pub(crate) fn compute_witness_polynomial<F: Field>(f: &[F], u: F) -> Vec<F> {
+pub(crate) fn compute_witness_polynomial<F: JoltField>(f: &[F], u: F) -> Vec<F> {
     let d = f.len();
     if d <= 1 {
         return vec![];
@@ -48,7 +48,7 @@ pub(crate) fn compute_witness_polynomial<F: Field>(f: &[F], u: F) -> Vec<F> {
 /// Evaluates a polynomial (in evaluation/coefficient form) at a point.
 ///
 /// Standard Horner evaluation: `f(u) = f[0] + f[1]*u + f[2]*u^2 + ...`
-pub(crate) fn eval_univariate<F: Field>(coeffs: &[F], u: F) -> F {
+pub(crate) fn eval_univariate<F: JoltField>(coeffs: &[F], u: F) -> F {
     let mut result = F::zero();
     let mut power = F::one();
     for &c in coeffs {
@@ -210,7 +210,7 @@ where
 }
 
 /// Computes `[1, c, c^2, ..., c^{n-1}]`.
-pub(crate) fn challenge_powers<F: Field>(c: F, n: usize) -> Vec<F> {
+pub(crate) fn challenge_powers<F: JoltField>(c: F, n: usize) -> Vec<F> {
     let mut powers = Vec::with_capacity(n);
     let mut cur = F::one();
     for _ in 0..n {
@@ -223,7 +223,7 @@ pub(crate) fn challenge_powers<F: Field>(c: F, n: usize) -> Vec<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use num_traits::Zero;
 
     #[test]

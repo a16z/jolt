@@ -26,7 +26,7 @@ use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_claims::OutputClaims;
-use jolt_field::Field;
+use jolt_field::JoltField;
 #[cfg(feature = "akita")]
 use jolt_poly::boolean_point_msb;
 use jolt_poly::{Polynomial, UnivariatePoly};
@@ -60,7 +60,7 @@ struct FamilySelectors {
 }
 
 impl FamilySelectors {
-    fn new<F: Field>(
+    fn new<F: JoltField>(
         counts: (usize, usize, usize),
         chunk_bits: usize,
     ) -> Result<Self, KernelError<F>> {
@@ -83,7 +83,7 @@ impl FamilySelectors {
 
 /// All `N` pushforwards from one bundle walk against the shared cycle-eq
 /// table, in canonical (instruction, bytecode, RAM) order.
-fn pushforwards<F: Field>(
+fn pushforwards<F: JoltField>(
     rows: &[InstructionCycleRow],
     eq_cycle: &[F],
     selectors: &FamilySelectors,
@@ -160,7 +160,7 @@ fn pushforwards<F: Field>(
 /// optimized kernel.
 pub struct OptimizedHammingWeightClaimReduction;
 
-impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
+impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
     for OptimizedHammingWeightClaimReduction
 {
     fn prepare(
@@ -372,7 +372,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
     }
 }
 
-struct HammingWeightKernel<F: Field> {
+struct HammingWeightKernel<F: JoltField> {
     rounds: usize,
     /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
@@ -383,7 +383,7 @@ struct HammingWeightKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for HammingWeightKernel<F> {
+impl<F: JoltField> allocative::Allocative for HammingWeightKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{polys_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -403,7 +403,7 @@ impl<F: Field> allocative::Allocative for HammingWeightKernel<F> {
     }
 }
 
-impl<F: Field> HammingWeightKernel<F> {
+impl<F: JoltField> HammingWeightKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(
             self.g_tables
@@ -428,7 +428,7 @@ impl<F: Field> HammingWeightKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for HammingWeightKernel<F> {
+impl<F: JoltField> ProveRounds<F> for HammingWeightKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -474,7 +474,7 @@ impl<F: Field> ProveRounds<F> for HammingWeightKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for HammingWeightKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for HammingWeightKernel<F> {
     type Relation = HammingWeightClaimReduction<F>;
 
     fn output_claims(
@@ -509,7 +509,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     };
@@ -606,7 +606,7 @@ mod tests {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod akita_tests {
     use jolt_claims::protocols::jolt::lattice::relations::digit_zero::LatticeDigitZeroClaimReductionDimensions;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     };

@@ -27,7 +27,7 @@
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -67,7 +67,7 @@ impl InstructionOperandRow {
     /// The row's five operand values as field elements, in output-claim
     /// declaration order — the exact entries the dense reduced tables hold.
     #[inline]
-    fn field_values<F: Field>(&self) -> [F; NUM_TABLES] {
+    fn field_values<F: JoltField>(&self) -> [F; NUM_TABLES] {
         [
             F::from_u64(self.lookup_output.0),
             F::from_u64(self.left_lookup_operand.0),
@@ -82,7 +82,7 @@ impl InstructionOperandRow {
 /// `instruction_claim_reduction` slot.
 pub struct OptimizedInstructionClaimReduction;
 
-impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>>
+impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     for OptimizedInstructionClaimReduction
 {
     fn prepare(
@@ -102,7 +102,7 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>>
     }
 }
 
-pub struct OptimizedInstructionClaimReductionKernel<F: Field> {
+pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     log_t: usize,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
     /// table (the summand is linear in the five operands).
@@ -116,7 +116,7 @@ pub struct OptimizedInstructionClaimReductionKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for OptimizedInstructionClaimReductionKernel<F> {
+impl<F: JoltField> allocative::Allocative for OptimizedInstructionClaimReductionKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -134,7 +134,7 @@ impl<F: Field> allocative::Allocative for OptimizedInstructionClaimReductionKern
     }
 }
 
-impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
+impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
     pub fn new(
         tau_low: &[F],
         rows: Vec<InstructionOperandRow>,
@@ -310,7 +310,7 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OptimizedInstructionClaimReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OptimizedInstructionClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -333,7 +333,7 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OptimizedInstructionClaimReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKernel<F> {
     type Relation = InstructionClaimReduction<F>;
 
     fn output_claims(
@@ -396,7 +396,7 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         InstructionClaimReductionPublic, JoltDerivedId, TraceDimensions,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;

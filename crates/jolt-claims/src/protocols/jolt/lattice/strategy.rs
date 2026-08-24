@@ -222,7 +222,7 @@ fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn shape(log_t: usize) -> OneHotTraceShape {
         OneHotTraceShape {

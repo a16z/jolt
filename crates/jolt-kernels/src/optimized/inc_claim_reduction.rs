@@ -20,7 +20,7 @@
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
@@ -42,7 +42,7 @@ use crate::{
 /// optimized kernel.
 pub struct OptimizedIncClaimReduction;
 
-impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduction {
+impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduction {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -110,7 +110,7 @@ impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduc
     }
 }
 
-struct IncKernel<F: Field> {
+struct IncKernel<F: JoltField> {
     rounds: usize,
     ram_inc: Polynomial<F>,
     rd_inc: Polynomial<F>,
@@ -120,7 +120,7 @@ struct IncKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for IncKernel<F> {
+impl<F: JoltField> allocative::Allocative for IncKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -136,7 +136,7 @@ impl<F: Field> allocative::Allocative for IncKernel<F> {
     }
 }
 
-impl<F: Field> IncKernel<F> {
+impl<F: JoltField> IncKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(
             [
@@ -165,7 +165,7 @@ impl<F: Field> IncKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for IncKernel<F> {
+impl<F: JoltField> ProveRounds<F> for IncKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -211,7 +211,7 @@ impl<F: Field> ProveRounds<F> for IncKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for IncKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for IncKernel<F> {
     type Relation = IncClaimReduction<F>;
 
     fn output_claims(
@@ -237,7 +237,7 @@ impl<F: Field> SumcheckKernel<F> for IncKernel<F> {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6b::inc_claim_reduction::{
         IncClaimReductionChallenges, IncClaimReductionInputClaims,
     };

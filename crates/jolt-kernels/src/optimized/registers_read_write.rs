@@ -45,7 +45,7 @@
 
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_read_write;
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltPolynomialId, RegistersReadWritePublic};
-use jolt_field::{AdditiveAccumulator, Field, OptimizedMul, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -129,14 +129,14 @@ const COLLECT_CHUNK: usize = 1 << 16;
 
 /// Streaming consumer building the sparse entries and the operand index
 /// columns in one trace pass, no whole-trace row materialization.
-struct CollectRegisterEntries<F: Field> {
+struct CollectRegisterEntries<F: JoltField> {
     entries: Vec<IndexedSparseEntry<F>>,
     rs1_indices: Vec<Option<u8>>,
     rs2_indices: Vec<Option<u8>>,
     rd_indices: Vec<Option<u8>>,
 }
 
-impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
+impl<F: JoltField> StreamConsumer for CollectRegisterEntries<F> {
     type Witness = RegisterCycleRow;
 
     fn consume(&mut self, chunk: &[RegisterCycleRow]) {
@@ -156,7 +156,7 @@ impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
 /// pass. Slice-backed sources build index-parallel; re-emulating sources
 /// stream sequentially. Entry values and order are identical either way —
 /// [`cycle_entries`] is pure per cycle, and runs concatenate in cycle order.
-fn collect_register_entries<F: Field>(
+fn collect_register_entries<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
@@ -184,7 +184,7 @@ fn collect_register_entries<F: Field>(
 /// columns fill on the counting pass. Entry values and order are identical
 /// to the streaming pass: cycle_entries is pure per cycle.
 #[cfg(feature = "parallel")]
-fn collect_register_entries_par<F: Field>(
+fn collect_register_entries_par<F: JoltField>(
     access: &RandomAccessRows,
     cycles: usize,
 ) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
@@ -343,7 +343,29 @@ struct CoeffLut<F> {
     values: Vec<F>,
 }
 
-impl<F: Field> CoeffLut<F> {
+#[inline(always)]
+fn mul_zero<F: JoltField>(left: F, right: F) -> F {
+    if left.is_zero() || right.is_zero() {
+        F::zero()
+    } else {
+        left * right
+    }
+}
+
+#[inline(always)]
+fn mul_zero_one<F: JoltField>(left: F, right: F) -> F {
+    if left.is_zero() || right.is_zero() {
+        F::zero()
+    } else if left.is_one() {
+        right
+    } else if right.is_one() {
+        left
+    } else {
+        left * right
+    }
+}
+
+impl<F: JoltField> CoeffLut<F> {
     /// One-past the largest table an entry's `u16` index can address.
     const MAX_VALUES: usize = 1 << 16;
 
@@ -386,7 +408,7 @@ impl<F: Field> CoeffLut<F> {
 /// into a [`CoeffLut`]. Both compute identical field values — the lookup
 /// table pre-binds every possible value, the index arithmetic just selects —
 /// so switching representations is memory-shape only, never wire-visible.
-trait OneHotCoeff<F: Field>: Copy + Send + Sync + 'static {
+trait OneHotCoeff<F: JoltField>: Copy + Send + Sync + 'static {
     /// Bind a vertically adjacent pair with `r`; a missing side is an
     /// implicit zero coefficient.
     fn bind(even: Option<Self>, odd: Option<Self>, r: F, lut: &CoeffLut<F>) -> Self;
@@ -398,13 +420,13 @@ trait OneHotCoeff<F: Field>: Copy + Send + Sync + 'static {
     fn value(self, lut: &CoeffLut<F>) -> F;
 }
 
-impl<F: Field> OneHotCoeff<F> for F {
+impl<F: JoltField> OneHotCoeff<F> for F {
     #[inline]
     fn bind(even: Option<Self>, odd: Option<Self>, r: F, _lut: &CoeffLut<F>) -> Self {
         match (even, odd) {
-            (Some(even), Some(odd)) => even + r.mul_0_optimized(odd - even),
-            (Some(even), None) => (F::one() - r).mul_01_optimized(even),
-            (None, Some(odd)) => r.mul_01_optimized(odd),
+            (Some(even), Some(odd)) => even + mul_zero(r, odd - even),
+            (Some(even), None) => mul_zero_one(F::one() - r, even),
+            (None, Some(odd)) => mul_zero_one(r, odd),
             (None, None) => unreachable!("merge visits only represented cells"),
         }
     }
@@ -430,7 +452,7 @@ impl<F: Field> OneHotCoeff<F> for F {
 #[derive(Clone, Copy, Debug)]
 struct LutIndex(u16);
 
-impl<F: Field> OneHotCoeff<F> for LutIndex {
+impl<F: JoltField> OneHotCoeff<F> for LutIndex {
     #[inline]
     fn bind(even: Option<Self>, odd: Option<Self>, _r: F, lut: &CoeffLut<F>) -> Self {
         // The table itself binds with `r` separately; index 0 is the zero
@@ -472,7 +494,7 @@ impl<F: Field> OneHotCoeff<F> for LutIndex {
 #[derive(Clone, Copy, Debug)]
 struct SmallLutIndex(u8);
 
-impl<F: Field> OneHotCoeff<F> for SmallLutIndex {
+impl<F: JoltField> OneHotCoeff<F> for SmallLutIndex {
     #[inline]
     fn bind(even: Option<Self>, odd: Option<Self>, _r: F, lut: &CoeffLut<F>) -> Self {
         let bits = lut.bits();
@@ -538,7 +560,7 @@ struct SparseEntry<F, R, W> {
     col: u8,
 }
 
-impl<F: Field, R: OneHotCoeff<F>, W: OneHotCoeff<F>> SparseEntry<F, R, W> {
+impl<F: JoltField, R: OneHotCoeff<F>, W: OneHotCoeff<F>> SparseEntry<F, R, W> {
     /// Bind two vertically adjacent cells (rows `2j`/`2j+1`, same column)
     /// with `r`. A missing side is an untouched slice: its `Val` is the
     /// neighbor's raw boundary value and its `ra`/`wa` are zero.
@@ -553,7 +575,7 @@ impl<F: Field, R: OneHotCoeff<F>, W: OneHotCoeff<F>> SparseEntry<F, R, W> {
             (Some(even), Some(odd)) => {
                 debug_assert_eq!(even.col, odd.col);
                 Self {
-                    val: even.val + r.mul_0_optimized(odd.val - even.val),
+                    val: even.val + mul_zero(r, odd.val - even.val),
                     ra: R::bind(Some(even.ra), Some(odd.ra), r, ra_lut),
                     wa: W::bind(Some(even.wa), Some(odd.wa), r, wa_lut),
                     prev_val: even.prev_val,
@@ -565,7 +587,7 @@ impl<F: Field, R: OneHotCoeff<F>, W: OneHotCoeff<F>> SparseEntry<F, R, W> {
             (Some(even), None) => {
                 let odd_val = F::from_u64(even.next_val);
                 Self {
-                    val: even.val + r.mul_0_optimized(odd_val - even.val),
+                    val: even.val + mul_zero(r, odd_val - even.val),
                     ra: R::bind(Some(even.ra), None, r, ra_lut),
                     wa: W::bind(Some(even.wa), None, r, wa_lut),
                     prev_val: even.prev_val,
@@ -577,7 +599,7 @@ impl<F: Field, R: OneHotCoeff<F>, W: OneHotCoeff<F>> SparseEntry<F, R, W> {
             (None, Some(odd)) => {
                 let even_val = F::from_u64(odd.prev_val);
                 Self {
-                    val: even_val + r.mul_0_optimized(odd.val - even_val),
+                    val: even_val + mul_zero(r, odd.val - even_val),
                     ra: R::bind(None, Some(odd.ra), r, ra_lut),
                     wa: W::bind(None, Some(odd.wa), r, wa_lut),
                     prev_val: odd.prev_val,
@@ -644,7 +666,7 @@ const WA_HOT: SmallLutIndex = SmallLutIndex(1);
 
 /// Build the (sorted-by-column) sparse entries of one cycle as seed-table
 /// indices. Returns the filled prefix length (0–3).
-fn cycle_entries<F: Field>(
+fn cycle_entries<F: JoltField>(
     row: u32,
     cycle: &RegisterCycleRow,
 ) -> ([IndexedSparseEntry<F>; 3], usize) {
@@ -730,7 +752,7 @@ fn merge_count<F, R, W>(evens: &[SparseEntry<F, R, W>], odds: &[SparseEntry<F, R
 
 /// Merge-bind two adjacent sorted-by-column rows into `out` (sized by
 /// [`merge_count`]), keeping column order.
-fn merge_fill<F: Field, R: OneHotCoeff<F>, W: OneHotCoeff<F>>(
+fn merge_fill<F: JoltField, R: OneHotCoeff<F>, W: OneHotCoeff<F>>(
     evens: &[SparseEntry<F, R, W>],
     odds: &[SparseEntry<F, R, W>],
     r: F,
@@ -790,7 +812,7 @@ fn split_pair_group<F, R, W>(
 
 pub struct OptimizedRegistersReadWrite;
 
-impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
+impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -882,7 +904,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
 /// The sparse entries in their round-dependent coefficient representation:
 /// `u16` LUT indices while the tables can still square (the first four cycle
 /// rounds — the peak-memory window), direct field values after.
-enum SparseEntries<F: Field> {
+enum SparseEntries<F: JoltField> {
     Indexed {
         entries: Vec<IndexedSparseEntry<F>>,
         ra_lut: CoeffLut<F>,
@@ -891,7 +913,7 @@ enum SparseEntries<F: Field> {
     Direct(Vec<DirectSparseEntry<F>>),
 }
 
-impl<F: Field> SparseEntries<F> {
+impl<F: JoltField> SparseEntries<F> {
     /// A placeholder table for the direct representation, which ignores it.
     fn unused_lut() -> CoeffLut<F> {
         CoeffLut { values: Vec::new() }
@@ -924,7 +946,7 @@ impl<F: Field> SparseEntries<F> {
     }
 }
 
-struct ReadWriteKernel<F: Field> {
+struct ReadWriteKernel<F: JoltField> {
     log_t: usize,
     log_k: usize,
     /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
@@ -947,7 +969,7 @@ struct ReadWriteKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for ReadWriteKernel<F> {
+impl<F: JoltField> allocative::Allocative for ReadWriteKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -992,7 +1014,7 @@ fn bind_sparse_entries<F, R, W>(
     ra_lut: &CoeffLut<F>,
     wa_lut: &CoeffLut<F>,
 ) where
-    F: Field,
+    F: JoltField,
     R: OneHotCoeff<F>,
     W: OneHotCoeff<F>,
 {
@@ -1091,7 +1113,7 @@ fn sparse_quadratic<F, R, W>(
     inc: &[F],
 ) -> [F; 2]
 where
-    F: Field,
+    F: JoltField,
     R: OneHotCoeff<F>,
     W: OneHotCoeff<F>,
 {
@@ -1206,7 +1228,7 @@ where
     }
 }
 
-impl<F: Field> ReadWriteKernel<F> {
+impl<F: JoltField> ReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's
     /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
     /// into the exact cubic by `gruen_poly_deg_3`.
@@ -1401,7 +1423,7 @@ impl<F: Field> ReadWriteKernel<F> {
 /// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
 /// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
 /// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
-fn one_hot_operand_claims<F: Field>(
+fn one_hot_operand_claims<F: JoltField>(
     rs1_indices: &[Option<u8>],
     rs2_indices: &[Option<u8>],
     r_address: &[F],
@@ -1454,7 +1476,7 @@ fn one_hot_operand_claims<F: Field>(
     (claims[0], claims[1])
 }
 
-impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t + self.log_k
     }
@@ -1481,7 +1503,7 @@ impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
     type Relation = RegistersReadWriteChecking<F>;
 
     fn output_claims(
@@ -1533,7 +1555,7 @@ impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
 pub(crate) mod test_support {
     use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::execution::{
         JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,
     };
@@ -1848,7 +1870,7 @@ mod tests {
         ReadWriteDimensions, REGISTER_ADDRESS_BITS,
     };
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::Polynomial;
     use jolt_verifier::stages::stage4::registers_read_write_checking::{
         RegistersReadWriteChallenges, RegistersReadWriteChecking, RegistersReadWriteInputClaims,

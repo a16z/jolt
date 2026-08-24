@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
@@ -36,7 +36,7 @@ enum AddressEncodingError {
 }
 
 impl AddressEncodingError {
-    fn into_kernel_error<F: Field>(self) -> KernelError<F> {
+    fn into_kernel_error<F: JoltField>(self) -> KernelError<F> {
         let reason = match self {
             Self::TooLarge => "optimized RAM kernels require remapped addresses below 2^32 - 1",
             Self::SentinelCollision => {
@@ -133,7 +133,7 @@ impl allocative::Allocative for RamAccessValues {
 }
 
 impl RamAccessColumns {
-    fn collect<F: Field>(
+    fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
     ) -> Result<(Self, RamAccessValues), KernelError<F>> {
@@ -171,7 +171,7 @@ impl RamAccessColumns {
     /// Slice-backed traces scatter directly into the three final columns,
     /// avoiding a full-width `RamAccessBundle` vector at the collection peak.
     #[cfg(feature = "parallel")]
-    fn collect_par<F: Field>(
+    fn collect_par<F: JoltField>(
         access: &RandomAccessRows,
         cycles: usize,
     ) -> Result<(Self, RamAccessValues), KernelError<F>> {
@@ -242,7 +242,7 @@ impl RamAccessColumns {
         clippy::expect_used,
         reason = "the entry is parked by this function right above the read"
     )]
-    pub fn shared<F: Field>(
+    pub fn shared<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
@@ -268,7 +268,7 @@ impl RamAccessColumns {
 
     /// Reclaims the value columns at their final consumer while leaving the
     /// shared address column available to later stages.
-    pub fn shared_with_values<F: Field>(
+    pub fn shared_with_values<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
@@ -284,7 +284,7 @@ impl RamAccessColumns {
 
     /// Bounds-check every accessed address against the proof's `K`, matching
     /// the grid materializers' fail-loud contract.
-    pub fn validate_addresses<F: Field>(&self, ram_k: usize) -> Result<(), KernelError<F>> {
+    pub fn validate_addresses<F: JoltField>(&self, ram_k: usize) -> Result<(), KernelError<F>> {
         if self
             .addresses
             .iter()
@@ -301,7 +301,7 @@ impl RamAccessColumns {
     /// `out[j] = Σ_k eq(r_address, k) · ra(k, j) = eq_address[addresses[j]]`
     /// (0 on no-access cycles). Reproduces `views::address_fold` of the dense
     /// grid without materializing it.
-    pub fn fold_addresses<F: Field>(&self, eq_address: &[F]) -> Vec<F> {
+    pub fn fold_addresses<F: JoltField>(&self, eq_address: &[F]) -> Vec<F> {
         self.addresses
             .iter()
             .map(|&address| {
@@ -318,7 +318,7 @@ impl RamAccessColumns {
     /// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
     /// Reproduces `views::cycle_fold` of the dense grid without
     /// materializing it.
-    pub fn fold_cycles<F: Field>(&self, eq_cycle: &[F], ram_k: usize) -> Vec<F> {
+    pub fn fold_cycles<F: JoltField>(&self, eq_cycle: &[F], ram_k: usize) -> Vec<F> {
         let mut out = vec![F::zero(); ram_k];
         for (&address, &eq) in self.addresses.iter().zip(eq_cycle) {
             if address != NO_ACCESS {
@@ -337,7 +337,11 @@ impl RamAccessColumns {
     /// being consistent with the final memory image (exactly what the RAM
     /// val/output sumchecks prove). A dishonest witness diverges here and
     /// fails the engine's round checks loudly.
-    pub fn reconstruct_val_init<F: Field>(&self, pre_values: &[u64], val_final: Vec<F>) -> Vec<F> {
+    pub fn reconstruct_val_init<F: JoltField>(
+        &self,
+        pre_values: &[u64],
+        val_final: Vec<F>,
+    ) -> Vec<F> {
         debug_assert_eq!(self.addresses.len(), pre_values.len());
         let mut val_init = val_final;
         let mut seen = vec![false; val_init.len()];

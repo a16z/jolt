@@ -41,7 +41,7 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -65,7 +65,7 @@ use crate::{
 /// `instruction_ra_virtualization` slot.
 pub struct OptimizedInstructionRaVirtualization;
 
-impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
+impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
     for OptimizedInstructionRaVirtualization
 {
     fn prepare(
@@ -128,7 +128,7 @@ fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec
     }
 }
 
-pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
+pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     log_t: usize,
     num_committed_per_virtual: usize,
     /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
@@ -146,7 +146,7 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for OptimizedInstructionRaVirtualizationKernel<F> {
+impl<F: JoltField> allocative::Allocative for OptimizedInstructionRaVirtualizationKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{gruen_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -163,7 +163,7 @@ impl<F: Field> allocative::Allocative for OptimizedInstructionRaVirtualizationKe
     }
 }
 
-impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
+impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
     pub(crate) fn new(
         log_t: usize,
@@ -273,7 +273,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
 
-        struct Scratch<F: Field> {
+        struct Scratch<F: JoltField> {
             /// Cross-row lanes for `q(1), …, q(N−1), q(∞)`.
             lanes: Vec<F::Accumulator>,
             /// Per-row product lanes (reduced and folded by `e_in` each row).
@@ -402,7 +402,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -425,7 +425,7 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel<F> 
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<F> {
     type Relation = InstructionRaVirtualization<F>;
 
     fn output_claims(
@@ -491,7 +491,7 @@ mod tests {
         InstructionRaVirtualizationChallenges, InstructionRaVirtualizationInputClaims,
     };
     use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;

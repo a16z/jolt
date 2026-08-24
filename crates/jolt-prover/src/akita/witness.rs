@@ -10,7 +10,7 @@ use jolt_claims::protocols::jolt::lattice::packing::{
 };
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
-use jolt_field::{Field, FixedByteSize};
+use jolt_field::{CanonicalBytes, JoltField};
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_poly::MultilinearPoly;
@@ -42,7 +42,7 @@ pub struct SparseUnitPolynomial<F> {
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> SparseUnitPolynomial<F> {
+impl<F: JoltField> SparseUnitPolynomial<F> {
     /// Sorts the positions ascending once here — the invariant
     /// `for_each_row`'s row scan and `for_each_one`'s yield order rely on.
     ///
@@ -71,7 +71,7 @@ impl<F: Field> SparseUnitPolynomial<F> {
     }
 }
 
-impl<F: Field> MultilinearPoly<F> for SparseUnitPolynomial<F> {
+impl<F: JoltField> MultilinearPoly<F> for SparseUnitPolynomial<F> {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -223,7 +223,7 @@ fn fill_trace_row(
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
 /// plan's canonical semantic-column order.
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
-pub fn assemble_one_hot_trace_rows<F: Field>(
+pub fn assemble_one_hot_trace_rows<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
     plan: &OneHotTraceLayoutPlan,
     ra_layout: JoltRaPolynomialLayout,
@@ -410,7 +410,7 @@ where
     })
 }
 
-fn commit_failed<F: Field>(error: impl ToString) -> ProverError<F> {
+fn commit_failed<F: JoltField>(error: impl ToString) -> ProverError<F> {
     ProverError::Verifier(
         jolt_verifier::VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
@@ -452,7 +452,7 @@ pub fn commit_program_one_hot<PCS>(
 where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
-    let imm_byte_width = <PCS::Field as FixedByteSize>::NUM_BYTES;
+    let imm_byte_width = <PCS::Field as CanonicalBytes>::NUM_BYTES;
     let bytecode_len = program.bytecode.bytecode.len();
     if bytecode_chunk_count == 0 || !bytecode_len.is_multiple_of(bytecode_chunk_count) {
         return Err(ProverError::InvariantViolation {
@@ -548,7 +548,7 @@ const _: () = {
 /// chunk is `2^log_bytecode_rows` (bytecode rows, zero-padded); byte one-hot
 /// columns encode padding by selecting row zero (never all-zero), the
 /// selector/flag columns leave padding rows empty.
-pub fn assemble_precommitted_witness<F: Field>(
+pub fn assemble_precommitted_witness<F: JoltField>(
     plan: &PrefixPackedObjectPlan,
     instructions: &[JoltInstructionRow],
     log_bytecode_rows: usize,

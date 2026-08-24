@@ -17,7 +17,7 @@
 //! prover; summation order differs from legacy where convenient (field
 //! addition is exact, so the values are identical).
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::Polynomial;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -52,7 +52,7 @@ pub(crate) struct AddressMajorEntry<F> {
     pub ra: F,
 }
 
-impl<F: Field> CycleMajorEntry<F> {
+impl<F: JoltField> CycleMajorEntry<F> {
     fn into_address_major(self) -> AddressMajorEntry<F> {
         AddressMajorEntry {
             row: self.row,
@@ -143,13 +143,13 @@ impl<F: Field> CycleMajorEntry<F> {
 
 /// `val + γ·(inc + val)` — the shared value factor of the summand.
 #[inline]
-fn val_slope_term<F: Field>(val: F, inc: F, gamma: F) -> F {
+fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
     val + gamma * (inc + val)
 }
 
 /// Merge two sorted-by-column adjacent rows into `out`, binding entries
 /// pairwise (the legacy `seq_bind_rows`).
-fn merge_bind_rows<F: Field>(
+fn merge_bind_rows<F: JoltField>(
     even: &[CycleMajorEntry<F>],
     odd: &[CycleMajorEntry<F>],
     r: F,
@@ -184,7 +184,7 @@ fn merge_bind_rows<F: Field>(
 
 /// The pair contribution of two sorted-by-column adjacent rows (the legacy
 /// `seq_prover_message_contribution`).
-fn merge_quadratic_evals<F: Field>(
+fn merge_quadratic_evals<F: JoltField>(
     even: &[CycleMajorEntry<F>],
     odd: &[CycleMajorEntry<F>],
     inc_evals: [F; 2],
@@ -262,7 +262,7 @@ pub(crate) struct CycleMajorMatrix<F> {
     pub entries: Vec<CycleMajorEntry<F>>,
 }
 
-impl<F: Field> CycleMajorMatrix<F> {
+impl<F: JoltField> CycleMajorMatrix<F> {
     /// Bind one cycle variable low-to-high: merge every adjacent row pair.
     pub fn bind(&mut self, r: F) {
         #[cfg(feature = "parallel")]
@@ -345,7 +345,7 @@ impl<F: Field> CycleMajorMatrix<F> {
     }
 }
 
-impl<F: Field> AddressMajorEntry<F> {
+impl<F: JoltField> AddressMajorEntry<F> {
     /// Bind a `(col 2k, col 2k+1)` pair of same-row entries; a `None` side
     /// is implicit (`ra = 0`, `val` recovered from its column checkpoint).
     fn bind(
@@ -439,7 +439,7 @@ fn split_col_pair<F>(
 
 /// Merge two sorted-by-row adjacent columns, binding entries pairwise and
 /// walking the value checkpoints forward (the legacy `seq_bind_cols`).
-fn merge_bind_cols<F: Field>(
+fn merge_bind_cols<F: JoltField>(
     even: &[AddressMajorEntry<F>],
     odd: &[AddressMajorEntry<F>],
     mut even_checkpoint: F,
@@ -512,7 +512,7 @@ fn merge_bind_cols<F: Field>(
 
 /// The column pair's round contribution `[s(0), s(2)]` (the legacy
 /// `seq_prover_message_contribution`), checkpoints walked forward per row.
-fn merge_address_round_evals<F: Field>(
+fn merge_address_round_evals<F: JoltField>(
     even: &[AddressMajorEntry<F>],
     odd: &[AddressMajorEntry<F>],
     mut even_checkpoint: F,
@@ -605,7 +605,7 @@ pub(crate) struct AddressMajorMatrix<F> {
     pub entries: Vec<AddressMajorEntry<F>>,
 }
 
-impl<F: Field> AddressMajorMatrix<F> {
+impl<F: JoltField> AddressMajorMatrix<F> {
     /// Bind one address variable low-to-high: merge every adjacent column
     /// pair against the `val_init` checkpoints, then bind `val_init` itself.
     pub fn bind(&mut self, r: F, val_init: &mut Polynomial<F>) {

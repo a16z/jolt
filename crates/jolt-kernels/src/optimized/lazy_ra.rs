@@ -31,7 +31,7 @@
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -58,7 +58,7 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily for the
 /// first three binds.
-pub(crate) enum LazyFoldedRa<F: Field, S> {
+pub(crate) enum LazyFoldedRa<F: JoltField, S> {
     /// Fewer than three binds: per-polynomial branch scale tables (the base
     /// table pre-scaled by each bound-bit pattern's eq weight), flattened
     /// offset-major — `tables[i][offset · stride_i + k]` with
@@ -73,7 +73,7 @@ pub(crate) enum LazyFoldedRa<F: Field, S> {
     Dense(Vec<Polynomial<F>>),
 }
 
-impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
+impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     /// One scale table per selector polynomial, in polynomial order.
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
         debug_assert_eq!(tables.len(), source.num_polys());
@@ -194,7 +194,7 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
 /// one add per hot branch, no multiplications (the weights are pre-scaled
 /// into the branch tables).
 #[inline]
-fn gather<F: Field, S: ChunkIndexSource>(
+fn gather<F: JoltField, S: ChunkIndexSource>(
     table: &[F],
     width: usize,
     source: &S,
@@ -220,7 +220,7 @@ fn gather<F: Field, S: ChunkIndexSource>(
 /// half keeps the existing branches scaled by `1 − challenge` (bit 0), the
 /// second half by `challenge` (bit 1) — offset layout
 /// `b0 + 2·b1 + 4·b2`, matching the low bits of the original cycle index.
-fn double_branches<F: Field>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
+fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
     let one_minus = F::one() - challenge;
     let double = |table: Vec<F>| -> Vec<F> {
         let mut next = Vec::with_capacity(table.len() * 2);
@@ -244,7 +244,7 @@ fn double_branches<F: Field>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
 /// footprint (`N · T / branches` field elements — the stage-6b peak at
 /// large T) against one more gather round and double the branch tables;
 /// measured on a 64-thread host, T/16 beats the original T/8 on both axes.
-fn materialize<F: Field, S: ChunkIndexSource>(
+fn materialize<F: JoltField, S: ChunkIndexSource>(
     tables: &[Vec<F>],
     source: &S,
     branches: usize,

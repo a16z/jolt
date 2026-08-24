@@ -32,7 +32,7 @@ use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -55,7 +55,7 @@ use crate::{
 /// The phase state machine: cycle rounds on the cycle-major matrix, address
 /// rounds on the address-major matrix, then the fully bound values. `None`
 /// only transiently inside a transition.
-enum Phase<F: Field> {
+enum Phase<F: JoltField> {
     Cycle {
         matrix: CycleMajorMatrix<F>,
         gruen: GruenSplitEqPolynomial<F>,
@@ -72,7 +72,7 @@ enum Phase<F: Field> {
     },
 }
 
-pub(crate) struct RamReadWriteKernel<F: Field> {
+pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
     /// The committed per-cycle increment column, bound alongside phase 1;
     /// a scalar once every cycle variable is bound.
@@ -85,7 +85,7 @@ pub(crate) struct RamReadWriteKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RamReadWriteKernel<F> {
+impl<F: JoltField> allocative::Allocative for RamReadWriteKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -108,13 +108,13 @@ impl<F: Field> allocative::Allocative for RamReadWriteKernel<F> {
     }
 }
 
-fn phase_error<F: Field>() -> SumcheckError<F> {
+fn phase_error<F: JoltField>() -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
         kind: "RAM read-write phase state",
     }
 }
 
-impl<F: Field> RamReadWriteKernel<F> {
+impl<F: JoltField> RamReadWriteKernel<F> {
     /// Bind the challenge of `round` (0-indexed over the member's window),
     /// advancing the phase machine at the boundaries.
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
@@ -198,7 +198,7 @@ impl<F: Field> RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t + self.log_k
     }
@@ -224,7 +224,7 @@ impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
     type Relation = RamReadWriteChecking<F>;
 
     fn output_claims(
@@ -278,7 +278,7 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -356,7 +356,7 @@ mod tests {
 
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,
     };

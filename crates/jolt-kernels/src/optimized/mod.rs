@@ -25,7 +25,7 @@
 //!
 //! Each module documents its own port; [`JoltBackend::optimized`] wires them.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use crate::commitment::ModeStreamingCommitment;
@@ -73,7 +73,7 @@ pub struct OptimizedBackend;
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The optimized backend: [`JoltBackend::reference`] with every slot this

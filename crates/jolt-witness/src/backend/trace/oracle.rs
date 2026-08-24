@@ -205,7 +205,7 @@ fn advice_bytes_cell_vars(max_bytes: usize) -> usize {
     )
 }
 
-impl<F: Field, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
+impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         self.shape_of(id)
     }

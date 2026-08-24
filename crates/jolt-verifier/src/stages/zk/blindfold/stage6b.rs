@@ -167,7 +167,7 @@ where
     clippy::wildcard_enum_match_arm,
     reason = "fail-closed: unmatched opening ids yield no alias and are reported missing below"
 )]
-fn stage6_cycle_output_openings_and_aliases<F: Field>(
+fn stage6_cycle_output_openings_and_aliases<F: JoltField>(
     formula_dimensions: JoltFormulaDimensions,
     bytecode_ra_opening_points: &[Vec<F>],
     booleanity_opening_point: &[F],

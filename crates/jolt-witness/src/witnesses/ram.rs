@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::{Extract, ToField, WitnessEnv};
@@ -33,7 +33,7 @@ pub struct RamHammingWeight(pub bool);
 pub struct RemappedRamAddress(pub Option<u64>);
 
 impl ToField for RamAddress {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -49,7 +49,7 @@ impl Extract for RamAddress {
 }
 
 impl ToField for RamReadValue {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -65,7 +65,7 @@ impl Extract for RamReadValue {
 }
 
 impl ToField for RamWriteValue {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -81,7 +81,7 @@ impl Extract for RamWriteValue {
 }
 
 impl ToField for RamHammingWeight {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_bool(self.0)
     }
 }

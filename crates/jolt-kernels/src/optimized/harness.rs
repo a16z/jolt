@@ -11,7 +11,7 @@
 
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_field::{Field, Fr, FromPrimitiveInt};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_sumcheck::SumcheckError;
 #[cfg(not(feature = "akita"))]
 use jolt_witness::JoltWitnessOracle;
@@ -54,7 +54,9 @@ pub(crate) fn probe_one_hot_family(
 /// check: probe `prove_round` with a zero claim and read the true domain sum
 /// off the `RoundCheckFailed` error (an `Ok` means the claim really is zero).
 /// `prove_round(None, ..)` binds nothing, so the probe is state-free.
-pub(crate) fn probe_input_claim<F: Field, R>(kernel: &mut dyn SumcheckKernel<F, Relation = R>) -> F
+pub(crate) fn probe_input_claim<F: JoltField, R>(
+    kernel: &mut dyn SumcheckKernel<F, Relation = R>,
+) -> F
 where
     R: jolt_verifier::stages::relations::ConcreteSumcheck<F>,
     jolt_verifier::stages::relations::SumcheckInputClaims<F, R>: jolt_claims::InputClaims<F>,
@@ -74,7 +76,7 @@ where
 /// for output-claim comparison. `initial_claim` must be the honest input
 /// claim (see [`probe_input_claim`]); a zero claim is rejected so a
 /// degenerate all-zero fixture cannot make the parity vacuous.
-pub(crate) fn run_lockstep<F: Field, R>(
+pub(crate) fn run_lockstep<F: JoltField, R>(
     reference: &mut dyn SumcheckKernel<F, Relation = R>,
     optimized: &mut dyn SumcheckKernel<F, Relation = R>,
     initial_claim: F,

@@ -1,6 +1,6 @@
 //! Small shared primitives of the optimized kernels.
 
-use jolt_field::{Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial, UnivariatePoly};
 use jolt_witness::{
     stream_witnesses, RandomAccessRows, RowSource, StreamConsumer, WitnessBundle, WitnessError,
@@ -61,7 +61,7 @@ pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
 /// Accumulates `Π factors` into `lane`, fusing the last multiply into the
 /// deferred-reduction accumulator. Requires at least two factors.
 #[inline]
-pub(crate) fn accumulate_product<F: Field>(factors: &[F], lane: &mut F::Accumulator) {
+pub(crate) fn accumulate_product<F: JoltField>(factors: &[F], lane: &mut F::Accumulator) {
     debug_assert!(factors.len() >= 2);
     let last = factors.len() - 1;
     let mut product = factors[0];
@@ -73,12 +73,12 @@ pub(crate) fn accumulate_product<F: Field>(factors: &[F], lane: &mut F::Accumula
 
 /// `scale · eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index
 /// MSB) — the scaled variant of the reference tier's `eq_table`.
-pub(crate) fn scaled_eq_table<F: Field>(point: &[F], scale: F) -> Vec<F> {
+pub(crate) fn scaled_eq_table<F: JoltField>(point: &[F], scale: F) -> Vec<F> {
     EqPolynomial::<F>::evals(point, Some(scale))
 }
 
 /// `eq(point, ·)` evaluations, big-endian.
-pub(crate) fn eq_table<F: Field>(point: &[F]) -> Vec<F> {
+pub(crate) fn eq_table<F: JoltField>(point: &[F]) -> Vec<F> {
     EqPolynomial::<F>::evals(point, None)
 }
 
@@ -86,13 +86,13 @@ pub(crate) fn eq_table<F: Field>(point: &[F]) -> Vec<F> {
 /// the two evaluations whose linear extension `lo + t·(hi − lo)` is the
 /// table's per-round univariate restriction.
 #[inline(always)]
-pub(crate) fn pair<F: Field>(table: &Polynomial<F>, y: usize) -> (F, F) {
+pub(crate) fn pair<F: JoltField>(table: &Polynomial<F>, y: usize) -> (F, F) {
     let evals = table.evals();
     (evals[2 * y], evals[2 * y + 1])
 }
 
 /// Bind every table one round low-to-high, in place.
-pub(crate) fn bind_all<'a, F: Field>(
+pub(crate) fn bind_all<'a, F: JoltField>(
     tables: impl IntoIterator<Item = &'a mut Polynomial<F>>,
     challenge: F,
 ) {
@@ -107,7 +107,7 @@ pub(crate) fn bind_all<'a, F: Field>(
 /// `s(0) + s(1) = previous_claim`), interpolated through the same
 /// `UnivariatePoly::from_evals` path, so the coefficient vectors are
 /// byte-identical on honest inputs.
-pub(crate) fn round_poly_from_skipped_evals<F: Field>(
+pub(crate) fn round_poly_from_skipped_evals<F: JoltField>(
     evals_without_one: &[F],
     previous_claim: F,
 ) -> UnivariatePoly<F> {
@@ -120,7 +120,7 @@ pub(crate) fn round_poly_from_skipped_evals<F: Field>(
 
 /// Sum per-thread accumulator vectors elementwise.
 #[cfg(feature = "parallel")]
-pub(crate) fn merge_evals<F: Field>(mut left: Vec<F>, right: Vec<F>) -> Vec<F> {
+pub(crate) fn merge_evals<F: JoltField>(mut left: Vec<F>, right: Vec<F>) -> Vec<F> {
     for (left, right) in left.iter_mut().zip(right) {
         *left += right;
     }
@@ -148,7 +148,7 @@ pub(crate) enum SplitLt<F> {
     Dense(Vec<F>),
 }
 
-impl<F: Field> SplitLt<F> {
+impl<F: JoltField> SplitLt<F> {
     pub(crate) fn new(r_cycle: &[F]) -> Self {
         Self::new_plus_constant(r_cycle, F::zero())
     }
@@ -283,7 +283,7 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
     /// Resolve for a witness plane: the owning handle when the source is
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.
-    pub(crate) fn resolve<F: Field>(
+    pub(crate) fn resolve<F: JoltField>(
         witness: &dyn jolt_witness::JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, crate::KernelError<F>> {

@@ -12,7 +12,7 @@ use crate::{BundleSource, RowSource, WitnessBundle};
 impl<T: TraceSource> TraceBackend<T> {
     /// Materializes one cycle-domain witness column by walking the trace
     /// once; all per-witness logic lives on `W`.
-    pub(crate) fn materialize_cycle<F: Field, W: Extract + ToField>(
+    pub(crate) fn materialize_cycle<F: JoltField, W: Extract + ToField>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
         self.walk_cycles(|row, next, env| W::extract(row, next, env).map(ToField::to_field))
@@ -21,7 +21,7 @@ impl<T: TraceSource> TraceBackend<T> {
     /// [`Self::materialize_cycle`] for indexed witness families; `index`
     /// selects the family member.
     pub(crate) fn materialize_cycle_indexed<
-        F: Field,
+        F: JoltField,
         W: ExtractIndexed<I> + ToField,
         I: Copy + Send + Sync,
     >(
@@ -49,7 +49,7 @@ impl<T: TraceSource> TraceBackend<T> {
         chunk_bits: usize,
     ) -> Result<Vec<F>, WitnessError>
     where
-        F: Field,
+        F: JoltField,
         W: ExtractIndexed<RaChunkSelector> + Into<Option<usize>>,
     {
         let selector = RaChunkSelector::new(index, chunks, chunk_bits)?;
@@ -77,7 +77,7 @@ impl<T: TraceSource> TraceBackend<T> {
     /// packed (lattice) witness as the flat address-major `(K x T)` grid,
     /// `K = 2^committed_chunk_bits`. Every cycle is hot: padding rows encode
     /// the zero delta in row zero of every digit and the carry.
-    pub(crate) fn materialize_balanced_inc_one_hot<F: Field>(
+    pub(crate) fn materialize_balanced_inc_one_hot<F: JoltField>(
         &self,
         column: crate::witnesses::BalancedIncColumn,
     ) -> Result<Vec<F>, WitnessError> {

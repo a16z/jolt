@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaClaimReductionPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
@@ -48,7 +48,7 @@ use crate::{
 /// The three consumed claims (RAF, read-write, val-check), in γ-power order.
 const TERMS: usize = 3;
 
-impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -121,7 +121,7 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
 
 /// `Q_x[c_lo] = Σ_{c_hi} eq(r_address)[addresses[c_hi‖c_lo]] · eq_hi_x[c_hi]`
 /// for the three cycle points, in one pass over the access columns.
-fn build_q_tables<F: Field>(
+fn build_q_tables<F: JoltField>(
     columns: &RamAccessColumns,
     eq_address: &[F],
     eq_hi: &[Vec<F>; TERMS],
@@ -180,7 +180,7 @@ fn build_q_tables<F: Field>(
 /// `H'[c_hi] = Σ_{c_lo} eq(r_address)[addresses[c_hi‖c_lo]] · eq_prefix[c_lo]`
 /// — the partial evaluation of the address-folded `ra` at the prefix
 /// challenges, regathered from the access columns.
-fn gather_h_prime<F: Field>(
+fn gather_h_prime<F: JoltField>(
     columns: &RamAccessColumns,
     eq_address: &[F],
     eq_prefix: &[F],
@@ -232,7 +232,7 @@ fn gather_h_prime<F: Field>(
 }
 
 /// In-place low-to-high bind: `t[y] ← t[2y] + r·(t[2y+1] − t[2y])`.
-fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
+fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     let half = table.len() / 2;
     for y in 0..half {
         let even = table[2 * y];
@@ -245,7 +245,7 @@ fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
     clippy::large_enum_variant,
     reason = "one kernel object per proof; boxing buys nothing"
 )]
-enum Phase<F: Field> {
+enum Phase<F: JoltField> {
     /// Rounds over the low (prefix) cycle variables: six `O(√T)` tables. The
     /// suffix eq tables and the transition inputs (columns, address eq,
     /// low-half cycle points, collected challenges) ride along.
@@ -267,7 +267,7 @@ enum Phase<F: Field> {
     },
 }
 
-struct RaReductionKernel<F: Field> {
+struct RaReductionKernel<F: JoltField> {
     rounds: usize,
     rounds_bound: usize,
     prefix_bits: usize,
@@ -277,7 +277,7 @@ struct RaReductionKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RaReductionKernel<F> {
+impl<F: JoltField> allocative::Allocative for RaReductionKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::vec_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -319,7 +319,7 @@ impl<F: Field> allocative::Allocative for RaReductionKernel<F> {
     }
 }
 
-impl<F: Field> RaReductionKernel<F> {
+impl<F: JoltField> RaReductionKernel<F> {
     fn bind(&mut self, r: F) {
         self.rounds_bound += 1;
         match &mut self.phase {
@@ -428,7 +428,7 @@ impl<F: Field> RaReductionKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RaReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RaReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -454,7 +454,7 @@ impl<F: Field> ProveRounds<F> for RaReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RaReductionKernel<F> {
     type Relation = RamRaClaimReduction<F>;
 
     fn output_claims(
@@ -512,7 +512,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::{
         RamRaClaimReductionChallenges, RamRaClaimReductionInputClaims,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,

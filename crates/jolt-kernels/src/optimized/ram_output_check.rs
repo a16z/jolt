@@ -30,7 +30,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -46,7 +46,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -99,7 +99,7 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     }
 }
 
-struct OutputCheckKernel<F: Field> {
+struct OutputCheckKernel<F: JoltField> {
     ram_log_k: usize,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
@@ -110,7 +110,7 @@ struct OutputCheckKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for OutputCheckKernel<F> {
+impl<F: JoltField> allocative::Allocative for OutputCheckKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -127,7 +127,7 @@ impl<F: Field> allocative::Allocative for OutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> OutputCheckKernel<F> {
+impl<F: JoltField> OutputCheckKernel<F> {
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.rounds_bound == self.ram_log_k {
             Ok(())
@@ -210,7 +210,7 @@ impl<F: Field> OutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OutputCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.ram_log_k
     }
@@ -233,7 +233,7 @@ impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OutputCheckKernel<F> {
     type Relation = RamOutputCheck<F>;
 
     fn output_claims(
@@ -279,7 +279,7 @@ mod tests {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, ReadWriteDimensions};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::execution::{JoltProgram, MemoryImage, OwnedTrace, TraceOutput, TraceRow};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, PublicIoMemory, RAMPreprocessing,

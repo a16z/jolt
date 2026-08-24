@@ -14,7 +14,7 @@
 //! is a function of rows `t` and `t + 1`, with padding semantics at
 //! `T - 1`) and the environment ([`WitnessEnv`]).
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{JoltLookupQuery, LookupQuery};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
@@ -65,7 +65,7 @@ impl<'a> WitnessEnv<'a> {
 
 /// The field encoding of an atomic witness value.
 pub trait ToField {
-    fn to_field<F: Field>(self) -> F;
+    fn to_field<F: JoltField>(self) -> F;
 }
 
 /// The single-sourced derivation of one atomic witness from a trace row.

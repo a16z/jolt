@@ -25,7 +25,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -56,7 +56,7 @@ enum WaState<F> {
     Dense(Vec<F>),
 }
 
-impl<F: Field> WaState<F> {
+impl<F: JoltField> WaState<F> {
     #[inline]
     fn pair(&self, y: usize) -> (F, F) {
         match self {
@@ -107,7 +107,7 @@ impl<F: Field> WaState<F> {
 
 pub struct OptimizedRegistersValEvaluation;
 
-impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
+impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -177,7 +177,7 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
 
 /// The increment table's lifecycle: deferred to the member's first active
 /// round on slice-backed sources, dense from prepare otherwise.
-enum IncSource<F: Field> {
+enum IncSource<F: JoltField> {
     Deferred(jolt_witness::RandomAccessRows),
     Ready(Polynomial<F>),
 }
@@ -188,7 +188,7 @@ struct RdIncRow {
     rd_inc: RdInc,
 }
 
-struct ValEvaluationKernel<F: Field> {
+struct ValEvaluationKernel<F: JoltField> {
     rounds: usize,
     inc: IncSource<F>,
     wa: WaState<F>,
@@ -197,7 +197,7 @@ struct ValEvaluationKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for ValEvaluationKernel<F> {
+impl<F: JoltField> allocative::Allocative for ValEvaluationKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -216,7 +216,7 @@ impl<F: Field> allocative::Allocative for ValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> ValEvaluationKernel<F> {
+impl<F: JoltField> ValEvaluationKernel<F> {
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         let remaining = self.rounds - self.rounds_bound;
         if remaining == 0 {
@@ -240,7 +240,7 @@ impl<F: Field> ValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -319,7 +319,7 @@ impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
     type Relation = RegistersValEvaluation<F>;
 
     fn output_claims(

@@ -49,7 +49,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -118,7 +118,7 @@ struct PcBundle {
 
 /// One trace scan per proof, shared by both phases through the session.
 #[cfg(not(feature = "akita"))]
-fn pc_rows<F: Field>(
+fn pc_rows<F: JoltField>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
@@ -174,7 +174,7 @@ fn pc_rows<F: Field>(
 
 /// Per-stage cycle-eq pushforwards onto the bytecode address domain, with all
 /// stages sharing one trace walk over the split-eq two-table decomposition.
-fn stage_pushforwards<F: Field, R: Sync, const WEIGHTED: bool>(
+fn stage_pushforwards<F: JoltField, R: Sync, const WEIGHTED: bool>(
     stage_cycle_points: &[Vec<F>],
     rows: &[R],
     addresses: usize,
@@ -276,7 +276,7 @@ fn stage_pushforwards<F: Field, R: Sync, const WEIGHTED: bool>(
 /// Stage-6a address phase: `PrepareKernel` front of the optimized kernel.
 pub struct OptimizedBytecodeReadRafAddress;
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
     for OptimizedBytecodeReadRafAddress
 {
     fn prepare(
@@ -420,7 +420,7 @@ enum StageVal {
     Complement(usize),
 }
 
-struct AddressKernel<F: Field> {
+struct AddressKernel<F: JoltField> {
     rounds: usize,
     committed_program: bool,
     stage_weights: Vec<F>,
@@ -439,7 +439,7 @@ struct AddressKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for AddressKernel<F> {
+impl<F: JoltField> allocative::Allocative for AddressKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -459,7 +459,7 @@ impl<F: Field> allocative::Allocative for AddressKernel<F> {
     }
 }
 
-impl<F: Field> AddressKernel<F> {
+impl<F: JoltField> AddressKernel<F> {
     #[inline]
     fn stage_pair(&self, stage: usize, y: usize) -> (F, F) {
         match self.stage_values[stage] {
@@ -517,7 +517,7 @@ impl<F: Field> AddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for AddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for AddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -563,7 +563,7 @@ impl<F: Field> ProveRounds<F> for AddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for AddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
 
     fn output_claims(
@@ -599,7 +599,7 @@ impl<F: Field> SumcheckKernel<F> for AddressKernel<F> {
 /// RA factors still retain their shared compact rows. The fourth bind
 /// materializes only `T / 16` field elements and releases this handle.
 #[cfg(feature = "akita")]
-enum LazyFusedInc<F: Field> {
+enum LazyFusedInc<F: JoltField> {
     Lazy {
         branch_weights: Vec<F>,
         rows: Arc<Vec<InstructionCycleRow>>,
@@ -608,7 +608,7 @@ enum LazyFusedInc<F: Field> {
 }
 
 #[cfg(feature = "akita")]
-impl<F: Field> LazyFusedInc<F> {
+impl<F: JoltField> LazyFusedInc<F> {
     fn new(rows: Arc<Vec<InstructionCycleRow>>) -> Self {
         Self::Lazy {
             branch_weights: vec![F::one()],
@@ -687,7 +687,7 @@ impl<F: Field> LazyFusedInc<F> {
 /// Stage-6b cycle phase: `PrepareKernel` front of the optimized kernel.
 pub struct OptimizedBytecodeReadRafCycle;
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeReadRafCycle {
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeReadRafCycle {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -864,7 +864,7 @@ impl ChunkIndexSource for BytecodePcChunks {
     }
 }
 
-struct CycleKernel<F: Field> {
+struct CycleKernel<F: JoltField> {
     rounds: usize,
     degree: usize,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
@@ -880,7 +880,7 @@ struct CycleKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for CycleKernel<F> {
+impl<F: JoltField> allocative::Allocative for CycleKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -907,7 +907,7 @@ impl<F: Field> allocative::Allocative for CycleKernel<F> {
     }
 }
 
-impl<F: Field> CycleKernel<F> {
+impl<F: JoltField> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all([&mut self.combined], challenge);
         #[cfg(feature = "akita")]
@@ -958,7 +958,7 @@ impl<F: Field> CycleKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for CycleKernel<F> {
+impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -1006,7 +1006,7 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
     type Relation = BytecodeReadRafCycle<F>;
 
     fn output_claims(
@@ -1050,7 +1050,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6a::bytecode_read_raf::{
         BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
     };
@@ -1247,7 +1247,7 @@ mod akita_tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 use jolt_verifier::stages::relations::{
@@ -64,7 +64,7 @@ use crate::KernelError;
 /// scheduler per stage via `build`. Takes [`ProofSession`] so a device
 /// traversal shares the carry its kernels park in `prepare`, and so
 /// per-proof state cannot leak onto the long-lived backend.
-pub trait BuildRoundScheduler<F: Field> {
+pub trait BuildRoundScheduler<F: JoltField> {
     fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
 }
 
@@ -96,7 +96,7 @@ pub trait BuildRoundScheduler<F: Field> {
 /// surfaces the same distant way.
 pub trait PrepareKernel<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -124,7 +124,7 @@ where
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
@@ -170,7 +170,7 @@ where
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// Open the proof-scoped session that slot state lives in. One session
@@ -266,7 +266,7 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
 /// every power-of-two prefix below each current table, so each side has
 /// `2 * current_len - 1` field elements.
 #[cfg(feature = "allocative")]
-pub(crate) fn gruen_heap_bytes<F: jolt_field::Field>(
+pub(crate) fn gruen_heap_bytes<F: jolt_field::JoltField>(
     split: &jolt_poly::GruenSplitEqPolynomial<F>,
 ) -> usize {
     let in_len = split.e_in_current_len();
@@ -421,7 +421,7 @@ mod kernel_slots_derive_tests {
     // delegation is unrepresentable.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
-    struct ToyRegistry<F: Field> {
+    struct ToyRegistry<F: JoltField> {
         label: String,
         shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
         slot_count: usize,

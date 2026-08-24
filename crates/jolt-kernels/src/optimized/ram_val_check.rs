@@ -17,7 +17,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc_val_check;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -61,7 +61,7 @@ impl ChunkIndexSource for RamAddressIndices {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -101,7 +101,7 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
-struct RamValCheckKernel<F: Field> {
+struct RamValCheckKernel<F: JoltField> {
     rounds: usize,
     rounds_bound: usize,
     inc: Polynomial<F>,
@@ -110,7 +110,7 @@ struct RamValCheckKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for RamValCheckKernel<F> {
+impl<F: JoltField> allocative::Allocative for RamValCheckKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
@@ -123,7 +123,7 @@ impl<F: Field> allocative::Allocative for RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> RamValCheckKernel<F> {
+impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);
         self.ra.bind(challenge);
@@ -141,7 +141,7 @@ impl<F: Field> RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -203,7 +203,7 @@ impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
     type Relation = RamValCheck<F>;
 
     fn output_claims(
@@ -250,7 +250,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::{
         RamValCheckChallenges, RamValCheckInputClaims,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::LtPolynomial;
 
     use super::super::testing::{

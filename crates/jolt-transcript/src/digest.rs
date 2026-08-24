@@ -33,7 +33,7 @@ pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
 impl<D, F> Clone for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn clone(&self) -> Self {
         Self {
@@ -54,7 +54,7 @@ where
 impl<D, F> Default for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn default() -> Self {
         Self::new(b"")
@@ -64,7 +64,7 @@ where
 impl<D, F> std::fmt::Debug for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DigestTranscript")
@@ -77,7 +77,7 @@ where
 impl<D, F> DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     /// Raw multi-byte squeeze backing jolt-prover-legacy's challenge
     /// decoding, so its legacy `Transcript` vocabulary can drive this engine
@@ -142,7 +142,7 @@ where
 impl<D, F> Transcript for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     type Challenge = F;
 

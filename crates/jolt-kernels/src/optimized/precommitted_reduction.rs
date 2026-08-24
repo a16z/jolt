@@ -48,7 +48,7 @@ use jolt_claims::protocols::jolt::{
     PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_riscv::JoltInstructionRow;
 use jolt_verifier::stages::relations::{
@@ -106,7 +106,7 @@ impl<R> OptimizedPrecommittedAddress<R> {
 
 impl<F, R> PrepareKernel<F, R> for OptimizedPrecommittedAddress<R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F> + 'static,
     AddressReductionKernel<F, R>: SumcheckKernel<F, Relation = R>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
@@ -130,7 +130,7 @@ where
 
 // ---------------------------------------------------------------- advice
 
-impl<F: Field> AdviceOpeningEvaluation<F> for OptimizedPrecommittedCycle {
+impl<F: JoltField> AdviceOpeningEvaluation<F> for OptimizedPrecommittedCycle {
     #[tracing::instrument(skip_all, name = "OptimizedAdviceOpeningEvaluation::evaluate", fields(kind = ?kind))]
     fn evaluate(
         &self,
@@ -157,7 +157,7 @@ impl<F: Field> AdviceOpeningEvaluation<F> for OptimizedPrecommittedCycle {
     }
 }
 
-impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for OptimizedPrecommittedCycle {
+impl<F: JoltField> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for OptimizedPrecommittedCycle {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -184,7 +184,7 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for OptimizedPrecomm
     }
 }
 
-impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPrecommittedCycle {
+impl<F: JoltField> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPrecommittedCycle {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -217,7 +217,7 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPreco
 /// challenges directly — the coefficient permute and the challenge permute
 /// are the same LSB relabeling, so `permuted_table[i] · permuted_eq[i]` pairs
 /// exactly as the unpermuted product did.
-fn advice_reduction_kernel<F: Field, R>(
+fn advice_reduction_kernel<F: JoltField, R>(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
     r_val: &[F],
@@ -245,7 +245,7 @@ fn advice_reduction_kernel<F: Field, R>(
     CycleReductionKernel::new(reduction, value, eq, Vec::new())
 }
 
-fn advice_table<F: Field>(
+fn advice_table<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     kind: JoltAdviceKind,
     expected_vars: usize,
@@ -263,7 +263,9 @@ fn advice_table<F: Field>(
 
 // --------------------------------------------------------- program image
 
-impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for OptimizedPrecommittedCycle {
+impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>>
+    for OptimizedPrecommittedCycle
+{
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -287,7 +289,7 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Optimize
 /// The program-image reduction's cycle-phase kernel: the padded word vector
 /// (permuted as raw `u64`s, converted in one parallel pass) against the
 /// blocked shifted eq slice.
-fn program_image_reduction_kernel<F: Field>(
+fn program_image_reduction_kernel<F: JoltField>(
     layout: &ProgramImageClaimReductionLayout,
     r_addr_rw: &[F],
     start_index: usize,
@@ -330,7 +332,7 @@ fn program_image_reduction_kernel<F: Field>(
 /// entries still enter the bound tables, so they must match exactly).
 /// Assembled from maximal aligned power-of-two blocks — `O(len)` total work,
 /// never the `O(2^|r_addr|)` full table.
-fn shifted_eq_slice<F: Field>(r_addr: &[F], start_index: usize, len: usize) -> Vec<F> {
+fn shifted_eq_slice<F: JoltField>(r_addr: &[F], start_index: usize, len: usize) -> Vec<F> {
     let ram_domain = 1usize << r_addr.len();
     let mut out = Vec::with_capacity(len);
     let mut index = start_index & (ram_domain - 1);
@@ -350,7 +352,7 @@ fn shifted_eq_slice<F: Field>(r_addr: &[F], start_index: usize, len: usize) -> V
 }
 
 /// Parallel `u64 → F` conversion of the (already permuted) word vector.
-fn convert_words<F: Field>(words: &[u64]) -> Vec<F> {
+fn convert_words<F: JoltField>(words: &[u64]) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if words.len() >= PAR_THRESHOLD {
         return words.par_iter().map(|&word| F::from_u64(word)).collect();
@@ -360,7 +362,7 @@ fn convert_words<F: Field>(words: &[u64]) -> Vec<F> {
 
 // -------------------------------------------------------------- bytecode
 
-impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPrecommittedCycle {
+impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPrecommittedCycle {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -381,7 +383,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPre
 /// value fold over the parallel-built per-chunk grids, the lane-weight eq
 /// template, and the raw grids as aux tables (their fully bound coefficients
 /// are the final per-chunk openings).
-fn bytecode_reduction_kernel<F: Field>(
+fn bytecode_reduction_kernel<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,
     bytecode: &[JoltInstructionRow],
@@ -455,7 +457,7 @@ fn bytecode_reduction_kernel<F: Field>(
 /// parallel: each chunk's rows are a contiguous instruction slice and the
 /// grid indexing is chunk-local, so a single-chunk build over the slice is
 /// coefficient-identical to that chunk of the full build.
-fn parallel_chunk_coeffs<F: Field>(
+fn parallel_chunk_coeffs<F: JoltField>(
     bytecode: &[JoltInstructionRow],
     chunk_count: usize,
     layout: &BytecodeClaimReductionLayout,
@@ -507,7 +509,7 @@ fn parallel_chunk_coeffs<F: Field>(
 mod tests {
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,

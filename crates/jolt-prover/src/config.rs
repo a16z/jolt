@@ -10,7 +10,7 @@
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
-use jolt_field::FieldCore;
+use jolt_field::JoltField;
 use jolt_program::execution::{RamAccess, TraceRow};
 use jolt_riscv::JoltTraceRow;
 #[cfg(feature = "parallel")]
@@ -59,7 +59,7 @@ impl ProverConfig {
     /// final no-op), size RAM to the highest touched (remapped) address or the
     /// program image extent, and pick the chunking policies from `log_T`.
     #[tracing::instrument(skip_all, name = "ProverConfig::derive", fields(rows = rows.len()))]
-    pub fn derive<F: FieldCore>(
+    pub fn derive<F: JoltField>(
         rows: &[TraceRow],
         memory_layout: &MemoryLayout,
         min_bytecode_address: u64,
@@ -86,7 +86,7 @@ impl ProverConfig {
         name = "ProverConfig::derive_compact",
         fields(rows = rows.len())
     )]
-    pub fn derive_compact<F: FieldCore>(
+    pub fn derive_compact<F: JoltField>(
         rows: &[JoltTraceRow],
         memory_layout: &MemoryLayout,
         min_bytecode_address: u64,
@@ -104,7 +104,7 @@ impl ProverConfig {
     }
 
     #[expect(non_snake_case)]
-    fn derive_from_rows<F: FieldCore, R: Sync>(
+    fn derive_from_rows<F: JoltField, R: Sync>(
         rows: &[R],
         memory_layout: &MemoryLayout,
         min_bytecode_address: u64,

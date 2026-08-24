@@ -3,7 +3,7 @@
 use super::*;
 
 impl<T: TraceSource> TraceBackend<T> {
-    pub(crate) fn materialize_register_read_write_virtual<F: Field>(
+    pub(crate) fn materialize_register_read_write_virtual<F: JoltField>(
         &self,
         id: JoltVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
