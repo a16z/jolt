@@ -2,18 +2,15 @@
 
 #define RAM_READ_WRITE_HOT_THRESHOLD 4096u
 #define RAM_READ_WRITE_SIMD_WIDTH 32u
-#define RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS 1024u
-#define RAM_READ_WRITE_HOT_COMPACTION_MAX_SIMDGROUPS \
-    (RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS / RAM_READ_WRITE_SIMD_WIDTH)
-#define RAM_READ_WRITE_HOT_MESSAGE_THREADS 256u
-#define RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS \
-    (RAM_READ_WRITE_HOT_MESSAGE_THREADS / RAM_READ_WRITE_SIMD_WIDTH)
+#define RAM_READ_WRITE_HOT_THREADS 256u
+#define RAM_READ_WRITE_HOT_SIMDGROUPS \
+    (RAM_READ_WRITE_HOT_THREADS / RAM_READ_WRITE_SIMD_WIDTH)
 
 struct RamReadWriteSegment {
     uint offset;
     uint length;
     uint capacity;
-    uint reserved;
+    uint aux_offset;
 };
 
 struct RamReadWritePhaseParams {
@@ -22,11 +19,19 @@ struct RamReadWritePhaseParams {
     uint e_in_length;
     uint bind;
     uint emit_message;
+    uint hot_source_aux;
 };
 
 struct RamReadWriteHotChunk {
-    uint segment_index;
+    uint hot_index;
     uint local_offset;
+};
+
+struct RamReadWriteHotSegment {
+    uint segment_index;
+    uint first_chunk;
+    uint chunk_count;
+    uint aux_offset;
 };
 
 struct RamReadWriteMessageTerm {
@@ -260,17 +265,71 @@ kernel void solinas_ram_read_write_address(
     partials[params.output_stride + segment_index] = q_infinity;
 }
 
-kernel void solinas_ram_read_write_address_hot(
-    device const uint* hot_addresses [[buffer(0)]],
+kernel void solinas_ram_read_write_address_hot_count(
+    device const RamReadWriteHotChunk* chunks [[buffer(0)]],
+    device const RamReadWriteHotSegment* hot_segments [[buffer(1)]],
+    device const RamReadWriteSegment* segments [[buffer(2)]],
+    device const uint* primary_blocks [[buffer(3)]],
+    device const uint* auxiliary_blocks [[buffer(4)]],
+    device uint* chunk_counts [[buffer(5)]],
+    constant RamReadWritePhaseParams& params [[buffer(6)]],
+    uint chunk_index [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    if (chunk_index >= params.work_items) {
+        return;
+    }
+    RamReadWriteHotChunk chunk = chunks[chunk_index];
+    RamReadWriteHotSegment hot = hot_segments[chunk.hot_index];
+    RamReadWriteSegment segment = segments[hot.segment_index];
+    uint source_length = segment.length;
+    if (chunk.local_offset >= source_length) {
+        if (tid == 0u) {
+            chunk_counts[chunk_index] = 0u;
+        }
+        return;
+    }
+    device const uint* blocks = params.hot_source_aux != 0u
+        ? auxiliary_blocks
+        : primary_blocks;
+    uint source_begin = params.hot_source_aux != 0u
+        ? hot.aux_offset
+        : segment.offset;
+    uint chunk_begin = source_begin + chunk.local_offset;
+    uint chunk_end = min(
+        chunk_begin + RAM_READ_WRITE_HOT_THRESHOLD,
+        source_begin + source_length);
+    uint count = 0u;
+    for (uint index = chunk_begin + tid; index < chunk_end; index += threads) {
+        uint parent = blocks[index] >> 1;
+        count += uint(index == source_begin || (blocks[index - 1u] >> 1) != parent);
+    }
+    count = simd_sum(count);
+    threadgroup uint group_counts[RAM_READ_WRITE_HOT_SIMDGROUPS];
+    if (lane == 0u) {
+        group_counts[simdgroup] = count;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0u) {
+        uint total = 0u;
+        for (uint group = 0u; group < threads / RAM_READ_WRITE_SIMD_WIDTH; group++) {
+            total += group_counts[group];
+        }
+        chunk_counts[chunk_index] = total;
+    }
+}
+
+kernel void solinas_ram_read_write_address_hot_prefix(
+    device const RamReadWriteHotSegment* hot_segments [[buffer(0)]],
     device RamReadWriteSegment* segments [[buffer(1)]],
-    device uint* blocks [[buffer(2)]],
-    device ulong* previous [[buffer(3)]],
-    device ulong* next [[buffer(4)]],
-    device SolinasFp128* values [[buffer(5)]],
-    device SolinasFp128* ra [[buffer(6)]],
-    device SolinasFp128* partials [[buffer(7)]],
-    constant SolinasFp128& challenge [[buffer(8)]],
-    constant RamReadWritePhaseParams& params [[buffer(9)]],
+    device const uint* chunk_counts [[buffer(2)]],
+    device uint* chunk_offsets [[buffer(3)]],
+    device uint* source_lengths [[buffer(4)]],
+    device SolinasFp128* partials [[buffer(5)]],
+    constant RamReadWritePhaseParams& params [[buffer(6)]],
     uint hot_index [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint lane [[thread_index_in_simdgroup]],
@@ -280,65 +339,160 @@ kernel void solinas_ram_read_write_address_hot(
     if (hot_index >= params.work_items) {
         return;
     }
-    uint segment_index = hot_addresses[hot_index];
-    if (tid == 0u && params.emit_message != 0u) {
-        partials[segment_index] = solinas_zero();
-        partials[params.output_stride + segment_index] = solinas_zero();
+    RamReadWriteHotSegment hot = hot_segments[hot_index];
+    RamReadWriteSegment segment = segments[hot.segment_index];
+    threadgroup uint group_offsets[RAM_READ_WRITE_HOT_SIMDGROUPS];
+    threadgroup uint running;
+    if (tid == 0u) {
+        running = 0u;
+        source_lengths[hot_index] = segment.length;
+        partials[hot.segment_index] = solinas_zero();
+        partials[params.output_stride + hot.segment_index] = solinas_zero();
     }
-    if (params.bind == 0u) {
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint batch = 0u; batch < hot.chunk_count; batch += threads) {
+        uint local_chunk = batch + tid;
+        bool valid = local_chunk < hot.chunk_count;
+        uint count = valid ? chunk_counts[hot.first_chunk + local_chunk] : 0u;
+        uint local_offset = simd_prefix_exclusive_sum(count);
+        uint simd_count = simd_sum(count);
+        if (lane == 0u) {
+            group_offsets[simdgroup] = simd_count;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (tid == 0u) {
+            uint cursor = running;
+            uint simdgroups = threads / RAM_READ_WRITE_SIMD_WIDTH;
+            for (uint group = 0u; group < simdgroups; group++) {
+                uint count = group_offsets[group];
+                group_offsets[group] = cursor;
+                cursor += count;
+            }
+            running = cursor;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (valid) {
+            chunk_offsets[hot.first_chunk + local_chunk] =
+                group_offsets[simdgroup] + local_offset;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0u) {
+        segment.length = running;
+        segments[hot.segment_index] = segment;
+    }
+}
+
+kernel void solinas_ram_read_write_address_hot_scatter(
+    device const RamReadWriteHotChunk* chunks [[buffer(0)]],
+    device const RamReadWriteHotSegment* hot_segments [[buffer(1)]],
+    device const RamReadWriteSegment* segments [[buffer(2)]],
+    device const uint* chunk_offsets [[buffer(3)]],
+    device const uint* source_lengths [[buffer(4)]],
+    device uint* primary_blocks [[buffer(5)]],
+    device ulong* primary_previous [[buffer(6)]],
+    device ulong* primary_next [[buffer(7)]],
+    device SolinasFp128* primary_values [[buffer(8)]],
+    device SolinasFp128* primary_ra [[buffer(9)]],
+    device uint* auxiliary_blocks [[buffer(10)]],
+    device ulong* auxiliary_previous [[buffer(11)]],
+    device ulong* auxiliary_next [[buffer(12)]],
+    device SolinasFp128* auxiliary_values [[buffer(13)]],
+    device SolinasFp128* auxiliary_ra [[buffer(14)]],
+    constant SolinasFp128& challenge [[buffer(15)]],
+    constant RamReadWritePhaseParams& params [[buffer(16)]],
+    uint chunk_index [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    if (chunk_index >= params.work_items) {
         return;
     }
-    RamReadWriteSegment segment = segments[segment_index];
-    uint begin = segment.offset;
-    uint end = begin + segment.length;
-    threadgroup uint group_offsets[RAM_READ_WRITE_HOT_COMPACTION_MAX_SIMDGROUPS];
-    threadgroup uint compacted_length;
-    threadgroup uint previous_chunk_parent;
-    threadgroup uint current_chunk_last_parent;
-
+    RamReadWriteHotChunk chunk = chunks[chunk_index];
+    RamReadWriteHotSegment hot = hot_segments[chunk.hot_index];
+    RamReadWriteSegment segment = segments[hot.segment_index];
+    uint source_length = source_lengths[chunk.hot_index];
+    if (chunk.local_offset >= source_length) {
+        return;
+    }
+    device uint* source_blocks = params.hot_source_aux != 0u
+        ? auxiliary_blocks
+        : primary_blocks;
+    device ulong* source_previous = params.hot_source_aux != 0u
+        ? auxiliary_previous
+        : primary_previous;
+    device ulong* source_next = params.hot_source_aux != 0u
+        ? auxiliary_next
+        : primary_next;
+    device SolinasFp128* source_values = params.hot_source_aux != 0u
+        ? auxiliary_values
+        : primary_values;
+    device SolinasFp128* source_ra = params.hot_source_aux != 0u
+        ? auxiliary_ra
+        : primary_ra;
+    device uint* destination_blocks = params.hot_source_aux != 0u
+        ? primary_blocks
+        : auxiliary_blocks;
+    device ulong* destination_previous = params.hot_source_aux != 0u
+        ? primary_previous
+        : auxiliary_previous;
+    device ulong* destination_next = params.hot_source_aux != 0u
+        ? primary_next
+        : auxiliary_next;
+    device SolinasFp128* destination_values = params.hot_source_aux != 0u
+        ? primary_values
+        : auxiliary_values;
+    device SolinasFp128* destination_ra = params.hot_source_aux != 0u
+        ? primary_ra
+        : auxiliary_ra;
+    uint source_begin = params.hot_source_aux != 0u
+        ? hot.aux_offset
+        : segment.offset;
+    uint destination_begin = params.hot_source_aux != 0u
+        ? segment.offset
+        : hot.aux_offset;
+    uint source_end = source_begin + source_length;
+    uint chunk_begin = source_begin + chunk.local_offset;
+    uint chunk_end = min(
+        chunk_begin + RAM_READ_WRITE_HOT_THRESHOLD,
+        source_end);
+    threadgroup uint group_offsets[RAM_READ_WRITE_HOT_SIMDGROUPS];
+    threadgroup uint chunk_cursor;
     if (tid == 0u) {
-        compacted_length = 0u;
-        previous_chunk_parent = 0u;
+        chunk_cursor = 0u;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint chunk = 0u; chunk < segment.length; chunk += threads) {
-        uint index = begin + chunk + tid;
-        bool valid = index < end;
-        uint first_block = valid ? blocks[index] : 0u;
+    for (uint batch = 0u; batch < chunk_end - chunk_begin; batch += threads) {
+        uint index = chunk_begin + batch + tid;
+        bool valid = index < chunk_end;
+        uint first_block = valid ? source_blocks[index] : 0u;
         uint parent = first_block >> 1;
-        uint boundary_parent = previous_chunk_parent;
-        if (tid == 0u) {
-            uint chunk_length = min(threads, segment.length - chunk);
-            current_chunk_last_parent =
-                blocks[begin + chunk + chunk_length - 1u] >> 1;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
         bool leader = valid
-            && (index == begin
-                || (tid == 0u
-                    ? boundary_parent
-                    : blocks[index - 1u] >> 1) != parent);
+            && (index == source_begin
+                || (source_blocks[index - 1u] >> 1) != parent);
         ulong output_previous = 0u;
         ulong output_next = 0u;
         SolinasFp128 output_value = solinas_zero();
         SolinasFp128 output_ra = solinas_zero();
 
         if (leader) {
-            ulong first_previous = previous[index];
-            ulong first_next = next[index];
-            SolinasFp128 first_value = values[index];
-            SolinasFp128 first_ra = ra[index];
-            bool paired = index + 1u < end
-                && (blocks[index + 1u] >> 1) == parent;
+            ulong first_previous = source_previous[index];
+            ulong first_next = source_next[index];
+            SolinasFp128 first_value = source_values[index];
+            SolinasFp128 first_ra = source_ra[index];
+            bool paired = index + 1u < source_end
+                && (source_blocks[index + 1u] >> 1) == parent;
             output_previous = first_previous;
             output_next = first_next;
             if (paired) {
-                output_next = next[index + 1u];
+                output_next = source_next[index + 1u];
                 output_value = ram_read_write_bind(
-                    first_value, values[index + 1u], challenge);
+                    first_value, source_values[index + 1u], challenge);
                 output_ra = ram_read_write_bind(
-                    first_ra, ra[index + 1u], challenge);
+                    first_ra, source_ra[index + 1u], challenge);
             } else if ((first_block & 1u) == 0u) {
                 output_value = ram_read_write_bind(
                     first_value,
@@ -366,50 +520,48 @@ kernel void solinas_ram_read_write_address_hot(
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (tid == 0u) {
-            uint cursor = compacted_length;
-            uint simdgroups = threads / RAM_READ_WRITE_SIMD_WIDTH;
-            for (uint group = 0u; group < simdgroups; group++) {
+            uint cursor = chunk_cursor;
+            for (uint group = 0u; group < threads / RAM_READ_WRITE_SIMD_WIDTH; group++) {
                 uint count = group_offsets[group];
                 group_offsets[group] = cursor;
                 cursor += count;
             }
-            compacted_length = cursor;
+            chunk_cursor = cursor;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-
         if (leader) {
-            uint output = begin + group_offsets[simdgroup] + local_offset;
-            blocks[output] = parent;
-            previous[output] = output_previous;
-            next[output] = output_next;
-            values[output] = output_value;
-            ra[output] = output_ra;
-        }
-        threadgroup_barrier(mem_flags::mem_device);
-        if (tid == 0u) {
-            previous_chunk_parent = current_chunk_last_parent;
+            uint output = destination_begin
+                + chunk_offsets[chunk_index]
+                + group_offsets[simdgroup]
+                + local_offset;
+            destination_blocks[output] = parent;
+            destination_previous[output] = output_previous;
+            destination_next[output] = output_next;
+            destination_values[output] = output_value;
+            destination_ra[output] = output_ra;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-
-    if (tid == 0u) {
-        segment.length = compacted_length;
-        segments[segment_index] = segment;
     }
 }
 
 kernel void solinas_ram_read_write_address_hot_message(
     device const RamReadWriteHotChunk* chunks [[buffer(0)]],
-    device const RamReadWriteSegment* segments [[buffer(1)]],
-    device const uint* blocks [[buffer(2)]],
-    device const ulong* previous [[buffer(3)]],
-    device const ulong* next [[buffer(4)]],
-    device const SolinasFp128* values [[buffer(5)]],
-    device const SolinasFp128* ra [[buffer(6)]],
-    device const SolinasFp128* e_in [[buffer(7)]],
-    device const SolinasFp128* e_out [[buffer(8)]],
-    device SolinasFp128* partials [[buffer(9)]],
-    constant RamReadWritePhaseParams& params [[buffer(10)]],
+    device const RamReadWriteHotSegment* hot_segments [[buffer(1)]],
+    device const RamReadWriteSegment* segments [[buffer(2)]],
+    device const uint* primary_blocks [[buffer(3)]],
+    device const ulong* primary_previous [[buffer(4)]],
+    device const ulong* primary_next [[buffer(5)]],
+    device const SolinasFp128* primary_values [[buffer(6)]],
+    device const SolinasFp128* primary_ra [[buffer(7)]],
+    device const uint* auxiliary_blocks [[buffer(8)]],
+    device const ulong* auxiliary_previous [[buffer(9)]],
+    device const ulong* auxiliary_next [[buffer(10)]],
+    device const SolinasFp128* auxiliary_values [[buffer(11)]],
+    device const SolinasFp128* auxiliary_ra [[buffer(12)]],
+    device const SolinasFp128* e_in [[buffer(13)]],
+    device const SolinasFp128* e_out [[buffer(14)]],
+    device SolinasFp128* partials [[buffer(15)]],
+    constant RamReadWritePhaseParams& params [[buffer(16)]],
     uint chunk_index [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint lane [[thread_index_in_simdgroup]],
@@ -420,8 +572,26 @@ kernel void solinas_ram_read_write_address_hot_message(
         return;
     }
     RamReadWriteHotChunk chunk = chunks[chunk_index];
-    RamReadWriteSegment segment = segments[chunk.segment_index];
-    uint segment_begin = segment.offset;
+    RamReadWriteHotSegment hot = hot_segments[chunk.hot_index];
+    RamReadWriteSegment segment = segments[hot.segment_index];
+    device const uint* blocks = params.hot_source_aux != 0u
+        ? auxiliary_blocks
+        : primary_blocks;
+    device const ulong* previous = params.hot_source_aux != 0u
+        ? auxiliary_previous
+        : primary_previous;
+    device const ulong* next = params.hot_source_aux != 0u
+        ? auxiliary_next
+        : primary_next;
+    device const SolinasFp128* values = params.hot_source_aux != 0u
+        ? auxiliary_values
+        : primary_values;
+    device const SolinasFp128* ra = params.hot_source_aux != 0u
+        ? auxiliary_ra
+        : primary_ra;
+    uint segment_begin = params.hot_source_aux != 0u
+        ? hot.aux_offset
+        : segment.offset;
     uint segment_end = segment_begin + segment.length;
     uint chunk_begin = segment_begin + chunk.local_offset;
     uint chunk_end = min(
@@ -516,18 +686,18 @@ kernel void solinas_ram_read_write_address_hot_message(
 
     q_zero = solinas_simd_sum_32(q_zero);
     q_infinity = solinas_simd_sum_32(q_infinity);
-    threadgroup SolinasFp128 zero_sums[RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS];
-    threadgroup SolinasFp128 infinity_sums[RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS];
+    threadgroup SolinasFp128 zero_sums[RAM_READ_WRITE_HOT_SIMDGROUPS];
+    threadgroup SolinasFp128 infinity_sums[RAM_READ_WRITE_HOT_SIMDGROUPS];
     if (lane == 0u) {
         zero_sums[simdgroup] = q_zero;
         infinity_sums[simdgroup] = q_infinity;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (simdgroup == 0u) {
-        q_zero = lane < RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS
+        q_zero = lane < RAM_READ_WRITE_HOT_SIMDGROUPS
             ? zero_sums[lane]
             : solinas_zero();
-        q_infinity = lane < RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS
+        q_infinity = lane < RAM_READ_WRITE_HOT_SIMDGROUPS
             ? infinity_sums[lane]
             : solinas_zero();
         q_zero = solinas_simd_sum_32(q_zero);

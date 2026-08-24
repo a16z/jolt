@@ -12,7 +12,12 @@ pub(super) const SOURCE: &str = include_str!("shader.metal");
 pub(crate) use runtime::{RamReadWriteFinish, RamReadWriteSequence};
 
 pub const RAM_READ_WRITE_ADDRESS_PIPELINE: &str = "solinas_ram_read_write_address";
-pub const RAM_READ_WRITE_ADDRESS_HOT_PIPELINE: &str = "solinas_ram_read_write_address_hot";
+pub const RAM_READ_WRITE_ADDRESS_HOT_COUNT_PIPELINE: &str =
+    "solinas_ram_read_write_address_hot_count";
+pub const RAM_READ_WRITE_ADDRESS_HOT_PREFIX_PIPELINE: &str =
+    "solinas_ram_read_write_address_hot_prefix";
+pub const RAM_READ_WRITE_ADDRESS_HOT_SCATTER_PIPELINE: &str =
+    "solinas_ram_read_write_address_hot_scatter";
 pub const RAM_READ_WRITE_ADDRESS_HOT_MESSAGE_PIPELINE: &str =
     "solinas_ram_read_write_address_hot_message";
 pub const RAM_READ_WRITE_CYCLE_PIPELINE: &str = "solinas_ram_read_write_cycle";
@@ -23,7 +28,8 @@ pub const RAM_READ_WRITE_REDUCTION_WIDTH: usize = 32;
 pub const RAM_READ_WRITE_CYCLE_TILE_LOG2: usize = 12;
 pub const RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD: usize = 1 << 12;
 pub const RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE: usize = 1 << 12;
-pub const RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS: usize = 1024;
+pub const RAM_READ_WRITE_HOT_COMPACTION_THREADS: usize = 256;
+pub const RAM_READ_WRITE_HOT_THREADGROUP_BYTES_MAX: u64 = 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -31,7 +37,7 @@ struct Segment {
     offset: u32,
     length: u32,
     capacity: u32,
-    reserved: u32,
+    aux_offset: u32,
 }
 
 const _: [(); 16] = [(); size_of::<Segment>()];
@@ -39,11 +45,22 @@ const _: [(); 16] = [(); size_of::<Segment>()];
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct HotChunk {
-    segment_index: u32,
+    hot_index: u32,
     local_offset: u32,
 }
 
 const _: [(); 8] = [(); size_of::<HotChunk>()];
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct HotSegment {
+    segment_index: u32,
+    first_chunk: u32,
+    chunk_count: u32,
+    aux_offset: u32,
+}
+
+const _: [(); 16] = [(); size_of::<HotSegment>()];
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -53,9 +70,10 @@ struct PhaseParams {
     e_in_length: u32,
     bind: u32,
     emit_message: u32,
+    hot_source_aux: u32,
 }
 
-const _: [(); 20] = [(); size_of::<PhaseParams>()];
+const _: [(); 24] = [(); size_of::<PhaseParams>()];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CycleProductRoot {

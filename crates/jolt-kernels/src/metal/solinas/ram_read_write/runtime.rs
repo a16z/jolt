@@ -13,12 +13,14 @@ use metal::{
 use rayon::prelude::*;
 
 use super::{
-    CycleProductRoot, HotChunk, PhaseParams, Segment, RAM_READ_WRITE_ADDRESS_HOT_MESSAGE_PIPELINE,
-    RAM_READ_WRITE_ADDRESS_HOT_PIPELINE, RAM_READ_WRITE_ADDRESS_PIPELINE,
-    RAM_READ_WRITE_CYCLE_PIPELINE, RAM_READ_WRITE_CYCLE_TILE_LOG2,
-    RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS, RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE,
-    RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD, RAM_READ_WRITE_REDUCTION_PIPELINE,
-    RAM_READ_WRITE_REDUCTION_WIDTH, RAM_READ_WRITE_SIMD_WIDTH, RAM_READ_WRITE_THREADS,
+    CycleProductRoot, HotChunk, HotSegment, PhaseParams, Segment,
+    RAM_READ_WRITE_ADDRESS_HOT_COUNT_PIPELINE, RAM_READ_WRITE_ADDRESS_HOT_MESSAGE_PIPELINE,
+    RAM_READ_WRITE_ADDRESS_HOT_PREFIX_PIPELINE, RAM_READ_WRITE_ADDRESS_HOT_SCATTER_PIPELINE,
+    RAM_READ_WRITE_ADDRESS_PIPELINE, RAM_READ_WRITE_CYCLE_PIPELINE, RAM_READ_WRITE_CYCLE_TILE_LOG2,
+    RAM_READ_WRITE_HOT_COMPACTION_THREADS, RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE,
+    RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD, RAM_READ_WRITE_HOT_THREADGROUP_BYTES_MAX,
+    RAM_READ_WRITE_REDUCTION_PIPELINE, RAM_READ_WRITE_REDUCTION_WIDTH, RAM_READ_WRITE_SIMD_WIDTH,
+    RAM_READ_WRITE_THREADS,
 };
 use crate::metal::solinas::{
     completed_command_gpu_time, encode_column_reductions, set_inline_bytes, Fp128, MetalError,
@@ -36,7 +38,10 @@ pub(crate) struct RamReadWriteBucketStats {
     pub p99_segment: usize,
     pub hot_addresses: usize,
     pub hot_message_chunks: usize,
+    pub hot_state_entries: usize,
     pub hot_compaction_threads: usize,
+    pub hot_compaction_threadgroup_bytes: u64,
+    pub hot_auxiliary_bytes: usize,
     pub address_bytes: usize,
     pub cycle_bytes: usize,
 }
@@ -68,8 +73,11 @@ pub(crate) struct RamReadWriteFinish {
 }
 
 struct AddressBuffers {
-    hot_addresses: Buffer,
+    hot_segments: Buffer,
     hot_message_chunks: Buffer,
+    hot_chunk_counts: Buffer,
+    hot_chunk_offsets: Buffer,
+    hot_source_lengths: Buffer,
     segments: Buffer,
     blocks: Buffer,
     previous: Buffer,
@@ -80,6 +88,11 @@ struct AddressBuffers {
     partial_b: Buffer,
     hot_partial_a: Buffer,
     hot_partial_b: Buffer,
+    aux_blocks: Buffer,
+    aux_previous: Buffer,
+    aux_next: Buffer,
+    aux_values: Buffer,
+    aux_ra: Buffer,
 }
 
 struct CycleBuffers {
@@ -100,7 +113,9 @@ struct RamReadWriteBuffers {
 
 struct RamReadWritePipelines {
     address: ComputePipelineState,
-    address_hot: ComputePipelineState,
+    address_hot_count: ComputePipelineState,
+    address_hot_prefix: ComputePipelineState,
+    address_hot_scatter: ComputePipelineState,
     address_hot_message: ComputePipelineState,
     cycle: ComputePipelineState,
     reduction: ComputePipelineState,
@@ -114,6 +129,7 @@ pub(crate) struct RamReadWriteSequence {
     address_count: usize,
     hot_address_count: usize,
     hot_message_chunk_count: usize,
+    hot_state_entries: usize,
     hot_address_threads: usize,
     tile_count: usize,
     tile_log: usize,
@@ -202,8 +218,9 @@ struct BucketPlan {
     chunk_length: usize,
     address_lengths: Vec<u32>,
     tile_lengths: Vec<u32>,
-    hot_addresses: Vec<u32>,
+    hot_segments: Vec<HotSegment>,
     hot_message_chunks: Vec<HotChunk>,
+    hot_state_entries: usize,
     stats: RamReadWriteBucketStats,
 }
 
@@ -241,15 +258,20 @@ impl SolinasMetal {
             address_count,
             tile_count,
             maximum_eq_fields,
-            plan.hot_addresses.len(),
+            plan.hot_segments.len(),
             plan.hot_message_chunks.len(),
+            plan.hot_state_entries,
         )?)?;
+        let hot_address_capacity = plan.hot_segments.len().max(1);
         let hot_message_chunk_capacity = plan.hot_message_chunks.len().max(1);
+        let hot_state_capacity = plan.hot_state_entries.max(1);
         let address = AddressBuffers {
-            hot_addresses: self
-                .new_ram_read_write_buffer::<u32>(plan.hot_addresses.len().max(1))?,
+            hot_segments: self.new_ram_read_write_buffer::<HotSegment>(hot_address_capacity)?,
             hot_message_chunks: self
                 .new_ram_read_write_buffer::<HotChunk>(hot_message_chunk_capacity)?,
+            hot_chunk_counts: self.new_ram_read_write_buffer::<u32>(hot_message_chunk_capacity)?,
+            hot_chunk_offsets: self.new_ram_read_write_buffer::<u32>(hot_message_chunk_capacity)?,
+            hot_source_lengths: self.new_ram_read_write_buffer::<u32>(hot_address_capacity)?,
             segments: self.new_ram_read_write_buffer::<Segment>(address_count)?,
             blocks: self.new_ram_read_write_buffer::<u32>(record_capacity)?,
             previous: self.new_ram_read_write_buffer::<u64>(record_capacity)?,
@@ -262,6 +284,11 @@ impl SolinasMetal {
                 .new_ram_read_write_buffer::<Fp128>(2 * hot_message_chunk_capacity)?,
             hot_partial_b: self
                 .new_ram_read_write_buffer::<Fp128>(2 * hot_message_chunk_capacity)?,
+            aux_blocks: self.new_ram_read_write_buffer::<u32>(hot_state_capacity)?,
+            aux_previous: self.new_ram_read_write_buffer::<u64>(hot_state_capacity)?,
+            aux_next: self.new_ram_read_write_buffer::<u64>(hot_state_capacity)?,
+            aux_values: self.new_ram_read_write_buffer::<Fp128>(hot_state_capacity)?,
+            aux_ra: self.new_ram_read_write_buffer::<Fp128>(hot_state_capacity)?,
         };
         let cycle = CycleBuffers {
             segments: self.new_ram_read_write_buffer::<Segment>(tile_count)?,
@@ -273,8 +300,8 @@ impl SolinasMetal {
         };
         let e_in = self.new_ram_read_write_buffer::<Fp128>(maximum_eq_fields)?;
         let e_out = self.new_ram_read_write_buffer::<Fp128>(maximum_eq_fields)?;
-        buffer_slice_mut::<u32>(&address.hot_addresses, plan.hot_addresses.len())
-            .copy_from_slice(&plan.hot_addresses);
+        buffer_slice_mut::<HotSegment>(&address.hot_segments, plan.hot_segments.len())
+            .copy_from_slice(&plan.hot_segments);
         buffer_slice_mut::<HotChunk>(&address.hot_message_chunks, plan.hot_message_chunks.len())
             .copy_from_slice(&plan.hot_message_chunks);
 
@@ -285,6 +312,12 @@ impl SolinasMetal {
             address_count,
             tile_count,
         );
+        let address_partials = buffer_slice_mut::<Fp128>(&address.partial_a, 2 * address_count);
+        for hot in &plan.hot_segments {
+            let index = hot.segment_index as usize;
+            address_partials[index] = Fp128::ZERO;
+            address_partials[address_count + index] = Fp128::ZERO;
+        }
         let writers = BucketWriters {
             address_blocks: address.blocks.contents().cast::<u32>(),
             address_previous: address.previous.contents().cast::<u64>(),
@@ -305,8 +338,12 @@ impl SolinasMetal {
         );
 
         let address_pipeline = self.compile_named_pipeline(RAM_READ_WRITE_ADDRESS_PIPELINE)?;
-        let address_hot_pipeline =
-            self.compile_named_pipeline(RAM_READ_WRITE_ADDRESS_HOT_PIPELINE)?;
+        let address_hot_count_pipeline =
+            self.compile_named_pipeline(RAM_READ_WRITE_ADDRESS_HOT_COUNT_PIPELINE)?;
+        let address_hot_prefix_pipeline =
+            self.compile_named_pipeline(RAM_READ_WRITE_ADDRESS_HOT_PREFIX_PIPELINE)?;
+        let address_hot_scatter_pipeline =
+            self.compile_named_pipeline(RAM_READ_WRITE_ADDRESS_HOT_SCATTER_PIPELINE)?;
         let address_hot_message_pipeline =
             self.compile_named_pipeline(RAM_READ_WRITE_ADDRESS_HOT_MESSAGE_PIPELINE)?;
         let cycle_pipeline = self.compile_named_pipeline(RAM_READ_WRITE_CYCLE_PIPELINE)?;
@@ -319,11 +356,21 @@ impl SolinasMetal {
             Some(RAM_READ_WRITE_THREADS),
             Self::limits(&cycle_pipeline),
         )?;
-        let address_hot_limits = Self::limits(&address_hot_pipeline);
-        let address_hot_requested = RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS
-            .min(address_hot_limits.max_total_threads_per_threadgroup);
-        let address_hot_threads =
-            Self::resolve_threadgroup_width(Some(address_hot_requested), address_hot_limits)?;
+        let address_hot_count_limits = Self::limits(&address_hot_count_pipeline);
+        let address_hot_prefix_limits = Self::limits(&address_hot_prefix_pipeline);
+        let address_hot_scatter_limits = Self::limits(&address_hot_scatter_pipeline);
+        let address_hot_count_threads = Self::resolve_threadgroup_width(
+            Some(RAM_READ_WRITE_HOT_COMPACTION_THREADS),
+            address_hot_count_limits,
+        )?;
+        let address_hot_prefix_threads = Self::resolve_threadgroup_width(
+            Some(RAM_READ_WRITE_HOT_COMPACTION_THREADS),
+            address_hot_prefix_limits,
+        )?;
+        let address_hot_scatter_threads = Self::resolve_threadgroup_width(
+            Some(RAM_READ_WRITE_HOT_COMPACTION_THREADS),
+            address_hot_scatter_limits,
+        )?;
         let address_hot_message_limits = Self::limits(&address_hot_message_pipeline);
         let address_hot_message_threads = Self::resolve_threadgroup_width(
             Some(RAM_READ_WRITE_THREADS),
@@ -333,24 +380,37 @@ impl SolinasMetal {
             Some(RAM_READ_WRITE_REDUCTION_WIDTH),
             Self::limits(&reduction),
         )?;
-        if address_hot_limits.thread_execution_width != RAM_READ_WRITE_SIMD_WIDTH
+        let hot_threadgroup_bytes = address_hot_count_limits
+            .static_threadgroup_memory_length
+            .max(address_hot_prefix_limits.static_threadgroup_memory_length)
+            .max(address_hot_scatter_limits.static_threadgroup_memory_length);
+        if address_hot_count_limits.thread_execution_width != RAM_READ_WRITE_SIMD_WIDTH
+            || address_hot_prefix_limits.thread_execution_width != RAM_READ_WRITE_SIMD_WIDTH
+            || address_hot_scatter_limits.thread_execution_width != RAM_READ_WRITE_SIMD_WIDTH
             || address_hot_message_limits.thread_execution_width != RAM_READ_WRITE_SIMD_WIDTH
             || address_threads != RAM_READ_WRITE_THREADS
+            || address_hot_count_threads != RAM_READ_WRITE_HOT_COMPACTION_THREADS
+            || address_hot_prefix_threads != RAM_READ_WRITE_HOT_COMPACTION_THREADS
+            || address_hot_scatter_threads != RAM_READ_WRITE_HOT_COMPACTION_THREADS
             || address_hot_message_threads != RAM_READ_WRITE_THREADS
             || cycle_threads != RAM_READ_WRITE_THREADS
             || reduction_threads != RAM_READ_WRITE_REDUCTION_WIDTH
+            || hot_threadgroup_bytes > RAM_READ_WRITE_HOT_THREADGROUP_BYTES_MAX
         {
             return Err(MetalError::InvalidRamReadWriteState(
                 "RAM read-write pipeline width differs from its checked schedule",
             ));
         }
 
-        plan.stats.hot_compaction_threads = address_hot_threads;
+        plan.stats.hot_compaction_threads = address_hot_scatter_threads;
+        plan.stats.hot_compaction_threadgroup_bytes = hot_threadgroup_bytes;
         Ok(RamReadWriteSequence {
             context: self.clone(),
             pipelines: RamReadWritePipelines {
                 address: address_pipeline,
-                address_hot: address_hot_pipeline,
+                address_hot_count: address_hot_count_pipeline,
+                address_hot_prefix: address_hot_prefix_pipeline,
+                address_hot_scatter: address_hot_scatter_pipeline,
                 address_hot_message: address_hot_message_pipeline,
                 cycle: cycle_pipeline,
                 reduction,
@@ -363,9 +423,10 @@ impl SolinasMetal {
             },
             log_t,
             address_count,
-            hot_address_count: plan.hot_addresses.len(),
+            hot_address_count: plan.hot_segments.len(),
             hot_message_chunk_count: plan.hot_message_chunks.len(),
-            hot_address_threads: address_hot_threads,
+            hot_state_entries: plan.hot_state_entries,
+            hot_address_threads: address_hot_scatter_threads,
             tile_count,
             tile_log,
             rounds_bound: 0,
@@ -506,6 +567,7 @@ impl RamReadWriteSequence {
                 .map_err(|_| MetalError::InputTooLong(e_in_length))?,
             bind,
             emit_message: u32::from(emit_address_message),
+            hot_source_aux: (self.rounds_bound % 2) as u32,
         };
         let cycle_params = PhaseParams {
             work_items: u32::try_from(self.tile_count)
@@ -515,15 +577,22 @@ impl RamReadWriteSequence {
             e_in_length: address_params.e_in_length,
             bind,
             emit_message: u32::from(emit_cycle_message),
+            hot_source_aux: 0,
         };
         let submitted_at = Instant::now();
         autoreleasepool(|| {
             let command_buffer = self.context.queue.new_command_buffer().to_owned();
             let encoder = command_buffer.new_compute_command_encoder();
             self.encode_address(encoder, challenge, address_params);
-            self.encode_hot_addresses(encoder, challenge, address_params);
+            if bind != 0 {
+                self.encode_hot_address_counts(encoder, address_params);
+                self.encode_hot_address_prefixes(encoder, address_params);
+                self.encode_hot_address_scatter(encoder, challenge, address_params);
+            }
             if emit_address_message {
-                self.encode_hot_address_messages(encoder, address_params);
+                let mut message_params = address_params;
+                message_params.hot_source_aux ^= bind;
+                self.encode_hot_address_messages(encoder, message_params);
             }
             if self.cycle_resident {
                 self.encode_cycle(encoder, challenge, cycle_params);
@@ -634,27 +703,43 @@ impl RamReadWriteSequence {
         dispatch_segments(encoder, self.tile_count);
     }
 
-    fn encode_hot_addresses(
+    fn encode_hot_address_counts(
         &self,
         encoder: &metal::ComputeCommandEncoderRef,
-        challenge: Fp128,
+        mut params: PhaseParams,
+    ) {
+        if self.hot_message_chunk_count == 0 {
+            return;
+        }
+        params.work_items = self.hot_message_chunk_count as u32;
+        encoder.set_compute_pipeline_state(&self.pipelines.address_hot_count);
+        encoder.set_buffer(0, Some(&self.buffers.address.hot_message_chunks), 0);
+        encoder.set_buffer(1, Some(&self.buffers.address.hot_segments), 0);
+        encoder.set_buffer(2, Some(&self.buffers.address.segments), 0);
+        encoder.set_buffer(3, Some(&self.buffers.address.blocks), 0);
+        encoder.set_buffer(4, Some(&self.buffers.address.aux_blocks), 0);
+        encoder.set_buffer(5, Some(&self.buffers.address.hot_chunk_counts), 0);
+        set_inline_bytes(encoder, 6, &params);
+        self.dispatch_hot_chunks(encoder);
+    }
+
+    fn encode_hot_address_prefixes(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
         mut params: PhaseParams,
     ) {
         if self.hot_address_count == 0 {
             return;
         }
         params.work_items = self.hot_address_count as u32;
-        encoder.set_compute_pipeline_state(&self.pipelines.address_hot);
-        encoder.set_buffer(0, Some(&self.buffers.address.hot_addresses), 0);
+        encoder.set_compute_pipeline_state(&self.pipelines.address_hot_prefix);
+        encoder.set_buffer(0, Some(&self.buffers.address.hot_segments), 0);
         encoder.set_buffer(1, Some(&self.buffers.address.segments), 0);
-        encoder.set_buffer(2, Some(&self.buffers.address.blocks), 0);
-        encoder.set_buffer(3, Some(&self.buffers.address.previous), 0);
-        encoder.set_buffer(4, Some(&self.buffers.address.next), 0);
-        encoder.set_buffer(5, Some(&self.buffers.address.values), 0);
-        encoder.set_buffer(6, Some(&self.buffers.address.ra), 0);
-        encoder.set_buffer(7, Some(&self.buffers.address.partial_a), 0);
-        set_inline_bytes(encoder, 8, &challenge);
-        set_inline_bytes(encoder, 9, &params);
+        encoder.set_buffer(2, Some(&self.buffers.address.hot_chunk_counts), 0);
+        encoder.set_buffer(3, Some(&self.buffers.address.hot_chunk_offsets), 0);
+        encoder.set_buffer(4, Some(&self.buffers.address.hot_source_lengths), 0);
+        encoder.set_buffer(5, Some(&self.buffers.address.partial_a), 0);
+        set_inline_bytes(encoder, 6, &params);
         encoder.dispatch_thread_groups(
             MTLSize {
                 width: self.hot_address_count as u64,
@@ -667,6 +752,37 @@ impl RamReadWriteSequence {
                 depth: 1,
             },
         );
+    }
+
+    fn encode_hot_address_scatter(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        challenge: Fp128,
+        mut params: PhaseParams,
+    ) {
+        if self.hot_message_chunk_count == 0 {
+            return;
+        }
+        params.work_items = self.hot_message_chunk_count as u32;
+        encoder.set_compute_pipeline_state(&self.pipelines.address_hot_scatter);
+        encoder.set_buffer(0, Some(&self.buffers.address.hot_message_chunks), 0);
+        encoder.set_buffer(1, Some(&self.buffers.address.hot_segments), 0);
+        encoder.set_buffer(2, Some(&self.buffers.address.segments), 0);
+        encoder.set_buffer(3, Some(&self.buffers.address.hot_chunk_offsets), 0);
+        encoder.set_buffer(4, Some(&self.buffers.address.hot_source_lengths), 0);
+        encoder.set_buffer(5, Some(&self.buffers.address.blocks), 0);
+        encoder.set_buffer(6, Some(&self.buffers.address.previous), 0);
+        encoder.set_buffer(7, Some(&self.buffers.address.next), 0);
+        encoder.set_buffer(8, Some(&self.buffers.address.values), 0);
+        encoder.set_buffer(9, Some(&self.buffers.address.ra), 0);
+        encoder.set_buffer(10, Some(&self.buffers.address.aux_blocks), 0);
+        encoder.set_buffer(11, Some(&self.buffers.address.aux_previous), 0);
+        encoder.set_buffer(12, Some(&self.buffers.address.aux_next), 0);
+        encoder.set_buffer(13, Some(&self.buffers.address.aux_values), 0);
+        encoder.set_buffer(14, Some(&self.buffers.address.aux_ra), 0);
+        set_inline_bytes(encoder, 15, &challenge);
+        set_inline_bytes(encoder, 16, &params);
+        self.dispatch_hot_chunks(encoder);
     }
 
     fn encode_hot_address_messages(
@@ -682,16 +798,26 @@ impl RamReadWriteSequence {
         params.bind = 0;
         encoder.set_compute_pipeline_state(&self.pipelines.address_hot_message);
         encoder.set_buffer(0, Some(&self.buffers.address.hot_message_chunks), 0);
-        encoder.set_buffer(1, Some(&self.buffers.address.segments), 0);
-        encoder.set_buffer(2, Some(&self.buffers.address.blocks), 0);
-        encoder.set_buffer(3, Some(&self.buffers.address.previous), 0);
-        encoder.set_buffer(4, Some(&self.buffers.address.next), 0);
-        encoder.set_buffer(5, Some(&self.buffers.address.values), 0);
-        encoder.set_buffer(6, Some(&self.buffers.address.ra), 0);
-        encoder.set_buffer(7, Some(&self.buffers.e_in), 0);
-        encoder.set_buffer(8, Some(&self.buffers.e_out), 0);
-        encoder.set_buffer(9, Some(&self.buffers.address.hot_partial_a), 0);
-        set_inline_bytes(encoder, 10, &params);
+        encoder.set_buffer(1, Some(&self.buffers.address.hot_segments), 0);
+        encoder.set_buffer(2, Some(&self.buffers.address.segments), 0);
+        encoder.set_buffer(3, Some(&self.buffers.address.blocks), 0);
+        encoder.set_buffer(4, Some(&self.buffers.address.previous), 0);
+        encoder.set_buffer(5, Some(&self.buffers.address.next), 0);
+        encoder.set_buffer(6, Some(&self.buffers.address.values), 0);
+        encoder.set_buffer(7, Some(&self.buffers.address.ra), 0);
+        encoder.set_buffer(8, Some(&self.buffers.address.aux_blocks), 0);
+        encoder.set_buffer(9, Some(&self.buffers.address.aux_previous), 0);
+        encoder.set_buffer(10, Some(&self.buffers.address.aux_next), 0);
+        encoder.set_buffer(11, Some(&self.buffers.address.aux_values), 0);
+        encoder.set_buffer(12, Some(&self.buffers.address.aux_ra), 0);
+        encoder.set_buffer(13, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(14, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(15, Some(&self.buffers.address.hot_partial_a), 0);
+        set_inline_bytes(encoder, 16, &params);
+        self.dispatch_hot_chunks(encoder);
+    }
+
+    fn dispatch_hot_chunks(&self, encoder: &metal::ComputeCommandEncoderRef) {
         encoder.dispatch_thread_groups(
             MTLSize {
                 width: self.hot_message_chunk_count as u64,
@@ -699,7 +825,7 @@ impl RamReadWriteSequence {
                 depth: 1,
             },
             MTLSize {
-                width: RAM_READ_WRITE_THREADS as u64,
+                width: self.hot_address_threads as u64,
                 height: 1,
                 depth: 1,
             },
@@ -803,10 +929,16 @@ impl RamReadWriteSequence {
     fn read_address_roots(&self) -> Result<Vec<AddressCycleRoot>, MetalError> {
         let segments = buffer_slice::<Segment>(&self.buffers.address.segments, self.address_count);
         let capacity = self.stats.accesses.max(1);
-        let previous = buffer_slice::<u64>(&self.buffers.address.previous, capacity);
-        let next = buffer_slice::<u64>(&self.buffers.address.next, capacity);
-        let values = buffer_slice::<Fp128>(&self.buffers.address.values, capacity);
-        let ra = buffer_slice::<Fp128>(&self.buffers.address.ra, capacity);
+        let primary_previous = buffer_slice::<u64>(&self.buffers.address.previous, capacity);
+        let primary_next = buffer_slice::<u64>(&self.buffers.address.next, capacity);
+        let primary_values = buffer_slice::<Fp128>(&self.buffers.address.values, capacity);
+        let primary_ra = buffer_slice::<Fp128>(&self.buffers.address.ra, capacity);
+        let hot_capacity = self.hot_state_entries.max(1);
+        let aux_previous = buffer_slice::<u64>(&self.buffers.address.aux_previous, hot_capacity);
+        let aux_next = buffer_slice::<u64>(&self.buffers.address.aux_next, hot_capacity);
+        let aux_values = buffer_slice::<Fp128>(&self.buffers.address.aux_values, hot_capacity);
+        let aux_ra = buffer_slice::<Fp128>(&self.buffers.address.aux_ra, hot_capacity);
+        let hot_roots_in_aux = !self.rounds_bound.is_multiple_of(2);
         let mut roots = Vec::with_capacity(self.stats.active_addresses);
         for (address, segment) in segments.iter().enumerate() {
             if segment.length == 0 {
@@ -817,15 +949,36 @@ impl RamReadWriteSequence {
                     "RAM read-write address segment did not compact to one root",
                 ));
             }
-            let index = segment.offset as usize;
-            validate_field(&self.context, values[index], index)?;
-            validate_field(&self.context, ra[index], index)?;
+            let in_aux = hot_roots_in_aux
+                && segment.capacity as usize > RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD;
+            let index = if in_aux {
+                segment.aux_offset as usize
+            } else {
+                segment.offset as usize
+            };
+            let (previous, next, value, ra) = if in_aux {
+                (
+                    aux_previous[index],
+                    aux_next[index],
+                    aux_values[index],
+                    aux_ra[index],
+                )
+            } else {
+                (
+                    primary_previous[index],
+                    primary_next[index],
+                    primary_values[index],
+                    primary_ra[index],
+                )
+            };
+            validate_field(&self.context, value, index)?;
+            validate_field(&self.context, ra, index)?;
             roots.push(AddressCycleRoot {
                 address,
-                previous: previous[index],
-                next: next[index],
-                value: values[index].into_jolt_field(),
-                ra: ra[index].into_jolt_field(),
+                previous,
+                next,
+                value: value.into_jolt_field(),
+                ra: ra.into_jolt_field(),
             });
         }
         Ok(roots)
@@ -919,38 +1072,54 @@ fn bucket_plan(
             }
         })
         .collect();
-    let hot_addresses = address_lengths
+    let hot_address_count = address_lengths
         .iter()
-        .enumerate()
-        .filter(|(_, length)| **length as usize > RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD)
-        .map(|(address, _)| address as u32)
-        .collect::<Vec<_>>();
+        .filter(|&&length| length as usize > RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD)
+        .count();
+    let mut hot_segments = Vec::with_capacity(hot_address_count);
     let mut hot_message_chunks = Vec::with_capacity(
-        accesses.div_ceil(RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE) + hot_addresses.len(),
+        accesses.div_ceil(RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE) + hot_address_count,
     );
-    for &segment_index in &hot_addresses {
-        let length = address_lengths[segment_index as usize] as usize;
+    let mut hot_state_entries = 0u32;
+    for (segment_index, &length) in address_lengths.iter().enumerate() {
+        if length as usize <= RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD {
+            continue;
+        }
+        let hot_index = hot_segments.len();
+        let first_chunk = hot_message_chunks.len();
         for local_offset in (0..length).step_by(RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE) {
             hot_message_chunks.push(HotChunk {
-                segment_index,
-                local_offset: local_offset as u32,
+                hot_index: hot_index as u32,
+                local_offset,
             });
         }
+        let chunk_count = hot_message_chunks.len() - first_chunk;
+        hot_segments.push(HotSegment {
+            segment_index: segment_index as u32,
+            first_chunk: first_chunk as u32,
+            chunk_count: chunk_count as u32,
+            aux_offset: hot_state_entries,
+        });
+        hot_state_entries = hot_state_entries
+            .checked_add(length)
+            .ok_or(MetalError::InputTooLong(addresses.len()))?;
     }
     let stats = bucket_stats(
         &address_lengths,
         accesses,
         &tile_lengths,
-        hot_addresses.len(),
+        hot_segments.len(),
         hot_message_chunks.len(),
+        hot_state_entries as usize,
     );
     Ok(BucketPlan {
         workers,
         chunk_length,
         address_lengths,
         tile_lengths,
-        hot_addresses,
+        hot_segments,
         hot_message_chunks,
+        hot_state_entries: hot_state_entries as usize,
         stats,
     })
 }
@@ -999,6 +1168,7 @@ fn bucket_stats(
     tile_lengths: &[u32],
     hot_addresses: usize,
     hot_message_chunks: usize,
+    hot_state_entries: usize,
 ) -> RamReadWriteBucketStats {
     let mut nonzero = address_lengths
         .iter()
@@ -1016,8 +1186,14 @@ fn bucket_stats(
         .saturating_mul(size_of::<u32>() + 2 * size_of::<u64>() + 2 * size_of::<Fp128>())
         .saturating_add(address_lengths.len() * size_of::<Segment>())
         .saturating_add(4 * address_lengths.len() * size_of::<Fp128>())
+        .saturating_add(hot_addresses * size_of::<HotSegment>())
         .saturating_add(hot_addresses * size_of::<u32>())
         .saturating_add(hot_message_chunks * size_of::<HotChunk>())
+        .saturating_add(2 * hot_message_chunks * size_of::<u32>())
+        .saturating_add(
+            hot_state_entries
+                .saturating_mul(size_of::<u32>() + 2 * size_of::<u64>() + 2 * size_of::<Fp128>()),
+        )
         .saturating_add(4 * hot_message_chunks * size_of::<Fp128>());
     let cycle_bytes = accesses
         .saturating_mul(size_of::<u32>() + 2 * size_of::<Fp128>())
@@ -1032,7 +1208,11 @@ fn bucket_stats(
         p99_segment: percentile(99),
         hot_addresses,
         hot_message_chunks,
+        hot_state_entries,
         hot_compaction_threads: 0,
+        hot_compaction_threadgroup_bytes: 0,
+        hot_auxiliary_bytes: hot_state_entries
+            .saturating_mul(size_of::<u32>() + 2 * size_of::<u64>() + 2 * size_of::<Fp128>()),
         address_bytes,
         cycle_bytes,
     }
@@ -1047,12 +1227,20 @@ fn initialize_segments(
 ) {
     let address_segments = buffer_slice_mut::<Segment>(address_buffer, address_count);
     let mut offset = 0u32;
-    for (segment, &length) in address_segments.iter_mut().zip(&plan.address_lengths) {
+    let mut hot_segments = plan.hot_segments.iter().peekable();
+    for (segment_index, (segment, &length)) in address_segments
+        .iter_mut()
+        .zip(&plan.address_lengths)
+        .enumerate()
+    {
+        let aux_offset = hot_segments
+            .next_if(|hot| hot.segment_index as usize == segment_index)
+            .map_or(0, |hot| hot.aux_offset);
         *segment = Segment {
             offset,
             length,
             capacity: length,
-            reserved: 0,
+            aux_offset,
         };
         offset += length;
     }
@@ -1063,7 +1251,7 @@ fn initialize_segments(
             offset,
             length,
             capacity: length,
-            reserved: 0,
+            aux_offset: 0,
         };
         offset += length;
     }
@@ -1224,6 +1412,7 @@ fn ram_read_write_buffer_bytes(
     eq_fields: usize,
     hot_addresses: usize,
     hot_message_chunks: usize,
+    hot_state_entries: usize,
 ) -> Result<u64, MetalError> {
     let typed = |elements: usize, element_bytes: usize| {
         elements
@@ -1231,8 +1420,11 @@ fn ram_read_write_buffer_bytes(
             .and_then(|bytes| u64::try_from(bytes).ok())
     };
     [
-        typed(hot_addresses.max(1), size_of::<u32>()),
+        typed(hot_addresses.max(1), size_of::<HotSegment>()),
         typed(hot_message_chunks.max(1), size_of::<HotChunk>()),
+        typed(hot_message_chunks.max(1), size_of::<u32>()),
+        typed(hot_message_chunks.max(1), size_of::<u32>()),
+        typed(hot_addresses.max(1), size_of::<u32>()),
         typed(addresses, size_of::<Segment>()),
         typed(records, size_of::<u32>()),
         typed(records, size_of::<u64>()),
@@ -1243,6 +1435,11 @@ fn ram_read_write_buffer_bytes(
         typed(2 * addresses, size_of::<Fp128>()),
         typed(2 * hot_message_chunks.max(1), size_of::<Fp128>()),
         typed(2 * hot_message_chunks.max(1), size_of::<Fp128>()),
+        typed(hot_state_entries.max(1), size_of::<u32>()),
+        typed(hot_state_entries.max(1), size_of::<u64>()),
+        typed(hot_state_entries.max(1), size_of::<u64>()),
+        typed(hot_state_entries.max(1), size_of::<Fp128>()),
+        typed(hot_state_entries.max(1), size_of::<Fp128>()),
         typed(tiles, size_of::<Segment>()),
         typed(records, size_of::<u32>()),
         typed(records, size_of::<Fp128>()),

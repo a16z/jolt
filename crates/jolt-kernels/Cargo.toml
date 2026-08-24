@@ -53,6 +53,7 @@ tracing.workspace = true
 metal = { workspace = true, optional = true }
 
 [dev-dependencies]
+akita-transcript = { workspace = true, features = ["transcript-blake2b"] }
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true

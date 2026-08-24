@@ -792,7 +792,10 @@ impl MetalBackend {
             p99_segment = stats.p99_segment,
             hot_addresses = stats.hot_addresses,
             hot_message_chunks = stats.hot_message_chunks,
+            hot_state_entries = stats.hot_state_entries,
             hot_compaction_threads = stats.hot_compaction_threads,
+            hot_compaction_threadgroup_bytes = stats.hot_compaction_threadgroup_bytes,
+            hot_auxiliary_bytes = stats.hot_auxiliary_bytes,
             address_bytes = stats.address_bytes,
             cycle_bytes = stats.cycle_bytes,
             resident_bytes = sequence.resident_bytes(),
@@ -804,6 +807,13 @@ impl MetalBackend {
             .test_counters
             .ram_read_write_metal_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(any(test, feature = "test-utils"))]
+        if stats.hot_addresses != 0 {
+            let _ = self
+                .test_counters
+                .ram_read_write_multigroup_hot_sequences
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         Ok(Some(Box::new(MetalRamReadWriteKernel {
             phase: Some(MetalPhase::Cycle {
                 sequence: Box::new(sequence),
@@ -1261,15 +1271,16 @@ mod tests {
     #[test]
     fn address_segmented_hot_chunk_boundary_matches_optimized_cpu() {
         let shape = FixtureShape {
-            log_t: 14,
+            log_t: 15,
             ram_k: 1 << 19,
         };
-        let mut ops = vec![RamOp::None; 1 << 13];
+        let mut ops = vec![RamOp::None; 1 << 14];
         for cycle in (0..ops.len()).step_by(2) {
             ops[cycle] = RamOp::Read { word: 3 };
         }
         ops[511] = RamOp::Read { word: 3 };
         ops[8189] = RamOp::Read { word: 3 };
+        ops[12287] = RamOp::Read { word: 3 };
         let termination_cycle = ops.len();
         with_ram_fixture_backend(shape, ops, |witness| {
             let tau_low = point(43, shape.log_t);
@@ -1299,6 +1310,7 @@ mod tests {
             let mut actual =
                 PrepareKernel::prepare(&metal, &mut ProofSession::default(), witness, inputs())
                     .unwrap();
+            assert_eq!(metal.ram_read_write_multigroup_hot_sequences(), 1);
 
             let input_claim = EqPolynomial::new(tau_low.clone()).evaluations()[termination_cycle]
                 * challenges.gamma;
