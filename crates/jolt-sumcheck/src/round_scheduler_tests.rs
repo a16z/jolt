@@ -13,12 +13,121 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 use crate::batch::{BatchMember, BatchPrelude};
 use crate::error::SumcheckError;
 use crate::prover::{
-    prove_batch, MemberFinish, MemberRound, ProveRounds, RoundScheduler, SequentialRounds,
+    prove_batch, MemberFinish, MemberRound, ProveRounds, RoundExecutionDomain, RoundScheduler,
+    SequentialRounds, TwoLaneRounds,
 };
 use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
 use crate::tests::DenseMember;
 
 type F = Fr;
+
+struct DomainMember {
+    inner: DenseMember,
+    domain: RoundExecutionDomain,
+}
+
+impl ProveRounds<F> for DomainMember {
+    fn num_rounds(&self) -> usize {
+        self.inner.num_rounds()
+    }
+
+    fn execution_domain(&self) -> RoundExecutionDomain {
+        self.domain
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<jolt_poly::UnivariatePoly<F>, SumcheckError<F>> {
+        self.inner.prove_round(bind, round, previous_claim)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.inner.finish_rounds(bind)
+    }
+}
+
+#[test]
+fn two_lane_scheduler_enters_host_and_accelerator_before_either_finishes() {
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
+
+    struct BlockingMember {
+        domain: RoundExecutionDomain,
+        rendezvous: Arc<(Mutex<usize>, Condvar)>,
+    }
+
+    impl ProveRounds<F> for BlockingMember {
+        fn num_rounds(&self) -> usize {
+            1
+        }
+
+        fn execution_domain(&self) -> RoundExecutionDomain {
+            self.domain
+        }
+
+        fn prove_round(
+            &mut self,
+            _bind: Option<F>,
+            _round: usize,
+            _previous_claim: F,
+        ) -> Result<jolt_poly::UnivariatePoly<F>, SumcheckError<F>> {
+            let (entered, ready) = &*self.rendezvous;
+            let mut entered = entered.lock().unwrap();
+            *entered += 1;
+            ready.notify_all();
+            let (entered, wait) = ready
+                .wait_timeout_while(entered, Duration::from_secs(1), |entered| *entered < 2)
+                .unwrap();
+            if wait.timed_out() && *entered < 2 {
+                return Err(SumcheckError::ComputeBackend {
+                    backend: "two-lane-test",
+                    message: "the second lane did not overlap the first".to_owned(),
+                });
+            }
+            Ok(jolt_poly::UnivariatePoly::new(vec![
+                F::from_u64(0),
+                F::from_u64(0),
+            ]))
+        }
+
+        fn finish_rounds(&mut self, _bind: F) -> Result<(), SumcheckError<F>> {
+            Ok(())
+        }
+    }
+
+    let rendezvous = Arc::new((Mutex::new(0), Condvar::new()));
+    let mut host = BlockingMember {
+        domain: RoundExecutionDomain::Host,
+        rendezvous: rendezvous.clone(),
+    };
+    let mut accelerator = BlockingMember {
+        domain: RoundExecutionDomain::Accelerator,
+        rendezvous,
+    };
+    let mut work = [
+        MemberRound {
+            index: 0,
+            local_round: 0,
+            bind: None,
+            claim: F::from_u64(0),
+            member: &mut host,
+            message: None,
+        },
+        MemberRound {
+            index: 1,
+            local_round: 0,
+            bind: None,
+            claim: F::from_u64(0),
+            member: &mut accelerator,
+            message: None,
+        },
+    ];
+
+    assert!(TwoLaneRounds.batch_prove_round(&mut work).is_ok());
+}
 
 struct ChaosRounds;
 
@@ -117,6 +226,47 @@ fn proof_is_invariant_under_a_reordering_traversal() {
     assert_eq!(sequential.member_claims, chaotic.member_claims);
     assert_eq!(sequential_proof, chaotic_proof);
     assert_eq!(sequential_state, chaotic_state);
+}
+
+#[test]
+fn proof_is_invariant_under_two_lane_traversal() {
+    let prove = |two_lane: bool| {
+        let (long, short, prelude, mut transcript, mut recorder) = traversal_fixture();
+        let mut long = DomainMember {
+            inner: long,
+            domain: RoundExecutionDomain::Accelerator,
+        };
+        let mut short = DomainMember {
+            inner: short,
+            domain: RoundExecutionDomain::Host,
+        };
+        let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
+        let mut sequential = SequentialRounds;
+        let mut overlapped = TwoLaneRounds;
+        let scheduler: &mut dyn RoundScheduler<F> = if two_lane {
+            &mut overlapped
+        } else {
+            &mut sequential
+        };
+        let proved = prove_batch(
+            &prelude,
+            &mut members,
+            scheduler,
+            &mut recorder,
+            &mut transcript,
+        )
+        .unwrap();
+        let recorded = recorder
+            .finish(&proved.member_claims, &mut transcript)
+            .unwrap();
+        (proved, recorded.proof, transcript.state())
+    };
+
+    let (sequential, sequential_proof, sequential_state) = prove(false);
+    let (overlapped, overlapped_proof, overlapped_state) = prove(true);
+    assert_eq!(sequential, overlapped);
+    assert_eq!(sequential_proof, overlapped_proof);
+    assert_eq!(sequential_state, overlapped_state);
 }
 
 #[test]

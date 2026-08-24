@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use jolt_field::AkitaField;
 use jolt_openings::CommitmentScheme;
+use jolt_sumcheck::{RoundScheduler, TwoLaneRounds};
 
 use super::booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
 use super::bytecode_read_raf::{
@@ -34,7 +35,7 @@ use super::solinas::{
 use super::spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
 use super::spartan_product::SpartanProductRemainderMetalConfig;
 use super::spartan_shift::SpartanShiftMetalConfig;
-use crate::JoltBackend;
+use crate::{BuildRoundScheduler, JoltBackend, ProofSession};
 
 /// Tuning values for all currently implemented Metal slots.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -307,12 +308,19 @@ impl MetalBackend {
     }
 }
 
+impl BuildRoundScheduler<AkitaField> for MetalBackend {
+    fn build(&self, _session: &mut ProofSession) -> Box<dyn RoundScheduler<AkitaField>> {
+        Box::new(TwoLaneRounds)
+    }
+}
+
 impl<PCS> JoltBackend<AkitaField, PCS>
 where
     PCS: CommitmentScheme<Field = AkitaField>,
 {
     /// Replaces implemented optimized slots with their Metal counterparts.
     pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Self {
+        self.round_scheduler = Box::new(metal.clone());
         self.spartan_outer_uniskip = Box::new(metal.clone());
         self.spartan_outer_remainder = Box::new(metal.clone());
         self.spartan_product_uniskip = Box::new(metal.clone());

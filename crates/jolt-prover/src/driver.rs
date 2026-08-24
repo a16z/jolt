@@ -143,11 +143,15 @@ impl<F, K, SR, SF> ProveRounds<F> for SpannedRounds<Box<K>, SR, SF>
 where
     F: Field,
     K: ProveRounds<F> + ?Sized,
-    SR: Fn() -> tracing::Span,
-    SF: Fn() -> tracing::Span,
+    SR: Fn() -> tracing::Span + Send,
+    SF: Fn() -> tracing::Span + Send,
 {
     fn num_rounds(&self) -> usize {
         self.inner.num_rounds()
+    }
+
+    fn execution_domain(&self) -> jolt_sumcheck::RoundExecutionDomain {
+        self.inner.execution_domain()
     }
 
     fn prove_round(

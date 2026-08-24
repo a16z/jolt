@@ -1,7 +1,7 @@
 use std::mem::size_of;
 
 use jolt_field::AkitaField;
-use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::{
     SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims, SumcheckOutputPoints,
 };
@@ -380,6 +380,16 @@ impl MetalBooleanityKernel {
 impl ProveRounds<AkitaField> for MetalBooleanityKernel {
     fn num_rounds(&self) -> usize {
         self.cpu.num_rounds()
+    }
+
+    fn execution_domain(&self) -> RoundExecutionDomain {
+        if self.sequence.as_ref().is_some_and(|sequence| {
+            !sequence.is_dense() || sequence.current_elements() > self.cutoff_elements
+        }) {
+            RoundExecutionDomain::Accelerator
+        } else {
+            RoundExecutionDomain::Host
+        }
     }
 
     fn prove_round(
