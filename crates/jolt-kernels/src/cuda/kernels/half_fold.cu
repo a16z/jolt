@@ -2,12 +2,18 @@
 #define HF_KIND_U128 1u
 #define HF_KIND_TWOS_I128 2u
 #define HF_KIND_FIELD 3u
+#define HF_KIND_U32 4u
+#define HF_KIND_BIT 5u
 
 __device__ __forceinline__ void hf_promote_narrow(const u64 *__restrict__ entry,
                                                  unsigned int kind,
+                                                 unsigned int bit,
                                                  u64 *out) {
+    bool wide = kind == HF_KIND_U128 || kind == HF_KIND_TWOS_I128;
     u64 lo = entry[0];
-    u64 hi = kind == HF_KIND_U64 ? 0ull : entry[1];
+    if (kind == HF_KIND_U32) lo &= 0xFFFFFFFFull;
+    if (kind == HF_KIND_BIT) lo = (lo >> bit) & 1ull;
+    u64 hi = wide ? entry[1] : 0ull;
     bool negative = kind == HF_KIND_TWOS_I128 && (hi >> 63) != 0ull;
     if (negative) {
         u64 next = ~lo + 1ull;
@@ -28,6 +34,7 @@ __device__ __forceinline__ void hf_load_value(const u64 *__restrict__ words,
                                               unsigned int kind,
                                               unsigned int stride,
                                               unsigned int offset,
+                                              unsigned int bit,
                                               unsigned long long index,
                                               u64 *out) {
     if (kind == HF_KIND_FIELD) {
@@ -35,7 +42,7 @@ __device__ __forceinline__ void hf_load_value(const u64 *__restrict__ words,
         return;
     }
     hf_promote_narrow(words + (unsigned long long)offset + index * (unsigned long long)stride,
-                      kind, out);
+                      kind, bit, out);
 }
 
 extern "C" __global__ void hf_half_fold_kernel(const u64 *__restrict__ column,
@@ -50,7 +57,8 @@ extern "C" __global__ void hf_half_fold_kernel(const u64 *__restrict__ column,
                                               unsigned int accumulate,
                                               unsigned int kind,
                                               unsigned int entry_stride,
-                                              unsigned int entry_offset) {
+                                              unsigned int entry_offset,
+                                              unsigned int entry_bit) {
     unsigned int a = blockIdx.x * blockDim.x + threadIdx.x;
     if (a >= out_len) return;
 
@@ -60,7 +68,7 @@ extern "C" __global__ void hf_half_fold_kernel(const u64 *__restrict__ column,
         u64 weight[LIMBS], value[LIMBS], term[LIMBS], sum[LIMBS];
         load4(weights + (unsigned long long)b * LIMBS, weight);
         unsigned long long index = base + (unsigned long long)b * (unsigned long long)sum_stride;
-        hf_load_value(column, kind, entry_stride, entry_offset, index, value);
+        hf_load_value(column, kind, entry_stride, entry_offset, entry_bit, index, value);
         fr_mul(weight, value, term);
         fr_add(acc, term, sum);
         for (int l = 0; l < LIMBS; l++) acc[l] = sum[l];
@@ -89,7 +97,8 @@ extern "C" __global__ void hf_row_fold_kernel(const u64 *__restrict__ column,
                                              unsigned int accumulate,
                                              unsigned int kind,
                                              unsigned int entry_stride,
-                                             unsigned int entry_offset) {
+                                             unsigned int entry_offset,
+                                             unsigned int entry_bit) {
     extern __shared__ u64 scratch[];
     unsigned int a = blockIdx.x;
     unsigned int tid = threadIdx.x;
@@ -99,7 +108,8 @@ extern "C" __global__ void hf_row_fold_kernel(const u64 *__restrict__ column,
     for (unsigned int b = tid; b < sum_len; b += blockDim.x) {
         u64 weight[LIMBS], value[LIMBS], term[LIMBS], sum[LIMBS];
         load4(weights + (unsigned long long)b * LIMBS, weight);
-        hf_load_value(column, kind, entry_stride, entry_offset, base + (unsigned long long)b, value);
+        hf_load_value(column, kind, entry_stride, entry_offset, entry_bit,
+                      base + (unsigned long long)b, value);
         fr_mul(weight, value, term);
         fr_add(acc, term, sum);
         for (int l = 0; l < LIMBS; l++) acc[l] = sum[l];
@@ -132,4 +142,28 @@ extern "C" __global__ void hf_row_fold_kernel(const u64 *__restrict__ column,
         fr_add(scaled, bias, result);
     }
     store4(out + (unsigned long long)a * LIMBS, result);
+}
+
+extern "C" __global__ void hf_bind_low_to_high_kernel(const u64 *__restrict__ column,
+                                                     unsigned int kind,
+                                                     unsigned int entry_stride,
+                                                     unsigned int entry_offset,
+                                                     unsigned int entry_bit,
+                                                     u64 c0, u64 c1, u64 c2, u64 c3,
+                                                     u64 *__restrict__ out,
+                                                     unsigned int half) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= half) return;
+    u64 lo[LIMBS], hi[LIMBS], c[LIMBS], d[LIMBS], t[LIMBS], r[LIMBS];
+    unsigned long long pair = (unsigned long long)i * 2;
+    hf_load_value(column, kind, entry_stride, entry_offset, entry_bit, pair, lo);
+    hf_load_value(column, kind, entry_stride, entry_offset, entry_bit, pair + 1, hi);
+    c[0] = c0;
+    c[1] = c1;
+    c[2] = c2;
+    c[3] = c3;
+    fr_sub(hi, lo, d);
+    fr_mul(c, d, t);
+    fr_add(lo, t, r);
+    store4(out + i * LIMBS, r);
 }

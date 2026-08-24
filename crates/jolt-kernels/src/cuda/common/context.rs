@@ -166,10 +166,10 @@ pub struct CudaKernelContext {
     pcr_place_row: CudaFunction,
     hf_half_fold: CudaFunction,
     hf_row_fold: CudaFunction,
+    hf_bind_low_to_high: CudaFunction,
     sopg_round: CudaFunction,
-    ii_gather: CudaFunction,
-    ii_columns: CudaFunction,
-    ss_columns_device: CudaFunction,
+    ii_flag_words: CudaFunction,
+    ss_packed_columns: CudaFunction,
     bap_bind_squared: CudaFunction,
     bap_message: CudaFunction,
     brap_one_hot: CudaFunction,
@@ -342,10 +342,10 @@ impl CudaKernelContext {
             pcr_place_row: module.load_function("pcr_place_row_kernel")?,
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
+            hf_bind_low_to_high: module.load_function("hf_bind_low_to_high_kernel")?,
             sopg_round: module.load_function("sopg_round_kernel")?,
-            ii_gather: module.load_function("ii_gather_kernel")?,
-            ii_columns: module.load_function("ii_columns_kernel")?,
-            ss_columns_device: module.load_function("ss_columns_device_kernel")?,
+            ii_flag_words: module.load_function("ii_flag_words_kernel")?,
+            ss_packed_columns: module.load_function("ss_packed_columns_kernel")?,
             bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
             bap_message: module.load_function("bap_message_kernel")?,
             brap_one_hot: module.load_function("brap_one_hot_kernel")?,
@@ -608,16 +608,12 @@ impl CudaKernelContext {
         &self.sopg_round
     }
 
-    pub(crate) const fn ii_gather(&self) -> &CudaFunction {
-        &self.ii_gather
+    pub(crate) const fn ii_flag_words(&self) -> &CudaFunction {
+        &self.ii_flag_words
     }
 
-    pub(crate) const fn ii_columns(&self) -> &CudaFunction {
-        &self.ii_columns
-    }
-
-    pub(crate) const fn ss_columns_device(&self) -> &CudaFunction {
-        &self.ss_columns_device
+    pub(crate) const fn ss_packed_columns(&self) -> &CudaFunction {
+        &self.ss_packed_columns
     }
 
     pub(crate) const fn bap_bind_squared(&self) -> &CudaFunction {
@@ -850,6 +846,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn hf_row_fold(&self) -> &CudaFunction {
         &self.hf_row_fold
+    }
+
+    pub(crate) const fn hf_bind_low_to_high(&self) -> &CudaFunction {
+        &self.hf_bind_low_to_high
     }
 
     pub(crate) const fn sp_gather(&self) -> &CudaFunction {
@@ -1102,6 +1102,23 @@ impl CudaKernelContext {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
         })
+    }
+
+    pub(crate) fn device_columns(
+        &self,
+        columns: &[super::half_fold::FoldColumn<'_>],
+    ) -> Result<(CudaSlice<u64>, CudaSlice<u32>), CudaError> {
+        let mut pointers = Vec::with_capacity(columns.len());
+        let mut descriptors = Vec::with_capacity(columns.len() * 4);
+        for column in columns {
+            let (pointer, _guard) = column.words().device_ptr(&self.stream);
+            pointers.push(pointer);
+            descriptors.extend_from_slice(&column.descriptor()?);
+        }
+        Ok((
+            self.upload_u64_slice(&pointers)?,
+            self.upload_u32_slice(&descriptors)?,
+        ))
     }
 
     pub(crate) fn device_pointers(

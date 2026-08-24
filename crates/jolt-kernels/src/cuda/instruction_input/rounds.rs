@@ -9,6 +9,7 @@ use super::witness::{
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::half_fold::FoldColumn;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::cuda::common::sum_of_products::{DeviceSumOfProducts, SumOfProducts};
 
@@ -87,8 +88,8 @@ impl<F: Field> Basis<F> {
         let mut coefficients = match self {
             Self::EvalPoints { eq, form } => {
                 let whole = columns.whole()?;
-                let mut handles = whole.handles();
-                handles.push(eq);
+                let mut handles = whole.columns()?;
+                handles.push(FoldColumn::Field(eq));
                 let evals: Vec<F> =
                     form.round_lanes(context, &handles, whole.len() / 2, 1, true, degree)?;
                 let mut toom = Vec::with_capacity(evals.len() + 1);
@@ -207,7 +208,7 @@ mod tests {
                 let want: (Fr, Fr) = form
                     .round_gruen_endpoints(
                         context,
-                        &expected.handles(),
+                        &expected.columns().expect("whole columns"),
                         expected.len() / 2,
                         &expected_eq,
                     )

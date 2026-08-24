@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use jolt_claims::protocols::jolt::geometry::spartan::{
     is_first_in_sequence_shift, is_noop_shift, is_virtual_shift, pc_shift, unexpanded_pc_shift,
 };
@@ -159,13 +161,13 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
                     .pc;
             column_windows.push(PrefixSuffixWindow {
                 ordinal,
-                columns: ColumnSet::Field(columns::upload_from_device::<F>(
+                columns: ColumnSet::Narrow(Arc::new(columns::pack_from_device::<F>(
                     device,
-                    trace.unexpanded_pc(),
+                    trace,
                     &pc,
                     &atoms.flags,
                     window.len,
-                )?),
+                )?)),
                 suffix_offset: window.start / prefix_len,
                 suffix_len: window.len / prefix_len,
             });

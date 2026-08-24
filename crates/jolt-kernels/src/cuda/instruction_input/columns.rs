@@ -1,7 +1,12 @@
+use std::sync::Arc;
+
 use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::Field;
 use jolt_riscv::InstructionFlags as InstructionFlagKind;
-use jolt_witness::backend::cuda::{instruction_flag_bit, DeviceAtomColumns, DeviceTrace};
+use jolt_witness::backend::cuda::{
+    instruction_flag_bit, DeviceAtomColumns, DeviceTrace, EXTRA_IMM_HI, EXTRA_IMM_LO, EXTRA_RS1,
+    EXTRA_RS2, EXTRA_WORDS,
+};
 
 pub(crate) struct ColumnShard<F: Field> {
     pub(crate) ordinal: usize,
@@ -74,7 +79,7 @@ impl<F: Field> ShardedInstructionColumns<F> {
         if let Some(collapsed) = &self.collapsed {
             let context = context_for(0).ok_or(absent())?;
             let half = collapsed.len() / 2;
-            return form.round_gruen_endpoints(context, &collapsed.handles(), half, whole_eq);
+            return form.round_gruen_endpoints(context, &collapsed.columns()?, half, whole_eq);
         }
         let tasks: Vec<DeviceTask<'_, (F, F), CudaError>> = self
             .shards
@@ -85,7 +90,7 @@ impl<F: Field> ShardedInstructionColumns<F> {
                     let half = shard.columns.len() / 2;
                     shard.form.round_gruen_endpoints(
                         context,
-                        &shard.columns.handles(),
+                        &shard.columns.columns()?,
                         half,
                         &shard.eq,
                     )
@@ -141,7 +146,7 @@ impl<F: Field> ShardedInstructionColumns<F> {
             .map(|shard| {
                 let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
                     let _ = context_for(shard.ordinal).ok_or(absent())?;
-                    shard.columns.window_scalars()
+                    shard.columns.scalars()
                 });
                 task
             })
@@ -189,146 +194,153 @@ const fn absent() -> CudaError {
     }
 }
 
-#[cfg(test)]
-use super::witness::Packed;
-use super::witness::{self, COLUMNS, LAYOUT, NARROW, SIGN_BIT_BASE, WIDE};
+use super::witness::{
+    COLUMNS, IMM_COLUMN, LEFT_IS_PC_COLUMN, LEFT_IS_RS1_COLUMN, RIGHT_IS_IMM_COLUMN,
+    RIGHT_IS_RS2_COLUMN, RS1_VALUE_COLUMN, RS2_VALUE_COLUMN, UNEXPANDED_PC_COLUMN,
+};
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::half_fold::{bind_column, FoldColumn, NarrowColumn, NarrowKind};
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::cuda::common::sum_of_products::DeviceSumOfProducts;
 use jolt_field::Fr;
 
-pub struct DeviceInstructionColumns {
-    columns: Vec<DeviceFrVec>,
+const IMM_WORDS_ARE_ADJACENT: () = assert!(EXTRA_IMM_HI == EXTRA_IMM_LO + 1);
+
+const FLAG_KINDS: [InstructionFlagKind; 4] = [
+    InstructionFlagKind::LeftOperandIsRs1Value,
+    InstructionFlagKind::LeftOperandIsPC,
+    InstructionFlagKind::RightOperandIsRs2Value,
+    InstructionFlagKind::RightOperandIsImm,
+];
+
+pub struct NativeInstructionColumns {
+    trace: Arc<DeviceTrace>,
+    flags: CudaSlice<u64>,
+    bits: [u32; 4],
+    entries: usize,
+}
+
+impl NativeInstructionColumns {
+    fn extra(&self, word: usize, kind: NarrowKind) -> FoldColumn<'_> {
+        FoldColumn::Narrow(NarrowColumn {
+            words: self.trace.extras(),
+            kind,
+            len: self.entries,
+            stride: EXTRA_WORDS,
+            offset: word,
+        })
+    }
+
+    fn flag(&self, slot: usize) -> Option<FoldColumn<'_>> {
+        let bit = *self.bits.get(slot)?;
+        Some(FoldColumn::Narrow(NarrowColumn::packed(
+            &self.flags,
+            NarrowKind::Bit(bit),
+            self.entries,
+        )))
+    }
+
+    fn column(&self, index: usize) -> Option<FoldColumn<'_>> {
+        match index {
+            LEFT_IS_RS1_COLUMN => self.flag(0),
+            LEFT_IS_PC_COLUMN => self.flag(1),
+            RIGHT_IS_RS2_COLUMN => self.flag(2),
+            RIGHT_IS_IMM_COLUMN => self.flag(3),
+            RS1_VALUE_COLUMN => Some(self.extra(EXTRA_RS1, NarrowKind::U64)),
+            RS2_VALUE_COLUMN => Some(self.extra(EXTRA_RS2, NarrowKind::U64)),
+            IMM_COLUMN => Some(self.extra(EXTRA_IMM_LO, NarrowKind::TwosI128)),
+            UNEXPANDED_PC_COLUMN => Some(FoldColumn::Narrow(NarrowColumn::packed(
+                self.trace.unexpanded_pc(),
+                NarrowKind::U64,
+                self.entries,
+            ))),
+            _ => None,
+        }
+    }
+}
+
+pub enum DeviceInstructionColumns {
+    Native(NativeInstructionColumns),
+    Bound(Vec<DeviceFrVec>),
 }
 
 impl DeviceInstructionColumns {
     #[cfg(feature = "allocative")]
     pub fn device_bytes(&self) -> usize {
-        self.columns.iter().map(DeviceFrVec::device_bytes).sum()
+        match self {
+            Self::Native(native) => native.flags.len() * size_of::<u64>(),
+            Self::Bound(columns) => columns.iter().map(DeviceFrVec::device_bytes).sum(),
+        }
     }
 
     pub fn from_device(
         context: &CudaKernelContext,
-        trace: &DeviceTrace,
+        trace: Arc<DeviceTrace>,
         atoms: &DeviceAtomColumns,
         cycles: usize,
     ) -> Result<Self, CudaError> {
-        if cycles < 2 || !cycles.is_power_of_two() || trace.cycles() < cycles {
+        let () = IMM_WORDS_ARE_ADJACENT;
+        if cycles < 2
+            || !cycles.is_power_of_two()
+            || trace.cycles() < cycles
+            || atoms.flags.len() < cycles
+        {
             return Err(CudaError::InvariantViolation {
                 reason: "the device instruction-input sources need a power-of-two cycle count",
             });
         }
-        let mut narrow = context.alloc_u64(cycles * NARROW)?;
-        let mut wide = context.alloc_u64(cycles * WIDE * 2)?;
-        let mut flags = context.alloc_u32(cycles)?;
-        let sources = context.upload_u32_slice(&Self::gather_bit_sources()?)?;
-        let sign_base = witness::SIGN_BIT_BASE;
-
-        let count = CudaKernelContext::count_of(cycles)?;
-        let mut builder = context.stream().launch_builder(context.ii_gather());
-        let _ = builder.arg(trace.extras());
-        let _ = builder.arg(trace.unexpanded_pc());
-        let _ = builder.arg(&atoms.flags);
-        let _ = builder.arg(&sources);
-        let _ = builder.arg(&sign_base);
-        let _ = builder.arg(&mut narrow);
-        let _ = builder.arg(&mut wide);
-        let _ = builder.arg(&mut flags);
-        let _ = builder.arg(&count);
-        // SAFETY: thread `t < cycles` writes the `NARROW` u64s at `t * NARROW`,
-        // the `WIDE * 2` u64s at `t * WIDE * 2` and `flags[t]`, all inside
-        // allocations sized for `cycles` rows, and reads `address[t]`,
-        // `canonical[t]`, the `EXTRA_WORDS` words at `t * EXTRA_WORDS` and the
-        // four in-range entries of `sources`. Every buffer is distinct.
-        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-
-        Self::split(context, narrow, wide, flags, cycles)
-    }
-
-    fn gather_bit_sources() -> Result<Vec<u32>, CudaError> {
         let missing = || CudaError::InvariantViolation {
             reason: "an instruction-input flag has no canonical device bit",
         };
-        Ok(vec![
-            instruction_flag_bit(InstructionFlagKind::LeftOperandIsRs1Value).ok_or_else(missing)?,
-            instruction_flag_bit(InstructionFlagKind::LeftOperandIsPC).ok_or_else(missing)?,
-            instruction_flag_bit(InstructionFlagKind::RightOperandIsRs2Value)
-                .ok_or_else(missing)?,
-            instruction_flag_bit(InstructionFlagKind::RightOperandIsImm).ok_or_else(missing)?,
-        ])
-    }
-
-    #[cfg(test)]
-    pub fn new(context: &CudaKernelContext, packed: &Packed) -> Result<Self, CudaError> {
-        let cycles = packed.flags.len();
-        if cycles < 2
-            || !cycles.is_power_of_two()
-            || packed.narrow.len() != cycles * NARROW
-            || packed.wide.len() != cycles * WIDE * 2
-        {
-            return Err(CudaError::InvariantViolation {
-                reason: "the packed instruction-input columns must hold one entry per cycle per \
-                         column over a power-of-two cycle count",
-            });
+        let mut bits = [0u32; 4];
+        for (slot, kind) in FLAG_KINDS.into_iter().enumerate() {
+            *bits.get_mut(slot).ok_or_else(missing)? =
+                instruction_flag_bit(kind).ok_or_else(missing)?;
         }
 
-        let narrow = context.upload_u64_slice(&packed.narrow)?;
-        let wide = context.upload_u64_slice(&packed.wide)?;
-        let flags = context.upload_u32_slice(&packed.flags)?;
-        Self::split(context, narrow, wide, flags, cycles)
-    }
-
-    fn split(
-        context: &CudaKernelContext,
-        narrow: CudaSlice<u64>,
-        wide: CudaSlice<u64>,
-        flags: CudaSlice<u32>,
-        cycles: usize,
-    ) -> Result<Self, CudaError> {
+        let mut flags = context.alloc_u64(cycles)?;
         let count = CudaKernelContext::count_of(cycles)?;
-        let narrow_width = CudaKernelContext::count_of(NARROW)?;
-        let wide_width = CudaKernelContext::count_of(WIDE)?;
-        let mut columns = Vec::with_capacity(COLUMNS);
-        for term in LAYOUT {
-            let kind = (term >> 8) & 3;
-            let slot = term & 0xFF;
-            let mut column = context.alloc(cycles)?;
-            let mut builder = context.stream().launch_builder(context.ii_columns());
-            let _ = builder.arg(&narrow);
-            let _ = builder.arg(&wide);
-            let _ = builder.arg(&flags);
-            let _ = builder.arg(&narrow_width);
-            let _ = builder.arg(&wide_width);
-            let _ = builder.arg(&kind);
-            let _ = builder.arg(&slot);
-            let _ = builder.arg(&SIGN_BIT_BASE);
-            let _ = builder.arg(&count);
-            let _ = builder.arg(column.limbs_mut());
-            // SAFETY: thread `t < cycles` reads `flags[t]` of `cycles` entries and,
-            // by kind, either nothing else, or `narrow[t * NARROW + slot]` inside
-            // `narrow`'s `cycles * NARROW` u64s, or `wide[t * WIDE * 2 + 2 * slot
-            // (+ 1)]` inside `wide`'s `cycles * WIDE * 2` u64s — every `LAYOUT`
-            // slot is below its kind's width by construction. `SIGN_BIT_BASE + slot`
-            // is 24 for the single wide slot, inside a u32 mask. It writes only
-            // `out[t]` of the freshly allocated `cycles`-element column, distinct
-            // from all three inputs, so no thread reads what another writes.
-            let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-            columns.push(column);
-        }
+        let mut builder = context.stream().launch_builder(context.ii_flag_words());
+        let _ = builder.arg(&atoms.flags);
+        let _ = builder.arg(&mut flags);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `t < cycles` reads `canonical[t]`, checked above to hold
+        // at least `cycles` entries, and writes `words[t]` of a fresh
+        // `cycles`-word allocation distinct from it. Threads with `t >= cycles`
+        // return before any access.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
 
-        Ok(Self { columns })
+        Ok(Self::Native(NativeInstructionColumns {
+            trace,
+            flags,
+            bits,
+            entries: cycles,
+        }))
     }
 
     pub fn len(&self) -> usize {
-        self.columns.first().map_or(0, DeviceFrVec::len)
+        match self {
+            Self::Native(native) => native.entries,
+            Self::Bound(columns) => columns.first().map_or(0, DeviceFrVec::len),
+        }
     }
 
-    pub fn handles(&self) -> Vec<&DeviceFrVec> {
-        self.columns.iter().collect()
+    pub fn columns(&self) -> Result<Vec<FoldColumn<'_>>, CudaError> {
+        let absent = || CudaError::InvariantViolation {
+            reason: "an instruction-input column set lost a column",
+        };
+        match self {
+            Self::Native(native) => (0..COLUMNS)
+                .map(|index| native.column(index).ok_or_else(absent))
+                .collect(),
+            Self::Bound(columns) => (0..COLUMNS)
+                .map(|index| columns.get(index).map(FoldColumn::Field).ok_or_else(absent))
+                .collect(),
+        }
     }
 
     pub fn bind<F: Field>(
@@ -336,15 +348,29 @@ impl DeviceInstructionColumns {
         context: &CudaKernelContext,
         challenge: F,
     ) -> Result<(), CudaError> {
+        if self.len() < 2 {
+            return Err(CudaError::LengthMismatch {
+                expected: 2,
+                got: self.len(),
+            });
+        }
+        if let Self::Native(_) = self {
+            let bound = self
+                .columns()?
+                .into_iter()
+                .map(|column| bind_column(context, column, challenge))
+                .collect::<Result<Vec<_>, _>>()?;
+            *self = Self::Bound(bound);
+            return Ok(());
+        }
+        let Self::Bound(columns) = self else {
+            return Err(CudaError::InvariantViolation {
+                reason: "an instruction-input column set changed state mid-bind",
+            });
+        };
         let scalar = require_fr(challenge)?;
-        for column in &mut self.columns {
+        for column in columns.iter_mut() {
             let len = column.len();
-            if len < 2 {
-                return Err(CudaError::LengthMismatch {
-                    expected: 2,
-                    got: len,
-                });
-            }
             *column = context.bind_rows(column, len, scalar)?;
         }
         Ok(())
@@ -365,17 +391,22 @@ impl DeviceInstructionColumns {
                 got: columns.len(),
             });
         }
-        Ok(Self {
-            columns: columns
+        Ok(Self::Bound(
+            columns
                 .iter()
                 .map(|column| context.upload(column))
                 .collect::<Result<Vec<_>, _>>()?,
-        })
+        ))
     }
 
-    fn window_scalars(&self) -> Result<Vec<Fr>, CudaError> {
-        let mut scalars = Vec::with_capacity(self.columns.len());
-        for column in &self.columns {
+    fn scalars(&self) -> Result<Vec<Fr>, CudaError> {
+        let Self::Bound(columns) = self else {
+            return Err(CudaError::InvariantViolation {
+                reason: "an instruction-input column set was read back before its first bind",
+            });
+        };
+        let mut scalars = Vec::with_capacity(columns.len());
+        for column in columns {
             if column.len() != 1 {
                 return Err(CudaError::LengthMismatch {
                     expected: 1,
@@ -388,19 +419,14 @@ impl DeviceInstructionColumns {
     }
 
     pub fn finals<F: Field>(&self) -> Result<Vec<F>, CudaError> {
-        let mut finals = Vec::with_capacity(self.columns.len());
-        for column in &self.columns {
-            if column.len() != 1 {
-                return Err(CudaError::LengthMismatch {
-                    expected: 1,
-                    got: column.len(),
-                });
-            }
-            finals.push(fr_into(column.first()?).ok_or(CudaError::NotImplemented {
-                kernel: "CUDA kernels support only the BN254 scalar field",
-            })?);
-        }
-        Ok(finals)
+        self.scalars()?
+            .into_iter()
+            .map(|value| {
+                fr_into(value).ok_or(CudaError::NotImplemented {
+                    kernel: "CUDA kernels support only the BN254 scalar field",
+                })
+            })
+            .collect()
     }
 }
 
@@ -415,15 +441,16 @@ mod tests {
         rs1_value, rs2_value, unexpanded_pc,
     };
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltOpeningId};
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, UnexpandedPc};
-    use jolt_witness::{collect_bundles, JoltWitnessPlane};
+    use jolt_field::Fr;
+    use jolt_witness::JoltWitnessPlane;
 
-    use super::super::witness::{self, InstructionInputWitness, COLUMNS};
+    use super::super::witness::COLUMNS;
     use super::DeviceInstructionColumns;
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::half_fold::promote_for_test;
     use crate::cuda::common::testing::with_r1cs_witness;
     use crate::reference::views::dense_view;
+    use crate::ProofSession;
 
     const LOG_T: usize = 8;
 
@@ -449,86 +476,39 @@ mod tests {
         ]
     }
 
-    fn wide_imm_rows() -> Vec<InstructionInputWitness> {
-        let immediates: [i128; 8] = [
-            0,
-            1,
-            -1,
-            i128::from(u64::MAX),
-            -i128::from(u64::MAX),
-            (1i128 << 96) + 12_345,
-            -((1i128 << 96) + 12_345),
-            (1i128 << 64) - 1,
-        ];
-        immediates
-            .into_iter()
-            .enumerate()
-            .map(|(index, value)| InstructionInputWitness {
-                imm: Imm(value),
-                rs1_value: Rs1Value(index as u64),
-                rs2_value: Rs2Value(7 * index as u64),
-                unexpanded_pc: UnexpandedPc(index as u64),
-                right_operand_is_imm: InstructionFlag(true),
-                ..InstructionInputWitness::default()
-            })
-            .collect()
-    }
-
     #[test]
-    fn synthetic_rows_exercise_the_high_immediate_word() {
-        let rows = wide_imm_rows();
-        let packed = witness::pack(&rows);
-        assert!(
-            packed
-                .wide
-                .chunks_exact(witness::WIDE * 2)
-                .any(|limbs| limbs[2 * witness::IMM_SLOT + 1] != 0),
-            "no synthetic row populates the immediate's high word, so the wide read's high limb \
-             stays untested",
-        );
-        assert!(
-            rows.iter().any(|row| row.imm.0 < 0),
-            "no synthetic row carries a negative immediate",
-        );
-        assert!(
-            rows.iter().any(|row| row.imm.0 > 0),
-            "no synthetic row carries a positive immediate",
-        );
-    }
-
-    #[test]
-    fn promoted_immediates_match_the_host_conversion_beyond_64_bits() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        let rows = wide_imm_rows();
-        let packed = witness::pack(&rows);
-        let columns = DeviceInstructionColumns::new(context, &packed).expect("device columns");
-        let handles = columns.handles();
-        let got = handles[witness::IMM_COLUMN]
-            .to_host()
-            .expect("download the immediate column");
-        let expected: Vec<Fr> = rows.iter().map(|row| Fr::from_i128(row.imm.0)).collect();
-        assert_eq!(got, expected, "the promoted immediate column diverged");
-    }
-
-    #[test]
-    fn promoted_columns_match_the_oracle_tables() {
+    fn native_columns_match_the_oracle_tables() {
         let Some(context) = shared_context() else {
             return;
         };
         with_r1cs_witness(LOG_T, RAM_K, one_hot(), 11, |witness| {
             let plane: &dyn JoltWitnessPlane<Fr> = witness;
-            let rows = collect_bundles::<InstructionInputWitness>(plane, 1usize << LOG_T)
-                .expect("the fixture serves the instruction-input bundle");
-            let packed = witness::pack(&rows);
-            let columns = DeviceInstructionColumns::new(context, &packed).expect("device columns");
-            let handles = columns.handles();
+            let cycles = 1usize << LOG_T;
+            let mut session = ProofSession::default();
+            let trace = crate::cuda::witness::session_device_trace::<Fr>(
+                context,
+                &mut session,
+                witness,
+                cycles,
+            )
+            .expect("device residency");
+            let atoms = crate::cuda::witness::session_atom_columns::<Fr>(
+                context,
+                &mut session,
+                witness,
+                cycles,
+            )
+            .expect("atom columns");
+            let columns = DeviceInstructionColumns::from_device(context, trace, &atoms, cycles)
+                .expect("native columns");
 
-            for (id, handle) in column_ids().into_iter().zip(handles) {
+            for (id, column) in column_ids()
+                .into_iter()
+                .zip(columns.columns().expect("columns"))
+            {
                 let expected = dense_view::<Fr>(plane, id).expect("the fixture serves the column");
-                let got = handle.to_host().expect("download column");
-                assert_eq!(got, expected, "promoted column diverged for {id:?}");
+                let got = promote_for_test(context, column).expect("promote the native column");
+                assert_eq!(got, expected, "native column diverged for {id:?}");
             }
         });
     }

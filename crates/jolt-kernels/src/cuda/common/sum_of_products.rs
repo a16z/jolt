@@ -10,6 +10,7 @@ use jolt_field::Field;
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{require_fr, DeviceFrVec, LIMBS};
 use super::error::CudaError;
+use super::half_fold::FoldColumn;
 use super::primitives::reduce_lanes;
 use super::split_eq::DeviceSplitEq;
 
@@ -112,7 +113,7 @@ impl DeviceSumOfProducts {
     pub fn round_lanes<F: Field>(
         &self,
         context: &CudaKernelContext,
-        tables: &[&DeviceFrVec],
+        tables: &[FoldColumn<'_>],
         half: usize,
         first_point: u32,
         infinity_lane: bool,
@@ -125,7 +126,7 @@ impl DeviceSumOfProducts {
             });
         }
         for table in tables {
-            if table.len() != 2 * half {
+            if !table.covers(2 * half) {
                 return Err(CudaError::LengthMismatch {
                     expected: 2 * half,
                     got: table.len(),
@@ -135,13 +136,14 @@ impl DeviceSumOfProducts {
         let lanes = CudaKernelContext::count_of(lane_count)?;
         let half_count = CudaKernelContext::count_of(half)?;
         let terms = CudaKernelContext::count_of(self.terms)?;
-        let pointers = context.device_pointers(tables)?;
+        let (pointers, descriptors) = context.device_columns(tables)?;
         let blocks = half_count.div_ceil(BLOCK).max(1);
         let mut partials = context.alloc(lanes as usize * blocks as usize)?;
         let infinity_flag = u32::from(infinity_lane);
 
         let mut builder = context.stream().launch_builder(context.sop_round());
         let _ = builder.arg(&pointers);
+        let _ = builder.arg(&descriptors);
         let _ = builder.arg(&self.offsets);
         let _ = builder.arg(&self.factors);
         let _ = builder.arg(self.coefficients.limbs());
@@ -151,10 +153,11 @@ impl DeviceSumOfProducts {
         let _ = builder.arg(partials.limbs_mut());
         let _ = builder.arg(&first_point);
         let _ = builder.arg(&infinity_flag);
-        // SAFETY: thread `y < half` reads `table[2y]` and `table[2y+1]` of every
-        // table named by `factors`, each checked above to hold `2 * half`
-        // elements, and every `factors` entry indexes `tables` because `push`
-        // recorded it against that same slice. `offsets` holds `terms + 1`
+        // SAFETY: thread `y < half` reads entries `2y` and `2y+1` of every
+        // table named by `factors`, each checked above by `covers` to reach
+        // `2 * half` entries under its own descriptor, and every `factors` entry
+        // indexes `tables`/`descriptors` because `push` recorded it against that
+        // same slice. `offsets` holds `terms + 1`
         // entries so `offsets[t + 1]` is in bounds, and `coefficients` holds
         // `terms`. Writes touch only `partials[c * gridDim.x + blockIdx.x]` of
         // `lanes * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
@@ -183,7 +186,7 @@ impl DeviceSumOfProducts {
     pub fn round_gruen_endpoints<F: Field>(
         &self,
         context: &CudaKernelContext,
-        tables: &[&DeviceFrVec],
+        tables: &[FoldColumn<'_>],
         half: usize,
         eq: &DeviceSplitEq<F>,
     ) -> Result<(F, F), CudaError> {
@@ -200,7 +203,7 @@ impl DeviceSumOfProducts {
             });
         }
         for table in tables {
-            if table.len() != 2 * half {
+            if !table.covers(2 * half) {
                 return Err(CudaError::LengthMismatch {
                     expected: 2 * half,
                     got: table.len(),
@@ -216,7 +219,7 @@ impl DeviceSumOfProducts {
         }
         context.require_owned(self.offsets.ordinal())?;
         for table in tables {
-            context.require_owned(table.ordinal())?;
+            context.require_owned(table.words().ordinal())?;
         }
         context.require_owned(eq.e_out_current().ordinal())?;
 
@@ -224,12 +227,13 @@ impl DeviceSumOfProducts {
         let terms = CudaKernelContext::count_of(self.terms)?;
         let inner_len = CudaKernelContext::count_of(e_in_len)?;
         let in_bits = CudaKernelContext::count_of(e_in_len.max(1).ilog2() as usize)?;
-        let pointers = context.device_pointers(tables)?;
+        let (pointers, descriptors) = context.device_columns(tables)?;
         let blocks = half_count.div_ceil(BLOCK).max(1);
         let mut partials = context.alloc(2 * blocks as usize)?;
 
         let mut builder = context.stream().launch_builder(context.sopg_round());
         let _ = builder.arg(&pointers);
+        let _ = builder.arg(&descriptors);
         let _ = builder.arg(&self.offsets);
         let _ = builder.arg(&self.factors);
         let _ = builder.arg(self.coefficients.limbs());
@@ -240,10 +244,11 @@ impl DeviceSumOfProducts {
         let _ = builder.arg(&inner_len);
         let _ = builder.arg(&in_bits);
         let _ = builder.arg(partials.limbs_mut());
-        // SAFETY: thread `y < half` reads `table[2y]` and `table[2y+1]` of every
-        // table named by `factors`, each checked above to hold `2 * half`
-        // elements, and every `factors` entry indexes `tables` because `push`
-        // recorded it against that same slice. `offsets` holds `terms + 1`
+        // SAFETY: thread `y < half` reads entries `2y` and `2y+1` of every
+        // table named by `factors`, each checked above by `covers` to reach
+        // `2 * half` entries under its own descriptor, and every `factors` entry
+        // indexes `tables`/`descriptors` because `push` recorded it against that
+        // same slice. `offsets` holds `terms + 1`
         // entries so `offsets[t + 1]` is in bounds, and `coefficients` holds
         // `terms`. The eq lookup reads `e_out[y]` when `e_in_len <= 1` and
         // otherwise `e_in[y & mask]` / `e_out[y >> in_bits]`, bounded because
@@ -347,7 +352,7 @@ mod tests {
                 .iter()
                 .map(|table| context.upload(table).expect("upload table"))
                 .collect();
-            let handles: Vec<_> = uploaded.iter().collect();
+            let handles: Vec<_> = uploaded.iter().map(super::FoldColumn::Field).collect();
 
             let lanes = 3;
             let got: Vec<Fr> = device_form
@@ -405,7 +410,7 @@ mod tests {
                 .iter()
                 .map(|table| context.upload(table).expect("upload table"))
                 .collect();
-            let handles: Vec<_> = uploaded.iter().collect();
+            let handles: Vec<_> = uploaded.iter().map(super::FoldColumn::Field).collect();
             let eq = super::super::split_eq::DeviceSplitEq::<Fr>::new(
                 context,
                 &point,
@@ -482,7 +487,10 @@ mod tests {
         let table = context
             .upload(&[fr(1), fr(2), fr(3), fr(4)])
             .expect("upload table");
-        let handles = [&table, &table];
+        let handles = [
+            super::FoldColumn::Field(&table),
+            super::FoldColumn::Field(&table),
+        ];
         assert!(
             device_form
                 .round_gruen_endpoints::<Fr>(context, &handles, 2, &eq)
@@ -502,7 +510,10 @@ mod tests {
         assert_eq!(form.uniform_arity(), None);
         let device_form = form.upload(context).expect("upload form");
         let table = context.upload(&[fr(1), fr(2)]).expect("upload table");
-        let handles = [&table, &table];
+        let handles = [
+            super::FoldColumn::Field(&table),
+            super::FoldColumn::Field(&table),
+        ];
         assert!(
             device_form
                 .round_lanes::<Fr>(context, &handles, 1, 1, true, 2)

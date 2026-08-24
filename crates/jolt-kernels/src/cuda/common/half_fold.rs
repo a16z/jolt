@@ -25,12 +25,14 @@ pub enum NarrowKind {
     U64,
     U128,
     TwosI128,
+    U32,
+    Bit(u32),
 }
 
 impl NarrowKind {
     const fn words(self) -> usize {
         match self {
-            Self::U64 => 1,
+            Self::U64 | Self::U32 | Self::Bit(_) => 1,
             Self::U128 | Self::TwosI128 => 2,
         }
     }
@@ -40,6 +42,15 @@ impl NarrowKind {
             Self::U64 => 0,
             Self::U128 => 1,
             Self::TwosI128 => 2,
+            Self::U32 => 4,
+            Self::Bit(_) => 5,
+        }
+    }
+
+    const fn bit(self) -> u32 {
+        match self {
+            Self::Bit(bit) => bit,
+            Self::U64 | Self::U128 | Self::TwosI128 | Self::U32 => 0,
         }
     }
 }
@@ -95,32 +106,39 @@ impl FoldColumn<'_> {
         }
     }
 
-    const fn words(&self) -> &CudaSlice<u64> {
+    pub const fn words(&self) -> &CudaSlice<u64> {
         match self {
             Self::Field(column) => column.limbs(),
             Self::Narrow(column) => column.words,
         }
     }
 
-    fn covers(&self, len: usize) -> bool {
+    pub fn descriptor(&self) -> Result<[u32; 4], CudaError> {
+        let (stride, offset, bit) = self.geometry()?;
+        Ok([self.kind(), stride, offset, bit])
+    }
+
+    pub fn covers(&self, len: usize) -> bool {
         match self {
             Self::Field(column) => column.len() == len,
             Self::Narrow(column) => {
                 column.len == len
                     && column.stride >= column.kind.words()
+                    && column.kind.bit() < u64::BITS
                     && column.words.len() >= column.reach()
             }
         }
     }
 
-    fn geometry(&self) -> Result<(u32, u32), CudaError> {
-        let (stride, offset) = match self {
-            Self::Field(_) => (LIMBS, 0),
-            Self::Narrow(column) => (column.stride, column.offset),
+    fn geometry(&self) -> Result<(u32, u32, u32), CudaError> {
+        let (stride, offset, bit) = match self {
+            Self::Field(_) => (LIMBS, 0, 0),
+            Self::Narrow(column) => (column.stride, column.offset, column.kind.bit()),
         };
         Ok((
             CudaKernelContext::count_of(stride)?,
             CudaKernelContext::count_of(offset)?,
+            bit,
         ))
     }
 }
@@ -149,6 +167,67 @@ pub fn half_fold<F: Field>(
         F::zero(),
         false,
     )?;
+    Ok(out)
+}
+
+pub fn bind_column<F: Field>(
+    context: &CudaKernelContext,
+    column: FoldColumn<'_>,
+    challenge: F,
+) -> Result<DeviceFrVec, CudaError> {
+    let len = column.len();
+    if len < 2 || !len.is_multiple_of(2) || !column.covers(len) {
+        return Err(CudaError::LengthMismatch {
+            expected: len.next_power_of_two().max(2),
+            got: len,
+        });
+    }
+    let half = len / 2;
+    let mut out = context.alloc(half)?;
+    let limbs = fr_limbs(require_fr(challenge)?);
+    let count = CudaKernelContext::count_of(half)?;
+    let kind = column.kind();
+    let (stride, offset, bit) = column.geometry()?;
+
+    let mut builder = context
+        .stream()
+        .launch_builder(context.hf_bind_low_to_high());
+    let _ = builder.arg(column.words());
+    let _ = builder.arg(&kind);
+    let _ = builder.arg(&stride);
+    let _ = builder.arg(&offset);
+    let _ = builder.arg(&bit);
+    for limb in &limbs {
+        let _ = builder.arg(limb);
+    }
+    let _ = builder.arg(out.limbs_mut());
+    let _ = builder.arg(&count);
+    // SAFETY: thread `i < half` reads entries `2i` and `2i + 1` of `column`,
+    // both below `len`, whose words `offset + i * stride ..= + kind.words()`
+    // `covers` checked against `words.len()`; `bit` only shifts a loaded word
+    // and `covers` bounded it below `u64::BITS`. It writes only `out[i]` of the
+    // freshly allocated `half` elements, distinct from `column`. The challenge
+    // arrives as four by-value limbs, so no device buffer backs it, and threads
+    // with `i >= half` return before any access.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+    Ok(out)
+}
+
+#[cfg(test)]
+pub(crate) fn promote_for_test(
+    context: &CudaKernelContext,
+    column: FoldColumn<'_>,
+) -> Result<Vec<jolt_field::Fr>, CudaError> {
+    use jolt_field::FromPrimitiveInt;
+    let zero = jolt_field::Fr::from_u64(0);
+    let one = jolt_field::Fr::from_u64(1);
+    let evens = bind_column(context, column, zero)?.to_host()?;
+    let odds = bind_column(context, column, one)?.to_host()?;
+    let mut out = Vec::with_capacity(evens.len() + odds.len());
+    for (even, odd) in evens.into_iter().zip(odds) {
+        out.push(even);
+        out.push(odd);
+    }
     Ok(out)
 }
 
@@ -192,7 +271,7 @@ pub fn half_fold_into<F: Field>(
     let sum_stride = CudaKernelContext::count_of(sum_stride)?;
     let accumulate = u32::from(accumulate);
     let kind = column.kind();
-    let (stride, offset) = column.geometry()?;
+    let (stride, offset, bit) = column.geometry()?;
 
     let mut builder = context.stream().launch_builder(context.hf_half_fold());
     let _ = builder.arg(column.words());
@@ -214,6 +293,7 @@ pub fn half_fold_into<F: Field>(
     let _ = builder.arg(&kind);
     let _ = builder.arg(&stride);
     let _ = builder.arg(&offset);
+    let _ = builder.arg(&bit);
     // SAFETY: thread `a < out_len` reads `weights[b]` for every `b < sum_len`
     // (inside `weights`'s `sum_len` elements) and entry
     // `a * out_stride + b * sum_stride` of `column`, whose largest value is
@@ -221,7 +301,9 @@ pub fn half_fold_into<F: Field>(
     // turns an entry `i` into words `offset + i * stride ..= + kind.words()`, and
     // `covers` checked exactly that reach against `words.len()` for the largest
     // entry (`LIMBS`-word elements at stride `LIMBS` for the field arm), having
-    // also required `stride >= kind.words()` so entries do not overlap. It reads
+    // also required `stride >= kind.words()` so entries do not overlap. `bit`
+    // only shifts a word the kernel has already loaded, and `covers` bounded it
+    // below `u64::BITS`. It reads
     // and writes only `out[a]` of `out_len`, so the
     // accumulate path's read-modify-write is per-thread and non-aliasing.
     // `scale` and `bias` arrive as by-value limbs, so no device buffer backs
@@ -248,7 +330,7 @@ fn row_fold_into(
     })?;
     let accumulate = u32::from(accumulate);
     let kind = column.kind();
-    let (stride, offset) = column.geometry()?;
+    let (stride, offset, bit) = column.geometry()?;
 
     let mut builder = context.stream().launch_builder(context.hf_row_fold());
     let _ = builder.arg(column.words());
@@ -265,12 +347,14 @@ fn row_fold_into(
     let _ = builder.arg(&kind);
     let _ = builder.arg(&stride);
     let _ = builder.arg(&offset);
+    let _ = builder.arg(&bit);
     // SAFETY: block `a = blockIdx.x < out_len` reads `weights[b]` and column
     // entry `a * sum_len + b` for `b` striding from `threadIdx.x` by
     // `blockDim.x` while `b < sum_len`, so every column entry is below
     // `out_len * sum_len`, whose words `offset + i * stride ..= + kind.words()`
     // `covers` checked against `words.len()` — and every weight index below
-    // `sum_len`. Shared memory is `BLOCK * LIMBS` u64s, matching
+    // `sum_len`; `bit` only shifts a loaded word and `covers` bounded it below
+    // `u64::BITS`. Shared memory is `BLOCK * LIMBS` u64s, matching
     // `shared_mem_bytes`; every thread reaches each `__syncthreads()` because the
     // strided loop and the tree sit outside any early return, and `BLOCK` is a
     // power of two so the tree covers the block. Only thread 0 touches `out[a]`,
@@ -328,10 +412,29 @@ mod tests {
                     words.push(high);
                     values.push(Fr::from_i128(value as i128));
                 }
+                NarrowKind::U32 => {
+                    words.push(mixed);
+                    values.push(Fr::from_u64(mixed & u64::from(u32::MAX)));
+                }
+                NarrowKind::Bit(bit) => {
+                    words.push(mixed);
+                    values.push(Fr::from_u64((mixed >> bit) & 1));
+                }
             }
         }
         (words, values)
     }
+
+    const KINDS: [NarrowKind; 8] = [
+        NarrowKind::U64,
+        NarrowKind::U128,
+        NarrowKind::TwosI128,
+        NarrowKind::U32,
+        NarrowKind::Bit(0),
+        NarrowKind::Bit(1),
+        NarrowKind::Bit(32),
+        NarrowKind::Bit(63),
+    ];
 
     fn cpu_half_fold(
         column: &[Fr],
@@ -405,7 +508,7 @@ mod tests {
             let device_weights = context.upload(&weights).expect("upload weights");
             let scale = fr(seed ^ 0xfeed);
 
-            for kind in [NarrowKind::U64, NarrowKind::U128, NarrowKind::TwosI128] {
+            for kind in KINDS {
                 let (words, values) = narrow_entries(kind, out_len * sum_len, seed);
                 let device_words = context.upload_u64_slice(&words).expect("upload words");
                 let column = FoldColumn::Narrow(NarrowColumn::packed(
@@ -442,7 +545,7 @@ mod tests {
             let device_weights = context.upload(&weights).expect("upload weights");
             let scale = fr(seed ^ 0xa11ce);
 
-            for kind in [NarrowKind::U64, NarrowKind::U128, NarrowKind::TwosI128] {
+            for kind in KINDS {
                 let (packed, values) = narrow_entries(kind, entries, seed);
                 let stride = kind.words() + stride_slack;
                 let mut words = vec![0u64; offset + entries * stride];
@@ -539,7 +642,7 @@ mod tests {
         let Some(context) = shared_context() else {
             return;
         };
-        let cases: [(NarrowKind, Vec<u64>, Vec<Fr>); 3] = [
+        let cases: [(NarrowKind, Vec<u64>, Vec<Fr>); 5] = [
             (
                 NarrowKind::U64,
                 vec![0, 1, u64::MAX, u64::MAX - 1],
@@ -577,6 +680,31 @@ mod tests {
                     Fr::from_i128(1),
                     Fr::from_i128(i128::MIN),
                     Fr::from_i128(i128::MAX),
+                ],
+            ),
+            (
+                NarrowKind::U32,
+                vec![
+                    u64::MAX,
+                    u64::from(u32::MAX) << 32,
+                    (u64::from(u32::MAX) << 32) | 1,
+                    u64::from(u32::MAX),
+                ],
+                vec![
+                    Fr::from_u64(u64::from(u32::MAX)),
+                    Fr::from_u64(0),
+                    Fr::from_u64(1),
+                    Fr::from_u64(u64::from(u32::MAX)),
+                ],
+            ),
+            (
+                NarrowKind::Bit(63),
+                vec![u64::MAX, 1u64 << 63, (1u64 << 63) - 1, 0],
+                vec![
+                    Fr::from_u64(1),
+                    Fr::from_u64(1),
+                    Fr::from_u64(0),
+                    Fr::from_u64(0),
                 ],
             ),
         ];

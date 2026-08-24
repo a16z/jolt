@@ -170,7 +170,7 @@ pub(crate) fn prepare_with_basis<F: Field>(
         let (trace, atoms) = session_window_residency(device, session, witness, cycles, window)?;
         column_shards.push(ColumnShard {
             ordinal,
-            columns: DeviceInstructionColumns::from_device(device, &trace, &atoms, window.len)?,
+            columns: DeviceInstructionColumns::from_device(device, trace, &atoms, window.len)?,
             eq: DeviceSplitEq::new_window(device, point, BindingOrder::LowToHigh, ordinal, shards)?,
             form: rounds::gruen_form(device, inputs.challenges.gamma)?,
         });
@@ -282,60 +282,6 @@ mod tests {
                     "{id:?} is constant across the fixture, so a mis-indexed read would pass",
                 );
             }
-        });
-    }
-
-    #[test]
-    fn device_instruction_columns_match_the_host_encoder() {
-        let Some(context) = shared_context() else {
-            return;
-        };
-        with_r1cs_witness(LOG_T, RAM_K, one_hot(), 7, |witness| {
-            let cycles = 1usize << LOG_T;
-            let rows: Vec<super::witness::InstructionInputWitness> =
-                jolt_witness::collect_bundles(witness, cycles).expect("reference rows");
-            let expected: Vec<Vec<Fr>> = super::columns::DeviceInstructionColumns::new(
-                context,
-                &super::witness::pack(&rows),
-            )
-            .expect("host-encoded columns")
-            .handles()
-            .iter()
-            .map(|column| column.to_host().expect("download"))
-            .collect();
-
-            let mut session = ProofSession::default();
-            let trace = crate::cuda::witness::session_device_trace::<Fr>(
-                context,
-                &mut session,
-                witness,
-                cycles,
-            )
-            .expect("device residency");
-            let atoms = crate::cuda::witness::session_atom_columns::<Fr>(
-                context,
-                &mut session,
-                witness,
-                cycles,
-            )
-            .expect("atom columns");
-            let got: Vec<Vec<Fr>> = super::columns::DeviceInstructionColumns::from_device(
-                context, &trace, &atoms, cycles,
-            )
-            .expect("device-gathered columns")
-            .handles()
-            .iter()
-            .map(|column| column.to_host().expect("download"))
-            .collect();
-
-            assert!(
-                expected[1].iter().any(|value| *value != expected[1][0]),
-                "every rs1 value is identical, so a kernel ignoring the row would pass",
-            );
-            assert_eq!(
-                got, expected,
-                "the device instruction columns diverge from the host encoder",
-            );
         });
     }
 

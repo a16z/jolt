@@ -150,6 +150,11 @@ pub trait NarrowColumns: Send + Sync {
     fn entries(&self) -> usize;
 
     fn column(&self, index: usize) -> Option<NarrowColumn<'_>>;
+
+    #[cfg(feature = "allocative")]
+    fn device_bytes(&self) -> usize {
+        0
+    }
 }
 
 pub enum ColumnSet {
@@ -203,7 +208,7 @@ impl ColumnSet {
     pub fn device_bytes(&self) -> usize {
         match self {
             Self::Field(columns) => columns.iter().map(DeviceFrVec::device_bytes).sum(),
-            Self::Narrow(_) => 0,
+            Self::Narrow(columns) => columns.device_bytes(),
         }
     }
 }
@@ -543,7 +548,7 @@ impl<F: Field> PrefixSuffixRounds<F> {
             Phase::One(phase) => (&phase.tables, &phase.form),
             Phase::Two(phase) => (&phase.tables, &phase.form),
         };
-        let handles: Vec<&DeviceFrVec> = tables.iter().collect();
+        let handles: Vec<FoldColumn<'_>> = tables.iter().map(FoldColumn::Field).collect();
         let lanes: Vec<F> = form.round_lanes(self.context, &handles, half, 1, true, 2)?;
         let [at_one, at_infinity] = lanes.as_slice() else {
             return Err(CudaError::LengthMismatch {

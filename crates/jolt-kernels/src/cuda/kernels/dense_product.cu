@@ -110,7 +110,8 @@ extern "C" __global__ void lane_sum_total_kernel(const u64 *__restrict__ in,
 }
 
 extern "C" __global__ void sopg_round_kernel(
-    const u64 *const *__restrict__ tables, const unsigned int *__restrict__ term_offsets,
+    const u64 *const *__restrict__ tables, const unsigned int *__restrict__ descriptors,
+    const unsigned int *__restrict__ term_offsets,
     const unsigned int *__restrict__ term_factors, const u64 *__restrict__ coefficients,
     unsigned int terms, unsigned int half, const u64 *__restrict__ e_in,
     const u64 *__restrict__ e_out, unsigned int e_in_len, unsigned int in_bits,
@@ -132,10 +133,12 @@ extern "C" __global__ void sopg_round_kernel(
             load4(FR_ONE, constant);
             load4(FR_ONE, leading);
             for (unsigned int f = term_offsets[t]; f < term_offsets[t + 1]; f++) {
-                const u64 *table = tables[term_factors[f]];
+                unsigned int slot = term_factors[f];
+                const unsigned int *entry = descriptors + slot * 4u;
                 u64 lo[LIMBS], hi[LIMBS], diff[LIMBS], next[LIMBS];
-                load4(table + (2 * y) * LIMBS, lo);
-                load4(table + (2 * y + 1) * LIMBS, hi);
+                unsigned long long pair = (unsigned long long)y * 2;
+                hf_load_value(tables[slot], entry[0], entry[1], entry[2], entry[3], pair, lo);
+                hf_load_value(tables[slot], entry[0], entry[1], entry[2], entry[3], pair + 1, hi);
                 fr_sub(hi, lo, diff);
                 fr_mul(constant, lo, next);
                 for (int l = 0; l < LIMBS; l++) constant[l] = next[l];
@@ -187,7 +190,8 @@ extern "C" __global__ void sopg_round_kernel(
 }
 
 extern "C" __global__ void sop_round_kernel(
-    const u64 *const *__restrict__ tables, const unsigned int *__restrict__ term_offsets,
+    const u64 *const *__restrict__ tables, const unsigned int *__restrict__ descriptors,
+    const unsigned int *__restrict__ term_offsets,
     const unsigned int *__restrict__ term_factors, const u64 *__restrict__ coefficients,
     unsigned int terms, unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
     unsigned int first_point, unsigned int infinity_lane) {
@@ -207,10 +211,12 @@ extern "C" __global__ void sop_round_kernel(
                 u64 product[LIMBS];
                 load4(FR_ONE, product);
                 for (unsigned int f = term_offsets[t]; f < term_offsets[t + 1]; f++) {
-                    const u64 *table = tables[term_factors[f]];
+                    unsigned int slot = term_factors[f];
+                    const unsigned int *entry = descriptors + slot * 4u;
                     u64 lo[LIMBS], hi[LIMBS], diff[LIMBS], scaled[LIMBS], value[LIMBS];
-                    load4(table + (2 * y) * LIMBS, lo);
-                    load4(table + (2 * y + 1) * LIMBS, hi);
+                    unsigned long long pair = (unsigned long long)y * 2;
+                    hf_load_value(tables[slot], entry[0], entry[1], entry[2], entry[3], pair, lo);
+                    hf_load_value(tables[slot], entry[0], entry[1], entry[2], entry[3], pair + 1, hi);
                     fr_sub(hi, lo, diff);
                     if (at_infinity) {
                         for (int l = 0; l < LIMBS; l++) value[l] = diff[l];
