@@ -124,12 +124,17 @@ pub use virt::VirtualRev8W;
 pub use virt::VirtualRotri;
 pub use virt::VirtualRotriw;
 pub use virt::VirtualShiftRightBitmask;
+pub use virt::VirtualShiftRightBitmaskW;
 pub use virt::VirtualShiftRightBitmaski;
 pub use virt::VirtualSignExtendWord;
 pub use virt::VirtualSra;
 pub use virt::VirtualSrai;
+pub use virt::VirtualSraiw;
+pub use virt::VirtualSraw;
 pub use virt::VirtualSrl;
 pub use virt::VirtualSrli;
+pub use virt::VirtualSrliw;
+pub use virt::VirtualSrlw;
 pub use virt::VirtualXorRot16;
 pub use virt::VirtualXorRot24;
 pub use virt::VirtualXorRot32;
@@ -414,6 +419,11 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualXorRotW6(VirtualXorRotW6<T>),
     WindowMaskW(WindowMaskW<T>),
     PextSigned(PextSigned<T>),
+    VirtualShiftRightBitmaskW(VirtualShiftRightBitmaskW<T>),
+    VirtualSrlw(VirtualSrlw<T>),
+    VirtualSrliw(VirtualSrliw<T>),
+    VirtualSraw(VirtualSraw<T>),
+    VirtualSraiw(VirtualSraiw<T>),
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
@@ -626,6 +636,11 @@ impl_jolt_instructions_flags! {
     VirtualXorRotW6 => VirtualXORROTW6,
     WindowMaskW => VirtualWindowMaskW,
     PextSigned => VirtualPextSigned,
+    VirtualShiftRightBitmaskW => VirtualShiftRightBitmaskW,
+    VirtualSrlw => VirtualSRLW,
+    VirtualSrliw => VirtualSRLIW,
+    VirtualSraw => VirtualSRAW,
+    VirtualSraiw => VirtualSRAIW,
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,
