@@ -8,6 +8,7 @@ use crate::cuda::common::error::CudaError;
 
 pub struct HandoffInputs<'a> {
     pub rows: &'a DeviceRows,
+    pub cycles: usize,
     pub v_tables: &'a [DeviceFrVec],
     pub table_values: &'a [Fr],
     pub raf_interleaved: Fr,
@@ -25,7 +26,13 @@ pub fn build_cycle_tables(
     context: &CudaKernelContext,
     inputs: &HandoffInputs<'_>,
 ) -> Result<HandoffTables, CudaError> {
-    let cycles = inputs.rows.cycles();
+    let cycles = inputs.cycles;
+    if cycles > inputs.rows.cycles() {
+        return Err(CudaError::LengthMismatch {
+            expected: cycles,
+            got: inputs.rows.cycles(),
+        });
+    }
     let phases = inputs.address_bits / CHUNK_LEN;
     if inputs.v_tables.len() != phases {
         return Err(CudaError::LengthMismatch {
@@ -254,6 +261,7 @@ mod tests {
                 context,
                 &HandoffInputs {
                     rows: &device_rows,
+                    cycles: device_rows.cycles(),
                     v_tables: &v_tables,
                     table_values: &table_values,
                     raf_interleaved,

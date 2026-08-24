@@ -520,19 +520,20 @@ pub fn condense_u_evals(
 pub fn flag_claims(
     context: &CudaKernelContext,
     rows: &DeviceRows,
+    cycles: usize,
     eq_cycle: &DeviceFrVec,
     table_count: usize,
 ) -> Result<(Vec<Fr>, Fr), CudaError> {
-    if eq_cycle.len() != rows.cycles() {
+    if eq_cycle.len() != cycles || cycles > rows.cycles() {
         return Err(CudaError::LengthMismatch {
-            expected: rows.cycles(),
+            expected: cycles,
             got: eq_cycle.len(),
         });
     }
-    let count = CudaKernelContext::count_of(rows.cycles())?;
+    let count = CudaKernelContext::count_of(cycles)?;
     let table_count_arg = CudaKernelContext::count_of(table_count)?;
 
-    let mut keys = context.alloc_u32(rows.cycles())?;
+    let mut keys = context.alloc_u32(cycles)?;
     let mut builder = context.stream().launch_builder(context.ap_flag_keys());
     let _ = builder.arg(rows.table_index());
     let _ = builder.arg(&table_count_arg);
@@ -543,7 +544,7 @@ pub fn flag_claims(
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
     context.stream().synchronize()?;
 
-    let segments = segment_rows(context, &keys, rows.cycles(), table_count)?;
+    let segments = segment_rows(context, &keys, cycles, table_count)?;
     let mut sums = context.alloc(table_count)?;
     let blocks = CudaKernelContext::count_of(table_count)?;
     let mut builder = context.stream().launch_builder(context.ap_flag_sums());
@@ -812,7 +813,7 @@ mod tests {
 
             let table_count = LookupTableKind::<RISCV_XLEN>::COUNT;
             let (flags, raf_flag) =
-                super::flag_claims(context, &device, &uploaded, table_count)
+                super::flag_claims(context, &device, device.cycles(), &uploaded, table_count)
                     .expect("device flag_claims");
 
             let mut expected_flags = vec![Fr::from(0u64); table_count];

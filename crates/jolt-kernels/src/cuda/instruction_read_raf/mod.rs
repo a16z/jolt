@@ -24,16 +24,18 @@ use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_witness::backend::cuda::FLAG_BIT_RAF;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::{session_atom_columns, session_device_trace};
+use crate::cuda::witness::{session_atom_columns, session_device_trace, session_window_residency};
 
 use self::address_driver::DeviceAddressPhase;
 use self::address_phase::{flag_claims, DeviceRows};
 use self::cycle_handoff::{build_cycle_tables, HandoffInputs};
-use self::cycle_rounds::DeviceCycleRounds;
+use self::cycle_rounds::{CycleShard, DeviceCycleRounds};
 use super::{require_context, CudaBackend};
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice};
-use crate::cuda::common::device_columns::device_lookup_limbs;
+use crate::cuda::common::context::{context_for, CudaKernelContext};
+use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
+use crate::cuda::common::device_columns::{device_lookup_limbs, windowed_trace_columns};
+use crate::cuda::common::devices::{fan_out, witness_windows, DeviceTask};
+use crate::cuda::common::error::CudaError;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -51,10 +53,16 @@ fn raf_initial_checkpoints<F: Field>() -> [F; RAF_CHECKPOINTS] {
     checkpoints
 }
 
+pub(crate) struct RowShard {
+    pub(crate) ordinal: usize,
+    pub(crate) rows: Arc<DeviceRows>,
+    pub(crate) cycles: usize,
+}
+
 pub struct DeviceInstructionReadRaf<F: Field> {
     device: Option<DeviceAddressPhase>,
     cycle: Option<DeviceCycleRounds>,
-    rows: Arc<DeviceRows>,
+    row_shards: Vec<RowShard>,
     r_reduction: Vec<Fr>,
     cycle_challenges: Vec<Fr>,
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -91,6 +99,51 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
         fr_into(value).ok_or(SumcheckError::MissingEvaluationSource {
             kind: "cuda instruction read-RAF field",
         })
+    }
+
+    fn window_flag_claims(&self, r_cycle: &[Fr]) -> Result<(Vec<Fr>, Fr), CudaError> {
+        let count = self.row_shards.len();
+        let tasks: Vec<DeviceTask<'_, (Vec<Fr>, Fr), CudaError>> = self
+            .row_shards
+            .iter()
+            .enumerate()
+            .map(|(index, shard)| {
+                let task: DeviceTask<'_, (Vec<Fr>, Fr), CudaError> = Box::new(move || {
+                    let device =
+                        context_for(shard.ordinal).ok_or(CudaError::InvariantViolation {
+                            reason: "an instruction read-RAF flag window names an absent device",
+                        })?;
+                    let eq = device.eq_evals_shard(r_cycle, index, count)?;
+                    flag_claims(
+                        device,
+                        &shard.rows,
+                        shard.cycles,
+                        &eq,
+                        LookupTableKind::<RISCV_XLEN>::COUNT,
+                    )
+                });
+                task
+            })
+            .collect();
+        let mut flags: Vec<Fr> = Vec::new();
+        let mut raf = Fr::from(0u64);
+        for (part, part_raf) in fan_out(tasks)? {
+            if flags.is_empty() {
+                flags = part;
+            } else {
+                if part.len() != flags.len() {
+                    return Err(CudaError::LengthMismatch {
+                        expected: flags.len(),
+                        got: part.len(),
+                    });
+                }
+                for (slot, value) in flags.iter_mut().zip(&part) {
+                    *slot += *value;
+                }
+            }
+            raf += part_raf;
+        }
+        Ok((flags, raf))
     }
 
     fn enter_cycle_rounds(&mut self) -> Result<(), SumcheckError<F>> {
@@ -151,28 +204,60 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_checkpoints[3];
         }
 
-        let tables = build_cycle_tables(
-            self.context,
-            &HandoffInputs {
-                rows: &self.rows,
-                v_tables: device.v_tables(),
-                table_values: &table_values,
-                raf_interleaved: require_fr(raf_interleaved).map_err(|_| failed())?,
-                raf_identity: require_fr(raf_identity).map_err(|_| failed())?,
-                ra_count: self.ra_count,
-                address_bits: ADDRESS_BITS,
-            },
-        )
-        .map_err(|_| failed())?;
+        let raf_interleaved = require_fr(raf_interleaved).map_err(|_| failed())?;
+        let raf_identity = require_fr(raf_identity).map_err(|_| failed())?;
+        let host_v: Vec<Vec<Fr>> = device
+            .v_tables()
+            .iter()
+            .map(DeviceFrVec::to_host)
+            .collect::<Result<_, _>>()
+            .map_err(|_| failed())?;
+
+        let host_v = &host_v;
+        let table_values = &table_values;
+        let ra_count = self.ra_count;
+        let tasks: Vec<DeviceTask<'_, CycleShard, CudaError>> = self
+            .row_shards
+            .iter()
+            .map(|shard| {
+                let task: DeviceTask<'_, CycleShard, CudaError> = Box::new(move || {
+                    let device =
+                        context_for(shard.ordinal).ok_or(CudaError::InvariantViolation {
+                            reason: "an instruction read-RAF cycle window names an absent device",
+                        })?;
+                    let v_tables: Vec<DeviceFrVec> = host_v
+                        .iter()
+                        .map(|table| device.upload(table))
+                        .collect::<Result<_, _>>()?;
+                    let tables = build_cycle_tables(
+                        device,
+                        &HandoffInputs {
+                            rows: &shard.rows,
+                            cycles: shard.cycles,
+                            v_tables: &v_tables,
+                            table_values,
+                            raf_interleaved,
+                            raf_identity,
+                            ra_count,
+                            address_bits: ADDRESS_BITS,
+                        },
+                    )?;
+                    let mut factors = Vec::with_capacity(tables.ra.len() + 1);
+                    factors.push(tables.combined_val);
+                    factors.extend(tables.ra);
+                    Ok(CycleShard {
+                        ordinal: shard.ordinal,
+                        factors,
+                    })
+                });
+                task
+            })
+            .collect();
+        let shards = fan_out(tasks).map_err(|_| failed())?;
 
         self.cycle = Some(
-            DeviceCycleRounds::from_device(
-                &self.r_reduction,
-                tables.combined_val,
-                tables.ra,
-                self.rounds - ADDRESS_BITS,
-            )
-            .map_err(|_| failed())?,
+            DeviceCycleRounds::from_windows(&self.r_reduction, shards, self.rounds - ADDRESS_BITS)
+                .map_err(|_| failed())?,
         );
         Ok(())
     }
@@ -216,6 +301,42 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             .map_err(|_| unsupported())?,
         );
 
+        let windows = witness_windows(cycles);
+        let mut row_shards = Vec::with_capacity(windows.len());
+        for (ordinal, window) in windows.iter().enumerate() {
+            if ordinal == 0 {
+                row_shards.push(RowShard {
+                    ordinal,
+                    rows: Arc::clone(&device_rows),
+                    cycles: window.len,
+                });
+                continue;
+            }
+            let shard = context_for(ordinal).ok_or(KernelError::InvariantViolation {
+                reason: "an instruction read-RAF cycle window names an absent device",
+            })?;
+            let (trace, atoms) = session_window_residency(shard, session, witness, cycles, window)?;
+            let limbs =
+                windowed_trace_columns::<F>(shard, session, witness, cycles, window, [1, 0, 0], 0)?
+                    .lookup;
+            let flags = trace
+                .flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)
+                .map_err(|_| unsupported())?;
+            row_shards.push(RowShard {
+                ordinal,
+                rows: Arc::new(
+                    DeviceRows::from_device_columns(
+                        limbs,
+                        shard.clone_u32(&atoms.table_index)?,
+                        flags,
+                        window.len,
+                    )
+                    .map_err(|_| unsupported())?,
+                ),
+                cycles: window.len,
+            });
+        }
+
         let device = DeviceAddressPhase::with_rows(
             context,
             Arc::clone(&device_rows),
@@ -231,7 +352,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
         Ok(Box::new(DeviceInstructionReadRaf {
             device: Some(device),
             cycle: None,
-            rows: device_rows,
+            row_shards,
             r_reduction,
             cycle_challenges: Vec::with_capacity(dimensions.log_t()),
             prefix_checkpoints: ALL_PREFIXES
@@ -380,19 +501,10 @@ impl<F: Field> SumcheckKernel<F> for DeviceInstructionReadRaf<F> {
                     reason: "CUDA instruction RA claim readback failed",
                 })?;
         let r_cycle: Vec<Fr> = self.cycle_challenges.iter().rev().copied().collect();
-        let eq_cycle = self.context.eq_evals(&r_cycle).map_err(|_| {
+        let (flags, raf_flag) = self.window_flag_claims(&r_cycle).map_err(|_| {
             SumcheckKernelError::InvariantViolation {
-                reason: "CUDA cycle eq table construction failed",
+                reason: "CUDA flag claim readback failed",
             }
-        })?;
-        let (flags, raf_flag) = flag_claims(
-            self.context,
-            &self.rows,
-            &eq_cycle,
-            LookupTableKind::<RISCV_XLEN>::COUNT,
-        )
-        .map_err(|_| SumcheckKernelError::InvariantViolation {
-            reason: "CUDA flag claim readback failed",
         })?;
         let lookup_table_flags: Vec<F> = flags
             .into_iter()
