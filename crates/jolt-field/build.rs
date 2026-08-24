@@ -5,20 +5,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn compile_asm(
-    compiler: &str,
+    compiler: &cc::Tool,
     source: &Path,
     object: &Path,
     asm_dir: &Path,
-    apple_arch: Option<&str>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut command = Command::new(compiler);
+    let mut command = compiler.to_command();
     let _ = command.args(["-c", "-I"]).arg(asm_dir);
-    if let Some(arch) = apple_arch {
-        let _ = command.args(["-arch", arch]);
-    }
     let status = command.arg(source).arg("-o").arg(object).status()?;
     if !status.success() {
-        return Err(io::Error::other(format!("{compiler} failed with {status}")).into());
+        return Err(io::Error::other(format!(
+            "{} failed with {status}",
+            compiler.path().display()
+        ))
+        .into());
     }
     Ok(())
 }
@@ -151,23 +151,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    let target = env::var("TARGET")?;
+    let host = env::var("HOST")?;
+    let compiler = cc::Build::new()
+        .host(&host)
+        .target(&target)
+        .try_get_compiler()?;
+
     let asm_dir = Path::new("asm").join(&target_arch);
 
     let out_dir = PathBuf::from(
         env::var_os("OUT_DIR")
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Cargo did not set OUT_DIR"))?,
     );
-    let compiler = env::var("CC").unwrap_or_else(|_| "cc".to_owned());
-    let apple_arch = if env::var("CARGO_CFG_TARGET_VENDOR").as_deref() == Ok("apple") {
-        Some(match target_arch.as_str() {
-            "aarch64" => "arm64",
-            "x86_64" => "x86_64",
-            _ => unreachable!(),
-        })
-    } else {
-        None
-    };
-
     let mut stems = Vec::new();
     if fp64_linkage {
         stems.extend(["fp64_add", "fp64_sub", "fp64_mul"]);
@@ -187,7 +183,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             &asm_dir.join(format!("{stem}.S")),
             &out_dir.join(format!("{stem}.o")),
             &asm_dir,
-            apple_arch,
         )?;
     }
     Ok(())

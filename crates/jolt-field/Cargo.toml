@@ -45,6 +45,9 @@ num-bigint = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 
+[build-dependencies]
+cc = "1.2"
+
 [[bench]]
 name = "ext4_kernels"
 harness = false

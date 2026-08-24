@@ -1,7 +1,10 @@
 [files]
 # golden_bytes.rs is hex fixture data (byte-encoding pins); hex substrings
 # trigger false positives ("ede", "ba").
-extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
+extend-exclude = [
+    "patches/*.patch",
+    "crates/jolt-field/tests/golden_bytes.rs",
+]
 
 [default.extend-words]
 "groth" = "groth"
@@ -25,8 +28,16 @@ extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
 # (A_tru, A_unt) in the packed (Akita) prove path docs.
 "tru" = "tru"
 "unt" = "unt"
-# HOL Light names and theorem type.
+
+[type.ocaml.extend-words]
+# HOL Light tactic identifiers.
 "ASSUM" = "ASSUM"
+
+[type.sh.extend-words]
+# HOL Light theorem type emitted and checked by the proof runner.
 "thm" = "thm"
-# x86 instruction byte strings contain this immediate byte token.
+
+[type.py.extend-words]
+# Proof checkers contain this x86 immediate and the HOL Light theorem type.
 "ba" = "ba"
+"thm" = "thm"

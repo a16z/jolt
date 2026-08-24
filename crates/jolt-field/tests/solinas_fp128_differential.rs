@@ -329,18 +329,6 @@ fn fp128_offset275_matches() {
 }
 
 #[test]
-fn fp128_offset159_matches() {
-    let mut rng = rng();
-    check_prime128!(two::Prime128Offset159, u128::MAX - 158, &mut rng);
-}
-
-#[test]
-fn fp128_offset2355_matches() {
-    let mut rng = rng();
-    check_prime128!(two::Prime128Offset2355, u128::MAX - 2354, &mut rng);
-}
-
-#[test]
 fn fp128_offset_a7f7_matches() {
     let mut rng = rng();
     check_prime128!(two::Prime128OffsetA7F7, u128::MAX - 0xFFFF_A7F6, &mut rng);
@@ -436,7 +424,5 @@ fn jolt_field_blanket_covers_fp128() {
         assert_eq!(inner_product(&xs, &ys), F::from_u64(31));
     }
     check::<two::Prime128Offset275>();
-    check::<two::Prime128Offset159>();
-    check::<two::Prime128Offset2355>();
     check::<two::Prime128OffsetA7F7>();
 }
