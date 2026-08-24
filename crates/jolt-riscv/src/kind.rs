@@ -454,6 +454,21 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRotW6) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualShiftRightBitmaskW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSrlw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSrliw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSraw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSraiw) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (FieldAdd) => {
         Some(SourceExtension::FieldInline)
     };
@@ -898,6 +913,21 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRotW6) => {
         false
     };
+    (VirtualShiftRightBitmaskW) => {
+        false
+    };
+    (VirtualSrlw) => {
+        false
+    };
+    (VirtualSrliw) => {
+        false
+    };
+    (VirtualSraw) => {
+        false
+    };
+    (VirtualSraiw) => {
+        false
+    };
     (FieldAdd) => {
         true
     };
@@ -1152,6 +1182,21 @@ macro_rules! jolt_target_extension_for_marker {
     };
     (VirtualXorRotW6) => {
         Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualShiftRightBitmaskW) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSrlw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSrliw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSraw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSraiw) => {
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (FieldAdd) => {
         Some(JoltTargetExtension::FieldInline)
@@ -1430,6 +1475,21 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRotW6) => {
+        false
+    };
+    (VirtualShiftRightBitmaskW) => {
+        false
+    };
+    (VirtualSrlw) => {
+        false
+    };
+    (VirtualSrliw) => {
+        false
+    };
+    (VirtualSraw) => {
+        false
+    };
+    (VirtualSraiw) => {
         false
     };
 }

@@ -15,6 +15,8 @@ use right_shift_w::RightShiftWPrefix;
 use sign_extension::SignExtensionPrefix;
 use sign_extension_right_operand::SignExtensionRightOperandPrefix;
 use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
+use sign_extension_w::SignExtensionWPrefix;
+use srlw_sext::SrlwSextPrefix;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -45,6 +47,7 @@ use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use window_sign::WindowSignPrefix;
 use window_sign_pow2::WindowSignPow2Prefix;
+use word_msb::WordMsbPrefix;
 use xor::XorPrefix;
 use xor_rot::XorRotPrefix;
 use xor_rotw::XorRotWPrefix;
@@ -80,10 +83,13 @@ pub mod right_shift_w;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod sign_extension_w;
+pub mod srlw_sext;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod window_sign;
 pub mod window_sign_pow2;
+pub mod word_msb;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotw;
@@ -182,6 +188,9 @@ pub enum Prefixes {
     XorRotW22,
     XorRotW19,
     XorRotW6,
+    WordMsb,
+    SignExtensionW,
+    SrlwSext,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -322,6 +331,11 @@ impl Prefixes {
             }
             Prefixes::WindowSign => WindowSignPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::WindowSignPow2 => WindowSignPow2Prefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::WordMsb => WordMsbPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::SignExtensionW => {
+                SignExtensionWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::SrlwSext => SrlwSextPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -646,6 +660,27 @@ impl Prefixes {
             Prefixes::WindowSignPow2 => {
                 WindowSignPow2Prefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
             }
+            Prefixes::WordMsb => WordMsbPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::SignExtensionW => SignExtensionWPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::SrlwSext => SrlwSextPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
         }
     }
 }
