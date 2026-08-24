@@ -215,6 +215,24 @@ fn modular_lookup_table_indices_match_prover_abi() {
             LookupTableKind::<XLEN>::PextSigned(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::PextSigned(Default::default())),
         ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTW22(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW22(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTW19(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW19(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTW6(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW6(
+                Default::default(),
+            )),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());

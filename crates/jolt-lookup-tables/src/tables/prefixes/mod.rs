@@ -155,6 +155,9 @@ pub enum Prefixes {
     Pow2OffsetW,
     WindowSign,
     WindowSignPow2,
+    XorRotW22,
+    XorRotW19,
+    XorRotW6,
 }
 
 /// Total number of prefix variants.
@@ -214,6 +217,9 @@ macro_rules! dispatch_prefix {
             Prefixes::Pow2OffsetW => pow2_offset_w::Pow2OffsetWPrefix::$method($($args),*),
             Prefixes::WindowSign => window_sign::WindowSignPrefix::$method($($args),*),
             Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
+            Prefixes::XorRotW22 => xor_rotw::XorRotWPrefix::<22>::$method($($args),*),
+            Prefixes::XorRotW19 => xor_rotw::XorRotWPrefix::<19>::$method($($args),*),
+            Prefixes::XorRotW6 => xor_rotw::XorRotWPrefix::<6>::$method($($args),*),
         }
     };
 }

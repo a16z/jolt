@@ -298,16 +298,40 @@ impl Sha256SequenceBuilder {
 
     /// Sigma_0 function of SHA256 compression function: Σ₀(x) = ROTR²(x) ⊕ ROTR¹³(x) ⊕ ROTR²²(x)
     fn sha_sigma_0(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
-        let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 2, 13, rd, ss);
-        let rotri_22 = self.asm.rotri32(rs1, 22, ss);
-        self.asm.xor(rotri_xor, rotri_22, rd)
+        match rs1 {
+            Reg(rs1) => {
+                self.asm.rotri32(Reg(rs1), 11, ss);
+                self.asm.emit_r(Kind::VirtualXORROTW12, rd, rs1, ss);
+                self.asm.emit_r(Kind::VirtualXORROTW22, rd, rs1, rd);
+                Reg(rd)
+            }
+            Imm(value) => {
+                let value = value as u32;
+                Imm(
+                    (value.rotate_right(2) ^ value.rotate_right(13) ^ value.rotate_right(22))
+                        as u64,
+                )
+            }
+        }
     }
 
     /// Sigma_1 function of SHA256 compression function: Σ₁(x) = ROTR⁶(x) ⊕ ROTR¹¹(x) ⊕ ROTR²⁵(x)
     fn sha_sigma_1(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
-        let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 6, 11, rd, ss);
-        let rotri_25 = self.asm.rotri32(rs1, 25, ss);
-        self.asm.xor(rotri_xor, rotri_25, rd)
+        match rs1 {
+            Reg(rs1) => {
+                self.asm.rotri32(Reg(rs1), 18, ss);
+                self.asm.emit_r(Kind::VirtualXORROTW19, rd, rs1, ss);
+                self.asm.emit_r(Kind::VirtualXORROTW6, rd, rs1, rd);
+                Reg(rd)
+            }
+            Imm(value) => {
+                let value = value as u32;
+                Imm(
+                    (value.rotate_right(6) ^ value.rotate_right(11) ^ value.rotate_right(25))
+                        as u64,
+                )
+            }
+        }
     }
 
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
@@ -320,8 +344,8 @@ impl Sha256SequenceBuilder {
 
     /// sigma_1 for word computation: σ₁(x) = ROTR¹⁷(x) ⊕ ROTR¹⁹(x) ⊕ SHR¹⁰(x)
     fn sha_word_sigma_1(&mut self, rs1: u8, rd: u8, ss: u8) {
-        // We don't need to do Imm shenanigans here since words are always in registers
-        self.asm.rotri_xor_rotri32(Reg(rs1), 17, 19, rd, ss);
+        self.asm.rotri32(Reg(rs1), 30, ss);
+        self.asm.emit_r(Kind::VirtualXORROTW19, rd, rs1, ss);
         self.word_shr(rs1, 10, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
     }

@@ -93,6 +93,18 @@ macro_rules! __jolt_asm_stmt {
         use $crate::expand::asm_support::Kind;
         $asm.emit_r(Kind::VirtualXORROTW16, $rd, $rs1, $rs2)
     }};
+    ($asm:expr, xorrotw19 $rd:expr, $rs1:expr, $rs2:expr) => {{
+        use $crate::expand::asm_support::Kind;
+        $asm.emit_r(Kind::VirtualXORROTW19, $rd, $rs1, $rs2)
+    }};
+    ($asm:expr, xorrotw22 $rd:expr, $rs1:expr, $rs2:expr) => {{
+        use $crate::expand::asm_support::Kind;
+        $asm.emit_r(Kind::VirtualXORROTW22, $rd, $rs1, $rs2)
+    }};
+    ($asm:expr, xorrotw6 $rd:expr, $rs1:expr, $rs2:expr) => {{
+        use $crate::expand::asm_support::Kind;
+        $asm.emit_r(Kind::VirtualXORROTW6, $rd, $rs1, $rs2)
+    }};
     ($asm:expr, addi $rd:expr, $rs1:expr, $imm:expr) => {{
         use $crate::expand::asm_support::Kind;
         $asm.emit_i(Kind::ADDI, $rd, $rs1, $imm)

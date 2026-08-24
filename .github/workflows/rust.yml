@@ -741,9 +741,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Run extractor tests
         working-directory: ./zklean-extractor
-        run: cargo test
+        run: cargo nextest run --cargo-quiet
 
   compile-extracted-lean:
     name: Compile extracted Lean

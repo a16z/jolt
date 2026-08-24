@@ -135,6 +135,9 @@ pub use virt::VirtualXorRot32;
 pub use virt::VirtualXorRot63;
 pub use virt::VirtualXorRotW12;
 pub use virt::VirtualXorRotW16;
+pub use virt::VirtualXorRotW19;
+pub use virt::VirtualXorRotW22;
+pub use virt::VirtualXorRotW6;
 pub use virt::VirtualXorRotW7;
 pub use virt::VirtualXorRotW8;
 pub use virt::VirtualZeroExtendWord;
@@ -404,6 +407,9 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualXorRotW12(VirtualXorRotW12<T>),
     VirtualXorRotW8(VirtualXorRotW8<T>),
     VirtualXorRotW7(VirtualXorRotW7<T>),
+    VirtualXorRotW22(VirtualXorRotW22<T>),
+    VirtualXorRotW19(VirtualXorRotW19<T>),
+    VirtualXorRotW6(VirtualXorRotW6<T>),
     WindowMaskW(WindowMaskW<T>),
     PextSigned(PextSigned<T>),
     VirtualAdvice(VirtualAdvice<T>),
@@ -612,6 +618,9 @@ impl_jolt_instructions_flags! {
     VirtualXorRotW12 => VirtualXORROTW12,
     VirtualXorRotW8 => VirtualXORROTW8,
     VirtualXorRotW7 => VirtualXORROTW7,
+    VirtualXorRotW22 => VirtualXORROTW22,
+    VirtualXorRotW19 => VirtualXORROTW19,
+    VirtualXorRotW6 => VirtualXORROTW6,
     WindowMaskW => VirtualWindowMaskW,
     PextSigned => VirtualPextSigned,
     VirtualAdvice => VirtualAdvice,

@@ -156,6 +156,9 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
     WindowMaskW(WindowMaskWTable<XLEN>),
     PextSigned(PextSignedTable<XLEN>),
+    VirtualXORROTW22(VirtualXORROTWTable<XLEN, 22>),
+    VirtualXORROTW19(VirtualXORROTWTable<XLEN, 19>),
+    VirtualXORROTW6(VirtualXORROTWTable<XLEN, 6>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -206,6 +209,9 @@ macro_rules! dispatch {
             Self::VirtualXORROTW7($t) => $expr,
             Self::WindowMaskW($t) => $expr,
             Self::PextSigned($t) => $expr,
+            Self::VirtualXORROTW22($t) => $expr,
+            Self::VirtualXORROTW19($t) => $expr,
+            Self::VirtualXORROTW6($t) => $expr,
         }
     };
 }

@@ -445,6 +445,15 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRotW7) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualXorRotW22) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotW19) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotW6) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (FieldAdd) => {
         Some(SourceExtension::FieldInline)
     };
@@ -880,6 +889,15 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRotW7) => {
         false
     };
+    (VirtualXorRotW22) => {
+        false
+    };
+    (VirtualXorRotW19) => {
+        false
+    };
+    (VirtualXorRotW6) => {
+        false
+    };
     (FieldAdd) => {
         true
     };
@@ -1124,6 +1142,15 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRotW7) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRotW22) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRotW19) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRotW6) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (FieldAdd) => {
@@ -1394,6 +1421,15 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRotW7) => {
+        false
+    };
+    (VirtualXorRotW22) => {
+        false
+    };
+    (VirtualXorRotW19) => {
+        false
+    };
+    (VirtualXorRotW6) => {
         false
     };
 }

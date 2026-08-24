@@ -161,6 +161,9 @@ pub enum Suffixes {
     PextHelper,
     WindowSign,
     WindowSignPow2,
+    XorRotW22,
+    XorRotW19,
+    XorRotW6,
 }
 
 /// Total number of suffix variants.
@@ -238,6 +241,9 @@ impl Suffixes {
             Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
             Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::XorRotW22 => XorRotWSuffix::<22>::suffix_mle(b),
+            Suffixes::XorRotW19 => XorRotWSuffix::<19>::suffix_mle(b),
+            Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
         }
     }
 
