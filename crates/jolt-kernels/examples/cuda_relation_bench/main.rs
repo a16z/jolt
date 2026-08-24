@@ -6,6 +6,7 @@
 
 mod arms;
 mod fixture;
+mod probe;
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -216,19 +217,27 @@ struct Args {
     gpus: usize,
     filter: Option<String>,
     csv: Option<String>,
+    hold: Duration,
+    smi_poll: Duration,
 }
 
 fn usage() -> ! {
     println!(
         "usage: cuda_relation_bench [--name <workload>] [--scales 16,22] [--repeats 3]\n\
          \x20                          [--bytecode-chunks 2] [--gpus 1] [--arm <substring>]\n\
-         \x20                          [--csv <path>]\n\
+         \x20                          [--csv <path>] [--hold-ms 1000] [--smi-poll-ms 500]\n\
          \n\
          workloads: fibonacci | sha2-chain | sha3-chain | btreemap\n\
          Default scales are 16 and 22; 25 is opt-in (it flips the one-hot chunk\n\
          geometry, and its fixture costs 60-120 s per scale).\n\
          Tiers are always optimized and cuda: reference is ~230x slower and is a\n\
-         correctness oracle, not a performance baseline."
+         correctness oracle, not a performance baseline.\n\
+         --hold-ms is the cuda-only device probe: the arm is looped for that long\n\
+         while per-device memory is polled in process and nvidia-smi is polled for\n\
+         utilization and power. 0 disables the probe. The timing table is measured\n\
+         with no sampler running, so it stays comparable across runs. Each nvidia-smi\n\
+         query costs ~45 ms of driver time on this box, so compare the probe's\n\
+         iter ms against the timing table's total before trusting util%."
     );
     std::process::exit(2);
 }
@@ -242,6 +251,8 @@ fn parse_args() -> Args {
         gpus: 1,
         filter: None,
         csv: None,
+        hold: Duration::from_secs(1),
+        smi_poll: Duration::from_millis(500),
     };
     let mut argv = std::env::args().skip(1);
     while let Some(flag) = argv.next() {
@@ -270,6 +281,12 @@ fn parse_args() -> Args {
             "--gpus" => args.gpus = value().parse().unwrap_or_else(|_| usage()),
             "--arm" => args.filter = Some(value()),
             "--csv" => args.csv = Some(value()),
+            "--hold-ms" => {
+                args.hold = Duration::from_millis(value().parse().unwrap_or_else(|_| usage()));
+            }
+            "--smi-poll-ms" => {
+                args.smi_poll = Duration::from_millis(value().parse().unwrap_or_else(|_| usage()));
+            }
             "-h" | "--help" => usage(),
             _ => usage(),
         }
@@ -302,11 +319,18 @@ const TIERS: [(&str, BackendKind); 2] = [
     ("cuda", BackendKind::Cuda),
 ];
 
+const MIB: f64 = 1024.0 * 1024.0;
+
 fn main() {
     let args = parse_args();
     let mut csv = String::from(
         "arm,tier,log_t,prepare_ms,address_ms,handoff_ms,cycle_ms,claims_ms,total_ms\n",
     );
+    let mut gpu_csv = String::from(
+        "arm,log_t,gpu,baseline_mib,peak_mib,own_mib,util_pct,mem_util_pct,watts,iteration_ms,polled_iteration_ms\n",
+    );
+    let devices = jolt_kernels::cuda::device_count();
+    let probing = !args.hold.is_zero() && devices > 0;
 
     for &scale in &args.scales {
         println!(
@@ -322,6 +346,7 @@ fn main() {
             "arm", "tier", "prepare", "address", "handoff", "cycle", "claims", "total",
         );
 
+        let mut probes: Vec<(&str, probe::GpuProbe)> = Vec::new();
         for arm in ARMS {
             if let Some(filter) = &args.filter {
                 if !arm.name.contains(filter.as_str()) {
@@ -369,6 +394,59 @@ fn main() {
                     ms(timing.claims),
                     ms(timing.total()),
                 );
+                if probing && backend == BackendKind::Cuda {
+                    probes.push((
+                        arm.name,
+                        probe::probe(devices, args.hold, args.smi_poll, || {
+                            (arm.run)(&fixture, witness, backend)
+                        }),
+                    ));
+                }
+            }
+        }
+
+        if probes.is_empty() {
+            continue;
+        }
+        println!(
+            "\n{:>34}  {:>3}  {:>11}  {:>11}  {:>11}  {:>7}  {:>7}  {:>7}  {:>8}  {:>4}",
+            "arm", "gpu", "baseline", "peak", "own", "util%", "mem%", "watts", "iter ms", "smi",
+        );
+        for (name, gpu) in &probes {
+            for (ordinal, device) in gpu.devices.iter().enumerate() {
+                let show = |value: Option<f64>| {
+                    value.map_or_else(|| "--".to_owned(), |value| format!("{value:.1}"))
+                };
+                println!(
+                    "{:>34}  {ordinal:>3}  {:>8.0} MiB  {:>8.0} MiB  {:>8.0} MiB  {:>7}  {:>7}  {:>7}  {:>8.1}  {:>4}",
+                    name,
+                    device.baseline as f64 / MIB,
+                    device.peak as f64 / MIB,
+                    device.own() as f64 / MIB,
+                    show(device.util),
+                    show(device.mem_util),
+                    show(device.watts),
+                    gpu.iteration.as_secs_f64() * 1e3,
+                    gpu.smi_samples,
+                );
+                let field = |value: Option<f64>| {
+                    value.map_or_else(String::new, |value| format!("{value:.2}"))
+                };
+                let _ = writeln!(
+                    gpu_csv,
+                    "{},{},{},{:.1},{:.1},{:.1},{},{},{},{:.3},{:.3}",
+                    name,
+                    scale,
+                    ordinal,
+                    device.baseline as f64 / MIB,
+                    device.peak as f64 / MIB,
+                    device.own() as f64 / MIB,
+                    field(device.util),
+                    field(device.mem_util),
+                    field(device.watts),
+                    gpu.iteration.as_secs_f64() * 1e3,
+                    gpu.polled_iteration.as_secs_f64() * 1e3,
+                );
             }
         }
     }
@@ -376,5 +454,10 @@ fn main() {
     if let Some(path) = &args.csv {
         std::fs::write(path, &csv).expect("write the CSV");
         println!("\nwrote {path}");
+        if probing {
+            let gpu_path = format!("{path}.gpu.csv");
+            std::fs::write(&gpu_path, &gpu_csv).expect("write the GPU CSV");
+            println!("wrote {gpu_path}");
+        }
     }
 }

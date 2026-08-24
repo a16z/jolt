@@ -118,27 +118,33 @@ fn tier2_selected(
                 got: count,
             });
         }
-        let g2: Vec<u64> = setup.0.g2_vec[..count]
-            .iter()
-            .flat_map(|base| arena::g2_limbs(&base.0))
-            .collect();
-        let device_g2 = context.upload_raw_u64(&g2)?;
+        let (device_g2, device_g1) =
+            tracing::info_span!("cuda_tier2_stage_rows", lanes = members.len(), rows = count)
+                .in_scope(|| {
+                    let g2: Vec<u64> = setup.0.g2_vec[..count]
+                        .iter()
+                        .flat_map(|base| arena::g2_limbs(&base.0))
+                        .collect();
+                    let device_g2 = context.upload_raw_u64(&g2)?;
 
-        let mut g1 = vec![0u64; members.len() * count * 3 * FQ_LIMBS];
-        if !flatten_rows(columns, &members, count, &mut g1) {
-            return Err(CudaError::InvariantViolation {
-                reason: "a tier-2 group named a column outside the batch",
-            });
-        }
-        let device_g1 = context.upload_raw_u64(&g1)?;
+                    let mut g1 = vec![0u64; members.len() * count * 3 * FQ_LIMBS];
+                    if !flatten_rows(columns, &members, count, &mut g1) {
+                        return Err(CudaError::InvariantViolation {
+                            reason: "a tier-2 group named a column outside the batch",
+                        });
+                    }
+                    Ok((device_g2, context.upload_raw_u64(&g1)?))
+                })?;
 
         let segments: Vec<(usize, usize)> =
             (0..members.len()).map(|lane| (lane * count, 0)).collect();
         let limbs = context.multi_miller_batch(&device_g1, &device_g2, &segments, count)?;
 
         let outputs =
-            final_exponentiations(&limbs, members.len()).ok_or(CudaError::InvariantViolation {
-                reason: "a batched tier-2 Miller output was degenerate",
+            tracing::info_span!("cuda_tier2_final_exp", lanes = members.len()).in_scope(|| {
+                final_exponentiations(&limbs, members.len()).ok_or(CudaError::InvariantViolation {
+                    reason: "a batched tier-2 Miller output was degenerate",
+                })
             })?;
         for (value, &member) in outputs.into_iter().zip(members.iter()) {
             placed.push((member, DoryCommitment(value)));

@@ -573,8 +573,10 @@ where
                         let _ = park_hot_columns(session, source, ordinal, ids, window, built);
                     }
                 }
-                let finished = tracing::info_span!("cuda_commit_tier2", columns = columns.len())
-                    .in_scope(|| PCS::tier2_columns(setup, &columns))?;
+                let rows: usize = columns.iter().map(Vec::len).sum();
+                let finished =
+                    tracing::info_span!("cuda_commit_tier2", columns = columns.len(), rows)
+                        .in_scope(|| PCS::tier2_columns(setup, &columns))?;
                 return finished
                     .into_iter()
                     .zip(ids)

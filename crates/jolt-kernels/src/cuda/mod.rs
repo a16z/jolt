@@ -35,7 +35,8 @@ mod witness;
 
 pub use commitment::DeviceTier1Commitment;
 pub use common::context::{
-    device_count, request_devices, shared_context, CudaKernelContext, DEVICE_COUNT_VARIABLE,
+    context_for, device_count, device_memory_used, request_devices, shared_context,
+    CudaKernelContext, DEVICE_COUNT_VARIABLE,
 };
 pub use common::device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
 pub use common::error::CudaError;

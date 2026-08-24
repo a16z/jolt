@@ -406,6 +406,11 @@ impl CudaKernelContext {
         self.ordinal
     }
 
+    pub fn memory_used(&self) -> Result<(usize, usize), CudaError> {
+        let (free, total) = self.stream.context().mem_get_info()?;
+        Ok((total.saturating_sub(free), total))
+    }
+
     pub(crate) fn require_owned(&self, ordinal: usize) -> Result<(), CudaError> {
         if ordinal == self.ordinal {
             return Ok(());
@@ -1260,4 +1265,18 @@ pub fn shared_context() -> Option<&'static CudaKernelContext> {
 
 pub fn context_for(ordinal: usize) -> Option<&'static CudaKernelContext> {
     pool().get(ordinal)
+}
+
+pub fn device_memory_used() -> Vec<usize> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                pool()
+                    .iter()
+                    .map(|context| context.memory_used().map_or(0, |(used, _)| used))
+                    .collect()
+            })
+            .join()
+            .unwrap_or_default()
+    })
 }

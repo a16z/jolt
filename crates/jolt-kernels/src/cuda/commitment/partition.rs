@@ -191,7 +191,8 @@ pub(super) fn split_columns<F: Field>(
             ))
         }));
     }
-    let parts = fan_out(tasks)?;
+    let parts = tracing::info_span!("cuda_commit_tier1_fanout", windows = windows.len())
+        .in_scope(|| fan_out(tasks))?;
     let mut columns = Vec::with_capacity(parts.len());
     let mut traces = Vec::with_capacity(parts.len());
     let mut hots = Vec::with_capacity(parts.len());
@@ -200,7 +201,9 @@ pub(super) fn split_columns<F: Field>(
         traces.push(trace);
         hots.push(built);
     }
-    Ok((stitch::<F>(columns, windows, hot, plan)?, traces, hots))
+    let stitched = tracing::info_span!("cuda_commit_stitch", windows = windows.len())
+        .in_scope(|| stitch::<F>(columns, windows, hot, plan))?;
+    Ok((stitched, traces, hots))
 }
 
 #[cfg(test)]

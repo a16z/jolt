@@ -948,15 +948,18 @@ impl CudaKernelContext {
         rows: &[i128],
         row_len: usize,
     ) -> Result<Vec<JacobianLimbs>, CudaError> {
-        let mut magnitudes = vec![0u64; rows.len()];
-        let mut signs = vec![0u8; rows.len()];
-        if !split_signed_magnitudes(rows, &mut magnitudes, &mut signs) {
-            return Err(CudaError::InvariantViolation {
-                reason: "signed MSM scalars must fit in [-u64::MAX, u64::MAX]",
-            });
-        }
-        self.require_owned(bases.ordinal())?;
-        let device = self.upload_u64_slice(&magnitudes)?;
+        let (device, signs) = tracing::info_span!("cuda_msm_i128_stage", len = rows.len())
+            .in_scope(|| {
+                let mut magnitudes = vec![0u64; rows.len()];
+                let mut signs = vec![0u8; rows.len()];
+                if !split_signed_magnitudes(rows, &mut magnitudes, &mut signs) {
+                    return Err(CudaError::InvariantViolation {
+                        reason: "signed MSM scalars must fit in [-u64::MAX, u64::MAX]",
+                    });
+                }
+                self.require_owned(bases.ordinal())?;
+                Ok((self.upload_u64_slice(&magnitudes)?, signs))
+            })?;
         let accumulator = self.pippenger_device(
             bases,
             DeviceScalars {
@@ -968,7 +971,8 @@ impl CudaKernelContext {
             row_len,
             64,
         )?;
-        Ok(unflatten_jacobian(&self.download_u64(&accumulator)?))
+        tracing::info_span!("cuda_msm_i128_download", len = rows.len())
+            .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&accumulator)?)))
     }
 
     #[cfg(test)]
@@ -1115,6 +1119,8 @@ impl CudaKernelContext {
         let chunk_count_arg = Self::count_of(chunk_count)?;
         let one_hot_k_arg = Self::count_of(one_hot_k)?;
 
+        let count_span =
+            tracing::info_span!("cuda_commit_one_hot_count", segments, cycles).entered();
         let mut counts = self.alloc_u32(segments + 1)?;
         let mut builder = self.stream().launch_builder(self.msm_one_hot_count());
         let _ = builder.arg(hot);
@@ -1134,6 +1140,7 @@ impl CudaKernelContext {
         // one counter are atomic.
         let _ = unsafe { builder.launch(Self::launch_config(cycle_count)) }?;
         self.stream().synchronize()?;
+        drop(count_span);
 
         let (offsets, total, widest) = tracing::info_span!("cuda_commit_one_hot_scan", segments)
             .in_scope(|| {
@@ -1162,6 +1169,8 @@ impl CudaKernelContext {
                 ))
             })?;
 
+        let scatter_span =
+            tracing::info_span!("cuda_commit_one_hot_scatter", segments, entries = total).entered();
         let mut cursor = self.clone_u32(&offsets)?;
         let mut indices = self.alloc_u32(total.max(1))?;
         let mut builder = self.stream().launch_builder(self.msm_one_hot_scatter());
@@ -1182,9 +1191,16 @@ impl CudaKernelContext {
         // excluded from the histogram and return without writing.
         let _ = unsafe { builder.launch(Self::launch_config(cycle_count)) }?;
         self.stream().synchronize()?;
+        drop(scatter_span);
 
         let mut output = self.alloc_u64(segments * 3 * FQ_LIMBS)?;
-        tracing::info_span!("cuda_commit_one_hot_segments", segments).in_scope(|| {
+        tracing::info_span!(
+            "cuda_commit_one_hot_segments",
+            segments,
+            widest,
+            entries = total
+        )
+        .in_scope(|| {
             self.launch_segment_sums(
                 bases,
                 SegmentPlan {
@@ -1197,7 +1213,8 @@ impl CudaKernelContext {
                 &mut output,
             )
         })?;
-        Ok(unflatten_jacobian(&self.download_u64(&output)?))
+        tracing::info_span!("cuda_commit_one_hot_download", segments)
+            .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&output)?)))
     }
 
     fn canonical_scalars(&self, values: &DeviceFrVec) -> Result<CudaSlice<u64>, CudaError> {
@@ -2087,6 +2104,14 @@ impl CudaKernelContext {
         let rows_arg = Self::count_of(rows)?;
 
         if Self::batched_windows(rows, buckets, windows, len) {
+            let _batched = tracing::info_span!(
+                "cuda_pippenger_batched",
+                rows,
+                windows,
+                buckets,
+                lanes = signs.len() * windows
+            )
+            .entered();
             let mut lanes = Vec::with_capacity(signs.len() * windows);
             for _ in 0..windows {
                 lanes.extend_from_slice(signs);
@@ -2119,6 +2144,8 @@ impl CudaKernelContext {
             return Ok(accumulator);
         }
 
+        let _looped =
+            tracing::info_span!("cuda_pippenger_looped", rows, windows, buckets).entered();
         let device_signs = self.upload_u8_slice(signs)?;
         let mut window_points = self.alloc_u64(rows * 3 * FQ_LIMBS)?;
         for window in (0..windows).rev() {

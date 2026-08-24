@@ -95,16 +95,20 @@ impl DeviceTier1Commitment for CudaDoryScheme {
     ) -> Result<Vec<crate::cuda::commitment::FinishedColumn<Self>>, CudaError> {
         let commitments = tier2::tier2_columns(setup, columns)?;
         let blind = <Fr as jolt_field::FromPrimitiveInt>::from_u64(0);
-        #[cfg(feature = "parallel")]
-        let partials = columns
-            .par_iter()
-            .map(|rows| DoryScheme::partial_from_rows(setup, rows))
-            .collect::<Result<Vec<_>, _>>()?;
-        #[cfg(not(feature = "parallel"))]
-        let partials = columns
-            .iter()
-            .map(|rows| DoryScheme::partial_from_rows(setup, rows))
-            .collect::<Result<Vec<_>, _>>()?;
+        let partials =
+            tracing::info_span!("cuda_commit_hints", columns = columns.len()).in_scope(|| {
+                #[cfg(feature = "parallel")]
+                let partials = columns
+                    .par_iter()
+                    .map(|rows| DoryScheme::partial_from_rows(setup, rows))
+                    .collect::<Result<Vec<_>, _>>();
+                #[cfg(not(feature = "parallel"))]
+                let partials = columns
+                    .iter()
+                    .map(|rows| DoryScheme::partial_from_rows(setup, rows))
+                    .collect::<Result<Vec<_>, _>>();
+                partials
+            })?;
         commitments
             .into_iter()
             .zip(partials)
