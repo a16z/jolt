@@ -11,7 +11,7 @@ use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::primitives::fold_lanes_by_halving;
+use crate::cuda::common::primitives::reduce_lanes;
 
 const fn absent() -> CudaError {
     CudaError::InvariantViolation {
@@ -232,7 +232,7 @@ impl DeviceCycleRounds {
         }?;
         context.stream().synchronize()?;
 
-        fold_lanes_by_halving(context, partials, lanes, blocks)?.to_host()
+        reduce_lanes(context, partials, lanes, blocks)?.to_host()
     }
 
     pub fn round_message<F: Field>(

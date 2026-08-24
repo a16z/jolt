@@ -75,26 +75,6 @@ extern "C" __global__ void dense_product_round_kernel(
     }
 }
 
-extern "C" __global__ void lane_sum_reduce_kernel(const u64 *__restrict__ in,
-                                                 u64 *__restrict__ out,
-                                                 unsigned int lanes,
-                                                 unsigned int in_width,
-                                                 unsigned int out_width) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int lane = blockIdx.y;
-    if (i >= out_width || lane >= lanes) return;
-    u64 acc[LIMBS];
-    load4(in + (lane * in_width + i) * LIMBS, acc);
-    unsigned int mate = i + out_width;
-    if (mate < in_width) {
-        u64 other[LIMBS], sum[LIMBS];
-        load4(in + (lane * in_width + mate) * LIMBS, other);
-        fr_add(acc, other, sum);
-        for (int l = 0; l < LIMBS; l++) acc[l] = sum[l];
-    }
-    store4(out + (lane * out_width + i) * LIMBS, acc);
-}
-
 extern "C" __global__ void lane_sum_total_kernel(const u64 *__restrict__ in,
                                                  u64 *__restrict__ out, unsigned int width) {
     extern __shared__ u64 scratch[];

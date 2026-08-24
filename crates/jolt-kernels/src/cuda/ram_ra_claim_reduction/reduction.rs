@@ -7,7 +7,7 @@ use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::primitives::fold_lanes_by_halving;
+use crate::cuda::common::primitives::reduce_lanes;
 
 pub const TERMS: usize = 3;
 
@@ -475,7 +475,7 @@ impl DeviceRamRaReduction {
             })
         }?;
         context.stream().synchronize()?;
-        let folded = fold_lanes_by_halving(context, partials, lanes, blocks)?;
+        let folded = reduce_lanes(context, partials, lanes, blocks)?;
         folded
             .to_host()?
             .into_iter()
@@ -536,7 +536,7 @@ impl DeviceRamRaReduction {
             })
         }?;
         context.stream().synchronize()?;
-        let folded = fold_lanes_by_halving(context, partials, lanes, blocks)?;
+        let folded = reduce_lanes(context, partials, lanes, blocks)?;
         folded
             .to_host()?
             .into_iter()

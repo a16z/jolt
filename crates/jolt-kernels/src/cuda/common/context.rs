@@ -41,7 +41,6 @@ pub struct CudaKernelContext {
     pub(super) scan_u32_block: CudaFunction,
     pub(super) scan_u32_add_offsets: CudaFunction,
     dense_product_round: CudaFunction,
-    lane_sum_reduce: CudaFunction,
     lane_sum_total: CudaFunction,
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
@@ -63,7 +62,7 @@ pub struct CudaKernelContext {
     ap_scale_shift: CudaFunction,
     ap_condense: CudaFunction,
     ap_raf_prefix: CudaFunction,
-    ap_bind_strided: CudaFunction,
+    ap_bind_lanes: CudaFunction,
     ap_round_message_hinted: CudaFunction,
     ap_combined_val: CudaFunction,
     ap_ra: CudaFunction,
@@ -216,7 +215,6 @@ impl CudaKernelContext {
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
             dense_product_round: module.load_function("dense_product_round_kernel")?,
-            lane_sum_reduce: module.load_function("lane_sum_reduce_kernel")?,
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
@@ -238,7 +236,7 @@ impl CudaKernelContext {
             ap_scale_shift: module.load_function("ap_scale_shift_kernel")?,
             ap_condense: module.load_function("ap_condense_kernel")?,
             ap_raf_prefix: module.load_function("ap_raf_prefix_kernel")?,
-            ap_bind_strided: module.load_function("ap_bind_strided_kernel")?,
+            ap_bind_lanes: module.load_function("ap_bind_lanes_kernel")?,
             ap_round_message_hinted: module.load_function("ap_round_message_hinted_kernel")?,
             ap_combined_val: module.load_function("ap_combined_val_kernel")?,
             ap_ra: module.load_function("ap_ra_kernel")?,
@@ -492,10 +490,6 @@ impl CudaKernelContext {
 
     pub(crate) const fn dense_product_round(&self) -> &CudaFunction {
         &self.dense_product_round
-    }
-
-    pub(crate) const fn lane_sum_reduce(&self) -> &CudaFunction {
-        &self.lane_sum_reduce
     }
 
     pub(crate) const fn lane_sum_total(&self) -> &CudaFunction {
@@ -958,8 +952,8 @@ impl CudaKernelContext {
         &self.ap_raf_prefix
     }
 
-    pub(crate) const fn ap_bind_strided(&self) -> &CudaFunction {
-        &self.ap_bind_strided
+    pub(crate) const fn ap_bind_lanes(&self) -> &CudaFunction {
+        &self.ap_bind_lanes
     }
 
     pub(crate) const fn ap_round_message_hinted(&self) -> &CudaFunction {
