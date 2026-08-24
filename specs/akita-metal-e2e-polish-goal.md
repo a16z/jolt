@@ -27,13 +27,14 @@ The paired worktrees are:
   `/Users/mgeorghiades/worktrees/akita-metal-eval-proof`.
 
 The accepted runtime sources are Jolt `9fb538461` and Akita `a454c7575`. Later heads
-contain documentation, rejected experiments, and exact reverts: Jolt `5f0d3e4d3` and
-Akita `a027f03ca` after the first polish tranche. Audit the actual heads and trees
+contain documentation, rejected experiments, and exact reverts: Jolt `57598b494` and
+Akita `a027f03ca` after the first two polish tranches. Audit the actual heads and trees
 before resuming. Jolt's modified `Cargo.lock` and untracked `.cargo/config.toml` are
 intentional local Akita path overrides. Do not commit or remove them. Do not push.
 
-The release binary was rebuilt from those accepted runtime trees after the C1 revert.
-Rebuild only after another runtime-source change.
+The current release binary was built from rejected C2 before its source revert. Rebuild
+from the accepted runtime trees before another measurement; rebuild again only after a
+later runtime-source change.
 
 The CPU anchors and last accepted Metal observations are:
 
@@ -72,7 +73,12 @@ Do not repeat these campaigns:
 - two D512 root tasks per SIMDgroup. It halved modeled matrix reads at T25 from
   207.23 GB to 104.15 GB, but root GPU time regressed from 1.473 s to 1.729 s and
   complete proving from 6.45 s to 6.71 s. Register pressure or reduced issue rate
-  dominates the removed traffic. Do not retry larger task-reuse factors.
+  dominates the removed traffic. Do not retry larger task-reuse factors;
+- a materialized CPU ProductRemainder opening hybrid. It reduced its local extraction
+  from 1.897 s to 0.762 s in two verified T28 runs, but the 4 GiB equality-table walk
+  displaced later unified-memory work and regressed complete proving from 48.08 s to
+  a 49.59 s mean. Do not retry it unless the table is eliminated and the cross-stage
+  memory effect is priced separately.
 
 The detailed evidence is in
 [akita-metal-high-activity-ram.md](akita-metal-high-activity-ram.md),
@@ -93,44 +99,43 @@ before another comparison.
 Use one append-only ignored event ledger and one small current model under
 `benchmark-runs/akita-metal-e2e-polish/`. Do not build a large search harness.
 
-### 2. Current tranche: route pressured product-output extraction to CPU
+### 2. Current tranche: carry-free D512 root accumulation
 
-A fresh post-A2 BTreeMap T28 trace verified in 48.98 s (diagnostic only; retain the
-48.08 s untraced score). Its disjoint top-level spans are 14.219 s commit, 28.842 s
-PIOP, and 5.897 s eval proof. Stage 2 is 7.656 s on Metal versus 8.006 s on optimized
-CPU because several opposing deltas cancel. The clearest bounded anomaly is the final
-eight-opening extraction for `ProductRemainder`:
+The accepted D512 root kernel keeps eight fp128 output coefficients per SIMD lane.
+Each selected source currently performs a four-word carry chain and updates a whole-
+field wrap counter. At BTreeMap T28, 14,310 Metal tasks and about 1.99 billion Metal
+hot entries imply roughly 1.019 trillion fp128 coefficient additions. A T25 density
+calibration prices the unchanged arithmetic at about 131 billion additions/s, or a
+7.77-second T28 compute term. The unchanged 1,810.10 GiB traffic model has a
+4.388-second floor at 412.5 GiB/s; the measured root is 12.510 seconds GPU-active.
 
-- current Metal wall: 1.897 s;
-- current Metal GPU-active: 0.081 s;
-- frozen optimized-CPU wall: 0.474 s;
-- BTreeMap-only exposed gap: about 1.423 s;
-- Fibonacci Metal/CPU: 0.079 s / 0.553 s, so a universal CPU route would regress it;
-- SHA-2 Metal/CPU: 0.893 s / 0.639 s, only about 0.25 s of upside.
+Replace only the per-lane accumulator representation with eight signed radix-`2^16`
+digit accumulators. The canonical schedule already divides every D512 block into 16
+position partials. At the largest qualified shape each partial contains at most
+32,768 trace rows, so every signed digit sum is bounded by
+`32768 * 65535 = 2,147,450,880`, strictly inside `i32`. The endpoint reduction
+propagates the eight signed digits once and applies the existing pseudo-Mersenne field
+reduction. Matrix layout, selected-row traversal, task ownership, scratch/output
+layout, hybrid split, commitment, proof, transcript, and verifier remain unchanged.
 
-Keep every Metal product uni-skip and remainder round unchanged. After all round
-challenges are fixed, use the existing optimized CPU opening walk over an owning
-handle to the original slice-backed witness rows only when public trace geometry and
-RAM activity select it. The initial production rule is T28 with at least `2^25`
-certified RAM accesses; it selects BTreeMap's 65,195,206 accesses but excludes SHA-2's
-4,196,259 and Fibonacci's sparse route. Missing owning rows keep the Metal path.
+This raises nominal live accumulator state from 40 to 64 32-bit values per lane, but
+prior fp128 evidence places eight wide outputs below the measured register cliff; ten
+and sixteen wide outputs failed. Unlike C1, it does not add a second task. It replaces
+four dependent carry-aware word updates per coefficient with eight independent signed
+digit additions. The static instruction model reduces the hot arithmetic term by
+about one third while preserving traffic, predicting 9.3--10.3 seconds T28 root GPU
+time and roughly 44.9--45.9 seconds complete proving before unrelated noise.
 
-The CPU walk constructs one T-element fp128 equality table, exactly 4 GiB at T28,
-then extracts the same eight typed columns in one parallel pass. The frozen CPU trace
-is the best measured latency control. Under the live Metal allocation pressure,
-predict 0.47--0.85 s for the opening walk, 1.05--1.43 s affected-span savings, and
-roughly 46.7--47.4 s complete proving before run noise. The accepted 80.08 GiB peak
-projects to about 84.1 GiB, below the 90 GiB guard.
-
-Before implementation, factor the CPU formula into one shared helper rather than
-copying it. Add a red exact-parity test that forces the activity route, verifies the
-same output claims as optimized CPU, and asserts that the route ran exactly once.
-Then run that focused test and one verified BTreeMap T28 treatment. A T25 timing
-sentinel is unnecessary because the public T28 cutoff makes its route unreachable;
-the focused test must explicitly cover the off route instead. Reject if the CPU
-opening walk exceeds 0.85 s, complete proving exceeds 47.58 s, RSS exceeds 90 GiB,
-proof verification fails, telemetry is missing, or an ineligible geometry routes.
-This changes neither protocol nor soundness.
+First add a red route-identity plus exact CPU-parity test, including positive,
+negative, maximum-row, partial-boundary, and final partial cases. Compile the exact
+1,024-thread pipeline and run the focused Akita tests. Then run one verified BTreeMap
+T25 sentinel after rebuilding. Admit T28 only if root GPU time is at most 1.33 seconds
+from the 1.473-second parent, modeled matrix/lane/scratch bytes are unchanged, the
+hybrid split is unchanged, and the complete proof does not regress. At T28 require
+root GPU at most 10.3 seconds, complete proving at most 46.2 seconds, RSS at most
+90 GiB, exact verification, and the expected route. Any miss restores the carry-chain
+kernel without tuning radix, partial count, task width, or hybrid split. This is an
+execution-only Akita change and does not change soundness.
 
 ### 3. Recompute the complete critical path
 
@@ -151,7 +156,7 @@ localization evidence, not an additive budget after the retained RAM/eval change
 Rank candidates by credible complete-prover seconds divided by implementation and
 correctness risk. The likely queue is:
 
-1. the high-activity ProductRemainder output CPU hybrid above;
+1. the carry-free D512 root representation above;
 2. commit arithmetic reduction with one task per SIMDgroup, or wrapper,
    synchronization, and CPU-tail residue, but only if new telemetry shows it on the
    critical path;
@@ -275,27 +280,27 @@ performance, and useful public geometry/activity-based CPU/Metal crossovers at l
 scales. Once all three clear 5x with credible margin, continue while a simple bounded
 candidate has at least roughly 0.5 seconds or 1% of credible T28 upside.
 
-Do not retry C1: two D512 tasks per SIMDgroup halved modeled matrix reads at T25 but
-regressed root GPU time from 1.473s to 1.729s and was exactly reverted. The current
-first tranche is the high-activity ProductRemainder output hybrid in Jolt. Preserve
-all Metal product rounds; after their challenges are fixed, route only the final
-eight-opening extraction through the existing optimized CPU formula when the public
-geometry is at least T28, the certified RAM access count is at least 2^25, and an
-owning slice-backed witness handle exists. BTreeMap has 65,195,206 accesses; SHA-2
-has 4,196,259, and Fibonacci stays sparse. Missing eligibility must keep the current
-Metal route.
+Do not retry C1: two D512 tasks per SIMDgroup halved modeled matrix reads but regressed
+root GPU time. Do not retry C2: two exact high-activity CPU ProductRemainder treatments
+saved 1.135s locally but regressed complete proving to a 49.59s mean because their
+4GiB equality table perturbed later unified-memory work. Both were exactly reverted.
 
-Factor the CPU opening formula into one shared helper rather than duplicating it.
-Before production code, record the exact boundary: a 4GiB T28 fp128 equality table
-plus one row-extraction pass, frozen CPU output wall 0.474s versus current Metal wall
-1.897s and GPU-active 0.081s, predicted CPU-hybrid wall 0.47--0.85s, projected RSS
-about 84.1GiB, and a complete-prover target below 47.58s from the 48.08s parent. Add
-a red test that forces the route, checks exact output-claim parity, asserts one route
-hit, and covers the off condition. Run the focused test and then at most one verified
-BTreeMap T28 treatment; skip a timed T25 sentinel because the T28 cutoff makes this
-candidate unreachable there. Reject on output wall above 0.85s, complete proving
-above 47.58s, RSS above 90GiB, verifier failure, missing telemetry, or wrong routing.
-This is an implementation-only hybrid and must not change the protocol.
+The current tranche is carry-free D512 root accumulation in Akita. Keep one task per
+SIMDgroup and the exact D512 schedule, traffic, hybrid split, output, proof, transcript,
+and verifier. Replace the eight per-lane fp128 carry-chain accumulators with eight
+signed radix-2^16 digit accumulators and reduce once per position partial. The existing
+16 partials bound every digit by 32768*65535=2,147,450,880, strictly inside i32 even at
+T28. Prior Akita evidence places eight wide outputs below the register cliff; ten and
+sixteen failed. The T28 model is 4.388s compulsory traffic plus a reduced arithmetic
+term, predicting 9.3--10.3s root GPU from 12.510s.
+
+Add a red route-identity and exact CPU-parity test covering both signs, the row bound,
+and partial endpoints. Run focused Akita tests and pipeline compilation, then one
+verified BTreeMap T25 sentinel. Admit one T28 run only if T25 root GPU is at most
+1.33s from 1.473s with unchanged traffic and routing. At T28 require root GPU at most
+10.3s, complete proving at most 46.2s, RSS at most 90GiB, and exact verification.
+Reject and exactly revert without tuning the radix, partial count, task width, or
+hybrid split if any gate misses.
 
 After that result, recompute the complete critical path. Commit work alone cannot
 close BTreeMap's current 14.77-second gap to its 33.31-second 5x ceiling, so select the
