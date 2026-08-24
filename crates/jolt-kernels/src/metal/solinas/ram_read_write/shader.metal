@@ -2,9 +2,12 @@
 
 #define RAM_READ_WRITE_HOT_THRESHOLD 4096u
 #define RAM_READ_WRITE_SIMD_WIDTH 32u
-#define RAM_READ_WRITE_HOT_THREADS 256u
-#define RAM_READ_WRITE_HOT_SIMDGROUPS \
-    (RAM_READ_WRITE_HOT_THREADS / RAM_READ_WRITE_SIMD_WIDTH)
+#define RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS 1024u
+#define RAM_READ_WRITE_HOT_COMPACTION_MAX_SIMDGROUPS \
+    (RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS / RAM_READ_WRITE_SIMD_WIDTH)
+#define RAM_READ_WRITE_HOT_MESSAGE_THREADS 256u
+#define RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS \
+    (RAM_READ_WRITE_HOT_MESSAGE_THREADS / RAM_READ_WRITE_SIMD_WIDTH)
 
 struct RamReadWriteSegment {
     uint offset;
@@ -288,7 +291,7 @@ kernel void solinas_ram_read_write_address_hot(
     RamReadWriteSegment segment = segments[segment_index];
     uint begin = segment.offset;
     uint end = begin + segment.length;
-    threadgroup uint group_offsets[RAM_READ_WRITE_HOT_SIMDGROUPS];
+    threadgroup uint group_offsets[RAM_READ_WRITE_HOT_COMPACTION_MAX_SIMDGROUPS];
     threadgroup uint compacted_length;
     threadgroup uint previous_chunk_parent;
     threadgroup uint current_chunk_last_parent;
@@ -364,7 +367,8 @@ kernel void solinas_ram_read_write_address_hot(
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (tid == 0u) {
             uint cursor = compacted_length;
-            for (uint group = 0u; group < RAM_READ_WRITE_HOT_SIMDGROUPS; group++) {
+            uint simdgroups = threads / RAM_READ_WRITE_SIMD_WIDTH;
+            for (uint group = 0u; group < simdgroups; group++) {
                 uint count = group_offsets[group];
                 group_offsets[group] = cursor;
                 cursor += count;
@@ -512,18 +516,18 @@ kernel void solinas_ram_read_write_address_hot_message(
 
     q_zero = solinas_simd_sum_32(q_zero);
     q_infinity = solinas_simd_sum_32(q_infinity);
-    threadgroup SolinasFp128 zero_sums[RAM_READ_WRITE_HOT_SIMDGROUPS];
-    threadgroup SolinasFp128 infinity_sums[RAM_READ_WRITE_HOT_SIMDGROUPS];
+    threadgroup SolinasFp128 zero_sums[RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS];
+    threadgroup SolinasFp128 infinity_sums[RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS];
     if (lane == 0u) {
         zero_sums[simdgroup] = q_zero;
         infinity_sums[simdgroup] = q_infinity;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (simdgroup == 0u) {
-        q_zero = lane < RAM_READ_WRITE_HOT_SIMDGROUPS
+        q_zero = lane < RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS
             ? zero_sums[lane]
             : solinas_zero();
-        q_infinity = lane < RAM_READ_WRITE_HOT_SIMDGROUPS
+        q_infinity = lane < RAM_READ_WRITE_HOT_MESSAGE_SIMDGROUPS
             ? infinity_sums[lane]
             : solinas_zero();
         q_zero = solinas_simd_sum_32(q_zero);

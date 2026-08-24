@@ -23,6 +23,7 @@ pub const RAM_READ_WRITE_REDUCTION_WIDTH: usize = 32;
 pub const RAM_READ_WRITE_CYCLE_TILE_LOG2: usize = 12;
 pub const RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD: usize = 1 << 12;
 pub const RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE: usize = 1 << 12;
+pub const RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS: usize = 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

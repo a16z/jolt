@@ -792,6 +792,7 @@ impl MetalBackend {
             p99_segment = stats.p99_segment,
             hot_addresses = stats.hot_addresses,
             hot_message_chunks = stats.hot_message_chunks,
+            hot_compaction_threads = stats.hot_compaction_threads,
             address_bytes = stats.address_bytes,
             cycle_bytes = stats.cycle_bytes,
             resident_bytes = sequence.resident_bytes(),

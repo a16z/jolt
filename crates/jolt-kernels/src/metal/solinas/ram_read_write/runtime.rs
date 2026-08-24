@@ -16,9 +16,9 @@ use super::{
     CycleProductRoot, HotChunk, PhaseParams, Segment, RAM_READ_WRITE_ADDRESS_HOT_MESSAGE_PIPELINE,
     RAM_READ_WRITE_ADDRESS_HOT_PIPELINE, RAM_READ_WRITE_ADDRESS_PIPELINE,
     RAM_READ_WRITE_CYCLE_PIPELINE, RAM_READ_WRITE_CYCLE_TILE_LOG2,
-    RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE, RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD,
-    RAM_READ_WRITE_REDUCTION_PIPELINE, RAM_READ_WRITE_REDUCTION_WIDTH, RAM_READ_WRITE_SIMD_WIDTH,
-    RAM_READ_WRITE_THREADS,
+    RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS, RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE,
+    RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD, RAM_READ_WRITE_REDUCTION_PIPELINE,
+    RAM_READ_WRITE_REDUCTION_WIDTH, RAM_READ_WRITE_SIMD_WIDTH, RAM_READ_WRITE_THREADS,
 };
 use crate::metal::solinas::{
     completed_command_gpu_time, encode_column_reductions, set_inline_bytes, Fp128, MetalError,
@@ -36,6 +36,7 @@ pub(crate) struct RamReadWriteBucketStats {
     pub p99_segment: usize,
     pub hot_addresses: usize,
     pub hot_message_chunks: usize,
+    pub hot_compaction_threads: usize,
     pub address_bytes: usize,
     pub cycle_bytes: usize,
 }
@@ -113,6 +114,7 @@ pub(crate) struct RamReadWriteSequence {
     address_count: usize,
     hot_address_count: usize,
     hot_message_chunk_count: usize,
+    hot_address_threads: usize,
     tile_count: usize,
     tile_log: usize,
     rounds_bound: usize,
@@ -318,8 +320,10 @@ impl SolinasMetal {
             Self::limits(&cycle_pipeline),
         )?;
         let address_hot_limits = Self::limits(&address_hot_pipeline);
+        let address_hot_requested = RAM_READ_WRITE_HOT_COMPACTION_MAX_THREADS
+            .min(address_hot_limits.max_total_threads_per_threadgroup);
         let address_hot_threads =
-            Self::resolve_threadgroup_width(Some(RAM_READ_WRITE_THREADS), address_hot_limits)?;
+            Self::resolve_threadgroup_width(Some(address_hot_requested), address_hot_limits)?;
         let address_hot_message_limits = Self::limits(&address_hot_message_pipeline);
         let address_hot_message_threads = Self::resolve_threadgroup_width(
             Some(RAM_READ_WRITE_THREADS),
@@ -332,7 +336,6 @@ impl SolinasMetal {
         if address_hot_limits.thread_execution_width != RAM_READ_WRITE_SIMD_WIDTH
             || address_hot_message_limits.thread_execution_width != RAM_READ_WRITE_SIMD_WIDTH
             || address_threads != RAM_READ_WRITE_THREADS
-            || address_hot_threads != RAM_READ_WRITE_THREADS
             || address_hot_message_threads != RAM_READ_WRITE_THREADS
             || cycle_threads != RAM_READ_WRITE_THREADS
             || reduction_threads != RAM_READ_WRITE_REDUCTION_WIDTH
@@ -342,6 +345,7 @@ impl SolinasMetal {
             ));
         }
 
+        plan.stats.hot_compaction_threads = address_hot_threads;
         Ok(RamReadWriteSequence {
             context: self.clone(),
             pipelines: RamReadWritePipelines {
@@ -361,6 +365,7 @@ impl SolinasMetal {
             address_count,
             hot_address_count: plan.hot_addresses.len(),
             hot_message_chunk_count: plan.hot_message_chunks.len(),
+            hot_address_threads: address_hot_threads,
             tile_count,
             tile_log,
             rounds_bound: 0,
@@ -657,7 +662,7 @@ impl RamReadWriteSequence {
                 depth: 1,
             },
             MTLSize {
-                width: RAM_READ_WRITE_THREADS as u64,
+                width: self.hot_address_threads as u64,
                 height: 1,
                 depth: 1,
             },
@@ -1027,6 +1032,7 @@ fn bucket_stats(
         p99_segment: percentile(99),
         hot_addresses,
         hot_message_chunks,
+        hot_compaction_threads: 0,
         address_bytes,
         cycle_bytes,
     }
