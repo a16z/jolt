@@ -127,6 +127,29 @@ impl<F: Field> JointPolynomial<F> {
                 });
             }
         }
+        if let Some(column) = self.zero_extended_source()? {
+            let columns = 1usize << sigma;
+            if columns > 0 && column.len().is_multiple_of(columns) {
+                let rows = column.len() / columns;
+                let head = left.get(..rows).ok_or(CudaError::LengthMismatch {
+                    expected: rows,
+                    got: left.len(),
+                })?;
+                let folded = tracing::info_span!(
+                    "cuda_opening_prefix_fold",
+                    sigma,
+                    len = column.len(),
+                    domain = 1usize << self.grid.total_vars
+                )
+                .in_scope(|| {
+                    self.context
+                        .fold_rows(&column, require_fr_slice(head)?, sigma)
+                })?;
+                return fr_vec_into(folded).ok_or(CudaError::NotImplemented {
+                    kernel: "CUDA kernels support only the BN254 scalar field",
+                });
+            }
+        }
         let embedded = self.embed()?;
         let folded = tracing::info_span!("cuda_opening_fold", sigma).in_scope(|| {
             self.context
@@ -135,6 +158,25 @@ impl<F: Field> JointPolynomial<F> {
         fr_vec_into(folded).ok_or(CudaError::NotImplemented {
             kernel: "CUDA kernels support only the BN254 scalar field",
         })
+    }
+
+    fn zero_extended_source(&self) -> Result<Option<DeviceFrVec>, CudaError> {
+        let domain = 1usize << self.grid.total_vars;
+        let column = match &self.source {
+            JointSource::DeviceDense {
+                column,
+                plan: EmbedPlan::ZeroExtend,
+            } => column.try_clone()?,
+            JointSource::Dense {
+                table,
+                plan: EmbedPlan::ZeroExtend,
+            } => self.context.upload(require_fr_slice(table)?)?,
+            _ => return Ok(None),
+        };
+        if column.len() >= domain {
+            return Ok(None);
+        }
+        Ok(Some(column))
     }
 
     fn dense_device(&self) -> Result<Vec<F>, CudaError> {
@@ -633,6 +675,58 @@ mod tests {
             }
         }
         table
+    }
+
+    #[test]
+    fn prefix_fold_matches_the_zero_extended_fold() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let mut exercised = 0usize;
+        for (index, &(log_t, total_vars, _)) in FOLD_GEOMETRIES.iter().enumerate() {
+            let cycles = 1usize << log_t;
+            let domain = 1usize << total_vars;
+            let sigma = total_vars.div_ceil(2);
+            let columns = 1usize << sigma;
+            if cycles >= domain || !cycles.is_multiple_of(columns) {
+                continue;
+            }
+            exercised += 1;
+            let column: Vec<Fr> = (0..cycles)
+                .map(|cycle| fr((index as u64 + 1) * 7_919 + cycle as u64 + 1))
+                .collect();
+            let left: Vec<Fr> = (0..domain >> sigma)
+                .map(|row| fr((index as u64 + 1) * 1_000 + row as u64 + 3))
+                .collect();
+
+            let device_column = context.upload(&column).expect("upload the real column");
+            let extended = context
+                .zero_extend(&device_column, domain)
+                .expect("zero-extend the column");
+            let expected = context
+                .fold_rows(&extended, &left, sigma)
+                .expect("zero-extended fold");
+            let rows = cycles / columns;
+            let got = context
+                .fold_rows(&device_column, &left[..rows], sigma)
+                .expect("prefix fold");
+
+            assert_eq!(
+                got, expected,
+                "geometry {index} (log_T {log_t}, total_vars {total_vars}, sigma {sigma}): folding \
+                 the real column against the head of `left` diverged from folding its \
+                 zero-extended embedding",
+            );
+            assert!(
+                expected.iter().any(|value| *value != Fr::from_u64(0)),
+                "geometry {index}: the fold is identically zero, so the comparison proves nothing",
+            );
+        }
+        assert!(
+            exercised > 0,
+            "no fold geometry has a column that tiles whole fold rows, so the prefix fold this \
+             test exists to check was never run",
+        );
     }
 
     #[test]
