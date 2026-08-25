@@ -343,8 +343,7 @@ impl JoltField for AkitaFp128 {
     // SAFETY: one is below the Akita field modulus.
     const MONTGOMERY_R: Self = AkitaFp128(unsafe { AkitaField::from_canonical_u128(1) });
     // SAFETY: one is below the Akita field modulus.
-    const MONTGOMERY_R_SQUARE: Self =
-        AkitaFp128(unsafe { AkitaField::from_canonical_u128(1) });
+    const MONTGOMERY_R_SQUARE: Self = AkitaFp128(unsafe { AkitaField::from_canonical_u128(1) });
 
     type UnreducedElem = BigInt<2>;
     type UnreducedMulU64 = Folded128MulU64;
