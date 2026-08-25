@@ -12,8 +12,6 @@ use crate::lookup_bits::LookupBits;
 
 mod and;
 mod andnot;
-mod change_divisor;
-mod change_divisor_w;
 mod div_by_zero;
 mod eq;
 mod gt;
@@ -58,8 +56,6 @@ mod xor_rotw;
 
 use and::AndSuffix;
 use andnot::AndNotSuffix;
-use change_divisor::ChangeDivisorSuffix;
-use change_divisor_w::ChangeDivisorWSuffix;
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;
@@ -132,8 +128,6 @@ pub enum Suffixes {
     Or,
     RightOperand,
     RightOperandW,
-    ChangeDivisor,
-    ChangeDivisorW,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -207,8 +201,6 @@ impl Suffixes {
                 | Suffixes::TwoLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
-                | Suffixes::ChangeDivisor
-                | Suffixes::ChangeDivisorW
                 | Suffixes::WindowSign
                 | Suffixes::TopYBit
                 | Suffixes::BottomXBit
@@ -225,8 +217,6 @@ impl Suffixes {
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
             Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::suffix_mle(b),

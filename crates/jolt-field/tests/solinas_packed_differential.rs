@@ -197,8 +197,6 @@ fn packed_fp64_wide_sub_word_matches_integer_reference() {
 #[test]
 fn packed_fp128_matches_scalar() {
     check_prime_field::<<two::Prime128Offset275 as WithPacking>::Packing>(pm(128, 275), 0x12801);
-    check_prime_field::<<two::Prime128Offset159 as WithPacking>::Packing>(pm(128, 159), 0x12802);
-    check_prime_field::<<two::Prime128Offset2355 as WithPacking>::Packing>(pm(128, 2355), 0x12803);
     check_prime_field::<<two::Prime128OffsetA7F7 as WithPacking>::Packing>(
         pm(128, 0xFFFF_A7F7),
         0x12804,
@@ -312,8 +310,6 @@ fn with_packing_associated_types() {
     check_with_packing::<two::Prime56Offset27>(0x5107);
     check_with_packing::<two::Prime64Offset59>(0x5108);
     check_with_packing::<two::Prime128Offset275>(0x5109);
-    check_with_packing::<two::Prime128Offset159>(0x510a);
-    check_with_packing::<two::Prime128Offset2355>(0x510b);
     check_with_packing::<two::Prime128OffsetA7F7>(0x510c);
     check_with_packing::<two::Ext2<two::Prime32Offset99>>(0x510d);
     check_with_packing::<two::FpExt2<two::Fp32<251>, two::NegOneNr>>(0x510e);

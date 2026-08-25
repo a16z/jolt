@@ -341,8 +341,18 @@ macro_rules! define_solinas_prime {
             }
 
             #[inline]
+            fn canonical_u64_slice(values: &[Self]) -> Option<&[u64]> {
+                canonical_u64_slice!($word, values)
+            }
+
+            #[inline]
             fn num_bits(&self) -> u32 {
                 <$word>::BITS - self.0.leading_zeros()
+            }
+
+            #[inline]
+            fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+                Self::from_bytes_le_reduced(bytes)
             }
         }
 
@@ -360,6 +370,18 @@ macro_rules! define_solinas_prime {
 macro_rules! canonical_u32_slice {
     (u32, $values:ident) => {{
         // SAFETY: `Fp32` is transparent over one `u32`, and every constructor
+        // and arithmetic operation maintains a canonical representative.
+        Some(unsafe { std::slice::from_raw_parts($values.as_ptr().cast(), $values.len()) })
+    }};
+    ($word:ident, $values:ident) => {{
+        let _ = $values;
+        None
+    }};
+}
+
+macro_rules! canonical_u64_slice {
+    (u64, $values:ident) => {{
+        // SAFETY: `Fp64` is transparent over one `u64`, and every constructor
         // and arithmetic operation maintains a canonical representative.
         Some(unsafe { std::slice::from_raw_parts($values.as_ptr().cast(), $values.len()) })
     }};

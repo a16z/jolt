@@ -61,6 +61,8 @@ jobs:
         run: cargo check -p jolt-field --no-default-features --features bn254
       - name: Test Solinas backend
         run: cargo nextest run -p jolt-field --no-default-features --features solinas --cargo-quiet
+      - name: Test parallel Solinas backend
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas,parallel --cargo-quiet
       - name: Check combined backends
         run: cargo check -p jolt-field --no-default-features --features bn254,solinas
 

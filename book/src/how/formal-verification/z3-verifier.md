@@ -106,7 +106,7 @@ When the test suite runs (`cargo nextest run -p z3-verifier`), it outputs `SAT` 
 
 ## Nightly CI
 
-A scheduled workflow (`.github/workflows/z3-nightly.yml`) runs a subset of the suite nightly against a hermetic Z3 built from pinned vendored source (the crate's `vendored-z3` feature), and files a GitHub issue on failure. Its scope is narrower than the full suite: the non-`#[ignore]`d virtual-sequence proofs plus the per-instruction R1CS determinism checks; the div/rem/mulh sequences (non-terminating under the 64-bit model), memory/atomic/CSR expansions, and registered inlines are not covered. It can also be run on demand via `workflow_dispatch` after changes to `tracer/`, `crates/jolt-program/`, or `z3-verifier/`.
+A scheduled workflow (`.github/workflows/z3-nightly.yml`) runs a subset of the suite nightly against a hermetic Z3 built from pinned vendored source (the crate's `vendored-z3` feature), and files a GitHub issue on failure. Its scope is narrower than the full suite: the non-`#[ignore]`d virtual-sequence proofs plus the per-instruction R1CS determinism checks, and a second step that runs the signed DIV/REM/DIVW/REMW proofs at `Z3_VERIFIER_BV_BITS=8` (non-terminating at 64 bits, milliseconds at 8 — see Bit-Width Scaling below). The div/rem family at 64-bit width, the unsigned div/rem and mulh sequences, memory/atomic/CSR expansions, and registered inlines are not covered. It can also be run on demand via `workflow_dispatch` after changes to `tracer/`, `crates/jolt-program/`, or `z3-verifier/`.
 
 ## Bit-Width Scaling (Virtual Sequences)
 

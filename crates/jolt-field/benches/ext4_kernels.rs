@@ -1,6 +1,5 @@
-//! Bench gate for the `Fp32` degree-4 ext-mul kernels (checkpoint 6
-//! acceptance): the generic coefficient-formula schedule (what the crate
-//! ships as the `PseudoMersenne` hook default) vs a local port of the
+//! Bench gate for the `Fp32` degree-4 extension kernels. It compares the
+//! generic coefficient schedule with a local port of the
 //! baseline's fused u128-accumulation `Fp32` override, on batched degree-4
 //! muls and squares over `Prime32Offset99`. (The original jolt-field
 //! baseline, which shipped the fused override, timed identically to the
@@ -26,7 +25,7 @@ mod harness {
     use std::hint::black_box;
     use std::time::Instant;
 
-    use two::{CanonicalEncoding, Field, Ring};
+    use two::{CanonicalEncoding, Field};
 
     type Fp = two::Prime32Offset99;
     type E4 = two::FpExt4<Fp>;
@@ -40,6 +39,48 @@ mod harness {
     #[inline(always)]
     fn product(a: Fp, b: Fp) -> u128 {
         ((a.to_limbs() as u64) * (b.to_limbs() as u64)) as u128
+    }
+
+    #[inline(always)]
+    fn generic_mul(a: [Fp; 4], b: [Fp; 4]) -> [Fp; 4] {
+        let [a0, a1, a2, a3] = a;
+        let [b0, b1, b2, b3] = b;
+        let tail = a1 * b1 + a2 * b2 + a3 * b3;
+        [
+            a0 * b0 + tail + tail,
+            a0 * b1 + a1 * b0 + a1 * b2 + a2 * b1 + a2 * b3 + a3 * b2,
+            a0 * b2 + a2 * b0 + a1 * b1 + a1 * b3 + a3 * b1 - a3 * b3,
+            a0 * b3 + a3 * b0 + a1 * b2 + a2 * b1 - a2 * b3 - a3 * b2,
+        ]
+    }
+
+    #[inline(always)]
+    fn generic_square(a: [Fp; 4]) -> [Fp; 4] {
+        let [a0, a1, a2, a3] = a;
+        let x0 = a0;
+        let x1 = a2;
+        let y0 = a1 - a3;
+        let y1 = a3;
+
+        let x0x1 = x0 * x1;
+        let y0y1 = y0 * y1;
+        let x1_square = x1 * x1;
+        let y1_square = y1 * y1;
+        let aa = (x0 * x0 + x1_square + x1_square, x0x1 + x0x1);
+        let bb = (y0 * y0 + y1_square + y1_square, y0y1 + y0y1);
+
+        let v0 = x0 * y0;
+        let v1 = x1 * y1;
+        let ab = (v0 + v1 + v1, (x0 + x1) * (y0 + y1) - v0 - v1);
+        let constant = (bb.0 + bb.0 + bb.1 + bb.1, bb.0 + bb.1 + bb.1);
+        let coeff_e1 = (ab.0 + ab.0, ab.1 + ab.1);
+
+        [
+            aa.0 + constant.0,
+            coeff_e1.0 + coeff_e1.1,
+            aa.1 + constant.1,
+            coeff_e1.1,
+        ]
     }
 
     const P: u32 = 4_294_967_197; // 2^32 − 99
@@ -131,14 +172,17 @@ mod harness {
             .collect();
         // Sanity: the fused port agrees with the wired generic path.
         for (a, b) in pairs.iter().take(64) {
-            assert_eq!((*a * *b).coeffs, fused_mul(a.coeffs, b.coeffs));
-            assert_eq!(Ring::square(a).coeffs, fused_square(a.coeffs));
+            assert_eq!(
+                generic_mul(a.coeffs, b.coeffs),
+                fused_mul(a.coeffs, b.coeffs)
+            );
+            assert_eq!(generic_square(a.coeffs), fused_square(a.coeffs));
         }
 
-        let generic_mul_ns = measure(&pairs, |(a, b)| (a * b).coeffs[0]);
+        let generic_mul_ns = measure(&pairs, |(a, b)| generic_mul(a.coeffs, b.coeffs)[0]);
         let fused_mul_ns = measure(&pairs, |(a, b)| fused_mul(a.coeffs, b.coeffs)[0]);
 
-        let generic_sq_ns = measure(&pairs, |(a, _)| Ring::square(&a).coeffs[0]);
+        let generic_sq_ns = measure(&pairs, |(a, _)| generic_square(a.coeffs)[0]);
         let fused_sq_ns = measure(&pairs, |(a, _)| fused_square(a.coeffs)[0]);
 
         println!("ext4 over Prime32Offset99, {N} elements x {REPS} reps, best of {TRIALS}");

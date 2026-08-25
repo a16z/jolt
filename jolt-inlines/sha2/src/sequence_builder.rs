@@ -89,7 +89,7 @@ impl Sha256SequenceBuilder {
             // VirtualRev8W is FormatT (rd, rs1, no rs2): emit an I-shaped row so the
             // bytecode operands (rs2 = None, imm = 0) match the tracer's format.
             self.asm.emit_i(Kind::VIRTUAL_REV8_W, lo, lo, 0);
-            self.asm.expand_i(SourceKind::SRLI, hi, lo, 32);
+            self.asm.emit_i(SourceKind::SRLI, hi, lo, 32);
         }
         // Run 64 rounds
         for _ in 0..64 {
