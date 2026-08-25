@@ -14,6 +14,8 @@ use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "allocative")]
+use jolt_poly::Polynomial;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
@@ -237,19 +239,19 @@ fn visit_carry<T: Any + allocative::Allocative>(
 /// with the tuple spine.
 #[cfg(feature = "allocative")]
 pub(crate) fn visit_keyed_polys<K, T>(
-    tables: &Vec<(K, Vec<jolt_poly::Polynomial<T>>)>,
+    tables: &Vec<(K, Vec<Polynomial<T>>)>,
     visitor: &mut allocative::Visitor<'_>,
 ) {
     visitor.visit_simple(
         allocative::Key::new("spine"),
-        tables.capacity() * size_of::<(K, Vec<jolt_poly::Polynomial<T>>)>(),
+        tables.capacity() * size_of::<(K, Vec<Polynomial<T>>)>(),
     );
     visitor.visit_simple(
         allocative::Key::new("tables"),
         tables
             .iter()
             .map(|(_, polys)| {
-                polys.capacity() * size_of::<jolt_poly::Polynomial<T>>()
+                polys.capacity() * size_of::<Polynomial<T>>()
                     + polys
                         .iter()
                         .map(|poly| poly.len() * size_of::<T>())
@@ -273,38 +275,6 @@ pub(crate) fn visit_scalar_pairs<T>(
             .sum(),
     );
 }
-
-/// [`visit_keyed_polys`] for a map from a foreign key to a table.
-#[cfg(feature = "allocative")]
-pub(crate) fn visit_poly_map<K, T>(
-    tables: &std::collections::BTreeMap<K, jolt_poly::Polynomial<T>>,
-    visitor: &mut allocative::Visitor<'_>,
-) {
-    visitor.visit_simple(
-        allocative::Key::new("nodes"),
-        tables.len() * size_of::<(K, jolt_poly::Polynomial<T>)>(),
-    );
-    visitor.visit_simple(
-        allocative::Key::new("elements"),
-        tables
-            .values()
-            .map(|poly| poly.len() * size_of::<T>())
-            .sum(),
-    );
-}
-
-/// [`visit_poly_map`] for a map from a foreign key to a scalar.
-#[cfg(feature = "allocative")]
-pub(crate) fn visit_scalar_map<K, V>(
-    values: &std::collections::BTreeMap<K, V>,
-    visitor: &mut allocative::Visitor<'_>,
-) {
-    visitor.visit_simple(
-        allocative::Key::new("nodes"),
-        values.len() * size_of::<(K, V)>(),
-    );
-}
-
 /// Backend-owned state with proof lifetime, opaque to orchestration.
 ///
 /// Slots stash and share private state keyed by a backend-private type, so

@@ -50,11 +50,6 @@ use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 /// See the module docs. Construct with every leaf table the relation's output
 /// expression references; [`new`](Self::new) validates coverage and sizes so
 /// the round loop cannot miss a leaf.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F, R")
-)]
 pub struct NaiveSumcheckProver<F, R>
 where
     F: JoltField,
@@ -66,21 +61,73 @@ where
     /// The kernel's own clone of the stage's relation, taken from
     /// [`ProverInputs`] at prepare time; geometry (`rounds`/`degree`) and the
     /// output expression are read off it directly.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
     relation: R,
     /// The expression's `Challenge` leaves pre-resolved to scalars at
     /// construction, so the round loop reads plain `Sync` data (the typed
     /// `Challenges` struct is borrowed with a lifetime and stays with the
     /// caller that drew it).
-    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_scalar_map))]
     challenge_values: BTreeMap<JoltChallengeId, F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_poly_map))]
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_poly_map))]
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
     binding_order: BindingOrder,
     rounds_bound: usize,
 }
+
+/// Hand-written because the id-keyed table maps cannot go through the derive:
+/// `JoltChallengeId`/`JoltOpeningId`/`JoltDerivedId` have no `Allocative`
+/// impl, and giving them one cascades through jolt-claims for types that own
+/// no heap. Sized arithmetically instead, like the scalar tables — table
+/// bytes by `len()`, exact at the mid-stage snapshot (see
+/// [`jolt_poly::visit_scalars`]).
+#[cfg(feature = "allocative")]
+impl<F, R> allocative::Allocative for NaiveSumcheckProver<F, R>
+where
+    F: JoltField,
+    R: ConcreteSumcheck<F>,
+    SumcheckInputClaims<F, R>: InputClaims<F>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+{
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        fn visit_tables<K, F>(
+            visitor: &mut allocative::Visitor<'_>,
+            key: allocative::Key,
+            tables: &BTreeMap<K, Polynomial<F>>,
+        ) {
+            let mut visitor = visitor.enter(key, size_of::<BTreeMap<K, Polynomial<F>>>());
+            visitor.visit_simple(
+                allocative::Key::new("nodes"),
+                tables.len() * size_of::<(K, Polynomial<F>)>(),
+            );
+            visitor.visit_simple(
+                allocative::Key::new("elements"),
+                tables
+                    .values()
+                    .map(|poly| poly.len() * size_of::<F>())
+                    .sum(),
+            );
+            visitor.exit();
+        }
+
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("challenge_values"),
+            self.challenge_values.len() * size_of::<(JoltChallengeId, F)>(),
+        );
+        visit_tables(
+            &mut visitor,
+            allocative::Key::new("opening_tables"),
+            &self.opening_tables,
+        );
+        visit_tables(
+            &mut visitor,
+            allocative::Key::new("derived_tables"),
+            &self.derived_tables,
+        );
+        visitor.exit();
+    }
+}
+
 impl<F, R> NaiveSumcheckProver<F, R>
 where
     F: JoltField,
