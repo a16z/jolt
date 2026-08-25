@@ -13,6 +13,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 jolt-field = { path = "..", default-features = false, features = [
   "bn254",
+  "fuzzing",
   "solinas",
 ] }
 num-traits = "0.2"
@@ -40,4 +41,9 @@ doc = false
 [[bin]]
 name = "solinas_field_arith"
 path = "fuzz_targets/solinas_field_arith.rs"
+doc = false
+
+[[bin]]
+name = "fp128_asm_differential"
+path = "fuzz_targets/fp128_asm_differential.rs"
 doc = false

@@ -8,6 +8,9 @@ repository = "https://github.com/a16z/jolt"
 keywords = ["SNARK", "cryptography", "finite-fields", "BN254", "Solinas"]
 categories = ["cryptography"]
 
+[package.metadata.cargo-machete]
+ignored = ["cc"]
+
 [lints]
 workspace = true
 
@@ -26,8 +29,11 @@ thiserror = { workspace = true }
 default = ["bn254"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []
+asm = []
+fuzzing = ["asm"]
 parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
+fp128-proof-linkage = ["asm"]
 
 [dev-dependencies]
 bincode = { workspace = true }
@@ -36,6 +42,9 @@ num-bigint = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 
+[build-dependencies]
+cc = "1.2"
+
 [[bench]]
 name = "ext4_kernels"
 harness = false
@@ -43,3 +52,12 @@ harness = false
 [[bench]]
 name = "fp64_kernels"
 harness = false
+
+[[bench]]
+name = "field_arithmetic"
+harness = false
+required-features = ["solinas"]
+
+[[example]]
+name = "fp128_production_witness"
+required-features = ["solinas", "fp128-proof-linkage"]

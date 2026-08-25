@@ -354,8 +354,26 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualXORROTW7 => {
                 LookupTables::VirtualXORROTW7(Default::default())
             }
+            JoltInstructionKind::VirtualXORROTW22 => {
+                LookupTables::VirtualXORROTW22(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW19 => {
+                LookupTables::VirtualXORROTW19(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW6 => {
+                LookupTables::VirtualXORROTW6(Default::default())
+            }
             JoltInstruction::WindowMaskW(_) => LookupTables::WindowMaskW(Default::default()),
             JoltInstruction::PextSigned(_) => LookupTables::PextSigned(Default::default()),
+            JoltInstruction::VirtualShiftRightBitmaskW(_) => {
+                LookupTables::ShiftRightBitmaskW(Default::default())
+            }
+            JoltInstructionKind::VirtualSRLW | JoltInstructionKind::VirtualSRLIW => {
+                LookupTables::VirtualSRLW(Default::default())
+            }
+            JoltInstructionKind::VirtualSRAW | JoltInstructionKind::VirtualSRAIW => {
+                LookupTables::VirtualSRAW(Default::default())
+            }
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -506,7 +524,9 @@ define_rv64imac_trait_impls! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
-        VirtualWindowMaskW, VirtualPextSigned
+        VirtualXORROTW22, VirtualXORROTW19, VirtualXORROTW6,
+        VirtualWindowMaskW, VirtualPextSigned,
+        VirtualShiftRightBitmaskW, VirtualSRLW, VirtualSRLIW, VirtualSRAW, VirtualSRAIW
     ]
 }
 
@@ -568,12 +588,17 @@ pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
+pub mod virtual_shift_right_bitmask_w;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend_word;
 pub mod virtual_sra;
 pub mod virtual_srai;
+pub mod virtual_sraiw;
+pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_srliw;
+pub mod virtual_srlw;
 pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;

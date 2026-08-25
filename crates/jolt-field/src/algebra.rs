@@ -341,10 +341,9 @@ pub trait CanonicalEncoding:
     }
 
     /// Constructs a non-optimized scalar challenge from transcript bytes.
-    #[inline]
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_challenge_bytes(bytes)
-    }
+    ///
+    /// Implementations must choose the protocol's byte order explicitly.
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self;
 }
 
 /// Accumulates sums and products with potentially deferred modular reduction.

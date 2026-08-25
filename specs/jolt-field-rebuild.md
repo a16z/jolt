@@ -101,15 +101,17 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
   M4, per the baseline's own doc comment) and the prover hot path. An
   AArch64-only unit test in `fp128.rs` cross-checks them against the portable
   fold on random + boundary inputs for all four registered offsets.
-- **Dropped:** AArch64 and x86-64 inline-asm add/sub kernels
+- **Initially dropped, later restored:** AArch64 and x86-64 inline-asm add/sub kernels
   (`add_raw_{aarch64,x86_64}_{imm,reg}` + dispatchers, ~470 source lines).
   Same carry-chain algorithm as the portable path with hand-scheduled flag
   flow (`ccmp`/`sbb`-mask selects); no benchmark recorded in-tree, only
   qualitative comments. The portable path is branchless and compiles to a
   near-identical adds/adcs/csel (resp. add/adc/cmov) sequence. The x86-64
-  imm-vs-reg dispatch subtlety (sign-extended imm32 unusable for C ≥ 2^31,
-  i.e. `Prime128OffsetA7F7`) dies with it. Baseline x86-64 `mul` was already
-  portable — nothing dropped there.
+  imm-vs-reg dispatch subtlety matters because a sign-extended imm32 is
+  unusable for C ≥ 2^31, including `Prime128OffsetA7F7`. The proof continuity
+  follow-up restores both architecture families. It also binds the A7F7
+  AArch64 words and x86-64 bytes to HOL Light theorems and an optimized public witness. See
+  `specs/jolt-field-proof-continuity.md`.
 - **Initially dropped:** the AArch64 `mul_add` asm kernel together with the
   `mul_add`/`add_128_into_256` fused multiply-add surface had no consumer in
   the original parity scope. Current Akita now uses this hook, so the refresh
@@ -318,6 +320,20 @@ Final per-file actuals are recorded in the file-structure table below
    while Fp64/Fp128 results were mixed and near noise. The x86-64 hook now
    reuses the canonical `FpExt4Fp32ProductAccum` formula and reduces four
    slots once; sub-32-bit Fp32 moduli retain the generic schedule.
+7. **Fp128 architecture add and subtract kernels are restored.** The A7F7
+   AArch64 and x86-64 instruction bodies are shared by production inline assembly and
+   standalone proof objects. HOL Light proves the object bytes. An optimized
+   public witness checks that Rust includes the same words.
+   The same proof path now covers baseline x86-64 multiplication. That kernel
+   uses `mulq`, `add`, and `adc`, so it does not require BMI2 or ADX. The proved
+   inline path is about 20% faster than the former portable path in the focused
+   x86-64 Criterion benchmark under Rosetta.
+8. **Scalar challenge decoding is field specific.** BN254 and Dory preserve
+   the historical byte reversal. Fp128 uses Akita's direct little endian
+   convention. Old packed Akita proofs are not supported.
+9. **The parallel helper set gains `cfg_try_fold_reduce!`.** `cfg_join!` now
+   resolves Rayon through a hidden crate reexport, so downstream expansion
+   does not require a direct Rayon dependency.
 
 ## Replacement validation evidence
 

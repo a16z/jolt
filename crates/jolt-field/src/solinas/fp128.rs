@@ -11,16 +11,39 @@
 //! compile time (2^128 trial division is not CTFE-viable); instantiating a
 //! composite odd modulus yields a ring whose `inverse` is meaningless.
 //!
-//! On AArch64 the multiply and squaring kernels use inline assembly
-//! (benchmarked at 1.29x throughput vs the portable path on Apple M4); every
-//! other path, and every path on other architectures, is portable Rust.
+//! With the `asm` feature, every valid offset uses architecture-specific add,
+//! subtract, and multiply kernels. AArch64 also uses assembly for fused
+//! multiply-add and squaring. AArch64 multiplication was benchmarked at 1.29x
+//! the portable throughput on Apple M4. Without `asm`, all Fp128 operations
+//! use portable Rust.
 
 use super::word::mul64_wide;
 use crate::PseudoMersenne;
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 use rand_core::RngCore;
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))]
 use std::arch::asm;
+#[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
+use std::sync::atomic::{AtomicU8, Ordering};
+
+mod add_sub;
+
+#[cfg(any(
+    all(feature = "asm", target_arch = "x86_64"),
+    all(test, feature = "asm", target_arch = "aarch64")
+))]
+const A7F7_OFFSET: u64 = 0xffff_a7f7;
+#[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
+const X86_64_BASELINE_BACKEND: u8 = 1;
+#[cfg(all(
+    feature = "fuzzing",
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+const X86_64_BMI2_ADX_BACKEND: u8 = 2;
+#[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
+static LAST_X86_64_MUL_BACKEND: AtomicU8 = AtomicU8::new(0);
 
 /// Pack two `u64` limbs into little-endian `[lo, hi]`.
 #[inline(always)]
@@ -169,7 +192,11 @@ impl<const P: u128> Fp128<P> {
     }
 
     /// Adds a canonical 128-bit value to a 256-bit product.
-    #[cfg(any(not(target_arch = "aarch64"), test))]
+    #[cfg(any(
+        test,
+        feature = "fuzzing",
+        not(all(feature = "asm", target_arch = "aarch64"))
+    ))]
     #[inline(always)]
     fn add_128_into_256(prod: [u64; 4], addend: [u64; 2]) -> [u64; 4] {
         let (s0, carry0) = prod[0].overflowing_add(addend[0]);
@@ -181,45 +208,17 @@ impl<const P: u128> Fp128<P> {
         [s0, s1, s2, s3]
     }
 
-    /// Carry-chain add with fused reduction.
-    ///
-    /// For `a, b < p`: if the two-limb add wraps (`overflow`), the real sum
-    /// is `s + 2^128 ≡ s + C`, and `s = a + b − 2^128 < 2p − 2^128 = p − C`,
-    /// so `s + C < p` is already canonical (and `carry3 = 0`). Without wrap,
-    /// `s + C` carries iff `s ≥ p`, and then the wrapped value is
-    /// `s − p ≤ p − 2`. Both cases select `r` on `overflow | carry3`.
-    #[inline(always)]
-    fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        let (s0, carry0) = a[0].overflowing_add(b[0]);
-        let (s1a, carry1a) = a[1].overflowing_add(b[1]);
-        let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
-        let overflow = carry1a | carry1b;
-
-        let (r0, carry2) = s0.overflowing_add(Self::C_LO);
-        let (r1, carry3) = s1.overflowing_add(carry2 as u64);
-
-        pack(
-            if overflow | carry3 { r0 } else { s0 },
-            if overflow | carry3 { r1 } else { s1 },
-        )
-    }
-
-    /// Subtract with borrow-conditional modulus add-back (`a − b + p` when
-    /// `a < b`; the wrapped difference plus `p` cannot wrap again since
-    /// `a − b + 2^128 + p − 2^128 = a − b + p < p`).
-    #[inline(always)]
-    fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        let (diff, borrow) = join(a).overflowing_sub(join(b));
-        split(if borrow { diff.wrapping_add(P) } else { diff })
-    }
-
     #[inline(always)]
     fn mul_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(feature = "asm", target_arch = "aarch64"))]
         {
-            Self::mul_raw_aarch64(a, b)
+            Self::mul_raw_aarch64_dispatch(a, b)
         }
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(all(feature = "asm", target_arch = "x86_64"))]
+        {
+            Self::mul_raw_x86_64_dispatch(a, b)
+        }
+        #[cfg(not(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64"))))]
         {
             Self::mul_raw_portable(a, b)
         }
@@ -227,17 +226,21 @@ impl<const P: u128> Fp128<P> {
 
     #[inline(always)]
     fn mul_add_raw(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(feature = "asm", target_arch = "aarch64"))]
         {
             Self::mul_add_raw_aarch64(a, b, addend)
         }
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(not(all(feature = "asm", target_arch = "aarch64")))]
         {
             Self::mul_add_raw_portable(a, b, addend)
         }
     }
 
-    #[cfg(any(not(target_arch = "aarch64"), test))]
+    #[cfg(any(
+        test,
+        feature = "fuzzing",
+        not(all(feature = "asm", target_arch = "aarch64"))
+    ))]
     #[inline(always)]
     fn mul_add_raw_portable(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
         let product = Self(a).mul_wide(Self(b));
@@ -245,7 +248,7 @@ impl<const P: u128> Fp128<P> {
         Self::reduce_4(s0, s1, s2, s3)
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn mul_add_raw_aarch64(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
         let out_lo: u64;
@@ -318,13 +321,112 @@ impl<const P: u128> Fp128<P> {
     }
 
     /// Portable multiply: schoolbook 2×2 widening product, then the two
-    /// Solinas folds. On AArch64 this is compiled only under `cfg(test)`
-    /// as the differential oracle for the assembly kernel.
-    #[cfg(any(not(target_arch = "aarch64"), test))]
+    /// Solinas folds. Assembly builds retain it for tests and fuzzing as the
+    /// differential oracle for the architecture kernel.
+    #[cfg(any(
+        test,
+        feature = "fuzzing",
+        not(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))
+    ))]
     #[inline(always)]
     fn mul_raw_portable(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [r0, r1, r2, r3] = Self(a).mul_wide(Self(b));
         Self::reduce_4(r0, r1, r2, r3)
+    }
+
+    /// x86-64 multiplication dispatch. Builds that enable both BMI2 and ADX
+    /// use the matching A7F7 specialization. Every other case uses the
+    /// parameterized baseline assembly sequence.
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
+    #[inline(always)]
+    fn mul_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        if Self::C_LO == A7F7_OFFSET {
+            #[cfg(all(target_feature = "bmi2", target_feature = "adx"))]
+            {
+                Self::mul_raw_x86_64_a7f7_bmi2_adx(a, b)
+            }
+            #[cfg(not(all(target_feature = "bmi2", target_feature = "adx")))]
+            {
+                Self::mul_raw_x86_64_baseline(a, b)
+            }
+        } else {
+            Self::mul_raw_x86_64_baseline(a, b)
+        }
+    }
+
+    /// A7F7 multiplication for x86-64 builds with BMI2 and ADX enabled.
+    ///
+    /// `rdi:rsi` starts with `a`, and `rdx:rcx` starts with `b`. The body
+    /// finishes directly in the System V result registers `rax:rdx`. It uses
+    /// only caller saved registers, flags, and no memory or stack.
+    #[cfg(all(
+        feature = "asm",
+        target_arch = "x86_64",
+        target_feature = "bmi2",
+        target_feature = "adx"
+    ))]
+    #[inline(always)]
+    fn mul_raw_x86_64_a7f7_bmi2_adx(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        #[cfg(feature = "fuzzing")]
+        LAST_X86_64_MUL_BACKEND.store(X86_64_BMI2_ADX_BACKEND, Ordering::Relaxed);
+        let [a_lo, a_hi] = a;
+        let [b_lo, b_hi] = b;
+        let out_lo: u64;
+        let out_hi: u64;
+        // SAFETY: The compile-time target-feature gate guarantees instruction
+        // availability. Every changed register is declared, and the body
+        // accesses neither memory nor stack.
+        unsafe {
+            asm!(
+                include_str!("../../asm/x86_64/fp128_mul_bmi2_adx_body.inc"),
+                inout("rdi") a_lo => _,
+                inout("rsi") a_hi => _,
+                inout("rdx") b_lo => out_hi,
+                inout("rcx") b_hi => _,
+                lateout("rax") out_lo,
+                out("r8") _,
+                out("r9") _,
+                out("r10") _,
+                out("r11") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
+    }
+
+    /// Parameterized multiplication through the baseline x86-64 instruction
+    /// body proved generically over every valid offset in HOL Light.
+    ///
+    /// `rdi:rsi` starts with `a`, and `rdx:rcx` starts with `b`. The result
+    /// finishes in `rdi:rcx`, which Rust binds to the two returned limbs. `r8`
+    /// contains `C = 2^128 - P`. The body uses `rax`, `rdx`, `r9`, `r10`,
+    /// `r11`, and the flags as temporary state. It uses no memory or stack and
+    /// requires no optional x86 target features.
+    #[cfg(all(feature = "asm", target_arch = "x86_64"))]
+    #[inline(always)]
+    fn mul_raw_x86_64_baseline(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        #[cfg(feature = "fuzzing")]
+        LAST_X86_64_MUL_BACKEND.store(X86_64_BASELINE_BACKEND, Ordering::Relaxed);
+        let [mut out_lo, a_hi] = a;
+        let [b_lo, mut out_hi] = b;
+        // SAFETY: The register contract is listed above. Every changed
+        // register is declared, and the body accesses neither memory nor stack.
+        unsafe {
+            asm!(
+                include_str!("../../asm/x86_64/fp128_mul_body.inc"),
+                inout("rdi") out_lo,
+                in("rsi") a_hi,
+                inout("rdx") b_lo => _,
+                inout("rcx") out_hi,
+                in("r8") Self::C_LO,
+                out("rax") _,
+                out("r9") _,
+                out("r10") _,
+                out("r11") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     /// 35-instruction AArch64 inline-asm multiply with Solinas reduction.
@@ -336,76 +438,42 @@ impl<const P: u128> Fp128<P> {
     ///     the ≥p check (8 vs 10 instructions).
     ///
     /// Benchmarked at 1.29x throughput improvement on Apple M4.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
-    fn mul_raw_aarch64(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        let out_lo: u64;
-        let out_hi: u64;
-        // SAFETY: register-only inline asm (pure, nomem, nostack) over plain
-        // integer operands; the carry/flag flow implements exactly the
-        // portable `mul_wide` + `reduce_4` algorithm, and `C < 2^32` (const-
-        // asserted) guarantees the fold-2 `mul {p11h}, {c}` cannot overflow.
+    fn mul_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        Self::mul_raw_aarch64_asm(a, b)
+    }
+
+    /// Parameterized multiplication through the instruction body proved
+    /// generically over every valid offset in HOL Light.
+    ///
+    /// `x0:x1` starts with `a` and finishes with the result. `x2:x3` contains
+    /// `b`. `x4` contains `C = 2^128 - P`. The body uses `x5:x12` and the
+    /// condition flags as temporary state. It does not access memory or the
+    /// stack.
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
+    #[inline(always)]
+    fn mul_raw_aarch64_asm(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [mut out_lo, mut out_hi] = a;
+        let [b_lo, b_hi] = b;
+        // SAFETY: The register contract is listed above. Every temporary
+        // register is declared, and the body does not access memory or stack.
         unsafe {
             asm!(
-                // Schoolbook 2×2 → 256-bit product [r0,r1,r2,r3]
-                "mul     {p00l}, {a0}, {b0}",
-                "umulh   {p00h}, {a0}, {b0}",
-                "mul     {p01l}, {a0}, {b1}",
-                "umulh   {p01h}, {a0}, {b1}",
-                "mul     {p10l}, {a1}, {b0}",
-                "umulh   {p10h}, {a1}, {b0}",
-                "mul     {p11l}, {a1}, {b1}",
-                "umulh   {p11h}, {a1}, {b1}",
-
-                // Carry accumulation into [r0=p00l, r1=p00h, r2=p01h, r3=p11h]
-                "adds   {p00h}, {p00h}, {p01l}",
-                "cset   {p01l:w}, hs",
-                "adds   {p01h}, {p01h}, {p10h}",
-                "cset   {p10h:w}, hs",
-                "adds   {p01h}, {p01h}, {p11l}",
-                "cinc   {p10h}, {p10h}, hs",
-                "adds   {p00h}, {p00h}, {p10l}",
-                "adcs   {p01h}, {p01h}, {p01l}",
-                "adc    {p11h}, {p11h}, {p10h}",
-
-                // Fold-1: [t0,t1,t2] = [r0,r1] + C·[r2,r3]
-                "mul    {p01l}, {p01h}, {c}",
-                "umulh  {p10l}, {p01h}, {c}",
-                "mul    {p10h}, {p11h}, {c}",
-                "umulh  {p11l}, {p11h}, {c}",
-
-                "adds   {p00l}, {p00l}, {p01l}",
-                "adcs   {p00h}, {p00h}, {p10l}",
-                "cset   {p01h:w}, hs",
-                "adds   {p00h}, {p00h}, {p10h}",
-                "adc    {p11h}, {p11l}, {p01h}",
-
-                // Fold-2 + canonicalize via ccmp (C < 2^32 ⇒ C·t2 fits in 64 bits)
-                "mul    {p01l}, {p11h}, {c}",
-                "adds   {p00l}, {p00l}, {p01l}",
-                "adcs   {p00h}, {p00h}, xzr",
-                "cset   {p01l:w}, hs",
-                "adds   {p10l}, {p00l}, {c}",
-                "adcs   {p10h}, {p00h}, xzr",
-                "ccmp   {p01l:w}, #0, #0, lo",
-                "csel   {out_lo}, {p10l}, {p00l}, ne",
-                "csel   {out_hi}, {p10h}, {p00h}, ne",
-
-                a0 = in(reg) a[0],
-                a1 = in(reg) a[1],
-                b0 = in(reg) b[0],
-                b1 = in(reg) b[1],
-                c = in(reg) Self::C_LO,
-                p00l = out(reg) _,
-                p00h = out(reg) _,
-                p01l = out(reg) _,
-                p01h = out(reg) _,
-                p10l = out(reg) _,
-                p10h = out(reg) _,
-                p11l = out(reg) _,
-                p11h = out(reg) _,
-                out_lo = lateout(reg) out_lo,
-                out_hi = lateout(reg) out_hi,
+                include_str!("../../asm/aarch64/fp128_mul_body.inc"),
+                inout("x0") out_lo,
+                inout("x1") out_hi,
+                in("x2") b_lo,
+                in("x3") b_hi,
+                in("x4") Self::C_LO,
+                out("x5") _,
+                out("x6") _,
+                out("x7") _,
+                out("x8") _,
+                out("x9") _,
+                out("x10") _,
+                out("x11") _,
+                out("x12") _,
                 options(pure, nomem, nostack),
             );
         }
@@ -414,11 +482,11 @@ impl<const P: u128> Fp128<P> {
 
     #[inline(always)]
     fn sqr_raw(a: [u64; 2]) -> [u64; 2] {
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(feature = "asm", target_arch = "aarch64"))]
         {
             Self::sqr_raw_aarch64(a)
         }
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(not(all(feature = "asm", target_arch = "aarch64")))]
         {
             Self::sqr_raw_portable(a)
         }
@@ -426,7 +494,11 @@ impl<const P: u128> Fp128<P> {
 
     /// Portable squaring (see [`mul_raw_portable`](Self::mul_raw_portable)
     /// for the AArch64 `cfg(test)` role).
-    #[cfg(any(not(target_arch = "aarch64"), test))]
+    #[cfg(any(
+        test,
+        feature = "fuzzing",
+        not(all(feature = "asm", target_arch = "aarch64"))
+    ))]
     #[inline(always)]
     fn sqr_raw_portable(a: [u64; 2]) -> [u64; 2] {
         let [r0, r1, r2, r3] = Self(a).sqr_wide();
@@ -438,7 +510,11 @@ impl<const P: u128> Fp128<P> {
     /// Row bounds: `row1 = p00_hi + 2·p01_lo ≤ 3(2^64 − 1) < 2^66` (carry ≤
     /// 2), `row2 = 2·p01_hi + p11_lo + carry1 < 2^66` (carry ≤ 2), and the
     /// top limb is exact because `a² < 2^256` (debug-asserted).
-    #[cfg(any(not(target_arch = "aarch64"), test))]
+    #[cfg(any(
+        test,
+        feature = "fuzzing",
+        not(all(feature = "asm", target_arch = "aarch64"))
+    ))]
     #[inline(always)]
     fn sqr_wide(self) -> [u64; 4] {
         let (a0, a1) = (self.0[0], self.0[1]);
@@ -465,15 +541,15 @@ impl<const P: u128> Fp128<P> {
     /// 31-instruction AArch64 inline-asm squaring with Solinas reduction:
     /// 3 widening multiplies (vs 4 for general mul), the cross term doubled
     /// via shifted-register operands, then the same fold-1 + ccmp
-    /// canonicalize as [`mul_raw_aarch64`](Self::mul_raw_aarch64).
-    #[cfg(target_arch = "aarch64")]
+    /// canonicalize as the parameterized multiplication kernel.
+    #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn sqr_raw_aarch64(a: [u64; 2]) -> [u64; 2] {
         let out_lo: u64;
         let out_hi: u64;
         // SAFETY: register-only inline asm (pure, nomem, nostack) over plain
         // integer operands; implements exactly `sqr_wide` + `reduce_4`, with
-        // the same `C < 2^32` fold-2 invariant as `mul_raw_aarch64`.
+        // the same `C < 2^32` fold-2 invariant as the multiplication kernel.
         unsafe {
             asm!(
                 // Squaring schoolbook: 3 widening muls
@@ -551,13 +627,14 @@ impl<const P: u128> Fp128<P> {
         acc
     }
 
-    /// Create from a canonical representative in `[0, P)`.
+    /// Create from a canonical representative in `[0, P)` without checking it.
     ///
-    /// `const` so downstream adapters can build associated constants (the
-    /// legacy prover's Akita fp128 glue constructs its Montgomery-identity
-    /// constants this way).
+    /// # Safety
+    ///
+    /// `x` must be less than `P`. Violating this condition breaks the private
+    /// canonical representation invariant used by the arithmetic kernels.
     #[inline]
-    pub const fn from_canonical_u128(x: u128) -> Self {
+    pub const unsafe fn from_canonical_u128(x: u128) -> Self {
         debug_assert!(x < P);
         Self(split(x))
     }
@@ -891,6 +968,52 @@ impl<const P: u128> Fp128<P> {
             }
         }
     }
+
+    /// Cross-checks every architecture-specific kernel against its portable
+    /// implementation. This is public only for the out-of-crate fuzz target.
+    #[cfg(all(
+        feature = "fuzzing",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
+    #[doc(hidden)]
+    pub fn assert_asm_matches_portable_for_fuzzing(self, rhs: Self, _addend: Self) {
+        assert_eq!(
+            Self::add_raw(self.0, rhs.0),
+            Self::add_raw_portable(self.0, rhs.0)
+        );
+        assert_eq!(
+            Self::sub_raw(self.0, rhs.0),
+            Self::sub_raw_portable(self.0, rhs.0)
+        );
+        let asm_mul = Self::mul_raw(self.0, rhs.0);
+        assert_eq!(asm_mul, Self::mul_raw_portable(self.0, rhs.0));
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            #[cfg(all(target_feature = "bmi2", target_feature = "adx"))]
+            let expected_backend = if Self::C_LO == A7F7_OFFSET {
+                X86_64_BMI2_ADX_BACKEND
+            } else {
+                X86_64_BASELINE_BACKEND
+            };
+            #[cfg(not(all(target_feature = "bmi2", target_feature = "adx")))]
+            let expected_backend = X86_64_BASELINE_BACKEND;
+            assert_eq!(
+                LAST_X86_64_MUL_BACKEND.load(Ordering::Relaxed),
+                expected_backend,
+                "the requested x86-64 multiplication backend was not executed"
+            );
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert_eq!(
+                Self::mul_add_raw(self.0, rhs.0, _addend.0),
+                Self::mul_add_raw_portable(self.0, rhs.0, _addend.0)
+            );
+            assert_eq!(Self::sqr_raw(self.0), Self::sqr_raw_portable(self.0));
+        }
+    }
 }
 
 crate::impl_ring_ops!(impl[const P: u128] Fp128<P> {
@@ -1046,6 +1169,11 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
     fn num_bits(&self) -> u32 {
         u128::BITS - join(self.0).leading_zeros()
     }
+
+    #[inline]
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self::from_bytes_le_reduced(bytes)
+    }
 }
 
 crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
@@ -1060,10 +1188,48 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
     const OFFSET: u128 = Self::C;
 }
 
-// AArch64-only: the inline-asm kernels against the portable fold, so a
-// machine running the asm still exercises (and cross-checks) both paths.
 #[cfg(test)]
-#[cfg(target_arch = "aarch64")]
+mod wide_tests {
+    use super::*;
+    use crate::solinas::Prime128Offset275;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::RngCore;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn mul_wide_limbs_roundtrips_through_reduction() {
+        type F = Prime128Offset275;
+        let mut rng = ChaCha20Rng::seed_from_u64(0x1bad_f00d_0ddc_afe1);
+        for _ in 0..1000 {
+            let a = F::random(&mut rng);
+            let b3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
+            let b4 = [
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+            ];
+
+            let got3_full = a.mul_wide_limbs::<3, 5>(b3);
+            let got3_trunc = a.mul_wide_limbs::<3, 4>(b3);
+            assert_eq!(got3_trunc, got3_full[..4]);
+            assert_eq!(F::solinas_reduce(&got3_full), a * F::solinas_reduce(&b3));
+
+            let got4_full = a.mul_wide_limbs::<4, 6>(b4);
+            let got4_trunc = a.mul_wide_limbs::<4, 4>(b4);
+            assert_eq!(got4_trunc, got4_full[..4]);
+            assert_eq!(F::solinas_reduce(&got4_full), a * F::solinas_reduce(&b4));
+        }
+    }
+}
+
+// Cross-check the inline-asm kernels against the portable arithmetic on every
+// supported architecture.
+#[cfg(all(
+    test,
+    feature = "asm",
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 mod tests {
     use super::*;
     use rand::{Rng, SeedableRng};
@@ -1081,6 +1247,7 @@ mod tests {
 
     fn check<const P: u128>() {
         for a in cases(P) {
+            #[cfg(target_arch = "aarch64")]
             assert_eq!(
                 Fp128::<P>::sqr_raw_aarch64(a),
                 Fp128::<P>::sqr_raw_portable(a),
@@ -1088,26 +1255,38 @@ mod tests {
             );
             for b in cases(P) {
                 assert_eq!(
-                    Fp128::<P>::mul_raw_aarch64(a, b),
+                    Fp128::<P>::add_raw(a, b),
+                    Fp128::<P>::add_raw_portable(a, b),
+                    "add asm vs portable, a={a:?} b={b:?}"
+                );
+                assert_eq!(
+                    Fp128::<P>::sub_raw(a, b),
+                    Fp128::<P>::sub_raw_portable(a, b),
+                    "sub asm vs portable, a={a:?} b={b:?}"
+                );
+                assert_eq!(
+                    Fp128::<P>::mul_raw(a, b),
                     Fp128::<P>::mul_raw_portable(a, b),
                     "mul asm vs portable, a={a:?} b={b:?}"
                 );
-                let addend = split(join(a).wrapping_add(join(b)) % P);
-                assert_eq!(
-                    Fp128::<P>::mul_add_raw_aarch64(a, b, addend),
-                    Fp128::<P>::mul_add_raw_portable(a, b, addend),
-                    "mul-add asm vs portable, a={a:?} b={b:?} addend={addend:?}"
-                );
+                #[cfg(target_arch = "aarch64")]
+                {
+                    let addend = split(join(a).wrapping_add(join(b)) % P);
+                    assert_eq!(
+                        Fp128::<P>::mul_add_raw_aarch64(a, b, addend),
+                        Fp128::<P>::mul_add_raw_portable(a, b, addend),
+                        "mul-add asm vs portable, a={a:?} b={b:?} addend={addend:?}"
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn asm_matches_portable() {
+    fn fp128_asm_matches_portable() {
+        check::<{ u128::MAX - 172 }>(); // C = 173, outside the published aliases
         check::<{ u128::MAX - 274 }>(); // C = 275
-        check::<{ u128::MAX - 158 }>(); // C = 159
-        check::<{ u128::MAX - 2354 }>(); // C = 2355
-        check::<{ u128::MAX - 0xFFFF_A7F6 }>(); // C = 0xFFFF_A7F7
+        check::<{ u128::MAX - (A7F7_OFFSET as u128 - 1) }>();
     }
 }
 

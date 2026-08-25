@@ -225,16 +225,10 @@ pub trait JoltField:
     fn from_u128(val: u128) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
-    /// Decodes a squeezed scalar challenge. The default preserves the legacy
-    /// transcript convention (digest bytes as a big-endian integer, i.e.
-    /// reverse then little-endian decode); fields whose shared-crate
-    /// convention is unreversed (the Solinas fp128 used by the packed Akita
-    /// path) override this so the legacy prover matches the modular
-    /// verifier's `from_scalar_challenge_bytes` for the same field.
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        let reversed: Vec<u8> = bytes.iter().rev().copied().collect();
-        Self::from_bytes(&reversed)
-    }
+    /// Decode scalar challenge bytes using this field's transcript convention.
+    ///
+    /// Implementations must choose the protocol's byte order explicitly.
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self;
     fn inverse(&self) -> Option<Self>;
     fn to_u64(&self) -> Option<u64> {
         unimplemented!("conversion to u64 not implemented");

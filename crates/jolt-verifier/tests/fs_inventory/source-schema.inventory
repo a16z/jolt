@@ -37,6 +37,7 @@ jolt-program::preprocess/program.rs::ProgramMetadata.entry_bytecode_index
 jolt-program::preprocess/program.rs::ProgramMetadata.min_bytecode_address
 jolt-program::preprocess/program.rs::ProgramMetadata.program_image_len_words
 jolt-verifier::config.rs::JoltProtocolConfig.commitment
+jolt-verifier::config.rs::JoltProtocolConfig.scalar_challenge_endianness
 jolt-verifier::config.rs::JoltProtocolConfig.zk
 jolt-verifier::config.rs::ZkConfig::BlindFold
 jolt-verifier::config.rs::ZkConfig::Transparent
