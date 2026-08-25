@@ -446,6 +446,8 @@ mod tests {
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
+    #[cfg(feature = "akita")]
+    use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
 
@@ -471,7 +473,7 @@ mod tests {
                     None,
                     None,
                     #[cfg(feature = "akita")]
-                    jolt_witness::witnesses::FusedInc::default(),
+                    FusedInc::default(),
                 )
             })
             .collect()

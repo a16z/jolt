@@ -5,6 +5,8 @@ use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
 use jolt_riscv::JoltTraceRow as TraceRow;
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use std::ops::Range;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
@@ -122,7 +124,7 @@ impl<T: TraceSource> TraceBackend<T> {
             value(current, next, &env)
         };
         #[cfg(feature = "parallel")]
-        return jolt_utils::par_collect_windows(rows, window);
+        return par_collect_windows(rows, window);
         #[cfg(not(feature = "parallel"))]
         return (0..rows).map(window).collect();
     }

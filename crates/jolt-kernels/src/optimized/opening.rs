@@ -48,7 +48,7 @@ use jolt_field::JoltField;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -217,7 +217,7 @@ impl OpeningColumns {
     /// every slot is written).
     #[cfg(feature = "parallel")]
     fn collect_par<F: JoltField>(
-        access: &jolt_witness::RandomAccessRows,
+        access: &RandomAccessRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         /// The scatter grain: big enough to amortize rayon dispatch, small

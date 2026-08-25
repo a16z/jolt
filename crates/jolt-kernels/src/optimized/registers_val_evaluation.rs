@@ -35,7 +35,7 @@ use jolt_verifier::stages::stage5::registers_val_evaluation::{
     RegistersValEvaluation, RegistersValEvaluationOutputClaims,
 };
 use jolt_witness::witnesses::{RdInc, ToField};
-use jolt_witness::{JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, RandomAccessRows, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -185,7 +185,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
 enum IncSource<F: JoltField> {
     /// The witness plane owns these rows; it reports them itself.
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    Deferred(jolt_witness::RandomAccessRows),
+    Deferred(RandomAccessRows),
     Ready(Polynomial<F>),
 }
 

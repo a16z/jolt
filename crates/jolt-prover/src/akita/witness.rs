@@ -2,6 +2,9 @@
 //! from the witness plane's typed rows and the sparse unit-valued auxiliary
 //! objects (advice byte columns, the precommitted `ProgramOneHot`).
 
+use std::sync::Arc;
+
+use jolt_akita::TraceOneHotRows;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
 use jolt_claims::protocols::jolt::lattice::packing::{
@@ -174,7 +177,7 @@ impl PackedTraceRows {
     }
 }
 
-impl jolt_akita::TraceOneHotRows for PackedTraceRows {
+impl TraceOneHotRows for PackedTraceRows {
     fn num_rows(&self) -> usize {
         self.num_rows
     }
@@ -254,7 +257,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
     ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
     log_t: usize,
-) -> Result<std::sync::Arc<dyn jolt_akita::TraceOneHotRows>, ProverError<F>> {
+) -> Result<Arc<dyn TraceOneHotRows>, ProverError<F>> {
     PackedTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
     let num_rows = 1usize << log_t;
     let num_columns = plan.packing().ids().len();
@@ -341,7 +344,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                     reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
                 });
             }
-            return Ok(std::sync::Arc::new(PackedTraceRows {
+            return Ok(Arc::new(PackedTraceRows {
                 num_rows,
                 num_columns,
                 selected_rows,
@@ -368,7 +371,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                 1u64 << (row_index % u64::BITS as usize);
         }
     }
-    Ok(std::sync::Arc::new(PackedTraceRows {
+    Ok(Arc::new(PackedTraceRows {
         num_rows,
         num_columns,
         selected_rows,
@@ -733,6 +736,7 @@ pub fn assemble_precommitted_witness<F: JoltField>(
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_akita::{AkitaField, AkitaScheme};
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 
@@ -742,7 +746,7 @@ mod tests {
     fn rejects_noncanonical_advice_shapes() {
         for max_advice_bytes in [0, 4, 12, 24] {
             assert!(matches!(
-                commit_advice_one_hot::<jolt_akita::AkitaScheme>(
+                commit_advice_one_hot::<AkitaScheme>(
                     JoltAdviceKind::Untrusted,
                     &[],
                     max_advice_bytes,
@@ -762,11 +766,11 @@ mod tests {
         let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape).unwrap();
 
         assert!(matches!(
-            PackedTraceRows::validate_dimensions::<jolt_akita::AkitaField>(&plan, 16, 5),
+            PackedTraceRows::validate_dimensions::<AkitaField>(&plan, 16, 5),
             Err(ProverError::Unsupported { .. })
         ));
         assert!(matches!(
-            PackedTraceRows::validate_dimensions::<jolt_akita::AkitaField>(&plan, 8, 6),
+            PackedTraceRows::validate_dimensions::<AkitaField>(&plan, 8, 6),
             Err(ProverError::InvariantViolation { .. })
         ));
     }

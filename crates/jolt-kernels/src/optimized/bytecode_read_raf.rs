@@ -50,6 +50,8 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
 use jolt_field::JoltField;
+#[cfg(feature = "akita")]
+use jolt_poly::BindingOrder;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -640,7 +642,7 @@ impl<F: JoltField> LazyFusedInc<F> {
                 }
             }
             Self::Dense(mut polynomial) => {
-                polynomial.bind_with_order(challenge, jolt_poly::BindingOrder::LowToHigh);
+                polynomial.bind_with_order(challenge, BindingOrder::LowToHigh);
                 Self::Dense(polynomial)
             }
         };

@@ -37,6 +37,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage3::registers_claim_reduction::{
     RegistersClaimReduction, RegistersClaimReductionOutputClaims,
 };
+use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
@@ -56,8 +57,8 @@ struct RegisterValuesRow([u64; 3]);
 
 impl WitnessBundle for RegisterValuesRow {
     fn from_row(
-        row: &jolt_witness::__private::TraceRow,
-        _next: Option<&jolt_witness::__private::TraceRow>,
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self([

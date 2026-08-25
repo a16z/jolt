@@ -5,6 +5,7 @@ use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use jolt_utils::FirstErrorLatch;
+use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 #[cfg(feature = "parallel")]
 use jolt_witness::RandomAccessRows;
@@ -32,8 +33,8 @@ impl WitnessBundle for RegisterCycleRow {
     // re-export the bundle derive uses; jolt-kernels deliberately has no
     // jolt-program dependency.
     fn from_row(
-        row: &jolt_witness::__private::TraceRow,
-        _next: Option<&jolt_witness::__private::TraceRow>,
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let cycle = Self {

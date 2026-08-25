@@ -2,7 +2,9 @@
 //! of consumers.
 
 use std::ops::Range;
+use std::sync::Arc;
 
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::JoltTraceRow as TraceRow;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -143,17 +145,17 @@ pub trait RowSource {
 /// Shared random access to compact rows and their extraction context.
 #[derive(Clone)]
 pub struct RandomAccessRows {
-    rows: std::sync::Arc<Vec<TraceRow>>,
+    rows: Arc<Vec<TraceRow>>,
     cycles: usize,
-    preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
+    preprocessing: Arc<JoltProgramPreprocessing>,
     padding: TraceRow,
 }
 
 impl RandomAccessRows {
     pub(crate) fn new(
-        rows: std::sync::Arc<Vec<TraceRow>>,
+        rows: Arc<Vec<TraceRow>>,
         cycles: usize,
-        preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
+        preprocessing: Arc<JoltProgramPreprocessing>,
     ) -> Result<Self, WitnessError> {
         if rows.len() > cycles {
             return Err(WitnessError::InvalidWitnessData {

@@ -22,7 +22,9 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
+use jolt_witness::{
+    stream_witnesses, JoltWitnessOracle, RandomAccessRows, RowSource, StreamConsumer, WitnessError,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -161,10 +163,10 @@ where
 /// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
 fn collect_range_into(
-    access: &jolt_witness::RandomAccessRows,
+    access: &RandomAccessRows,
     range: std::ops::Range<usize>,
     out: &mut Vec<CommittedColumnsWitness>,
-) -> Result<(), jolt_witness::WitnessError> {
+) -> Result<(), WitnessError> {
     out.clear();
     let start = range.start;
     let count = range.end - start;
@@ -178,7 +180,7 @@ fn collect_range_into(
             for (offset, slot) in destination.iter_mut().enumerate() {
                 let _ = slot.write(access.window(base + offset)?);
             }
-            Ok::<_, jolt_witness::WitnessError>(())
+            Ok::<_, WitnessError>(())
         })?;
     // SAFETY: every slot was initialized above; the row type is `Copy`.
     unsafe { out.set_len(count) };
@@ -187,7 +189,7 @@ fn collect_range_into(
 
 #[cfg(feature = "parallel")]
 fn commit_pipelined<F, PCS>(
-    access: &jolt_witness::RandomAccessRows,
+    access: &RandomAccessRows,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,

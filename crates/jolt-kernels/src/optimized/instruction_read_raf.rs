@@ -1497,6 +1497,8 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
+    #[cfg(feature = "akita")]
+    use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
 
     use crate::reference::instruction_read_raf::{
@@ -1519,7 +1521,7 @@ mod tests {
                     None,
                     None,
                     #[cfg(feature = "akita")]
-                    jolt_witness::witnesses::FusedInc::default(),
+                    FusedInc::default(),
                 )
             })
             .collect()
@@ -1600,7 +1602,7 @@ mod tests {
             Some(u32::MAX as usize),
             Some(u64::MAX - 1),
             #[cfg(feature = "akita")]
-            jolt_witness::witnesses::FusedInc(-123),
+            FusedInc(-123),
         );
         assert_eq!(row.lookup_index(), lookup_index);
         assert_eq!(row.table_index(), Some(table));

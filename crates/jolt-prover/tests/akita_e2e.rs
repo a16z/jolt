@@ -148,7 +148,7 @@ mod muldiv {
     use std::sync::Arc;
 
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita;
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
@@ -225,7 +225,7 @@ mod muldiv {
             &[],
         );
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         );
@@ -364,7 +364,7 @@ mod muldiv {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: 32,
         };
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         );
@@ -402,7 +402,7 @@ mod advice {
 
     use jolt_claims::protocols::jolt::JoltAdviceKind;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita::{self, witness::commit_advice_one_hot};
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
@@ -498,7 +498,7 @@ mod advice {
             &trusted_advice,
         );
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config)
                 .include_trusted_advice(true)
                 .include_untrusted_advice(true),
@@ -642,7 +642,7 @@ mod advice {
             &trusted_advice,
         );
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config)
                 .include_trusted_advice(true)
                 .include_untrusted_advice(true),
@@ -681,7 +681,7 @@ mod committed {
     use std::sync::Arc;
 
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita;
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
@@ -760,7 +760,7 @@ mod committed {
             &[],
         );
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &full_program, trace_output),
         );

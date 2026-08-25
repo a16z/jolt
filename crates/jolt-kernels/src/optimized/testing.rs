@@ -17,6 +17,7 @@ use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Field, Fr, Ring};
+use jolt_poly::UnivariatePoly;
 use jolt_program::execution::{
     JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
     RegisterWrite, TraceOutput, TraceRow,
@@ -26,7 +27,7 @@ use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
-use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessPlane, TraceBackend};
 use rand_core::SeedableRng;
 
 use crate::{ProverInputs, SumcheckKernel};
@@ -71,7 +72,7 @@ pub(crate) enum RamOp {
 pub(crate) fn with_ram_fixture<R>(
     shape: FixtureShape,
     ops: Vec<RamOp>,
-    f: impl FnOnce(&dyn jolt_witness::JoltWitnessPlane<Fr>) -> R,
+    f: impl FnOnce(&dyn JoltWitnessPlane<Fr>) -> R,
 ) -> R {
     with_ram_fixture_init(shape, Vec::new(), ops, f)
 }
@@ -90,7 +91,7 @@ pub(crate) fn with_ram_fixture_init<R>(
     shape: FixtureShape,
     init_words: Vec<u64>,
     ops: Vec<RamOp>,
-    f: impl FnOnce(&dyn jolt_witness::JoltWitnessPlane<Fr>) -> R,
+    f: impl FnOnce(&dyn JoltWitnessPlane<Fr>) -> R,
 ) -> R {
     assert!(ops.len() < 1usize << shape.log_t, "script too long");
     assert!(
@@ -256,7 +257,7 @@ pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
 /// Trailing-zero-insensitive round-polynomial coefficients: the engine sums
 /// members into `max_degree + 1` slots and trims the batched polynomial, so
 /// a member's trailing zeros never reach the wire.
-fn trimmed(poly: &jolt_poly::UnivariatePoly<Fr>) -> Vec<Fr> {
+fn trimmed(poly: &UnivariatePoly<Fr>) -> Vec<Fr> {
     let mut coefficients = poly.coefficients().to_vec();
     while coefficients.last() == Some(&Fr::from_u64(0)) {
         let _ = coefficients.pop();

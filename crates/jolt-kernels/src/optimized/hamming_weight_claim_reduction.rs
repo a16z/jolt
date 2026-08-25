@@ -24,6 +24,10 @@
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
+    reduced_balanced_inc_carry_opening, reduced_balanced_inc_digit_opening,
+};
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_claims::OutputClaims;
 use jolt_field::JoltField;
@@ -347,12 +351,10 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         let mut output_openings = output_openings;
         #[cfg(feature = "akita")]
         {
-            output_openings.extend((0..dimensions.chunking().chunk_count()).map(
-                jolt_claims::protocols::jolt::lattice::relations::digit_zero::reduced_balanced_inc_digit_opening,
-            ));
-            output_openings.push(
-                jolt_claims::protocols::jolt::lattice::relations::digit_zero::reduced_balanced_inc_carry_opening(),
+            output_openings.extend(
+                (0..dimensions.chunking().chunk_count()).map(reduced_balanced_inc_digit_opening),
             );
+            output_openings.push(reduced_balanced_inc_carry_opening());
         }
 
         Ok(Box::new(HammingWeightKernel {

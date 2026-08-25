@@ -18,7 +18,7 @@
 //! addition is exact, so the values are identical).
 
 use jolt_field::JoltField;
-use jolt_poly::Polynomial;
+use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -658,7 +658,7 @@ impl<F: JoltField> AddressMajorMatrix<F> {
             out
         };
         self.entries = bound;
-        val_init.bind_with_order(r, jolt_poly::BindingOrder::LowToHigh);
+        val_init.bind_with_order(r, BindingOrder::LowToHigh);
     }
 
     /// The `[s(0), s(2)]` evaluations of the phase-2 round message over all

@@ -3,6 +3,7 @@
 //! into the packed-envelope [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
+use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
@@ -38,7 +39,7 @@ pub fn prove<F, PCS, VC, T, W>(
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
     F: JoltField + CanonicalBytes + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::TraceOneHotCommitment,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript,
     VC: VectorCommitment<Field = F>,

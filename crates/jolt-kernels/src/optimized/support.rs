@@ -11,12 +11,15 @@ use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
 use jolt_witness::{
-    stream_witnesses, RandomAccessRows, RowSource, StreamConsumer, WitnessBundle, WitnessError,
+    stream_witnesses, JoltWitnessPlane, RandomAccessRows, RowSource, StreamConsumer, WitnessBundle,
+    WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -76,7 +79,7 @@ pub(crate) fn collect_par_map<B: WitnessBundle, V: Copy + Send>(
 ) -> Result<Vec<V>, WitnessError> {
     let window = |index| access.window::<B>(index).map(&pack);
     #[cfg(feature = "parallel")]
-    return jolt_utils::par_collect_windows(cycles, window);
+    return par_collect_windows(cycles, window);
     #[cfg(not(feature = "parallel"))]
     (0..cycles).map(window).collect()
 }
@@ -781,7 +784,7 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.
     pub(crate) fn resolve<F: JoltField>(
-        witness: &dyn jolt_witness::JoltWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, crate::KernelError<F>> {
         match witness.random_access() {

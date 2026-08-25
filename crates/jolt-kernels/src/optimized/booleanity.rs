@@ -57,6 +57,12 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::relations::booleanity::{
+    lattice_booleanity_output_openings, LatticeBooleanityDimensions,
+};
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::BalancedIncChunking;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningId};
@@ -137,15 +143,12 @@ impl BooleanityColumns {
         #[cfg(feature = "akita")]
         {
             let lattice_dimensions =
-                jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
-                    dimensions,
-                )
-                .map_err(|_| KernelError::InvariantViolation {
-                    reason: "the packed shape requires a lattice-compatible chunk width",
+                LatticeBooleanityDimensions::new(dimensions).map_err(|_| {
+                    KernelError::InvariantViolation {
+                        reason: "the packed shape requires a lattice-compatible chunk width",
+                    }
                 })?;
-            Ok(jolt_claims::protocols::jolt::lattice::relations::booleanity::lattice_booleanity_output_openings(
-                lattice_dimensions,
-            ))
+            Ok(lattice_booleanity_output_openings(lattice_dimensions))
         }
     }
 
@@ -189,11 +192,11 @@ impl BooleanityColumns {
         let mut selectors = selectors;
         #[cfg(feature = "akita")]
         {
-            let chunking =
-                jolt_claims::protocols::jolt::lattice::BalancedIncChunking::new(log_k_chunk)
-                    .map_err(|_| KernelError::InvariantViolation {
-                        reason: "the packed shape requires a lattice-compatible chunk width",
-                    })?;
+            let chunking = BalancedIncChunking::new(log_k_chunk).map_err(|_| {
+                KernelError::InvariantViolation {
+                    reason: "the packed shape requires a lattice-compatible chunk width",
+                }
+            })?;
             selectors.extend((0..chunking.chunk_count()).map(|index| {
                 ColumnSelector::UnsignedInc(BalancedIncColumn::Digit {
                     width: log_k_chunk,
@@ -998,11 +1001,7 @@ mod tests {
         reference_cycle: Vec<Fr>,
     ) -> Booleanity<Fr> {
         #[cfg(feature = "akita")]
-        let dimensions =
-            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
-                dimensions,
-            )
-            .unwrap();
+        let dimensions = LatticeBooleanityDimensions::new(dimensions).unwrap();
         Booleanity::new(dimensions, r_address, reference_address, reference_cycle)
     }
 
@@ -1150,7 +1149,7 @@ mod tests {
             let mut session = ProofSession::default();
             if carried_indices {
                 let rows = InstructionCycleRow::collect::<Fr>(backend, 1usize << log_t).unwrap();
-                session.park(SharedInstructionRows(std::sync::Arc::new(rows)));
+                session.park(SharedInstructionRows(Arc::new(rows)));
             }
             let optimized = OptimizedBooleanityCycle
                 .prepare(

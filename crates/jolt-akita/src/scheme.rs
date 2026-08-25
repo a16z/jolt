@@ -411,8 +411,8 @@ impl CommitmentScheme for AkitaScheme {
                     with_backend_pool(|| AkitaBackendScheme::setup_verifier(&backend_prover_setup))
                         .map_err(|err| invalid_setup(&err))?;
                 (
-                    Some(std::sync::Arc::new(backend_prover_setup)),
-                    Some(std::sync::Arc::new(prepared_backend_setup)),
+                    Some(Arc::new(backend_prover_setup)),
+                    Some(Arc::new(prepared_backend_setup)),
                     Some(backend_verifier_setup),
                 )
             };
@@ -433,8 +433,8 @@ impl CommitmentScheme for AkitaScheme {
             let backend_verifier_setup =
                 crate::adapters::one_hot_setup_verifier(params.one_hot_k, &backend_prover_setup)?;
             (
-                Some(std::sync::Arc::new(backend_prover_setup)),
-                Some(std::sync::Arc::new(prepared_backend_setup)),
+                Some(Arc::new(backend_prover_setup)),
+                Some(Arc::new(prepared_backend_setup)),
                 Some(backend_verifier_setup),
             )
         } else {
