@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787678074545,
+  "lastUpdate": 1787679936167,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -144526,6 +144526,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 868368,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dc0c08e5729c8fefc4b24b095e63f0610e9d0357",
+          "message": "perf(zkvm): magnitude reformulation of signed division — DIV 24->12, REM 24->9, DIVW 21->14, REMW 21->11 rows (#1751)\n\n* refactor: prove signed division over magnitudes\n\n* feat: add conditional negation division sequences\n\n* docs: update signed division sequence descriptions\n\n* fix(jolt-tracer-x86): update div-family advice to magnitude-based sequences\n\nThe x86 AOT backend (#1729, landed after this PR was authored) computed\ndiv-family advice for the old virtual sequences: two values per group\n([quotient, |remainder|]) with DIV/REM and DIVW/REMW sharing formulas.\nThis PR's magnitude-based sequences provide one advice value per group,\nand DIV (signed quotient) now differs from REM (quotient magnitude),\nlikewise DIVW/REMW; DIVW's overflow quotient is zero-extended\n0x8000_0000. Mirror the tracer's per-variant formulas and split the\nadvice codes accordingly.\n\nAlso pin SUPPORTED back to 70: this PR replaces VirtualChangeDivisor +\nVirtualChangeDivisorW with VirtualNegateIf (net -1 supported kind vs\nmain's 71).\n\n* refactor(program): unify expansion emission APIs\n\n* refactor(program): accept symbolic temporary operands\n\n* ci(z3-nightly): run signed DIV/REM/DIVW/REMW proofs at 8-bit width\n\nThe div/rem obligations are #[ignore]d (non-terminating under the 64-bit\nmodel) and the nightly never opts into ignored tests, so they ran at no\nwidth. Add a filtered step with Z3_VERIFIER_BV_BITS=8 covering the eight\nsigned correctness+consistency proofs — the mechanical check that\narbitrary advice cannot produce a wrong or non-unique result, which the\nhonest-advice tracer/e2e coverage cannot show. All eight discharge in\nunder a second at this width. Also refresh the workflow's stale SCOPE\ncensus (86/106 tests, LW now modeled) and the book's nightly-CI note.",
+          "timestamp": "2026-08-25T12:39:48-04:00",
+          "tree_id": "7ab8ef2a0f2964cb4f303abacc35541583b380c0",
+          "url": "https://github.com/a16z/jolt/commit/dc0c08e5729c8fefc4b24b095e63f0610e9d0357"
+        },
+        "date": 1787679921904,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.2405,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861704,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3273,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 493032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 495172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 495132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7278,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 495536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5752,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 497536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.7701,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 493736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.1212,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 117532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4476,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5927,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 493456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.462,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 495504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.1789,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 495316,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8349,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 495232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.2021,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1096492,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.948,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 611472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 90.1823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2131064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.3545,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 497688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.1133,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 860384,
             "unit": "KB",
             "extra": ""
           }
