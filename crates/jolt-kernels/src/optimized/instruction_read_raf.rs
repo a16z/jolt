@@ -229,35 +229,37 @@ impl StreamConsumer for PackRows {
     }
 }
 
-/// One streaming bundle pass over the cycle domain, packed row by row (the
-/// wide bundle row exists only per chunk).
-pub(crate) fn collect_instruction_cycle_rows<F: JoltField>(
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
-    // Slice-backed sources pack index-parallel (the wide bundle row still
-    // never exists beyond a register); re-emulating sources stream.
-    if let Some(access) = witness.random_access() {
-        if cycles <= access.cycles() {
-            let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
-                InstructionCycleRow::new(
-                    row.lookup_index.0,
-                    row.table_index.0,
-                    row.raf_flag.0,
-                    row.mapped_pc.0,
-                    row.remapped_ram_address.0,
-                    #[cfg(feature = "akita")]
-                    row.fused_inc,
-                )
-            })?;
-            return Ok(rows);
+impl InstructionCycleRow {
+    /// One streaming bundle pass over the cycle domain, packed row by row (the
+    /// wide bundle row exists only per chunk).
+    pub(crate) fn collect<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Vec<Self>, KernelError<F>> {
+        // Slice-backed sources pack index-parallel (the wide bundle row still
+        // never exists beyond a register); re-emulating sources stream.
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
+                    Self::new(
+                        row.lookup_index.0,
+                        row.table_index.0,
+                        row.raf_flag.0,
+                        row.mapped_pc.0,
+                        row.remapped_ram_address.0,
+                        #[cfg(feature = "akita")]
+                        row.fused_inc,
+                    )
+                })?;
+                return Ok(rows);
+            }
         }
+        let mut consumers = (PackRows {
+            rows: Vec::with_capacity(cycles),
+        },);
+        stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
+        Ok(consumers.0.rows)
     }
-    let mut consumers = (PackRows {
-        rows: Vec::with_capacity(cycles),
-    },);
-    stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
-    Ok(consumers.0.rows)
 }
 
 /// The collected stage-5 rows, parked in the [`ProofSession`] for the
@@ -295,43 +297,45 @@ impl allocative::Allocative for SharedInstructionRowsWeak {
     }
 }
 
-/// Reclaim the parked stage-5 rows (the length guard makes a stale carry
-/// impossible to consume) or collect them fresh, and park the carry back
-/// for later consumers.
-pub(crate) fn shared_instruction_rows<F: JoltField>(
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Arc<Vec<InstructionCycleRow>>, KernelError<F>> {
-    // A parked strong carry is always honored (re-emulating sources, and
-    // tests that inject rows a witness would not produce).
-    let carried = match session.take::<SharedInstructionRows>() {
-        Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
-        _ => None,
-    };
-    if witness.random_access().is_some() {
-        // Slice-backed: consumers share within a stage through a weak
-        // handle; once the stage's kernels drop, the rows free, and later
-        // stages re-derive them index-parallel.
-        let upgraded = || {
-            session
-                .state::<SharedInstructionRowsWeak>()
-                .and_then(|weak| weak.0.upgrade())
-                .filter(|rows| rows.len() == cycles)
+impl InstructionCycleRow {
+    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
+    /// impossible to consume) or collect them fresh, and park the carry back
+    /// for later consumers.
+    pub(crate) fn shared<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Arc<Vec<Self>>, KernelError<F>> {
+        // A parked strong carry is always honored (re-emulating sources, and
+        // tests that inject rows a witness would not produce).
+        let carried = match session.take::<SharedInstructionRows>() {
+            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
+            _ => None,
         };
-        let rows = match carried.or_else(upgraded) {
+        if witness.random_access().is_some() {
+            // Slice-backed: consumers share within a stage through a weak
+            // handle; once the stage's kernels drop, the rows free, and later
+            // stages re-derive them index-parallel.
+            let upgraded = || {
+                session
+                    .state::<SharedInstructionRowsWeak>()
+                    .and_then(|weak| weak.0.upgrade())
+                    .filter(|rows| rows.len() == cycles)
+            };
+            let rows = match carried.or_else(upgraded) {
+                Some(rows) => rows,
+                None => Arc::new(Self::collect(witness, cycles)?),
+            };
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+            return Ok(rows);
+        }
+        let rows = match carried {
             Some(rows) => rows,
-            None => Arc::new(collect_instruction_cycle_rows(witness, cycles)?),
+            None => Arc::new(Self::collect(witness, cycles)?),
         };
-        session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-        return Ok(rows);
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        Ok(rows)
     }
-    let rows = match carried {
-        Some(rows) => rows,
-        None => Arc::new(collect_instruction_cycle_rows(witness, cycles)?),
-    };
-    session.park(SharedInstructionRows(Arc::clone(&rows)));
-    Ok(rows)
 }
 
 /// Optimized [`PrepareKernel`] implementor for the `instruction_read_raf`
@@ -346,7 +350,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
+        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(InstructionCycleRow::collect(
             witness,
             1 << dimensions.log_t(),
         )?);

@@ -14,7 +14,7 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::sparse::{cycle_entries, IndexedSparseEntry};
+use super::sparse::IndexedSparseEntry;
 use crate::KernelError;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -106,7 +106,7 @@ impl<F: JoltField> StreamConsumer for CollectRegisterEntries<F> {
         for cycle in chunk {
             let row = self.rs1_indices.len();
             debug_assert!(u32::try_from(row).is_ok());
-            let (cells, len) = cycle_entries(row as u32, cycle);
+            let (cells, len) = cycle.entries(row as u32);
             self.entries.extend_from_slice(&cells[..len]);
             self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
             self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
@@ -115,177 +115,179 @@ impl<F: JoltField> StreamConsumer for CollectRegisterEntries<F> {
     }
 }
 
-/// Builds the sparse entries and the operand index columns in one trace
-/// pass. Slice-backed sources build index-parallel; re-emulating sources
-/// stream sequentially. Entry values and order are identical either way —
-/// [`cycle_entries`] is pure per cycle, and runs concatenate in cycle order.
-pub(super) fn collect_register_entries<F: JoltField>(
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
-    #[cfg(feature = "parallel")]
-    if let Some(access) = witness.random_access() {
-        if cycles <= access.cycles() {
-            return collect_register_entries_par(&access, cycles);
-        }
-    }
-    let mut consumers = (CollectRegisterEntries::<F> {
-        entries: Vec::with_capacity(cycles * 3),
-        rs1_indices: Vec::with_capacity(cycles),
-        rs2_indices: Vec::with_capacity(cycles),
-        rd_indices: Vec::with_capacity(cycles),
-    },);
-    stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-    Ok(consumers.0)
-}
-
-/// The index-parallel entry build: a first pass counts each chunk's
-/// entries (extraction-only, no staging), so entries scatter straight into
-/// their exclusive-scan offsets on the second pass — no per-chunk runs, no
-/// co-resident copy (the entry vector is the stage's largest allocation;
-/// briefly doubling it moves the prover's peak). The three operand index
-/// columns fill on the counting pass. Entry values and order are identical
-/// to the streaming pass: cycle_entries is pure per cycle.
-#[cfg(feature = "parallel")]
-fn collect_register_entries_par<F: JoltField>(
-    access: &RandomAccessRows,
-    cycles: usize,
-) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
-    use core::mem::MaybeUninit;
-    /// The scatter grain (matches the whole-range collectors' load-balance
-    /// tradeoff at ~3 entries per cycle).
-    const CHUNK: usize = 1 << 14;
-    let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-    let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-    let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-    let error = FirstErrorLatch::new();
-    let chunk_count = cycles.div_ceil(CHUNK);
-    // Pass 1: count entries per chunk and fill the index columns.
-    let mut counts: Vec<usize> = Vec::new();
-    (
-        rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-        rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-        rd_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-    )
-        .into_par_iter()
-        .enumerate()
-        .map(|(chunk_index, (rs1, rs2, rd))| {
-            let base = chunk_index * CHUNK;
-            let mut count = 0usize;
-            for offset in 0..rs1.len() {
-                match access.window::<RegisterCycleRow>(base + offset) {
-                    Ok(cycle) => {
-                        count += cycle_entry_count(&cycle);
-                        let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
-                        let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
-                        let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
-                    }
-                    Err(failure) => {
-                        error.record(base + offset, failure);
-                        return count;
-                    }
-                }
+impl<F: JoltField> CollectRegisterEntries<F> {
+    /// Builds the sparse entries and the operand index columns in one trace
+    /// pass. Slice-backed sources build index-parallel; re-emulating sources
+    /// stream sequentially. Entry values and order are identical either way —
+    /// [`RegisterCycleRow::entries`] is pure per cycle, and runs concatenate in
+    /// cycle order.
+    pub(super) fn collect(
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Self, KernelError<F>> {
+        #[cfg(feature = "parallel")]
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, cycles);
             }
-            count
-        })
-        .collect_into_vec(&mut counts);
-    if let Some(failure) = error.take() {
-        return Err(failure.into());
-    }
-    // SAFETY: the error latch is empty, so every chunk ran to completion and
-    // initialized its whole span of all three index columns.
-    unsafe {
-        rs1_indices.set_len(cycles);
-        rs2_indices.set_len(cycles);
-        rd_indices.set_len(cycles);
+        }
+        let mut consumers = (Self {
+            entries: Vec::with_capacity(cycles * 3),
+            rs1_indices: Vec::with_capacity(cycles),
+            rs2_indices: Vec::with_capacity(cycles),
+            rd_indices: Vec::with_capacity(cycles),
+        },);
+        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+        Ok(consumers.0)
     }
 
-    // Exclusive scan of the per-chunk counts, then pass 2: re-extract and
-    // scatter entries straight to their offsets.
-    let mut offsets: Vec<usize> = Vec::with_capacity(chunk_count);
-    let mut total = 0usize;
-    for &count in &counts {
-        offsets.push(total);
-        total += count;
-    }
-    let mut entries: Vec<IndexedSparseEntry<F>> = Vec::with_capacity(total);
-    {
-        let mut rest: &mut [MaybeUninit<IndexedSparseEntry<F>>] =
-            &mut entries.spare_capacity_mut()[..total];
-        let mut windows: Vec<&mut [MaybeUninit<IndexedSparseEntry<F>>]> =
-            Vec::with_capacity(chunk_count);
-        for &count in &counts {
-            let (head, tail) = rest.split_at_mut(count);
-            windows.push(head);
-            rest = tail;
-        }
+    /// The index-parallel entry build: a first pass counts each chunk's
+    /// entries (extraction-only, no staging), so entries scatter straight into
+    /// their exclusive-scan offsets on the second pass — no per-chunk runs, no
+    /// co-resident copy (the entry vector is the stage's largest allocation;
+    /// briefly doubling it moves the prover's peak). The three operand index
+    /// columns fill on the counting pass. Entry values and order are identical
+    /// to the streaming pass: [`RegisterCycleRow::entries`] is pure per cycle.
+    #[cfg(feature = "parallel")]
+    fn collect_par(access: &RandomAccessRows, cycles: usize) -> Result<Self, KernelError<F>> {
+        use core::mem::MaybeUninit;
+        /// The scatter grain (matches the whole-range collectors' load-balance
+        /// tradeoff at ~3 entries per cycle).
+        const CHUNK: usize = 1 << 14;
+        let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+        let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+        let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
-        windows
+        let chunk_count = cycles.div_ceil(CHUNK);
+        // Pass 1: count entries per chunk and fill the index columns.
+        let mut counts: Vec<usize> = Vec::new();
+        (
+            rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            rd_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+        )
             .into_par_iter()
             .enumerate()
-            .for_each(|(chunk_index, window)| {
+            .map(|(chunk_index, (rs1, rs2, rd))| {
                 let base = chunk_index * CHUNK;
-                let top = ((chunk_index + 1) * CHUNK).min(cycles);
-                let mut written = 0usize;
-                for row in base..top {
-                    // Pass 1 latched any extraction error; a second window
-                    // over the same immutable rows cannot fail differently,
-                    // but stay conservative and latch again.
-                    match access.window::<RegisterCycleRow>(row) {
+                let mut count = 0usize;
+                for offset in 0..rs1.len() {
+                    match access.window::<RegisterCycleRow>(base + offset) {
                         Ok(cycle) => {
-                            let (cells, len) = cycle_entries(row as u32, &cycle);
-                            for cell in &cells[..len] {
-                                let _ = window[written].write(*cell);
-                                written += 1;
-                            }
+                            count += cycle.entry_count();
+                            let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
+                            let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
+                            let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
                         }
                         Err(failure) => {
-                            error.record(row, failure);
-                            return;
+                            error.record(base + offset, failure);
+                            return count;
                         }
                     }
                 }
-                debug_assert_eq!(written, window.len());
-            });
+                count
+            })
+            .collect_into_vec(&mut counts);
         if let Some(failure) = error.take() {
             return Err(failure.into());
         }
+        // SAFETY: the error latch is empty, so every chunk ran to completion and
+        // initialized its whole span of all three index columns.
+        unsafe {
+            rs1_indices.set_len(cycles);
+            rs2_indices.set_len(cycles);
+            rd_indices.set_len(cycles);
+        }
+
+        // Exclusive scan of the per-chunk counts, then pass 2: re-extract and
+        // scatter entries straight to their offsets.
+        let mut offsets: Vec<usize> = Vec::with_capacity(chunk_count);
+        let mut total = 0usize;
+        for &count in &counts {
+            offsets.push(total);
+            total += count;
+        }
+        let mut entries: Vec<IndexedSparseEntry<F>> = Vec::with_capacity(total);
+        {
+            let mut rest: &mut [MaybeUninit<IndexedSparseEntry<F>>] =
+                &mut entries.spare_capacity_mut()[..total];
+            let mut windows: Vec<&mut [MaybeUninit<IndexedSparseEntry<F>>]> =
+                Vec::with_capacity(chunk_count);
+            for &count in &counts {
+                let (head, tail) = rest.split_at_mut(count);
+                windows.push(head);
+                rest = tail;
+            }
+            let error = FirstErrorLatch::new();
+            windows
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(chunk_index, window)| {
+                    let base = chunk_index * CHUNK;
+                    let top = ((chunk_index + 1) * CHUNK).min(cycles);
+                    let mut written = 0usize;
+                    for row in base..top {
+                        // Pass 1 latched any extraction error; a second window
+                        // over the same immutable rows cannot fail differently,
+                        // but stay conservative and latch again.
+                        match access.window::<RegisterCycleRow>(row) {
+                            Ok(cycle) => {
+                                let (cells, len) = cycle.entries(row as u32);
+                                for cell in &cells[..len] {
+                                    let _ = window[written].write(*cell);
+                                    written += 1;
+                                }
+                            }
+                            Err(failure) => {
+                                error.record(row, failure);
+                                return;
+                            }
+                        }
+                    }
+                    debug_assert_eq!(written, window.len());
+                });
+            if let Some(failure) = error.take() {
+                return Err(failure.into());
+            }
+        }
+        // SAFETY: the windows partition exactly `total` slots (the exclusive
+        // scan of the same counts pass 2 reproduces), and every window was
+        // fully written above.
+        unsafe { entries.set_len(total) };
+        Ok(Self {
+            entries,
+            rs1_indices,
+            rs2_indices,
+            rd_indices,
+        })
     }
-    // SAFETY: the windows partition exactly `total` slots (the exclusive
-    // scan of the same counts pass 2 reproduces), and every window was
-    // fully written above.
-    unsafe { entries.set_len(total) };
-    Ok(CollectRegisterEntries {
-        entries,
-        rs1_indices,
-        rs2_indices,
-        rd_indices,
-    })
 }
 
-/// The entry count [`cycle_entries`] will produce for one cycle — the
-/// counting pass's cheap twin (kept adjacent so the merge rules stay in
-/// sync: rs2 folds into rs1's entry, rd into either read's).
 #[cfg(feature = "parallel")]
-fn cycle_entry_count(cycle: &RegisterCycleRow) -> usize {
-    let mut count = 0usize;
-    let mut cols = [None; 2];
-    if let Some((rs1, _)) = cycle.rs1 {
-        cols[0] = Some(rs1);
-        count += 1;
-    }
-    if let Some((rs2, _)) = cycle.rs2 {
-        if cols[0] != Some(rs2) {
-            cols[1] = Some(rs2);
+impl RegisterCycleRow {
+    /// The entry count [`Self::entries`] will produce for one cycle — the
+    /// counting pass's cheap twin (kept adjacent so the merge rules stay in
+    /// sync: rs2 folds into rs1's entry, rd into either read's).
+    fn entry_count(&self) -> usize {
+        let mut count = 0usize;
+        let mut cols = [None; 2];
+        if let Some((rs1, _)) = self.rs1 {
+            cols[0] = Some(rs1);
             count += 1;
         }
-    }
-    if let Some((rd, ..)) = cycle.rd {
-        if cols[0] != Some(rd) && cols[1] != Some(rd) {
-            count += 1;
+        if let Some((rs2, _)) = self.rs2 {
+            if cols[0] != Some(rs2) {
+                cols[1] = Some(rs2);
+                count += 1;
+            }
         }
+        if let Some((rd, ..)) = self.rd {
+            if cols[0] != Some(rd) && cols[1] != Some(rd) {
+                count += 1;
+            }
+        }
+        count
     }
-    count
 }
 
 #[cfg(test)]

@@ -42,7 +42,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::instruction_read_raf::InstructionCycleRow;
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
     RoundProgress,
@@ -187,7 +187,7 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         let k_chunk = 1usize << dimensions.log_k_chunk;
         let cycles = 1usize << r_cycle.len();
 
-        let rows = shared_instruction_rows(session, witness, cycles)?;
+        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
         let eq_cycle = eq_table(r_cycle);
         let selectors = FamilySelectors::new(
             (layout.instruction(), layout.bytecode(), layout.ram()),

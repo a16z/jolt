@@ -336,70 +336,69 @@ const RA_BOTH: LutIndex = LutIndex(3);
 const WA_ZERO: SmallLutIndex = SmallLutIndex(0);
 const WA_HOT: SmallLutIndex = SmallLutIndex(1);
 
-/// Build the (sorted-by-column) sparse entries of one cycle as seed-table
-/// indices. Returns the filled prefix length (0–3).
-pub(super) fn cycle_entries<F: JoltField>(
-    row: u32,
-    cycle: &RegisterCycleRow,
-) -> ([IndexedSparseEntry<F>; 3], usize) {
-    let empty = SparseEntry {
-        val: F::zero(),
-        ra: RA_ZERO,
-        wa: WA_ZERO,
-        prev_val: 0,
-        next_val: 0,
-        row,
-        col: 0,
-    };
-    let mut out = [empty; 3];
-    let mut len = 0usize;
-
-    if let Some((rs1, rs1_val)) = cycle.rs1 {
-        out[len] = SparseEntry {
-            col: rs1,
-            prev_val: rs1_val,
-            next_val: rs1_val,
-            val: F::from_u64(rs1_val),
-            ra: RA_RS1,
-            ..empty
+impl RegisterCycleRow {
+    /// Build the (sorted-by-column) sparse entries of one cycle as seed-table
+    /// indices. Returns the filled prefix length (0–3).
+    pub(super) fn entries<F: JoltField>(&self, row: u32) -> ([IndexedSparseEntry<F>; 3], usize) {
+        let empty = SparseEntry {
+            val: F::zero(),
+            ra: RA_ZERO,
+            wa: WA_ZERO,
+            prev_val: 0,
+            next_val: 0,
+            row,
+            col: 0,
         };
-        len += 1;
-    }
-    if let Some((rs2, rs2_val)) = cycle.rs2 {
-        if let Some(entry) = out[..len].iter_mut().find(|entry| entry.col == rs2) {
-            entry.ra = RA_BOTH;
-        } else {
-            out[len] = SparseEntry {
-                col: rs2,
-                prev_val: rs2_val,
-                next_val: rs2_val,
-                val: F::from_u64(rs2_val),
-                ra: RA_RS2,
-                ..empty
-            };
-            len += 1;
-        }
-    }
-    if let Some((rd, rd_pre, rd_post)) = cycle.rd {
-        if let Some(entry) = out[..len].iter_mut().find(|entry| entry.col == rd) {
-            entry.wa = WA_HOT;
-            entry.next_val = rd_post;
-        } else {
-            out[len] = SparseEntry {
-                col: rd,
-                prev_val: rd_pre,
-                next_val: rd_post,
-                val: F::from_u64(rd_pre),
-                wa: WA_HOT,
-                ..empty
-            };
-            len += 1;
-        }
-    }
+        let mut out = [empty; 3];
+        let mut len = 0usize;
 
-    // Sort by column; len ≤ 3.
-    out[..len].sort_unstable_by_key(|entry| entry.col);
-    (out, len)
+        if let Some((rs1, rs1_val)) = self.rs1 {
+            out[len] = SparseEntry {
+                col: rs1,
+                prev_val: rs1_val,
+                next_val: rs1_val,
+                val: F::from_u64(rs1_val),
+                ra: RA_RS1,
+                ..empty
+            };
+            len += 1;
+        }
+        if let Some((rs2, rs2_val)) = self.rs2 {
+            if let Some(entry) = out[..len].iter_mut().find(|entry| entry.col == rs2) {
+                entry.ra = RA_BOTH;
+            } else {
+                out[len] = SparseEntry {
+                    col: rs2,
+                    prev_val: rs2_val,
+                    next_val: rs2_val,
+                    val: F::from_u64(rs2_val),
+                    ra: RA_RS2,
+                    ..empty
+                };
+                len += 1;
+            }
+        }
+        if let Some((rd, rd_pre, rd_post)) = self.rd {
+            if let Some(entry) = out[..len].iter_mut().find(|entry| entry.col == rd) {
+                entry.wa = WA_HOT;
+                entry.next_val = rd_post;
+            } else {
+                out[len] = SparseEntry {
+                    col: rd,
+                    prev_val: rd_pre,
+                    next_val: rd_post,
+                    val: F::from_u64(rd_pre),
+                    wa: WA_HOT,
+                    ..empty
+                };
+                len += 1;
+            }
+        }
+
+        // Sort by column; len ≤ 3.
+        out[..len].sort_unstable_by_key(|entry| entry.col);
+        (out, len)
+    }
 }
 
 /// Merged length of two adjacent sorted-by-column rows (a bind dry run —

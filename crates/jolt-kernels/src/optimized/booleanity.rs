@@ -81,7 +81,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{gamma_power_pairs, pin_derived_term_if_derived, RoundProgress};
 use crate::reference::views::eq_table;
@@ -123,32 +123,32 @@ struct BooleanityColumns {
     selectors: Vec<ColumnSelector>,
 }
 
-fn booleanity_openings<F: JoltField>(
-    dimensions: BooleanityDimensions,
-) -> Result<Vec<JoltOpeningId>, KernelError<F>> {
-    #[cfg(not(feature = "akita"))]
-    {
-        Ok(dimensions
-            .layout
-            .openings(JoltRelationId::Booleanity)
-            .collect())
-    }
-    #[cfg(feature = "akita")]
-    {
-        let lattice_dimensions =
-            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
-                dimensions,
-            )
-            .map_err(|_| KernelError::InvariantViolation {
-                reason: "the packed shape requires a lattice-compatible chunk width",
-            })?;
-        Ok(jolt_claims::protocols::jolt::lattice::relations::booleanity::lattice_booleanity_output_openings(
-            lattice_dimensions,
-        ))
-    }
-}
-
 impl BooleanityColumns {
+    fn openings<F: JoltField>(
+        dimensions: BooleanityDimensions,
+    ) -> Result<Vec<JoltOpeningId>, KernelError<F>> {
+        #[cfg(not(feature = "akita"))]
+        {
+            Ok(dimensions
+                .layout
+                .openings(JoltRelationId::Booleanity)
+                .collect())
+        }
+        #[cfg(feature = "akita")]
+        {
+            let lattice_dimensions =
+                jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
+                    dimensions,
+                )
+                .map_err(|_| KernelError::InvariantViolation {
+                    reason: "the packed shape requires a lattice-compatible chunk width",
+                })?;
+            Ok(jolt_claims::protocols::jolt::lattice::relations::booleanity::lattice_booleanity_output_openings(
+                lattice_dimensions,
+            ))
+        }
+    }
+
     /// The layout's chunk selectors, in canonical polynomial order, with the
     /// witness shapes validated up front.
     fn new<F: JoltField>(
@@ -158,7 +158,7 @@ impl BooleanityColumns {
         let log_t = dimensions.log_t;
         let log_k_chunk = dimensions.log_k_chunk;
         let layout = dimensions.layout;
-        let openings = booleanity_openings(dimensions)?;
+        let openings = Self::openings(dimensions)?;
         for opening in &openings {
             let shape = witness.shape(opening.polynomial_id())?;
             if shape.log_rows != log_k_chunk + log_t {
@@ -326,7 +326,7 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
         }
 
         let columns = BooleanityColumns::new(witness, dimensions)?;
-        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
         let masses = cycle_pushforward(
             &rows,
             &columns.selectors,
@@ -518,7 +518,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             });
         }
         let columns = BooleanityColumns::new(witness, dimensions)?;
-        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
 
         // The fixed address eq factor of the `EqAddressCycle` public; rides
         // in the split-eq scaling so round messages and the bound scalar
@@ -948,9 +948,7 @@ mod tests {
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
     use jolt_witness::JoltWitnessOracle;
 
-    use super::super::instruction_read_raf::{
-        collect_instruction_cycle_rows, SharedInstructionRows, SharedInstructionRowsWeak,
-    };
+    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
     use crate::ReferenceBackend;
@@ -1035,7 +1033,7 @@ mod tests {
         let gamma_sqr = gamma * gamma;
         let mut total = Fr::from_u64(0);
         let mut weight = Fr::from_u64(1);
-        for opening in booleanity_openings::<Fr>(dimensions).unwrap() {
+        for opening in BooleanityColumns::openings::<Fr>(dimensions).unwrap() {
             let grid: Vec<Fr> = backend.oracle_table(opening.polynomial_id()).unwrap();
             for (j, eq_cycle) in eq_cycle.iter().enumerate() {
                 let x: Fr = eq_address
@@ -1160,7 +1158,7 @@ mod tests {
                 .unwrap();
             let mut session = ProofSession::default();
             if carried_indices {
-                let rows = collect_instruction_cycle_rows::<Fr>(backend, 1usize << log_t).unwrap();
+                let rows = InstructionCycleRow::collect::<Fr>(backend, 1usize << log_t).unwrap();
                 session.park(SharedInstructionRows(std::sync::Arc::new(rows)));
             }
             let optimized = OptimizedBooleanityCycle

@@ -74,7 +74,7 @@ mod tests;
 
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
-use rows::{collect_register_entries, CollectRegisterEntries};
+use rows::CollectRegisterEntries;
 use sparse::{
     bind_sparse_entries, sparse_quadratic, CoeffLut, OneHotCoeff, ReadWriteKernel, SparseEntries,
 };
@@ -141,7 +141,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             rs1_indices,
             rs2_indices,
             rd_indices,
-        } = collect_register_entries(witness, cycles)?;
+        } = CollectRegisterEntries::collect(witness, cycles)?;
         let entries = SparseEntries::Indexed {
             entries,
             ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
@@ -345,64 +345,61 @@ impl<F: JoltField> ReadWriteKernel<F> {
     }
 }
 
-/// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the two
-/// read operands in one walk — the direct MLE of a one-hot `(K × T)` grid at
-/// the bound point.
-///
-/// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
-/// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
-/// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
-fn one_hot_operand_claims<F: JoltField>(
-    rs1_indices: &[Option<u8>],
-    rs2_indices: &[Option<u8>],
-    r_address: &[F],
-    r_cycle: &[F],
-) -> (F, F) {
-    let log_t = r_cycle.len();
-    let addr_bits = r_address.len();
-    let n = log_t + addr_bits;
-    let hi_bits = core::cmp::min(log_t, n.div_ceil(2));
+impl<F: JoltField> ReadWriteKernel<F> {
+    /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the two
+    /// read operands in one walk — the direct MLE of a one-hot `(K × T)` grid at
+    /// the bound point.
+    ///
+    /// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
+    /// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
+    /// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
+    fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
+        let log_t = r_cycle.len();
+        let addr_bits = r_address.len();
+        let n = log_t + addr_bits;
+        let hi_bits = core::cmp::min(log_t, n.div_ceil(2));
 
-    let r_joint: Vec<F> = r_cycle.iter().chain(r_address.iter()).copied().collect();
-    let (r_hi, r_lo) = r_joint.split_at(hi_bits);
-    let e_hi = EqPolynomial::<F>::evals(r_hi, None);
-    let e_lo = EqPolynomial::<F>::evals(r_lo, None);
+        let r_joint: Vec<F> = r_cycle.iter().chain(r_address.iter()).copied().collect();
+        let (r_hi, r_lo) = r_joint.split_at(hi_bits);
+        let e_hi = EqPolynomial::<F>::evals(r_hi, None);
+        let e_lo = EqPolynomial::<F>::evals(r_lo, None);
 
-    let cycle_bits_in_lo = (n - hi_bits) - addr_bits;
-    let cycles_per_block = 1usize << cycle_bits_in_lo;
-    let cycle_lo_mask = cycles_per_block - 1;
+        let cycle_bits_in_lo = (n - hi_bits) - addr_bits;
+        let cycles_per_block = 1usize << cycle_bits_in_lo;
+        let cycle_lo_mask = cycles_per_block - 1;
 
-    let block_contribution = |idx_hi: usize| -> [F; 2] {
-        let block_start = idx_hi << cycle_bits_in_lo;
-        let block_end = core::cmp::min(block_start + cycles_per_block, rs1_indices.len());
-        if block_start >= rs1_indices.len() {
-            return [F::zero(); 2];
-        }
-        let mut sums = [F::Accumulator::default(), F::Accumulator::default()];
-        for j in block_start..block_end {
-            let j_in_block = (j & cycle_lo_mask) << addr_bits;
-            if let Some(rs1) = rs1_indices[j] {
-                sums[0].add(e_lo[j_in_block | rs1 as usize]);
+        let block_contribution = |idx_hi: usize| -> [F; 2] {
+            let block_start = idx_hi << cycle_bits_in_lo;
+            let block_end = core::cmp::min(block_start + cycles_per_block, self.rs1_indices.len());
+            if block_start >= self.rs1_indices.len() {
+                return [F::zero(); 2];
             }
-            if let Some(rs2) = rs2_indices[j] {
-                sums[1].add(e_lo[j_in_block | rs2 as usize]);
+            let mut sums = [F::Accumulator::default(), F::Accumulator::default()];
+            for j in block_start..block_end {
+                let j_in_block = (j & cycle_lo_mask) << addr_bits;
+                if let Some(rs1) = self.rs1_indices[j] {
+                    sums[0].add(e_lo[j_in_block | rs1 as usize]);
+                }
+                if let Some(rs2) = self.rs2_indices[j] {
+                    sums[1].add(e_lo[j_in_block | rs2 as usize]);
+                }
             }
-        }
-        let e_hi_eval = e_hi[idx_hi];
-        [e_hi_eval * sums[0].reduce(), e_hi_eval * sums[1].reduce()]
-    };
+            let e_hi_eval = e_hi[idx_hi];
+            [e_hi_eval * sums[0].reduce(), e_hi_eval * sums[1].reduce()]
+        };
 
-    #[cfg(feature = "parallel")]
-    let claims = (0..e_hi.len())
-        .into_par_iter()
-        .map(block_contribution)
-        .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
-    #[cfg(not(feature = "parallel"))]
-    let claims = (0..e_hi.len())
-        .map(block_contribution)
-        .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
+        #[cfg(feature = "parallel")]
+        let claims = (0..e_hi.len())
+            .into_par_iter()
+            .map(block_contribution)
+            .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
+        #[cfg(not(feature = "parallel"))]
+        let claims = (0..e_hi.len())
+            .map(block_contribution)
+            .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
 
-    (claims[0], claims[1])
+        (claims[0], claims[1])
+    }
 }
 
 impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
@@ -441,8 +438,7 @@ impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
     ) -> Result<RegistersReadWriteOutputClaims<F>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
         let (r_address, r_cycle) = self.bound_point();
-        let (rs1_ra, rs2_ra) =
-            one_hot_operand_claims(&self.rs1_indices, &self.rs2_indices, &r_address, &r_cycle);
+        let (rs1_ra, rs2_ra) = self.one_hot_operand_claims(&r_address, &r_cycle);
         Ok(RegistersReadWriteOutputClaims {
             registers_val: self.val[0],
             rs1_ra,

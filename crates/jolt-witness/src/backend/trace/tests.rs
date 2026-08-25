@@ -705,8 +705,9 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
         #[cfg(feature = "field-inline")]
         field_inline: None,
     };
-    let row = compact_trace_row(&row, &preprocessing).map_err(|error| error.to_string())?;
-    let ram_row = compact_trace_row(
+    let row = TraceBackend::<OwnedTrace>::compact_trace_row(&row, &preprocessing)
+        .map_err(|error| error.to_string())?;
+    let ram_row = TraceBackend::<OwnedTrace>::compact_trace_row(
         &TraceRow {
             instruction: load_instruction,
             registers: RegisterState {
