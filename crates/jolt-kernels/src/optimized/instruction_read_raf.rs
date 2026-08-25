@@ -27,16 +27,14 @@
 //! - **Split-eq flag claims**: the output lookup-table/RAF flag sums use the
 //!   `E_hi ⊗ E_lo` factorization of `eq(r_cycle, ·)` instead of a `T`-sized
 //!   eq table.
-//! - **Shared witness rows**: the collected per-cycle rows are parked in the
-//!   [`ProofSession`] (keyed by [`SharedInstructionRows`]) so the stage-6b
-//!   instruction RA virtualization kernel and the stage-6a/6b booleanity
-//!   kernels reuse them instead of re-scanning the trace — the packed row
-//!   carries the mapped PC and remapped RAM address alongside the stage-5
-//!   facts at no size cost.
+//! - **Shared witness rows**: re-emulating sources keep a strong
+//!   [`SharedInstructionRows`] carry in the [`ProofSession`]; slice-backed
+//!   sources keep only [`SharedInstructionRowsWeak`], sharing inside one stage
+//!   and rebuilding index-parallel later so `40 B × T` rows do not survive
+//!   through the prover's peak window.
 
 #[cfg(feature = "parallel")]
 use std::mem::MaybeUninit;
-use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
@@ -60,7 +58,10 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{accumulate_product, collect_par_map};
+use super::support::{
+    accumulate_product_grid, collect_par_map, for_each_index_mut, map_indices, map_reduce_chunks,
+    scan_chunk_size, RoundProgress,
+};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -349,7 +350,11 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
             witness,
             1 << dimensions.log_t(),
         )?);
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        if witness.random_access().is_some() {
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+        } else {
+            session.park(SharedInstructionRows(Arc::clone(&rows)));
+        }
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,
@@ -358,81 +363,6 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         )?))
     }
 }
-
-// --- parallel shims -------------------------------------------------------
-//
-// The kernel's custom scans need chunked map-reduce and indexed maps; the
-// serial fallbacks compute the same field values (sums and products of the
-// same terms), so parity is unaffected by the feature.
-
-/// `merge`-fold of `map` over index chunks of at most `chunk_size`.
-fn map_reduce_chunks<R: Send>(
-    len: usize,
-    chunk_size: usize,
-    map: impl Fn(Range<usize>) -> R + Send + Sync,
-    merge: impl Fn(R, R) -> R + Send + Sync,
-    identity: impl Fn() -> R + Send + Sync,
-) -> R {
-    if len == 0 {
-        return identity();
-    }
-    #[cfg(feature = "parallel")]
-    {
-        let chunks = len.div_ceil(chunk_size);
-        (0..chunks)
-            .into_par_iter()
-            .map(|c| map(c * chunk_size..((c + 1) * chunk_size).min(len)))
-            .reduce(identity, merge)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let _ = (merge, identity, chunk_size);
-        map(0..len)
-    }
-}
-
-/// Collect `f(0), …, f(len − 1)`.
-fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..len).into_par_iter().map(f).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..len).map(f).collect()
-    }
-}
-
-/// Indexed in-place update of a slice.
-fn for_each_index_mut<T: Send>(items: &mut [T], f: impl Fn(usize, &mut T) + Send + Sync) {
-    #[cfg(feature = "parallel")]
-    {
-        items
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        items
-            .iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-}
-
-fn scan_chunk_size(len: usize) -> usize {
-    #[cfg(feature = "parallel")]
-    {
-        len.div_ceil(rayon::current_num_threads()).max(1024)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        len.max(1)
-    }
-}
-
-// --- kernel ---------------------------------------------------------------
 
 /// One RAF prefix–suffix decomposition — same shape and binding as the
 /// reference kernel's.
@@ -513,14 +443,14 @@ struct CycleState<F: JoltField> {
 #[cfg(feature = "allocative")]
 impl<F: JoltField> CycleState<F> {
     fn heap_bytes(&self) -> usize {
-        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
+        use crate::backend::{poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
         let tables = match &self.tables {
             CycleTables::Pending(pending) => vec_heap_bytes(&pending.table_values),
             CycleTables::Dense { combined_val, ra } => {
                 poly_heap_bytes(combined_val) + polys_heap_bytes(ra)
             }
         };
-        gruen_heap_bytes(&self.gruen) + tables + vec_heap_bytes(&self.bind_scratch)
+        self.gruen.heap_bytes() + tables + vec_heap_bytes(&self.bind_scratch)
     }
 }
 
@@ -663,7 +593,7 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     /// handoff so the full 40 B rows can free — the final flag walk needs
     /// only this byte per cycle.
     claim_columns: Vec<u8>,
-    rounds_bound: usize,
+    progress: RoundProgress,
 }
 
 #[cfg(feature = "allocative")]
@@ -917,7 +847,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             cycle_challenges: Vec::new(),
             cycle: None,
             claim_columns: Vec::new(),
-            rounds_bound: 0,
+            progress: RoundProgress::new(dimensions.sumcheck_rounds()),
         };
         kernel.init_phase(0);
         Ok(kernel)
@@ -1306,14 +1236,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         }
                     }
                 }
-                accumulate_product(&scratch.evals, &mut scratch.lanes[0]);
-                for lane in 1..factors - 1 {
-                    for (eval, step) in scratch.evals.iter_mut().zip(&scratch.steps) {
-                        *eval += *step;
-                    }
-                    accumulate_product(&scratch.evals, &mut scratch.lanes[lane]);
-                }
-                accumulate_product(&scratch.steps, &mut scratch.lanes[factors - 1]);
+                accumulate_product_grid(&mut scratch.evals, &scratch.steps, &mut scratch.lanes);
             },
             |_x_out, e_out, scratch| {
                 let mut out = vec![F::Accumulator::default(); factors];
@@ -1432,7 +1355,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        if self.rounds_bound < self.address_bits() {
+        if self.progress.bound() < self.address_bits() {
             let bind_dense = |table: &mut Polynomial<F>| {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);
             };
@@ -1461,7 +1384,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             self.phase_challenges.push(challenge);
 
             if self.phase_challenges.len() == CHUNK_LEN {
-                let phase = self.rounds_bound / CHUNK_LEN;
+                let phase = self.progress.bound() / CHUNK_LEN;
                 self.v_tables.push(eq_table(&self.phase_challenges));
                 for (&index, table) in self.prefix_indices.iter().zip(&self.prefix_tables) {
                     self.prefix_checkpoints[index] = PrefixEval::from(table.evals()[0]);
@@ -1538,7 +1461,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             }
             self.cycle_challenges.push(challenge);
         }
-        self.rounds_bound += 1;
+        self.progress.advance();
         Ok(())
     }
 }
@@ -1557,7 +1480,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        if self.rounds_bound < self.address_bits() {
+        if self.progress.bound() < self.address_bits() {
             Ok(self.address_message(previous_claim))
         } else {
             self.cycle_message(round, previous_claim)
@@ -1576,11 +1499,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.num_rounds() {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.num_rounds() - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let cycle = self
             .cycle
             .as_ref()

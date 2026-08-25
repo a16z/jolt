@@ -73,9 +73,10 @@ use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 #[cfg(not(feature = "akita"))]
 use super::support::collect_rows;
-#[cfg(feature = "parallel")]
-use super::support::merge_evals;
-use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals, scaled_eq_table};
+use super::support::{
+    bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, par_sum_pair_groups_reusing,
+    round_poly_from_skipped_evals, scaled_eq_table, RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -339,11 +340,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
 
         let base_stages = stage_cycle_points.len();
         let num_stages = base_stages + fused_cycle_points.len();
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = vec![F::one(); num_stages + 3];
-        for i in 1..gamma_powers.len() {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
 
         let pushforwards = stage_pushforwards::<F, _, false>(
             stage_cycle_points,
@@ -398,7 +395,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         };
 
         Ok(Box::new(AddressKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             committed_program: relation.committed_program(),
             stage_weights: gamma_powers[..num_stages].to_vec(),
             entry_weight: gamma_powers[num_stages + 2],
@@ -409,7 +406,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             int_table,
             entry_trace: one_hot(push_pc(&rows[0])),
             entry_expected: one_hot(entry_bytecode_index),
-            rounds_bound: 0,
         }))
     }
 }
@@ -421,7 +417,7 @@ enum StageVal {
 }
 
 struct AddressKernel<F: JoltField> {
-    rounds: usize,
+    progress: RoundProgress,
     committed_program: bool,
     stage_weights: Vec<F>,
     entry_weight: F,
@@ -435,7 +431,6 @@ struct AddressKernel<F: JoltField> {
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -490,7 +485,7 @@ impl<F: JoltField> AddressKernel<F> {
                 ]),
             challenge,
         );
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
@@ -519,7 +514,7 @@ impl<F: JoltField> AddressKernel<F> {
 
 impl<F: JoltField> ProveRounds<F> for AddressKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -533,25 +528,10 @@ impl<F: JoltField> ProveRounds<F> for AddressKernel<F> {
         }
         let half = self.entry_trace.len() / 2;
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || vec![F::zero(); 2],
-                |mut acc, y| {
-                    let group = self.group_evals(y);
-                    acc[0] += group[0];
-                    acc[1] += group[1];
-                    acc
-                },
-            )
-            .reduce(|| vec![F::zero(); 2], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = (0..half).fold(vec![F::zero(); 2], |mut acc, y| {
+        let evals = par_sum_pair_groups(half, 2, |acc, y| {
             let group = self.group_evals(y);
             acc[0] += group[0];
             acc[1] += group[1];
-            acc
         });
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
@@ -570,11 +550,7 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let mut intermediate =
             self.entry_weight * self.entry_trace.evals()[0] * self.entry_expected.evals()[0];
         let bound_int = self.int_table.evals()[0];
@@ -736,13 +712,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
         // stage-1 cycle point, SpartanShiftRaf the stage-3 one).
         let stage_values = relation.stage_values_at_r_address()?;
-        let gamma = inputs.challenges.gamma;
         let num_stages = stage_cycle_points.len();
         let base_stages = bytecode::BYTECODE_STAGE_GAMMA_COUNTS.len();
-        let mut gamma_powers = vec![F::one(); num_stages + 3];
-        for i in 1..gamma_powers.len() {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
         let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
         let mut stage_weights = (0..base_stages)
             .map(|stage| gamma_powers[stage] * stage_values[stage])
@@ -809,7 +781,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         }
 
         Ok(Box::new(CycleKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             degree: relation.degree(),
             ra,
             combined: Polynomial::new(combined),
@@ -818,7 +790,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             #[cfg(feature = "akita")]
             fused_combined,
             output_openings,
-            rounds_bound: 0,
         }))
     }
 }
@@ -865,7 +836,7 @@ impl ChunkIndexSource for BytecodePcChunks {
 }
 
 struct CycleKernel<F: JoltField> {
-    rounds: usize,
+    progress: RoundProgress,
     degree: usize,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
     combined: Polynomial<F>,
@@ -876,7 +847,6 @@ struct CycleKernel<F: JoltField> {
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
     output_openings: Vec<JoltOpeningId>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -915,7 +885,7 @@ impl<F: JoltField> CycleKernel<F> {
         self.ra.bind(challenge);
         #[cfg(feature = "akita")]
         self.fused_inc.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
@@ -960,7 +930,7 @@ impl<F: JoltField> CycleKernel<F> {
 
 impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -976,26 +946,12 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || (vec![F::zero(); slots], vec![(F::zero(), F::zero()); num_ra]),
-                |(mut acc, mut ra_pairs), y| {
-                    self.accumulate_group(y, &mut acc, &mut ra_pairs);
-                    (acc, ra_pairs)
-                },
-            )
-            .map(|(acc, _)| acc)
-            .reduce(|| vec![F::zero(); slots], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = {
-            let mut ra_pairs = vec![(F::zero(), F::zero()); num_ra];
-            (0..half).fold(vec![F::zero(); slots], |mut acc, y| {
-                self.accumulate_group(y, &mut acc, &mut ra_pairs);
-                acc
-            })
-        };
+        let evals = par_sum_pair_groups_reusing(
+            half,
+            slots,
+            || vec![(F::zero(), F::zero()); num_ra],
+            |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
+        );
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
     }
@@ -1013,11 +969,7 @@ impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let ra = &self.ra;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {
@@ -1062,7 +1014,7 @@ mod tests {
     use jolt_witness::{JoltWitnessOracle, ProgramSource};
 
     use super::*;
-    use crate::optimized::harness::{
+    use crate::optimized::parity::{
         probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
     };
     use crate::ReferenceBackend;
@@ -1257,7 +1209,7 @@ mod akita_tests {
 
     use super::*;
     use crate::optimized::booleanity::testing::with_booleanity_backend;
-    use crate::optimized::harness::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::ReferenceBackend;
 
     fn address_parity(log_t: usize, log_k_chunk: u8, committed_program: bool) {

@@ -43,9 +43,10 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
-#[cfg(feature = "parallel")]
-use super::support::merge_evals;
-use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals};
+use super::support::{
+    bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
+    RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -224,13 +225,8 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         }
         let g_tables = g_evals.into_iter().map(Polynomial::new).collect();
 
-        let gamma = inputs.challenges.gamma;
         #[cfg(not(feature = "akita"))]
-        let mut gamma_powers = vec![F::one(); 3 * layout.total()];
-        #[cfg(not(feature = "akita"))]
-        for i in 1..gamma_powers.len() {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers = gamma_powers(inputs.challenges.gamma, 3 * layout.total());
         let eq_bool = eq_table(r_address);
         #[cfg(not(feature = "akita"))]
         let weight_tables: Vec<Polynomial<F>> = virtualization_points
@@ -269,10 +265,7 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
                 })
                 .sum::<usize>();
             let decode_power = ra_terms + chunk_count + 1;
-            let mut gamma_powers = vec![F::one(); decode_power + 1];
-            for i in 1..gamma_powers.len() {
-                gamma_powers[i] = gamma_powers[i - 1] * gamma;
-            }
+            let gamma_powers = gamma_powers(inputs.challenges.gamma, decode_power + 1);
             let at_digit_zero = |point: &[F]| {
                 point
                     .iter()
@@ -363,23 +356,21 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         }
 
         Ok(Box::new(HammingWeightKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             g_tables,
             weight_tables,
             output_openings,
-            rounds_bound: 0,
         }))
     }
 }
 
 struct HammingWeightKernel<F: JoltField> {
-    rounds: usize,
+    progress: RoundProgress,
     /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
     /// Combined claim weights `W_i`, index-aligned with `g_tables`.
     weight_tables: Vec<Polynomial<F>>,
     output_openings: Vec<JoltOpeningId>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -411,7 +402,7 @@ impl<F: JoltField> HammingWeightKernel<F> {
                 .chain(self.weight_tables.iter_mut()),
             challenge,
         );
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
@@ -430,7 +421,7 @@ impl<F: JoltField> HammingWeightKernel<F> {
 
 impl<F: JoltField> ProveRounds<F> for HammingWeightKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -444,25 +435,10 @@ impl<F: JoltField> ProveRounds<F> for HammingWeightKernel<F> {
         }
         let half = self.weight_tables[0].len() / 2;
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || vec![F::zero(); 2],
-                |mut acc, y| {
-                    let group = self.group_evals(y);
-                    acc[0] += group[0];
-                    acc[1] += group[1];
-                    acc
-                },
-            )
-            .reduce(|| vec![F::zero(); 2], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = (0..half).fold(vec![F::zero(); 2], |mut acc, y| {
+        let evals = par_sum_pair_groups(half, 2, |acc, y| {
             let group = self.group_evals(y);
             acc[0] += group[0];
             acc[1] += group[1];
-            acc
         });
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
@@ -481,11 +457,7 @@ impl<F: JoltField> SumcheckKernel<F> for HammingWeightKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let g_tables = &self.g_tables;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {
@@ -517,7 +489,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
-    use crate::optimized::harness::{
+    use crate::optimized::parity::{
         probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
     };
     use crate::{ProofSession, ReferenceBackend};
@@ -613,7 +585,7 @@ mod akita_tests {
 
     use super::*;
     use crate::optimized::booleanity::testing::with_booleanity_backend;
-    use crate::optimized::harness::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::{ProofSession, ReferenceBackend};
 
     fn hamming_weight_parity(log_t: usize, log_k_chunk: u8) {

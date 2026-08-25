@@ -262,23 +262,6 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
         + polys.iter().map(poly_heap_bytes).sum::<usize>()
 }
 
-/// Heap retained by an unbound Gruen split-equality table. The cache stores
-/// every power-of-two prefix below each current table, so each side has
-/// `2 * current_len - 1` field elements.
-#[cfg(feature = "allocative")]
-pub(crate) fn gruen_heap_bytes<F: jolt_field::JoltField>(
-    split: &jolt_poly::GruenSplitEqPolynomial<F>,
-) -> usize {
-    let in_len = split.e_in_current_len();
-    let out_len = split.e_out_current_len();
-    let in_levels = in_len.ilog2() as usize + 1;
-    let out_levels = out_len.ilog2() as usize + 1;
-    let point_len = in_levels + out_levels - 1;
-    point_len * size_of::<F>()
-        + (in_levels + out_levels) * size_of::<Vec<F>>()
-        + (2 * in_len + 2 * out_len - 2) * size_of::<F>()
-}
-
 /// Visit a shared flat vector without walking its elements. This preserves
 /// `Arc` deduplication while keeping heap snapshots O(1) in the trace size.
 #[cfg(feature = "allocative")]

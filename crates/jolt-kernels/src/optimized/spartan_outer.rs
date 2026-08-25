@@ -65,7 +65,6 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
-use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::{
     lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
     NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
@@ -76,7 +75,10 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::support::{
+    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
+    RoundChallenges,
+};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -415,7 +417,7 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) 
 struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
     tau: Vec<F>,
-    rows: RowsStore,
+    rows: BundleStore<SpartanOuterRow>,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
     t1_values: Vec<F>,
@@ -436,72 +438,12 @@ impl<F: JoltField> allocative::Allocative for SpartanOuterCarry<F> {
     }
 }
 
-/// Where the kernel's typed rows live. A slice-backed witness serves an
-/// owning handle and every pass re-extracts its windows on the fly — the
-/// materialized row vector (~176 B × T, the prover's peak allocation at
-/// large scale) never exists. Re-emulating sources retain the collected
-/// rows as before.
-enum RowsStore {
-    Owned(jolt_witness::RandomAccessRows),
-    Retained(Vec<SpartanOuterRow>),
-}
-
-impl RowsStore {
-    /// Resolve for a witness plane: the owning handle when the source is
-    /// slice-backed (and covers the cycle domain), a materialized collect
-    /// otherwise.
-    fn resolve<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
-        match witness.random_access() {
-            Some(rows) if cycles <= rows.cycles() => Ok(Self::Owned(rows)),
-            _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
-        }
-    }
-
-    fn access(&self) -> RowsAccess<'_> {
-        match self {
-            Self::Owned(rows) => RowsAccess::View(rows),
-            Self::Retained(rows) => RowsAccess::Retained(rows),
-        }
-    }
-}
-
-#[cfg(feature = "allocative")]
-impl RowsStore {
-    fn heap_bytes(&self) -> usize {
-        match self {
-            Self::Owned(_) => 0,
-            Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
-        }
-    }
-}
-
-/// One pass's borrowed row provider.
-enum RowsAccess<'a> {
-    View(&'a jolt_witness::RandomAccessRows),
-    Retained(&'a [SpartanOuterRow]),
-}
-
-impl RowsAccess<'_> {
-    /// The typed row at cycle `t` — an extraction window over a slice-backed
-    /// source, an indexed copy from a retained vector. Pure per index.
-    #[inline]
-    fn row(&self, t: usize) -> Result<SpartanOuterRow, WitnessError> {
-        match self {
-            Self::View(view) => view.window(t),
-            Self::Retained(rows) => Ok(rows[t]),
-        }
-    }
-}
-
 /// Extended-node evaluations of
 /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
 /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
 /// integer extension pipeline.
 fn extended_t1_values<F: JoltField>(
-    rows: &RowsAccess<'_>,
+    rows: &BundleAccess<'_, SpartanOuterRow>,
     tau_low: &[F],
 ) -> Result<Vec<F>, WitnessError> {
     let split = tau_low.len() / 2;
@@ -531,26 +473,7 @@ fn extended_t1_values<F: JoltField>(
             .map(|accumulator| e_out[x_out] * accumulator.reduce())
             .collect())
     };
-    let merge = |mut left: Vec<F>, right: Vec<F>| {
-        for (left, right) in left.iter_mut().zip(right) {
-            *left += right;
-        }
-        left
-    };
-
-    #[cfg(feature = "parallel")]
-    let extended = (0..e_out.len()).into_par_iter().map(block).try_reduce(
-        || vec![F::zero(); EXTENDED_NODE_COUNT],
-        |left, right| Ok(merge(left, right)),
-    )?;
-    #[cfg(not(feature = "parallel"))]
-    let extended = {
-        let mut folded = vec![F::zero(); EXTENDED_NODE_COUNT];
-        for x_out in 0..e_out.len() {
-            folded = merge(folded, block(x_out)?);
-        }
-        folded
-    };
+    let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, block)?;
 
     let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
     for ((position, _), value) in extension_coefficients().iter().zip(extended) {
@@ -578,7 +501,7 @@ impl OptimizedOuterUniskip {
                 reason: "Spartan outer row count disagrees with log_t",
             });
         }
-        Self::prepare_from_store(session, log_t, tau, RowsStore::Retained(rows))
+        Self::prepare_from_store(session, log_t, tau, BundleStore::Retained(rows))
     }
 
     /// The store-generic half of `prepare`.
@@ -586,7 +509,7 @@ impl OptimizedOuterUniskip {
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
-        rows: RowsStore,
+        rows: BundleStore<SpartanOuterRow>,
     ) -> Result<(), KernelError<F>> {
         if tau.len() != log_t + 2 {
             return Err(KernelError::InvariantViolation {
@@ -614,7 +537,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
         tau: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = RowsStore::resolve(witness, 1usize << log_t)?;
+        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
         Self::prepare_from_store(session, log_t, tau, rows)
     }
 
@@ -677,15 +600,14 @@ struct DerivedWeights<F> {
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
 struct OuterRemainderKernel<F: JoltField> {
-    rounds: usize,
     az: Polynomial<F>,
     bz: Polynomial<F>,
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     /// Round-0 endpoints, fused into the materialization pass.
     pending_endpoints: Option<(F, F)>,
-    challenges: Vec<F>,
-    rows: RowsStore,
+    challenges: RoundChallenges<F>,
+    rows: BundleStore<SpartanOuterRow>,
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
@@ -693,7 +615,7 @@ struct OuterRemainderKernel<F: JoltField> {
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for OuterRemainderKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(allocative::Key::new("az"), poly_heap_bytes(&self.az));
         visitor.visit_simple(allocative::Key::new("bz"), poly_heap_bytes(&self.bz));
@@ -701,13 +623,10 @@ impl<F: JoltField> allocative::Allocative for OuterRemainderKernel<F> {
             allocative::Key::new("scratch"),
             vec_heap_bytes(&self.scratch),
         );
-        visitor.visit_simple(
-            allocative::Key::new("split_eq"),
-            gruen_heap_bytes(&self.split_eq),
-        );
+        visitor.visit_simple(allocative::Key::new("split_eq"), self.split_eq.heap_bytes());
         visitor.visit_simple(
             allocative::Key::new("challenges"),
-            vec_heap_bytes(&self.challenges),
+            self.challenges.heap_bytes(),
         );
         visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
         visitor.visit_simple(
@@ -821,13 +740,12 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             folded
         };
         Ok(Self {
-            rounds,
             az: Polynomial::new(az),
             bz: Polynomial::new(bz),
             scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
-            challenges: Vec::with_capacity(rounds),
+            challenges: RoundChallenges::new(rounds),
             rows,
             opening_ids,
             derived,
@@ -863,47 +781,6 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         })
     }
 
-    /// The current round's endpoints `q(0)`, `q(∞)` over the remaining
-    /// `(lo, hi)` pairs, eq-weighted by the split tensor.
-    fn endpoints(&self) -> (F, F) {
-        let az = self.az.evals();
-        let bz = self.bz.evals();
-        let e_out = self.split_eq.e_out_current();
-        let e_in = self.split_eq.e_in_current();
-        let in_len = e_in.len();
-        debug_assert_eq!(e_out.len() * in_len * 2, az.len());
-
-        let block = |x_out: usize| -> (F, F) {
-            let mut inner_zero = F::zero();
-            let mut inner_infinity = F::zero();
-            for (x_in, &e) in e_in.iter().enumerate() {
-                let pair = 2 * (x_out * in_len + x_in);
-                let az_low = az[pair];
-                let az_high = az[pair + 1];
-                let bz_low = bz[pair];
-                let bz_high = bz[pair + 1];
-                inner_zero += e * (az_low * bz_low);
-                inner_infinity += e * ((az_high - az_low) * (bz_high - bz_low));
-            }
-            (e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity)
-        };
-        let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
-
-        #[cfg(feature = "parallel")]
-        {
-            (0..e_out.len())
-                .into_par_iter()
-                .map(block)
-                .reduce(|| (F::zero(), F::zero()), add)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            (0..e_out.len())
-                .map(block)
-                .fold((F::zero(), F::zero()), add)
-        }
-    }
-
     fn bind(&mut self, challenge: F) {
         self.az
             .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
@@ -919,7 +796,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     /// mixed-width accumulators per input.
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
-        let reversed: Vec<F> = self.challenges[1..].iter().rev().copied().collect();
+        let reversed: Vec<F> = self.challenges.as_slice()[1..]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
         let weights = {
             let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
             EqPolynomial::<F>::evals(&reversed, None)
@@ -939,31 +820,9 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             }
             Ok(accumulator.finish())
         };
-        let merge = |mut left: Vec<F>, right: Vec<F>| {
-            for (left, right) in left.iter_mut().zip(right) {
-                *left += right;
-            }
-            left
-        };
-
         let claimed = {
             let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
-            #[cfg(feature = "parallel")]
-            {
-                (0..blocks).into_par_iter().map(block).try_reduce(
-                    || vec![F::zero(); VARIABLE_COUNT],
-                    |left, right| Ok(merge(left, right)),
-                )
-            }
-
-            #[cfg(not(feature = "parallel"))]
-            {
-                let mut folded = vec![F::zero(); VARIABLE_COUNT];
-                for index in 0..blocks {
-                    folded = merge(folded, block(index)?);
-                }
-                Ok(folded)
-            }
+            try_par_sum_vecs(blocks, VARIABLE_COUNT, block)
         };
         claimed
     }
@@ -1091,7 +950,7 @@ impl<F: JoltField> ClaimAccumulator<F> {
 
 impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.challenges.total()
     }
 
     fn prove_round(
@@ -1105,7 +964,7 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
         }
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
-            None => self.endpoints(),
+            None => self.split_eq.product_endpoints(&self.az, &self.bz),
         };
         Ok(self
             .split_eq
@@ -1125,10 +984,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.challenges.len();
-        if remaining != 0 {
-            return Err(SumcheckKernelError::NotFullyBound { remaining });
-        }
+        self.challenges.require_complete()?;
         let claimed =
             self.claimed_inputs()
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
@@ -1149,14 +1005,11 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.challenges.len();
-        if remaining != 0 {
-            return Err(SumcheckKernelError::NotFullyBound { remaining });
-        }
+        self.challenges.require_complete()?;
         // The stream challenge binds the per-stream weight pairs; the split-eq
         // scalar is the fully bound TauKernel — both from the kernel's own
         // state, cross-checked against the verifier's coefficient build.
-        let stream = self.challenges[0];
+        let stream = self.challenges.as_slice()[0];
         let blend = |pair: [&F; 2]| *pair[0] + stream * (*pair[1] - *pair[0]);
         let variable_count = self.opening_ids.len();
         let ids = std::iter::once(SpartanOuterPublic::TauKernel)
@@ -1168,12 +1021,6 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
             ]);
         for public_id in ids {
             let id = JoltDerivedId::from(public_id);
-            let expected =
-                match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                    Ok(value) => value,
-                    Err(VerifierError::MissingStageClaimDerived { .. }) => continue,
-                    Err(error) => return Err(error.into()),
-                };
             let got = match public_id {
                 SpartanOuterPublic::TauKernel => self.split_eq.current_scalar(),
                 SpartanOuterPublic::AzWeight(index) => blend([
@@ -1191,9 +1038,14 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
                     blend([&self.derived.bz_constant[0], &self.derived.bz_constant[1]])
                 }
             };
-            if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-            }
+            pin_derived_term_if_derived(
+                relation,
+                id,
+                input_points,
+                output_points,
+                challenges,
+                got,
+            )?;
         }
         Ok(())
     }

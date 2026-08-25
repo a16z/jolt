@@ -32,8 +32,7 @@ use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, ToField, UnexpandedPc};
@@ -41,7 +40,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -114,25 +113,24 @@ enum InputState<F: JoltField> {
 }
 
 pub struct OptimizedInstructionInputKernel<F: JoltField> {
-    log_t: usize,
+    progress: RoundProgress,
     gamma: F,
     state: InputState<F>,
     gruen: GruenSplitEqPolynomial<F>,
     bind_scratch: Vec<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for OptimizedInstructionInputKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{gruen_heap_bytes, polys_heap_bytes, vec_heap_bytes};
+        use crate::backend::{polys_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
         let state_bytes = match &self.state {
             InputState::Native(rows) => vec_heap_bytes(rows),
             InputState::Dense(polys) => polys_heap_bytes(polys),
         };
         visitor.visit_simple(allocative::Key::new("state"), state_bytes);
-        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
         visitor.visit_simple(
             allocative::Key::new("bind_scratch"),
             vec_heap_bytes(&self.bind_scratch),
@@ -168,12 +166,11 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             });
         }
         Ok(Self {
-            log_t,
+            progress: RoundProgress::new(log_t),
             gamma,
             state: InputState::Native(rows),
             gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
             bind_scratch: Vec::new(),
-            rounds_bound: 0,
         })
     }
 
@@ -291,29 +288,13 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let q_evals = match &self.state {
+        let mut q_evals = match &self.state {
             InputState::Native(rows) => self.native_q_evals(rows),
             InputState::Dense(tables) => self.dense_q_evals(tables),
         };
 
-        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let mut l_eval = l_at_0;
-        let mut evals = [F::zero(); 4];
-        for (eval, q) in evals.iter_mut().zip(&q_evals) {
-            *eval = l_eval * *q;
-            l_eval += l_step;
-        }
-
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        self.gruen
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {
@@ -349,7 +330,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 }
             }
         }
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The eight fully bound table values, table order.
@@ -364,7 +345,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
 
 impl<F: JoltField> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -392,11 +373,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionInputOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let [left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm] =
             self.final_values();
         Ok(InstructionInputOutputClaims {
@@ -421,18 +398,16 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(InstructionInputPublic::EqProduct);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            id,
+            input_points,
+            output_points,
+            challenges,
+            self.gruen.current_scalar(),
+        )
     }
 }
 

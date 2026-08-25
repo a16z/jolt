@@ -10,6 +10,8 @@
 use std::sync::Arc;
 
 use jolt_field::JoltField;
+#[cfg(feature = "parallel")]
+use jolt_utils::FirstErrorLatch;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
@@ -179,7 +181,7 @@ impl RamAccessColumns {
         let mut addresses = Vec::with_capacity(cycles);
         let mut pre_values = Vec::with_capacity(cycles);
         let mut post_values = Vec::with_capacity(cycles);
-        let error = std::sync::Mutex::new(None);
+        let error = FirstErrorLatch::new();
         (
             addresses.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
             pre_values.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
@@ -193,18 +195,14 @@ impl RamAccessColumns {
                     let bundle = match access.window::<RamAccessBundle>(base + offset) {
                         Ok(bundle) => bundle,
                         Err(failure) => {
-                            if let Ok(mut guard) = error.try_lock() {
-                                let _ = guard.get_or_insert(CollectFailure::Witness(failure));
-                            }
+                            error.record(base + offset, CollectFailure::Witness(failure));
                             return;
                         }
                     };
                     let address = match encode_address(bundle.address.0) {
                         Ok(address) => address,
                         Err(failure) => {
-                            if let Ok(mut guard) = error.try_lock() {
-                                let _ = guard.get_or_insert(CollectFailure::Address(failure));
-                            }
+                            error.record(base + offset, CollectFailure::Address(failure));
                             return;
                         }
                     };
@@ -213,8 +211,7 @@ impl RamAccessColumns {
                     let _ = post_values[offset].write(bundle.post_value.0);
                 }
             });
-        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
-        if let Some(failure) = error.into_inner().unwrap() {
+        if let Some(failure) = error.take() {
             return Err(match failure {
                 CollectFailure::Witness(failure) => failure.into(),
                 CollectFailure::Address(failure) => failure.into_kernel_error(),
@@ -258,11 +255,13 @@ impl RamAccessColumns {
                 .state::<Arc<Self>>()
                 .expect("RAM access columns parked above"),
         );
-        debug_assert_eq!(
-            columns.addresses.len(),
-            1usize << log_t,
-            "parked RAM access columns cover a different cycle domain than requested"
-        );
+        if columns.addresses.len() != 1usize << log_t {
+            return Err(KernelError::TableSizeMismatch {
+                table: "session-shared RAM access columns".to_owned(),
+                expected: 1usize << log_t,
+                got: columns.addresses.len(),
+            });
+        }
         Ok(columns)
     }
 
@@ -356,5 +355,37 @@ impl RamAccessColumns {
             }
         }
         val_init
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::panic, reason = "test module")]
+mod tests {
+    use jolt_field::Fr;
+    use jolt_witness::testing::with_sample_backend;
+
+    use super::*;
+
+    #[test]
+    fn rejects_session_carry_from_another_cycle_domain() {
+        with_sample_backend(|witness| {
+            let mut session = ProofSession::default();
+            session.park(Arc::new(RamAccessColumns {
+                addresses: vec![NO_ACCESS; 2],
+            }));
+
+            let error = match RamAccessColumns::shared::<Fr>(&mut session, witness, 2) {
+                Ok(_) => panic!("wrong-domain RAM columns were accepted"),
+                Err(error) => error,
+            };
+            assert!(matches!(
+                error,
+                KernelError::TableSizeMismatch {
+                    expected: 4,
+                    got: 2,
+                    ..
+                }
+            ));
+        });
     }
 }

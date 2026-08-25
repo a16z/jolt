@@ -527,7 +527,7 @@ mod tests {
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, ProgramSource, TraceBackend};
 
     use super::*;
-    use crate::optimized::harness::{run_lockstep, synthetic_point};
+    use crate::optimized::parity::{run_lockstep, synthetic_point};
     use crate::reference::precommitted_reduction::ReferencePrecommittedAddress;
     use crate::ReferenceBackend;
 

@@ -17,22 +17,19 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc_val_check;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::{Accumulator, JoltField};
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 use std::sync::Arc;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::SplitLt;
+use super::support::{pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -92,8 +89,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         }
 
         Ok(Box::new(RamValCheckKernel {
-            rounds: log_t,
-            rounds_bound: 0,
+            progress: RoundProgress::new(log_t),
             inc: Polynomial::new(inc_table),
             ra: LazyFoldedRa::new(vec![eq_table(r_address)], RamAddressIndices { columns }),
             lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
@@ -102,8 +98,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
 }
 
 struct RamValCheckKernel<F: JoltField> {
-    rounds: usize,
-    rounds_bound: usize,
+    progress: RoundProgress,
     inc: Polynomial<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,
     lt: SplitLt<F>,
@@ -128,22 +123,13 @@ impl<F: JoltField> RamValCheckKernel<F> {
         self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);
         self.ra.bind(challenge);
         self.lt.bind(challenge);
-        self.rounds_bound += 1;
-    }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.rounds_bound;
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
-        }
+        self.progress.advance();
     }
 }
 
 impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -158,41 +144,12 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
 
         let half = self.inc.len() / 2;
         let inc = self.inc.evals();
-        let accumulate = |y: usize, acc: &mut [F::Accumulator; 3]| {
-            let (inc_0, inc_1) = (inc[2 * y], inc[2 * y + 1]);
-            let (ra_0, ra_1) = self.ra.lo_hi(0, y);
-            let (lt_0, lt_1) = self.lt.pair(y);
-            let (inc_m, ra_m, lt_m) = (inc_1 - inc_0, ra_1 - ra_0, lt_1 - lt_0);
-            // t = 0, 2, 3; s(1) comes from the engine hint.
-            let (inc_2, ra_2, lt_2) = (inc_1 + inc_m, ra_1 + ra_m, lt_1 + lt_m);
-            acc[0].fmadd(inc_0 * ra_0, lt_0);
-            acc[1].fmadd(inc_2 * ra_2, lt_2);
-            acc[2].fmadd((inc_2 + inc_m) * (ra_2 + ra_m), lt_2 + lt_m);
-        };
-
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || [F::Accumulator::default(); 3],
-                |mut acc, y| {
-                    accumulate(y, &mut acc);
-                    acc
-                },
-            )
-            .map(|acc| acc.map(F::Accumulator::reduce))
-            .reduce(
-                || [F::zero(); 3],
-                |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
-            );
-        #[cfg(not(feature = "parallel"))]
-        let evals = {
-            let mut acc = [F::Accumulator::default(); 3];
-            for y in 0..half {
-                accumulate(y, &mut acc);
-            }
-            acc.map(F::Accumulator::reduce)
-        };
+        let evals = triple_product_round_evals(
+            half,
+            |y| (inc[2 * y], inc[2 * y + 1]),
+            |y| self.ra.lo_hi(0, y),
+            |y| self.lt.pair(y),
+        );
 
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
@@ -210,7 +167,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamValCheckOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         // The advice cells are dual-role: never bound here, their wire output
         // value is the consumed input claim read back (the naive tier's echo).
         Ok(RamValCheckOutputClaims {
@@ -231,14 +188,16 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.lt.final_value();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            id,
+            input_points,
+            output_points,
+            challenges,
+            self.lt.final_value(),
+        )
     }
 }
 

@@ -33,13 +33,25 @@ use crate::commitment::{
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 
-/// Cycles per superchunk. The dominant stage-0 wall cost on a many-core
-/// host is the per-superchunk join (its critical path is one window's
-/// serial MSM), so fewer, larger superchunks win: 2^17 → 2^21 measured
-/// 59.3s → 41.1s whole-prove at 2^25 on 64 threads. The extracted bundle
-/// buffer (64 B/cycle, two reused buffers) is the only staging that scales
-/// with the superchunk — columns feed the commit windows by closure.
-const SUPERCHUNK_CYCLES: usize = 1 << 21;
+/// Superchunk ceiling — the measured 64-thread optimum.
+#[cfg(feature = "parallel")]
+const SUPERCHUNK_CYCLES_MAX: usize = 1 << 21;
+
+/// Cycles per superchunk, scaled to the pool. The extracted bundle is 80
+/// bytes per cycle and the pipeline retains two buffers, so applying the
+/// 64-thread optimum to every host needlessly reserves about 320 MiB.
+fn superchunk_cycles() -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        (rayon::current_num_threads() << 15)
+            .next_power_of_two()
+            .clamp(1 << 17, SUPERCHUNK_CYCLES_MAX)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        1 << 17
+    }
+}
 
 #[cfg(feature = "parallel")]
 const COLLECT_PAR_CHUNK: usize = 1 << 12;
@@ -71,7 +83,7 @@ where
             return ReferenceBackend.commit_witness(session, source, ids, grid, setup);
         }
 
-        commit_streaming(source, ids, grid, setup, SUPERCHUNK_CYCLES)
+        commit_streaming(source, ids, grid, setup, superchunk_cycles())
     }
 
     fn commit_advice(
@@ -90,7 +102,7 @@ where
 
 /// The streaming commit pass at an explicit superchunk width (tests shrink
 /// it to force multi-delivery sequencing; production uses
-/// [`SUPERCHUNK_CYCLES`]).
+/// [`superchunk_cycles`]).
 fn commit_streaming<F, PCS>(
     source: &dyn RowSource,
     ids: &[JoltCommittedPolynomial],

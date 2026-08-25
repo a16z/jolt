@@ -94,7 +94,7 @@ pub(crate) fn with_ram_fixture_init<R>(
 ) -> R {
     assert!(ops.len() < 1usize << shape.log_t, "script too long");
     assert!(
-        2 + init_words.len() <= shape.ram_k,
+        init_words.is_empty() || 2 + init_words.len() <= shape.ram_k,
         "init words exceed the RAM domain"
     );
 
@@ -158,10 +158,12 @@ pub(crate) fn with_ram_fixture_init<R>(
         bytes
     };
     let mut script = ops;
-    script.push(RamOp::Write {
-        word: TERMINATION_WORD,
-        post: 1,
-    });
+    if shape.ram_k > TERMINATION_WORD as usize {
+        script.push(RamOp::Write {
+            word: TERMINATION_WORD,
+            post: 1,
+        });
+    }
     let mut rd_value = 0;
     let rows: Vec<TraceRow> = script
         .into_iter()
@@ -264,16 +266,16 @@ fn trimmed(poly: &jolt_poly::UnivariatePoly<Fr>) -> Vec<Fr> {
 
 /// Drive both kernels through the fused round loop in lockstep with the
 /// same deterministic challenges, asserting per-round polynomial equality
-/// (up to trailing zeros), then output-claim equality and both kernels'
-/// derived-table self-checks — the same post-loop sequence the generated
-/// stage drivers run.
-pub(crate) fn assert_parity<R>(
-    mut reference: Box<dyn SumcheckKernel<Fr, Relation = R>>,
-    mut optimized: Box<dyn SumcheckKernel<Fr, Relation = R>>,
+/// (up to trailing zeros) and output-claim equality; returns the drawn
+/// challenges for the caller's post-loop checks.
+pub(crate) fn drive_parity_rounds<R>(
+    reference: &mut dyn SumcheckKernel<Fr, Relation = R>,
+    optimized: &mut dyn SumcheckKernel<Fr, Relation = R>,
     input_claim: Fr,
     inputs: &ProverInputs<'_, Fr, R>,
     challenge_seed: u64,
-) where
+) -> Vec<Fr>
+where
     R: ConcreteSumcheck<Fr>,
     SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
     SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
@@ -319,7 +321,29 @@ pub(crate) fn assert_parity<R>(
         reference_outputs, optimized_outputs,
         "output claims diverged"
     );
+    challenges
+}
 
+/// [`drive_parity_rounds`] plus both kernels' derived-table self-checks.
+pub(crate) fn assert_parity<R>(
+    mut reference: Box<dyn SumcheckKernel<Fr, Relation = R>>,
+    mut optimized: Box<dyn SumcheckKernel<Fr, Relation = R>>,
+    input_claim: Fr,
+    inputs: &ProverInputs<'_, Fr, R>,
+    challenge_seed: u64,
+) where
+    R: ConcreteSumcheck<Fr>,
+    SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
+    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
+{
+    let challenges = drive_parity_rounds(
+        reference.as_mut(),
+        optimized.as_mut(),
+        input_claim,
+        inputs,
+        challenge_seed,
+    );
     let output_points = inputs
         .relation
         .derive_opening_points(&challenges, inputs.points)

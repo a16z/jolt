@@ -31,8 +31,7 @@ use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_witness::witnesses::{
@@ -43,7 +42,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -103,7 +102,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
 }
 
 pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
-    log_t: usize,
+    progress: RoundProgress,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
     /// table (the summand is linear in the five operands).
     combined: Polynomial<F>,
@@ -112,20 +111,19 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     rows: Vec<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
     bound_challenges: Vec<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for OptimizedInstructionClaimReductionKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("combined"),
             poly_heap_bytes(&self.combined),
         );
         visitor.visit_simple(allocative::Key::new("rows"), vec_heap_bytes(&self.rows));
-        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
         visitor.visit_simple(
             allocative::Key::new("bound_challenges"),
             vec_heap_bytes(&self.bound_challenges),
@@ -193,12 +191,11 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         let combined: Vec<F> = rows.iter().map(combine).collect();
 
         Ok(Self {
-            log_t,
+            progress: RoundProgress::new(log_t),
             combined: Polynomial::new(combined),
             rows,
             gruen: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
             bound_challenges: Vec::with_capacity(log_t),
-            rounds_bound: 0,
         })
     }
 
@@ -255,7 +252,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         const POINTS: usize = 3;
-        let q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in(
             || [F::zero(); POINTS],
             |acc, row, _x_in, e_in| {
                 let evals = self.combined.evals();
@@ -281,24 +278,8 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             },
         );
 
-        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let mut l_eval = l_at_0;
-        let mut evals = [F::zero(); POINTS];
-        for (eval, q) in evals.iter_mut().zip(&q_evals) {
-            *eval = l_eval * *q;
-            l_eval += l_step;
-        }
-
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        self.gruen
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {
@@ -306,13 +287,13 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         self.combined
             .bind_with_order(challenge, BindingOrder::LowToHigh);
         self.bound_challenges.push(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: JoltField> ProveRounds<F> for OptimizedInstructionClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -340,11 +321,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKerne
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let [lookup_output, left_lookup_operand, right_lookup_operand, left_instruction_input, right_instruction_input] =
             self.operand_claims();
         Ok(InstructionClaimReductionOutputClaims {
@@ -366,18 +343,16 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKerne
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            id,
+            input_points,
+            output_points,
+            challenges,
+            self.gruen.current_scalar(),
+        )
     }
 }
 

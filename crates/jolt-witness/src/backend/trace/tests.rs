@@ -219,6 +219,37 @@ fn backend_shares_precompacted_trace_rows() {
 }
 
 #[test]
+fn backend_rejects_physical_rows_beyond_cycle_domain() {
+    let program = Arc::new(JoltProgram::default());
+    let instruction = instruction(0x8000_0000);
+    let bytecode = BytecodePreprocessing::preprocess(
+        vec![instruction],
+        instruction.address as u64,
+        RV64IMAC_JOLT,
+    )
+    .unwrap();
+    let preprocessing = preprocessing_with_bytecode(bytecode);
+    let rows = vec![
+        TraceRow {
+            instruction,
+            ..Default::default()
+        },
+        TraceRow::default(),
+    ];
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
+
+    let error = match TraceBackend::try_new(config().with_log_t(0), inputs) {
+        Ok(_) => panic!("oversized trace was accepted"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        WitnessError::InvalidWitnessData { reason, .. }
+            if reason == "physical trace has 2 rows but the cycle domain has 1"
+    ));
+}
+
+#[test]
 fn committed_polynomial_order_uses_proof_payload_order() {
     let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();

@@ -36,17 +36,17 @@ use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputClaims, SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::ram_read_write_checking::{
     RamReadWriteChecking, RamReadWriteOutputClaims,
 };
-use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::rw_matrix::{AddressMajorMatrix, CycleMajorEntry, CycleMajorMatrix};
+use super::support::pin_derived_term_if_derived;
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -87,12 +87,10 @@ pub(crate) struct RamReadWriteKernel<F: JoltField> {
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for RamReadWriteKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
         let phase_bytes = self.phase.as_ref().map_or(0, |phase| match phase {
-            Phase::Cycle { matrix, gruen } => {
-                vec_heap_bytes(&matrix.entries) + gruen_heap_bytes(gruen)
-            }
+            Phase::Cycle { matrix, gruen } => vec_heap_bytes(&matrix.entries) + gruen.heap_bytes(),
             Phase::Address { matrix, merged_eq } => {
                 vec_heap_bytes(&matrix.entries) + poly_heap_bytes(merged_eq)
             }
@@ -264,17 +262,14 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
             });
         };
         let id = JoltDerivedId::from(RamReadWritePublic::EqCycle);
-        let expected =
-            match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                Ok(value) => value,
-                Err(VerifierError::MissingStageClaimDerived { .. }) => return Ok(()),
-                Err(error) => return Err(error.into()),
-            };
-        let got = merged_eq.evals()[0];
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term_if_derived(
+            relation,
+            id,
+            input_points,
+            output_points,
+            challenges,
+            merged_eq.evals()[0],
+        )
     }
 }
 

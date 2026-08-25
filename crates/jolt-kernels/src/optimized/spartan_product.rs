@@ -37,7 +37,6 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::{
     InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, RightInstructionInput,
 };
@@ -45,7 +44,10 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{BundleAccess, BundleStore};
+use super::support::{
+    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
+    RoundChallenges,
+};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -190,28 +192,7 @@ fn extended_t1_values<F: JoltField>(
             .map(|accumulator| e_out[x_out] * accumulator.reduce())
             .collect())
     };
-    let merge = |mut left: Vec<F>, right: Vec<F>| {
-        for (left, right) in left.iter_mut().zip(right) {
-            *left += right;
-        }
-        left
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        (0..e_out.len()).into_par_iter().map(block).try_reduce(
-            || vec![F::zero(); EXTENDED_SIZE],
-            |left, right| Ok(merge(left, right)),
-        )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut folded = vec![F::zero(); EXTENDED_SIZE];
-        for x_out in 0..e_out.len() {
-            folded = merge(folded, block(x_out)?);
-        }
-        Ok(folded)
-    }
+    try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, block)
 }
 
 /// The stage-2 product uni-skip front. `prepare` runs on `τ_low` only;
@@ -325,13 +306,12 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 /// The linear-time product remainder rounds over the cycle domain
 /// (bound `LowToHigh`).
 struct ProductRemainderKernel<F: JoltField> {
-    rounds: usize,
     left: Polynomial<F>,
     right: Polynomial<F>,
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     pending_endpoints: Option<(F, F)>,
-    challenges: Vec<F>,
+    challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
@@ -340,7 +320,7 @@ struct ProductRemainderKernel<F: JoltField> {
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for ProductRemainderKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(allocative::Key::new("left"), poly_heap_bytes(&self.left));
         visitor.visit_simple(allocative::Key::new("right"), poly_heap_bytes(&self.right));
@@ -348,13 +328,10 @@ impl<F: JoltField> allocative::Allocative for ProductRemainderKernel<F> {
             allocative::Key::new("scratch"),
             vec_heap_bytes(&self.scratch),
         );
-        visitor.visit_simple(
-            allocative::Key::new("split_eq"),
-            gruen_heap_bytes(&self.split_eq),
-        );
+        visitor.visit_simple(allocative::Key::new("split_eq"), self.split_eq.heap_bytes());
         visitor.visit_simple(
             allocative::Key::new("challenges"),
-            vec_heap_bytes(&self.challenges),
+            self.challenges.heap_bytes(),
         );
         visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
         visitor.visit_simple(
@@ -472,55 +449,15 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         };
 
         Ok(Self {
-            rounds,
             left: Polynomial::new(left),
             right: Polynomial::new(right),
             scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
-            challenges: Vec::with_capacity(rounds),
+            challenges: RoundChallenges::new(rounds),
             rows,
             lagrange_weights: weights,
         })
-    }
-
-    fn endpoints(&self) -> (F, F) {
-        let left = self.left.evals();
-        let right = self.right.evals();
-        let e_out = self.split_eq.e_out_current();
-        let e_in = self.split_eq.e_in_current();
-        let in_len = e_in.len();
-        debug_assert_eq!(e_out.len() * in_len * 2, left.len());
-
-        let block = |x_out: usize| -> (F, F) {
-            let mut inner_zero = F::zero();
-            let mut inner_infinity = F::zero();
-            for (x_in, &e) in e_in.iter().enumerate() {
-                let pair = 2 * (x_out * in_len + x_in);
-                let left_low = left[pair];
-                let left_high = left[pair + 1];
-                let right_low = right[pair];
-                let right_high = right[pair + 1];
-                inner_zero += e * (left_low * right_low);
-                inner_infinity += e * ((left_high - left_low) * (right_high - right_low));
-            }
-            (e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity)
-        };
-        let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
-
-        #[cfg(feature = "parallel")]
-        {
-            (0..e_out.len())
-                .into_par_iter()
-                .map(block)
-                .reduce(|| (F::zero(), F::zero()), add)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            (0..e_out.len())
-                .map(block)
-                .fold((F::zero(), F::zero()), add)
-        }
     }
 
     fn bind(&mut self, challenge: F) {
@@ -537,7 +474,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     /// eq-weighted walk over the typed rows, in the output claims' canonical
     /// field order.
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
-        let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
+        let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
         let cycles = weights.len();
         let access = self.rows.access();
@@ -574,34 +511,13 @@ impl<F: JoltField> ProductRemainderKernel<F> {
                 virtual_instruction.reduce(),
             ])
         };
-        let merge = |mut left: Vec<F>, right: Vec<F>| {
-            for (left, right) in left.iter_mut().zip(right) {
-                *left += right;
-            }
-            left
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            (0..blocks)
-                .into_par_iter()
-                .map(block)
-                .try_reduce(|| vec![F::zero(); 8], |left, right| Ok(merge(left, right)))
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            let mut folded = vec![F::zero(); 8];
-            for index in 0..blocks {
-                folded = merge(folded, block(index)?);
-            }
-            Ok(folded)
-        }
+        try_par_sum_vecs(blocks, 8, block)
     }
 }
 
 impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.challenges.total()
     }
 
     fn prove_round(
@@ -615,7 +531,7 @@ impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
         }
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
-            None => self.endpoints(),
+            None => self.split_eq.product_endpoints(&self.left, &self.right),
         };
         Ok(self
             .split_eq
@@ -635,10 +551,7 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.challenges.len();
-        if remaining != 0 {
-            return Err(SumcheckKernelError::NotFullyBound { remaining });
-        }
+        self.challenges.require_complete()?;
         let ids = [
             left_instruction_input_product(),
             right_instruction_input_product(),
@@ -670,20 +583,11 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.challenges.len();
-        if remaining != 0 {
-            return Err(SumcheckKernelError::NotFullyBound { remaining });
-        }
+        self.challenges.require_complete()?;
         let ids = std::iter::once(SpartanProductVirtualizationPublic::TauKernel)
             .chain((0..DOMAIN).map(SpartanProductVirtualizationPublic::LagrangeWeight));
         for public_id in ids {
             let id = JoltDerivedId::from(public_id);
-            let expected =
-                match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                    Ok(value) => value,
-                    Err(VerifierError::MissingStageClaimDerived { .. }) => continue,
-                    Err(error) => return Err(error.into()),
-                };
             let got = match public_id {
                 SpartanProductVirtualizationPublic::TauKernel => self.split_eq.current_scalar(),
                 SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
@@ -691,9 +595,14 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
                 }
                 SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => continue,
             };
-            if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-            }
+            pin_derived_term_if_derived(
+                relation,
+                id,
+                input_points,
+                output_points,
+                challenges,
+                got,
+            )?;
         }
         Ok(())
     }

@@ -31,9 +31,10 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "parallel")]
-use super::support::merge_evals;
-use super::support::{bind_all, pair, round_poly_from_skipped_evals, scaled_eq_table};
+use super::support::{
+    bind_all, pair, par_sum_pair_groups, round_poly_from_skipped_evals, scaled_eq_table,
+    RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -100,23 +101,21 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
             };
 
         Ok(Box::new(IncKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             ram_inc: Polynomial::new(dense(ram_inc_reduced())?),
             rd_inc: Polynomial::new(dense(rd_inc_reduced())?),
             ram_weights: Polynomial::new(ram_weights),
             rd_weights: Polynomial::new(rd_weights),
-            rounds_bound: 0,
         }))
     }
 }
 
 struct IncKernel<F: JoltField> {
-    rounds: usize,
+    progress: RoundProgress,
     ram_inc: Polynomial<F>,
     rd_inc: Polynomial<F>,
     ram_weights: Polynomial<F>,
     rd_weights: Polynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -147,7 +146,7 @@ impl<F: JoltField> IncKernel<F> {
             ],
             challenge,
         );
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
@@ -167,7 +166,7 @@ impl<F: JoltField> IncKernel<F> {
 
 impl<F: JoltField> ProveRounds<F> for IncKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -181,25 +180,10 @@ impl<F: JoltField> ProveRounds<F> for IncKernel<F> {
         }
         let half = self.ram_inc.len() / 2;
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || vec![F::zero(); 2],
-                |mut acc, y| {
-                    let group = self.group_evals(y);
-                    acc[0] += group[0];
-                    acc[1] += group[1];
-                    acc
-                },
-            )
-            .reduce(|| vec![F::zero(); 2], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = (0..half).fold(vec![F::zero(); 2], |mut acc, y| {
+        let evals = par_sum_pair_groups(half, 2, |acc, y| {
             let group = self.group_evals(y);
             acc[0] += group[0];
             acc[1] += group[1];
-            acc
         });
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
@@ -218,11 +202,7 @@ impl<F: JoltField> SumcheckKernel<F> for IncKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<IncClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         Ok(IncClaimReductionOutputClaims {
             ram_inc: self.ram_inc.evals()[0],
             rd_inc: self.rd_inc.evals()[0],
@@ -245,7 +225,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
-    use crate::optimized::harness::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::ReferenceBackend;
 
     #[test]

@@ -128,6 +128,10 @@ impl<T: TraceSource> TraceBackend<T> {
     /// Constructs a backend from proof rows built by the tracer, retaining
     /// their allocation.
     #[cfg(not(feature = "field-inline"))]
+    #[expect(
+        clippy::panic,
+        reason = "trusted compact traces must satisfy the producer cycle-domain contract"
+    )]
     pub fn from_compact(
         config: JoltVmWitnessConfig,
         inputs: JoltVmWitnessInputs<Arc<Vec<JoltTraceRow>>>,
@@ -138,6 +142,15 @@ impl<T: TraceSource> TraceBackend<T> {
             final_memory,
             advice_tape,
         } = inputs.trace;
+        let cycles = match checked_pow2(config.log_t) {
+            Ok(cycles) => cycles,
+            Err(error) => panic!("invalid compact trace domain: {error}"),
+        };
+        assert!(
+            trace.len() <= cycles,
+            "compact trace has {} rows but the cycle domain has {cycles}",
+            trace.len()
+        );
         Self {
             config,
             program: inputs.program,
@@ -166,6 +179,7 @@ impl<T: TraceSource> TraceBackend<T> {
         config: JoltVmWitnessConfig,
         inputs: JoltVmWitnessInputs<T>,
     ) -> Result<Self, WitnessError> {
+        let cycles = checked_pow2(config.log_t)?;
         let TraceOutput {
             trace: mut source,
             device,
@@ -176,7 +190,17 @@ impl<T: TraceSource> TraceBackend<T> {
         let mut trailing_padding = 0;
         #[cfg(feature = "field-inline")]
         let mut raw_rows = Vec::new();
+        let mut physical_rows = 0usize;
         while let Some(row) = source.next_row() {
+            physical_rows += 1;
+            if physical_rows > cycles {
+                return Err(WitnessError::InvalidWitnessData {
+                    label: JOLT_VM_LABEL,
+                    reason: format!(
+                        "physical trace has {physical_rows} rows but the cycle domain has {cycles}"
+                    ),
+                });
+            }
             let compact = compact_trace_row(&row, &inputs.preprocessing)?;
             if compact == JoltTraceRow::default() {
                 trailing_padding += 1;
@@ -432,5 +456,5 @@ fn require_index(index: usize, len: usize) -> Result<(), WitnessError> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test module")]
+#[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
 mod tests;

@@ -157,6 +157,6 @@ where
 }
 
 #[cfg(test)]
-pub(crate) mod harness;
+pub(crate) mod parity;
 #[cfg(test)]
 pub(crate) mod testing;

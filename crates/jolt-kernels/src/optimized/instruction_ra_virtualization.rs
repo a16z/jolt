@@ -38,28 +38,26 @@
 
 use std::sync::Arc;
 
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::support::{
+    accumulate_product_grid, map_indices, pin_derived_term, GruenRoundMessage, RoundProgress,
+};
+use crate::reference::views::eq_table;
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::accumulate_product;
-use crate::reference::views::eq_table;
-use crate::{
-    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
-};
 
 /// Optimized [`PrepareKernel`] implementor for the
 /// `instruction_ra_virtualization` slot.
@@ -116,20 +114,8 @@ impl ChunkIndexSource for LookupIndexChunks {
     }
 }
 
-/// Collect `f(0), …, f(len − 1)`.
-fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..len).into_par_iter().map(f).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..len).map(f).collect()
-    }
-}
-
 pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
-    log_t: usize,
+    progress: RoundProgress,
     num_committed_per_virtual: usize,
     /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
     /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
@@ -142,13 +128,12 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// first three binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for OptimizedInstructionRaVirtualizationKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{gruen_heap_bytes, vec_heap_bytes};
+        use crate::backend::vec_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("gamma_powers_inv"),
@@ -158,7 +143,7 @@ impl<F: JoltField> allocative::Allocative for OptimizedInstructionRaVirtualizati
             allocative::Key::new("folded_ra"),
             self.folded_ra.heap_bytes(),
         );
-        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
         visitor.exit();
     }
 }
@@ -244,12 +229,11 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         );
 
         Ok(Self {
-            log_t,
+            progress: RoundProgress::new(log_t),
             num_committed_per_virtual,
             gamma_powers_inv,
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
-            rounds_bound: 0,
         })
     }
 
@@ -305,14 +289,11 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                         *eval = pair.1;
                         *step = pair.1 - pair.0;
                     }
-                    accumulate_product(&scratch.evals, &mut scratch.row_lanes[0]);
-                    for lane in 1..n - 1 {
-                        for (eval, step) in scratch.evals.iter_mut().zip(&scratch.steps) {
-                            *eval += *step;
-                        }
-                        accumulate_product(&scratch.evals, &mut scratch.row_lanes[lane]);
-                    }
-                    accumulate_product(&scratch.steps, &mut scratch.row_lanes[n - 1]);
+                    accumulate_product_grid(
+                        &mut scratch.evals,
+                        &scratch.steps,
+                        &mut scratch.row_lanes,
+                    );
                 }
                 for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
                     lane.fmadd(e_in, row_lane.reduce());
@@ -347,7 +328,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
-        let q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in(
             || ([F::zero(); 3], vec![(F::zero(), F::zero()); num_committed]),
             |(acc, pairs), row, _x_in, e_in| {
                 folded_ra.lo_hi_all(row, pairs);
@@ -377,34 +358,20 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             },
         );
 
-        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let evals = [
-            l_at_0 * q_evals[0],
-            l_at_1 * q_evals[1],
-            (l_at_1 + l_step) * q_evals[2],
-        ];
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        self.gruen
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
         self.folded_ra.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: JoltField> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -432,11 +399,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
         let mut committed_instruction_ra = self.folded_ra.final_values();
@@ -460,18 +423,16 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            id,
+            input_points,
+            output_points,
+            challenges,
+            self.gruen.current_scalar(),
+        )
     }
 }
 

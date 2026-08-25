@@ -30,9 +30,9 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::{
     RamHammingBooleanity, RamHammingBooleanityOutputClaims,
 };
-use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
+use super::support::{pin_derived_term_if_derived, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -75,27 +75,25 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
         let eq_point: Vec<F> = stage1_cycle_binding.iter().rev().copied().collect();
 
         Ok(Box::new(OptimizedRamHammingBooleanityKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             eq: GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh),
             hamming: Polynomial::new(hamming),
-            rounds_bound: 0,
         }))
     }
 }
 
 struct OptimizedRamHammingBooleanityKernel<F: JoltField> {
-    rounds: usize,
+    progress: RoundProgress,
     eq: GruenSplitEqPolynomial<F>,
     hamming: Polynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for OptimizedRamHammingBooleanityKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{gruen_heap_bytes, poly_heap_bytes};
+        use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("eq"), gruen_heap_bytes(&self.eq));
+        visitor.visit_simple(allocative::Key::new("eq"), self.eq.heap_bytes());
         visitor.visit_simple(
             allocative::Key::new("hamming"),
             poly_heap_bytes(&self.hamming),
@@ -109,13 +107,13 @@ impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
         self.eq.bind(challenge);
         self.hamming
             .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -155,11 +153,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamHammingBooleanityOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         Ok(RamHammingBooleanityOutputClaims {
             ram_hamming_weight: self.hamming.evals()[0],
         })
@@ -175,23 +169,15 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &jolt_claims::NoChallenges<F>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
-        let id = JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle);
-        let expected =
-            match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                Ok(value) => value,
-                Err(VerifierError::MissingStageClaimDerived { .. }) => return Ok(()),
-                Err(error) => return Err(error.into()),
-            };
-        let got = self.eq.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        self.progress.require_complete()?;
+        pin_derived_term_if_derived(
+            relation,
+            JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle),
+            input_points,
+            output_points,
+            challenges,
+            self.eq.current_scalar(),
+        )
     }
 }
 

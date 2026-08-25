@@ -25,12 +25,11 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
-use jolt_field::{Accumulator, JoltField};
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage5::registers_val_evaluation::{
     RegistersValEvaluation, RegistersValEvaluationOutputClaims,
@@ -41,7 +40,10 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
-use super::support::{collect_par_map, collect_rows, SplitLt};
+use super::support::{
+    bind_pairs, collect_par_map, collect_rows, pin_derived_term, triple_product_round_evals,
+    RoundProgress, SplitLt,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -83,14 +85,7 @@ impl<F: JoltField> WaState<F> {
                 let dense: Vec<F> = (0..half).map(bind_pair).collect();
                 *self = Self::Dense(dense);
             }
-            Self::Dense(table) => {
-                let half = table.len() / 2;
-                for y in 0..half {
-                    let lo = table[2 * y];
-                    table[y] = lo + r * (table[2 * y + 1] - lo);
-                }
-                table.truncate(half);
-            }
+            Self::Dense(table) => bind_pairs(table, r),
         }
     }
 
@@ -163,14 +158,13 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
         };
 
         Ok(Box::new(ValEvaluationKernel {
-            rounds: log_t,
+            progress: RoundProgress::new(log_t),
             inc,
             wa: WaState::Indices {
                 rd,
                 eq_address: EqPolynomial::<F>::evals(r_address, None),
             },
             lt: SplitLt::new(r_cycle),
-            rounds_bound: 0,
         }))
     }
 }
@@ -189,11 +183,10 @@ struct RdIncRow {
 }
 
 struct ValEvaluationKernel<F: JoltField> {
-    rounds: usize,
+    progress: RoundProgress,
     inc: IncSource<F>,
     wa: WaState<F>,
     lt: SplitLt<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -217,15 +210,6 @@ impl<F: JoltField> allocative::Allocative for ValEvaluationKernel<F> {
 }
 
 impl<F: JoltField> ValEvaluationKernel<F> {
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.rounds_bound;
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
-        }
-    }
-
     /// Materialize the deferred increment table; a no-op once ready.
     fn ensure_inc(&mut self) -> Result<(), SumcheckError<F>> {
         if let IncSource::Deferred(owned) = &self.inc {
@@ -242,7 +226,7 @@ impl<F: JoltField> ValEvaluationKernel<F> {
 
 impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -258,7 +242,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
             }
             self.wa.bind(challenge);
             self.lt.bind(challenge);
-            self.rounds_bound += 1;
+            self.progress.advance();
         }
 
         let IncSource::Ready(inc_poly) = &self.inc else {
@@ -268,41 +252,12 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
         };
         let half = inc_poly.len() / 2;
         let inc = inc_poly.evals();
-        let accumulate = |y: usize, acc: &mut [F::Accumulator; 3]| {
-            let (inc_0, inc_1) = (inc[2 * y], inc[2 * y + 1]);
-            let (wa_0, wa_1) = self.wa.pair(y);
-            let (lt_0, lt_1) = self.lt.pair(y);
-            let (inc_m, wa_m, lt_m) = (inc_1 - inc_0, wa_1 - wa_0, lt_1 - lt_0);
-            // t = 0, 2, 3; s(1) comes from the engine hint.
-            let (inc_2, wa_2, lt_2) = (inc_1 + inc_m, wa_1 + wa_m, lt_1 + lt_m);
-            acc[0].fmadd(inc_0 * wa_0, lt_0);
-            acc[1].fmadd(inc_2 * wa_2, lt_2);
-            acc[2].fmadd((inc_2 + inc_m) * (wa_2 + wa_m), lt_2 + lt_m);
-        };
-
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || [F::Accumulator::default(); 3],
-                |mut acc, y| {
-                    accumulate(y, &mut acc);
-                    acc
-                },
-            )
-            .map(|acc| acc.map(F::Accumulator::reduce))
-            .reduce(
-                || [F::zero(); 3],
-                |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
-            );
-        #[cfg(not(feature = "parallel"))]
-        let evals = {
-            let mut acc = [F::Accumulator::default(); 3];
-            for y in 0..half {
-                accumulate(y, &mut acc);
-            }
-            acc.map(F::Accumulator::reduce)
-        };
+        let evals = triple_product_round_evals(
+            half,
+            |y| (inc[2 * y], inc[2 * y + 1]),
+            |y| self.wa.pair(y),
+            |y| self.lt.pair(y),
+        );
 
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
@@ -314,7 +269,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
         }
         self.wa.bind(bind);
         self.lt.bind(bind);
-        self.rounds_bound += 1;
+        self.progress.advance();
         Ok(())
     }
 }
@@ -326,7 +281,7 @@ impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RegistersValEvaluationOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let IncSource::Ready(inc) = &self.inc else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "increment table absent after full binding",
@@ -347,14 +302,16 @@ impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.lt.final_value();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            id,
+            input_points,
+            output_points,
+            challenges,
+            self.lt.final_value(),
+        )
     }
 }
 

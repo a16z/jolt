@@ -29,14 +29,14 @@ use std::sync::Arc;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -97,10 +97,9 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
         );
 
         Ok(Box::new(RamRaVirtualizationKernel {
-            log_t,
+            progress: RoundProgress::new(log_t),
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(ram_reduced_cycle, BindingOrder::LowToHigh),
-            rounds_bound: 0,
         }))
     }
 }
@@ -135,14 +134,13 @@ impl ChunkIndexSource for RamAddressChunks {
 }
 
 struct RamRaVirtualizationKernel<F: JoltField> {
-    log_t: usize,
+    progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
     /// cycles, served lazily off the shared columns for the first three
     /// binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -153,25 +151,12 @@ impl<F: JoltField> allocative::Allocative for RamRaVirtualizationKernel<F> {
             allocative::Key::new("folded_ra"),
             self.folded_ra.heap_bytes(),
         );
-        visitor.visit_simple(
-            allocative::Key::new("gruen"),
-            crate::backend::gruen_heap_bytes(&self.gruen),
-        );
+        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
         visitor.exit();
     }
 }
 
 impl<F: JoltField> RamRaVirtualizationKernel<F> {
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound == self.log_t {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            })
-        }
-    }
-
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
     /// `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`.
     fn message(
@@ -183,7 +168,7 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
 
-        let q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in(
             || {
                 (
                     vec![F::zero(); points],
@@ -192,6 +177,12 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                 )
             },
             |(acc, evals, steps), row, _x_in, e_in| {
+                if num_committed == 0 {
+                    for value in acc.iter_mut() {
+                        *value += e_in;
+                    }
+                    return;
+                }
                 for position in 0..num_committed {
                     let (lo, hi) = self.folded_ra.lo_hi(position, row);
                     evals[position] = lo;
@@ -222,36 +213,20 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
             },
         );
 
-        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let mut l_eval = l_at_0;
-        let mut evals = Vec::with_capacity(points);
-        for q in &q_evals {
-            evals.push(l_eval * *q);
-            l_eval += l_step;
-        }
-
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        self.gruen
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
         self.folded_ra.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: JoltField> ProveRounds<F> for RamRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -279,7 +254,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         Ok(RamRaVirtualizationOutputClaims {
             ram_ra: self.folded_ra.final_values(),
         })
@@ -295,14 +270,16 @@ impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            id,
+            input_points,
+            output_points,
+            challenges,
+            self.gruen.current_scalar(),
+        )
     }
 }
 
@@ -315,6 +292,8 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationInputClaims;
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, Ring};
+    use jolt_verifier::stages::relations::ConcreteSumcheck;
+    use jolt_verifier::VerifierError;
 
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,
@@ -327,6 +306,19 @@ mod tests {
     const CHUNK_BITS: usize = 4;
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
+        run_parity_with(shape, ops, seed, |reference, optimized, claim, inputs| {
+            assert_parity(reference, optimized, claim, inputs, seed);
+        });
+    }
+
+    type KernelBox = Box<dyn SumcheckKernel<Fr, Relation = RamRaVirtualization<Fr>>>;
+
+    fn run_parity_with(
+        shape: FixtureShape,
+        ops: Vec<RamOp>,
+        seed: u64,
+        finish: impl FnOnce(KernelBox, KernelBox, Fr, &ProverInputs<'_, Fr, RamRaVirtualization<Fr>>),
+    ) {
         with_ram_fixture(shape, ops, |witness| {
             let log_k = shape.log_k();
             let num_committed = log_k.div_ceil(CHUNK_BITS);
@@ -401,7 +393,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_parity(reference, optimized, input_claim, &inputs, seed);
+            finish(reference, optimized, input_claim, &inputs);
         });
     }
 
@@ -448,6 +440,45 @@ mod tests {
                 RamOp::Write { word: 63, post: 2 },
             ],
             433,
+        );
+    }
+
+    #[test]
+    fn zero_committed_chunks_prove_in_parity_and_fail_closed() {
+        let seed = 443;
+        run_parity_with(
+            FixtureShape { log_t: 3, ram_k: 1 },
+            vec![RamOp::None; 3],
+            seed,
+            |mut reference, mut optimized, input_claim, inputs| {
+                let challenges = super::super::testing::drive_parity_rounds(
+                    reference.as_mut(),
+                    optimized.as_mut(),
+                    input_claim,
+                    inputs,
+                    seed,
+                );
+                let output_points = inputs
+                    .relation
+                    .derive_opening_points(&challenges, inputs.points)
+                    .unwrap();
+                for kernel in [reference, optimized] {
+                    let error = kernel
+                        .validate_derived_tables(
+                            inputs.relation,
+                            inputs.points,
+                            &output_points,
+                            inputs.challenges,
+                        )
+                        .unwrap_err();
+                    assert!(matches!(
+                        error,
+                        SumcheckKernelError::Verifier(
+                            VerifierError::StageClaimPublicInputFailed { .. }
+                        )
+                    ));
+                }
+            },
         );
     }
 

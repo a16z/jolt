@@ -28,8 +28,7 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::{
     RamRaClaimReduction, RamRaClaimReductionOutputClaims,
@@ -39,6 +38,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::support::{bind_pairs, pin_derived_term, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -110,8 +110,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
         };
 
         Ok(Box::new(RaReductionKernel {
-            rounds: log_t,
-            rounds_bound: 0,
+            progress: RoundProgress::new(log_t),
             prefix_bits,
             gamma_powers,
             phase,
@@ -231,16 +230,6 @@ fn gather_h_prime<F: JoltField>(
     }
 }
 
-/// In-place low-to-high bind: `t[y] ← t[2y] + r·(t[2y+1] − t[2y])`.
-fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
-    let half = table.len() / 2;
-    for y in 0..half {
-        let even = table[2 * y];
-        table[y] = even + r * (table[2 * y + 1] - even);
-    }
-    table.truncate(half);
-}
-
 #[expect(
     clippy::large_enum_variant,
     reason = "one kernel object per proof; boxing buys nothing"
@@ -268,8 +257,7 @@ enum Phase<F: JoltField> {
 }
 
 struct RaReductionKernel<F: JoltField> {
-    rounds: usize,
-    rounds_bound: usize,
+    progress: RoundProgress,
     prefix_bits: usize,
     /// `[1, γ, γ²]` — the consumed-claim batching coefficients.
     gamma_powers: [F; TERMS],
@@ -321,7 +309,7 @@ impl<F: JoltField> allocative::Allocative for RaReductionKernel<F> {
 
 impl<F: JoltField> RaReductionKernel<F> {
     fn bind(&mut self, r: F) {
-        self.rounds_bound += 1;
+        self.progress.advance();
         match &mut self.phase {
             Phase::Prefix {
                 p, q, challenges, ..
@@ -372,7 +360,7 @@ impl<F: JoltField> RaReductionKernel<F> {
             &eq_address,
             &eq_prefix,
             self.prefix_bits,
-            self.rounds - self.prefix_bits,
+            self.progress.total() - self.prefix_bits,
         );
         let scales = core::array::from_fn(|x| EqPolynomial::<F>::mle(&r_cycle_lo[x], &r_prefix));
         self.phase = Phase::Suffix { h, eq_hi, scales };
@@ -417,20 +405,11 @@ impl<F: JoltField> RaReductionKernel<F> {
             }
         }
     }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.rounds_bound;
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
-        }
-    }
 }
 
 impl<F: JoltField> ProveRounds<F> for RaReductionKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -461,7 +440,7 @@ impl<F: JoltField> SumcheckKernel<F> for RaReductionKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamRaClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let Phase::Suffix { h, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "RAM RA claim-reduction fully bound but still in the prefix phase",
@@ -480,7 +459,7 @@ impl<F: JoltField> SumcheckKernel<F> for RaReductionKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let Phase::Suffix { eq_hi, scales, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "RAM RA claim-reduction fully bound but still in the prefix phase",
@@ -493,12 +472,8 @@ impl<F: JoltField> SumcheckKernel<F> for RaReductionKernel<F> {
         ];
         for (x, public_id) in ids.into_iter().enumerate() {
             let id = JoltDerivedId::from(public_id);
-            let expected =
-                relation.derive_output_term(&id, input_points, output_points, challenges)?;
             let got = scales[x] * eq_hi[x][0];
-            if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-            }
+            pin_derived_term(relation, id, input_points, output_points, challenges, got)?;
         }
         Ok(())
     }
