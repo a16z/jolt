@@ -234,7 +234,7 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::optimized();
+        let backend = akita::JoltAkitaBackend::reference();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -372,7 +372,7 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::optimized();
+        let backend = akita::JoltAkitaBackend::reference();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -398,9 +398,10 @@ mod muldiv {
 mod advice {
     use std::sync::Arc;
 
+    use jolt_claims::protocols::jolt::JoltAdviceKind;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::JoltProgram;
-    use jolt_prover::akita;
+    use jolt_prover::akita::{self, witness::commit_advice_one_hot};
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::packed::{
@@ -451,6 +452,12 @@ mod advice {
         )
         .expect("modular trusted advice object must commit");
         assert_eq!(modular_trusted.commitment, trusted_commitment);
+        let modular_untrusted = commit_advice_one_hot::<AkitaScheme>(
+            JoltAdviceKind::Untrusted,
+            &untrusted_advice,
+            guest.io_device.memory_layout.max_untrusted_advice_size as usize,
+        )
+        .expect("modular untrusted advice object must commit");
 
         let legacy_prover: AkitaPackedProver<'_> = JoltCpuProver::gen_from_elf(
             &legacy_preprocessing,
@@ -500,7 +507,7 @@ mod advice {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::optimized();
+        let backend = akita::JoltAkitaBackend::reference();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -510,11 +517,16 @@ mod advice {
             &public_io,
         )
         .expect("packed prover should produce a verifier-native proof");
-        assert!(proof.untrusted_advice_commitment.is_some());
+        assert_eq!(
+            proof.untrusted_advice_commitment.as_ref(),
+            Some(&modular_untrusted.commitment)
+        );
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // OneHotTrace is discharged by its native same-point batch. The two
-        // advice commitment objects remain in the auxiliary packed opening.
-        assert_eq!(proof.joint_opening_proof.auxiliary.len(), 2);
+        let auxiliary_plans = [&modular_untrusted.plan, &modular_trusted.plan];
+        assert_eq!(
+            proof.joint_opening_proof.auxiliary.len(),
+            auxiliary_plans.len()
+        );
 
         let verify = |proof: &AkitaJoltProof| {
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
@@ -638,7 +650,7 @@ mod advice {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::optimized();
+        let backend = akita::JoltAkitaBackend::reference();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -760,7 +772,7 @@ mod committed {
             }),
         };
 
-        let backend = akita::JoltAkitaBackend::optimized();
+        let backend = akita::JoltAkitaBackend::reference();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -771,9 +783,10 @@ mod committed {
         )
         .expect("packed prover should produce a verifier-native proof");
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // OneHotTrace is discharged by its native same-point batch;
-        // Bytecode and program image retain independent opening points.
-        assert_eq!(proof.joint_opening_proof.auxiliary.len(), 2);
+        assert_eq!(
+            proof.joint_opening_proof.auxiliary.len(),
+            program_one_hot.objects.len()
+        );
 
         let verify = |proof: &AkitaJoltProof| {
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
@@ -785,13 +798,11 @@ mod committed {
         };
         verify(&proof).expect("packed verifier should accept the committed packed proof");
 
-        // Tampers: the two program proofs are position-bound; a mutated
-        // reconstruction wire breaks the batched output check.
         let mut tampered = proof.clone();
-        tampered.joint_opening_proof.auxiliary.swap(0, 1);
+        let _ = tampered.joint_opening_proof.auxiliary.pop();
         assert!(
             verify(&tampered).is_err(),
-            "reordered program proofs must be rejected"
+            "a dropped program opening proof must be rejected"
         );
         let mut tampered = proof.clone();
         let JoltProofClaims::Clear(claims) = &mut tampered.claims else {

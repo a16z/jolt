@@ -61,11 +61,9 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
-    #[tracing::instrument(
-        skip_all,
-        name = "commit_witness",
-        fields(columns = ids.len(), total_vars = grid.total_vars)
-    )]
+    // The backend-neutral `commit_witness` span lives at the stage-0 call
+    // site. A per-implementation span with the same label would double its
+    // aggregated duration in profiling summaries.
     fn commit_witness(
         &self,
         session: &mut ProofSession,

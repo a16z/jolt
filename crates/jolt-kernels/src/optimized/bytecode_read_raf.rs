@@ -694,7 +694,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
 
         // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
         // one-hot grid, served lazily off the sparse per-cycle indices for
-        // the first three binds instead of `d × T` dense.
+        // the first four binds instead of `d × T` dense.
         let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
         let selectors = (0..num_ra)
             .map(|index| {
@@ -983,6 +983,74 @@ impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
                 .map(|index| ra.value(index, 0))
         })
         .map_err(SumcheckKernelError::from)
+    }
+}
+
+#[cfg(test)]
+mod stage_pushforward_tests {
+    use jolt_field::{Fr, One, Ring, Zero};
+
+    use super::*;
+    use crate::optimized::parity::synthetic_point;
+
+    #[derive(Clone, Copy)]
+    struct Row {
+        pc: usize,
+        weight: Fr,
+    }
+
+    #[test]
+    fn membership_is_independent_of_zero_contributions() {
+        let log_t = 4;
+        let addresses = 4;
+        let mut points: [Vec<Fr>; 5] =
+            std::array::from_fn(|stage| synthetic_point(log_t, 101 + stage as u64));
+        points[0][2] = Fr::one();
+
+        let pcs = [2, 0, 2, 1, 3, 3, 0, 2, 1, 1, 1, 1, 0, 3, 2, 0];
+        let rows: Vec<Row> = pcs
+            .into_iter()
+            .enumerate()
+            .map(|(index, pc)| Row {
+                pc,
+                weight: if index.is_multiple_of(3) {
+                    Fr::zero()
+                } else {
+                    Fr::from_u64(index as u64 + 1)
+                },
+            })
+            .collect();
+
+        let expected = |weighted: bool| {
+            points
+                .iter()
+                .map(|point| {
+                    let eq = eq_table(point);
+                    let mut values = vec![Fr::zero(); addresses];
+                    for (index, row) in rows.iter().enumerate() {
+                        values[row.pc] += eq[index] * if weighted { row.weight } else { Fr::one() };
+                    }
+                    values
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let unweighted = stage_pushforwards::<Fr, _, false>(
+            &points,
+            &rows,
+            addresses,
+            |row| row.pc,
+            |_| Fr::one(),
+        );
+        let weighted = stage_pushforwards::<Fr, _, true>(
+            &points,
+            &rows,
+            addresses,
+            |row| row.pc,
+            |row| row.weight,
+        );
+        assert_eq!(unweighted, expected(false));
+        assert_eq!(weighted, expected(true));
     }
 }
 

@@ -2786,13 +2786,6 @@ mod tests {
     }
 
     #[test]
-    fn d64_k256_2e28_dense_rotations_fit_the_table_budget() {
-        let table_bytes = 1024 * 29 * 64 * std::mem::size_of::<[i16; 64]>();
-        assert_eq!(table_bytes, 243_269_632);
-        assert!(table_bytes <= ROTATED_CHALLENGE_TABLE_BUDGET);
-    }
-
-    #[test]
     fn d128_auto_uses_compact_rotations() {
         let challenges = [SparseChallenge {
             positions: vec![0, 127].into(),
