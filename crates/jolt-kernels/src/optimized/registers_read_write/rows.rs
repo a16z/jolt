@@ -304,6 +304,33 @@ mod tests {
 
     use super::*;
 
+    /// The counting pass and the write pass must agree on every operand
+    /// pattern — including raw index 255, which the old `u8::MAX` sentinel
+    /// collided with (count 0, write 1 → pass-2 window overrun).
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn cycle_entry_count_matches_cycle_entries() {
+        use jolt_field::Fr;
+        let candidates: [Option<u8>; 5] = [None, Some(0), Some(5), Some(127), Some(255)];
+        for rs1 in candidates {
+            for rs2 in candidates {
+                for rd in candidates {
+                    let cycle = RegisterCycleRow {
+                        rs1: rs1.map(|register| (register, 11)),
+                        rs2: rs2.map(|register| (register, 22)),
+                        rd: rd.map(|register| (register, 33, 44)),
+                    };
+                    let (_, len) = cycle.entries::<Fr>(0);
+                    assert_eq!(
+                        cycle.entry_count(),
+                        len,
+                        "count/write divergence for {cycle:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn rejects_register_outside_protocol_domain() {
         let instruction = JoltInstructionRow {

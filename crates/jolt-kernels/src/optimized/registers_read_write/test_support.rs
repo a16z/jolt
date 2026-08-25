@@ -141,12 +141,13 @@ impl TraceFixture {
 }
 
 /// A structured register workload: write-then-read chains, `rs1 == rs2`,
-/// `rd == rs1` in one cycle, repeated writes, high register indices, and
-/// interleaved no-ops. Emits exactly `cycles` rows.
+/// `rd == rs1` in one cycle, `rs1 == rs2 == rd` in one cycle, repeated
+/// writes, high register indices, and interleaved no-ops. Emits exactly
+/// `cycles` rows.
 pub(crate) fn structured_fixture(cycles: usize) -> TraceFixture {
     let mut fixture = TraceFixture::new();
     for step in 0..cycles {
-        match step % 8 {
+        match step % 9 {
             0 => fixture.op(Some(5), Some(2), None),
             1 => fixture.op(Some(7), Some(5), Some(5)),
             2 => fixture.op(Some(5), Some(5), Some(7)),
@@ -154,6 +155,7 @@ pub(crate) fn structured_fixture(cycles: usize) -> TraceFixture {
             4 => fixture.op(None, Some(7), Some(100)),
             5 => fixture.op(Some(127), Some(0), Some(5)),
             6 => fixture.op(Some(100), None, None),
+            7 => fixture.op(Some(5), Some(5), Some(5)),
             _ => fixture.op(Some(7), Some(127), Some(100)),
         }
     }

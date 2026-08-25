@@ -234,7 +234,7 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -372,7 +372,7 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -507,7 +507,7 @@ mod advice {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -650,7 +650,7 @@ mod advice {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -772,7 +772,7 @@ mod committed {
             }),
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -798,6 +798,14 @@ mod committed {
         };
         verify(&proof).expect("packed verifier should accept the committed packed proof");
 
+        // Tampers: the program proofs are position-bound; a mutated
+        // reconstruction wire breaks the batched output check.
+        let mut tampered = proof.clone();
+        tampered.joint_opening_proof.auxiliary.swap(0, 1);
+        assert!(
+            verify(&tampered).is_err(),
+            "reordered program proofs must be rejected"
+        );
         let mut tampered = proof.clone();
         let _ = tampered.joint_opening_proof.auxiliary.pop();
         assert!(

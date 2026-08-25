@@ -339,19 +339,23 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("modular packed prove");
+        for backend in [
+            akita::JoltAkitaBackend::reference(),
+            akita::JoltAkitaBackend::optimized(),
+        ] {
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                &witness,
+                &public_io,
+            )
+            .expect("modular packed prove");
 
-        support::assert_proof_matches_legacy(&proof, &legacy_proof);
-        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+            support::assert_proof_matches_legacy(&proof, &legacy_proof);
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+        }
     }
 }
 
@@ -470,24 +474,28 @@ mod advice_consumer {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            Some(&modular_trusted),
-            &witness,
-            &public_io,
-        )
-        .expect("modular packed prove");
+        for backend in [
+            akita::JoltAkitaBackend::reference(),
+            akita::JoltAkitaBackend::optimized(),
+        ] {
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&modular_trusted),
+                &witness,
+                &public_io,
+            )
+            .expect("modular packed prove");
 
-        support::assert_proof_matches_legacy(&proof, &legacy_proof);
-        support::verify_modular(
-            &prover_preprocessing.verifier,
-            &public_io,
-            &proof,
-            Some(&trusted_commitment),
-        );
+            support::assert_proof_matches_legacy(&proof, &legacy_proof);
+            support::verify_modular(
+                &prover_preprocessing.verifier,
+                &public_io,
+                &proof,
+                Some(&trusted_commitment),
+            );
+        }
     }
 }
 
@@ -612,19 +620,23 @@ mod committed_muldiv {
             }),
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("modular packed prove");
+        for backend in [
+            akita::JoltAkitaBackend::reference(),
+            akita::JoltAkitaBackend::optimized(),
+        ] {
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                &witness,
+                &public_io,
+            )
+            .expect("modular packed prove");
 
-        support::assert_proof_matches_legacy(&proof, &legacy_proof);
-        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+            support::assert_proof_matches_legacy(&proof, &legacy_proof);
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+        }
     }
 }
 
