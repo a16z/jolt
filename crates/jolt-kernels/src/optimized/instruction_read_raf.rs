@@ -82,6 +82,7 @@ const _: () = assert!(
 /// is split into native limbs and the PC/table/flags share one word, keeping
 /// the retained row at 40 bytes in Akita mode.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct InstructionCycleRow {
     lookup_index_lo: u64,
     lookup_index_hi: u64,
@@ -269,33 +270,15 @@ impl InstructionCycleRow {
 ///
 /// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
 /// carry back for the later stages.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for SharedInstructionRows {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        crate::backend::visit_arc_vec(&mut visitor, allocative::Key::new("rows"), &self.0);
-        visitor.exit();
-    }
-}
 
 /// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
 /// so same-stage co-consumers share one collection but the 40 B × T rows
 /// never outlive their stage — later stages re-derive them index-parallel
 /// instead of carrying them across the prover's peak window.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for SharedInstructionRowsWeak {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        if let Some(rows) = self.0.upgrade() {
-            crate::backend::visit_arc_vec(&mut visitor, allocative::Key::new("rows"), &rows);
-        }
-        visitor.exit();
-    }
-}
 
 impl InstructionCycleRow {
     /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
@@ -370,21 +353,14 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
 
 /// One RAF prefix–suffix decomposition — same shape and binding as the
 /// reference kernel's.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
 struct RafDecomposition<F: JoltField> {
     prefix: Polynomial<F>,
     q_shift: Polynomial<F>,
     q_value: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     checkpoint: F,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> RafDecomposition<F> {
-    fn heap_bytes(&self) -> usize {
-        use crate::backend::poly_heap_bytes;
-        poly_heap_bytes(&self.prefix)
-            + poly_heap_bytes(&self.q_shift)
-            + poly_heap_bytes(&self.q_value)
-    }
 }
 
 impl<F: JoltField> RafDecomposition<F> {
@@ -437,25 +413,14 @@ fn extension_pair<F: JoltField>(evals: &[F], b: usize, half: usize) -> (F, F) {
 }
 
 /// Cycle-round state: the Gruen-split eq factor plus the cycle tables.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
 struct CycleState<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     tables: CycleTables<F>,
     /// Reused low-to-high binding buffer (swapped through every bind).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> CycleState<F> {
-    fn heap_bytes(&self) -> usize {
-        use crate::backend::{poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
-        let tables = match &self.tables {
-            CycleTables::Pending(pending) => vec_heap_bytes(&pending.table_values),
-            CycleTables::Dense { combined_val, ra } => {
-                poly_heap_bytes(combined_val) + polys_heap_bytes(ra)
-            }
-        };
-        self.gruen.heap_bytes() + tables + vec_heap_bytes(&self.bind_scratch)
-    }
 }
 
 /// The cycle tables' lifecycle. The address/cycle handoff leaves them
@@ -466,6 +431,8 @@ impl<F: JoltField> CycleState<F> {
 /// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
 /// exist. Values are identical to materialize-then-bind: the bases are the
 /// same, and `lo + r·(hi − lo)` is the binding formula either way.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
 enum CycleTables<F: JoltField> {
     Pending(PendingCycleTables<F>),
     Dense {
@@ -476,10 +443,15 @@ enum CycleTables<F: JoltField> {
 
 /// Everything the pending-base evaluations need beyond the kernel's own
 /// rows / claim columns / phase eq tables.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
 struct PendingCycleTables<F: JoltField> {
     /// Per-table combined value at the bound address point.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     table_values: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     raf_interleaved: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     raf_identity: F,
 }
 
@@ -564,16 +536,24 @@ impl<F: JoltField> RafSums<F> {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
 pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: InstructionReadRafDimensions,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_reduction: Vec<F>,
     rows: Arc<Vec<InstructionCycleRow>>,
     /// Per-table cycle buckets (`u32` cycle indices), by
     /// `LookupTableKind::index()`.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     buckets: Vec<Vec<u32>>,
     /// Condensed per-cycle eq weights (see the reference kernel).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     u_evals: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
     /// `ALL_PREFIXES` indices referenced by tables with non-empty buckets.
     prefix_indices: Vec<usize>,
@@ -582,14 +562,18 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     prefix_tables: Vec<Polynomial<F>>,
     /// Per present table: enum value + suffix `Q` polynomials in
     /// `table.suffixes()` order.
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_keyed_polys))]
     suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
     raf_left: RafDecomposition<F>,
     raf_right: RafDecomposition<F>,
     raf_identity: RafDecomposition<F>,
     raf_upper_all_ones: RafDecomposition<F>,
     /// Completed phases' bound-challenge eq tables.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     v_tables: Vec<Vec<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     phase_challenges: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
     /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
@@ -598,79 +582,6 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     /// only this byte per cycle.
     claim_columns: Vec<u8>,
     progress: RoundProgress,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OptimizedInstructionReadRafKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{
-            nested_vec_heap_bytes, polys_heap_bytes, vec_heap_bytes, visit_arc_vec,
-        };
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("r_reduction"),
-            vec_heap_bytes(&self.r_reduction),
-        );
-        visit_arc_vec(&mut visitor, allocative::Key::new("rows"), &self.rows);
-        visitor.visit_simple(
-            allocative::Key::new("buckets"),
-            nested_vec_heap_bytes(&self.buckets),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("u_evals"),
-            vec_heap_bytes(&self.u_evals),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("prefix_checkpoints"),
-            vec_heap_bytes(&self.prefix_checkpoints),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("prefix_indices"),
-            vec_heap_bytes(&self.prefix_indices),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("prefix_tables"),
-            polys_heap_bytes(&self.prefix_tables),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("suffix_tables"),
-            self.suffix_tables.capacity()
-                * std::mem::size_of::<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>()
-                + self
-                    .suffix_tables
-                    .iter()
-                    .map(|(_, polys)| polys_heap_bytes(polys))
-                    .sum::<usize>(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("raf"),
-            self.raf_left.heap_bytes()
-                + self.raf_right.heap_bytes()
-                + self.raf_identity.heap_bytes()
-                + self.raf_upper_all_ones.heap_bytes(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("v_tables"),
-            nested_vec_heap_bytes(&self.v_tables),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("phase_challenges"),
-            vec_heap_bytes(&self.phase_challenges),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("cycle_challenges"),
-            vec_heap_bytes(&self.cycle_challenges),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("cycle"),
-            self.cycle.as_ref().map_or(0, CycleState::heap_bytes),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("claim_columns"),
-            vec_heap_bytes(&self.claim_columns),
-        );
-        visitor.exit();
-    }
 }
 
 fn build_cycle_buckets<F: JoltField>(

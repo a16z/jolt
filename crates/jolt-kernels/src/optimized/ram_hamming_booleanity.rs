@@ -82,26 +82,16 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct OptimizedRamHammingBooleanityKernel<F: JoltField> {
     progress: RoundProgress,
     eq: GruenSplitEqPolynomial<F>,
     hamming: Polynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OptimizedRamHammingBooleanityKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("eq"), self.eq.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("hamming"),
-            poly_heap_bytes(&self.hamming),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.eq.bind(challenge);

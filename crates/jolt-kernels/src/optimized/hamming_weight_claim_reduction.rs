@@ -364,36 +364,20 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct HammingWeightKernel<F: JoltField> {
     progress: RoundProgress,
     /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
     /// Combined claim weights `W_i`, index-aligned with `g_tables`.
     weight_tables: Vec<Polynomial<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     output_openings: Vec<JoltOpeningId>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for HammingWeightKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{polys_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("g_tables"),
-            polys_heap_bytes(&self.g_tables),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("weight_tables"),
-            polys_heap_bytes(&self.weight_tables),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("output_openings"),
-            vec_heap_bytes(&self.output_openings),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> HammingWeightKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(

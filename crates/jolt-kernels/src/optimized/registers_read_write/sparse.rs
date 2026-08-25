@@ -8,10 +8,16 @@ use rayon::prelude::*;
 use super::super::support::RoundChallenges;
 use super::rows::RegisterCycleRow;
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub(super) struct CoeffLut<F> {
     /// Power-of-two length; index 0 is always zero (zero seeds stay zero
     /// under `b + r·(a − b)`), which is what lets an absent merge partner
     /// keep index arithmetic pure.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) values: Vec<F>,
 }
 
@@ -481,13 +487,22 @@ fn split_pair_group<F, R, W>(
     group.split_at(odd_start)
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub(super) enum SparseEntries<F: JoltField> {
     Indexed {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         entries: Vec<IndexedSparseEntry<F>>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
     },
-    Direct(Vec<DirectSparseEntry<F>>),
+    Direct(
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        Vec<DirectSparseEntry<F>>,
+    ),
 }
 
 impl<F: JoltField> SparseEntries<F> {
@@ -523,6 +538,11 @@ impl<F: JoltField> SparseEntries<F> {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub(super) struct ReadWriteKernel<F: JoltField> {
     pub(super) log_t: usize,
     pub(super) log_k: usize,
@@ -532,53 +552,23 @@ pub(super) struct ReadWriteKernel<F: JoltField> {
     pub(super) gruen: GruenSplitEqPolynomial<F>,
     pub(super) inc: Polynomial<F>,
     // Address-phase dense state (K-sized), materialized at the transition.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) ra: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) wa: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) val: Vec<F>,
     /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     pub(super) eq_scalar: F,
     /// Fully bound `rd_inc` — constant across the address rounds.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     pub(super) inc_scalar: F,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) rs1_indices: Vec<Option<u8>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) challenges: RoundChallenges<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for ReadWriteKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        let entries_bytes = match &self.entries {
-            SparseEntries::Indexed {
-                entries,
-                ra_lut,
-                wa_lut,
-            } => {
-                vec_heap_bytes(entries)
-                    + vec_heap_bytes(&ra_lut.values)
-                    + vec_heap_bytes(&wa_lut.values)
-            }
-            SparseEntries::Direct(entries) => vec_heap_bytes(entries),
-        };
-        visitor.visit_simple(allocative::Key::new("entries"), entries_bytes);
-        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
-        visitor.visit_simple(allocative::Key::new("inc"), poly_heap_bytes(&self.inc));
-        for (key, table) in [("ra", &self.ra), ("wa", &self.wa), ("val", &self.val)] {
-            visitor.visit_simple(allocative::Key::new(key), vec_heap_bytes(table));
-        }
-        visitor.visit_simple(
-            allocative::Key::new("challenges"),
-            self.challenges.heap_bytes(),
-        );
-        for (key, table) in [
-            ("rs1_indices", &self.rs1_indices),
-            ("rs2_indices", &self.rs2_indices),
-        ] {
-            visitor.visit_simple(allocative::Key::new(key), vec_heap_bytes(table));
-        }
-        visitor.exit();
-    }
 }
 
 /// Bind one cycle variable of the sparse matrix in place: merge every

@@ -71,20 +71,11 @@ impl WitnessBundle for RegisterCycleRow {
 /// Cross-member carry: the per-cycle `rd` hot indices, parked by this kernel's
 /// `prepare` for the stage-5 val-evaluation kernel (which otherwise re-walks
 /// the trace to collect them).
-pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for SharedRdIndices {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("indices"),
-            crate::backend::vec_heap_bytes(&self.0),
-        );
-        visitor.exit();
-    }
-}
-
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct SharedRdIndices(
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    pub  Vec<Option<u8>>,
+);
 /// The row-window size of the streaming entry-collection pass (matches
 /// `support::collect_rows`: wide enough to amortize the per-chunk rayon
 /// extraction dispatch).

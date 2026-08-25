@@ -348,27 +348,23 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
 /// plain multilinear; the squared term binds `B_i[k]` (same initial masses)
 /// with squared weights, because binding squares the one-hot's accumulated
 /// eq factor. The initial `A = B` makes the input claim exactly zero.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct OptimizedBooleanityAddressKernel<F: JoltField> {
     progress: RoundProgress,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_weights: Vec<F>,
     linear: Vec<Polynomial<F>>,
     /// Raw vectors because the squared-weight bind is not a multilinear bind.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedBooleanityAddressKernel, |kernel| {
-    use crate::backend::{
-        nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
-    };
-    vec_heap_bytes(&kernel.gamma_weights)
-        + polys_heap_bytes(&kernel.linear)
-        + nested_vec_heap_bytes(&kernel.squared)
-        + poly_heap_bytes(&kernel.eq_address)
-});
 
 impl<F: JoltField> OptimizedBooleanityAddressKernel<F> {
     fn new(rounds: usize, gamma: F, reference_address: &[F], masses: Vec<Vec<F>>) -> Self {
@@ -562,8 +558,10 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
 
 /// Lazy-RA index source over the packed stage-5 rows: polynomial `i`'s hot
 /// chunk at cycle `j`, through the layout's selectors.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BooleanityChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     selectors: Vec<ColumnSelector>,
 }
 
@@ -580,13 +578,13 @@ impl ChunkIndexSource for BooleanityChunks {
     fn index(&self, i: usize, j: usize) -> Option<usize> {
         self.selectors[i].index(&self.rows[j])
     }
-
-    #[cfg(feature = "allocative")]
-    fn heap_bytes(&self) -> usize {
-        crate::backend::vec_heap_bytes(&self.selectors)
-    }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
     progress: RoundProgress,
     /// Split-eq over the reference cycle, scaled by
@@ -596,20 +594,13 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     /// Pre-scaled (`γ^i`) shared address-folded tables, index-encoded for
     /// the first four binds (dense at `T/16` after).
     tables: LazyFoldedRa<F, BooleanityChunks>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_powers: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_powers_inv: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     openings: Vec<JoltOpeningId>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedBooleanityCycleKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    kernel.eq.heap_bytes()
-        + kernel.tables.heap_bytes()
-        + vec_heap_bytes(&kernel.gamma_powers)
-        + vec_heap_bytes(&kernel.gamma_powers_inv)
-        + vec_heap_bytes(&kernel.openings)
-});
 
 impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     fn bind(&mut self, challenge: F) {

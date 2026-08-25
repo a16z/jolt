@@ -110,29 +110,17 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct IncKernel<F: JoltField> {
     progress: RoundProgress,
     ram_inc: Polynomial<F>,
     rd_inc: Polynomial<F>,
     ram_weights: Polynomial<F>,
     rd_weights: Polynomial<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for IncKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        for (key, bytes) in [
-            ("ram_inc", poly_heap_bytes(&self.ram_inc)),
-            ("rd_inc", poly_heap_bytes(&self.rd_inc)),
-            ("ram_weights", poly_heap_bytes(&self.ram_weights)),
-            ("rd_weights", poly_heap_bytes(&self.rd_weights)),
-        ] {
-            visitor.visit_simple(allocative::Key::new(key), bytes);
-        }
-        visitor.exit();
-    }
 }
 
 impl<F: JoltField> IncKernel<F> {

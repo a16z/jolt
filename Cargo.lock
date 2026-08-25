@@ -3676,6 +3676,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "bincode 2.0.1",
  "criterion",
  "jolt-field",

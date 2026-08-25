@@ -91,6 +91,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
 
 /// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
 /// hot), off the stage-5 shared rows.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct LookupIndexChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
     num_committed: usize,
@@ -114,12 +115,15 @@ impl ChunkIndexSource for LookupIndexChunks {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
 pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     num_committed_per_virtual: usize,
     /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
     /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
     /// exactly, so unscaling is byte-exact).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_powers_inv: Vec<F>,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
@@ -128,24 +132,6 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// first four binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OptimizedInstructionRaVirtualizationKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::vec_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("gamma_powers_inv"),
-            vec_heap_bytes(&self.gamma_powers_inv),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("folded_ra"),
-            self.folded_ra.heap_bytes(),
-        );
-        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
-        visitor.exit();
-    }
 }
 
 impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {

@@ -227,65 +227,82 @@ fn visit_carry<T: Any + allocative::Allocative>(
     }
 }
 
-/// Allocator-reserved bytes behind a `Vec` of flat elements. Field elements
-/// carry no per-element heap (true of every production field), so parked
-/// kernels can size their tables arithmetically — no `F: Allocative` bound
-/// leaking into the generic reference impls that park them.
+/// Heap visitation the derive cannot reach: containers keyed by a foreign
+/// type without an `Allocative` impl. Everything else visits through
+/// `#[derive(Allocative)]`, with scalar tables routed to
+/// [`jolt_poly::visit_scalars`] so no `F: Allocative` bound leaks into the
+/// generic reference impls that park these kernels.
+///
+/// Sized arithmetically from `capacity()`; the key's own bytes ride along
+/// with the tuple spine.
 #[cfg(feature = "allocative")]
-pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
-    v.capacity() * size_of::<T>()
-}
-
-/// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
-/// inner reservation.
-#[cfg(feature = "allocative")]
-pub(crate) fn nested_vec_heap_bytes<T>(v: &Vec<Vec<T>>) -> usize {
-    v.capacity() * size_of::<Vec<T>>()
-        + v.iter()
-            .map(|inner| inner.capacity() * size_of::<T>())
-            .sum::<usize>()
-}
-
-/// Heap bytes behind a dense polynomial's evaluation table, by `len()` —
-/// [`Polynomial`](jolt_poly::Polynomial) exposes no capacity. Exact at the
-/// mid-stage snapshot (taken before any binding, when freshly built tables
-/// have `len == capacity`); undercounts the truncated slack of bound state.
-#[cfg(feature = "allocative")]
-pub(crate) fn poly_heap_bytes<T>(poly: &jolt_poly::Polynomial<T>) -> usize {
-    poly.len() * size_of::<T>()
-}
-
-/// [`poly_heap_bytes`] summed over a table list, plus the outer spine.
-#[cfg(feature = "allocative")]
-pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usize {
-    polys.capacity() * size_of::<jolt_poly::Polynomial<T>>()
-        + polys.iter().map(poly_heap_bytes).sum::<usize>()
-}
-
-/// Visit a shared flat vector without walking its elements. This preserves
-/// `Arc` deduplication while keeping heap snapshots O(1) in the trace size.
-#[cfg(feature = "allocative")]
-pub(crate) fn visit_arc_vec<T>(
+pub(crate) fn visit_keyed_polys<K, T>(
+    tables: &Vec<(K, Vec<jolt_poly::Polynomial<T>>)>,
     visitor: &mut allocative::Visitor<'_>,
-    key: allocative::Key,
-    value: &std::sync::Arc<Vec<T>>,
 ) {
-    let Some(mut visitor) = visitor.enter_shared(
-        key,
-        size_of::<*const Vec<T>>(),
-        std::sync::Arc::as_ptr(value).cast(),
-    ) else {
-        return;
-    };
     visitor.visit_simple(
-        allocative::Key::new("ArcInner"),
-        2 * size_of::<usize>() + size_of::<Vec<T>>(),
+        allocative::Key::new("spine"),
+        tables.capacity() * size_of::<(K, Vec<jolt_poly::Polynomial<T>>)>(),
+    );
+    visitor.visit_simple(
+        allocative::Key::new("tables"),
+        tables
+            .iter()
+            .map(|(_, polys)| {
+                polys.capacity() * size_of::<jolt_poly::Polynomial<T>>()
+                    + polys
+                        .iter()
+                        .map(|poly| poly.len() * size_of::<T>())
+                        .sum::<usize>()
+            })
+            .sum(),
+    );
+}
+
+/// [`visit_keyed_polys`] for prefix–suffix table pairs.
+#[cfg(feature = "allocative")]
+pub(crate) fn visit_scalar_pairs<T>(
+    pairs: &[(Vec<T>, Vec<T>)],
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    visitor.visit_simple(
+        allocative::Key::new("elements"),
+        pairs
+            .iter()
+            .map(|(p, q)| (p.capacity() + q.capacity()) * size_of::<T>())
+            .sum(),
+    );
+}
+
+/// [`visit_keyed_polys`] for a map from a foreign key to a table.
+#[cfg(feature = "allocative")]
+pub(crate) fn visit_poly_map<K, T>(
+    tables: &std::collections::BTreeMap<K, jolt_poly::Polynomial<T>>,
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    visitor.visit_simple(
+        allocative::Key::new("nodes"),
+        tables.len() * size_of::<(K, jolt_poly::Polynomial<T>)>(),
     );
     visitor.visit_simple(
         allocative::Key::new("elements"),
-        value.capacity() * size_of::<T>(),
+        tables
+            .values()
+            .map(|poly| poly.len() * size_of::<T>())
+            .sum(),
     );
-    visitor.exit();
+}
+
+/// [`visit_poly_map`] for a map from a foreign key to a scalar.
+#[cfg(feature = "allocative")]
+pub(crate) fn visit_scalar_map<K, V>(
+    values: &std::collections::BTreeMap<K, V>,
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    visitor.visit_simple(
+        allocative::Key::new("nodes"),
+        values.len() * size_of::<(K, V)>(),
+    );
 }
 
 /// Backend-owned state with proof lifetime, opaque to orchestration.

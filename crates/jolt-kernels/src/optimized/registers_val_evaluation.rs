@@ -50,12 +50,19 @@ use crate::{
 
 /// The write-address column: hot indices plus the address eq table until the
 /// first bind, a dense bound vector afterwards. The `K × T` grid never exists.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 enum WaState<F> {
     Indices {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         rd: Vec<Option<u8>>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,
     },
-    Dense(Vec<F>),
+    Dense(#[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<F>),
 }
 
 impl<F: JoltField> WaState<F> {
@@ -171,7 +178,14 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
 
 /// The increment table's lifecycle: deferred to the member's first active
 /// round on slice-backed sources, dense from prepare otherwise.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum IncSource<F: JoltField> {
+    /// The witness plane owns these rows; it reports them itself.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     Deferred(jolt_witness::RandomAccessRows),
     Ready(Polynomial<F>),
 }
@@ -182,33 +196,17 @@ struct RdIncRow {
     rd_inc: RdInc,
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct ValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncSource<F>,
     wa: WaState<F>,
     lt: SplitLt<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for ValEvaluationKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        let inc_bytes = match &self.inc {
-            IncSource::Deferred(_) => 0,
-            IncSource::Ready(inc) => poly_heap_bytes(inc),
-        };
-        visitor.visit_simple(allocative::Key::new("inc"), inc_bytes);
-        let wa_bytes = match &self.wa {
-            WaState::Indices { rd, eq_address } => vec_heap_bytes(rd) + vec_heap_bytes(eq_address),
-            WaState::Dense(table) => vec_heap_bytes(table),
-        };
-        visitor.visit_simple(allocative::Key::new("wa"), wa_bytes);
-        visitor.visit_simple(allocative::Key::new("lt"), self.lt.heap_bytes());
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> ValEvaluationKernel<F> {
     /// Materialize the deferred increment table; a no-op once ready.
     fn ensure_inc(&mut self) -> Result<(), SumcheckError<F>> {

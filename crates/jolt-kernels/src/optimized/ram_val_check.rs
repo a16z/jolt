@@ -38,6 +38,7 @@ use crate::{
 
 /// Lazy-RA index source over the full remapped RAM address (a single
 /// `K`-ary selector), cold on no-access cycles.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
     columns: Arc<RamAccessColumns>,
 }
@@ -97,25 +98,13 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
 struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: Polynomial<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,
     lt: SplitLt<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for RamValCheckKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("inc"),
-            crate::backend::poly_heap_bytes(&self.inc),
-        );
-        visitor.visit_simple(allocative::Key::new("ra"), self.ra.heap_bytes());
-        visitor.visit_simple(allocative::Key::new("lt"), self.lt.heap_bytes());
-        visitor.exit();
-    }
 }
 
 impl<F: JoltField> RamValCheckKernel<F> {

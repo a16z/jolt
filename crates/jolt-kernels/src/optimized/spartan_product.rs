@@ -139,29 +139,18 @@ fn extended_products(
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
 /// challenge vector, and all extended-node values of `t1`.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct SpartanProductCarry<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau_low: Vec<F>,
     rows: BundleStore<SpartanProductRow>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     t1_values: Vec<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for SpartanProductCarry<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::vec_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("tau_low"),
-            vec_heap_bytes(&self.tau_low),
-        );
-        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("t1_values"),
-            vec_heap_bytes(&self.t1_values),
-        );
-        visitor.exit();
-    }
 }
 
 /// Extended-node evaluations of
@@ -305,43 +294,25 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 
 /// The linear-time product remainder rounds over the cycle domain
 /// (bound `LowToHigh`).
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     lagrange_weights: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for ProductRemainderKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("left"), poly_heap_bytes(&self.left));
-        visitor.visit_simple(allocative::Key::new("right"), poly_heap_bytes(&self.right));
-        visitor.visit_simple(
-            allocative::Key::new("scratch"),
-            vec_heap_bytes(&self.scratch),
-        );
-        visitor.visit_simple(allocative::Key::new("split_eq"), self.split_eq.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("challenges"),
-            self.challenges.heap_bytes(),
-        );
-        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("lagrange_weights"),
-            vec_heap_bytes(&self.lagrange_weights),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> ProductRemainderKernel<F> {
     fn prepare(
         carry: SpartanProductCarry<F>,

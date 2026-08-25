@@ -90,48 +90,25 @@ enum CollectFailure {
 }
 
 /// Column-major per-cycle RAM access data over the full padded cycle domain.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamAccessColumns {
     /// Remapped word address per cycle; [`NO_ACCESS`] when the cycle makes no
     /// remappable RAM access (no-ops and address 0).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub addresses: Vec<u32>,
-}
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for RamAccessColumns {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("addresses"),
-            crate::backend::vec_heap_bytes(&self.addresses),
-        );
-        visitor.exit();
-    }
 }
 
 /// RAM values have one final consumer in stage 4, so they are parked
 /// separately from the address column and consumed there.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamAccessValues {
     /// Pre-access word value per cycle (a read's value, a write's pre-value);
     /// 0 on no-access cycles.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub post_values: Vec<u64>,
-}
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for RamAccessValues {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("pre_values"),
-            crate::backend::vec_heap_bytes(&self.pre_values),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("post_values"),
-            crate::backend::vec_heap_bytes(&self.post_values),
-        );
-        visitor.exit();
-    }
 }
 
 impl RamAccessColumns {

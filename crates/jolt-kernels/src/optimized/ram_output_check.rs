@@ -98,33 +98,20 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct OutputCheckKernel<F: JoltField> {
     progress: RoundProgress,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
     val_io: Polynomial<F>,
     val_final: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OutputCheckKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
-        for (key, bytes) in [
-            ("io_mask", poly_heap_bytes(&self.io_mask)),
-            ("val_io", poly_heap_bytes(&self.val_io)),
-            ("val_final", poly_heap_bytes(&self.val_final)),
-            ("bind_scratch", vec_heap_bytes(&self.bind_scratch)),
-        ] {
-            visitor.visit_simple(allocative::Key::new(key), bytes);
-        }
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> OutputCheckKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
     /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.

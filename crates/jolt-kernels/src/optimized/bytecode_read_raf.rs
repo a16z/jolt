@@ -90,6 +90,7 @@ const COLD: u32 = u32::MAX;
 /// one-hot hot index (unmapped rows are cold — the cycle-phase convention).
 #[derive(Clone, Copy, Debug)]
 #[cfg(not(feature = "akita"))]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct PcRow {
     push_pc: u32,
     #[cfg(not(feature = "akita"))]
@@ -98,16 +99,8 @@ pub(crate) struct PcRow {
 
 /// The session key of the shared per-cycle PC scan.
 #[cfg(not(feature = "akita"))]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct PcRowsKey(Arc<Vec<PcRow>>);
-
-#[cfg(all(feature = "allocative", not(feature = "akita")))]
-impl allocative::Allocative for PcRowsKey {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        crate::backend::visit_arc_vec(&mut visitor, allocative::Key::new("rows"), &self.0);
-        visitor.exit();
-    }
-}
 
 #[cfg(not(feature = "akita"))]
 #[derive(Clone, Copy, Debug, WitnessBundle)]
@@ -419,49 +412,37 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum StageVal {
     Table(usize),
     Complement(usize),
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct AddressKernel<F: JoltField> {
     progress: RoundProgress,
     committed_program: bool,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     stage_weights: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     entry_weight: F,
     /// Within-stage RAF `Int` weights, divided by the stage batching weight.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     raf_weights: Vec<F>,
     pushforwards: Vec<Polynomial<F>>,
     /// RAW stage-value tables — the RAF identity binds separately so
     /// committed mode can stage the raw bound `Val_s` wire claims.
     values: Vec<Polynomial<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     stage_values: Vec<StageVal>,
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for AddressKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        for (key, bytes) in [
-            ("stage_weights", vec_heap_bytes(&self.stage_weights)),
-            ("raf_weights", vec_heap_bytes(&self.raf_weights)),
-            ("pushforwards", polys_heap_bytes(&self.pushforwards)),
-            ("values", polys_heap_bytes(&self.values)),
-            ("stage_values", vec_heap_bytes(&self.stage_values)),
-            ("int_table", poly_heap_bytes(&self.int_table)),
-            ("entry_trace", poly_heap_bytes(&self.entry_trace)),
-            ("entry_expected", poly_heap_bytes(&self.entry_expected)),
-        ] {
-            visitor.visit_simple(allocative::Key::new(key), bytes);
-        }
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> AddressKernel<F> {
     #[inline]
     fn stage_pair(&self, stage: usize, y: usize) -> (F, F) {
@@ -583,8 +564,14 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
 /// RA factors still retain their shared compact rows. The fourth bind
 /// materializes only `T / 16` field elements and releases this handle.
 #[cfg(feature = "akita")]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum LazyFusedInc<F: JoltField> {
     Lazy {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         branch_weights: Vec<F>,
         rows: Arc<Vec<InstructionCycleRow>>,
     },
@@ -597,14 +584,6 @@ impl<F: JoltField> LazyFusedInc<F> {
         Self::Lazy {
             branch_weights: vec![F::one()],
             rows,
-        }
-    }
-
-    #[cfg(feature = "allocative")]
-    fn heap_bytes(&self) -> usize {
-        match self {
-            Self::Lazy { branch_weights, .. } => crate::backend::vec_heap_bytes(branch_weights),
-            Self::Dense(polynomial) => crate::backend::poly_heap_bytes(polynomial),
         }
     }
 
@@ -804,11 +783,13 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
 
 /// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
 /// cold on unmapped cycles, off the session-shared PC scan.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BytecodePcChunks {
     #[cfg(not(feature = "akita"))]
     rows: Arc<Vec<PcRow>>,
     #[cfg(feature = "akita")]
     rows: Arc<Vec<InstructionCycleRow>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     selectors: Vec<RaChunkSelector>,
 }
 
@@ -836,13 +817,13 @@ impl ChunkIndexSource for BytecodePcChunks {
             row.mapped_pc().map(|pc| self.selectors[i].chunk_usize(pc))
         }
     }
-
-    #[cfg(feature = "allocative")]
-    fn heap_bytes(&self) -> usize {
-        crate::backend::vec_heap_bytes(&self.selectors)
-    }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct CycleKernel<F: JoltField> {
     progress: RoundProgress,
     degree: usize,
@@ -854,37 +835,9 @@ struct CycleKernel<F: JoltField> {
     fused_combined: Polynomial<F>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     output_openings: Vec<JoltOpeningId>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for CycleKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("ra"), self.ra.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("combined"),
-            poly_heap_bytes(&self.combined),
-        );
-        #[cfg(feature = "akita")]
-        visitor.visit_simple(
-            allocative::Key::new("fused_inc"),
-            self.fused_inc.heap_bytes(),
-        );
-        #[cfg(feature = "akita")]
-        visitor.visit_simple(
-            allocative::Key::new("fused_combined"),
-            poly_heap_bytes(&self.fused_combined),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("output_openings"),
-            vec_heap_bytes(&self.output_openings),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all([&mut self.combined], challenge);

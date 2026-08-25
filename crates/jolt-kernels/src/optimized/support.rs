@@ -25,6 +25,7 @@ use crate::{KernelError, SumcheckKernelError};
 
 /// A kernel's bound-round count against its total — the one home of the
 /// "claims only after every round is bound" invariant.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RoundProgress {
     bound: usize,
     total: usize,
@@ -256,7 +257,13 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
 /// round total — one authority for both the challenge history and the
 /// bound-rounds invariant. Kernels that never revisit their challenges use
 /// [`RoundProgress`] instead.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 pub(crate) struct RoundChallenges<F> {
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     challenges: Vec<F>,
     total: usize,
 }
@@ -298,13 +305,6 @@ impl<F: JoltField> RoundChallenges<F> {
                 remaining: self.total - self.challenges.len(),
             })
         }
-    }
-}
-
-#[cfg(feature = "allocative")]
-impl<F> RoundChallenges<F> {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        crate::backend::vec_heap_bytes(&self.challenges)
     }
 }
 
@@ -654,28 +654,21 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
 /// — binding acts linearly on the `j_lo` tensor factor. (jolt-poly's
 /// `LtPolynomial` binds high-to-low only, so the low-to-high variant lives
 /// here.)
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 pub(crate) enum SplitLt<F> {
     Split {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lt_lo: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lt_hi: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_hi: Vec<F>,
     },
-    Dense(Vec<F>),
-}
-
-#[cfg(feature = "allocative")]
-impl<F> SplitLt<F> {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        use crate::backend::vec_heap_bytes;
-        match self {
-            Self::Split {
-                lt_lo,
-                lt_hi,
-                eq_hi,
-            } => vec_heap_bytes(lt_lo) + vec_heap_bytes(lt_hi) + vec_heap_bytes(eq_hi),
-            Self::Dense(table) => vec_heap_bytes(table),
-        }
-    }
+    Dense(#[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<F>),
 }
 
 impl<F: JoltField> SplitLt<F> {
@@ -769,19 +762,18 @@ impl<F: JoltField> SplitLt<F> {
 /// materialized row vector never exists; re-emulating sources retain the
 /// collected rows. The generic twin of the spartan-outer kernel's store,
 /// for every carry-style typed-row consumer.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "B")
+)]
 pub(crate) enum BundleStore<B> {
+    /// The witness plane owns these rows; it reports them itself.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     Owned(RandomAccessRows),
-    Retained(Vec<B>),
-}
-
-#[cfg(feature = "allocative")]
-impl<B> BundleStore<B> {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        match self {
-            Self::Owned(_) => 0,
-            Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
-        }
-    }
+    Retained(
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<B>,
+    ),
 }
 
 impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {

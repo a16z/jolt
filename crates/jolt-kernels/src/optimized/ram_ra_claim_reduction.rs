@@ -234,79 +234,55 @@ fn gather_h_prime<F: JoltField>(
     clippy::large_enum_variant,
     reason = "one kernel object per proof; boxing buys nothing"
 )]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum Phase<F: JoltField> {
     /// Rounds over the low (prefix) cycle variables: six `O(√T)` tables. The
     /// suffix eq tables and the transition inputs (columns, address eq,
     /// low-half cycle points, collected challenges) ride along.
     Prefix {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         p: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         q: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         eq_hi: [Vec<F>; TERMS],
         columns: Arc<RamAccessColumns>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         r_cycle_lo: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         challenges: Vec<F>,
     },
     /// Rounds over the high (suffix) cycle variables after the regather.
     /// `scales[x] = eq(r_x_lo, r_prefix)` — the bound prefix eq factors.
     Suffix {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         h: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         eq_hi: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(skip))]
         scales: [F; TERMS],
     },
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RaReductionKernel<F: JoltField> {
     progress: RoundProgress,
     prefix_bits: usize,
     /// `[1, γ, γ²]` — the consumed-claim batching coefficients.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; TERMS],
     phase: Phase<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for RaReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::vec_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        match &self.phase {
-            Phase::Prefix {
-                p,
-                q,
-                eq_hi,
-                columns,
-                eq_address,
-                r_cycle_lo,
-                challenges,
-            } => {
-                let array_bytes =
-                    |tables: &[Vec<F>; TERMS]| tables.iter().map(vec_heap_bytes).sum::<usize>();
-                visitor.visit_simple(allocative::Key::new("p"), array_bytes(p));
-                visitor.visit_simple(allocative::Key::new("q"), array_bytes(q));
-                visitor.visit_simple(allocative::Key::new("eq_hi"), array_bytes(eq_hi));
-                visitor.visit_field(allocative::Key::new("columns"), columns);
-                visitor.visit_simple(
-                    allocative::Key::new("eq_address"),
-                    vec_heap_bytes(eq_address),
-                );
-                visitor.visit_simple(allocative::Key::new("r_cycle_lo"), array_bytes(r_cycle_lo));
-                visitor.visit_simple(
-                    allocative::Key::new("challenges"),
-                    vec_heap_bytes(challenges),
-                );
-            }
-            Phase::Suffix { h, eq_hi, .. } => {
-                visitor.visit_simple(allocative::Key::new("h"), vec_heap_bytes(h));
-                visitor.visit_simple(
-                    allocative::Key::new("eq_hi"),
-                    eq_hi.iter().map(vec_heap_bytes).sum::<usize>(),
-                );
-            }
-        }
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> RaReductionKernel<F> {
     fn bind(&mut self, r: F) {
         self.progress.advance();

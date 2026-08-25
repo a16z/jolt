@@ -148,60 +148,52 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 enum Phase<F> {
     /// First half of the rounds: the P·Q buffers over the prefix variables.
-    PrefixSuffix { p: Vec<F>, q: Vec<F> },
+    PrefixSuffix {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        p: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        q: Vec<F>,
+    },
     /// Remaining rounds: the eq table and the three value columns, dense.
     Dense {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         rd_write_value: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         rs1_value: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         rs2_value: Vec<F>,
     },
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct ClaimReductionKernel<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_sq: F,
     /// The full `τ_low` point (big-endian) the summand's eq factor fixes.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
     /// Raw per-cycle `u64` values, kept for the phase-2 regeneration.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     values: Vec<RegisterValuesRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for ClaimReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::vec_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
-        visitor.visit_simple(allocative::Key::new("values"), vec_heap_bytes(&self.values));
-        let phase_bytes = match &self.phase {
-            Phase::PrefixSuffix { p, q } => vec_heap_bytes(p) + vec_heap_bytes(q),
-            Phase::Dense {
-                eq,
-                rd_write_value,
-                rs1_value,
-                rs2_value,
-            } => {
-                vec_heap_bytes(eq)
-                    + vec_heap_bytes(rd_write_value)
-                    + vec_heap_bytes(rs1_value)
-                    + vec_heap_bytes(rs2_value)
-            }
-        };
-        visitor.visit_simple(allocative::Key::new("phase"), phase_bytes);
-        visitor.visit_simple(
-            allocative::Key::new("challenges"),
-            self.challenges.heap_bytes(),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> ClaimReductionKernel<F> {
     /// Regenerate the dense phase from the raw values: the three columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix

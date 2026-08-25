@@ -101,6 +101,11 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     progress: RoundProgress,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
@@ -108,30 +113,12 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     combined: Polynomial<F>,
     /// Native per-cycle operand values, kept for the post-hoc output-claim
     /// walk.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rows: Vec<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bound_challenges: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OptimizedInstructionClaimReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("combined"),
-            poly_heap_bytes(&self.combined),
-        );
-        visitor.visit_simple(allocative::Key::new("rows"), vec_heap_bytes(&self.rows));
-        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("bound_challenges"),
-            vec_heap_bytes(&self.bound_challenges),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
     pub fn new(
         tau_low: &[F],

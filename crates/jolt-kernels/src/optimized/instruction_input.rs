@@ -107,36 +107,32 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
 
 /// The column state: native rows until the first bind, eight dense tables
 /// afterwards.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum InputState<F: JoltField> {
-    Native(Vec<InstructionInputRow>),
+    Native(
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        Vec<InstructionInputRow>,
+    ),
     Dense(Vec<Polynomial<F>>),
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct OptimizedInstructionInputKernel<F: JoltField> {
     progress: RoundProgress,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     state: InputState<F>,
     gruen: GruenSplitEqPolynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OptimizedInstructionInputKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{polys_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        let state_bytes = match &self.state {
-            InputState::Native(rows) => vec_heap_bytes(rows),
-            InputState::Dense(polys) => polys_heap_bytes(polys),
-        };
-        visitor.visit_simple(allocative::Key::new("state"), state_bytes);
-        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("bind_scratch"),
-            vec_heap_bytes(&self.bind_scratch),
-        );
-        visitor.exit();
-    }
 }
 
 /// `(value at t = 0, step)` of the pair's linear extension, as exact

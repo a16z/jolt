@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// - **HighToLow**: Bind from the most-significant bit (index `0`) downward.
 ///   Used by Spartan's outer sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub enum BindingOrder {
     #[default]
     LowToHigh,

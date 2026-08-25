@@ -50,6 +50,11 @@ use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 /// See the module docs. Construct with every leaf table the relation's output
 /// expression references; [`new`](Self::new) validates coverage and sizes so
 /// the round loop cannot miss a leaf.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F, R")
+)]
 pub struct NaiveSumcheckProver<F, R>
 where
     F: JoltField,
@@ -61,57 +66,21 @@ where
     /// The kernel's own clone of the stage's relation, taken from
     /// [`ProverInputs`] at prepare time; geometry (`rounds`/`degree`) and the
     /// output expression are read off it directly.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     relation: R,
     /// The expression's `Challenge` leaves pre-resolved to scalars at
     /// construction, so the round loop reads plain `Sync` data (the typed
     /// `Challenges` struct is borrowed with a lifetime and stays with the
     /// caller that drew it).
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_scalar_map))]
     challenge_values: BTreeMap<JoltChallengeId, F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_poly_map))]
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_poly_map))]
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
     binding_order: BindingOrder,
     rounds_bound: usize,
 }
-
-// Size arithmetic rather than a derive: neither `F` nor the relation `R`
-// may pick up an `Allocative` bound (this kernel serves every reference
-// slot generically). BTreeMap totals ignore per-node overhead — the tables
-// dominate; `Polynomial` sizing is by `len()`, exact at the mid-stage
-// snapshot where nothing is bound yet.
-#[cfg(feature = "allocative")]
-impl<F, R> allocative::Allocative for NaiveSumcheckProver<F, R>
-where
-    F: JoltField,
-    R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
-{
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("challenge_values"),
-            self.challenge_values.len() * size_of::<(JoltChallengeId, F)>(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("opening_tables"),
-            self.opening_tables
-                .values()
-                .map(poly_heap_bytes)
-                .sum::<usize>(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("derived_tables"),
-            self.derived_tables
-                .values()
-                .map(poly_heap_bytes)
-                .sum::<usize>(),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F, R> NaiveSumcheckProver<F, R>
 where
     F: JoltField,

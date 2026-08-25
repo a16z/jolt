@@ -414,28 +414,20 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) 
 /// remainder slot reclaims — the typed-row store (reused for
 /// materialization and the final opening walk), the stage challenge vector,
 /// and the extended-node evaluations of `t1`.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
     rows: BundleStore<SpartanOuterRow>,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     t1_values: Vec<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for SpartanOuterCarry<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::vec_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
-        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("t1_values"),
-            vec_heap_bytes(&self.t1_values),
-        );
-        visitor.exit();
-    }
 }
 
 /// Extended-node evaluations of
@@ -590,62 +582,44 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemaind
 /// The `Az`/`Bz` linear forms folded at both stream values — the closed forms
 /// of the relation's derived leaves after the stream bind, kept for
 /// [`SumcheckKernel::validate_derived_tables`].
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 struct DerivedWeights<F> {
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     az_weights: [Vec<F>; 2],
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     bz_weights: [Vec<F>; 2],
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     az_constant: [F; 2],
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     bz_constant: [F; 2],
 }
 
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct OuterRemainderKernel<F: JoltField> {
     az: Polynomial<F>,
     bz: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     /// Round-0 endpoints, fused into the materialization pass.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanOuterRow>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OuterRemainderKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("az"), poly_heap_bytes(&self.az));
-        visitor.visit_simple(allocative::Key::new("bz"), poly_heap_bytes(&self.bz));
-        visitor.visit_simple(
-            allocative::Key::new("scratch"),
-            vec_heap_bytes(&self.scratch),
-        );
-        visitor.visit_simple(allocative::Key::new("split_eq"), self.split_eq.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("challenges"),
-            self.challenges.heap_bytes(),
-        );
-        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("opening_ids"),
-            vec_heap_bytes(&self.opening_ids),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("derived"),
-            self.derived
-                .az_weights
-                .iter()
-                .chain(&self.derived.bz_weights)
-                .map(vec_heap_bytes)
-                .sum::<usize>(),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> OuterRemainderKernel<F> {
     fn prepare(
         carry: SpartanOuterCarry<F>,

@@ -73,14 +73,22 @@ const PAR_THRESHOLD: usize = 1 << 10;
 /// aux tables riding alongside, and the running inactive-round scale.
 /// `Polynomial`-backed so binds take the library's threshold-gated parallel
 /// path (byte-identical fold: `lo + r·(hi − lo)` pairwise, exact field ops).
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 struct PrecommittedTables<F> {
     value: Polynomial<F>,
     eq: Polynomial<F>,
     aux: Vec<Polynomial<F>>,
     /// `(1/2)^k` over the `k` inactive rounds ingested so far — the factor the
     /// running claim accumulated relative to the true bound product.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     scale: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     scale_inv: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     two_inv: F,
 }
 
@@ -227,84 +235,32 @@ fn is_active(active_rounds: &[usize], round: usize) -> bool {
 /// [`AddressReductionKernel`] by stage 7's `prepare`. Plain owned data —
 /// parked once, reclaimed once — keyed in the [`ProofSession`] by the
 /// address-phase relation `R` it becomes.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F, R")
+)]
 pub struct PrecommittedReductionCarry<F, R> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     reduction: PrecommittedClaimReduction,
     tables: PrecommittedTables<F>,
     _relation: PhantomData<fn() -> R>,
-}
-
-// Size arithmetic rather than a derive: neither the relation marker `R` nor
-// `F` may pick up an `Allocative` bound (the generic cycle kernel parks
-// this carry for every `F: JoltField`). The tables are the memory; the
-// scheduling metadata is attributed by its stack size alone (its
-// round-index vectors are a few hundred bytes, noise next to the tables).
-#[cfg(feature = "allocative")]
-impl<F, R> allocative::Allocative for PrecommittedReductionCarry<F, R> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{poly_heap_bytes, polys_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("reduction"),
-            size_of::<PrecommittedClaimReduction>(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("tables.value"),
-            poly_heap_bytes(&self.tables.value),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("tables.eq"),
-            poly_heap_bytes(&self.tables.eq),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("tables.aux"),
-            polys_heap_bytes(&self.tables.aux),
-        );
-        visitor.exit();
-    }
 }
 
 /// The stage-6b cycle-phase batch member for relation `R`: binds the cycle
 /// window, and — per kind — assembles the typed wire claims (resolving
 /// intermediate-vs-final from the schedule) and parks the 6b→7 carry.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField, R")
+)]
 pub struct CycleReductionKernel<F: JoltField, R> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     reduction: PrecommittedClaimReduction,
     tables: PrecommittedTables<F>,
     _relation: PhantomData<fn() -> R>,
 }
-
-// The two phase kernels share the carry's shape and its size-arithmetic
-// rationale (see the `PrecommittedReductionCarry` impl above).
-#[cfg(feature = "allocative")]
-macro_rules! impl_reduction_kernel_allocative {
-    ($($kernel:ident),+ $(,)?) => {$(
-        impl<F: JoltField, R> allocative::Allocative for $kernel<F, R> {
-            fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-                use crate::backend::{poly_heap_bytes, polys_heap_bytes};
-                let mut visitor = visitor.enter_self_sized::<Self>();
-                visitor.visit_simple(
-                    allocative::Key::new("reduction"),
-                    size_of::<PrecommittedClaimReduction>(),
-                );
-                visitor.visit_simple(
-                    allocative::Key::new("tables.value"),
-                    poly_heap_bytes(&self.tables.value),
-                );
-                visitor.visit_simple(
-                    allocative::Key::new("tables.eq"),
-                    poly_heap_bytes(&self.tables.eq),
-                );
-                visitor.visit_simple(
-                    allocative::Key::new("tables.aux"),
-                    polys_heap_bytes(&self.tables.aux),
-                );
-                visitor.exit();
-            }
-        }
-    )+};
-}
-#[cfg(feature = "allocative")]
-impl_reduction_kernel_allocative!(CycleReductionKernel, AddressReductionKernel);
-
 impl<F: JoltField, R> CycleReductionKernel<F, R> {
     /// Build a member from tables ALREADY permuted into Dory opening-round
     /// order (see [`lsb_permutation`] / [`permute_coefficients`]).
@@ -409,7 +365,13 @@ impl<F: JoltField, R> ProveRounds<F> for CycleReductionKernel<F, R> {
 /// The stage-7 address-phase batch member for relation `R`: resumes binding
 /// from the reclaimed 6b carry (running scale included) and — per kind —
 /// extracts the final openings from the fully bound tables.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField, R")
+)]
 pub struct AddressReductionKernel<F: JoltField, R> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     reduction: PrecommittedClaimReduction,
     tables: PrecommittedTables<F>,
     _relation: PhantomData<fn() -> R>,

@@ -106,6 +106,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 
 /// Lazy-RA index source: chunk `i` of the per-cycle remapped RAM address,
 /// cold on no-access cycles, off the session-shared access columns.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
     columns: Arc<RamAccessColumns>,
     num_committed: usize,
@@ -133,6 +134,8 @@ impl ChunkIndexSource for RamAddressChunks {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
 struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
@@ -141,19 +144,6 @@ struct RamRaVirtualizationKernel<F: JoltField> {
     /// binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for RamRaVirtualizationKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("folded_ra"),
-            self.folded_ra.heap_bytes(),
-        );
-        visitor.visit_simple(allocative::Key::new("gruen"), self.gruen.heap_bytes());
-        visitor.exit();
-    }
 }
 
 impl<F: JoltField> RamRaVirtualizationKernel<F> {
