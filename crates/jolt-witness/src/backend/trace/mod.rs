@@ -15,7 +15,6 @@ use jolt_riscv::{
     CapturedState, CircuitFlags, Flags, JoltInstruction, JoltTraceRow, LoadState, NonMemoryState,
     StoreState,
 };
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::backend::ProgramSource;
@@ -32,7 +31,6 @@ pub const RV64_LOOKUP_ADDRESS_BITS: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoltVmWitnessConfig {
-    pub retain_trace_rows: bool,
     pub log_t: usize,
     pub ram_k: usize,
     pub one_hot: JoltOneHotConfig,
@@ -56,18 +54,12 @@ impl Default for JoltVmWitnessConfig {
 impl JoltVmWitnessConfig {
     pub fn new(log_t: usize, ram_k: usize, one_hot: JoltOneHotConfig) -> Self {
         Self {
-            retain_trace_rows: false,
             log_t,
             ram_k,
             one_hot,
             include_trusted_advice: false,
             include_untrusted_advice: false,
         }
-    }
-
-    pub const fn retain_trace_rows(mut self, retain_trace_rows: bool) -> Self {
-        self.retain_trace_rows = retain_trace_rows;
-        self
     }
 
     pub const fn with_log_t(mut self, log_t: usize) -> Self {
@@ -106,6 +98,9 @@ impl<T> JoltVmWitnessInputs<T> {
     }
 }
 
+/// Proof witness backed by shared compact rows. Raw slice-backed traces can
+/// be normalized through [`Self::try_new`]; replaying sources must emit
+/// compact rows at their producer boundary and use [`Self::from_compact`].
 pub struct TraceBackend<T: TraceSource> {
     pub config: JoltVmWitnessConfig,
     pub program: Arc<JoltProgram>,
@@ -113,7 +108,7 @@ pub struct TraceBackend<T: TraceSource> {
     pub trace: TraceOutput<Arc<Vec<JoltTraceRow>>>,
     #[cfg(feature = "field-inline")]
     pub(crate) raw_trace_rows: Arc<Vec<TraceRow>>,
-    source: PhantomData<fn() -> T>,
+    source: std::marker::PhantomData<fn() -> T>,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness>,
 }
@@ -156,11 +151,12 @@ impl<T: TraceSource> TraceBackend<T> {
             program: inputs.program,
             preprocessing: inputs.preprocessing,
             trace: TraceOutput::new(trace, device, final_memory, advice_tape),
-            source: PhantomData,
+            source: std::marker::PhantomData,
         }
     }
 
-    /// Constructs a backend from a trace produced against `inputs.preprocessing`.
+    /// Normalizes a trusted slice-backed trace produced against
+    /// `inputs.preprocessing` into shared compact proof rows.
     ///
     /// Panics when the trace violates that producer contract. Use
     /// [`Self::try_new`] when the trace is not trusted.
@@ -175,33 +171,38 @@ impl<T: TraceSource> TraceBackend<T> {
         }
     }
 
+    /// Normalizes a slice-backed raw trace into shared compact proof rows.
+    /// Replaying and iterator-only sources are rejected rather than drained
+    /// and retained behind an API that implies streaming behavior.
     pub fn try_new(
         config: JoltVmWitnessConfig,
         inputs: JoltVmWitnessInputs<T>,
     ) -> Result<Self, WitnessError> {
         let cycles = checked_pow2(config.log_t)?;
         let TraceOutput {
-            trace: mut source,
+            trace: source,
             device,
             final_memory,
             advice_tape,
         } = inputs.trace;
+        let physical = source.rows().ok_or(WitnessError::UnavailableView {
+            label: JOLT_VM_LABEL,
+        })?;
+        if physical.len() > cycles {
+            return Err(WitnessError::InvalidWitnessData {
+                label: JOLT_VM_LABEL,
+                reason: format!(
+                    "physical trace has {} rows but the cycle domain has {cycles}",
+                    physical.len()
+                ),
+            });
+        }
         let mut trace_rows = Vec::new();
         let mut trailing_padding = 0;
         #[cfg(feature = "field-inline")]
         let mut raw_rows = Vec::new();
-        let mut physical_rows = 0usize;
-        while let Some(row) = source.next_row() {
-            physical_rows += 1;
-            if physical_rows > cycles {
-                return Err(WitnessError::InvalidWitnessData {
-                    label: JOLT_VM_LABEL,
-                    reason: format!(
-                        "physical trace has {physical_rows} rows but the cycle domain has {cycles}"
-                    ),
-                });
-            }
-            let compact = Self::compact_trace_row(&row, &inputs.preprocessing)?;
+        for row in physical {
+            let compact = Self::compact_trace_row(row, &inputs.preprocessing)?;
             if compact == JoltTraceRow::default() {
                 trailing_padding += 1;
             } else {
@@ -210,7 +211,7 @@ impl<T: TraceSource> TraceBackend<T> {
                 trace_rows.push(compact);
             }
             #[cfg(feature = "field-inline")]
-            raw_rows.push(row);
+            raw_rows.push(row.clone());
         }
         let trace = TraceOutput::new(Arc::new(trace_rows), device, final_memory, advice_tape);
         let backend = Self {
@@ -220,7 +221,7 @@ impl<T: TraceSource> TraceBackend<T> {
             trace,
             #[cfg(feature = "field-inline")]
             raw_trace_rows: Arc::new(raw_rows),
-            source: PhantomData,
+            source: std::marker::PhantomData,
             #[cfg(feature = "field-inline")]
             field_inline: None,
         };

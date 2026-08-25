@@ -440,22 +440,6 @@ mod support {
         (bytecode_chunk_hints, program_image_hint)
     }
 
-    /// A re-emulating view of an owned trace: `TraceSource::rows()` (and
-    /// `shared_rows`) stay at their `None` defaults, so every witness
-    /// collect and the commit stream take the sequential chunked walk —
-    /// `COLLECT_ROWS_CHUNK` boundaries, carried lookahead rows, and the
-    /// streamed (non-pipelined) consumers — instead of short-circuiting to
-    /// the index-parallel slice paths. The walk shape the chunk-boundary
-    /// gate exists to pin.
-    #[derive(Clone)]
-    pub struct HiddenRows(pub OwnedTrace);
-
-    impl jolt_program::execution::TraceSource for HiddenRows {
-        fn next_row(&mut self) -> Option<TraceRow> {
-            jolt_program::execution::TraceSource::next_row(&mut self.0)
-        }
-    }
-
     pub fn verify_modular(
         preprocessing: &VerifierPreprocessing,
         public_io: &JoltDevice,
@@ -1953,14 +1937,8 @@ mod inline_sha3 {
     }
 }
 
-/// The chunk-boundary gate: the optimized backend's streamed trace walks
-/// buffer 2^16-row chunks (`jolt-kernels` `COLLECT_ROWS_CHUNK`), and every
-/// other byte-parity arm caps at a 2^16 padded trace — no arm crosses a
-/// chunk boundary. This one pads to 2^17 (asserted) and proves twice: once
-/// slice-backed (the production shape — index-parallel collects and the
-/// pipelined commit), and once behind [`support::HiddenRows`], which forces
-/// the sequential chunked walk so the boundary carry and the streamed
-/// fallback consumers actually produce the pinned bytes.
+/// Large-trace parity gate: every other byte-parity arm caps at a 2^16 padded
+/// trace. This one pins the optimized backend against legacy at 2^17.
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
@@ -2054,20 +2032,6 @@ mod chunk_boundary {
             "the chunk-boundary gate needs a 2^17 padded trace; retune SHA2_ITERATIONS",
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        // The forced-walk twin of the same padded trace: hiding
-        // `TraceSource::rows()` makes every collect and the commit stream
-        // take the sequential chunked walk (`COLLECT_ROWS_CHUNK` boundary
-        // carries, streamed consumers) — slice-backed sources short-circuit
-        // all of it to index-parallel whole-range collection, which the
-        // first prove below covers.
-        let hidden_output = jolt_program::execution::TraceOutput::new(
-            support::HiddenRows(jolt_program::execution::OwnedTrace::new(
-                padded_output.trace.rows().to_vec(),
-            )),
-            padded_output.device.clone(),
-            padded_output.final_memory.clone(),
-            padded_output.advice_tape.clone(),
-        );
         let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
@@ -2139,28 +2103,6 @@ mod chunk_boundary {
         assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
 
         support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
-
-        // The forced-walk arm: the same trace behind a re-emulating source,
-        // so the sequential chunked walk (and its 2^16-row boundary carry)
-        // is what actually produces these bytes.
-        let hidden_witness = Arc::new(TraceBackend::new(
-            support::witness_config(&config),
-            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, hidden_output),
-        ));
-        let hidden_proof =
-            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                &backend,
-                &prover_preprocessing,
-                &config,
-                None,
-                hidden_witness.as_ref(),
-                &public_io,
-            )
-            .expect("top-level prove over the re-emulating source");
-        assert_eq!(
-            hidden_proof, legacy_proof,
-            "chunk-walk proof diverged from legacy",
-        );
     }
 }
 

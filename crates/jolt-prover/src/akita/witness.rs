@@ -149,6 +149,31 @@ struct PackedTraceRows {
     ram_digit_zero_mask: u64,
 }
 
+impl PackedTraceRows {
+    fn validate_dimensions<F: JoltField>(
+        plan: &OneHotTraceLayoutPlan,
+        log_k_chunk: usize,
+        log_t: usize,
+    ) -> Result<(), ProverError<F>> {
+        if !matches!(log_k_chunk, 4 | 8) {
+            return Err(ProverError::Unsupported {
+                reason: "packed one-hot trace chunk width must be 4 or 8 bits",
+            });
+        }
+        let logical_num_vars = log_t
+            .checked_add(log_k_chunk)
+            .ok_or(ProverError::Unsupported {
+                reason: "packed one-hot trace dimensions overflow",
+            })?;
+        if plan.packing().logical_num_vars() != logical_num_vars {
+            return Err(ProverError::InvariantViolation {
+                reason: "OneHotTrace plan dimensions disagree with the witness dimensions",
+            });
+        }
+        Ok(())
+    }
+}
+
 impl jolt_akita::TraceOneHotRows for PackedTraceRows {
     fn num_rows(&self) -> usize {
         self.num_rows
@@ -230,6 +255,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
     log_k_chunk: usize,
     log_t: usize,
 ) -> Result<std::sync::Arc<dyn jolt_akita::TraceOneHotRows>, ProverError<F>> {
+    PackedTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
     let num_rows = 1usize << log_t;
     let num_columns = plan.packing().ids().len();
     let ram_digit_zero_mask = plan
@@ -381,7 +407,12 @@ where
             reason: "advice bytes exceed the configured maximum advice size",
         });
     }
-    let words = (max_advice_bytes / 8).next_power_of_two().max(1);
+    if max_advice_bytes < WORD_BYTES || !max_advice_bytes.is_power_of_two() {
+        return Err(ProverError::Unsupported {
+            reason: "maximum advice size must be a nonzero power of two of at least one word",
+        });
+    }
+    let words = max_advice_bytes / WORD_BYTES;
     let word_vars = words.ilog2() as usize;
     let plan = advice_bytes_packing_plan(kind, word_vars).map_err(commit_failed)?;
     let cell_vars = plan.packing().packed_num_vars();
@@ -697,4 +728,46 @@ pub fn assemble_precommitted_witness<F: JoltField>(
         }
     }
     Ok(one_positions)
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+    use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
+
+    use super::*;
+
+    #[test]
+    fn rejects_noncanonical_advice_shapes() {
+        for max_advice_bytes in [0, 4, 12, 24] {
+            assert!(matches!(
+                commit_advice_one_hot::<jolt_akita::AkitaScheme>(
+                    JoltAdviceKind::Untrusted,
+                    &[],
+                    max_advice_bytes,
+                ),
+                Err(ProverError::Unsupported { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_mismatched_one_hot_trace_dimensions() {
+        let shape = OneHotTraceShape {
+            ra_layout: JoltRaPolynomialLayout::new(16, 1, 1).unwrap(),
+            log_t: 5,
+            log_k_chunk: 8,
+        };
+        let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape).unwrap();
+
+        assert!(matches!(
+            PackedTraceRows::validate_dimensions::<jolt_akita::AkitaField>(&plan, 16, 5),
+            Err(ProverError::Unsupported { .. })
+        ));
+        assert!(matches!(
+            PackedTraceRows::validate_dimensions::<jolt_akita::AkitaField>(&plan, 8, 6),
+            Err(ProverError::InvariantViolation { .. })
+        ));
+    }
 }

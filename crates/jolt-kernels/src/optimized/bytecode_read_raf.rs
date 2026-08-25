@@ -173,16 +173,25 @@ impl PcRow {
     }
 }
 
-/// Per-stage cycle-eq pushforwards onto the bytecode address domain, with all
-/// stages sharing one trace walk over the split-eq two-table decomposition.
-fn stage_pushforwards<F: JoltField, R: Sync, const WEIGHTED: bool>(
-    stage_cycle_points: &[Vec<F>],
+/// Per-stage cycle-eq pushforwards onto the bytecode address domain. Base and
+/// row-weighted stages share one trace walk over the split-eq decomposition.
+fn stage_pushforwards<F: JoltField, R: Sync>(
+    base_cycle_points: &[Vec<F>],
+    weighted_cycle_points: &[Vec<F>],
     rows: &[R],
     addresses: usize,
     pc: impl Fn(&R) -> usize + Sync,
     row_weight: impl Fn(&R) -> F + Sync,
 ) -> Vec<Vec<F>> {
-    let log_t = stage_cycle_points[0].len();
+    let Some(first_stage) = base_cycle_points
+        .first()
+        .or_else(|| weighted_cycle_points.first())
+    else {
+        return Vec::new();
+    };
+    let log_t = first_stage.len();
+    let base_stages = base_cycle_points.len();
+    let num_stages = base_stages + weighted_cycle_points.len();
     let lo_bits = log_t / 2;
     let hi_bits = log_t - lo_bits;
     let in_len = 1usize << lo_bits;
@@ -190,20 +199,22 @@ fn stage_pushforwards<F: JoltField, R: Sync, const WEIGHTED: bool>(
 
     // Big-endian points split as eq(r, j) = eq(r[..hi], j_hi) · eq(r[hi..], j_lo)
     // with j = (j_hi << lo_bits) | j_lo.
-    let e_hi = stage_cycle_points
+    let e_hi = base_cycle_points
         .iter()
+        .chain(weighted_cycle_points)
         .map(|point| eq_table(&point[..hi_bits]))
         .collect::<Vec<_>>();
-    let e_lo = stage_cycle_points
+    let e_lo = base_cycle_points
         .iter()
+        .chain(weighted_cycle_points)
         .map(|point| eq_table(&point[hi_bits..]))
         .collect::<Vec<_>>();
 
     let block = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
-        let mut partial = (0..stage_cycle_points.len())
+        let mut partial = (0..num_stages)
             .map(|_| vec![F::zero(); addresses])
             .collect::<Vec<_>>();
-        let mut inner = (0..stage_cycle_points.len())
+        let mut inner = (0..num_stages)
             .map(|_| vec![F::zero(); addresses])
             .collect::<Vec<_>>();
         let mut seen = vec![false; addresses];
@@ -224,12 +235,16 @@ fn stage_pushforwards<F: JoltField, R: Sync, const WEIGHTED: bool>(
                     seen[pc] = true;
                     touched.push(pc);
                 }
-                let weight = if WEIGHTED { row_weight(row) } else { F::one() };
-                for (stage_inner, stage_lo) in inner.iter_mut().zip(&e_lo) {
-                    if WEIGHTED {
+                let (base_inner, weighted_inner) = inner.split_at_mut(base_stages);
+                for (stage_inner, stage_lo) in base_inner.iter_mut().zip(&e_lo[..base_stages]) {
+                    stage_inner[pc] += stage_lo[j_lo];
+                }
+                if !weighted_inner.is_empty() {
+                    let weight = row_weight(row);
+                    for (stage_inner, stage_lo) in
+                        weighted_inner.iter_mut().zip(&e_lo[base_stages..])
+                    {
                         stage_inner[pc] += stage_lo[j_lo] * weight;
-                    } else {
-                        stage_inner[pc] += stage_lo[j_lo];
                     }
                 }
             }
@@ -254,7 +269,7 @@ fn stage_pushforwards<F: JoltField, R: Sync, const WEIGHTED: bool>(
             .map(|start| block(start..(start + chunk).min(out_len)))
             .reduce(
                 || {
-                    (0..stage_cycle_points.len())
+                    (0..num_stages)
                         .map(|_| vec![F::zero(); addresses])
                         .collect()
                 },
@@ -342,25 +357,18 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let num_stages = base_stages + fused_cycle_points.len();
         let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
 
-        let pushforwards = stage_pushforwards::<F, _, false>(
+        #[cfg(not(feature = "akita"))]
+        let row_weight = |_: &PcRow| F::one();
+        #[cfg(feature = "akita")]
+        let row_weight = InstructionCycleRow::fused_inc::<F>;
+        let pushforwards = stage_pushforwards::<F, _>(
             stage_cycle_points,
+            fused_cycle_points,
             &rows,
             addresses,
             push_pc,
-            |_| F::one(),
+            row_weight,
         );
-        #[cfg(feature = "akita")]
-        let pushforwards = {
-            let mut pushforwards = pushforwards;
-            pushforwards.extend(stage_pushforwards::<F, _, true>(
-                fused_cycle_points,
-                &rows,
-                addresses,
-                push_pc,
-                InstructionCycleRow::fused_inc::<F>,
-            ));
-            pushforwards
-        };
         let pushforwards = pushforwards
             .into_iter()
             .map(Polynomial::new)
@@ -1035,14 +1043,24 @@ mod stage_pushforward_tests {
                 .collect::<Vec<_>>()
         };
 
-        let unweighted = stage_pushforwards::<Fr, _, false>(
+        let unweighted = stage_pushforwards::<Fr, _>(
             &points,
+            &[],
             &rows,
             addresses,
             |row| row.pc,
             |_| Fr::one(),
         );
-        let weighted = stage_pushforwards::<Fr, _, true>(
+        let weighted = stage_pushforwards::<Fr, _>(
+            &[],
+            &points,
+            &rows,
+            addresses,
+            |row| row.pc,
+            |row| row.weight,
+        );
+        let combined = stage_pushforwards::<Fr, _>(
+            &points,
             &points,
             &rows,
             addresses,
@@ -1051,6 +1069,14 @@ mod stage_pushforward_tests {
         );
         assert_eq!(unweighted, expected(false));
         assert_eq!(weighted, expected(true));
+        assert_eq!(
+            combined,
+            unweighted
+                .iter()
+                .chain(&weighted)
+                .cloned()
+                .collect::<Vec<_>>()
+        );
     }
 }
 

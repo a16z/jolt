@@ -192,7 +192,7 @@ fn witness_keeps_jolt_program_execution_boundary() {
     let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let config = config().retain_trace_rows(true);
+    let config = config();
 
     let witness = TraceBackend::new(config.clone(), inputs);
 
@@ -1189,8 +1189,7 @@ fn excluded_ids_report_their_classification() {
     }
 }
 
-/// [`OwnedTrace`] with the slice accessor hidden: forces the sequential
-/// `next_row` fallback everywhere the backend would take the slice fast path.
+/// [`OwnedTrace`] with its slice accessor hidden.
 #[derive(Clone)]
 struct IteratorOnlyTrace(OwnedTrace);
 
@@ -1200,98 +1199,24 @@ impl TraceSource for IteratorOnlyTrace {
     }
 }
 
-/// The slice fast paths (`walk_cycles`, `visit_chunks`) must be value-equal
-/// to the sequential fallback, padding rows and lookahead windows included.
 #[test]
-fn slice_fast_paths_match_the_sequential_fallback() {
-    use crate::witnesses::NextUnexpandedPc;
-    use crate::{stream_witnesses, CollectBundles, WitnessBundle};
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
-    struct WindowBundle {
-        pc: UnexpandedPc,
-        next_pc: NextUnexpandedPc,
-    }
-
-    let instruction_row = instruction(0x8000_0000);
-    let bytecode = BytecodePreprocessing::preprocess(
-        vec![instruction_row],
-        instruction_row.address as u64,
-        RV64IMAC_JOLT,
-    )
-    .unwrap();
-    let preprocessing = preprocessing_with_bytecode(bytecode);
+fn backend_rejects_iterator_only_trace_sources() {
     let program = Arc::new(JoltProgram::default());
-    let rows = vec![
-        TraceRow {
-            instruction: instruction_row,
-            registers: RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 2,
-                    value: 5,
-                }),
-                rd: Some(RegisterWrite {
-                    register: 1,
-                    pre_value: 0,
-                    post_value: 8,
-                }),
-                ..Default::default()
-            },
-            ram_access: RamAccess::NoOp,
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        },
-        TraceRow::default(),
-        TraceRow {
-            instruction: instruction_row,
-            ..Default::default()
-        },
-    ];
-    // log_t = 4 over 3 physical rows: most of the domain is padding, so the
-    // padded-tail branches of both fast paths are on the compared route.
-    let config = config().with_log_t(4);
-
-    let slice_inputs = JoltVmWitnessInputs::new(
-        &program,
-        &preprocessing,
-        trace_output_with_rows(rows.clone()),
-    );
-    let slice_backend = TraceBackend::new(config.clone(), slice_inputs);
+    let preprocessing = preprocessing();
     let iterator_inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
         TraceOutput::new(
-            IteratorOnlyTrace(OwnedTrace::new(rows)),
+            IteratorOnlyTrace(OwnedTrace::default()),
             Default::default(),
             None,
             None,
         ),
     );
-    let iterator_backend = TraceBackend::new(config, iterator_inputs);
-    assert_eq!(iterator_backend.trace.trace.len(), 3);
-
-    for id in [
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::UnexpandedPC),
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::NextIsNoop),
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::Product),
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(CircuitFlags::AddOperands)),
-        JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
-        JoltPolynomialId::Committed(JoltCommittedPolynomial::InstructionRa(0)),
-        JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(0)),
-    ] {
-        let fast = JoltWitnessOracle::<Fr>::oracle_table(&slice_backend, id);
-        let fallback = JoltWitnessOracle::<Fr>::oracle_table(&iterator_backend, id);
-        assert_eq!(fast, fallback, "oracle tables diverge for {id:?}");
-    }
-
-    // Chunk size 3 over 16 cycles: borrowed buffers, a lookahead crossing
-    // every boundary, and a padding tail past the physical rows.
-    let collect = |source: &dyn crate::RowSource| {
-        let mut consumers = (CollectBundles::<WindowBundle>::default(),);
-        stream_witnesses(source, 0..16, 3, &mut consumers).unwrap();
-        consumers.0.into_rows()
-    };
-    assert_eq!(collect(&slice_backend), collect(&iterator_backend));
+    assert!(matches!(
+        TraceBackend::try_new(config(), iterator_inputs),
+        Err(WitnessError::UnavailableView { .. })
+    ));
 }
 
 #[test]
