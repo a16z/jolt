@@ -616,7 +616,8 @@ fn generate_committed_muldiv() -> GeneratedVerifierFixture {
         None,
         None,
         None,
-    );
+    )
+    .expect("legacy prover construction");
     let public_io = prover.program_io.clone();
     let (proof, _) = prover.prove().expect("prove verifier object fixture");
     let preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
@@ -670,7 +671,8 @@ fn generate_verifier_fixture(
         trusted_advice_commitment,
         trusted_advice_hint,
         None,
-    );
+    )
+    .expect("legacy prover construction");
     let public_io = prover.program_io.clone();
     let (proof, _) = prover.prove().expect("prove verifier object fixture");
     let preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
