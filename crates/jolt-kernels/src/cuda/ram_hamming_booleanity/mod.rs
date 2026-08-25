@@ -13,6 +13,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::devices::witness_windows;
+use crate::cuda::common::error::backend;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::cuda::witness::session_window_residency;
 use crate::{
@@ -43,15 +44,18 @@ impl<F: Field> allocative::Allocative for RamHammingBooleanityKernel<F> {
 
 impl<F: Field> RamHammingBooleanityKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        let failed = || SumcheckError::MissingEvaluationSource {
-            kind: "cuda RAM Hamming-booleanity bind",
-        };
         let bound = self.rounds_bound;
-        self.weights.bind(challenge, bound).map_err(|_| failed())?;
+        self.weights
+            .bind(challenge, bound)
+            .map_err(backend("cuda RAM Hamming-booleanity bind"))?;
         self.eq.bind(challenge);
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
-            self.final_claim = Some(self.weights.final_claim().map_err(|_| failed())?);
+            self.final_claim = Some(
+                self.weights
+                    .final_claim()
+                    .map_err(backend("cuda RAM Hamming-booleanity bind"))?,
+            );
         }
         Ok(())
     }

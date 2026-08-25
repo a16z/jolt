@@ -94,6 +94,17 @@ pub enum SumcheckError<F: FieldCore> {
         kind: &'static str,
     },
 
+    /// A device-backend operation failed inside a prover round. The sumcheck
+    /// engine cannot name backend error types, so the backend's own message is
+    /// carried as text rather than discarded.
+    #[error("{kind} failed in the device backend: {reason}")]
+    BackendFailure {
+        /// Which prover step failed, named by the backend.
+        kind: &'static str,
+        /// The backend error's `Display` output.
+        reason: String,
+    },
+
     /// A vector-commitment setup cannot commit to any values.
     #[error("vector-commitment setup has zero capacity")]
     ZeroCommitmentCapacity,

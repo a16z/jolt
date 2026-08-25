@@ -14,6 +14,7 @@ use crate::cuda::witness::session_window_residency;
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::devices::witness_windows;
+use crate::cuda::common::error::backend;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::SumcheckKernelError;
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
@@ -50,17 +51,20 @@ impl<F: Field> allocative::Allocative for InstructionInputKernel<F> {
 
 impl<F: Field> InstructionInputKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        let failed = || SumcheckError::MissingEvaluationSource {
-            kind: "cuda instruction input-virtualization bind",
-        };
         let bound = self.rounds_bound;
-        self.columns.bind(challenge, bound).map_err(|_| failed())?;
+        self.columns
+            .bind(challenge, bound)
+            .map_err(backend("cuda instruction input-virtualization bind"))?;
         self.basis
             .bind(self.context, challenge)
-            .map_err(|_| failed())?;
+            .map_err(backend("cuda instruction input-virtualization bind"))?;
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
-            self.finals = Some(self.columns.finals().map_err(|_| failed())?);
+            self.finals = Some(
+                self.columns
+                    .finals()
+                    .map_err(backend("cuda instruction input-virtualization bind"))?,
+            );
         }
         Ok(())
     }

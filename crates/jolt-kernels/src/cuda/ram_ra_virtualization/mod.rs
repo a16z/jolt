@@ -14,6 +14,7 @@ use super::{require_context, CudaBackend};
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::witness_windows;
+use crate::cuda::common::error::backend;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -45,15 +46,18 @@ impl<F: Field> allocative::Allocative for RamRaVirtualizationKernel<F> {
 
 impl<F: Field> RamRaVirtualizationKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        let failed = || SumcheckError::MissingEvaluationSource {
-            kind: "cuda RAM RA virtualization bind",
-        };
         let bound = self.rounds_bound;
-        self.one_hot.bind(challenge, bound).map_err(|_| failed())?;
+        self.one_hot
+            .bind(challenge, bound)
+            .map_err(backend("cuda RAM RA virtualization bind"))?;
         self.eq.bind(challenge);
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
-            self.finals = Some(self.one_hot.final_claims().map_err(|_| failed())?);
+            self.finals = Some(
+                self.one_hot
+                    .final_claims()
+                    .map_err(backend("cuda RAM RA virtualization bind"))?,
+            );
         }
         Ok(())
     }

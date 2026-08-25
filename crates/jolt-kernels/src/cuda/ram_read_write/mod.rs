@@ -17,6 +17,7 @@ use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::devices::witness_windows;
+use crate::cuda::common::error::backend;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::read_write_matrix::{CycleShard, ShardedReadWriteMatrix};
 use crate::cuda::common::split_eq::DeviceSplitEq;
@@ -83,21 +84,25 @@ impl<F: Field> RamReadWriteKernel<F> {
         if self.rounds_bound < self.log_t {
             let bound = self.rounds_bound;
             let cycle = self.cycle.as_mut().ok_or_else(failed)?;
-            cycle.bind(challenge, bound).map_err(|_| failed())?;
+            cycle
+                .bind(challenge, bound)
+                .map_err(backend("cuda RAM read-write bind"))?;
             self.eq.bind(challenge);
             self.rounds_bound += 1;
             if self.rounds_bound == self.log_t {
-                self.transition().map_err(|_| failed())?;
+                self.transition()
+                    .map_err(backend("cuda RAM read-write bind"))?;
             }
             return Ok(());
         }
         let address = self.address.as_mut().ok_or_else(failed)?;
         address
             .bind(self.context, challenge)
-            .map_err(|_| failed())?;
+            .map_err(backend("cuda RAM read-write bind"))?;
         self.rounds_bound += 1;
         if self.rounds_bound == self.log_t + self.log_k {
-            self.materialize().map_err(|_| failed())?;
+            self.materialize()
+                .map_err(backend("cuda RAM read-write bind"))?;
         }
         Ok(())
     }
@@ -151,7 +156,9 @@ impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
         };
         if round < self.log_t {
             let cycle = self.cycle.as_ref().ok_or_else(failed)?;
-            let coeffs: [F; 2] = cycle.quadratic_coeffs(&self.eq).map_err(|_| failed())?;
+            let coeffs: [F; 2] = cycle
+                .quadratic_coeffs(&self.eq)
+                .map_err(backend("cuda RAM read-write round"))?;
             return Ok(self
                 .eq
                 .gruen_poly_deg_3(coeffs[0], coeffs[1], previous_claim));
@@ -161,7 +168,7 @@ impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
         let inc = self.inc.as_ref().ok_or_else(failed)?;
         let evals: [F; 2] = address
             .round_evals(self.context, inc, merged_eq)
-            .map_err(|_| failed())?;
+            .map_err(backend("cuda RAM read-write round"))?;
         let mut coefficients =
             UnivariatePoly::from_evals_and_hint(previous_claim, &evals).into_coefficients();
         coefficients.resize(self.relation.degree() + 1, F::zero());

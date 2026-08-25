@@ -35,6 +35,7 @@ use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::{fan_out, witness_windows, DeviceTask};
+use crate::cuda::common::error::backend;
 use crate::cuda::common::error::CudaError;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -157,13 +158,17 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
             kind: "cuda address-phase handoff",
         };
 
-        let prefix_checkpoints = device.checkpoints(self.context).map_err(|_| failed())?;
+        let prefix_checkpoints = device
+            .checkpoints(self.context)
+            .map_err(backend("cuda address-phase handoff"))?;
         let prefix_checkpoints: Vec<F> = prefix_checkpoints
             .into_iter()
             .map(Self::field)
             .collect::<Result<_, _>>()?;
 
-        let raf = device.raf_checkpoints(self.context).map_err(|_| failed())?;
+        let raf = device
+            .raf_checkpoints(self.context)
+            .map_err(backend("cuda address-phase handoff"))?;
         if raf.len() != RAF_CHECKPOINTS {
             return Err(failed());
         }
@@ -196,7 +201,7 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
                 require_fr(table.combine(&self.prefix_checkpoints, &suffixes))
             })
             .collect::<Result<_, _>>()
-            .map_err(|_| failed())?;
+            .map_err(backend("cuda address-phase handoff"))?;
         let raf_interleaved =
             self.gamma * self.raf_checkpoints[0] + gamma_sqr * self.raf_checkpoints[1];
         let mut raf_identity = gamma_sqr * self.raf_checkpoints[2];
@@ -204,14 +209,16 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_checkpoints[3];
         }
 
-        let raf_interleaved = require_fr(raf_interleaved).map_err(|_| failed())?;
-        let raf_identity = require_fr(raf_identity).map_err(|_| failed())?;
+        let raf_interleaved =
+            require_fr(raf_interleaved).map_err(backend("cuda address-phase handoff"))?;
+        let raf_identity =
+            require_fr(raf_identity).map_err(backend("cuda address-phase handoff"))?;
         let host_v: Vec<Vec<Fr>> = device
             .v_tables()
             .iter()
             .map(DeviceFrVec::to_host)
             .collect::<Result<_, _>>()
-            .map_err(|_| failed())?;
+            .map_err(backend("cuda address-phase handoff"))?;
 
         let host_v = &host_v;
         let table_values = &table_values;
@@ -253,11 +260,11 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
                 task
             })
             .collect();
-        let shards = fan_out(tasks).map_err(|_| failed())?;
+        let shards = fan_out(tasks).map_err(backend("cuda address-phase handoff"))?;
 
         self.cycle = Some(
             DeviceCycleRounds::from_windows(&self.r_reduction, shards, self.rounds - ADDRESS_BITS)
-                .map_err(|_| failed())?,
+                .map_err(backend("cuda address-phase handoff"))?,
         );
         Ok(())
     }

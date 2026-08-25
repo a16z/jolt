@@ -17,6 +17,7 @@ use super::witness::{self, BRANCH_BIT, CLAIM_COLUMNS, JUMP_BIT, NEXT_IS_NOOP_BIT
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
+use crate::cuda::common::error::backend;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::{split_eq_tables_window, DeviceSplitEq};
@@ -548,15 +549,15 @@ impl<F: Field> ProveRounds<F> for SpartanProductRemainderKernel<F> {
         _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let failed = || SumcheckError::MissingEvaluationSource {
-            kind: "cuda Spartan product remainder",
-        };
         if let Some(challenge) = bind {
             self.state
                 .bind(self.context, challenge)
-                .map_err(|_| failed())?;
+                .map_err(backend("cuda Spartan product remainder"))?;
         }
-        let [q0, q2] = self.state.endpoints(self.context).map_err(|_| failed())?;
+        let [q0, q2] = self
+            .state
+            .endpoints(self.context)
+            .map_err(backend("cuda Spartan product remainder"))?;
         let mut coefficients = self
             .state
             .eq

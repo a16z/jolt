@@ -14,6 +14,7 @@ use super::CudaBackend;
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::witness_windows;
+use crate::cuda::common::error::backend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -46,15 +47,16 @@ impl<F: Field> allocative::Allocative for BytecodeReadRafCycleKernel<F> {
 
 impl<F: Field> BytecodeReadRafCycleKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        let failed = || SumcheckError::MissingEvaluationSource {
-            kind: "cuda bytecode read-RAF cycle-phase bind",
-        };
         self.one_hot
             .bind(challenge, self.rounds_bound)
-            .map_err(|_| failed())?;
+            .map_err(backend("cuda bytecode read-RAF cycle-phase bind"))?;
         self.rounds_bound += 1;
         if self.rounds_bound == self.relation.symbolic().rounds() {
-            self.finals = Some(self.one_hot.final_claims().map_err(|_| failed())?);
+            self.finals = Some(
+                self.one_hot
+                    .final_claims()
+                    .map_err(backend("cuda bytecode read-RAF cycle-phase bind"))?,
+            );
         }
         Ok(())
     }

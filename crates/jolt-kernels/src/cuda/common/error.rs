@@ -31,3 +31,12 @@ impl From<CompileError> for CudaError {
         Self::Compile(Box::new(error))
     }
 }
+
+pub(crate) fn backend<F: jolt_field::FieldCore>(
+    kind: &'static str,
+) -> impl Fn(CudaError) -> jolt_sumcheck::SumcheckError<F> {
+    move |error| jolt_sumcheck::SumcheckError::BackendFailure {
+        kind,
+        reason: error.to_string(),
+    }
+}

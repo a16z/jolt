@@ -22,6 +22,7 @@ use crate::cuda::witness::session_window_residency;
 use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::devices::{witness_windows, CycleWindow};
+use crate::cuda::common::error::backend;
 use crate::cuda::common::one_hot_fold::{DeviceOneHotColumns, OneHotShards};
 use crate::cuda::{require_context, CudaBackend};
 use crate::{
@@ -45,12 +46,9 @@ impl<F: Field> allocative::Allocative for BytecodeReadRafAddressKernel<F> {
 
 impl<F: Field> BytecodeReadRafAddressKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        let failed = || SumcheckError::MissingEvaluationSource {
-            kind: "cuda bytecode read-RAF address-phase bind",
-        };
         self.state
             .bind(self.context, challenge)
-            .map_err(|_| failed())?;
+            .map_err(backend("cuda bytecode read-RAF address-phase bind"))?;
         self.rounds_bound += 1;
         Ok(())
     }
