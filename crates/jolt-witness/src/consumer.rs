@@ -9,7 +9,7 @@ use rayon::prelude::*;
 
 use crate::bundle::WitnessBundle;
 use crate::witnesses::WitnessEnv;
-use crate::WitnessError;
+use crate::{WitnessError, JOLT_VM_LABEL};
 
 /// One consumer of a bundle stream. `Option<C>` is also a consumer:
 /// membership in a set is static, presence is runtime.
@@ -154,13 +154,22 @@ impl RandomAccessRows {
         rows: std::sync::Arc<Vec<TraceRow>>,
         cycles: usize,
         preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, WitnessError> {
+        if rows.len() > cycles {
+            return Err(WitnessError::InvalidWitnessData {
+                label: JOLT_VM_LABEL,
+                reason: format!(
+                    "physical trace has {} rows but the cycle domain has {cycles}",
+                    rows.len()
+                ),
+            });
+        }
+        Ok(Self {
             rows,
             cycles,
             preprocessing,
             padding: TraceRow::default(),
-        }
+        })
     }
 
     /// Padded cycle-domain size.
@@ -271,6 +280,7 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltPolynomialId;
     use jolt_field::Fr;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     /// A hand-implemented bundle carrying a lookahead witness, so chunk
     /// boundaries are observable.
@@ -348,6 +358,17 @@ mod tests {
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
             stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
             assert_eq!(routed, consumers.0.into_rows());
+        });
+    }
+
+    #[test]
+    fn random_access_rejects_rows_beyond_cycle_domain() {
+        with_sample_backend(|backend| {
+            let rows = Arc::new(vec![TraceRow::default(); 2]);
+            assert!(matches!(
+                RandomAccessRows::new(rows, 1, Arc::clone(&backend.preprocessing)),
+                Err(WitnessError::InvalidWitnessData { .. })
+            ));
         });
     }
 

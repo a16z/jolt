@@ -131,11 +131,12 @@ impl<T: TraceSource> TraceBackend<T> {
 impl<T: TraceSource> RowSource for TraceBackend<T> {
     fn random_access(&self) -> Option<crate::RandomAccessRows> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
-        Some(crate::RandomAccessRows::new(
+        crate::RandomAccessRows::new(
             std::sync::Arc::clone(&self.trace.trace),
             cycles,
             std::sync::Arc::clone(&self.preprocessing),
-        ))
+        )
+        .ok()
     }
 
     fn visit_chunks(
