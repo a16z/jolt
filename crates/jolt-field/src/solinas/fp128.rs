@@ -634,7 +634,7 @@ impl<const P: u128> Fp128<P> {
     /// `x` must be less than `P`. Violating this condition breaks the private
     /// canonical representation invariant used by the arithmetic kernels.
     #[inline]
-    pub unsafe fn from_canonical_u128(x: u128) -> Self {
+    pub const unsafe fn from_canonical_u128(x: u128) -> Self {
         debug_assert!(x < P);
         Self(split(x))
     }
