@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{eq_index_msb, Point, HIGH_TO_LOW};
 use jolt_transcript::{Label, Transcript, U64Word};
 
@@ -129,7 +129,7 @@ where
     }
 
     /// Forms the physical point `(selector || logical)`.
-    pub fn pack_point<F: Field>(
+    pub fn pack_point<F: JoltField>(
         &self,
         selector_point: &[F],
         logical_point: &[F],
@@ -155,7 +155,7 @@ where
     }
 
     /// Reduces ordered logical evaluations at one common point.
-    pub fn reduce_evaluations<F: Field>(
+    pub fn reduce_evaluations<F: JoltField>(
         &self,
         selector_point: &[F],
         evaluations: &[F],
@@ -190,7 +190,7 @@ where
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, OpeningsError>
     where
-        F: Field,
+        F: JoltField,
         T: Transcript<Challenge = F>,
     {
         if claims.point.len() != self.logical_num_vars {

@@ -34,7 +34,7 @@ use jolt_claims::protocols::jolt::{
     ProgramImageReconstructionPublic, TrustedAdviceReconstructionPublic,
     UntrustedAdviceReconstructionPublic,
 };
-use jolt_field::{CanonicalBytes, Field, FixedByteSize};
+use jolt_field::{CanonicalBytes, JoltField};
 use jolt_kernels::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
 };
@@ -75,7 +75,7 @@ mod drivers {
 /// The reconstruction phase's outputs: the wire proof (`None` exactly when
 /// the phase is absent), the wire claims, and the verifier-typed carrier the
 /// packed stage-8 opening consumes.
-pub struct ReconstructionProverOutput<F: Field, C> {
+pub struct ReconstructionProverOutput<F: JoltField, C> {
     pub sumcheck_proof: Option<SumcheckProof<F, C>>,
     pub claims: ReconstructionOutputClaims<F>,
     pub clear_output: ReconstructionClearOutput<F>,
@@ -95,7 +95,7 @@ pub fn prove_reconstruction<F, PCS, C, T>(
     transcript: &mut T,
 ) -> Result<ReconstructionProverOutput<F, C>, ProverError<F>>
 where
-    F: Field + CanonicalBytes,
+    F: JoltField + CanonicalBytes,
     PCS: CommitmentScheme<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -155,13 +155,13 @@ where
     })
 }
 
-fn eq_table<F: Field>(point: &[F]) -> Vec<F> {
+fn eq_table<F: JoltField>(point: &[F]) -> Vec<F> {
     EqPolynomial::new(point.to_vec()).evaluations()
 }
 
 /// The byte-decode weight table over a `(byte ‖ place)` block:
 /// `T[(byte << place_bits) | place] = byte · 256^place`.
-fn byte_decode_table<F: Field>(place_bits: usize) -> Vec<F> {
+fn byte_decode_table<F: JoltField>(place_bits: usize) -> Vec<F> {
     let mut table = vec![F::zero(); 1usize << (BYTE_BITS + place_bits)];
     for byte in 0..(1usize << BYTE_BITS) {
         for place in 0..(1usize << place_bits) {
@@ -176,7 +176,7 @@ fn byte_decode_table<F: Field>(place_bits: usize) -> Vec<F> {
 /// of `jolt_kernels::ReferenceBackend`.
 pub(super) struct ReferenceReconstruction;
 
-impl<F: Field> PrepareKernel<F, UntrustedAdviceReconstructionInstance<F>>
+impl<F: JoltField> PrepareKernel<F, UntrustedAdviceReconstructionInstance<F>>
     for ReferenceReconstruction
 {
     fn prepare(
@@ -259,7 +259,7 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceReconstructionInstance<F>>
     }
 }
 
-impl<F: Field> PrepareKernel<F, TrustedAdviceReconstructionInstance<F>>
+impl<F: JoltField> PrepareKernel<F, TrustedAdviceReconstructionInstance<F>>
     for ReferenceReconstruction
 {
     fn prepare(
@@ -292,7 +292,9 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceReconstructionInstance<F>>
     }
 }
 
-impl<F: Field> PrepareKernel<F, ProgramImageReconstructionInstance<F>> for ReferenceReconstruction {
+impl<F: JoltField> PrepareKernel<F, ProgramImageReconstructionInstance<F>>
+    for ReferenceReconstruction
+{
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -341,7 +343,7 @@ impl<F: Field> PrepareKernel<F, ProgramImageReconstructionInstance<F>> for Refer
 
 /// Fold the word (low-index) dimension of a `(byte ‖ place ‖ word)` cell
 /// table at `r_word`: `out[bp] = Σ_w eq(r_word, w) · cells[(bp << wv) | w]`.
-fn fold_word_dimension<F: Field>(cells: &[F], r_word: &[F]) -> Result<Vec<F>, KernelError<F>> {
+fn fold_word_dimension<F: JoltField>(cells: &[F], r_word: &[F]) -> Result<Vec<F>, KernelError<F>> {
     let word_vars = r_word.len();
     let blocks = 1usize << byte_place_vars();
     if cells.len() != blocks << word_vars {
@@ -359,7 +361,7 @@ fn fold_word_dimension<F: Field>(cells: &[F], r_word: &[F]) -> Result<Vec<F>, Ke
         .collect())
 }
 
-impl<F: Field + CanonicalBytes> PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>
+impl<F: JoltField + CanonicalBytes> PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>
     for ReferenceReconstruction
 {
     fn prepare(
@@ -402,7 +404,7 @@ impl<F: Field + CanonicalBytes> PrepareKernel<F, BytecodeChunkReconstructionInst
         };
 
         let layout = BYTECODE_LANE_LAYOUT;
-        let imm_byte_width = <F as FixedByteSize>::NUM_BYTES;
+        let imm_byte_width = <F as CanonicalBytes>::NUM_BYTES;
         let imm_place_bits = imm_byte_width.ilog2() as usize;
         let pc_place_bits = WORD_BYTES.ilog2() as usize;
         // The lookup block pads the (non-power-of-two) table count up; the

@@ -119,25 +119,32 @@ pub use virt::Pow2W;
 pub use virt::VirtualAdvice;
 pub use virt::VirtualAdviceLen;
 pub use virt::VirtualAdviceLoad;
-pub use virt::VirtualChangeDivisor;
-pub use virt::VirtualChangeDivisorW;
 pub use virt::VirtualHostIO;
+pub use virt::VirtualNegateIf;
 pub use virt::VirtualRev8W;
 pub use virt::VirtualRotri;
 pub use virt::VirtualRotriw;
 pub use virt::VirtualShiftRightBitmask;
+pub use virt::VirtualShiftRightBitmaskW;
 pub use virt::VirtualShiftRightBitmaski;
 pub use virt::VirtualSignExtendWord;
 pub use virt::VirtualSra;
 pub use virt::VirtualSrai;
+pub use virt::VirtualSraiw;
+pub use virt::VirtualSraw;
 pub use virt::VirtualSrl;
 pub use virt::VirtualSrli;
+pub use virt::VirtualSrliw;
+pub use virt::VirtualSrlw;
 pub use virt::VirtualXorRot16;
 pub use virt::VirtualXorRot24;
 pub use virt::VirtualXorRot32;
 pub use virt::VirtualXorRot63;
 pub use virt::VirtualXorRotW12;
 pub use virt::VirtualXorRotW16;
+pub use virt::VirtualXorRotW19;
+pub use virt::VirtualXorRotW22;
+pub use virt::VirtualXorRotW6;
 pub use virt::VirtualXorRotW7;
 pub use virt::VirtualXorRotW8;
 pub use virt::VirtualZeroExtendWord;
@@ -390,8 +397,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     MulIW(MulIW<T>),
     MovSign(MovSign<T>),
     VirtualRev8W(VirtualRev8W<T>),
-    VirtualChangeDivisor(VirtualChangeDivisor<T>),
-    VirtualChangeDivisorW(VirtualChangeDivisorW<T>),
+    VirtualNegateIf(VirtualNegateIf<T>),
     VirtualSignExtendWord(VirtualSignExtendWord<T>),
     VirtualZeroExtendWord(VirtualZeroExtendWord<T>),
     VirtualSrl(VirtualSrl<T>),
@@ -410,8 +416,16 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualXorRotW12(VirtualXorRotW12<T>),
     VirtualXorRotW8(VirtualXorRotW8<T>),
     VirtualXorRotW7(VirtualXorRotW7<T>),
+    VirtualXorRotW22(VirtualXorRotW22<T>),
+    VirtualXorRotW19(VirtualXorRotW19<T>),
+    VirtualXorRotW6(VirtualXorRotW6<T>),
     WindowMaskW(WindowMaskW<T>),
     PextSigned(PextSigned<T>),
+    VirtualShiftRightBitmaskW(VirtualShiftRightBitmaskW<T>),
+    VirtualSrlw(VirtualSrlw<T>),
+    VirtualSrliw(VirtualSrliw<T>),
+    VirtualSraw(VirtualSraw<T>),
+    VirtualSraiw(VirtualSraiw<T>),
     Pext(Pext<T>),
     WindowMaskB(WindowMaskB<T>),
     WindowMaskH(WindowMaskH<T>),
@@ -603,8 +617,7 @@ impl_jolt_instructions_flags! {
     MulIW => VirtualMULIW,
     MovSign => VirtualMovsign,
     VirtualRev8W => VirtualRev8W,
-    VirtualChangeDivisor => VirtualChangeDivisor,
-    VirtualChangeDivisorW => VirtualChangeDivisorW,
+    VirtualNegateIf => VirtualNegateIf,
     VirtualSignExtendWord => VirtualSignExtendWord,
     VirtualZeroExtendWord => VirtualZeroExtendWord,
     VirtualSrl => VirtualSRL,
@@ -623,8 +636,16 @@ impl_jolt_instructions_flags! {
     VirtualXorRotW12 => VirtualXORROTW12,
     VirtualXorRotW8 => VirtualXORROTW8,
     VirtualXorRotW7 => VirtualXORROTW7,
+    VirtualXorRotW22 => VirtualXORROTW22,
+    VirtualXorRotW19 => VirtualXORROTW19,
+    VirtualXorRotW6 => VirtualXORROTW6,
     WindowMaskW => VirtualWindowMaskW,
     PextSigned => VirtualPextSigned,
+    VirtualShiftRightBitmaskW => VirtualShiftRightBitmaskW,
+    VirtualSrlw => VirtualSRLW,
+    VirtualSrliw => VirtualSRLIW,
+    VirtualSraw => VirtualSRAW,
+    VirtualSraiw => VirtualSRAIW,
     Pext => VirtualPext,
     WindowMaskB => VirtualWindowMaskB,
     WindowMaskH => VirtualWindowMaskH,

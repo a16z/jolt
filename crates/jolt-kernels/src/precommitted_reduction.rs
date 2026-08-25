@@ -39,7 +39,7 @@
 use std::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::PrecommittedClaimReduction;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
@@ -84,7 +84,7 @@ struct PrecommittedTables<F> {
     two_inv: F,
 }
 
-impl<F: Field> PrecommittedTables<F> {
+impl<F: JoltField> PrecommittedTables<F> {
     /// The round polynomial for member-local state: the constant `claim/2` on
     /// an inactive round, else the hinted `{0,1,2}` interpolation (see the
     /// module doc for why the padded claim, not the true sum, feeds `s(1)`).
@@ -235,7 +235,7 @@ pub struct PrecommittedReductionCarry<F, R> {
 
 // Size arithmetic rather than a derive: neither the relation marker `R` nor
 // `F` may pick up an `Allocative` bound (the generic cycle kernel parks
-// this carry for every `F: Field`). The tables are the memory; the
+// this carry for every `F: JoltField`). The tables are the memory; the
 // scheduling metadata is attributed by its stack size alone (its
 // round-index vectors are a few hundred bytes, noise next to the tables).
 #[cfg(feature = "allocative")]
@@ -266,7 +266,7 @@ impl<F, R> allocative::Allocative for PrecommittedReductionCarry<F, R> {
 /// The stage-6b cycle-phase batch member for relation `R`: binds the cycle
 /// window, and — per kind — assembles the typed wire claims (resolving
 /// intermediate-vs-final from the schedule) and parks the 6b→7 carry.
-pub struct CycleReductionKernel<F: Field, R> {
+pub struct CycleReductionKernel<F: JoltField, R> {
     reduction: PrecommittedClaimReduction,
     tables: PrecommittedTables<F>,
     _relation: PhantomData<fn() -> R>,
@@ -277,7 +277,7 @@ pub struct CycleReductionKernel<F: Field, R> {
 #[cfg(feature = "allocative")]
 macro_rules! impl_reduction_kernel_allocative {
     ($($kernel:ident),+ $(,)?) => {$(
-        impl<F: Field, R> allocative::Allocative for $kernel<F, R> {
+        impl<F: JoltField, R> allocative::Allocative for $kernel<F, R> {
             fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
                 use crate::backend::{poly_heap_bytes, polys_heap_bytes};
                 let mut visitor = visitor.enter_self_sized::<Self>();
@@ -305,7 +305,7 @@ macro_rules! impl_reduction_kernel_allocative {
 #[cfg(feature = "allocative")]
 impl_reduction_kernel_allocative!(CycleReductionKernel, AddressReductionKernel);
 
-impl<F: Field, R> CycleReductionKernel<F, R> {
+impl<F: JoltField, R> CycleReductionKernel<F, R> {
     /// Build a member from tables ALREADY permuted into Dory opening-round
     /// order (see [`lsb_permutation`] / [`permute_coefficients`]).
     pub fn new(
@@ -379,7 +379,7 @@ impl<F: Field, R> CycleReductionKernel<F, R> {
     }
 }
 
-impl<F: Field, R> ProveRounds<F> for CycleReductionKernel<F, R> {
+impl<F: JoltField, R> ProveRounds<F> for CycleReductionKernel<F, R> {
     fn num_rounds(&self) -> usize {
         self.reduction.cycle_phase_total_rounds()
     }
@@ -409,13 +409,13 @@ impl<F: Field, R> ProveRounds<F> for CycleReductionKernel<F, R> {
 /// The stage-7 address-phase batch member for relation `R`: resumes binding
 /// from the reclaimed 6b carry (running scale included) and — per kind —
 /// extracts the final openings from the fully bound tables.
-pub struct AddressReductionKernel<F: Field, R> {
+pub struct AddressReductionKernel<F: JoltField, R> {
     reduction: PrecommittedClaimReduction,
     tables: PrecommittedTables<F>,
     _relation: PhantomData<fn() -> R>,
 }
 
-impl<F: Field, R> AddressReductionKernel<F, R> {
+impl<F: JoltField, R> AddressReductionKernel<F, R> {
     pub fn new(carry: PrecommittedReductionCarry<F, R>) -> Self {
         Self {
             reduction: carry.reduction,
@@ -425,7 +425,7 @@ impl<F: Field, R> AddressReductionKernel<F, R> {
     }
 }
 
-impl<F: Field, R> ProveRounds<F> for AddressReductionKernel<F, R> {
+impl<F: JoltField, R> ProveRounds<F> for AddressReductionKernel<F, R> {
     fn num_rounds(&self) -> usize {
         self.reduction.address_phase_total_rounds()
     }
@@ -452,7 +452,7 @@ impl<F: Field, R> ProveRounds<F> for AddressReductionKernel<F, R> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, TrustedAdviceCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, TrustedAdviceCyclePhase<F>> {
     type Relation = TrustedAdviceCyclePhase<F>;
 
     fn output_claims(
@@ -469,7 +469,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, TrustedAdviceCycleP
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, UntrustedAdviceCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, UntrustedAdviceCyclePhase<F>> {
     type Relation = UntrustedAdviceCyclePhase<F>;
 
     fn output_claims(
@@ -486,7 +486,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, UntrustedAdviceCycl
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReductionCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReductionCyclePhase<F>> {
     type Relation = BytecodeReductionCyclePhase<F>;
 
     fn output_claims(
@@ -514,7 +514,9 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReductionCy
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>> {
+impl<F: JoltField> SumcheckKernel<F>
+    for CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>>
+{
     type Relation = ProgramImageReductionCyclePhase<F>;
 
     fn output_claims(
@@ -531,7 +533,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, ProgramImageReducti
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, TrustedAdviceAddressPhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for AddressReductionKernel<F, TrustedAdviceAddressPhase<F>> {
     type Relation = TrustedAdviceAddressPhase<F>;
 
     fn output_claims(
@@ -544,7 +546,7 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, TrustedAdviceAddr
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, UntrustedAdviceAddressPhase<F>> {
+impl<F: JoltField> SumcheckKernel<F> for AddressReductionKernel<F, UntrustedAdviceAddressPhase<F>> {
     type Relation = UntrustedAdviceAddressPhase<F>;
 
     fn output_claims(
@@ -557,7 +559,9 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, UntrustedAdviceAd
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, BytecodeReductionAddressPhase<F>> {
+impl<F: JoltField> SumcheckKernel<F>
+    for AddressReductionKernel<F, BytecodeReductionAddressPhase<F>>
+{
     type Relation = BytecodeReductionAddressPhase<F>;
 
     fn output_claims(
@@ -570,7 +574,7 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, BytecodeReduction
     }
 }
 
-impl<F: Field> SumcheckKernel<F>
+impl<F: JoltField> SumcheckKernel<F>
     for AddressReductionKernel<F, ProgramImageReductionAddressPhase<F>>
 {
     type Relation = ProgramImageReductionAddressPhase<F>;

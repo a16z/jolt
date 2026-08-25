@@ -36,7 +36,9 @@ use jolt_openings::{
 };
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
-use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
+use jolt_verifier::config::{
+    CommitmentConfig, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
+};
 use jolt_verifier::preprocessing::{
     CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
     JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
@@ -1649,6 +1651,7 @@ impl AkitaPackedProver<'_> {
             protocol: JoltProtocolConfig {
                 zk: ZkConfig::Transparent,
                 commitment: CommitmentConfig::Packed,
+                scalar_challenge_endianness: ScalarChallengeEndianness::Little,
             },
             commitments: commitment,
             stages,
@@ -1813,7 +1816,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let setup_params = prover.one_hot_trace_setup_params();
         assert_eq!(setup_params.one_hot_k(), 16);
@@ -1905,7 +1909,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let forced = crate::zkvm::config::OneHotConfig {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: 32,
@@ -1990,7 +1995,8 @@ mod advice_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2095,7 +2101,8 @@ mod advice_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2158,7 +2165,8 @@ mod committed_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2280,7 +2288,8 @@ mod committed_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         eprintln!("trace length: {}", prover.trace.len());
         let setup_params = prover.one_hot_trace_setup_params();
@@ -2316,7 +2325,7 @@ mod committed_tests {
 }
 
 use jolt_crypto::{Commitment, HomomorphicCommitment, VectorCommitment};
-use jolt_field::{CanonicalBytes, Field, FixedByteSize};
+use jolt_field::{CanonicalBytes, JoltField};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug};
 
@@ -2353,16 +2362,15 @@ pub struct NoCommitment;
 
 // `AppendToTranscript` comes from jolt-transcript's blanket impl over
 // `CanonicalBytes`: an empty canonical encoding, so absorbing a
-// `NoCommitment` is a no-op.
-impl FixedByteSize for NoCommitment {
-    const NUM_BYTES: usize = 0;
-}
-
+// `NoCommitment` is a no-op. Deliberately NOT `CanonicalEncoding`: a commitment
+// placeholder is not a decodable field element.
 impl CanonicalBytes for NoCommitment {
+    const NUM_BYTES: usize = 0;
+
     fn to_bytes_le(&self, _out: &mut [u8]) {}
 }
 
-impl<F: Field> HomomorphicCommitment<F> for NoCommitment {
+impl<F: JoltField> HomomorphicCommitment<F> for NoCommitment {
     fn add(_c1: &Self, _c2: &Self) -> Self {
         Self
     }
@@ -2372,11 +2380,11 @@ impl<F: Field> HomomorphicCommitment<F> for NoCommitment {
     }
 }
 
-impl<F: Field> Commitment for NoVectorCommitment<F> {
+impl<F: JoltField> Commitment for NoVectorCommitment<F> {
     type Output = NoCommitment;
 }
 
-impl<F: Field> VectorCommitment for NoVectorCommitment<F> {
+impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
     type Field = F;
     type Setup = ();
 

@@ -7,7 +7,7 @@
 //! a factor of `k` and enables ~254× faster commitment via generator lookup
 //! instead of full MSM.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::multilinear::MultilinearPoly;
 
@@ -138,7 +138,7 @@ impl OneHotPolynomial {
     }
 }
 
-impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
+impl<F: JoltField> MultilinearPoly<F> for OneHotPolynomial {
     #[inline]
     fn num_vars(&self) -> usize {
         self.num_vars
@@ -227,7 +227,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
 mod tests {
     use super::*;
     use crate::Polynomial;
-    use jolt_field::{Fr, RandomSampling};
+    use jolt_field::{Field, Fr};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
@@ -236,7 +236,7 @@ mod tests {
         OneHotPolynomial::new(k, indices.to_vec())
     }
 
-    fn to_dense<F: Field>(oh: &OneHotPolynomial) -> Polynomial<F> {
+    fn to_dense<F: JoltField>(oh: &OneHotPolynomial) -> Polynomial<F> {
         let total = 1usize << oh.num_vars;
         let mut table = vec![F::zero(); total];
         for (row, &opt_col) in oh.indices.iter().enumerate() {

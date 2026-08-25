@@ -1,0 +1,99 @@
+name: Field portability
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/field-portability.yml"
+      - "crates/jolt-field/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/field-portability.yml"
+      - "crates/jolt-field/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  avx2:
+    name: AVX2 field kernels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Require AVX2
+        run: grep -Eq '(^|[[:space:]])avx2([[:space:]]|$)' /proc/cpuinfo
+      - name: Run packed field tests
+        env:
+          RUSTFLAGS: -D warnings -C target-feature=+avx2
+        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas,asm --test solinas_packed_differential
+      - name: Compare scalar Fp128 assembly with portable arithmetic
+        env:
+          RUSTFLAGS: -D warnings -C target-feature=+avx2
+        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
+
+  aarch64-neon:
+    name: AArch64 NEON field kernels
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Require native AArch64 NEON
+        run: |
+          test "$(uname -m)" = "aarch64"
+          grep -Eq '(^|[[:space:]])(asimd|neon)([[:space:]]|$)' /proc/cpuinfo
+      - name: Run packed field tests
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=native
+        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas,asm --test solinas_packed_differential
+      - name: Compare scalar Fp128 assembly with portable arithmetic
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=native
+        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
+
+  avx512:
+    name: AVX-512 field kernels (emulated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Install Intel Software Development Emulator
+        run: |
+          curl --fail --location --silent --show-error --output /tmp/intel-sde.tar.xz https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz
+          echo '94e97d623fec54385686e1e7ba65ebc9941748c05ee451423948334892bf2b50  /tmp/intel-sde.tar.xz' | sha256sum --check
+          sudo mkdir --parents /opt/intel-sde
+          sudo tar --extract --xz --file /tmp/intel-sde.tar.xz --strip-components=1 --directory /opt/intel-sde
+          sudo sysctl --write kernel.yama.ptrace_scope=0
+      - name: Run packed field tests under emulation
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
+          RUSTFLAGS: -D warnings -C target-feature=+avx2,+avx512f,+avx512dq
+        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-field --no-default-features --features solinas,asm --test solinas_packed_differential
+      - name: Compare scalar assembly with portable arithmetic under emulation
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
+          RUSTFLAGS: -D warnings -C target-feature=+avx2,+avx512f,+avx512dq
+        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-field --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'

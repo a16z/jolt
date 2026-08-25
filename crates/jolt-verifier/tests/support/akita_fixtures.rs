@@ -91,7 +91,8 @@ fn generate_muldiv() -> AkitaFixtureCase {
         None,
         None,
         None,
-    );
+    )
+    .expect("legacy prover construction");
     let public_io = prover.program_io.clone();
     let (object_setup, verifier_setup) =
         <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
@@ -139,7 +140,8 @@ fn generate_advice() -> AkitaFixtureCase {
         None,
         None,
         None,
-    );
+    )
+    .expect("legacy prover construction");
     let public_io = prover.program_io.clone();
     let (object_setup, verifier_setup) =
         <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
@@ -184,7 +186,8 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
         None,
         None,
         None,
-    );
+    )
+    .expect("legacy prover construction");
     let public_io = prover.program_io.clone();
     let (object_setup, verifier_setup) =
         <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())

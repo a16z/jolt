@@ -19,7 +19,7 @@
 
 use core::cmp::Ordering;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -54,7 +54,7 @@ pub(crate) struct AddressMajorEntry<F> {
     pub ra: F,
 }
 
-impl<F: Field> CycleMajorEntry<F> {
+impl<F: JoltField> CycleMajorEntry<F> {
     fn into_address_major(self) -> AddressMajorEntry<F> {
         AddressMajorEntry {
             row: self.row,
@@ -244,7 +244,7 @@ impl<F: Field> CycleMajorEntry<F> {
 /// `val + γ·(inc + val)` — the value factor of the summand, shared by both
 /// entry types' round evaluations.
 #[inline]
-fn val_slope_term<F: Field>(val: F, inc: F, gamma: F) -> F {
+fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
     val + gamma * (inc + val)
 }
 
@@ -253,7 +253,7 @@ pub(crate) struct CycleMajorMatrix<F> {
     pub entries: Vec<CycleMajorEntry<F>>,
 }
 
-impl<F: Field> CycleMajorMatrix<F> {
+impl<F: JoltField> CycleMajorMatrix<F> {
     /// Bind one cycle variable low-to-high: merge every adjacent row pair.
     pub fn bind(&mut self, r: F) {
         #[cfg(feature = "parallel")]
@@ -336,7 +336,7 @@ impl<F: Field> CycleMajorMatrix<F> {
     }
 }
 
-impl<F: Field> AddressMajorEntry<F> {
+impl<F: JoltField> AddressMajorEntry<F> {
     /// Bind a `(col 2k, col 2k+1)` pair of same-row entries; a `None` side
     /// is implicit (`ra = 0`, `val` recovered from its column checkpoint).
     fn bind(
@@ -594,7 +594,7 @@ pub(crate) struct AddressMajorMatrix<F> {
     pub entries: Vec<AddressMajorEntry<F>>,
 }
 
-impl<F: Field> AddressMajorMatrix<F> {
+impl<F: JoltField> AddressMajorMatrix<F> {
     /// Bind one address variable low-to-high: merge every adjacent column
     /// pair against the `val_init` checkpoints, then bind `val_init` itself.
     pub fn bind(&mut self, r: F, val_init: &mut Polynomial<F>) {

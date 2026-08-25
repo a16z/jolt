@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 
@@ -23,7 +23,7 @@ impl<const LOW_BIT: usize> Pow2OffsetPrefix<LOW_BIT> {
     };
 }
 
-impl<const LOW_BIT: usize, F: Field> SparseDensePrefix<F> for Pow2OffsetPrefix<LOW_BIT> {
+impl<const LOW_BIT: usize, F: JoltField> SparseDensePrefix<F> for Pow2OffsetPrefix<LOW_BIT> {
     fn default_checkpoint() -> F {
         F::one()
     }

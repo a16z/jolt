@@ -1,6 +1,6 @@
 //! Instruction claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::instruction::{
@@ -99,7 +99,7 @@ impl SymbolicSumcheck for ClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         weighted_claims(
             lookup_output_spartan(),
             left_lookup_operand_spartan(),
@@ -109,7 +109,7 @@ impl SymbolicSumcheck for ClaimReduction {
         )
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(InstructionClaimReductionPublic::EqSpartan)
             * weighted_claims(
                 lookup_output_reduced(),
@@ -125,7 +125,7 @@ impl SymbolicSumcheck for ClaimReduction {
 mod tests {
     use super::*;
     use crate::protocols::jolt::InstructionClaimReductionChallenge;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -10,7 +10,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 /// `XLEN` (the carry) contribute nothing; bits 2..0 are cleared.
 pub enum AlignAddrPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for AlignAddrPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for AlignAddrPrefix {
     fn default_checkpoint() -> F {
         F::zero()
     }

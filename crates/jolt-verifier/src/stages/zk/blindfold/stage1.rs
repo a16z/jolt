@@ -9,7 +9,7 @@ pub(super) fn add_stage1<F, PCS, VC, ZkProof>(
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone,
@@ -104,7 +104,7 @@ where
     )
 }
 
-fn stage1_spartan_outer_output_expr<F: Field>(
+fn stage1_spartan_outer_output_expr<F: JoltField>(
     openings: &[JoltVirtualPolynomial],
 ) -> VerifierExpr<F> {
     // The factored quadratic form, mirroring the jolt-claims relation: each

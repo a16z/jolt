@@ -21,7 +21,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalBytes, Field};
+use jolt_field::{CanonicalBytes, JoltField};
 use jolt_kernels::{JoltBackend, KernelSlots, PrepareKernel, ProofSession, ReferenceBackend};
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -59,7 +59,7 @@ pub mod witness;
 #[derive(KernelSlots)]
 pub struct JoltAkitaBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The shared stage 1–7 slot registry (naive-served).
@@ -80,7 +80,7 @@ struct PackedCommitStub;
 
 impl<F, PCS> jolt_kernels::CommitWitness<F, PCS> for PackedCommitStub
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     fn commit_witness(
@@ -114,7 +114,7 @@ where
 
 impl<F, PCS> JoltAkitaBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The always-present packed reference registry: every shared stage 1–7
@@ -217,7 +217,7 @@ pub fn prove<F, PCS, VC, T, W>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: Field + CanonicalBytes + AppendToTranscript,
+    F: JoltField + CanonicalBytes + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript,

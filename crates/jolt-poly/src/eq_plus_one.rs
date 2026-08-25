@@ -9,7 +9,7 @@
 //!
 //! Both `x` and `y` are in **big-endian** bit ordering (`point[0]` = MSB).
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::EqPolynomial;
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -18,12 +18,12 @@ use jolt_utils::unsafe_allocate_zero_vec;
 ///
 /// Stores a fixed point `x` in big-endian order. Call [`evaluate`](Self::evaluate)
 /// to compute `eq+1(x, y)` at any `y`.
-pub struct EqPlusOnePolynomial<F: Field> {
+pub struct EqPlusOnePolynomial<F: JoltField> {
     /// Fixed point (big-endian: `point[0]` = MSB).
     point: Vec<F>,
 }
 
-impl<F: Field> EqPlusOnePolynomial<F> {
+impl<F: JoltField> EqPlusOnePolynomial<F> {
     pub fn new(point: Vec<F>) -> Self {
         Self { point }
     }
@@ -131,7 +131,7 @@ impl<F: Field> EqPlusOnePolynomial<F> {
 /// half of the shift sumcheck to operate on √N-sized buffers rather than N.
 ///
 /// See <https://eprint.iacr.org/2025/611.pdf> (Appendix A).
-pub struct EqPlusOnePrefixSuffix<F: Field> {
+pub struct EqPlusOnePrefixSuffix<F: JoltField> {
     /// Evals of `eq+1(r_lo, j)` for `j ∈ {0,1}^{n/2}`.
     pub prefix_0: Vec<F>,
     /// Evals of `eq(r_hi, j)` for `j ∈ {0,1}^{n/2}`.
@@ -142,7 +142,7 @@ pub struct EqPlusOnePrefixSuffix<F: Field> {
     pub suffix_1: Vec<F>,
 }
 
-impl<F: Field> EqPlusOnePrefixSuffix<F> {
+impl<F: JoltField> EqPlusOnePrefixSuffix<F> {
     /// Creates the decomposition from a big-endian point `r`.
     ///
     /// Splits at `r.len() / 2`: the first half is `r_hi`, the second is `r_lo`.
@@ -172,7 +172,7 @@ impl<F: Field> EqPlusOnePrefixSuffix<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
