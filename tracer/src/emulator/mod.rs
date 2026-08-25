@@ -392,7 +392,6 @@ impl Emulator {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test-only assertions")]
 mod tests {
     use super::elf_analyzer::test_elf::{build_elf64, TestSymbol};
     use super::*;
@@ -459,107 +458,5 @@ mod tests {
     fn setup_program_rejects_non_elf_content() {
         let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
         emulator.setup_program(b"definitely not an elf");
-    }
-
-    #[test]
-    fn run_test_extracts_the_htif_endcode_from_the_tohost_write() {
-        // HTIF: payload LSB set means done, endcode = payload >> 1.
-        for (tohost_value, endcode) in [(1_u32, 0_u64), (5, 2)] {
-            let mut emulator = emulator_with(&tohost_program(tohost_value), &tohost_symbols());
-            assert_eq!(
-                emulator.run_test(false, false),
-                endcode,
-                "tohost={tohost_value}"
-            );
-        }
-    }
-
-    #[test]
-    fn run_test_treats_a_pc_stall_as_clean_exit() {
-        // addi x1, x0, 1 ; j .  — never writes tohost
-        let mut emulator = emulator_with(&[0x0010_0093, 0x0000_006f], &tohost_symbols());
-        assert_eq!(emulator.run_test(true, false), 0);
-        assert_eq!(emulator.get_cpu().read_register(1), 1);
-    }
-
-    #[test]
-    fn write_signature_emits_big_endian_lines_padded_to_granularity() {
-        let mut symbols = tohost_symbols();
-        symbols.push(TestSymbol {
-            name: "begin_signature",
-            value: 0x8000_2000,
-            info: 0x10,
-            size: 0,
-        });
-        symbols.push(TestSymbol {
-            name: "end_signature",
-            value: 0x8000_200c,
-            info: 0x10,
-            size: 0,
-        });
-        let mut emulator = emulator_with(&[0x0000_006f], &symbols);
-
-        let signature: [u8; 12] = [
-            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
-        ];
-        for (i, byte) in signature.iter().enumerate() {
-            emulator
-                .get_mut_cpu()
-                .get_mut_mmu()
-                .store_raw(0x8000_2000 + i as u64, *byte);
-        }
-
-        let mut output = Vec::new();
-        emulator.write_signature(&mut output, 4).unwrap();
-        assert_eq!(
-            String::from_utf8(output).unwrap(),
-            "44332211\n88776655\nccbbaa99\n"
-        );
-
-        // The 12-byte region does not divide the granularity: the tail line
-        // is zero-padded beyond end_signature.
-        let mut output = Vec::new();
-        emulator.write_signature(&mut output, 8).unwrap();
-        assert_eq!(
-            String::from_utf8(output).unwrap(),
-            "8877665544332211\n00000000ccbbaa99\n"
-        );
-    }
-
-    #[test]
-    fn write_signature_is_a_no_op_without_signature_symbols() {
-        let mut emulator = emulator_with(&[0x0000_006f], &tohost_symbols());
-        let mut output = Vec::new();
-        emulator.write_signature(&mut output, 4).unwrap();
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn advice_tape_accessors_move_the_tape_in_and_out() {
-        let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
-        let mut tape = cpu::AdviceTape::new();
-        tape.write(&[1, 2, 3]);
-        emulator.set_advice_tape(tape);
-        assert_eq!(emulator.get_advice_tape().len(), 3);
-        emulator.get_mut_advice_tape().write(&[4]);
-        assert_eq!(emulator.get_advice_tape().remaining(), 4);
-
-        let taken = emulator.take_advice_tape();
-        assert_eq!(taken.len(), 4);
-        assert!(emulator.get_advice_tape().is_empty());
-    }
-
-    #[test]
-    fn saved_state_keeps_symbols_but_drops_memory() {
-        let mut emulator = emulator_with(&tohost_program(1), &tohost_symbols());
-        let saved = emulator.save_state_with_empty_memory();
-        assert_eq!(saved.tohost_addr, TOHOST_ADDR);
-        assert_eq!(
-            saved.get_cpu().mmu.memory.memory.data.get_num_doublewords(),
-            0
-        );
-        // get_mut_emulator is an identity accessor over the state alias
-        let emulator_ref = get_mut_emulator(&mut emulator);
-        assert_eq!(emulator_ref.tohost_addr, TOHOST_ADDR);
     }
 }

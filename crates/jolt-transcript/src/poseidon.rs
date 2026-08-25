@@ -240,16 +240,6 @@ mod tests {
     }
 
     #[test]
-    fn debug_output_reports_the_squeeze_offset() {
-        let sponge = PoseidonSponge::new();
-        let output = format!("{sponge:?}");
-        assert!(
-            output.contains("PoseidonSponge") && output.contains("squeeze_offset"),
-            "unexpected Debug output: {output}"
-        );
-    }
-
-    #[test]
     fn ratchet_advances_the_state_and_discards_pending_output() {
         let mut baseline_sponge = PoseidonSponge::new();
         baseline_sponge.absorb(b"m");

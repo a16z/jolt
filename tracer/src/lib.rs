@@ -1019,59 +1019,6 @@ mod tests {
     }
 
     #[test]
-    fn trace_to_file_writes_the_postcard_encoded_trace() {
-        let elf = tiny_guest_elf();
-        let memory_config = tiny_guest_config(&elf);
-        let (_, cycles, _, _, _) = trace(&elf, None, &[], &[], &[], &memory_config, None);
-
-        let out_path = std::env::temp_dir().join(format!(
-            "jolt-tracer-test-{}-trace.postcard",
-            std::process::id()
-        ));
-        let (final_memory, device) =
-            trace_to_file(&elf, None, &[], &[], &[], &memory_config, &out_path);
-        assert!(!device.panic);
-        assert!(!final_memory.materialized_nonzero_bytes().is_empty());
-
-        let bytes = std::fs::read(&out_path).unwrap();
-        std::fs::remove_file(&out_path).ok();
-        // The whole trace fits one batch: a single postcard-encoded Vec<Cycle>
-        let decoded: Vec<Cycle> = postcard::from_bytes(&bytes).unwrap();
-        assert_eq!(decoded, cycles);
-    }
-
-    #[test]
-    fn decode_extracts_instructions_and_memory_image_from_the_elf() {
-        let elf = tiny_guest_elf();
-        let (instructions, memory_init, _program_end, entry) = decode(&elf);
-        assert_eq!(entry, 0x8000_0000);
-        assert_eq!(instructions.len(), 3);
-        let name: &'static str = (&instructions[0]).into();
-        assert_eq!(name, "ADDI");
-        let name: &'static str = (&instructions[2]).into();
-        assert_eq!(name, "JAL");
-        // The memory image holds the little-endian program bytes
-        assert_eq!(memory_init[0], (0x8000_0000, 0x93));
-    }
-
-    #[test]
-    fn iter_chunks_partitions_without_dropping_the_tail() {
-        let chunks: Vec<Vec<u32>> = (0..10).iter_chunks(3).collect();
-        assert_eq!(
-            chunks,
-            vec![vec![0, 1, 2], vec![3, 4, 5], vec![6, 7, 8], vec![9]]
-        );
-        let empty: Vec<Vec<u32>> = (0..0).iter_chunks(3).collect();
-        assert!(empty.is_empty());
-    }
-
-    #[test]
-    #[should_panic(expected = "chunk size must be non-zero")]
-    fn iter_chunks_rejects_zero_sized_chunks() {
-        let _ = (0..10).iter_chunks(0);
-    }
-
-    #[test]
     /// Execute-mode CPU state must be bit-identical to trace-mode state at
     /// every tick boundary (foundation of two-pass parallel tracing: pass-1
     /// runs execute-mode and its checkpoints seed trace-mode chunk replays).

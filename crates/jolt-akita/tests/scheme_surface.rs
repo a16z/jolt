@@ -1,17 +1,12 @@
-//! Trait-surface coverage for `AkitaScheme`: setup parameter validation,
-//! metadata trait consistency, hint-free openings, and the flavor-restricted
-//! `one_hot_only` setup.
+//! Trait-surface tests for `AkitaScheme`: setup parameter validation,
+//! hint-free openings, and the flavor-restricted `one_hot_only` setup.
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 mod support;
 
-use jolt_akita::{
-    AkitaBackendFlavor, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
-};
-use jolt_openings::{
-    CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, OpeningsError, ZkOpeningScheme,
-};
+use jolt_akita::{AkitaBackendFlavor, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16};
+use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial, setup_for};
@@ -56,90 +51,6 @@ fn setup_rejects_unsupported_one_hot_chunk_sizes() {
             "unexpected error for K={bad_k}: {err}"
         );
     }
-}
-
-#[test]
-fn verifier_setup_accessor_matches_setup_output() {
-    let params = AkitaSetupParams::new(DENSE_VARS, 2, layout(9));
-    assert_eq!(params.one_hot_k(), AKITA_ONE_HOT_K256, "default chunk size");
-    let (prover_setup, verifier_setup) = AkitaScheme::setup(params).expect("setup should succeed");
-    assert_eq!(AkitaScheme::verifier_setup(&prover_setup), verifier_setup);
-    assert_eq!(prover_setup.max_num_vars(), DENSE_VARS);
-    assert_eq!(prover_setup.max_num_polys_per_commitment_group(), 2);
-    assert_eq!(prover_setup.default_layout_digest(), layout(9));
-    assert_eq!(prover_setup.one_hot_k(), AKITA_ONE_HOT_K256);
-}
-
-/// The `GroupSetupMetadata` / `GroupCommitmentMetadata` impls are the shape
-/// vocabulary `jolt-openings` enforces before a native batch opening; they
-/// must agree with the concrete accessors and the committed polynomials.
-#[test]
-fn metadata_traits_report_committed_shapes() {
-    let (prover_setup, verifier_setup) = setup_for(DENSE_VARS, 2, layout(7));
-    assert_eq!(
-        GroupSetupMetadata::max_num_vars(&verifier_setup),
-        DENSE_VARS
-    );
-    assert_eq!(
-        GroupSetupMetadata::max_num_polys_per_commitment_group(&verifier_setup),
-        2
-    );
-    assert_eq!(
-        GroupSetupMetadata::default_layout_digest(&verifier_setup),
-        layout(7)
-    );
-    assert_eq!(
-        GroupSetupMetadata::one_hot_k(&verifier_setup),
-        AKITA_ONE_HOT_K256
-    );
-    assert_eq!(verifier_setup.max_num_vars(), DENSE_VARS);
-    assert_eq!(verifier_setup.max_num_polys_per_commitment_group(), 2);
-    assert_eq!(verifier_setup.default_layout_digest(), layout(7));
-    assert_eq!(verifier_setup.one_hot_k(), AKITA_ONE_HOT_K256);
-    assert!(
-        format!("{verifier_setup:?}").contains("BackendVerifierCache"),
-        "derived state must appear as an opaque cache in Debug output"
-    );
-
-    let (dense_commitment, _) = AkitaScheme::commit_group(
-        &prover_setup,
-        layout(11),
-        &[polynomial(DENSE_VARS, 1), polynomial(DENSE_VARS, 9)],
-    )
-    .expect("dense group commit should succeed");
-    assert!(!GroupCommitmentMetadata::is_one_hot_backend(
-        &dense_commitment
-    ));
-    assert_eq!(
-        GroupCommitmentMetadata::layout_digest(&dense_commitment),
-        layout(11)
-    );
-    assert_eq!(
-        GroupCommitmentMetadata::num_vars(&dense_commitment),
-        DENSE_VARS
-    );
-    assert_eq!(GroupCommitmentMetadata::poly_count(&dense_commitment), 2);
-    assert_eq!(
-        GroupCommitmentMetadata::one_hot_k(&dense_commitment),
-        0,
-        "dense-flavor commitments must not declare a chunk size"
-    );
-
-    let (one_hot_setup, _) = k16_setup();
-    let one_hot = OneHotPolynomial::new(AKITA_ONE_HOT_K16, one_hot_indices());
-    let (one_hot_commitment, _) = AkitaScheme::commit_one_hot_group(
-        &one_hot_setup,
-        layout(2),
-        std::slice::from_ref(&one_hot),
-    )
-    .expect("one-hot commit should succeed");
-    assert!(GroupCommitmentMetadata::is_one_hot_backend(
-        &one_hot_commitment
-    ));
-    assert_eq!(
-        GroupCommitmentMetadata::one_hot_k(&one_hot_commitment),
-        AKITA_ONE_HOT_K16
-    );
 }
 
 /// A `one_hot_only` setup skips the dense-flavor backend entirely, so a

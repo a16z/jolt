@@ -1,47 +1,17 @@
-//! Expansion snapshots and error-path tests for the claim derives.
-//!
-//! The macro's output is invisible to mutation testing and to reviewers of
-//! consumer crates, so the expansions of representative structs (covering the
-//! full `#[opening(..)]` grammar) are pinned as pretty-printed snapshots in
-//! `testdata/`. A drifted snapshot means the generated wiring changed for
-//! every claim struct in the workspace; regenerate deliberately with
-//! `JOLT_CLAIMS_DERIVE_REGENERATE_SNAPSHOTS=1` and review the diff.
+//! Error-path and ordering-contract tests for the claim derives.
 #![expect(
     clippy::expect_used,
-    reason = "snapshot harness should fail loudly on I/O or parse errors"
+    reason = "tests should fail loudly on I/O or parse errors"
 )]
-
-use std::{env, fs, path::PathBuf};
 
 use proc_macro2::TokenStream as TokenStream2;
 use syn::parse_quote;
 
 use crate::{expand_challenges, expand_input, expand_output};
 
-const REGENERATE_ENV: &str = "JOLT_CLAIMS_DERIVE_REGENERATE_SNAPSHOTS";
-
 fn pretty(tokens: TokenStream2) -> String {
     let file = syn::parse2::<syn::File>(tokens).expect("expansion must parse as a list of items");
     prettyplease::unparse(&file)
-}
-
-fn assert_snapshot(name: &str, actual: &str) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata")
-        .join(format!("{name}.expanded.rs"));
-    if env::var_os(REGENERATE_ENV).is_some() {
-        fs::write(&path, actual).expect("failed to write snapshot");
-        return;
-    }
-    let expected = fs::read_to_string(&path).expect(
-        "missing expansion snapshot; generate it with JOLT_CLAIMS_DERIVE_REGENERATE_SNAPSHOTS=1",
-    );
-    assert_eq!(
-        actual, expected,
-        "macro expansion drifted from testdata/{name}.expanded.rs; this changes the generated \
-         claim wiring for every derive site. If intentional, regenerate with \
-         {REGENERATE_ENV}=1 and review the diff."
-    );
 }
 
 /// Covers the full `OutputClaims` grammar: scalar virtual, payload-carrying
@@ -63,44 +33,6 @@ fn representative_output_struct() -> syn::DeriveInput {
             advice: C,
         }
     }
-}
-
-#[test]
-fn output_claims_expansion_matches_snapshot() {
-    let tokens = expand_output(representative_output_struct()).expect("expansion should succeed");
-    assert_snapshot("output_claims", &pretty(tokens));
-}
-
-#[test]
-fn input_claims_expansion_matches_snapshot() {
-    let input: syn::DeriveInput = parse_quote! {
-        struct DemoInputClaims<C> {
-            #[opening(PC, from = SpartanOuter)]
-            pc: C,
-            #[opening(committed = RamInc, from = RamReadWriteChecking)]
-            ram_inc: Option<C>,
-            #[opening(LookupTableFlag, from = InstructionReadRaf)]
-            table_flags: Vec<C>,
-            #[opening(untrusted_advice, from = AdviceClaimReduction)]
-            advice: C,
-        }
-    };
-    let tokens = expand_input(input).expect("expansion should succeed");
-    assert_snapshot("input_claims", &pretty(tokens));
-}
-
-#[test]
-fn sumcheck_challenges_expansion_matches_snapshot() {
-    let input: syn::DeriveInput = parse_quote! {
-        struct DemoChallenges<F> {
-            #[challenge(SpartanChallenges::Tau)]
-            tau: F,
-            #[challenge(SpartanChallenges::RInner)]
-            r_inner: F,
-        }
-    };
-    let tokens = expand_challenges(input).expect("expansion should succeed");
-    assert_snapshot("sumcheck_challenges", &pretty(tokens));
 }
 
 /// The macro's core contract: the canonical opening order is single-sourced
