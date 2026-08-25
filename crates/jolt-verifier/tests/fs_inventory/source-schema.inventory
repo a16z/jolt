@@ -37,6 +37,7 @@ jolt-program::preprocess/program.rs::ProgramMetadata.entry_bytecode_index
 jolt-program::preprocess/program.rs::ProgramMetadata.min_bytecode_address
 jolt-program::preprocess/program.rs::ProgramMetadata.program_image_len_words
 jolt-verifier::config.rs::JoltProtocolConfig.commitment
+jolt-verifier::config.rs::JoltProtocolConfig.scalar_challenge_endianness
 jolt-verifier::config.rs::JoltProtocolConfig.zk
 jolt-verifier::config.rs::ZkConfig::BlindFold
 jolt-verifier::config.rs::ZkConfig::Transparent
@@ -46,11 +47,11 @@ jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.max_padded_trace_
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.memory_layout
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.meta
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.program_image_commitment
-jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.program_one_hot_commitment
+jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.program_one_hot_commitments
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.pcs_setup
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.preprocessing_digest
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.program
-jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.program_one_hot_setup
+jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.program_one_hot_setups
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.trusted_advice_setup
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.untrusted_advice_setup
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.vc_setup

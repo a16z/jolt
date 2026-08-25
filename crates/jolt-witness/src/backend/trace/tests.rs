@@ -2,7 +2,7 @@ use common::{
     constants::RAM_START_ADDRESS,
     jolt_device::{JoltDevice, MemoryConfig, MemoryLayout},
 };
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_program::{
     execution::{
         JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
@@ -72,22 +72,22 @@ fn config() -> JoltVmWitnessConfig {
 }
 
 fn trace_output() -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), Default::default(), None)
+    TraceOutput::new(OwnedTrace::default(), Default::default(), None, None)
 }
 
 fn trace_output_with_rows(rows: Vec<TraceRow>) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::new(rows), Default::default(), None)
+    TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None)
 }
 
 fn trace_output_with_device(device: JoltDevice) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), device, None)
+    TraceOutput::new(OwnedTrace::default(), device, None, None)
 }
 
 fn trace_output_with_device_and_final_memory(
     device: JoltDevice,
     final_memory: MemoryImage,
 ) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), device, Some(final_memory))
+    TraceOutput::new(OwnedTrace::default(), device, Some(final_memory), None)
 }
 
 fn instruction(address: usize) -> JoltInstructionRow {
@@ -892,10 +892,6 @@ fn excluded_ids_report_their_classification() {
         assert_reason(JoltPolynomialId::Committed(id), COMMITTED_PROGRAM_REASON);
     }
     for id in [
-        JoltCommittedPolynomial::UnsignedIncChunk(0),
-        JoltCommittedPolynomial::UnsignedIncMsb,
-        JoltCommittedPolynomial::TrustedAdviceBytes,
-        JoltCommittedPolynomial::UntrustedAdviceBytes,
         JoltCommittedPolynomial::BytecodeLookupSelector { chunk: 0 },
         JoltCommittedPolynomial::ProgramImageBytes,
     ] {
@@ -918,10 +914,6 @@ fn excluded_ids_report_their_classification() {
     ] {
         assert_reason(JoltPolynomialId::Virtual(id), PROTOCOL_INTERMEDIATE_REASON);
     }
-    assert_reason(
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc),
-        LATTICE_REASON,
-    );
 }
 
 /// [`OwnedTrace`] with the slice accessor hidden: forces the sequential
@@ -1001,6 +993,7 @@ fn slice_fast_paths_match_the_sequential_fallback() {
         TraceOutput::new(
             IteratorOnlyTrace(OwnedTrace::new(rows)),
             Default::default(),
+            None,
             None,
         ),
     );

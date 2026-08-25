@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::{Expr, Source, SumcheckDomain};
 
@@ -54,10 +54,10 @@ pub trait SymbolicSumcheck {
     /// The per-round degree bound, derived from [`Shape`](Self::Shape).
     fn degree(&self) -> usize;
 
-    fn input_expression<F: RingCore>(
+    fn input_expression<F: Ring>(
         &self,
     ) -> Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>;
-    fn output_expression<F: RingCore>(
+    fn output_expression<F: Ring>(
         &self,
     ) -> Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>;
 
@@ -69,7 +69,7 @@ pub trait SymbolicSumcheck {
     /// holds because the output check constrains every produced opening (an
     /// unconstrained produced opening would be unsound). The field `F` only
     /// instantiates the expression — the ids are field-independent.
-    fn expected_output_openings<F: RingCore>(&self) -> std::collections::BTreeSet<Self::OpeningId>
+    fn expected_output_openings<F: Ring>(&self) -> std::collections::BTreeSet<Self::OpeningId>
     where
         Self::OpeningId: Ord,
     {
@@ -89,7 +89,7 @@ pub trait SymbolicSumcheck {
 mod tests {
     use super::*;
     use crate::{challenge, constant, derived, opening, NoChallenges, NoInputs, NoOutputs};
-    use jolt_field::{Fr, FromPrimitiveInt, RingCore};
+    use jolt_field::{Fr, Ring};
     use std::collections::BTreeSet;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -139,11 +139,11 @@ mod tests {
             2
         }
 
-        fn input_expression<F: RingCore>(&self) -> Expr<F, Opening, Derived, Challenge> {
+        fn input_expression<F: Ring>(&self) -> Expr<F, Opening, Derived, Challenge> {
             Expr::zero()
         }
 
-        fn output_expression<F: RingCore>(&self) -> Expr<F, Opening, Derived, Challenge> {
+        fn output_expression<F: Ring>(&self) -> Expr<F, Opening, Derived, Challenge> {
             let two = constant::<F, _, _, _>(F::one() + F::one());
             // (2*A + gamma) * (B + 1) - offset * A
             (two * opening(Opening::A) + challenge(Challenge::Gamma))
@@ -210,10 +210,10 @@ mod tests {
             fn degree(&self) -> usize {
                 0
             }
-            fn input_expression<F: RingCore>(&self) -> Expr<F, Opening, Derived, Challenge> {
+            fn input_expression<F: Ring>(&self) -> Expr<F, Opening, Derived, Challenge> {
                 Expr::zero()
             }
-            fn output_expression<F: RingCore>(&self) -> Expr<F, Opening, Derived, Challenge> {
+            fn output_expression<F: Ring>(&self) -> Expr<F, Opening, Derived, Challenge> {
                 Expr::zero()
             }
         }

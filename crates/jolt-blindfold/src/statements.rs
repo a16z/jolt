@@ -136,6 +136,7 @@ impl<F, O, Com> FinalOpeningBinding<F, O, Com> {
 }
 
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use jolt_claims::{opening, Expr};

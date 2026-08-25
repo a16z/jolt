@@ -13,7 +13,7 @@
 mod common;
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::{Fr, TranscriptChallenge};
+use jolt_field::{CanonicalEncoding, Fr};
 use jolt_transcript::LegacyBlake2bTranscript;
 
 type LegacyB2b = LegacyBlake2bTranscript<Fr>;

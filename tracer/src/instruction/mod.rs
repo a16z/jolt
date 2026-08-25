@@ -134,11 +134,11 @@ use virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use virtual_change_divisor::VirtualChangeDivisor;
-use virtual_change_divisor_w::VirtualChangeDivisorW;
-use virtual_lw::VirtualLW;
 use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
+use virtual_muliw::VirtualMULIW;
+use virtual_negate_if::VirtualNegateIf;
+use virtual_pext_signed::VirtualPextSigned;
 use virtual_pow2::VirtualPow2;
 use virtual_pow2_w::VirtualPow2W;
 use virtual_pow2i::VirtualPow2I;
@@ -147,15 +147,23 @@ use virtual_rev8w::VirtualRev8W;
 use virtual_rotri::VirtualROTRI;
 use virtual_rotriw::VirtualROTRIW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
+use virtual_shift_right_bitmask_w::VirtualShiftRightBitmaskW;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sign_extend_word::VirtualSignExtendWord;
 use virtual_sra::VirtualSRA;
 use virtual_srai::VirtualSRAI;
+use virtual_sraiw::VirtualSRAIW;
+use virtual_sraw::VirtualSRAW;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
-use virtual_sw::VirtualSW;
+use virtual_srliw::VirtualSRLIW;
+use virtual_srlw::VirtualSRLW;
+use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
-use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
+use virtual_xor_rotw::{
+    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
+    VirtualXORROTW7, VirtualXORROTW8,
+};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
@@ -321,12 +329,12 @@ pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
-pub mod virtual_lw;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_muliw;
+pub mod virtual_negate_if;
+pub mod virtual_pext_signed;
 pub mod virtual_pow2;
 pub mod virtual_pow2_w;
 pub mod virtual_pow2i;
@@ -335,13 +343,18 @@ pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
+pub mod virtual_shift_right_bitmask_w;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend_word;
 pub mod virtual_sra;
 pub mod virtual_srai;
+pub mod virtual_sraiw;
+pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srli;
-pub mod virtual_sw;
+pub mod virtual_srliw;
+pub mod virtual_srlw;
+pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
@@ -2087,7 +2100,7 @@ mod tests {
     #[test]
     fn source_only_tracer_conversion_does_not_fabricate_final_kind() {
         let source = SourceInstruction::new(
-            SourceInstructionKind::ADDW,
+            SourceInstructionKind::MULH,
             SourceInstructionRow {
                 address: 0x1234,
                 operands: NormalizedOperands {
@@ -2103,13 +2116,13 @@ mod tests {
 
         let instruction = Instruction::try_from_source_instruction(source).unwrap();
         assert!(instruction.try_jolt_instruction_row().is_err());
-        let Instruction::ADDW(addw) = instruction else {
-            panic!("expected ADDW tracer instruction");
+        let Instruction::MULH(mulh) = instruction else {
+            panic!("expected MULH tracer instruction");
         };
-        assert_eq!(addw.address, 0x1234);
-        assert_eq!(addw.virtual_sequence_remaining, None);
-        assert!(!addw.is_first_in_sequence);
-        assert!(addw.is_compressed);
+        assert_eq!(mulh.address, 0x1234);
+        assert_eq!(mulh.virtual_sequence_remaining, None);
+        assert!(!mulh.is_first_in_sequence);
+        assert!(mulh.is_compressed);
     }
 
     #[test]
@@ -2820,14 +2833,14 @@ mod tests {
             .iter()
             .filter(|instr| matches!(instr, Instruction::VirtualAdvice(_)))
             .count();
-        assert_eq!(advice_count, 2, "DIV advises quotient and remainder");
+        assert_eq!(advice_count, 1, "DIV advises the quotient");
 
         // `fill_virtual_advice`'s successor patches the values into
         // per-execution copies of the advice rows while tracing. With
         // x1 = x2 = 0 the sequence's own assertions require the RISC-V
-        // division-by-zero pair: quotient all-ones, remainder 0.
+        // division-by-zero quotient: all-ones.
         let mut trace = Vec::new();
-        trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX, 0], Some(&mut trace));
+        trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX], Some(&mut trace));
         let filled: Vec<u64> = trace
             .iter()
             .filter_map(|cycle| match cycle {
@@ -2835,7 +2848,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(filled, vec![u64::MAX, 0]);
+        assert_eq!(filled, vec![u64::MAX]);
     }
 
     #[test]
@@ -2843,10 +2856,10 @@ mod tests {
     fn trace_with_advice_panics_when_values_outnumber_slots() {
         let mut cpu = exec_cpu();
         let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
-        // 3 values for 2 advice slots; the first two are the correct pair for
+        // 2 values for 1 advice slot; the first is the correct quotient for
         // x1 = x2 = 0, so the mismatch check fires rather than a division
         // assertion inside the sequence.
-        trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX, 0, 3], None);
+        trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX, 3], None);
     }
 
     #[test]
@@ -2854,8 +2867,8 @@ mod tests {
     fn trace_with_advice_panics_when_slots_outnumber_values() {
         let mut cpu = exec_cpu();
         let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
-        // 1 value for 2 advice slots: the second advice row finds no value.
-        trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX], None);
+        // No values for 1 advice slot: the advice row finds no value.
+        trace_inline_sequence_with_advice(&div, &mut cpu, &[], None);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-mod support;
+pub mod support;
 
 use jolt_akita::{AkitaNativeBatching, AkitaProverHint, AkitaScheme};
 use jolt_openings::{
@@ -15,9 +15,9 @@ use support::{
 #[test]
 fn akita_native_batching_roundtrips_grouped_commitment() {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =
@@ -49,16 +49,16 @@ fn akita_native_batching_roundtrips_grouped_commitment() {
 #[test]
 fn akita_native_batching_rejects_malformed_statements() {
     let (prover_setup, _) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (group_commitment, group_hint) =
         AkitaScheme::commit_group(&prover_setup, layout(7), &[poly_a.clone(), poly_b.clone()])
             .expect("grouped commit should succeed");
     let (other_commitment, _) =
-        AkitaScheme::commit_group(&prover_setup, layout(7), &[polynomial(13, 80)])
+        AkitaScheme::commit_group(&prover_setup, layout(7), &[polynomial(16, 80)])
             .expect("other commit should succeed");
 
     let mut transcript = Blake2bTranscript::new(b"akita-bb-empty");
@@ -128,9 +128,9 @@ fn akita_native_batching_rejects_malformed_statements() {
 #[test]
 fn akita_native_batching_rejects_bad_prover_witnesses() {
     let (prover_setup, _) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =
@@ -139,7 +139,7 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
     let (_, other_hint) = AkitaScheme::commit_group(
         &prover_setup,
         layout(7),
-        &[polynomial(13, 80), polynomial(13, 100)],
+        &[polynomial(16, 80), polynomial(16, 100)],
     )
     .expect("other grouped commit should succeed");
     let statement = native_statement(commitment, &point, [eval_a, eval_b]);
@@ -188,9 +188,9 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
 #[test]
 fn akita_native_batching_rejects_tampered_verifier_inputs() {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =
@@ -221,13 +221,13 @@ fn akita_native_batching_rejects_tampered_verifier_inputs() {
     let (other_commitment, _) = AkitaScheme::commit_group(
         &prover_setup,
         layout(7),
-        &[polynomial(13, 80), polynomial(13, 100)],
+        &[polynomial(16, 80), polynomial(16, 100)],
     )
     .expect("other grouped commit should succeed");
     let tampered_commitment = native_statement(other_commitment, &point, [eval_a, eval_b]);
     assert_native_verify_rejects(&verifier_setup, tampered_commitment, &proof);
 
-    let (_, wrong_layout_setup) = setup_for(13, 2, layout(8));
+    let (_, wrong_layout_setup) = setup_for(16, 2, layout(8));
     assert_native_verify_rejects(&wrong_layout_setup, statement, &proof);
 }
 
@@ -260,8 +260,8 @@ fn expect_invalid_batch<T: std::fmt::Debug>(
 #[test]
 fn akita_native_batching_rejects_point_commitment_dimension_mismatch() {
     let (prover_setup, _) = native_setup();
-    let poly = polynomial(13, 1);
-    let short_point: Vec<_> = (0..12).map(|index| f(index + 2)).collect();
+    let poly = polynomial(16, 1);
+    let short_point: Vec<_> = (0..15).map(|index| f(index + 2)).collect();
     let (commitment, hint) =
         AkitaScheme::commit_group(&prover_setup, layout(7), std::slice::from_ref(&poly))
             .expect("commit should succeed");
@@ -276,7 +276,7 @@ fn akita_native_batching_rejects_point_commitment_dimension_mismatch() {
             hint,
             &mut transcript,
         ),
-        "12 variables but commitment has 13",
+        "15 variables but commitment has 16",
     );
 }
 
@@ -284,9 +284,9 @@ fn akita_native_batching_rejects_point_commitment_dimension_mismatch() {
 /// setup, so a statement built for one setup must reject against another.
 #[test]
 fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
-    let (small_setup, _) = setup_for(13, 1, layout(7));
-    let small_poly = polynomial(13, 1);
-    let small_point: Vec<_> = (0..13).map(|index| f(index + 2)).collect();
+    let (small_setup, _) = setup_for(14, 1, layout(7));
+    let small_poly = polynomial(14, 1);
+    let small_point: Vec<_> = (0..14).map(|index| f(index + 2)).collect();
     let small_eval = small_poly.evaluate(&small_point);
     let (small_commitment, small_hint) =
         AkitaScheme::commit_group(&small_setup, layout(7), std::slice::from_ref(&small_poly))
@@ -302,8 +302,8 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     )
     .expect("proof should be produced");
 
-    // A 13-variable commitment against a 14-variable verifier setup.
-    let (_, wider_verifier) = setup_for(14, 2, layout(7));
+    // A 14-variable commitment against a 15-variable verifier setup.
+    let (_, wider_verifier) = setup_for(15, 2, layout(7));
     let mut transcript = Blake2bTranscript::new(b"akita-bb-cross-setup");
     expect_invalid_batch(
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
@@ -317,9 +317,9 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
 
     // A two-polynomial group against a verifier setup capped at one slot.
     let (two_slot_setup, _) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|index| f(index + 2)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|index| f(index + 2)).collect();
     let (group_commitment, group_hint) = AkitaScheme::commit_group(
         &two_slot_setup,
         layout(7),
@@ -340,7 +340,7 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
         &mut transcript,
     )
     .expect("group proof should be produced");
-    let (_, one_slot_verifier) = setup_for(13, 1, layout(7));
+    let (_, one_slot_verifier) = setup_for(16, 1, layout(7));
     let mut transcript = Blake2bTranscript::new(b"akita-bb-cross-setup");
     expect_invalid_batch(
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
@@ -358,8 +358,8 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
 #[test]
 fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly = polynomial(13, 1);
-    let point: Vec<_> = (0..13).map(|index| f(index + 2)).collect();
+    let poly = polynomial(16, 1);
+    let point: Vec<_> = (0..16).map(|index| f(index + 2)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) =
         AkitaScheme::commit_group(&prover_setup, layout(7), std::slice::from_ref(&poly))
@@ -391,7 +391,7 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
             &proof,
             &mut transcript,
         ),
-        "must not declare a one-hot chunk size",
+        "invalid one-hot metadata",
     );
 }
 
@@ -442,8 +442,8 @@ fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
 
     // Same guard for the sparse-unit representation of a public one-hot
     // commitment (K=4 rides the dense-flavor sparse path).
-    let (sparse_setup, _) = setup_for(13, 1, layout(7));
-    let sparse_indices: Vec<_> = (0..(1usize << 13) / 4)
+    let (sparse_setup, _) = setup_for(14, 1, layout(7));
+    let sparse_indices: Vec<_> = (0..(1usize << 14) / 4)
         .map(|row| {
             if row % 5 == 4 {
                 None
@@ -455,16 +455,16 @@ fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
     let sparse_source = OneHotPolynomial::new(4, sparse_indices);
     let (sparse_commitment, sparse_hint) =
         AkitaScheme::commit(&sparse_source, &sparse_setup).expect("sparse commit should succeed");
-    let dense_13 = polynomial(13, 1);
-    let point_13: Vec<_> = (0..13).map(|index| f(index as u64 + 2)).collect();
+    let dense_14 = polynomial(14, 1);
+    let point_14: Vec<_> = (0..14).map(|index| f(index as u64 + 2)).collect();
     let sparse_statement =
-        single_statement(sparse_commitment, &point_13, dense_13.evaluate(&point_13));
+        single_statement(sparse_commitment, &point_14, dense_14.evaluate(&point_14));
     let mut transcript = Blake2bTranscript::new(b"akita-bb-dense-for-sparse");
     expect_invalid_batch(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &sparse_setup,
             sparse_statement,
-            batch_polynomials([&dense_13]),
+            batch_polynomials([&dense_14]),
             sparse_hint,
             &mut transcript,
         ),

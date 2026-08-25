@@ -11,7 +11,7 @@ use crate::{BundleSource, RowSource, WitnessBundle};
 impl<T: TraceSource + Clone> TraceBackend<T> {
     /// Materializes one cycle-domain witness column by walking the trace
     /// once; all per-witness logic lives on `W`.
-    pub(crate) fn materialize_cycle<F: Field, W: Extract + ToField>(
+    pub(crate) fn materialize_cycle<F: JoltField, W: Extract + ToField>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
         self.walk_cycles(|row, next, env| W::extract(row, next, env).map(ToField::to_field))
@@ -20,7 +20,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
     /// [`Self::materialize_cycle`] for indexed witness families; `index`
     /// selects the family member.
     pub(crate) fn materialize_cycle_indexed<
-        F: Field,
+        F: JoltField,
         W: ExtractIndexed<I> + ToField,
         I: Copy + Send + Sync,
     >(
@@ -48,7 +48,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         chunk_bits: usize,
     ) -> Result<Vec<F>, WitnessError>
     where
-        F: Field,
+        F: JoltField,
         W: ExtractIndexed<RaChunkSelector> + Into<Option<usize>>,
     {
         let selector = RaChunkSelector::new(index, chunks, chunk_bits)?;
@@ -68,6 +68,34 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
             if let Some(address) = address {
                 values[address * cycles + cycle] = F::one();
             }
+        }
+        Ok(values)
+    }
+
+    /// Materializes one `BalancedIncDigit`/`BalancedIncCarry` column of the
+    /// packed (lattice) witness as the flat address-major `(K x T)` grid,
+    /// `K = 2^committed_chunk_bits`. Every cycle is hot: padding rows encode
+    /// the zero delta as lane 0 of every digit and of the carry.
+    pub(crate) fn materialize_balanced_inc_one_hot<F: JoltField>(
+        &self,
+        lane: crate::witnesses::BalancedIncLane,
+    ) -> Result<Vec<F>, WitnessError> {
+        let chunk_bits = self.config.one_hot.committed_chunk_bits();
+        let cycles = checked_pow2(self.config.log_t)?;
+        let hot_addresses: Vec<usize> = self.walk_cycles(|row, next, env| {
+            crate::witnesses::BalancedIncHot::extract_indexed(lane, row, next, env).map(|hot| hot.0)
+        })?;
+        let mut values = vec![F::zero(); checked_pow2(self.one_hot_log_rows()?)?];
+        for (cycle, address) in hot_addresses.into_iter().enumerate() {
+            if address >> chunk_bits != 0 {
+                return Err(WitnessError::InvalidWitnessData {
+                    label: JOLT_VM_LABEL,
+                    reason: format!(
+                        "balanced-inc hot lane {address} outside the 2^{chunk_bits} lane domain"
+                    ),
+                });
+            }
+            values[address * cycles + cycle] = F::one();
         }
         Ok(values)
     }

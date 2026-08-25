@@ -1,6 +1,6 @@
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
@@ -38,7 +38,7 @@ use crate::{
 /// Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream` helper
 /// wires which upstream opening feeds which downstream input. Public because the
 /// prover's stage-5 recipe builds its batch inputs through the same wiring.
-pub fn stage5_input_values_from_upstream<F: Field>(
+pub fn stage5_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4OutputClaims<F>,
 ) -> Stage5InputClaims<F> {
@@ -52,7 +52,7 @@ pub fn stage5_input_values_from_upstream<F: Field>(
 /// Assemble the stage-5 consumed opening *points* from the upstream output-points
 /// aggregates. ZK-agnostic: both the clear and ZK stage-2/stage-4 outputs expose
 /// these, so the same wiring builds the input points in either mode.
-pub fn stage5_input_points_from_upstream<F: Field>(
+pub fn stage5_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
 ) -> Stage5InputPoints<F> {
@@ -77,7 +77,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_k = checked.ram_K.ilog2() as usize;
+    let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = formula_dimensions.trace;
 
     let sumchecks = Stage5Sumchecks {

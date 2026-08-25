@@ -3,6 +3,10 @@
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
+#[expect(
+    dead_code,
+    reason = "shared integration-test support is compiled independently per test file"
+)]
 mod support;
 
 use jolt_akita::{AkitaBackendFlavor, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16};
@@ -11,8 +15,8 @@ use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial, setup_for};
 
-/// The smallest dense dimension the folded-only planner schedules.
-const DENSE_VARS: usize = 13;
+/// The smallest dense dimension the checked-in catalog schedules.
+const DENSE_VARS: usize = 14;
 /// The smallest K=16 one-hot dimension (`log2(K) + 8`).
 const ONE_HOT_VARS: usize = 12;
 
@@ -155,17 +159,16 @@ fn open_batch_rejects_mismatched_claim_counts() {
             .expect("group commit should succeed");
 
     let mut transcript = Blake2bTranscript::new(b"akita-batch-mismatch");
-    let err = AkitaScheme::open_batch(
-        &[&poly_a, &poly_b],
+    let err = AkitaScheme::open_batch_from_hint(
         &point,
         &[poly_a.evaluate(&point)],
         &prover_setup,
         hint,
         &mut transcript,
     )
-    .expect_err("two polynomials with one evaluation must reject");
+    .expect_err("two committed polynomials with one evaluation must reject");
     assert!(
-        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("2 polynomials but 1 evaluations")),
+        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("2 polynomials but statement has 1 claims")),
         "unexpected error: {err}"
     );
 }

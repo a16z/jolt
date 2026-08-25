@@ -225,6 +225,10 @@ pub trait JoltField:
     fn from_u128(val: u128) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
+    /// Decode scalar challenge bytes using this field's transcript convention.
+    ///
+    /// Implementations must choose the protocol's byte order explicitly.
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self;
     fn inverse(&self) -> Option<Self>;
     fn to_u64(&self) -> Option<u64> {
         unimplemented!("conversion to u64 not implemented");

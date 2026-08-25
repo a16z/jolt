@@ -62,7 +62,7 @@ fn canonical_order_follows_field_declaration_order() {
     })
     .collect();
     assert!(
-        id_positions.windows(2).all(|pair| pair[0] < pair[1]),
+        id_positions.is_sorted_by(|a, b| a < b),
         "canonical_order ids out of declaration order: positions {id_positions:?}"
     );
 }

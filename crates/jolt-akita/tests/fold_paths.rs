@@ -6,6 +6,10 @@
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
+#[expect(
+    dead_code,
+    reason = "shared integration-test support is compiled independently per test file"
+)]
 mod support;
 
 use jolt_akita::{AkitaBatchProof, AkitaScheme};
@@ -104,7 +108,7 @@ fn deep_recursive_fold_schedule_roundtrips() {
 /// requires backend payloads to consume their byte buffers exactly.
 #[test]
 fn proof_payloads_with_trailing_garbage_reject() {
-    let fixture = fold_roundtrip(13, b"akita-fold-trailing");
+    let fixture = fold_roundtrip(14, b"akita-fold-trailing");
 
     for field in ["serialized_akita_proof", "serialized_akita_proof_shape"] {
         let mut value =

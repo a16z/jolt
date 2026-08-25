@@ -15,7 +15,7 @@
 //! Matrix MLE factors as:
 //! $$\tilde{M}(r_x, r_y) = \widetilde{eq}(r_x^{cyc}, r_y^{cyc}) \cdot \tilde{M}_{local}(r_x^{con}, r_y^{var})$$
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use serde::{Deserialize, Serialize};
 
@@ -25,31 +25,148 @@ use crate::constraint::ConstraintMatrices;
 ///
 /// Stores per-cycle sparse constraint matrices and dimensional metadata.
 /// All evaluation methods exploit the uniform (repeated-constraint) structure.
+///
+/// Dimensional invariants (power-of-two `num_cycles`, padded dimensions
+/// re-derivable from the matrices, non-overflowing `total_rows`/`total_cols`
+/// products) are established at construction. Deserialization routes through
+/// [`RawR1csKey`] and revalidates them; malformed input is rejected before
+/// any consumer sees the struct.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct R1csKey<F: Field> {
-    pub matrices: ConstraintMatrices<F>,
-    pub num_cycles: usize,
-    pub num_constraints_padded: usize,
-    pub num_vars_padded: usize,
+#[serde(
+    bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"),
+    try_from = "RawR1csKey<F>"
+)]
+pub struct R1csKey<F: JoltField> {
+    pub(crate) matrices: ConstraintMatrices<F>,
+    pub(crate) num_cycles: usize,
+    pub(crate) num_constraints_padded: usize,
+    pub(crate) num_vars_padded: usize,
 }
 
-impl<F: Field> R1csKey<F> {
+/// Deserialization helper; never exposed directly.
+#[derive(Deserialize)]
+#[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
+struct RawR1csKey<F: JoltField> {
+    matrices: ConstraintMatrices<F>,
+    num_cycles: usize,
+    num_constraints_padded: usize,
+    num_vars_padded: usize,
+}
+
+impl<F: JoltField> TryFrom<RawR1csKey<F>> for R1csKey<F> {
+    type Error = String;
+
+    fn try_from(raw: RawR1csKey<F>) -> Result<Self, Self::Error> {
+        let RawR1csKey {
+            matrices,
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        } = raw;
+        check_key_invariants(
+            &matrices,
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        )?;
+        Ok(Self {
+            matrices,
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        })
+    }
+}
+
+fn check_key_invariants<F: JoltField>(
+    matrices: &ConstraintMatrices<F>,
+    num_cycles: usize,
+    num_constraints_padded: usize,
+    num_vars_padded: usize,
+) -> Result<(), String> {
+    if !num_cycles.is_power_of_two() {
+        return Err(format!(
+            "num_cycles must be a power of two, got {num_cycles}"
+        ));
+    }
+    let expected_num_constraints_padded = matrices
+        .num_constraints
+        .checked_next_power_of_two()
+        .ok_or_else(|| {
+            format!(
+                "next power of two overflows usize for {} constraints",
+                matrices.num_constraints
+            )
+        })?;
+    if num_constraints_padded != expected_num_constraints_padded {
+        return Err(format!(
+            "num_constraints_padded = {num_constraints_padded}, expected {} (next power of two of {} constraints)",
+            expected_num_constraints_padded,
+            matrices.num_constraints,
+        ));
+    }
+    let expected_num_vars_padded =
+        matrices
+            .num_vars
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                format!(
+                    "next power of two overflows usize for {} variables",
+                    matrices.num_vars
+                )
+            })?;
+    if num_vars_padded != expected_num_vars_padded {
+        return Err(format!(
+            "num_vars_padded = {num_vars_padded}, expected {} (next power of two of {} variables)",
+            expected_num_vars_padded, matrices.num_vars,
+        ));
+    }
+    // Guarantees total_rows()/total_cols() cannot overflow downstream.
+    if num_cycles.checked_mul(num_constraints_padded).is_none() {
+        return Err(format!(
+            "total row count overflows usize: {num_cycles} cycles * {num_constraints_padded} padded constraints"
+        ));
+    }
+    if num_cycles.checked_mul(num_vars_padded).is_none() {
+        return Err(format!(
+            "total column count overflows usize: {num_cycles} cycles * {num_vars_padded} padded variables"
+        ));
+    }
+    Ok(())
+}
+
+impl<F: JoltField> R1csKey<F> {
     /// Creates a new key from per-cycle constraints and cycle count.
     ///
     /// # Panics
     ///
-    /// Panics if `num_cycles` is not a power of two.
+    /// Panics if `num_cycles` is not a power of two, or if a padded dimension
+    /// or total row/column count overflows `usize`.
+    #[expect(
+        clippy::expect_used,
+        reason = "constructor invariant violation indicates a programmer error"
+    )]
     pub fn new(matrices: ConstraintMatrices<F>, num_cycles: usize) -> Self {
-        assert!(
-            num_cycles.is_power_of_two(),
-            "num_cycles must be a power of two, got {num_cycles}"
-        );
+        let num_constraints_padded = matrices
+            .num_constraints
+            .checked_next_power_of_two()
+            .expect("R1csKey constraint dimension exceeds the maximum power of two");
+        let num_vars_padded = matrices
+            .num_vars
+            .checked_next_power_of_two()
+            .expect("R1csKey variable dimension exceeds the maximum power of two");
+        check_key_invariants(
+            &matrices,
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        )
+        .expect("R1csKey::new invariant violated");
         Self {
-            num_constraints_padded: matrices.num_constraints.next_power_of_two(),
-            num_vars_padded: matrices.num_vars.next_power_of_two(),
             matrices,
             num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
         }
     }
 
@@ -92,8 +209,16 @@ impl<F: Field> R1csKey<F> {
     ///
     /// $$\tilde{M}_{local}(r_c, r_v) = \sum_k \widetilde{eq}(k, r_c) \sum_{(j, \alpha)} \alpha \cdot \widetilde{eq}(j, r_v)$$
     pub fn evaluate_local_mles(&self, constraint_point: &[F], var_point: &[F]) -> (F, F, F) {
-        debug_assert_eq!(constraint_point.len(), self.num_constraint_vars());
-        debug_assert_eq!(var_point.len(), self.num_var_vars());
+        assert_eq!(
+            constraint_point.len(),
+            self.num_constraint_vars(),
+            "constraint point dimension mismatch"
+        );
+        assert_eq!(
+            var_point.len(),
+            self.num_var_vars(),
+            "variable point dimension mismatch"
+        );
 
         let eq_con = EqPolynomial::new(constraint_point.to_vec()).evaluations();
         let eq_var = EqPolynomial::new(var_point.to_vec()).evaluations();
@@ -102,36 +227,21 @@ impl<F: Field> R1csKey<F> {
         let mut b_eval = F::zero();
         let mut c_eval = F::zero();
 
-        for (k, ((a_row, b_row), c_row)) in self
+        for (((a_row, b_row), c_row), &w) in self
             .matrices
             .a
             .iter()
             .zip(&self.matrices.b)
             .zip(&self.matrices.c)
-            .enumerate()
+            .zip(&eq_con)
         {
-            let w = eq_con[k];
             if w.is_zero() {
                 continue;
             }
 
-            let mut a_row_eval = F::zero();
-            for &(j, coeff) in a_row {
-                a_row_eval += coeff * eq_var[j];
-            }
-            a_eval += w * a_row_eval;
-
-            let mut b_row_eval = F::zero();
-            for &(j, coeff) in b_row {
-                b_row_eval += coeff * eq_var[j];
-            }
-            b_eval += w * b_row_eval;
-
-            let mut c_row_eval = F::zero();
-            for &(j, coeff) in c_row {
-                c_row_eval += coeff * eq_var[j];
-            }
-            c_eval += w * c_row_eval;
+            a_eval += w * sparse_row_dot(a_row, &eq_var);
+            b_eval += w * sparse_row_dot(b_row, &eq_var);
+            c_eval += w * sparse_row_dot(c_row, &eq_var);
         }
 
         (a_eval, b_eval, c_eval)
@@ -144,8 +254,8 @@ impl<F: Field> R1csKey<F> {
     /// $$\tilde{M}(r_x, r_y) = \widetilde{eq}(r_x^{cyc}, r_y^{cyc}) \cdot \tilde{M}_{local}(r_x^{con}, r_y^{var})$$
     pub fn evaluate_matrix_mles(&self, r_x: &[F], r_y: &[F]) -> (F, F, F) {
         let cv = self.num_cycle_vars();
-        debug_assert_eq!(r_x.len(), cv + self.num_constraint_vars());
-        debug_assert_eq!(r_y.len(), cv + self.num_var_vars());
+        assert_eq!(r_x.len(), self.num_row_vars(), "r_x dimension mismatch");
+        assert_eq!(r_y.len(), self.num_col_vars(), "r_y dimension mismatch");
 
         let (rx_cycle, rx_con) = r_x.split_at(cv);
         let (ry_cycle, ry_var) = r_y.split_at(cv);
@@ -161,8 +271,17 @@ impl<F: Field> R1csKey<F> {
     /// For each constraint k, computes `dot(M_row_k, witness_evals)` weighted
     /// by the eq polynomial at the constraint point.
     pub fn evaluate_sparse_matvec(&self, constraint_point: &[F], witness_evals: &[F]) -> (F, F, F) {
-        debug_assert_eq!(constraint_point.len(), self.num_constraint_vars());
-        debug_assert!(witness_evals.len() >= self.matrices.num_vars);
+        assert_eq!(
+            constraint_point.len(),
+            self.num_constraint_vars(),
+            "constraint point dimension mismatch"
+        );
+        assert!(
+            witness_evals.len() >= self.matrices.num_vars,
+            "witness evals must cover all {} variables, got {}",
+            self.matrices.num_vars,
+            witness_evals.len()
+        );
 
         let eq_con = EqPolynomial::new(constraint_point.to_vec()).evaluations();
 
@@ -170,37 +289,21 @@ impl<F: Field> R1csKey<F> {
         let mut bz = F::zero();
         let mut cz = F::zero();
 
-        for (k, ((a_row, b_row), c_row)) in self
+        for (((a_row, b_row), c_row), &w) in self
             .matrices
             .a
             .iter()
             .zip(&self.matrices.b)
             .zip(&self.matrices.c)
-            .enumerate()
+            .zip(&eq_con)
         {
-            let w = eq_con[k];
             if w.is_zero() {
                 continue;
             }
 
-            let mut a_dot = F::zero();
-            for &(j, coeff) in a_row {
-                a_dot += coeff * witness_evals[j];
-            }
-
-            let mut b_dot = F::zero();
-            for &(j, coeff) in b_row {
-                b_dot += coeff * witness_evals[j];
-            }
-
-            let mut c_dot = F::zero();
-            for &(j, coeff) in c_row {
-                c_dot += coeff * witness_evals[j];
-            }
-
-            az += w * a_dot;
-            bz += w * b_dot;
-            cz += w * c_dot;
+            az += w * sparse_row_dot(a_row, witness_evals);
+            bz += w * sparse_row_dot(b_row, witness_evals);
+            cz += w * sparse_row_dot(c_row, witness_evals);
         }
 
         (az, bz, cz)
@@ -214,6 +317,7 @@ impl<F: Field> R1csKey<F> {
     /// column indices (already a power of two by construction).
     pub fn combined_row(&self, r_x: &[F], rho_a: F, rho_b: F, rho_c: F) -> Vec<F> {
         let cv = self.num_cycle_vars();
+        assert_eq!(r_x.len(), self.num_row_vars(), "r_x dimension mismatch");
         let (rx_cycle, rx_con) = r_x.split_at(cv);
 
         let eq_con = EqPolynomial::new(rx_con.to_vec()).evaluations();
@@ -221,15 +325,18 @@ impl<F: Field> R1csKey<F> {
 
         // Build combined local row: M_local(r_con, v) for each variable v
         let mut local_row = vec![F::zero(); self.num_vars_padded];
-        for (k, ((a_row, b_row), c_row)) in self
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "column indices are below num_vars <= num_vars_padded = local_row.len() by the ConstraintMatrices invariant"
+        )]
+        for (((a_row, b_row), c_row), &w) in self
             .matrices
             .a
             .iter()
             .zip(&self.matrices.b)
             .zip(&self.matrices.c)
-            .enumerate()
+            .zip(&eq_con)
         {
-            let w = eq_con[k];
             if w.is_zero() {
                 continue;
             }
@@ -247,14 +354,13 @@ impl<F: Field> R1csKey<F> {
         let v_pad = self.num_vars_padded;
         let mut combined = vec![F::zero(); self.total_cols()];
 
-        let fill_cycle = |(c, chunk): (usize, &mut [F])| {
-            let eq_c = eq_cycle[c];
+        let fill_cycle = |(chunk, eq_c): (&mut [F], &F)| {
             if eq_c.is_zero() {
                 return;
             }
-            for (v, &local_val) in local_row.iter().enumerate() {
+            for (slot, &local_val) in chunk.iter_mut().zip(&local_row) {
                 if !local_val.is_zero() {
-                    chunk[v] = eq_c * local_val;
+                    *slot = *eq_c * local_val;
                 }
             }
         };
@@ -264,23 +370,43 @@ impl<F: Field> R1csKey<F> {
             use rayon::prelude::*;
             combined
                 .par_chunks_mut(v_pad)
-                .enumerate()
+                .zip(eq_cycle.par_iter())
                 .for_each(fill_cycle);
         }
         #[cfg(not(feature = "parallel"))]
         {
-            combined.chunks_mut(v_pad).enumerate().for_each(fill_cycle);
+            combined
+                .chunks_mut(v_pad)
+                .zip(eq_cycle.iter())
+                .for_each(fill_cycle);
         }
 
         combined
     }
 }
 
+/// Dot product of a sparse row with a dense evaluation table.
+///
+/// Callers guarantee the table covers `num_vars` entries; every column index
+/// is below `num_vars` by the [`ConstraintMatrices`] invariant.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "column indices are below num_vars by the ConstraintMatrices invariant and tables cover num_vars"
+)]
+fn sparse_row_dot<F: JoltField>(row: &[(usize, F)], table: &[F]) -> F {
+    let mut acc = F::zero();
+    for &(j, coeff) in row {
+        acc += coeff * table[j];
+    }
+    acc
+}
+
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr, Ring};
     use num_traits::{One, Zero};
 
     /// x * x = y, y * x = z — 2 constraints, 4 vars [1, x, y, z]
@@ -297,6 +423,67 @@ mod tests {
 
     fn test_key(num_cycles: usize) -> R1csKey<Fr> {
         R1csKey::new(test_matrices(), num_cycles)
+    }
+
+    #[test]
+    #[should_panic(expected = "power of two")]
+    fn new_rejects_non_power_of_two_cycles() {
+        let _ = R1csKey::new(test_matrices(), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "overflows usize")]
+    fn new_rejects_total_size_overflow() {
+        // 2 constraints pad to 2; (1 << 63) * 2 overflows usize.
+        let _ = R1csKey::new(test_matrices(), 1 << 63);
+    }
+
+    fn raw_key(
+        num_cycles: usize,
+        num_constraints_padded: usize,
+        num_vars_padded: usize,
+    ) -> RawR1csKey<Fr> {
+        RawR1csKey {
+            matrices: test_matrices(),
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        }
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test should fail loudly")]
+    fn try_from_accepts_consistent_dimensions() {
+        let key = R1csKey::try_from(raw_key(4, 2, 4)).expect("consistent raw key");
+        assert_eq!(key.num_cycles, 4);
+        assert_eq!(key.num_constraints_padded, 2);
+        assert_eq!(key.num_vars_padded, 4);
+    }
+
+    #[test]
+    fn try_from_rejects_dimensional_invariant_violations() {
+        // Zero num_cycles would make num_cycle_vars() return 64.
+        assert!(R1csKey::try_from(raw_key(0, 2, 4)).is_err());
+        assert!(R1csKey::try_from(raw_key(3, 2, 4)).is_err());
+        // Padded dimensions inconsistent with the embedded matrices.
+        assert!(R1csKey::try_from(raw_key(4, 1, 4)).is_err());
+        assert!(R1csKey::try_from(raw_key(4, 4, 4)).is_err());
+        assert!(R1csKey::try_from(raw_key(4, 2, 2)).is_err());
+        // total_rows()/total_cols() products must not overflow.
+        assert!(R1csKey::try_from(raw_key(1 << 63, 2, 4)).is_err());
+    }
+
+    #[test]
+    fn try_from_rejects_padded_dimension_overflow() {
+        let matrices = ConstraintMatrices::<Fr>::new(0, usize::MAX, vec![], vec![], vec![]);
+        let raw = RawR1csKey {
+            matrices,
+            num_cycles: 1,
+            num_constraints_padded: 1,
+            num_vars_padded: 0,
+        };
+
+        assert!(R1csKey::try_from(raw).is_err());
     }
 
     #[test]
@@ -322,6 +509,48 @@ mod tests {
         // Constraint 0, var 1 → A has (1, 1), eq([0,1], [0,1]) = 1, so A(0, [0,1]) = 1
         let (a, _, _) = key.evaluate_local_mles(&[Fr::zero()], &[Fr::zero(), Fr::one()]);
         assert_eq!(a, Fr::one());
+    }
+
+    #[test]
+    #[should_panic(expected = "r_x dimension mismatch")]
+    fn matrix_mles_reject_short_r_x() {
+        let key = test_key(4);
+        let r_x = vec![Fr::one(); key.num_row_vars() - 1];
+        let r_y = vec![Fr::one(); key.num_col_vars()];
+        let _ = key.evaluate_matrix_mles(&r_x, &r_y);
+    }
+
+    #[test]
+    #[should_panic(expected = "r_y dimension mismatch")]
+    fn matrix_mles_reject_long_r_y() {
+        let key = test_key(4);
+        let r_x = vec![Fr::one(); key.num_row_vars()];
+        let r_y = vec![Fr::one(); key.num_col_vars() + 1];
+        let _ = key.evaluate_matrix_mles(&r_x, &r_y);
+    }
+
+    #[test]
+    #[should_panic(expected = "constraint point dimension mismatch")]
+    fn sparse_matvec_rejects_wrong_constraint_point() {
+        let key = test_key(1);
+        let w = vec![Fr::one(); 4];
+        let _ = key.evaluate_sparse_matvec(&[Fr::zero(), Fr::zero()], &w);
+    }
+
+    #[test]
+    #[should_panic(expected = "witness evals must cover")]
+    fn sparse_matvec_rejects_short_witness_evals() {
+        let key = test_key(1);
+        let w = vec![Fr::one(); key.matrices.num_vars - 1];
+        let _ = key.evaluate_sparse_matvec(&[Fr::zero()], &w);
+    }
+
+    #[test]
+    #[should_panic(expected = "r_x dimension mismatch")]
+    fn combined_row_rejects_wrong_r_x() {
+        let key = test_key(4);
+        let r_x = vec![Fr::one(); key.num_cycle_vars()];
+        let _ = key.combined_row(&r_x, Fr::one(), Fr::one(), Fr::one());
     }
 
     #[test]

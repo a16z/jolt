@@ -5,6 +5,10 @@
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
+#[expect(
+    dead_code,
+    reason = "shared integration-test support is compiled independently per test file"
+)]
 mod support;
 
 use jolt_akita::{AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16};

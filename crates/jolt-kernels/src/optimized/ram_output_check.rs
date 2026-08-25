@@ -30,7 +30,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -46,7 +46,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -98,7 +98,7 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     }
 }
 
-struct OutputCheckKernel<F: Field> {
+struct OutputCheckKernel<F: JoltField> {
     progress: RoundProgress,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
@@ -117,7 +117,7 @@ crate::optimized::impl_field_allocative!(OutputCheckKernel, |kernel| {
         + vec_heap_bytes(&kernel.bind_scratch)
 });
 
-impl<F: Field> OutputCheckKernel<F> {
+impl<F: JoltField> OutputCheckKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
     /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
     fn message(
@@ -174,7 +174,7 @@ impl<F: Field> OutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OutputCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -197,7 +197,7 @@ impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OutputCheckKernel<F> {
     type Relation = RamOutputCheck<F>;
 
     fn output_claims(
@@ -245,7 +245,7 @@ mod tests {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, ReadWriteDimensions};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::execution::{JoltProgram, MemoryImage, OwnedTrace, TraceOutput, TraceRow};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, PublicIoMemory, RAMPreprocessing,
@@ -333,7 +333,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory)),
+            TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory), None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend, public_memory)

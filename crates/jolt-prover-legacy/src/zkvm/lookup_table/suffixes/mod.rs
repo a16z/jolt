@@ -1,5 +1,3 @@
-use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
-use crate::zkvm::lookup_table::suffixes::change_divisor_w::ChangeDivisorWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift_w::LeftShiftWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift_w_helper::LeftShiftWHelperSuffix;
@@ -15,7 +13,10 @@ use lsb::LsbSuffix;
 use lt::LessThanSuffix;
 use num_derive::FromPrimitive;
 use or::OrSuffix;
+use pext::PextSuffix;
+use pext_helper::PextHelperSuffix;
 use pow2::Pow2Suffix;
+use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8W;
 use right_is_zero::RightOperandIsZeroSuffix;
@@ -26,6 +27,7 @@ use right_shift_w::RightShiftWSuffix;
 use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use sign_extension_w::SignExtensionWSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndSuffix;
@@ -36,13 +38,14 @@ use one::OneSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+use window_sign::WindowSignSuffix;
+use window_sign_pow2::WindowSignPow2Suffix;
+use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
 
 pub mod and;
-pub mod change_divisor;
-pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
@@ -58,7 +61,10 @@ pub mod notand;
 pub mod one;
 pub mod or;
 pub mod overflow_bits_zero;
+pub mod pext;
+pub mod pext_helper;
 pub mod pow2;
+pub mod pow2_offset_w;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -72,8 +78,12 @@ pub mod right_shift_w_helper;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod sign_extension_w;
 pub mod two_lsb;
 pub mod upper_word;
+pub mod window_sign;
+pub mod window_sign_pow2;
+pub mod x31_y0;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotw;
@@ -95,8 +105,6 @@ pub enum Suffixes {
     Or,
     RightOperand,
     RightOperandW,
-    ChangeDivisor,
-    ChangeDivisorW,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -131,6 +139,16 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    Pow2OffsetW,
+    Pext,
+    PextHelper,
+    WindowSign,
+    WindowSignPow2,
+    XorRotW22,
+    XorRotW19,
+    XorRotW6,
+    SignExtensionW,
+    X31Y0,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -154,8 +172,7 @@ impl Suffixes {
                 | Suffixes::TwoLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
-                | Suffixes::ChangeDivisor
-                | Suffixes::ChangeDivisorW
+                | Suffixes::WindowSign
         )
     }
 
@@ -170,8 +187,6 @@ impl Suffixes {
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
             Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::<XLEN>::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::<XLEN>::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::<XLEN>::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::<XLEN>::suffix_mle(b),
@@ -208,6 +223,16 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::Pow2OffsetW => Pow2OffsetWSuffix::suffix_mle(b),
+            Suffixes::Pext => PextSuffix::suffix_mle(b),
+            Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
+            Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
+            Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::XorRotW22 => XorRotWSuffix::<22>::suffix_mle(b),
+            Suffixes::XorRotW19 => XorRotWSuffix::<19>::suffix_mle(b),
+            Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
+            Suffixes::SignExtensionW => SignExtensionWSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::X31Y0 => X31Y0Suffix::<XLEN>::suffix_mle(b),
         }
     }
 }

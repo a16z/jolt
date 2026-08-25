@@ -30,7 +30,7 @@
 //! shared trace columns and sparse matrix. Each kernel module documents its
 //! own port; [`JoltBackend::optimized`] wires them.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use crate::commitment::ModeStreamingCommitment;
@@ -53,7 +53,7 @@ use self::spartan_shift::OptimizedSpartanShift;
 #[cfg(feature = "allocative")]
 macro_rules! impl_field_allocative {
     ($type:ident, |$value:ident| $heap:block) => {
-        impl<F: jolt_field::Field> allocative::Allocative for $type<F> {
+        impl<F: jolt_field::JoltField> allocative::Allocative for $type<F> {
             fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
                 let mut visitor = visitor.enter_self_sized::<Self>();
                 let $value = self;
@@ -127,7 +127,7 @@ pub struct OptimizedBackend;
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The optimized backend: [`JoltBackend::reference`] with every slot this

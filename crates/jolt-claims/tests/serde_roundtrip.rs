@@ -14,7 +14,7 @@ use jolt_claims::protocols::jolt::relations::spartan::{
     ProductUniskipOutputClaims, SpartanShiftOutputClaims,
 };
 use jolt_claims::{OutputClaims, SumcheckDomain};
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use serde::de::DeserializeOwned;

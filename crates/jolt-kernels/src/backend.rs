@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 use jolt_verifier::stages::relations::{
@@ -53,11 +53,21 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
+use jolt_sumcheck::RoundScheduler;
+
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::uniskip::UniskipKernel;
 use crate::KernelError;
+
+/// Factory behind [`JoltBackend::round_scheduler`]: stage fronts mint one
+/// scheduler per stage via `build`. Takes [`ProofSession`] so a device
+/// traversal shares the carry its kernels park in `prepare`, and so
+/// per-proof state cannot leak onto the long-lived backend.
+pub trait BuildRoundScheduler<F: JoltField> {
+    fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
+}
 
 /// The universal backend trait behind [`JoltBackend`]'s naive-served slots:
 /// mint the [`SumcheckKernel`] that proves `R`, from the proof session, the
@@ -87,7 +97,7 @@ use crate::KernelError;
 /// surfaces the same distant way.
 pub trait PrepareKernel<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -109,15 +119,17 @@ where
 /// `Box<dyn PrepareKernel<F, R>>`, reached by type through the
 /// `#[derive(KernelSlots)]`-emitted delegating [`PrepareKernel`] impls; the
 /// remaining slots are the bespoke non-sumcheck duties (commit streaming, the
-/// uni-skip fronts, the advice opening evaluation, the joint opening).
+/// uni-skip fronts, the advice opening evaluation, the joint opening, and the
+/// round-traversal factory).
 #[derive(KernelSlots)]
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
+    pub round_scheduler: Box<dyn BuildRoundScheduler<F>>,
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
     pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,
@@ -159,7 +171,7 @@ where
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// Open the proof-scoped session that slot state lives in. One session
@@ -276,13 +288,13 @@ pub struct ProofSession {
 impl ProofSession {
     /// Retain the proof's witness plane for kernels whose state outlives
     /// their `prepare` borrow.
-    pub fn set_witness<F: Field>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
+    pub fn set_witness<F: JoltField>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
         self.witness = Some(Box::new(witness));
     }
 
     /// The retained witness plane for `F`, when the proof was started from
     /// an owned plane.
-    pub fn witness<F: Field>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
+    pub fn witness<F: JoltField>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
         self.witness.as_ref()?.downcast_ref()
     }
 
@@ -385,7 +397,7 @@ mod kernel_slots_derive_tests {
     // delegation is unrepresentable.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
-    struct ToyRegistry<F: Field> {
+    struct ToyRegistry<F: JoltField> {
         label: String,
         shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
         slot_count: usize,

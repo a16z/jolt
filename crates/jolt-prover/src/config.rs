@@ -10,13 +10,28 @@
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
-use jolt_field::FieldCore;
+use jolt_field::JoltField;
 use jolt_program::execution::{RamAccess, TraceRow};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use crate::ProverError;
 
 /// The full instruction lookup key width: two `XLEN`-bit operands.
 const LOOKUP_ADDRESS_BITS: usize = 2 * XLEN;
+#[cfg(feature = "parallel")]
+const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
+
+/// The minimum padded trace length — the compiled protocol's PCS floor
+/// (legacy's `PCS::MIN_PADDED_TRACE_LENGTH`). Dory needs `T >= K^(1/D)`
+/// (256); Akita's folded-only protocol cannot schedule the K=16
+/// `OneHotTrace` group below 16 variables, and column arity is
+/// `log_k_chunk + log_T`, so the packed pipeline pads every trace to at
+/// least 2^12 cycles.
+#[cfg(not(feature = "akita"))]
+const MIN_PADDED_TRACE_LENGTH: usize = 256;
+#[cfg(feature = "akita")]
+const MIN_PADDED_TRACE_LENGTH: usize = 1 << 12;
 
 /// The proof-shape configuration for one proving run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,15 +58,16 @@ impl ProverConfig {
     /// final no-op), size RAM to the highest touched (remapped) address or the
     /// program image extent, and pick the chunking policies from `log_T`.
     #[expect(non_snake_case)]
-    pub fn derive<F: FieldCore>(
+    #[tracing::instrument(skip_all, name = "ProverConfig::derive", fields(rows = rows.len()))]
+    pub fn derive<F: JoltField>(
         rows: &[TraceRow],
         memory_layout: &MemoryLayout,
         min_bytecode_address: u64,
         program_image_len_words: usize,
         max_padded_trace_length: usize,
     ) -> Result<Self, ProverError<F>> {
-        let trace_length = if rows.len() < 256 {
-            256
+        let trace_length = if rows.len() < MIN_PADDED_TRACE_LENGTH {
+            MIN_PADDED_TRACE_LENGTH
         } else {
             (rows.len() + 1).next_power_of_two()
         };
@@ -61,18 +77,25 @@ impl ProverConfig {
             });
         }
 
-        let touched = rows
-            .iter()
-            .filter_map(|row| {
-                let address = match row.ram_access {
-                    RamAccess::Read(read) => read.address,
-                    RamAccess::Write(write) => write.address,
-                    RamAccess::NoOp => 0,
-                };
-                remap_address(address, memory_layout)
-            })
-            .max()
-            .unwrap_or(0);
+        let touched_address = |row: &TraceRow| {
+            let address = match row.ram_access {
+                RamAccess::Read(read) => read.address,
+                RamAccess::Write(write) => write.address,
+                RamAccess::NoOp => 0,
+            };
+            remap_address(address, memory_layout)
+        };
+        #[cfg(feature = "parallel")]
+        let touched = if rows.len() >= PARALLEL_DERIVE_MIN_ROWS {
+            rows.par_iter()
+                .filter_map(touched_address)
+                .max()
+                .unwrap_or(0)
+        } else {
+            rows.iter().filter_map(touched_address).max().unwrap_or(0)
+        };
+        #[cfg(not(feature = "parallel"))]
+        let touched = rows.iter().filter_map(touched_address).max().unwrap_or(0);
         let image_end = remap_address(min_bytecode_address, memory_layout).unwrap_or(0)
             + program_image_len_words as u64
             + 1;

@@ -61,7 +61,7 @@ use jolt_claims::protocols::jolt::{
     BooleanityPublic, JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::{OutputClaims, Source, SymbolicSumcheck};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
     try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
 };
@@ -99,7 +99,7 @@ impl ColumnSelector {
     /// The layout's chunk selectors, in canonical polynomial order, with the
     /// witness shapes validated up front (mirroring the reference kernel's
     /// size checks).
-    fn for_layout<F: Field>(
+    fn for_layout<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         dimensions: BooleanityDimensions,
     ) -> Result<Vec<ColumnSelector>, KernelError<F>> {
@@ -158,7 +158,7 @@ impl ColumnSelector {
 /// folds them by `e_out` into the running partials. Equals the reference's
 /// per-chunk cycle masses exactly — same terms, regrouped through the
 /// `eq = E_out ⊗ E_in` factorization.
-fn cycle_pushforward<F: Field>(
+fn cycle_pushforward<F: JoltField>(
     rows: &[InstructionCycleRow],
     selectors: &[ColumnSelector],
     k_chunk: usize,
@@ -170,7 +170,7 @@ fn cycle_pushforward<F: Field>(
     let e_in = eq.e_in();
     let in_len = e_in.len();
 
-    struct State<F: Field> {
+    struct State<F: JoltField> {
         /// Cross-block `Σ e_out · reduce(block)` lanes, still deferred.
         partial: Vec<Vec<F::Accumulator>>,
         /// Within-block unreduced `Σ e_in` buckets, cleared per block.
@@ -240,7 +240,7 @@ fn cycle_pushforward<F: Field>(
 /// Slot front for the stage-6a booleanity address phase.
 pub struct OptimizedBooleanityAddress;
 
-impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleanityAddress {
+impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleanityAddress {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -286,7 +286,7 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleani
 /// plain multilinear; the squared term binds `B_i[k]` (same initial masses)
 /// with squared weights, because binding squares the one-hot's accumulated
 /// eq factor. The initial `A = B` makes the input claim exactly zero.
-struct OptimizedBooleanityAddressKernel<F: Field> {
+struct OptimizedBooleanityAddressKernel<F: JoltField> {
     progress: RoundProgress,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
@@ -308,7 +308,7 @@ crate::optimized::impl_field_allocative!(OptimizedBooleanityAddressKernel, |kern
         + poly_heap_bytes(&kernel.eq_address)
 });
 
-impl<F: Field> OptimizedBooleanityAddressKernel<F> {
+impl<F: JoltField> OptimizedBooleanityAddressKernel<F> {
     fn new(rounds: usize, gamma: F, reference_address: &[F], masses: Vec<Vec<F>>) -> Self {
         let linear: Vec<Polynomial<F>> = masses.into_iter().map(Polynomial::new).collect();
         let squared: Vec<Vec<F>> = linear.iter().map(|table| table.evals().to_vec()).collect();
@@ -341,7 +341,7 @@ impl<F: Field> OptimizedBooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OptimizedBooleanityAddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -402,7 +402,7 @@ impl<F: Field> ProveRounds<F> for OptimizedBooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityAddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityAddressKernel<F> {
     type Relation = BooleanityAddressPhase<F>;
 
     fn output_claims(
@@ -432,7 +432,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityAddressKernel<F> {
 /// Slot front for the stage-6b booleanity cycle phase.
 pub struct OptimizedBooleanityCycle;
 
-impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
+impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -533,7 +533,7 @@ impl ChunkIndexSource for BooleanityChunks {
     }
 }
 
-struct OptimizedBooleanityCycleKernel<F: Field> {
+struct OptimizedBooleanityCycleKernel<F: JoltField> {
     progress: RoundProgress,
     /// Split-eq over the reference cycle, scaled by
     /// `eq(r_address, reference_address)` — together the reference's
@@ -558,7 +558,7 @@ crate::optimized::impl_field_allocative!(OptimizedBooleanityCycleKernel, |kernel
         + vec_heap_bytes(&kernel.gamma_powers_inv)
 });
 
-impl<F: Field> OptimizedBooleanityCycleKernel<F> {
+impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.eq.bind(challenge);
         self.tables.bind(challenge);
@@ -566,7 +566,7 @@ impl<F: Field> OptimizedBooleanityCycleKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -584,7 +584,7 @@ impl<F: Field> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         let gamma_powers = &self.gamma_powers;
         let num_polys = gamma_powers.len();
 
-        struct Scratch<F: Field> {
+        struct Scratch<F: JoltField> {
             /// Within-block `Σ e_in · (constant, leading)` lanes, deferred.
             lanes: [F::Accumulator; 2],
             pairs: Vec<(F, F)>,
@@ -638,7 +638,7 @@ impl<F: Field> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
     type Relation = Booleanity<F>;
 
     fn output_claims(
@@ -848,7 +848,7 @@ pub(crate) mod testing {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
 
@@ -875,7 +875,7 @@ pub(crate) mod testing {
 
     /// Deterministic nonzero challenge sequence for lockstep test drives.
     pub(crate) fn test_challenge(round: usize) -> Fr {
-        use jolt_field::FromPrimitiveInt;
+        use jolt_field::Ring;
         Fr::from_u64(0x1234_5678 + 1000 * round as u64 + 7)
     }
 }
@@ -885,7 +885,7 @@ pub(crate) mod testing {
 mod tests {
     use jolt_claims::protocols::jolt::JoltChallengeId;
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheckChallenges;
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;

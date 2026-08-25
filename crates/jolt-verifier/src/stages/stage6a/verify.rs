@@ -171,7 +171,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -193,6 +193,7 @@ mod tests {
                     stage_cycle_points: Default::default(),
                     register_read_write_point: Vec::new(),
                     register_val_evaluation_point: Vec::new(),
+                    fused_inc_cycle_points: Vec::new(),
                 },
                 0,
             ),
@@ -269,7 +270,11 @@ mod tests {
     /// committed chunk width keeps its reversed tail and draws no pad — only
     /// the booleanity gamma squeeze follows the bytecode member's six.
     #[test]
-    #[expect(clippy::unwrap_used)]
+    #[expect(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test fixture slices its own three-entry address"
+    )]
     fn draw_challenges_truncates_wide_reference_address_without_pad_draws() {
         let address = vec![fr(11), fr(12), fr(13)];
         let sumchecks = sumchecks(address.clone(), vec![fr(21)]);

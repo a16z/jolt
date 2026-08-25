@@ -17,7 +17,7 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RamRafEvaluationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -26,7 +26,7 @@ use crate::VerifierError;
 
 /// Wire the consumed RAM address opening *value* from stage 1's outer sumcheck.
 /// (Verifier-side constructor for the moved [`RamRafEvaluationInputClaims`].)
-pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
+pub fn ram_raf_evaluation_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> RamRafEvaluationInputClaims<F> {
     RamRafEvaluationInputClaims {
@@ -35,7 +35,7 @@ pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RamRafEvaluation<F: Field> {
+pub struct RamRafEvaluation<F: JoltField> {
     symbolic: relations::ram::RafEvaluation,
     read_write_dimensions: ReadWriteDimensions,
     ram_log_k: usize,
@@ -43,7 +43,7 @@ pub struct RamRafEvaluation<F: Field> {
     tau_low: Vec<F>,
 }
 
-impl<F: Field> RamRafEvaluation<F> {
+impl<F: JoltField> RamRafEvaluation<F> {
     pub fn new(
         read_write_dimensions: ReadWriteDimensions,
         raf_dimensions: RamRafEvaluationDimensions,
@@ -68,7 +68,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> RamRafEvaluation<F> {
+impl<F: JoltField> RamRafEvaluation<F> {
     pub fn read_write_dimensions(&self) -> ReadWriteDimensions {
         self.read_write_dimensions
     }
@@ -86,7 +86,7 @@ impl<F: Field> RamRafEvaluation<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamRafEvaluation<F> {
     type Symbolic = relations::ram::RafEvaluation;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -137,14 +137,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
             // address (`identity(r_address) * 8 + lowest_address`).
             RamRafEvaluationPublic::UnmapAddress => {
                 let point = output_points.ram_ra();
-                if point.len() < self.ram_log_k {
-                    return Err(public_input_failed(format!(
+                let address = point.get(..self.ram_log_k).ok_or_else(|| {
+                    public_input_failed(format!(
                         "RAM RAF opening point is too short: expected at least {}, got {}",
                         self.ram_log_k,
                         point.len()
-                    )));
-                }
-                let address = &point[..self.ram_log_k];
+                    ))
+                })?;
                 Ok(
                     IdentityPolynomial::new(self.ram_log_k).evaluate(address) * F::from_u64(8)
                         + F::from_u64(self.lowest_address),
@@ -160,11 +159,11 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
 
-    /// The `instance_point_offset` override must reproduce the legacy phase-1
-    /// slicing `(batch_num_vars - (log_t + log_k)) + phase1_num_rounds` the
-    /// pre-port verifier computed via `try_round_offset(log_t + log_k)`.
+    /// The `instance_point_offset` override must place the relation's own
+    /// rounds exactly at the batch tail, and reject batch vectors shorter
+    /// than the active stage-2 window.
     #[test]
-    fn instance_point_offset_matches_legacy_phase1_formula() {
+    fn instance_point_offset_spans_the_batch_tail() {
         for (log_t, log_k, phase1, phase2) in [(4usize, 3usize, 2usize, 1usize), (6, 5, 3, 2)] {
             let dimensions = ReadWriteDimensions::new(log_t, log_k, phase1, phase2);
             let raf_dimensions = RamRafEvaluationDimensions::try_from(dimensions).unwrap();
@@ -173,9 +172,7 @@ mod tests {
             // The real batch has `log_t + log_k` variables (the RAM read-write
             // leader); also probe a padded vector.
             for batch_num_vars in [log_t + log_k, log_t + log_k + 5] {
-                let legacy = (batch_num_vars - (log_t + log_k)) + phase1;
                 let offset = relation.instance_point_offset(batch_num_vars).unwrap();
-                assert_eq!(offset, legacy);
                 assert_eq!(offset + relation.rounds(), batch_num_vars);
             }
             assert!(relation.instance_point_offset(log_t + log_k - 1).is_err());

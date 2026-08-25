@@ -1,6 +1,6 @@
 //! Spartan product univariate-skip symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::dimensions::{
@@ -80,13 +80,13 @@ impl SymbolicSumcheck for ProductUniskip {
         PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_uniskip_weight(0) * opening(product_outer_opening())
             + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
             + product_uniskip_weight(2) * opening(product_should_jump_outer_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(product_uniskip_opening())
     }
 }
@@ -98,7 +98,7 @@ mod tests {
         PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
     };
     use crate::protocols::jolt::SpartanProductVirtualizationPublic;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     /// The input claim is the Lagrange-reweighted sum of the three consumed
     /// Spartan-outer openings: `w0*product + w1*should_branch + w2*should_jump`.

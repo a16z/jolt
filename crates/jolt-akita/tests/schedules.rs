@@ -6,9 +6,9 @@
 //! The Jolt-owned schedule catalogs: coverage and drift guards.
 
 use jolt_akita::schedules::emit::{
-    family_specs, keys, K16_NUM_POLYS, K16_NUM_VARS, K256_NUM_POLYS, K256_NUM_VARS,
+    family_specs, keys, K16_NUM_VARS, K256_NUM_VARS, ONE_HOT_TRACE_NUM_POLYS,
 };
-use jolt_akita::schedules::{jolt_fp128_d64_onehot_k16_table, jolt_fp128_d64_onehot_k256_table};
+use jolt_akita::schedules::{jolt_fp128_onehot_k16_table, jolt_fp128_onehot_k256_table};
 
 /// Every key of a family grid resolves from its checked-in table (binary
 /// lookup over sorted entries) — no planner-DP fallback for reachable
@@ -18,13 +18,13 @@ use jolt_akita::schedules::{jolt_fp128_d64_onehot_k16_table, jolt_fp128_d64_oneh
 fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     for (table, num_polys, num_vars) in [
         (
-            jolt_fp128_d64_onehot_k16_table().expect("K16 catalog is checked in"),
-            K16_NUM_POLYS,
+            jolt_fp128_onehot_k16_table().expect("K16 catalog is checked in"),
+            ONE_HOT_TRACE_NUM_POLYS,
             K16_NUM_VARS,
         ),
         (
-            jolt_fp128_d64_onehot_k256_table().expect("K256 catalog is checked in"),
-            K256_NUM_POLYS,
+            jolt_fp128_onehot_k256_table().expect("K256 catalog is checked in"),
+            ONE_HOT_TRACE_NUM_POLYS,
             K256_NUM_VARS,
         ),
     ] {
@@ -47,30 +47,44 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     }
 }
 
+/// Drops the module's leading import boilerplate — everything through the
+/// closing `};` of the `use super::{…};` block. rustfmt sorts and wraps that
+/// list, so it cannot token-match the emitter's fixed header; the schedule
+/// data below it is what this oracle guards.
+fn strip_import_header(source: &str) -> &str {
+    source
+        .find("use super::{")
+        .and_then(|start| {
+            let rest = &source[start..];
+            rest.find("};").map(|end| &rest[end + 2..])
+        })
+        .unwrap_or(source)
+}
+
 /// The emit specs are the single source of truth for what the generator
-/// writes; each checked-in catalog must be exactly its family's grid — the
-/// forward inclusion is checked above, so a length match plus a
+/// writes; each checked-in one-hot catalog must be exactly its family's grid —
+/// the forward inclusion is checked above, so a length match plus a
 /// reverse-inclusion sweep rules out stale or duplicated entries.
 #[test]
 fn emit_specs_and_checked_in_catalogs_agree_exactly() {
-    let [k16_spec, k256_spec] = family_specs(std::path::PathBuf::new());
+    let [k16_spec, k256_spec, _dense_spec] = family_specs(std::path::PathBuf::new());
     let cases = [
         (
             k16_spec,
-            "jolt_fp128_d64_onehot_k16",
-            jolt_fp128_d64_onehot_k16_table().expect("K16 catalog is checked in"),
+            "jolt_fp128_onehot_k16",
+            jolt_fp128_onehot_k16_table().expect("K16 catalog is checked in"),
         ),
         (
             k256_spec,
-            "jolt_fp128_d64_onehot_k256",
-            jolt_fp128_d64_onehot_k256_table().expect("K256 catalog is checked in"),
+            "jolt_fp128_onehot_k256",
+            jolt_fp128_onehot_k256_table().expect("K256 catalog is checked in"),
         ),
     ];
     for (spec, module_name, table) in cases {
         assert_eq!(spec.module_name, module_name, "spec order regressed");
         assert!(
-            !spec.emit_group_batch && spec.group_batch_keys.is_empty(),
-            "Jolt families emit scalar single-group schedules only"
+            spec.group_batch_keys.is_empty(),
+            "Jolt one-hot families emit scalar single-group schedules only"
         );
         assert_eq!(
             spec.keys.len(),
@@ -80,7 +94,7 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
         for entry in table.entries {
             assert!(
                 entry.root.precommitted_groups.is_empty(),
-                "{module_name}: Jolt catalogs are scalar-only"
+                "{module_name}: Jolt one-hot catalogs are scalar-only"
             );
             assert!(
                 spec.keys.contains(&entry.root.final_group.layout),
@@ -105,6 +119,7 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
 /// detects every semantic change while ignoring layout. The checked-in file's
 /// formatting itself is enforced by the workspace `cargo fmt` lane.
 fn source_tokens(source: &str) -> Vec<String> {
+    let source = strip_import_header(source);
     let mut tokens = Vec::new();
     let mut current = String::new();
     for ch in source.chars() {

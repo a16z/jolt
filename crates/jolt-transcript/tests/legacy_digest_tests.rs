@@ -14,7 +14,7 @@
 //! squeeze        : out    = H(state || round_word(n)),  state' = out, n += 1
 //! ```
 
-use jolt_field::{Fr, TranscriptChallenge};
+use jolt_field::{CanonicalEncoding, Fr};
 use jolt_transcript::{Label, LabelWithCount, LegacyBlake2bTranscript, Transcript, U64Word};
 
 type T = LegacyBlake2bTranscript<Fr>;
