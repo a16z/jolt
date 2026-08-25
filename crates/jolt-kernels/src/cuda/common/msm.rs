@@ -69,11 +69,15 @@ pub(crate) struct DeviceClasses {
     ids: CudaSlice<u32>,
     fat: usize,
     thin: usize,
+    fat_entries: usize,
+    live_thin: usize,
 }
 
 pub(crate) struct HostClasses {
     ids: Vec<u32>,
     fat: usize,
+    fat_entries: usize,
+    live_thin: usize,
 }
 
 pub(crate) fn plan_classes(counts: &[u32]) -> HostClasses {
@@ -81,14 +85,23 @@ pub(crate) fn plan_classes(counts: &[u32]) -> HostClasses {
     let mean = total / counts.len().max(1) as u64;
     let limit = u32::try_from(mean.saturating_mul(2).max(CLASS_FLOOR as u64)).unwrap_or(u32::MAX);
     let mut ids = Vec::with_capacity(counts.len());
-    for (segment, _) in counts.iter().enumerate().filter(|(_, &c)| c > limit) {
+    let mut fat_entries = 0usize;
+    for (segment, &count) in counts.iter().enumerate().filter(|(_, &c)| c > limit) {
         ids.push(u32::try_from(segment).unwrap_or(u32::MAX));
+        fat_entries += count as usize;
     }
     let fat = ids.len();
-    for (segment, _) in counts.iter().enumerate().filter(|(_, &c)| c <= limit) {
+    let mut live_thin = 0usize;
+    for (segment, &count) in counts.iter().enumerate().filter(|(_, &c)| c <= limit) {
         ids.push(u32::try_from(segment).unwrap_or(u32::MAX));
+        live_thin += usize::from(count > 0);
     }
-    HostClasses { ids, fat }
+    HostClasses {
+        ids,
+        fat,
+        fat_entries,
+        live_thin,
+    }
 }
 
 pub struct SignedColumn {
@@ -1465,7 +1478,9 @@ impl CudaKernelContext {
             widest,
             entries = total,
             fat = classes.fat,
-            thin = classes.thin
+            thin = classes.thin,
+            fat_entries = classes.fat_entries,
+            live_thin = classes.live_thin
         )
         .in_scope(|| {
             self.launch_segment_sums(
@@ -2209,6 +2224,8 @@ impl CudaKernelContext {
             },
             fat: plan.fat,
             thin: plan.ids.len() - plan.fat,
+            fat_entries: plan.fat_entries,
+            live_thin: plan.live_thin,
         })
     }
 
