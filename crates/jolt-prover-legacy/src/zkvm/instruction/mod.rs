@@ -321,11 +321,8 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             }
             JoltInstructionKind::VirtualROTRI => LookupTables::VirtualROTR(Default::default()),
             JoltInstructionKind::VirtualROTRIW => LookupTables::VirtualROTRW(Default::default()),
-            JoltInstruction::VirtualChangeDivisor(_) => {
-                LookupTables::VirtualChangeDivisor(Default::default())
-            }
-            JoltInstruction::VirtualChangeDivisorW(_) => {
-                LookupTables::VirtualChangeDivisorW(Default::default())
+            JoltInstruction::VirtualNegateIf(_) => {
+                LookupTables::VirtualNegateIf(Default::default())
             }
             JoltInstructionKind::VirtualAssertMulUNoOverflow => {
                 LookupTables::MulUNoOverflow(Default::default())
@@ -517,7 +514,7 @@ define_rv64imac_trait_impls! {
         VirtualAssertEQ, VirtualAssertHalfwordAlignment,
         VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
-        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
+        VirtualNegateIf, VirtualAssertMulUNoOverflow,
         VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualMULIW,
         VirtualPow2, VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
@@ -573,12 +570,11 @@ pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_muliw;
+pub mod virtual_negate_if;
 pub mod virtual_pext_signed;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;

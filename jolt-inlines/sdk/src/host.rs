@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use crate::jolt_asm;
 pub use num_bigint::BigUint as NBigUint;
 use tracer::{
     instruction::inline::INLINE,
@@ -307,202 +308,6 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
     write_inline_trace(file, &inline_info, &inputs, &instructions, mode).map_err(|e| e.to_string())
 }
 
-/// Assembly-style sugar over [`InlineExpansionBuilder`].
-///
-/// Each statement is `mnemonic operands..;` with the **destination register
-/// first** (RISC-V operand order). Operands are ordinary Rust expressions —
-/// locals, `*self.vr[i]`, computed offsets — evaluating to `u8` register
-/// numbers or integer immediates. Every statement expands to exactly one
-/// builder call, so recipes written with the macro are byte-identical to
-/// hand-written `emit_*` calls. Statements that are not instruction-shaped
-/// (register allocation, range helpers, control flow) stay outside the block.
-///
-/// Operand shapes:
-///
-/// | statement                  | mnemonics                                  |
-/// |----------------------------|--------------------------------------------|
-/// | `op rd, rs1, rs2;`         | `add sub and or xor andn mul mulhu sltu`   |
-/// |                            | `xorrot16/24/32/63` `xorrotw6/7/8/12/16/19/22` |
-/// | `op rd, rs1, imm;`         | `addi andi ori xori slli srli srliw`       |
-/// | `zextw rd, rs1;`           | zero-extend low 32 bits of `rs1` into `rd` |
-/// | `op rd, base, offset;`     | `ld lw` (loads; signed byte offset)        |
-/// | `sd base, src, offset;`    | store `src` to `base + offset`             |
-/// | `lui rd, imm;`             | load immediate                             |
-/// | `advice rd;`               | next runtime-advice value into `rd`        |
-/// | `assert_eq rs1, rs2;`      | `VirtualAssertEQ` (also `assert_lte`)      |
-/// | `rotl64 rd, rs1, amount;`  | 64-bit rotate-left by a constant amount    |
-///
-/// ```ignore
-/// jolt_asm!(self.asm, {
-///     add temp1, va, vb;       // temp1 = va + vb
-///     xorrot32 vd, vd, va;     // vd = rotr64(vd ^ va, 32)
-///     ld t, self.operands.rs2, 128;
-/// });
-/// ```
-#[macro_export]
-macro_rules! jolt_asm {
-    ($asm:expr, { $($mnemonic:ident $($operand:expr),* ;)* }) => {
-        $($crate::__jolt_asm_stmt!($asm, $mnemonic $($operand),*);)*
-    };
-}
-
-/// One statement of [`jolt_asm!`]: `mnemonic` dispatch to a builder call.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __jolt_asm_stmt {
-    // R-format: op rd, rs1, rs2
-    ($asm:expr, add $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::ADD, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, sub $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::SUB, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, and $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::AND, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, or $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::OR, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xor $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::XOR, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, andn $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::ANDN, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, mul $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::MUL, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, mulhu $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::MULHU, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, sltu $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::SLTU, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrot16 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROT16, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrot24 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROT24, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrot32 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROT32, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrot63 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROT63, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrotw7 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROTW7, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrotw8 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROTW8, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrotw12 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROTW12, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrotw16 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROTW16, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrotw19 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROTW19, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrotw22 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROTW22, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrotw6 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_r(Kind::VirtualXORROTW6, $rd, $rs1, $rs2)
-    }};
-    // I-format: op rd, rs1, imm
-    ($asm:expr, addi $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_i(Kind::ADDI, $rd, $rs1, $imm)
-    }};
-    ($asm:expr, andi $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_i(Kind::ANDI, $rd, $rs1, $imm)
-    }};
-    ($asm:expr, ori $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_i(Kind::ORI, $rd, $rs1, $imm)
-    }};
-    ($asm:expr, xori $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_i(Kind::XORI, $rd, $rs1, $imm)
-    }};
-    ($asm:expr, slli $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::SourceKind;
-        $asm.expand_i(SourceKind::SLLI, $rd, $rs1, $imm)
-    }};
-    ($asm:expr, srli $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::SourceKind;
-        $asm.expand_i(SourceKind::SRLI, $rd, $rs1, $imm)
-    }};
-    ($asm:expr, srliw $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::SourceKind;
-        $asm.expand_i(SourceKind::SRLIW, $rd, $rs1, $imm)
-    }};
-    ($asm:expr, zextw $rd:expr, $rs1:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_i(Kind::VIRTUAL_ZERO_EXTEND_WORD, $rd, $rs1, 0)
-    }};
-    // Loads: op rd, base, offset (signed byte offset)
-    ($asm:expr, ld $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_ld(Kind::LD, $rd, $rs1, $imm)
-    }};
-    ($asm:expr, lw $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::SourceKind;
-        $asm.expand_ld(SourceKind::LW, $rd, $rs1, $imm)
-    }};
-    // Store: sd base, src, offset
-    ($asm:expr, sd $base:expr, $src:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_s(Kind::SD, $base, $src, $imm)
-    }};
-    // U-format: lui rd, imm
-    ($asm:expr, lui $rd:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_u(Kind::LUI, $rd, $imm)
-    }};
-    // Runtime advice: advice rd
-    ($asm:expr, advice $rd:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_j(Kind::VIRTUAL_ADVICE, $rd, 0)
-    }};
-    // Virtual asserts: op rs1, rs2
-    ($asm:expr, assert_eq $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_b(Kind::VirtualAssertEQ, $rs1, $rs2, 0)
-    }};
-    ($asm:expr, assert_lte $rs1:expr, $rs2:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_b(Kind::VirtualAssertLTE, $rs1, $rs2, 0)
-    }};
-    // Rotate helper: rotl64 rd, rs1, amount (constant amount, 0..=64)
-    ($asm:expr, rotl64 $rd:expr, $rs1:expr, $amount:expr) => {
-        let _ = $asm.rotl64($crate::host::Value::Reg($rs1), $amount, $rd);
-    };
-}
-
 /// Extension trait adding common load/store helpers to [`InlineExpansionBuilder`].
 ///
 /// Paired u32 helpers combine two adjacent u32 values into a single 64-bit
@@ -542,7 +347,7 @@ impl InlineBuilderExt for InlineExpansionBuilder {
 
     fn load_u32_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
         for (i, register) in registers.iter().enumerate() {
-            self.expand_ld(
+            self.emit_ld(
                 SourceKind::LW,
                 **register,
                 base,

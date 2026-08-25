@@ -1,5 +1,3 @@
-use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
-use crate::zkvm::lookup_table::suffixes::change_divisor_w::ChangeDivisorWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift_w::LeftShiftWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift_w_helper::LeftShiftWHelperSuffix;
@@ -48,8 +46,6 @@ use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
 
 pub mod and;
-pub mod change_divisor;
-pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
@@ -109,8 +105,6 @@ pub enum Suffixes {
     Or,
     RightOperand,
     RightOperandW,
-    ChangeDivisor,
-    ChangeDivisorW,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -178,8 +172,6 @@ impl Suffixes {
                 | Suffixes::TwoLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
-                | Suffixes::ChangeDivisor
-                | Suffixes::ChangeDivisorW
                 | Suffixes::WindowSign
         )
     }
@@ -195,8 +187,6 @@ impl Suffixes {
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
             Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::<XLEN>::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::<XLEN>::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::<XLEN>::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::<XLEN>::suffix_mle(b),

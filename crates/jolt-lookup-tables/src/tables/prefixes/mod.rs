@@ -9,11 +9,11 @@
 
 pub mod and;
 pub mod andn;
-pub mod change_divisor;
-pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
+pub mod left_msb_right_operand;
+pub mod left_msb_right_operand_is_zero;
 pub mod left_operand_msb;
 pub mod left_shift;
 pub mod left_shift_helper;
@@ -23,13 +23,8 @@ pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
-pub mod negative_divisor_equals_remainder;
-pub mod negative_divisor_greater_than_remainder;
-pub mod negative_divisor_zero_remainder;
 pub mod or;
 pub mod overflow_bits_zero;
-pub mod positive_remainder_equals_divisor;
-pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
 pub mod pow2_offset_w;
 pub mod pow2_w;
@@ -133,11 +128,6 @@ pub enum Prefixes {
     LeftOperandMsb,
     RightOperandMsb,
     DivByZero,
-    PositiveRemainderEqualsDivisor,
-    PositiveRemainderLessThanDivisor,
-    NegativeDivisorZeroRemainder,
-    NegativeDivisorEqualsRemainder,
-    NegativeDivisorGreaterThanRemainder,
     Lsb,
     Pow2,
     Pow2W,
@@ -148,9 +138,9 @@ pub enum Prefixes {
     LeftShiftHelper,
     TwoLsb,
     SignExtensionUpperHalf,
-    ChangeDivisor,
-    ChangeDivisorW,
     RightOperand,
+    LeftMsbRightOperand,
+    LeftMsbRightOperandIsZero,
     RightOperandW,
     SignExtensionRightOperand,
     RightShiftW,
@@ -206,11 +196,6 @@ macro_rules! dispatch_prefix {
             Prefixes::LeftOperandMsb => left_operand_msb::LeftOperandMsbPrefix::$method($($args),*),
             Prefixes::RightOperandMsb => right_operand_msb::RightOperandMsbPrefix::$method($($args),*),
             Prefixes::DivByZero => div_by_zero::DivByZeroPrefix::$method($($args),*),
-            Prefixes::PositiveRemainderEqualsDivisor => positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix::$method($($args),*),
-            Prefixes::PositiveRemainderLessThanDivisor => positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix::$method($($args),*),
-            Prefixes::NegativeDivisorZeroRemainder => negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix::$method($($args),*),
-            Prefixes::NegativeDivisorEqualsRemainder => negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix::$method($($args),*),
-            Prefixes::NegativeDivisorGreaterThanRemainder => negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix::$method($($args),*),
             Prefixes::Lsb => lsb::LsbPrefix::$method($($args),*),
             Prefixes::Pow2 => pow2::Pow2Prefix::$method($($args),*),
             Prefixes::Pow2W => pow2_w::Pow2WPrefix::$method($($args),*),
@@ -221,9 +206,9 @@ macro_rules! dispatch_prefix {
             Prefixes::LeftShiftHelper => left_shift_helper::LeftShiftHelperPrefix::$method($($args),*),
             Prefixes::TwoLsb => two_lsb::TwoLsbPrefix::$method($($args),*),
             Prefixes::SignExtensionUpperHalf => sign_extension_upper_half::SignExtensionUpperHalfPrefix::$method($($args),*),
-            Prefixes::ChangeDivisor => change_divisor::ChangeDivisorPrefix::$method($($args),*),
-            Prefixes::ChangeDivisorW => change_divisor_w::ChangeDivisorWPrefix::$method($($args),*),
             Prefixes::RightOperand => right_operand::RightOperandPrefix::$method($($args),*),
+            Prefixes::LeftMsbRightOperand => left_msb_right_operand::LeftMsbRightOperandPrefix::$method($($args),*),
+            Prefixes::LeftMsbRightOperandIsZero => left_msb_right_operand_is_zero::LeftMsbRightOperandIsZeroPrefix::$method($($args),*),
             Prefixes::RightOperandW => right_operand_w::RightOperandWPrefix::$method($($args),*),
             Prefixes::SignExtensionRightOperand => sign_extension_right_operand::SignExtensionRightOperandPrefix::$method($($args),*),
             Prefixes::RightShiftW => right_shift_w::RightShiftWPrefix::$method($($args),*),

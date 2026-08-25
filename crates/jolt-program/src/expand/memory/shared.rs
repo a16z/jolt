@@ -11,12 +11,12 @@ pub(in crate::expand) fn expand_ram_region_assertion(
     address_register: RegisterOperand,
     ram_start: TempId,
 ) -> Result<(), ExpansionError> {
-    asm.expand_u(
+    asm.emit_u(
         SourceInstructionKind::LUI,
         ram_start.operand(),
         RAM_START_ADDRESS as i128,
     );
-    asm.expand_b(
+    asm.emit_b(
         SourceInstructionKind::VirtualAssertLTE,
         ram_start.operand(),
         address_register,
@@ -42,30 +42,30 @@ pub(in crate::expand) fn expand_byte_load(
 
     // v0 = effective address. v1 = aligned address of the containing
     // doubleword.
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ADDI,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ANDI,
         v1.operand(),
         v0.operand(),
         format_i_imm(-8),
     );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    asm.emit_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
     // Under the RV64 shift mask, ((address ^ 7) << 3) is
     // (7 - byte_offset) * 8, moving the selected byte to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 7);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
+    asm.emit_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 7);
+    asm.emit_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.emit_r(
         SourceInstructionKind::SLL,
         v1.operand(),
         v1.operand(),
         v0.operand(),
     );
-    asm.expand_i(
+    asm.emit_i(
         if signed {
             SourceInstructionKind::SRAI
         } else {
@@ -95,35 +95,35 @@ pub(in crate::expand) fn expand_halfword_load(
 
     // Halfword loads may start at byte offsets 0, 2, 4, or 6 within the
     // containing doubleword.
-    asm.expand_address(
+    asm.emit_address(
         SourceInstructionKind::VirtualAssertHalfwordAlignment,
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ADDI,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ANDI,
         v1.operand(),
         v0.operand(),
         format_i_imm(-8),
     );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    asm.emit_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
     // Under the RV64 shift mask, ((address ^ 6) << 3) selects the aligned
     // halfword lane and moves it to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 6);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
+    asm.emit_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 6);
+    asm.emit_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.emit_r(
         SourceInstructionKind::SLL,
         v1.operand(),
         v1.operand(),
         v0.operand(),
     );
-    asm.expand_i(
+    asm.emit_i(
         if signed {
             SourceInstructionKind::SRAI
         } else {
@@ -149,20 +149,20 @@ pub(in crate::expand) fn expand_advice_load(
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
 
-    asm.expand_j(
+    asm.emit_j(
         SourceInstructionKind::VirtualAdviceLoad(jolt_riscv::instructions::VirtualAdviceLoad(())),
         reg(rd(instruction)?),
         byte_len,
     );
     if byte_len < 8 {
         let shift = 64 - byte_len * 8;
-        asm.expand_i(
+        asm.emit_i(
             SourceInstructionKind::SLLI,
             reg(rd(instruction)?),
             reg(rd(instruction)?),
             shift,
         );
-        asm.expand_i(
+        asm.emit_i(
             SourceInstructionKind::SRAI,
             reg(rd(instruction)?),
             reg(rd(instruction)?),
@@ -187,20 +187,20 @@ pub(in crate::expand) fn expand_amo_d(
     let v_rs2 = asm.allocate()?;
     let v_rd = asm.allocate()?;
 
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::LD,
         v_rd.operand(),
         reg(rs1(instruction)?),
         0,
     );
-    asm.expand_r(op, v_rs2.operand(), v_rd.operand(), reg(rs2(instruction)?));
-    asm.expand_s(
+    asm.emit_r(op, v_rs2.operand(), v_rd.operand(), reg(rs2(instruction)?));
+    asm.emit_s(
         SourceInstructionKind::SD,
         reg(rs1(instruction)?),
         v_rs2.operand(),
         0,
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ADDI,
         reg(rd(instruction)?),
         v_rd.operand(),
@@ -234,38 +234,38 @@ pub(in crate::expand) fn expand_amo_minmax_d(
 
     // v0 = old memory. v1 = whether rs2 should be stored. v2 = conditional
     // delta from old memory to rs2.
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::LD,
         v0.operand(),
         reg(rs1(instruction)?),
         0,
     );
-    asm.expand_r(compare_op, v1.operand(), cmp_rs1, cmp_rs2);
-    asm.expand_r(
+    asm.emit_r(compare_op, v1.operand(), cmp_rs1, cmp_rs2);
+    asm.emit_r(
         SourceInstructionKind::SUB,
         v2.operand(),
         reg(rs2(instruction)?),
         v0.operand(),
     );
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::MUL,
         v2.operand(),
         v2.operand(),
         v1.operand(),
     );
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::ADD,
         v1.operand(),
         v0.operand(),
         v2.operand(),
     );
-    asm.expand_s(
+    asm.emit_s(
         SourceInstructionKind::SD,
         reg(rs1(instruction)?),
         v1.operand(),
         0,
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ADDI,
         reg(rd(instruction)?),
         v0.operand(),
@@ -300,7 +300,7 @@ pub(in crate::expand) fn expand_amo_w(
         v_dword.operand(),
         v_shift.operand(),
     )?;
-    asm.expand_r(op, v_rs2.operand(), v_rd.operand(), reg(rs2(instruction)?));
+    asm.emit_r(op, v_rs2.operand(), v_rd.operand(), reg(rs2(instruction)?));
     expand_amo_post64(
         &mut asm,
         AmoPost64 {
@@ -355,27 +355,27 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     };
     // Compare normalized word values, but keep the original low-word payload
     // for the value that will be merged back into memory.
-    asm.expand_i(extend_op, v_rs2.operand(), reg(rs2(instruction)?), 0);
-    asm.expand_i(extend_op, v0.operand(), v_rd.operand(), 0);
+    asm.emit_i(extend_op, v_rs2.operand(), reg(rs2(instruction)?), 0);
+    asm.emit_i(extend_op, v0.operand(), v_rd.operand(), 0);
     let (cmp_rs1, cmp_rs2) = if min {
         (v_rs2.operand(), v0.operand())
     } else {
         (v0.operand(), v_rs2.operand())
     };
-    asm.expand_r(compare_op, v0.operand(), cmp_rs1, cmp_rs2);
-    asm.expand_r(
+    asm.emit_r(compare_op, v0.operand(), cmp_rs1, cmp_rs2);
+    asm.emit_r(
         SourceInstructionKind::SUB,
         v_rs2.operand(),
         reg(rs2(instruction)?),
         v_rd.operand(),
     );
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::MUL,
         v_rs2.operand(),
         v_rs2.operand(),
         v0.operand(),
     );
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::ADD,
         v_rs2.operand(),
         v_rs2.operand(),
@@ -410,11 +410,11 @@ pub(in crate::expand) fn expand_amo_pre64(
     v_dword: RegisterOperand,
     v_shift: RegisterOperand,
 ) -> Result<(), ExpansionError> {
-    asm.expand_address(SourceInstructionKind::VirtualAssertWordAlignment, rs1, 0);
-    asm.expand_i(SourceInstructionKind::ANDI, v_shift, rs1, format_i_imm(-8));
-    asm.expand_i(SourceInstructionKind::LD, v_dword, v_shift, 0);
-    asm.expand_i(SourceInstructionKind::SLLI, v_shift, rs1, 3);
-    asm.expand_r(SourceInstructionKind::SRL, v_rd, v_dword, v_shift);
+    asm.emit_address(SourceInstructionKind::VirtualAssertWordAlignment, rs1, 0);
+    asm.emit_i(SourceInstructionKind::ANDI, v_shift, rs1, format_i_imm(-8));
+    asm.emit_i(SourceInstructionKind::LD, v_dword, v_shift, 0);
+    asm.emit_i(SourceInstructionKind::SLLI, v_shift, rs1, 3);
+    asm.emit_r(SourceInstructionKind::SRL, v_rd, v_dword, v_shift);
     Ok(())
 }
 
@@ -455,16 +455,16 @@ pub(in crate::expand) fn expand_amo_post64(
 
     // Build a 32-bit lane mask, shift the new word into place, and use
     // masked-XOR replacement: new_dword = old ^ ((old ^ new) & mask).
-    asm.expand_i(SourceInstructionKind::ORI, v_mask, reg(0), format_i_imm(-1));
-    asm.expand_i(SourceInstructionKind::SRLI, v_mask, v_mask, 32);
-    asm.expand_r(SourceInstructionKind::SLL, v_mask, v_mask, v_shift);
-    asm.expand_r(SourceInstructionKind::SLL, v_shift, v_rs2, v_shift);
-    asm.expand_r(SourceInstructionKind::XOR, v_shift, v_dword, v_shift);
-    asm.expand_r(SourceInstructionKind::AND, v_shift, v_shift, v_mask);
-    asm.expand_r(SourceInstructionKind::XOR, v_dword, v_dword, v_shift);
-    asm.expand_i(SourceInstructionKind::ANDI, v_mask, rs1, format_i_imm(-8));
-    asm.expand_s(SourceInstructionKind::SD, v_mask, v_dword, 0);
-    asm.expand_i(
+    asm.emit_i(SourceInstructionKind::ORI, v_mask, reg(0), format_i_imm(-1));
+    asm.emit_i(SourceInstructionKind::SRLI, v_mask, v_mask, 32);
+    asm.emit_r(SourceInstructionKind::SLL, v_mask, v_mask, v_shift);
+    asm.emit_r(SourceInstructionKind::SLL, v_shift, v_rs2, v_shift);
+    asm.emit_r(SourceInstructionKind::XOR, v_shift, v_dword, v_shift);
+    asm.emit_r(SourceInstructionKind::AND, v_shift, v_shift, v_mask);
+    asm.emit_r(SourceInstructionKind::XOR, v_dword, v_dword, v_shift);
+    asm.emit_i(SourceInstructionKind::ANDI, v_mask, rs1, format_i_imm(-8));
+    asm.emit_s(SourceInstructionKind::SD, v_mask, v_dword, 0);
+    asm.emit_i(
         SourceInstructionKind::VirtualSignExtendWord(
             jolt_riscv::instructions::VirtualSignExtendWord(()),
         ),
@@ -494,56 +494,56 @@ pub(in crate::expand) fn expand_narrow_store(
 
     if let Some(alignment) = alignment {
         // `SH` requires halfword alignment; `SB` passes `None`.
-        asm.expand_address(alignment, reg(rs1(instruction)?), instruction.operands.imm);
+        asm.emit_address(alignment, reg(rs1(instruction)?), instruction.operands.imm);
     }
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ADDI,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ANDI,
         v1.operand(),
         v0.operand(),
         format_i_imm(-8),
     );
-    asm.expand_i(SourceInstructionKind::LD, v2.operand(), v1.operand(), 0);
-    asm.expand_i(SourceInstructionKind::SLLI, v3.operand(), v0.operand(), 3);
-    asm.expand_u(SourceInstructionKind::LUI, v0.operand(), mask);
+    asm.emit_i(SourceInstructionKind::LD, v2.operand(), v1.operand(), 0);
+    asm.emit_i(SourceInstructionKind::SLLI, v3.operand(), v0.operand(), 3);
+    asm.emit_u(SourceInstructionKind::LUI, v0.operand(), mask);
     // As in the word-store and AMO paths, masked-XOR replacement updates only
     // the selected narrow lane.
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::SLL,
         v0.operand(),
         v0.operand(),
         v3.operand(),
     );
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::SLL,
         v3.operand(),
         reg(rs2(instruction)?),
         v3.operand(),
     );
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::XOR,
         v3.operand(),
         v2.operand(),
         v3.operand(),
     );
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::AND,
         v3.operand(),
         v3.operand(),
         v0.operand(),
     );
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::XOR,
         v2.operand(),
         v2.operand(),
         v3.operand(),
     );
-    asm.expand_s(SourceInstructionKind::SD, v1.operand(), v2.operand(), 0);
+    asm.emit_s(SourceInstructionKind::SD, v1.operand(), v2.operand(), 0);
     asm.release_many([v0, v1, v2, v3]);
 
     asm.finalize()
