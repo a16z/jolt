@@ -328,6 +328,16 @@ pub trait CanonicalEncoding:
         None
     }
 
+    /// Borrows canonical `u64` representatives without per-element conversion.
+    ///
+    /// Fields whose in-memory representation is exactly one canonical `u64`
+    /// may override this capability. Narrower or encoded fields return `None`.
+    #[inline]
+    fn canonical_u64_slice(values: &[Self]) -> Option<&[u64]> {
+        let _ = values;
+        None
+    }
+
     /// Number of significant bits in this element's canonical representative.
     ///
     /// Zero is considered to have zero significant bits.
