@@ -263,6 +263,9 @@ if [[ "$ARCHITECTURE" == x86_64 ]]; then
   ADD_THEOREM=JOLT_FP128_ADD_X86_64_SUBROUTINE_CORRECT
   SUB_THEOREM=JOLT_FP128_SUB_X86_64_SUBROUTINE_CORRECT
   MUL_THEOREM=JOLT_FP128_MUL_X86_64_SUBROUTINE_CORRECT
+  GENERIC_ADD_THEOREM=JOLT_FP128_ADD_X86_64_GENERIC_CORRECT
+  GENERIC_SUB_THEOREM=JOLT_FP128_SUB_X86_64_GENERIC_CORRECT
+  GENERIC_MUL_THEOREM=JOLT_FP128_MUL_X86_64_GENERIC_CORRECT
   BMI2_ADX_MUL_THEOREM=JOLT_FP128_MUL_X86_64_BMI2_ADX_SUBROUTINE_CORRECT
   printf 'print_endline "[HOL 1/5] Proving x86-64 addition";;\n' >"$COMBINED_SOURCE"
   printf 'loadt "x86/proofs/base.ml";;\n' >>"$COMBINED_SOURCE"
@@ -300,6 +303,9 @@ else
   ADD_THEOREM=JOLT_FP128_ADD_SUBROUTINE_CORRECT
   SUB_THEOREM=JOLT_FP128_SUB_SUBROUTINE_CORRECT
   MUL_THEOREM=JOLT_FP128_MUL_SUBROUTINE_CORRECT
+  GENERIC_ADD_THEOREM=JOLT_FP128_ADD_GENERIC_CORRECT
+  GENERIC_SUB_THEOREM=JOLT_FP128_SUB_GENERIC_CORRECT
+  GENERIC_MUL_THEOREM=JOLT_FP128_MUL_GENERIC_CORRECT
   BMI2_ADX_MUL_THEOREM=""
   printf 'print_endline "[HOL 1/4] Proving AArch64 addition";;\n' >"$COMBINED_SOURCE"
   printf 'loadt "arm/proofs/base.ml";;\n' >>"$COMBINED_SOURCE"
@@ -327,6 +333,12 @@ printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
   "$ADD_THEOREM" "$ADD_THEOREM" >>"$COMBINED_SOURCE"
 printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
   "$SUB_THEOREM" "$SUB_THEOREM" >>"$COMBINED_SOURCE"
+printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
+  "$GENERIC_ADD_THEOREM" "$GENERIC_ADD_THEOREM" >>"$COMBINED_SOURCE"
+printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
+  "$GENERIC_SUB_THEOREM" "$GENERIC_SUB_THEOREM" >>"$COMBINED_SOURCE"
+printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
+  "$GENERIC_MUL_THEOREM" "$GENERIC_MUL_THEOREM" >>"$COMBINED_SOURCE"
 if [[ -n "$MUL_THEOREM" ]]; then
   printf 'Printf.printf "val %s : thm = %%s\\n" (string_of_thm %s);;\n' \
     "$MUL_THEOREM" "$MUL_THEOREM" >>"$COMBINED_SOURCE"
@@ -364,6 +376,9 @@ JOLT_FP128_MUL_BMI2_ADX_OBJECT="$BMI2_ADX_MUL_PROOF_OBJECT" \
 echo "[5/5] Confirming the $ARCHITECTURE_LABEL theorems"
 grep -F "val $ADD_THEOREM : thm" "$LOG_PATH"
 grep -F "val $SUB_THEOREM : thm" "$LOG_PATH"
+grep -F "val $GENERIC_ADD_THEOREM : thm" "$LOG_PATH"
+grep -F "val $GENERIC_SUB_THEOREM : thm" "$LOG_PATH"
+grep -F "val $GENERIC_MUL_THEOREM : thm" "$LOG_PATH"
 if [[ -n "$MUL_THEOREM" ]]; then
   grep -F "val $MUL_THEOREM : thm" "$LOG_PATH"
 fi

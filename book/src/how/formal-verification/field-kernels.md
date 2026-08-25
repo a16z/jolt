@@ -1,11 +1,13 @@
 # Formal verification of field kernels
 
-HOL Light proves that exact AArch64 and x86-64 instruction sequences
-compute scalar addition, subtraction, and multiplication correctly for
-canonical `Prime128OffsetA7F7` inputs. Jolt also checks that deliberately
-compiled inspection functions contain the expected bytes. The proof does not
-cover every inlined caller or a downstream executable. This chapter explains
-the exact claim, its connection to Rust, and its limits.
+HOL Light proves that the exact register-parameterized AArch64 and baseline
+x86-64 instruction bodies compute scalar addition, subtraction, and
+multiplication correctly for every valid Fp128 offset. It also proves complete
+callable A7F7 objects and the A7F7-specific BMI2 and ADX multiplication object.
+Jolt checks that deliberately compiled inspection functions contain the
+expected bytes. The proof does not cover every inlined caller or a downstream
+executable. This chapter explains the exact claim, its connection to Rust, and
+its limits.
 
 This page focuses on `Prime128OffsetA7F7`. The
 [scalar Fp64 page](field-kernels-fp64.md) describes the separate
@@ -20,12 +22,16 @@ The benchmark, fuzz, and proof workflows enable it explicitly to validate the
 library option. A product that adopts the Solinas backend must make a separate
 rollout decision and forward `asm` from its own feature configuration.
 
-The Fp128 field modulus is
+For an offset `C`, the modulus is
 
 ```text
-p = 2^128 - 2^32 + 22537
-  = 0xffffffffffffffffffffffff00005809
+p(C) = 2^128 - C
 ```
+
+The generic theorems assume `0 < C < 2^32` and the reduction bound used by
+the Rust type. Both public offsets, 275 and A7F7 (`2^32 - 22537`), satisfy
+those assumptions. A separate certificate proves that the A7F7 modulus
+`0xffffffffffffffffffffffff00005809` is prime.
 
 Every field value has one canonical integer representative from `0` through
 `p - 1`. Each kernel accepts two canonical values in two 64 bit limbs. It
@@ -103,8 +109,9 @@ The AArch64 body uses the following registers.
 | Addition temporary values | `x5:x9` |
 | Subtraction temporary values | `x5:x7` |
 
-Each proved AArch64 object includes the constant load, arithmetic body, and
-`ret`. The theorems do not assume any initial value for `x4`. Multiplication
+Each fixture object includes the A7F7 constant load, arithmetic body, and
+`ret`. The generic body theorem starts after that load with an arbitrary valid
+`C` in `x4`; the A7F7 corollary proves the literal load as well. Multiplication
 also uses `x10:x12` as temporary registers. None of the proved bodies accesses
 memory or the stack. The subroutine theorems prove the return through `x30`
 and use the normal AArch64 set of registers that a callee may change.
@@ -128,10 +135,11 @@ The x86-64 body uses the following registers.
 | Multiplication temporary values | `rax`, `rdx`, and `r9:r11` |
 
 These registers are caller saved in the System V x86-64 procedure call
-convention. Each standalone object and theorem includes its constant load. The
-baseline objects load `r8d`. The BMI2 and ADX object loads `edx` after it has
-used the second input. No theorem assumes a prepared constant register. The
-body does not access memory or the stack. The subroutine theorem also proves
+convention. Each standalone object includes its constant load. The generic
+baseline theorem starts after the `r8d` load with an arbitrary valid `C`; its
+A7F7 corollary proves that load too. The BMI2 and ADX object loads its embedded
+A7F7 value into `edx` after it has used the second input. The body does not
+access memory or the stack. The subroutine theorem also proves
 that `ret` reads the return address from the stack, updates `rsp` by eight
 bytes, and transfers control to that address.
 
@@ -265,19 +273,25 @@ The machine proof follows the same stages as the code.
    instructions either keep it or subtract `p` once.
 
 The final result is therefore both congruent to `m * n` and in the canonical
-range. The AArch64 theorem covers its exact 35 instruction A7F7 body. One
-x86-64 theorem covers the baseline `mulq`, `add`, and `adc` sequence. A second
-x86-64 theorem covers the 31 instruction BMI2 and ADX sequence built from
-`mulx`, `adcx`, and `adox`. Each architecture has a theorem for the callable
-body followed by `ret`.
+range. The generic AArch64 theorem covers the exact 35-instruction arithmetic
+body for every valid `C`. One generic x86-64 theorem covers the baseline
+`mulq`, `add`, and `adc` sequence. A separate A7F7 theorem covers the
+31-instruction BMI2 and ADX sequence built from `mulx`, `adcx`, and `adox`.
+Each architecture also has an A7F7 theorem for the callable body followed by
+`ret`.
 
-The assembly dispatch recognizes only A7F7. Every other `Fp128` modulus uses
-portable Rust, including the retained offset-275 reference field. Adding
-assembly for another modulus therefore requires an explicit dispatch change,
-differential tests, and a separate proof obligation. A baseline x86-64 build
-needs no optional features. A build that enables both BMI2 and ADX uses the
-separately proved fragment. It performs no feature check inside a field
-multiplication.
+With `asm`, the register kernels take `C = 2^128 - p` as an operand and run for
+every valid `Fp128` offset. The type-level checks require `C < 2^32`, which is
+the bound used by the two Solinas folds. A test-only offset 173, outside the
+published aliases, exercises this parameterized path in differential tests and
+fuzzing against portable Rust, alongside the public offsets 275 and A7F7.
+
+The generic HOL Light theorem uses the same offset bounds, so adding another
+valid field alias does not require a new baseline arithmetic proof or dispatch
+case. A new alias still needs evidence that its offset satisfies those bounds
+and, if it is intended to be a field, a separate primality argument. On
+x86-64, the BMI2 and ADX fragment remains A7F7-specific because its instruction
+bytes embed that offset directly.
 
 ## The modulus is prime
 
@@ -289,13 +303,15 @@ fact.
 
 ## The theorem layers
 
-Each operation has two theorem levels.
+Each baseline operation has three theorem levels.
 
-The body theorem starts at the constant-load instruction and stops before
-`ret`. Its precondition fixes the loaded bytes, program counter, and input
-registers. It does not assume an initial value for the offset register. Its
-postcondition states the field result. Its frame condition lists every part of
-processor state that may change.
+The generic body theorem starts immediately after the constant-load
+instruction and stops before `ret`. Its precondition fixes the loaded bytes,
+program counter, input registers, and a symbolic offset register. Its
+postcondition states the result modulo `2^128 - C` for every valid `C`.
+
+The A7F7 body corollary starts at the literal load. It proves that load and
+specializes the generic theorem to A7F7.
 
 The AArch64 subroutine theorem adds `ret` and the procedure call convention.
 It states where the return address comes from and which registers a caller
@@ -319,7 +335,7 @@ part of this statement for readers who do not use HOL Light.
 
 | File | Purpose |
 | --- | --- |
-| `fp128_common.ml` | Modulus shared by both architectures |
+| `fp128_common.ml` | Generic modulus, offset bounds, and reduction lemmas shared by both architectures |
 | `fp128_x86_64_common.ml` | x86 model and the named borrow mask lemma |
 | `fp128_add_x86_64_object.ml` | Exact addition bytes and instruction execution rule |
 | `fp128_sub_x86_64_object.ml` | Exact subtraction bytes and instruction execution rule |
@@ -340,19 +356,22 @@ architectures use the same inspection witness and artifact checker.
 
 ## Exact claim
 
-| Architecture | Proved object | Rust connection |
+| Architecture | Proved instruction scope | Rust connection |
 | --- | --- | --- |
-| AArch64 add and subtract | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
-| AArch64 multiply | Constant load, complete fixed body, and `ret` | The proof object and complete optimized witness are byte identical |
-| Linux x86-64 add and subtract | Constant load, complete fixed body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
-| Linux x86-64 multiply | Constant load, complete baseline body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
+| AArch64 baseline bodies | Generic add, subtract, and multiply bodies for every valid `C` | Production passes `C` in the proved register contract and uses the shared instruction bodies |
+| AArch64 A7F7 functions | Constant load, complete body, and `ret` | The proof object and complete optimized witness are byte identical |
+| Linux x86-64 baseline bodies | Generic add, subtract, and multiply bodies for every valid `C` | Production passes `C` in the proved register contract and uses the shared instruction bodies |
+| Linux x86-64 A7F7 functions | Constant load, complete body, ABI result moves, and `ret` | The proof object and complete optimized witness are byte identical |
 | Linux x86-64 BMI2 and ADX multiply | Complete BMI2 and ADX body with direct ABI result and `ret` | The proof object and witness built with both features are byte identical |
 | Darwin x86-64 add, subtract, and multiply | Arithmetic and ABI result sequence | The checker requires one exact unproved Darwin frame wrapper around the proved sequence |
 
-These claims cover the A7F7 register kernels. Other `Fp128` moduli use portable
-Rust rather than an unproved assembly fallback. The claims do not cover packed
-SIMD arithmetic, squaring, inversion, the full proof system, or an arbitrary
-downstream executable.
+The generic claims cover every offset satisfying the stated Fp128 bounds; the
+full callable-object and BMI2/ADX claims specialize to A7F7. Both current
+offsets and the test-only generic offset 173 are also differentially tested
+against portable Rust, which checks the dispatch and inline-assembly interface
+outside the isolated machine theorem.
+The claims do not cover packed SIMD arithmetic, squaring, inversion, the full
+proof system, or an arbitrary downstream executable.
 
 ## Unreduced arithmetic is a separate obligation
 
@@ -384,10 +403,11 @@ connect the compiled implementation to those theorems.
 The proved scalar kernels have an additional differential fuzz target. It
 compares assembly with portable addition, subtraction, and multiplication on
 AArch64, baseline x86-64, and x86-64 with BMI2 and ADX. The AArch64 target also
-compares squaring and fused multiply-add. This testing exercises dispatch,
-inline assembly constraints, and edge cases around the proof boundary; the HOL
-Light theorem and exact-byte checks remain the exhaustive correctness and
-linkage evidence for the proved sequences.
+compares squaring and fused multiply-add. The corpus is interpreted in both
+public fields and a test-only offset outside the published aliases. This testing
+exercises dispatch, inline assembly constraints, and edge cases around the
+proof boundary; the HOL Light theorem and exact-byte checks remain the
+exhaustive correctness and linkage evidence for the proved sequences.
 
 ## Trust boundary
 

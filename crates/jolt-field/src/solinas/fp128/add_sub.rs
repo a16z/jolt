@@ -1,8 +1,12 @@
 //! Architecture-specific Fp128 addition and subtraction kernels.
 
-#[cfg(feature = "asm")]
-use super::A7F7_OFFSET;
-use super::{join, pack, split, Fp128};
+#[cfg(any(
+    test,
+    feature = "fuzzing",
+    not(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))
+))]
+use super::{join, split};
+use super::{pack, Fp128};
 #[cfg(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))]
 use std::arch::asm;
 
@@ -28,6 +32,11 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
+    #[cfg(any(
+        test,
+        feature = "fuzzing",
+        not(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))
+    ))]
     #[inline(always)]
     pub(super) fn add_raw_portable(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         // Compute s = a + b as two limbs.
@@ -50,20 +59,17 @@ impl<const P: u128> Fp128<P> {
     #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn add_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        if Self::C_LO == A7F7_OFFSET {
-            Self::add_raw_aarch64_a7f7(a, b)
-        } else {
-            Self::add_raw_portable(a, b)
-        }
+        Self::add_raw_aarch64_asm(a, b)
     }
 
-    /// A7F7 addition through the exact instruction body proved in HOL Light.
+    /// Parameterized addition through the instruction body proved generically
+    /// over every valid offset in HOL Light.
     ///
     /// Register contract for `fp128_add_body.inc`:
     ///
     /// - `x0:x1` starts with `a` and finishes with the result.
     /// - `x2:x3` contains `b` and is not changed.
-    /// - `x4` contains `C = 2^128 - P = 0xffff_a7f7` and is not changed.
+    /// - `x4` contains `C = 2^128 - P` and is not changed.
     /// - `x5:x9` and the condition flags are temporary state.
     /// - The body does not access memory or the stack.
     ///
@@ -73,7 +79,7 @@ impl<const P: u128> Fp128<P> {
     /// public operation witness words.
     #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
-    fn add_raw_aarch64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    fn add_raw_aarch64_asm(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, mut out_hi] = a;
         let [b_lo, b_hi] = b;
         // SAFETY: The register contract is listed above. The body declares
@@ -100,20 +106,17 @@ impl<const P: u128> Fp128<P> {
     #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn add_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        if Self::C_LO == A7F7_OFFSET {
-            Self::add_raw_x86_64_a7f7(a, b)
-        } else {
-            Self::add_raw_portable(a, b)
-        }
+        Self::add_raw_x86_64_asm(a, b)
     }
 
-    /// A7F7 addition through the exact instruction body proved in HOL Light.
+    /// Parameterized addition through the instruction body proved generically
+    /// over every valid offset in HOL Light.
     ///
     /// Register contract for `fp128_add_body.inc`:
     ///
     /// - `rdi:rsi` starts with `a` and finishes with the result.
     /// - `rdx:rcx` contains `b` and is not changed.
-    /// - `r8` contains `C = 2^128 - P = 0xffff_a7f7` and is not changed.
+    /// - `r8` contains `C = 2^128 - P` and is not changed.
     /// - `r9:r11` and the condition flags are temporary state.
     /// - The body does not access memory or the stack.
     ///
@@ -123,7 +126,7 @@ impl<const P: u128> Fp128<P> {
     /// optimized public operation witness.
     #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
-    fn add_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    fn add_raw_x86_64_asm(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, mut out_hi] = a;
         let [b_lo, b_hi] = b;
         // SAFETY: The register contract is listed above. The body declares
@@ -165,6 +168,11 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
+    #[cfg(any(
+        test,
+        feature = "fuzzing",
+        not(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))
+    ))]
     #[inline(always)]
     pub(super) const fn sub_raw_portable(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let (diff, borrow) = join(a).overflowing_sub(join(b));
@@ -174,20 +182,17 @@ impl<const P: u128> Fp128<P> {
     #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn sub_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        if Self::C_LO == A7F7_OFFSET {
-            Self::sub_raw_aarch64_a7f7(a, b)
-        } else {
-            Self::sub_raw_portable(a, b)
-        }
+        Self::sub_raw_aarch64_asm(a, b)
     }
 
-    /// A7F7 subtraction through the exact instruction body proved in HOL Light.
+    /// Parameterized subtraction through the instruction body proved
+    /// generically over every valid offset in HOL Light.
     ///
     /// Register contract for `fp128_sub_body.inc`:
     ///
     /// - `x0:x1` starts with `a` and finishes with the result.
     /// - `x2:x3` contains `b` and is not changed.
-    /// - `x4` contains `C = 2^128 - P = 0xffff_a7f7` and is not changed.
+    /// - `x4` contains `C = 2^128 - P` and is not changed.
     /// - `x5:x7` and the condition flags are temporary state.
     /// - The body does not access memory or the stack.
     ///
@@ -197,7 +202,7 @@ impl<const P: u128> Fp128<P> {
     /// public operation witness words.
     #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
-    fn sub_raw_aarch64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    fn sub_raw_aarch64_asm(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, mut out_hi] = a;
         let [b_lo, b_hi] = b;
         // SAFETY: The register contract is listed above. The body declares
@@ -222,20 +227,17 @@ impl<const P: u128> Fp128<P> {
     #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn sub_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        if Self::C_LO == A7F7_OFFSET {
-            Self::sub_raw_x86_64_a7f7(a, b)
-        } else {
-            Self::sub_raw_portable(a, b)
-        }
+        Self::sub_raw_x86_64_asm(a, b)
     }
 
-    /// A7F7 subtraction through the exact instruction body proved in HOL Light.
+    /// Parameterized subtraction through the instruction body proved
+    /// generically over every valid offset in HOL Light.
     ///
     /// Register contract for `fp128_sub_body.inc`:
     ///
     /// - `rdi:rsi` starts with `a` and finishes with the result.
     /// - `rdx:rcx` contains `b` and is not changed.
-    /// - `r8` contains `C = 2^128 - P = 0xffff_a7f7` and is not changed.
+    /// - `r8` contains `C = 2^128 - P` and is not changed.
     /// - `r9` and the condition flags are temporary state.
     /// - The body does not access memory or the stack.
     ///
@@ -245,7 +247,7 @@ impl<const P: u128> Fp128<P> {
     /// optimized public operation witness.
     #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
-    fn sub_raw_x86_64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    fn sub_raw_x86_64_asm(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [mut out_lo, mut out_hi] = a;
         let [b_lo, b_hi] = b;
         // SAFETY: The register contract is listed above. The body declares

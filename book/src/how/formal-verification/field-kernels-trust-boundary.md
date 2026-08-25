@@ -23,8 +23,8 @@ possible input pair.
 
 | Layer | Current evidence |
 | --- | --- |
-| Arithmetic specification | Reviewed equations for scalar addition, subtraction, and multiplication modulo the A7F7 and `2^64 - 59` primes |
-| Exact proof object | HOL Light body and callable subroutine theorems |
+| Arithmetic specification | Reviewed equations for scalar addition, subtraction, and multiplication modulo `2^128 - C` under the Fp128 offset bounds and modulo the `2^64 - 59` prime |
+| Exact proof object | Generic Fp128 HOL Light body theorems, A7F7 callable subroutine theorems, and Fp64 body and callable subroutine theorems |
 | Linux inspection witness | Complete byte equality with the proved object |
 | Darwin AArch64 inspection witness | Complete byte equality with the proved object |
 | Darwin x86-64 inspection witness | Exact wrapper bytes checked, while frame semantics remain outside the theorem |
@@ -55,10 +55,11 @@ assembly or compiler output safe by itself. Jolt still needs correct compiler
 contracts, correct feature selection, and a final integration check.
 
 If assembly does not improve performance, its unsafe boundary and proof upkeep
-are difficult to justify. The A7F7 paths remain because native measurements
-show a gain over the portable implementation. Fp64 therefore keeps its Rust
-production path. Optional x86 instructions remain separate because not every
-x86-64 processor supports them.
+are difficult to justify. The parameterized paths remain because native
+measurements show a gain over the portable implementation. The A7F7 BMI2 and
+ADX variant remains separate because not every x86-64 processor supports those
+instructions and because its bytes embed the A7F7 offset. Fp64 keeps its Rust
+production path because the assembly experiment was slower.
 
 ## What the arithmetic theorem rules out
 
