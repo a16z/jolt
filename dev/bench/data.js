@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787679954032,
+  "lastUpdate": 1787692298417,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -145030,6 +145030,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861376,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "abf0a2cf844e07dd5292bf5a79a8f31e88dd0d5b",
+          "message": "fix: issue 1780 findings (#1804)\n\n* fix(common): strip private advice bytes from JoltDevice serialization\n\nThe tracer populates trusted_advice/untrusted_advice so the MMU can\nservice loads from the advice regions, and those bytes rode along in\nboth the serde and CanonicalSerialize impls. A host that serializes\nprover.program_io as its public io blob would leak the private inputs,\neven though the verifier never reads those fields (advice is bound via\npolynomial commitments) and the Fiat-Shamir preamble only absorbs\ninputs/outputs/panic.\n\nSerialize the advice fields as empty vectors in both impls. The wire\nformat is unchanged (identical to a device whose advice is empty), and\ndeserialization still accepts populated fields so existing blobs decode.\n\nSurfaced by the jolt-go integration (#1780, finding 1).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(prover): return an error instead of panicking on oversized traces\n\nThe trace-length check in JoltCpuProver::gen_from_trace panicked when\nthe padded trace exceeded the preprocessing's max_padded_trace_length.\nFor FFI hosts this is a sharp edge: on Linux, a panic unwinding across a\nforeign-created thread aborts the process even under catch_unwind.\n\nMake gen_from_trace and gen_from_elf return\nResult<Self, jolt_verifier::VerifierError>, reusing the\nInvalidTraceLength variant so the whole macro-free prove path\n(gen_from_elf -> prove) surfaces one error type. The #[jolt::provable]\nprove closure keeps its panicking behavior via .expect(), and the\nmodular prover already returns an error for this case\n(ProverConfig::derive).\n\nSurfaced by the jolt-go integration (#1780, finding 2).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* docs: document the foreign-toolchain guest contract; warn on tohost hijack\n\nWrites down the porting traps surfaced by the jolt-go integration\n(#1780, finding 3): the raw (unaligned) program_size arithmetic that a\nforeign linker script must mirror, the A extension being implemented as\nvirtual sequences, and the tohost symbol flipping the tracer into\nriscv-tests mode.\n\nThe tohost flip also gets a runtime tracing warning when it hijacks an\nemulator that has a JoltDevice configured — that combination only\nhappens when a Jolt guest wrongly exports the symbol; the riscv-tests\nrunner installs its device after setup and stays quiet.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-08-25T16:03:14-04:00",
+          "tree_id": "f604d2d7e5a9d1701f9dba872d1aa30362c2d0f8",
+          "url": "https://github.com/a16z/jolt/commit/abf0a2cf844e07dd5292bf5a79a8f31e88dd0d5b"
+        },
+        "date": 1787692293461,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.4617,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4006,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 497776,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 497280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7736,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6299,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 502800,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0387,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 509036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.0277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5095,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6164,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 511272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4987,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 503136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.4871,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8874,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 31.9654,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1083780,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.3057,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 628584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 90.2117,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2123868,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4209,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 497740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6516,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.3585,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 862048,
             "unit": "KB",
             "extra": ""
           }
