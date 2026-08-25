@@ -15,6 +15,7 @@ use jolt_field::{Prime64Offset59, Ring, Zero};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
+    cfg_try_fold_reduce,
 };
 
 type F = Prime64Offset59;
@@ -83,4 +84,30 @@ fn fold_reduce_matches_serial_sum_of_squares() {
         |a: F, b: F| a + b
     );
     assert_eq!(got, expected);
+}
+
+#[test]
+fn try_fold_reduce_matches_serial_and_propagates_errors() {
+    let v = inputs();
+    let got: Result<F, &'static str> = cfg_try_fold_reduce!(
+        0..v.len(),
+        F::zero,
+        |acc: F, i: usize| Ok(acc + v[i]),
+        |a: F, b: F| Ok(a + b)
+    );
+    assert_eq!(got, Ok(serial_sum(&v)));
+
+    let failed: Result<F, &'static str> = cfg_try_fold_reduce!(
+        0..v.len(),
+        F::zero,
+        |acc: F, i: usize| {
+            if i == 17 {
+                Err("sentinel")
+            } else {
+                Ok(acc + v[i])
+            }
+        },
+        |a: F, b: F| Ok(a + b)
+    );
+    assert_eq!(failed, Err("sentinel"));
 }

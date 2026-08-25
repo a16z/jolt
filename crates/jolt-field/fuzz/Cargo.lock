@@ -298,6 +298,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff",
  "ark-serialize",
+ "cc",
  "num-traits",
  "rand_core",
  "serde",

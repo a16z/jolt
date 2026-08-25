@@ -159,11 +159,6 @@ pub type Prime56Offset27 = Fp64<{ pm(56, 27) as u64 }>;
 pub type Prime64Offset59 = Fp64<{ pm(64, 59) as u64 }>;
 /// Prime field for `2^128 − 275`.
 pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
-/// Prime field for `2^128 − 159`. Split-NTT-only helper prime.
-pub type Prime128Offset159 = Fp128<{ pm(128, 159) }>;
-/// Prime field for `2^128 − 2355` (`p ≡ 5 mod 8`): smooth multiplicative
-/// subgroup of order `14700 = 2² · 3 · 5² · 7²` for mixed-radix FFT.
-pub type Prime128Offset2355 = Fp128<{ pm(128, 2355) }>;
 /// Prime field for `2^128 − 2^32 + 22537` (`C = 0xFFFF_A7F7`): smooth
 /// multiplicative subgroup of order `2^3 · 3^7 = 17496` (pure radix-3
 /// subgroup `3^7 = 2187`). The default protocol prime.
@@ -287,10 +282,10 @@ mod sampling_tests {
         let mut fp128_bytes = Vec::from(fp128_modulus.to_le_bytes());
         fp128_bytes.extend_from_slice(&42u128.to_le_bytes());
         let mut fp128_rng = ScriptedRng::new(fp128_bytes);
-        assert_eq!(
-            Prime128OffsetA7F7::random(&mut fp128_rng),
+        // SAFETY: 42 is below the field modulus.
+        assert_eq!(Prime128OffsetA7F7::random(&mut fp128_rng), unsafe {
             Prime128OffsetA7F7::from_canonical_u128(42)
-        );
+        });
         assert_eq!(fp128_rng.cursor, 32);
     }
 }

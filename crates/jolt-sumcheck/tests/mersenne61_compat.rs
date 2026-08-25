@@ -281,6 +281,10 @@ impl CanonicalEncoding for Mersenne61 {
     fn num_bits(&self) -> u32 {
         u64::BITS - self.0.leading_zeros()
     }
+
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self::from_bytes_le_reduced(bytes)
+    }
 }
 
 impl WithAccumulator for Mersenne61 {
