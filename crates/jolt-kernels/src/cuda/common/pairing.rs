@@ -146,7 +146,7 @@ impl CudaKernelContext {
             .ok_or(CudaError::InvariantViolation {
                 reason: "a multi-Miller batch overflowed its lane buffer",
             })?;
-        let mut lanes = self.alloc_u64(lanes_len)?;
+        let mut lanes = self.alloc_u64_unset(lanes_len)?;
         let pairs = Self::count_of(count)?;
         let lanes_of = Self::count_of(segments.len())?;
         let device_g1_offsets = self.upload_u32_slice(&g1_offsets)?;
@@ -248,7 +248,7 @@ impl CudaKernelContext {
             .ok_or(CudaError::InvariantViolation {
                 reason: "a multi-Miller batch overflowed its lane buffer",
             })?;
-        let mut lanes = self.alloc_u64(lanes_len)?;
+        let mut lanes = self.alloc_u64_unset(lanes_len)?;
         let pairs = Self::count_of(count)?;
         let lanes_of = Self::count_of(segments.len())?;
         let device_g1_offsets = self.upload_u32_slice(&g1_offsets)?;

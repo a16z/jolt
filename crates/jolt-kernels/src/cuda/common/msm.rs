@@ -1090,8 +1090,8 @@ impl CudaKernelContext {
         }
         let count = Self::count_of(cycles)?;
         let code = kind.code();
-        let mut magnitudes = self.alloc_u64(cycles)?;
-        let mut signs = self.alloc_u8(cycles)?;
+        let mut magnitudes = self.alloc_u64_unset(cycles)?;
+        let mut signs = self.alloc_u8_unset(cycles)?;
         let mut builder = self.stream().launch_builder(self.commit_increment_column());
         let _ = builder.arg(extras);
         let _ = builder.arg(&code);
@@ -1418,7 +1418,7 @@ impl CudaKernelContext {
         let scatter_span =
             tracing::info_span!("cuda_commit_one_hot_scatter", segments, entries = total).entered();
         let mut cursor = self.clone_u32(&offsets)?;
-        let mut indices = self.alloc_u32(total.max(1))?;
+        let mut indices = self.alloc_u32_unset(total.max(1))?;
         if mode == OneHotMode::Shared {
             let mut builder = self
                 .stream()
@@ -2102,7 +2102,7 @@ impl CudaKernelContext {
         let mask = Self::count_of(buckets - 1)?;
         let limbs_arg = Self::count_of(scalar_limbs)?;
 
-        let mut digits = self.alloc_u32(total)?;
+        let mut digits = self.alloc_u32_unset(total)?;
         for (index, &shift_bits) in shifts.iter().enumerate() {
             let shift = Self::count_of(shift_bits)?;
             let mut lane_digits = digits.slice_mut(index * lane..(index + 1) * lane);
@@ -2139,7 +2139,7 @@ impl CudaKernelContext {
 
         let offsets = self.exclusive_scan_u32_on_device(&counts, segments)?;
         let mut cursor = self.clone_u32(&offsets)?;
-        let mut indices = self.alloc_u32(total.max(1))?;
+        let mut indices = self.alloc_u32_unset(total.max(1))?;
         let mut builder = self.stream().launch_builder(self.msm_bucket_scatter());
         let _ = builder.arg(&digits);
         let _ = builder.arg(signs);

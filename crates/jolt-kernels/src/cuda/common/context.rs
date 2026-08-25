@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use cudarc::driver::{
-    CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, DevicePtr, LaunchConfig,
-    PushKernelArg,
+    CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, DevicePtr, DevicePtrMut,
+    LaunchConfig, PushKernelArg,
 };
 use cudarc::nvrtc::Ptx;
 use jolt_field::Fr;
@@ -13,6 +13,13 @@ use super::device::{fill_staging, DeviceFrVec, LIMBS};
 use super::error::CudaError;
 use super::staging::StagingPool;
 use super::xfer_stats::{self, Phase};
+
+const POISON_BYTE: u8 = 0xA5;
+
+fn poison_byte() -> Option<u8> {
+    static POISON: OnceLock<Option<u8>> = OnceLock::new();
+    *POISON.get_or_init(|| std::env::var_os("JOLT_CUDA_POISON").map(|_| POISON_BYTE))
+}
 
 pub const BLOCK: u32 = 256;
 
@@ -506,6 +513,47 @@ impl CudaKernelContext {
 
     pub(crate) fn alloc_u8(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
         Ok(self.stream.alloc_zeros::<u8>(len)?)
+    }
+
+    fn alloc_unset<T: cudarc::driver::DeviceRepr>(
+        &self,
+        len: usize,
+    ) -> Result<CudaSlice<T>, CudaError> {
+        // SAFETY: `alloc` leaves the elements unset, which every caller of this
+        // helper is required to tolerate: each writes all of `len` before any
+        // read, or reads only positions it wrote. Nothing here observes the
+        // contents. `JOLT_CUDA_POISON` turns that requirement into a test by
+        // filling the block with a non-zero pattern instead, so a stale read
+        // cannot pass as a zero.
+        let mut buffer = unsafe { self.stream.alloc::<T>(len) }?;
+        if let Some(byte) = poison_byte() {
+            let bytes = len * size_of::<T>();
+            let (pointer, _record) = buffer.device_ptr_mut(&self.stream);
+            // SAFETY: `pointer` is the freshly allocated block above and `bytes`
+            // is exactly its length, so the fill stays inside it; the memset is
+            // ordered on the same stream as every later use.
+            unsafe {
+                cudarc::driver::result::memset_d8_async(
+                    pointer,
+                    byte,
+                    bytes,
+                    self.stream.cu_stream(),
+                )
+            }?;
+        }
+        Ok(buffer)
+    }
+
+    pub(crate) fn alloc_u32_unset(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
+        self.alloc_unset::<u32>(len)
+    }
+
+    pub(crate) fn alloc_u8_unset(&self, len: usize) -> Result<CudaSlice<u8>, CudaError> {
+        self.alloc_unset::<u8>(len)
+    }
+
+    pub(crate) fn alloc_u64_unset(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
+        self.alloc_unset::<u64>(len)
     }
 
     pub(crate) fn replicate_u8(
