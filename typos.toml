@@ -29,6 +29,7 @@ extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
 [type.ocaml.extend-words]
 # HOL Light tactic identifiers.
 "ASSUM" = "ASSUM"
+"THM" = "THM"
 
 [type.sh.extend-words]
 # HOL Light theorem type emitted and checked by the proof runner.
