@@ -353,8 +353,11 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
 
 /// One RAF prefix–suffix decomposition — same shape and binding as the
 /// reference kernel's.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RafDecomposition<F: JoltField> {
     prefix: Polynomial<F>,
     q_shift: Polynomial<F>,
@@ -413,8 +416,11 @@ fn extension_pair<F: JoltField>(evals: &[F], b: usize, half: usize) -> (F, F) {
 }
 
 /// Cycle-round state: the Gruen-split eq factor plus the cycle tables.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct CycleState<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     tables: CycleTables<F>,
@@ -431,8 +437,11 @@ struct CycleState<F: JoltField> {
 /// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
 /// exist. Values are identical to materialize-then-bind: the bases are the
 /// same, and `lo + r·(hi − lo)` is the binding formula either way.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum CycleTables<F: JoltField> {
     Pending(PendingCycleTables<F>),
     Dense {
@@ -443,8 +452,11 @@ enum CycleTables<F: JoltField> {
 
 /// Everything the pending-base evaluations need beyond the kernel's own
 /// rows / claim columns / phase eq tables.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct PendingCycleTables<F: JoltField> {
     /// Per-table combined value at the bound address point.
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
@@ -536,8 +548,11 @@ impl<F: JoltField> RafSums<F> {
     }
 }
 
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-#[cfg_attr(feature = "allocative", allocative(bound = "F: JoltField"))]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: InstructionReadRafDimensions,
@@ -548,7 +563,6 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     rows: Arc<Vec<InstructionCycleRow>>,
     /// Per-table cycle buckets (`u32` cycle indices), by
     /// `LookupTableKind::index()`.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     buckets: Vec<Vec<u32>>,
     /// Condensed per-cycle eq weights (see the reference kernel).
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]

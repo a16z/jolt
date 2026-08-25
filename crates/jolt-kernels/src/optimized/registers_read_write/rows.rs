@@ -72,10 +72,8 @@ impl WitnessBundle for RegisterCycleRow {
 /// `prepare` for the stage-5 val-evaluation kernel (which otherwise re-walks
 /// the trace to collect them).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedRdIndices(
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-    pub  Vec<Option<u8>>,
-);
+pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
+
 /// The row-window size of the streaming entry-collection pass (matches
 /// `support::collect_rows`: wide enough to amortize the per-chunk rayon
 /// extraction dispatch).

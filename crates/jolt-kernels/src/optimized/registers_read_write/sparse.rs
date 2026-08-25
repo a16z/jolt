@@ -564,9 +564,7 @@ pub(super) struct ReadWriteKernel<F: JoltField> {
     /// Fully bound `rd_inc` — constant across the address rounds.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub(super) inc_scalar: F,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) rs1_indices: Vec<Option<u8>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) challenges: RoundChallenges<F>,
 }

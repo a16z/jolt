@@ -189,7 +189,6 @@ pub struct InstructionReadRafKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rows: Vec<InstructionReadRafWitness>,
     /// Per-table cycle buckets, indexed by `LookupTableKind::index()`.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     buckets: Vec<Vec<usize>>,
     /// Condensed per-cycle eq weights: after phase `p` starts,
     /// `u[j] = eq(r_reduction, j) · Π_{q<p} eq(phase-q challenges, chunk_q(k_j))`.

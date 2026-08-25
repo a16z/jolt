@@ -57,7 +57,6 @@ use crate::{
 )]
 enum WaState<F> {
     Indices {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         rd: Vec<Option<u8>>,
         #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,

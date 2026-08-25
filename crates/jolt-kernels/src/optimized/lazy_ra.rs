@@ -52,9 +52,9 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily until the
 /// fourth bind materializes dense.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[cfg_attr(
     feature = "allocative",
+    derive(allocative::Allocative),
     allocative(bound = "F: JoltField, S: allocative::Allocative")
 )]
 pub(crate) enum LazyFoldedRa<F: JoltField, S> {

@@ -94,7 +94,6 @@ enum CollectFailure {
 pub(crate) struct RamAccessColumns {
     /// Remapped word address per cycle; [`NO_ACCESS`] when the cycle makes no
     /// remappable RAM access (no-ops and address 0).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub addresses: Vec<u32>,
 }
 
@@ -104,10 +103,8 @@ pub(crate) struct RamAccessColumns {
 pub(crate) struct RamAccessValues {
     /// Pre-access word value per cycle (a read's value, a write's pre-value);
     /// 0 on no-access cycles.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub post_values: Vec<u64>,
 }
 
