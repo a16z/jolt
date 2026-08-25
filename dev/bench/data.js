@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787606305346,
+  "lastUpdate": 1787637377075,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -143770,6 +143770,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 859320,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "53ed6c31977d463e1e9061fd4b5569825d04e4e6",
+          "message": "feat(field): restore and prove Fp128 kernels (#1797)\n\n* perf(field): port subword Fp64 kernels\n\n* fix(field): keep fused helpers in packed backend\n\n* feat(field): restore proved fp128 kernels\n\n* fix(field): close migration audit gaps\n\n* fix(field): lint fp128 portable helpers\n\n* feat(field): prove x86 fp128 add and sub\n\n* feat(field): prove aarch64 fp128 multiply\n\n* feat(field): prove fp128 constant loads\n\n* feat(field): prove fp128 multiply constant load\n\n* fix(field): respect external canonical constructor\n\n* docs(field): state strengthened fp128 proof scope\n\n* fix(field): tighten x86 proof linkage\n\n* docs(field): define unreduced proof obligations\n\n* feat(field): prove x86 fp128 multiply\n\nAdd a baseline x86-64 multiplication sequence for the A7F7 prime and use it in the production inline path. Bind HOL Light to the exact object bytes, prove the body and fixed-register subroutine, and extend the reusable proof runners and documentation.\\n\\nThe focused Criterion benchmark improves by about 20% against the saved portable baseline under Rosetta.\n\n* feat(field): prove x86 ABI return path\n\nExtend the exact x86 proof objects through the System V result moves and ret. Tighten Linux witness linkage to complete-symbol equality, recognize the exact Darwin frame wrapper, and record native Ryzen performance evidence.\n\n* perf(field): add proved BMI2 and ADX multiply\n\nSelect a 31-instruction MULX and dual-carry kernel when both target features are enabled. Keep the proved baseline sequence for all other x86-64 builds.\n\nConnect both production witness forms to exact objects and add HOL Light body and System V subroutine theorems for the optimized path.\n\n* docs(fv): explain field kernel trust boundary\n\nAdd a source-to-bytes walkthrough, a theorem-reading guide, and a skeptical-reviewer account of what is proved, checked, tested, and trusted.\n\nRecord the BMI2 and ADX feature boundary, native measurements, callable-object claim, and downstream executable gap.\n\n* chore(ci): allow x86 byte token\n\n* ci(field): run portability tests with nextest\n\n* ci: use nextest for remaining test commands\n\n* feat(field): gate Fp128 assembly and fuzz differentially\n\n* ci(field): select benchmark and fuzz targets\n\n* fix(field): address fp128 review findings\n\n* fix(ci): cover Fp128 review integration checks\n\n* fix(field): generalize Fp128 assembly proofs\n\n* ci: pin fuzz nightly toolchain",
+          "timestamp": "2026-08-24T21:50:18-07:00",
+          "tree_id": "0976356714b42eb77fcfe0725e4e3bd2ca69773a",
+          "url": "https://github.com/a16z/jolt/commit/53ed6c31977d463e1e9061fd4b5569825d04e4e6"
+        },
+        "date": 1787637372224,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6843,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 873392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3275,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 506864,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 511540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 502768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7441,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507180,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5857,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.7777,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 506824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.5736,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 121600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4129,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5716,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 509196,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4646,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.3694,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 504536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.6475,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 502972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.2489,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1081508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.5445,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 638592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 83.7811,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2126700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.3423,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5327,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.7126,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 863808,
             "unit": "KB",
             "extra": ""
           }
