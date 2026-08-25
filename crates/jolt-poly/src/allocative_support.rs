@@ -5,6 +5,10 @@
 //! on every field-generic profiler — a bound the foreign `akita-field`
 //! scalar cannot satisfy (both it and `Allocative` are foreign, so no impl
 //! can exist here). Reach for these from `#[allocative(visit = ...)]`.
+//!
+//! TODO(https://github.com/a16z/jolt/issues/1805): the akita-field edge is a
+//! pre-cutover bootstrap; once it goes, `JoltField` can require `Allocative`
+//! and this module deletes itself along with its ~86 call sites.
 
 use allocative::{Key, Visitor};
 
