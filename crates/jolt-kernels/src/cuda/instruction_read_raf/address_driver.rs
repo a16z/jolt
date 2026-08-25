@@ -3,7 +3,7 @@
     reason = "implementation target: the instruction read-RAF kernel wires this once it lands"
 )]
 
-use cudarc::driver::{LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_field::{Field, Fr};
 use jolt_lookup_tables::tables::LookupTableKind;
@@ -35,7 +35,7 @@ pub struct AddressShard {
 pub struct DeviceAddressPhase {
     shards: Vec<AddressShard>,
     present: Vec<LookupTableKind<RISCV_XLEN>>,
-    layout: TermLayout,
+    layout: DeviceTermLayout,
     address_bits: usize,
     phase: usize,
     rounds_bound: usize,
@@ -61,6 +61,30 @@ struct TermLayout {
     offsets: Vec<u32>,
     counts: Vec<u32>,
     suffix_bases: Vec<u32>,
+}
+
+struct DeviceTermLayout {
+    ordinal: usize,
+    scales: CudaSlice<u32>,
+    prefix_ids: CudaSlice<u32>,
+    suffix_slots: CudaSlice<u32>,
+    offsets: CudaSlice<u32>,
+    counts: CudaSlice<u32>,
+    suffix_bases: CudaSlice<u32>,
+}
+
+impl TermLayout {
+    fn upload(&self, context: &CudaKernelContext) -> Result<DeviceTermLayout, CudaError> {
+        Ok(DeviceTermLayout {
+            ordinal: context.ordinal(),
+            scales: context.upload_u32_slice(&self.scales)?,
+            prefix_ids: context.upload_u32_slice(&self.prefix_ids)?,
+            suffix_slots: context.upload_u32_slice(&self.suffix_slots)?,
+            offsets: context.upload_u32_slice(&self.offsets)?,
+            counts: context.upload_u32_slice(&self.counts)?,
+            suffix_bases: context.upload_u32_slice(&self.suffix_bases)?,
+        })
+    }
 }
 
 fn term_layout(present: &[LookupTableKind<RISCV_XLEN>]) -> Result<TermLayout, CudaError> {
@@ -150,7 +174,7 @@ impl DeviceAddressPhase {
         let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
             .filter(|table| used[table.index()])
             .collect();
-        let layout = term_layout(&present)?;
+        let layout = term_layout(&present)?.upload(context)?;
 
         let checkpoints = default_checkpoints(context)?;
         let mut raf_checkpoints = vec![Fr::from(0u64); RAF_CHECKPOINTS];
@@ -326,14 +350,12 @@ impl DeviceAddressPhase {
                 reason: "the address round tables are already fully bound",
             });
         }
+        if context.ordinal() != self.layout.ordinal {
+            return Err(CudaError::InvariantViolation {
+                reason: "an address round message ran on a device the term layout does not live on",
+            });
+        }
         let prefixes = self.evaluate_prefixes(context, half)?;
-
-        let scales = context.upload_u32_slice(&self.layout.scales)?;
-        let prefix_ids = context.upload_u32_slice(&self.layout.prefix_ids)?;
-        let suffix_slots = context.upload_u32_slice(&self.layout.suffix_slots)?;
-        let offsets = context.upload_u32_slice(&self.layout.offsets)?;
-        let counts = context.upload_u32_slice(&self.layout.counts)?;
-        let suffix_bases = context.upload_u32_slice(&self.layout.suffix_bases)?;
 
         let table_count = CudaKernelContext::count_of(self.present.len())?;
         let half_count = CudaKernelContext::count_of(half)?;
@@ -347,13 +369,13 @@ impl DeviceAddressPhase {
             .stream()
             .launch_builder(context.ap_round_message_hinted());
         let _ = builder.arg(prefixes.limbs());
-        let _ = builder.arg(&prefix_ids);
-        let _ = builder.arg(&suffix_slots);
-        let _ = builder.arg(&scales);
-        let _ = builder.arg(&offsets);
-        let _ = builder.arg(&counts);
+        let _ = builder.arg(&self.layout.prefix_ids);
+        let _ = builder.arg(&self.layout.suffix_slots);
+        let _ = builder.arg(&self.layout.scales);
+        let _ = builder.arg(&self.layout.offsets);
+        let _ = builder.arg(&self.layout.counts);
         let _ = builder.arg(self.tables.suffixes.limbs());
-        let _ = builder.arg(&suffix_bases);
+        let _ = builder.arg(&self.layout.suffix_bases);
         let _ = builder.arg(&table_count);
         let _ = builder.arg(self.tables.raf_prefix.limbs());
         let _ = builder.arg(self.tables.raf.shift_half.limbs());
