@@ -32,6 +32,24 @@ use crate::commitment::ModeStreamingCommitment;
 
 use crate::JoltBackend;
 
+#[cfg(feature = "allocative")]
+macro_rules! impl_field_allocative {
+    ($type:ident, |$value:ident| $heap:block) => {
+        impl<F: jolt_field::JoltField> allocative::Allocative for $type<F> {
+            fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+                let mut visitor = visitor.enter_self_sized::<Self>();
+                let $value = self;
+                let heap_bytes: usize = $heap;
+                visitor.visit_simple(allocative::Key::new("heap"), heap_bytes);
+                visitor.exit();
+            }
+        }
+    };
+}
+
+#[cfg(feature = "allocative")]
+pub(crate) use impl_field_allocative;
+
 pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod commitment;

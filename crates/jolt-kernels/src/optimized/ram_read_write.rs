@@ -106,9 +106,12 @@ impl<F: JoltField> allocative::Allocative for RamReadWriteKernel<F> {
     }
 }
 
-fn phase_error<F: JoltField>() -> SumcheckError<F> {
-    SumcheckError::MissingEvaluationSource {
-        kind: "RAM read-write phase state",
+impl<F: JoltField> Phase<F> {
+    /// The error for a bind or round message arriving outside its phase.
+    fn error() -> SumcheckError<F> {
+        SumcheckError::MissingEvaluationSource {
+            kind: "RAM read-write phase state",
+        }
     }
 }
 
@@ -118,14 +121,14 @@ impl<F: JoltField> RamReadWriteKernel<F> {
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
         if round < self.log_t {
             let Some(Phase::Cycle { matrix, gruen }) = &mut self.phase else {
-                return Err(phase_error());
+                return Err(Phase::error());
             };
             matrix.bind(r);
             gruen.bind(r);
             self.inc.bind_with_order(r, BindingOrder::LowToHigh);
             if round == self.log_t - 1 {
                 let Some(Phase::Cycle { matrix, gruen }) = self.phase.take() else {
-                    return Err(phase_error());
+                    return Err(Phase::error());
                 };
                 self.phase = Some(Phase::Address {
                     matrix: matrix.into_address_major(),
@@ -137,7 +140,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
         } else {
             let Some(Phase::Address { matrix, .. }) = &mut self.phase else {
-                return Err(phase_error());
+                return Err(Phase::error());
             };
             matrix.bind(r, &mut self.val_init);
             if round == self.log_t + self.log_k - 1 {
@@ -149,7 +152,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
 
     fn finalize(&mut self) -> Result<(), SumcheckError<F>> {
         let Some(Phase::Address { matrix, merged_eq }) = self.phase.take() else {
-            return Err(phase_error());
+            return Err(Phase::error());
         };
         let (final_ra, final_val) = matrix.final_values(&self.val_init);
         self.phase = Some(Phase::Done {
@@ -168,7 +171,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let Some(Phase::Cycle { matrix, gruen }) = &self.phase else {
-            return Err(phase_error());
+            return Err(Phase::error());
         };
         let e_in = gruen.e_in_current();
         let e_out = gruen.e_out_current();
@@ -189,7 +192,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let Some(Phase::Address { matrix, merged_eq }) = &self.phase else {
-            return Err(phase_error());
+            return Err(Phase::error());
         };
         let evals = matrix.address_round_evals(&self.val_init, &self.inc, merged_eq, self.gamma);
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))

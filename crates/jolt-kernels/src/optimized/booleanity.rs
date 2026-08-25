@@ -148,66 +148,68 @@ fn booleanity_openings<F: JoltField>(
     }
 }
 
-/// The layout's chunk selectors, in canonical polynomial order, with the
-/// witness shapes validated up front (mirroring the reference kernel's size
-/// checks).
-fn column_selectors<F: JoltField>(
-    witness: &dyn JoltWitnessPlane<F>,
-    dimensions: BooleanityDimensions,
-) -> Result<BooleanityColumns, KernelError<F>> {
-    let log_t = dimensions.log_t;
-    let log_k_chunk = dimensions.log_k_chunk;
-    let layout = dimensions.layout;
-    let openings = booleanity_openings(dimensions)?;
-    for opening in &openings {
-        let shape = witness.shape(opening.polynomial_id())?;
-        if shape.log_rows != log_k_chunk + log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{opening:?}"),
-                expected: 1usize << (log_k_chunk + log_t),
-                got: shape.rows(),
-            });
+impl BooleanityColumns {
+    /// The layout's chunk selectors, in canonical polynomial order, with the
+    /// witness shapes validated up front.
+    fn new<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        dimensions: BooleanityDimensions,
+    ) -> Result<Self, KernelError<F>> {
+        let log_t = dimensions.log_t;
+        let log_k_chunk = dimensions.log_k_chunk;
+        let layout = dimensions.layout;
+        let openings = booleanity_openings(dimensions)?;
+        for opening in &openings {
+            let shape = witness.shape(opening.polynomial_id())?;
+            if shape.log_rows != log_k_chunk + log_t {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("{opening:?}"),
+                    expected: 1usize << (log_k_chunk + log_t),
+                    got: shape.rows(),
+                });
+            }
         }
-    }
-    let selectors = layout
-        .polynomials()
-        .map(|polynomial| {
-            Ok(match polynomial {
-                JoltRaPolynomial::Instruction(index) => ColumnSelector::Instruction(
-                    RaChunkSelector::new(index, layout.instruction(), log_k_chunk)?,
-                ),
-                JoltRaPolynomial::Bytecode(index) => ColumnSelector::Bytecode(
-                    RaChunkSelector::new(index, layout.bytecode(), log_k_chunk)?,
-                ),
-                JoltRaPolynomial::Ram(index) => {
-                    ColumnSelector::Ram(RaChunkSelector::new(index, layout.ram(), log_k_chunk)?)
-                }
+        let selectors = layout
+            .polynomials()
+            .map(|polynomial| {
+                Ok(match polynomial {
+                    JoltRaPolynomial::Instruction(index) => ColumnSelector::Instruction(
+                        RaChunkSelector::new(index, layout.instruction(), log_k_chunk)?,
+                    ),
+                    JoltRaPolynomial::Bytecode(index) => ColumnSelector::Bytecode(
+                        RaChunkSelector::new(index, layout.bytecode(), log_k_chunk)?,
+                    ),
+                    JoltRaPolynomial::Ram(index) => {
+                        ColumnSelector::Ram(RaChunkSelector::new(index, layout.ram(), log_k_chunk)?)
+                    }
+                })
             })
-        })
-        .collect::<Result<Vec<_>, KernelError<F>>>()?;
-    #[cfg(feature = "akita")]
-    let mut selectors = selectors;
-    #[cfg(feature = "akita")]
-    {
-        let chunking = jolt_claims::protocols::jolt::lattice::BalancedIncChunking::new(log_k_chunk)
-            .map_err(|_| KernelError::InvariantViolation {
-                reason: "the packed shape requires a lattice-compatible chunk width",
-            })?;
-        selectors.extend((0..chunking.chunk_count()).map(|index| {
-            ColumnSelector::UnsignedInc(BalancedIncColumn::Digit {
+            .collect::<Result<Vec<_>, KernelError<F>>>()?;
+        #[cfg(feature = "akita")]
+        let mut selectors = selectors;
+        #[cfg(feature = "akita")]
+        {
+            let chunking =
+                jolt_claims::protocols::jolt::lattice::BalancedIncChunking::new(log_k_chunk)
+                    .map_err(|_| KernelError::InvariantViolation {
+                        reason: "the packed shape requires a lattice-compatible chunk width",
+                    })?;
+            selectors.extend((0..chunking.chunk_count()).map(|index| {
+                ColumnSelector::UnsignedInc(BalancedIncColumn::Digit {
+                    width: log_k_chunk,
+                    index,
+                })
+            }));
+            selectors.push(ColumnSelector::UnsignedInc(BalancedIncColumn::Carry {
                 width: log_k_chunk,
-                index,
-            })
-        }));
-        selectors.push(ColumnSelector::UnsignedInc(BalancedIncColumn::Carry {
-            width: log_k_chunk,
-        }));
+            }));
+        }
+        debug_assert_eq!(openings.len(), selectors.len());
+        Ok(Self {
+            openings,
+            selectors,
+        })
     }
-    debug_assert_eq!(openings.len(), selectors.len());
-    Ok(BooleanityColumns {
-        openings,
-        selectors,
-    })
 }
 
 /// The one-hot pushforward `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`
@@ -323,7 +325,7 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
             });
         }
 
-        let columns = column_selectors(witness, dimensions)?;
+        let columns = BooleanityColumns::new(witness, dimensions)?;
         let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
         let masses = cycle_pushforward(
             &rows,
@@ -358,31 +360,15 @@ struct OptimizedBooleanityAddressKernel<F: JoltField> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OptimizedBooleanityAddressKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{
-            nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
-        };
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("gamma_weights"),
-            vec_heap_bytes(&self.gamma_weights),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("linear"),
-            polys_heap_bytes(&self.linear),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("squared"),
-            nested_vec_heap_bytes(&self.squared),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("eq_address"),
-            poly_heap_bytes(&self.eq_address),
-        );
-        visitor.exit();
-    }
-}
+crate::optimized::impl_field_allocative!(OptimizedBooleanityAddressKernel, |kernel| {
+    use crate::backend::{
+        nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
+    };
+    vec_heap_bytes(&kernel.gamma_weights)
+        + polys_heap_bytes(&kernel.linear)
+        + nested_vec_heap_bytes(&kernel.squared)
+        + poly_heap_bytes(&kernel.eq_address)
+});
 
 impl<F: JoltField> OptimizedBooleanityAddressKernel<F> {
     fn new(rounds: usize, gamma: F, reference_address: &[F], masses: Vec<Vec<F>>) -> Self {
@@ -531,7 +517,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
                 reason: "booleanity cycle-phase point lengths disagree with the dimensions",
             });
         }
-        let columns = column_selectors(witness, dimensions)?;
+        let columns = BooleanityColumns::new(witness, dimensions)?;
         let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
 
         // The fixed address eq factor of the `EqAddressCycle` public; rides
@@ -616,27 +602,14 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for OptimizedBooleanityCycleKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::vec_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("eq"), self.eq.heap_bytes());
-        visitor.visit_simple(allocative::Key::new("tables"), self.tables.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("gamma_powers"),
-            vec_heap_bytes(&self.gamma_powers),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("gamma_powers_inv"),
-            vec_heap_bytes(&self.gamma_powers_inv),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("openings"),
-            vec_heap_bytes(&self.openings),
-        );
-        visitor.exit();
-    }
-}
+crate::optimized::impl_field_allocative!(OptimizedBooleanityCycleKernel, |kernel| {
+    use crate::backend::vec_heap_bytes;
+    kernel.eq.heap_bytes()
+        + kernel.tables.heap_bytes()
+        + vec_heap_bytes(&kernel.gamma_powers)
+        + vec_heap_bytes(&kernel.gamma_powers_inv)
+        + vec_heap_bytes(&kernel.openings)
+});
 
 impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     fn bind(&mut self, challenge: F) {
