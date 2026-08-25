@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787679936167,
+  "lastUpdate": 1787679954032,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -144778,6 +144778,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 860384,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d80d201d6ab645c528a1c1ff7bde975ed72af9e9",
+          "message": "refactor: delete the HyperKZG commitment scheme (#1795)\n\n* refactor: delete the HyperKZG commitment scheme\n\nHyperKZG had no production caller. The modular `jolt-hyperkzg` crate was\nreachable only as a `jolt-openings` dev-dependency, and the legacy\n`poly/commitment/hyperkzg.rs` carried its own note that \"HyperKZG is not\ncurrently used in Jolt\". Dory is the only PCS the prover and verifier\nactually instantiate.\n\nRemoved:\n- crates/jolt-hyperkzg/ — the crate, its criterion bench, and its three\n  cargo-fuzz targets (none of which CI ever ran: neither fuzz-crates.yml\n  nor bench-crates.yml lists the crate)\n- crates/jolt-prover-legacy/src/poly/commitment/{hyperkzg,kzg}.rs — the\n  legacy port and the UnivariateKZG/SRS primitives it was the sole\n  consumer of\n- crates/jolt-openings/tests/homomorphic_hyperkzg.rs\n\n`tests/support/common.rs` is `#[path]`-included by the surviving Dory and\nschemes test binaries, so its `kzg_setup` helper and imports go with it.\nIts clear-path witness-count-mismatch case covered generic\n`HomomorphicBatch` code that survives — Dory only had the ZK-path\nequivalent — so that test is ported to homomorphic_dory.rs rather than\ndropped.\n\nDocs are updated where they described the workspace as it was: the crate\ncount, the legacy `poly/` module map, and the verifier-closure crate\ncount. specs/verifier-closure-lints.md keeps its dated 2026-07-26 survey\nverbatim and gains an addendum instead, since it records a campaign as\nexecuted rather than current state.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-prover-legacy): drop helpers orphaned by the HyperKZG removal\n\nEach of these had exactly one caller workspace-wide, in the files the\nprevious commit deleted. All four are `pub`, so rustc emits no dead_code\nwarning for them — left in place they would rot silently.\n\n- `UniPoly::eval_as_univariate` (caller: hyperkzg.rs) — reading a\n  multilinear's coefficient vector as a univariate is the Gemini\n  transformation, i.e. HyperKZG's core trick and nothing else's\n- `VariableBaseMSM::batch_msm_univariate` (caller: kzg.rs)\n- `VariableBaseMSM::batch_msm` (callers: kzg.rs)\n- `RLCPolynomial::linear_combination` (caller: hyperkzg.rs) — written for\n  HyperKZG's mixed dense + one-hot case; the live pipeline builds its RLC\n  through `new_streaming`\n\nDeleting the first two also retires imports that would otherwise trip\n`unused_imports` under `-D warnings`.\n\nKept deliberately: `UniPoly::{random, divide_with_remainder}` and\n`DensePolynomial::linear_combination` lose their last production caller\nhere but are still exercised by unipoly.rs's and dory's own tests.\n\nThis commit is separable from the HyperKZG removal itself and can be\ndropped without affecting it.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-25T12:40:59-04:00",
+          "tree_id": "61ca71fb97e9e3f759644137df6db863a169a174",
+          "url": "https://github.com/a16z/jolt/commit/d80d201d6ab645c528a1c1ff7bde975ed72af9e9"
+        },
+        "date": 1787679939014,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6895,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.2905,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.723,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5697,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 499288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.7372,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 507312,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.9649,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4476,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 862056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5712,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4525,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 502804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.8184,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.5882,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 509476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.4458,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1093064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.8462,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 654704,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.1337,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2135516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.3236,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4679,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 504772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.0394,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861376,
             "unit": "KB",
             "extra": ""
           }
