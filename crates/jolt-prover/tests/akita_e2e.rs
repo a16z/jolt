@@ -198,7 +198,8 @@ mod muldiv {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let setup_params = legacy_prover.one_hot_trace_setup_params();
         assert_eq!(setup_params.one_hot_k(), 16);
@@ -321,7 +322,8 @@ mod muldiv {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         // The forced K = 256 regime; the setup params must be derived AFTER
         // the override (they carry K and the layout digest).
         let forced = LegacyOneHotConfig {
@@ -468,7 +470,8 @@ mod advice {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -614,7 +617,8 @@ mod advice {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -721,7 +725,8 @@ mod committed {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),

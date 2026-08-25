@@ -518,7 +518,8 @@ mod muldiv {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
@@ -1144,7 +1145,8 @@ mod advice_consumer {
             Some(trusted.commitment),
             Some(trusted.hint.clone()),
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
@@ -1358,7 +1360,8 @@ mod committed_muldiv {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
@@ -1523,7 +1526,8 @@ mod address_major {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
@@ -1690,7 +1694,8 @@ mod advice_committed {
             Some(trusted.commitment),
             Some(trusted.hint.clone()),
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
@@ -1873,7 +1878,8 @@ mod inline_sha3 {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
@@ -2002,7 +2008,8 @@ mod chunk_boundary {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
@@ -2180,7 +2187,8 @@ mod wide_one_hot {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         legacy_prover.one_hot_params = LegacyOneHotParams::from_config(
             &LegacyOneHotConfig {
                 log_k_chunk: WIDE_LOG_K_CHUNK,

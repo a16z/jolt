@@ -294,7 +294,8 @@ mod muldiv {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -420,7 +421,8 @@ mod advice_consumer {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -561,7 +563,8 @@ mod committed_muldiv {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
