@@ -23,8 +23,8 @@ of 128 bit inputs.
 
 | Layer | Current evidence |
 | --- | --- |
-| Arithmetic specification | Reviewed equations for addition, subtraction, and multiplication modulo the A7F7 prime |
-| Exact proof object | HOL Light body and callable subroutine theorems |
+| Arithmetic specification | Reviewed equations for addition, subtraction, and multiplication modulo `2^128 - C` under the Fp128 offset bounds |
+| Exact proof object | Generic HOL Light body theorems plus A7F7 callable subroutine theorems |
 | Linux inspection witness | Complete byte equality with the proved object |
 | Darwin inspection witness | Exact wrapper bytes checked, while frame semantics remain outside the theorem |
 | Arbitrary inlined callers | Rust and LLVM inline assembly contract trusted |
@@ -49,9 +49,10 @@ Jolt still needs a correct inline assembly declaration, correct feature
 selection, and a final integration check.
 
 If assembly does not improve performance, its unsafe boundary and proof upkeep
-are difficult to justify. The A7F7 paths remain because native measurements
-show a gain over the portable implementation. The BMI2 and ADX variant remains
-separate because not every x86-64 processor supports those instructions.
+are difficult to justify. The parameterized paths remain because native
+measurements show a gain over the portable implementation. The A7F7 BMI2 and
+ADX variant remains separate because not every x86-64 processor supports those
+instructions and because its bytes embed the A7F7 offset.
 
 ## What the arithmetic theorem rules out
 

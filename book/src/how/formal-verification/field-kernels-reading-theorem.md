@@ -8,16 +8,18 @@ do not need prior HOL Light knowledge.
 The x86-64 addition theorem has this simplified shape.
 
 ```ocaml
-!a0 a1 b0 b1 pc.
+!c a0 a1 b0 b1 pc.
+  valid_offset c ==>
   ensures x86
     (\s. bytes_loaded s (word pc) code /\
-         read RIP s = word pc /\
+         read RIP s = word body_pc /\
          read RDI s = a0 /\ read RSI s = a1 /\
-         read RDX s = b0 /\ read RCX s = b1)
+         read RDX s = b0 /\ read RCX s = b1 /\
+         read R8 s = word c)
     (\s. read RIP s = word end_pc /\
-         (value a0 a1 < p /\ value b0 b1 < p
+         (value a0 a1 < p(c) /\ value b0 b1 < p(c)
           ==> value (read RAX s) (read RDX s) =
-              (value a0 a1 + value b0 b1) MOD p))
+              (value a0 a1 + value b0 b1) MOD p(c)))
     (MAYCHANGE registers ,, MAYCHANGE flags ,, MAYCHANGE events)
 ```
 
@@ -29,10 +31,11 @@ the same.
 The first line starts with `!`.
 
 ```ocaml
-!a0 a1 b0 b1 pc.
+!c a0 a1 b0 b1 pc.
 ```
 
-This means the theorem applies to every choice of these values. `a0` and `a1`
+This means the theorem applies to every choice of these values. `c` is the
+offset in `p(c) = 2^128 - c`, subject to `valid_offset c`. `a0` and `a1`
 are the low and high 64 bit limbs of the first input. `b0` and `b1` are the
 limbs of the second input. `pc` is the address where the code is loaded.
 
@@ -50,10 +53,12 @@ bytes_loaded s (word pc) code
 This fixes the exact instruction bytes in memory at `pc`.
 
 ```ocaml
-read RIP s = word pc
+read RIP s = word body_pc
 ```
 
-This says execution starts at the first instruction.
+This says generic execution starts immediately after the fixture's literal
+constant load. The precondition also puts symbolic `c` in `r8`. The separate
+A7F7 corollary starts at the first instruction and proves that literal load.
 
 The register equations place the four input limbs in the physical registers
 used by the object. The values are variables, but the register names are fixed
@@ -102,10 +107,12 @@ functional theorem focus on the arithmetic result and ordinary machine state.
 
 ## Body theorem and subroutine theorem
 
-Each kernel has two theorem levels.
+Each baseline kernel has three theorem levels.
 
-The body theorem starts at the first instruction and stops before `ret`. It
-states the arithmetic result and the exact state that the body may change.
+The generic body theorem starts after the fixture's constant load and stops
+before `ret`. It states the arithmetic result for every valid offset and the
+exact state that the body may change. The A7F7 body corollary starts at the
+literal load and specializes the generic theorem.
 
 The subroutine theorem adds the procedure call convention. On x86-64 it states
 that `ret` reads the return address from the stack, increases `rsp` by eight

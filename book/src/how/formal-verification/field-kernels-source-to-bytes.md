@@ -37,14 +37,21 @@ limbs is less than the modulus.
 
 The compiler knows the modulus because it is a constant parameter of the field
 type. It also knows the target architecture and the target CPU features. It can
-therefore remove unused branches. An A7F7 multiplication on x86-64 reaches one
-of two fixed instruction fragments.
+therefore remove unused branches. An `Fp128` multiplication on x86-64 reaches
+one of two instruction fragments.
 
-* A baseline fragment works on every supported x86-64 processor.
-* A BMI2 and ADX fragment is present only when the build enables both CPU
-  features.
+* A baseline fragment takes the modulus offset in a register and works for
+  every valid `Fp128` offset on every supported x86-64 processor.
+* A BMI2 and ADX fragment embeds the A7F7 offset and is selected only for that
+  field when the build enables both CPU features.
 
-Other moduli use the portable Rust implementation.
+The baseline body theorem quantifies over the offset register and proves the
+fragment for every valid Fp128 offset. A separate callable-object corollary
+covers the fixture's literal A7F7 load and return sequence. The BMI2 and ADX
+fragment remains A7F7-specific because its bytes embed that offset. Both public
+offsets and a test-only generic offset 173 are also differentially tested
+against portable Rust to exercise the Rust dispatch and inline-assembly
+contract.
 
 ## What `include_str!` does
 
@@ -83,8 +90,10 @@ input. It does not prove that a multiplication returns the right residue modulo
 the prime. Tests can cover many inputs, but this field has about `2^128`
 possible values.
 
-The machine theorem proves the arithmetic result for every canonical input. It
-does so for one exact instruction sequence.
+The machine theorem proves the arithmetic result for every canonical input and
+every offset satisfying the Fp128 bounds. It does so for one exact
+register-parameterized instruction sequence; literal-load and BMI2/ADX
+corollaries remain constant-specific.
 
 The assembly boundary is still unsafe. Rust must place each input in the stated
 register. Rust must also be told about every register and flag that the

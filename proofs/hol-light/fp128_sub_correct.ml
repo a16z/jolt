@@ -40,6 +40,77 @@ let jolt_fp128_sub_mc =
 
 let JOLT_FP128_SUB_EXEC = ARM_MK_EXEC_RULE jolt_fp128_sub_mc;;
 
+(*** Generic theorem for the register-parameterized body. X4 supplies C; the
+     proof starts after the fixture's A7F7 constant load. ***)
+let JOLT_FP128_SUB_GENERIC_CORRECT = time prove
+ (`!c a0 a1 b0 b1 pc.
+      jolt_fp128_valid_offset c
+      ==>
+      ensures arm
+        (\s. aligned_bytes_loaded s (word pc) jolt_fp128_sub_mc /\
+             read PC s = word (pc + 0x4) /\
+             read X0 s = a0 /\
+             read X1 s = a1 /\
+             read X2 s = b0 /\
+             read X3 s = b1 /\
+             read X4 s = word c)
+        (\s. read PC s = word (pc + 0x18) /\
+             (bignum_of_wordlist [a0; a1] < jolt_fp128_p c /\
+              bignum_of_wordlist [b0; b1] < jolt_fp128_p c
+              ==> bignum_of_wordlist [read X0 s; read X1 s] =
+                  (bignum_of_wordlist [a0; a1] + jolt_fp128_p c -
+                   bignum_of_wordlist [b0; b1]) MOD jolt_fp128_p c))
+        (MAYCHANGE [PC; X0; X1; X5; X6; X7] ,,
+         MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
+  MAP_EVERY X_GEN_TAC
+   [`c:num`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
+  DISCH_TAC THEN REWRITE_TAC[SOME_FLAGS] THEN
+  SUBGOAL_THEN `c < 2 EXP 64` ASSUME_TAC THENL
+   [UNDISCH_TAC `jolt_fp128_valid_offset c` THEN
+    REWRITE_TAC[jolt_fp128_valid_offset] THEN ARITH_TAC;
+    ALL_TAC] THEN
+  SUBGOAL_THEN `c MOD 2 EXP 64 = c` ASSUME_TAC THENL
+   [MATCH_MP_TAC MOD_LT THEN ASM_REWRITE_TAC[]; ALL_TAC] THEN
+  ABBREV_TAC `m = bignum_of_wordlist [a0; a1]` THEN
+  ABBREV_TAC `n = bignum_of_wordlist [b0; b1]` THEN
+  ENSURES_INIT_TAC "s0" THEN
+  ARM_ACCSTEPS_TAC JOLT_FP128_SUB_EXEC [2;3;5;6] (2--6) THEN
+  ENSURES_FINAL_STATE_TAC THEN
+  ASM_SIMP_TAC[VAL_WORD; DIMINDEX_64; MOD_LT] THEN STRIP_TAC THEN
+  ABBREV_TAC `d = bignum_of_wordlist [sum_s2; sum_s3]` THEN
+  ABBREV_TAC `t = bignum_of_wordlist [sum_s5; sum_s6]` THEN
+  SUBGOAL_THEN `2 EXP 128 * bitval carry_s3 + m = n + d`
+  ASSUME_TAC THENL
+   [MAP_EVERY EXPAND_TAC ["d"; "m"; "n"] THEN
+    REWRITE_TAC[bignum_of_wordlist; MULT_CLAUSES; ADD_CLAUSES] THEN
+    REWRITE_TAC[GSYM REAL_OF_NUM_CLAUSES] THEN
+    ACCUMULATOR_ASSUM_LIST(MP_TAC o end_itlist CONJ o DECARRY_RULE) THEN
+    DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN REAL_ARITH_TAC;
+    ALL_TAC] THEN
+  SUBGOAL_THEN
+   `2 EXP 128 * bitval carry_s6 + d =
+    (if carry_s3 then c else 0) + t`
+  ASSUME_TAC THENL
+   [MAP_EVERY EXPAND_TAC ["t"; "d"] THEN
+    REWRITE_TAC[bignum_of_wordlist; MULT_CLAUSES; ADD_CLAUSES] THEN
+    REWRITE_TAC[GSYM REAL_OF_NUM_CLAUSES] THEN
+    ACCUMULATOR_ASSUM_LIST(MP_TAC o end_itlist CONJ o DECARRY_RULE) THEN
+    DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN
+    ASM_CASES_TAC `carry_s3:bool` THEN
+    ASM_REWRITE_TAC
+     [BITVAL_CLAUSES; VAL_WORD_0; VAL_WORD; DIMINDEX_64; MOD_LT] THEN
+    REAL_ARITH_TAC;
+    ALL_TAC] THEN
+  SUBGOAL_THEN `d < 2 EXP 128 /\ t < 2 EXP 128` STRIP_ASSUME_TAC THENL
+   [MAP_EVERY EXPAND_TAC ["d"; "t"] THEN BOUNDER_TAC[];
+    ALL_TAC] THEN
+  DISCARD_STATE_TAC "s6" THEN
+  ACCUMULATOR_POP_ASSUM_LIST(K ALL_TAC) THEN
+  MATCH_MP_TAC(SPECL
+   [`c:num`; `m:num`; `n:num`; `d:num`; `t:num`;
+    `carry_s3:bool`; `carry_s6:bool`] JOLT_FP128_SUB_GENERIC) THEN
+  ASM_REWRITE_TAC[]);;
+
 (*** ensures arm takes a precondition, a postcondition, and a frame condition.
 
      The precondition fixes the loaded code, program counter, and input

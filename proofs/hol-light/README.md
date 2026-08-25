@@ -1,9 +1,11 @@
 # Fp128 HOL Light proofs
 
-These proofs cover scalar addition, subtraction, and multiplication for
-`Prime128OffsetA7F7` on AArch64 and x86-64. They import the exact instruction
-words or bytes from standalone objects. Production Rust includes the same
-instruction body files.
+These proofs cover the register-parameterized scalar addition, subtraction,
+and multiplication bodies for every valid Fp128 offset on AArch64 and
+baseline x86-64. They also prove complete callable objects for
+`Prime128OffsetA7F7`, including the literal constant load and return sequence,
+and the A7F7-specific x86-64 BMI2 and ADX multiplication object. Production
+Rust includes the same instruction body files.
 
 The assembly kernels are opt-in through the `jolt-field/asm` feature. Builds
 that enable `solinas` without `asm` use the portable Rust implementation on
@@ -16,18 +18,22 @@ Start with the Book chapter
 It explains the arithmetic, theorem shape, production connection, and trust
 boundary.
 
-The final theorems cover complete callable AArch64 and Linux x86-64 witness
+The generic body theorems quantify over `C`, assume the same offset bounds as
+the Rust `Fp128` implementation, and start immediately after the fixture
+object's constant-load instruction with `C` in `x4` or `r8`. They prove the
+canonical result modulo `2^128 - C` for every canonical input. Both public
+offsets, 275 and A7F7, have machine-checked proofs that they satisfy those
+bounds.
+
+The A7F7 corollaries cover complete callable AArch64 and Linux x86-64 witness
 functions. The baseline x86-64 bodies copy their internal results to the
 System V return registers `rax:rdx`. The BMI2 and ADX multiplication body
-creates its result directly in those registers. The theorems prove the result
-moves where present, the `ret` stack behavior, and an ABI safe frame. The
+creates its result directly in those registers. These corollaries prove the
+literal load, result moves where present, `ret` behavior, and an ABI-safe
+frame. A separate certificate proves that the A7F7 modulus is prime. The
 Darwin x86-64 compiler adds a fixed frame wrapper. The artifact checker checks
 that wrapper exactly, but the current theorem does not cover its frame
-instructions. Every proved object loads its own reduction constant, so none of
-the theorems assumes a prepared offset register. All arithmetic theorems assume
-canonical inputs and prove the canonical result modulo
-`0xffffffffffffffffffffffff00005809`. A separate certificate proves that this
-modulus is prime.
+instructions.
 
 The inspection witness calls the normal Rust field operation. On AArch64 and
 Linux x86-64, the artifact checker confirms that its complete optimized symbol is
@@ -73,10 +79,12 @@ Use `aarch64` instead of `x86_64` to check the AArch64 path.
 ## Differential fuzzing
 
 The `fp128_asm_differential` target compares assembly with portable arithmetic
-for addition, subtraction, and multiplication. On AArch64 it also compares the
-assembly square and fused multiply-add kernels. CI fuzzes the target natively
-on AArch64, on baseline x86-64 through the general fuzz workflow, and on
-x86-64 with BMI2 and ADX enabled through this proof workflow.
+for both public offsets, 275 and A7F7, and a test-only generic offset 173, for
+addition, subtraction, and multiplication. The extra offset ensures the
+register-parameterized path stays independently reachable. On AArch64 it also
+compares the assembly square and fused multiply-add kernels. CI fuzzes the
+target natively on AArch64, on baseline x86-64 through the general fuzz
+workflow, and on x86-64 with BMI2 and ADX enabled through this proof workflow.
 
 Run it locally from `crates/jolt-field` on a supported architecture.
 
@@ -127,5 +135,6 @@ clean run preserves its temporary workspace and prints the path. A successful
 clean run removes it. CI runs clean checks independently for AArch64 and
 x86-64.
 
-Packed SIMD operations, squaring, inversion, small offset immediate kernels,
-and generic fallback kernels are outside the present proof scope.
+Packed SIMD operations, squaring, inversion, and fused multiply-add remain
+outside the present machine-proof scope. They retain differential or ordinary
+test coverage as described in the Book chapter.
