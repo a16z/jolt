@@ -61,6 +61,8 @@ jobs:
         run: cargo check -p jolt-field --no-default-features --features bn254
       - name: Test Solinas backend
         run: cargo nextest run -p jolt-field --no-default-features --features solinas --cargo-quiet
+      - name: Test parallel Solinas backend
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas,parallel --cargo-quiet
       - name: Check combined backends
         run: cargo check -p jolt-field --no-default-features --features bn254,solinas
 
@@ -741,9 +743,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Run extractor tests
         working-directory: ./zklean-extractor
-        run: cargo test
+        run: cargo nextest run --cargo-quiet
 
   compile-extracted-lean:
     name: Compile extracted Lean

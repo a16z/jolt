@@ -1063,7 +1063,7 @@ include these `JoltTargetExtension` families:
   `VirtualAssertWordAlignment`, and `VirtualAssertHalfwordAlignment`;
 - `JoltTargetExtension::VirtualArithmetic`: `VirtualMULI`,
   `VirtualMovsign`, `VirtualPow2`, `VirtualPow2I`, `VirtualPow2W`,
-  `VirtualPow2IW`, `VirtualChangeDivisor`, `VirtualChangeDivisorW`,
+  `VirtualPow2IW`, `VirtualNegateIf`,
   `VirtualSignExtendWord`, and `VirtualZeroExtendWord`;
 - `JoltTargetExtension::VirtualShifts`: `VirtualSRL`, `VirtualSRLI`,
   `VirtualSRA`, `VirtualSRAI`, `VirtualShiftRightBitmask`,

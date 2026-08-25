@@ -232,41 +232,64 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
         AdviceCompute::Div { code, rs1, rs2 } => {
             let x = state.x[*rs1 as usize] as i64;
             let y = state.x[*rs2 as usize] as i64;
-            let (a, b) = match code {
-                // DIV / REM: [quotient, |remainder|]
+            // One advice value per group; formulas mirror the tracer's
+            // per-variant `trace` implementations (div.rs, rem.rs, …).
+            let quotient = match code {
+                // DIV: signed quotient
                 0 => {
                     if y == 0 {
-                        (u64::MAX, x.unsigned_abs())
+                        u64::MAX
                     } else if x == i64::MIN && y == -1 {
-                        (x as u64, 0)
+                        x as u64
                     } else {
-                        ((x / y) as u64, (x % y).unsigned_abs())
+                        (x / y) as u64
                     }
                 }
-                // DIVW / REMW: 32-bit, quotient sign-extended
+                // REM: quotient magnitude
                 1 => {
+                    if y == 0 {
+                        0
+                    } else if x == i64::MIN && y == -1 {
+                        1 << 63
+                    } else {
+                        (x / y).unsigned_abs()
+                    }
+                }
+                // DIVW: 32-bit signed quotient, sign-extended
+                // (except the overflow case, zero-extended 0x8000_0000)
+                2 => {
                     let x = x as i32;
                     let y = y as i32;
-                    let (q, r) = if y == 0 {
-                        (-1i32, x.unsigned_abs())
+                    if y == 0 {
+                        u64::MAX
                     } else if y == -1 && x == i32::MIN {
-                        (i32::MIN, 0)
+                        0x8000_0000
                     } else {
-                        (x / y, (x % y).unsigned_abs())
-                    };
-                    (q as u64, r as u64)
+                        (x / y) as u64
+                    }
                 }
-                // DIVU / REMU: [quotient]
-                2 => ((x as u64).checked_div(y as u64).unwrap_or(u64::MAX), 0),
+                // REMW: 32-bit quotient magnitude, zero-extended
+                3 => {
+                    let x = x as i32;
+                    let y = y as i32;
+                    if y == 0 {
+                        0
+                    } else if y == -1 && x == i32::MIN {
+                        1 << 31
+                    } else {
+                        u64::from((x / y).unsigned_abs())
+                    }
+                }
+                // DIVU / REMU
+                4 => (x as u64).checked_div(y as u64).unwrap_or(u64::MAX),
                 // DIVUW / REMUW: 32-bit, zero-extended
                 _ => {
                     let x = x as u32;
                     let y = y as u32;
-                    (x.checked_div(y).map_or(u64::from(u32::MAX), u64::from), 0)
+                    x.checked_div(y).map_or(u64::from(u32::MAX), u64::from)
                 }
             };
-            state.advice_slots[0] = a;
-            state.advice_slots[1] = b;
+            state.advice_slots[0] = quotient;
             0
         }
         AdviceCompute::Inline {

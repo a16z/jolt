@@ -555,122 +555,6 @@ mod solinas {
             "2c96bcbf573df48ae896963ea3675f9e",
         ),
     ];
-    const FIX_PRIME128_OFFSET159: &[(&str, &str)] = &[
-        (
-            "00000000000000000000000000000000",
-            "00000000000000000000000000000000",
-        ),
-        (
-            "01000000000000000000000000000000",
-            "01000000000000000000000000000000",
-        ),
-        (
-            "02000000000000000000000000000000",
-            "02000000000000000000000000000000",
-        ),
-        (
-            "60ffffffffffffffffffffffffffffff",
-            "60ffffffffffffffffffffffffffffff",
-        ),
-        (
-            "61ffffffffffffffffffffffffffffff",
-            "00000000000000000000000000000000",
-        ),
-        (
-            "ffffffffffffffffffffffffffffffff",
-            "9e000000000000000000000000000000",
-        ),
-        (
-            "dae623d2aa29f41845b9a32a1d819bb6",
-            "dae623d2aa29f41845b9a32a1d819bb6",
-        ),
-        (
-            "5e7ca3106f280413e0638df8a0029a4d",
-            "5e7ca3106f280413e0638df8a0029a4d",
-        ),
-        (
-            "7c41df5c178ab67358fb5375991fe1ba",
-            "7c41df5c178ab67358fb5375991fe1ba",
-        ),
-        (
-            "909e7d5a185156624bd8be7123e5d34b",
-            "909e7d5a185156624bd8be7123e5d34b",
-        ),
-        (
-            "f0496a0db0d44aecb71a5457bac1cd1f",
-            "f0496a0db0d44aecb71a5457bac1cd1f",
-        ),
-        (
-            "004ed4e1b8a4ad0fda75893f75f9e34b",
-            "004ed4e1b8a4ad0fda75893f75f9e34b",
-        ),
-        (
-            "a3697a40313c6c012a94dd3346964418",
-            "a3697a40313c6c012a94dd3346964418",
-        ),
-        (
-            "2c96bcbf573df48ae896963ea3675f9e",
-            "2c96bcbf573df48ae896963ea3675f9e",
-        ),
-    ];
-    const FIX_PRIME128_OFFSET2355: &[(&str, &str)] = &[
-        (
-            "00000000000000000000000000000000",
-            "00000000000000000000000000000000",
-        ),
-        (
-            "01000000000000000000000000000000",
-            "01000000000000000000000000000000",
-        ),
-        (
-            "02000000000000000000000000000000",
-            "02000000000000000000000000000000",
-        ),
-        (
-            "ccf6ffffffffffffffffffffffffffff",
-            "ccf6ffffffffffffffffffffffffffff",
-        ),
-        (
-            "cdf6ffffffffffffffffffffffffffff",
-            "00000000000000000000000000000000",
-        ),
-        (
-            "ffffffffffffffffffffffffffffffff",
-            "32090000000000000000000000000000",
-        ),
-        (
-            "dae623d2aa29f41845b9a32a1d819bb6",
-            "dae623d2aa29f41845b9a32a1d819bb6",
-        ),
-        (
-            "5e7ca3106f280413e0638df8a0029a4d",
-            "5e7ca3106f280413e0638df8a0029a4d",
-        ),
-        (
-            "7c41df5c178ab67358fb5375991fe1ba",
-            "7c41df5c178ab67358fb5375991fe1ba",
-        ),
-        (
-            "909e7d5a185156624bd8be7123e5d34b",
-            "909e7d5a185156624bd8be7123e5d34b",
-        ),
-        (
-            "f0496a0db0d44aecb71a5457bac1cd1f",
-            "f0496a0db0d44aecb71a5457bac1cd1f",
-        ),
-        (
-            "004ed4e1b8a4ad0fda75893f75f9e34b",
-            "004ed4e1b8a4ad0fda75893f75f9e34b",
-        ),
-        (
-            "a3697a40313c6c012a94dd3346964418",
-            "a3697a40313c6c012a94dd3346964418",
-        ),
-        (
-            "2c96bcbf573df48ae896963ea3675f9e",
-            "2c96bcbf573df48ae896963ea3675f9e",
-        ),
-    ];
     const FIX_PRIME128_OFFSETA7F7: &[(&str, &str)] = &[
         (
             "00000000000000000000000000000000",
@@ -1042,8 +926,6 @@ mod solinas {
     #[test]
     fn fp128_bytes_match_fixtures() {
         check_prime_rows::<two::Prime128Offset275>(FIX_PRIME128_OFFSET275);
-        check_prime_rows::<two::Prime128Offset159>(FIX_PRIME128_OFFSET159);
-        check_prime_rows::<two::Prime128Offset2355>(FIX_PRIME128_OFFSET2355);
         check_prime_rows::<two::Prime128OffsetA7F7>(FIX_PRIME128_OFFSETA7F7);
     }
 

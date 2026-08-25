@@ -14,7 +14,7 @@
 
 use jolt_field as two;
 
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use two::{
     pseudo_mersenne_modulus, CanonicalEncoding, ExtField, Field, NoPacking, Packed, WithPacking,
@@ -84,6 +84,53 @@ where
     check_boundary_patterns::<PF>(p);
 }
 
+/// Packed Fp64 arithmetic checked directly against integer modular
+/// arithmetic, without routing the expectation through the scalar kernel.
+fn check_fp64_integer_oracle<const P: u64, PF>(lhs: &[u64], rhs: &[u64])
+where
+    PF: Packed<Scalar = two::Fp64<P>>,
+{
+    assert_eq!(lhs.len(), PF::WIDTH);
+    assert_eq!(rhs.len(), PF::WIDTH);
+    let a = PF::from_fn(|i| two::Fp64::<P>::from_u128_checked(lhs[i] as u128).unwrap());
+    let b = PF::from_fn(|i| two::Fp64::<P>::from_u128_checked(rhs[i] as u128).unwrap());
+    let (sum, diff, product) = (a + b, a - b, a * b);
+    for lane in 0..PF::WIDTH {
+        let x = lhs[lane] as u128;
+        let y = rhs[lane] as u128;
+        let p = P as u128;
+        assert_eq!(sum.extract(lane).to_u128_checked(), Some((x + y) % p));
+        assert_eq!(diff.extract(lane).to_u128_checked(), Some((x + p - y) % p));
+        assert_eq!(product.extract(lane).to_u128_checked(), Some((x * y) % p));
+    }
+}
+
+fn check_fp64_wide_sub_word<const P: u64>(seed: u64)
+where
+    two::Fp64<P>: WithPacking,
+{
+    type F<const Q: u64> = two::Fp64<Q>;
+    let boundary = [0, 1, 2, (P - 1) / 2, P - 2, P - 1];
+    for &x in &boundary {
+        for &y in &boundary {
+            check_fp64_integer_oracle::<P, <F<P> as WithPacking>::Packing>(
+                &vec![x; <F<P> as WithPacking>::Packing::WIDTH],
+                &vec![y; <F<P> as WithPacking>::Packing::WIDTH],
+            );
+        }
+    }
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    for _ in 0..1024 {
+        let lhs: Vec<u64> = (0..<F<P> as WithPacking>::Packing::WIDTH)
+            .map(|_| rng.gen::<u64>() % P)
+            .collect();
+        let rhs: Vec<u64> = (0..<F<P> as WithPacking>::Packing::WIDTH)
+            .map(|_| rng.gen::<u64>() % P)
+            .collect();
+        check_fp64_integer_oracle::<P, <F<P> as WithPacking>::Packing>(&lhs, &rhs);
+    }
+}
+
 /// `from_fn`/`extract`/`broadcast` and the slice-helper laws.
 fn check_lane_laws<PF: Packed>(vals: &[PF::Scalar]) {
     let w = PF::WIDTH;
@@ -142,10 +189,14 @@ fn packed_fp64_matches_scalar() {
 }
 
 #[test]
+fn packed_fp64_wide_sub_word_matches_integer_reference() {
+    check_fp64_wide_sub_word::<{ (1u64 << 63) - 259 }>(0xAA63_0259);
+    check_fp64_wide_sub_word::<{ (1u64 << 63) - 25 }>(0xAA63_0025);
+}
+
+#[test]
 fn packed_fp128_matches_scalar() {
     check_prime_field::<<two::Prime128Offset275 as WithPacking>::Packing>(pm(128, 275), 0x12801);
-    check_prime_field::<<two::Prime128Offset159 as WithPacking>::Packing>(pm(128, 159), 0x12802);
-    check_prime_field::<<two::Prime128Offset2355 as WithPacking>::Packing>(pm(128, 2355), 0x12803);
     check_prime_field::<<two::Prime128OffsetA7F7 as WithPacking>::Packing>(
         pm(128, 0xFFFF_A7F7),
         0x12804,
@@ -205,6 +256,22 @@ fn packed_ext2_matches_scalar() {
     check_ext_field::<<two::Ext2<F64> as WithPacking>::Packing, F64>(pm(64, 59), 0xE203);
     type F128 = two::Prime128Offset275;
     check_ext_field::<<two::Ext2<F128> as WithPacking>::Packing, F128>(pm(128, 275), 0xE204);
+
+    // Fused NR=2 paths: a wide 63-bit base product, a narrow base reducer
+    // whose three-product coefficient needs the wide fold, and a large
+    // offset that exercises the full-low-word SIMD correction multiply.
+    type Wide = two::Fp64<{ (1u64 << 63) - 259 }>;
+    check_ext_field::<<two::Ext2<Wide> as WithPacking>::Packing, Wide>((1u128 << 63) - 259, 0xE205);
+    type NarrowBase = two::Fp64<{ (1u64 << 58) - 27 }>;
+    check_ext_field::<<two::Ext2<NarrowBase> as WithPacking>::Packing, NarrowBase>(
+        (1u128 << 58) - 27,
+        0xE206,
+    );
+    type LargeOffset = two::Fp64<{ (1u64 << 63) - 1_500_000_051 }>;
+    check_ext_field::<<two::Ext2<LargeOffset> as WithPacking>::Packing, LargeOffset>(
+        (1u128 << 63) - 1_500_000_051,
+        0xE207,
+    );
 }
 
 #[test]
@@ -243,8 +310,6 @@ fn with_packing_associated_types() {
     check_with_packing::<two::Prime56Offset27>(0x5107);
     check_with_packing::<two::Prime64Offset59>(0x5108);
     check_with_packing::<two::Prime128Offset275>(0x5109);
-    check_with_packing::<two::Prime128Offset159>(0x510a);
-    check_with_packing::<two::Prime128Offset2355>(0x510b);
     check_with_packing::<two::Prime128OffsetA7F7>(0x510c);
     check_with_packing::<two::Ext2<two::Prime32Offset99>>(0x510d);
     check_with_packing::<two::FpExt2<two::Fp32<251>, two::NegOneNr>>(0x510e);

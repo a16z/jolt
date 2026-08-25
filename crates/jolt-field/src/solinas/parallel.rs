@@ -19,6 +19,10 @@
 #[cfg(feature = "parallel")]
 pub use rayon::prelude::*;
 
+#[doc(hidden)]
+#[cfg(feature = "parallel")]
+pub use rayon::join as __rayon_join;
+
 /// Returns `.par_iter()` when `parallel` is enabled, `.iter()` otherwise.
 #[macro_export]
 macro_rules! cfg_iter {
@@ -86,7 +90,7 @@ macro_rules! cfg_chunks_mut {
 macro_rules! cfg_join {
     ($f_a:expr, $f_b:expr) => {{
         #[cfg(feature = "parallel")]
-        let result = rayon::join($f_a, $f_b);
+        let result = $crate::solinas::parallel::__rayon_join($f_a, $f_b);
         #[cfg(not(feature = "parallel"))]
         let result = ($f_a(), $f_b());
         result
@@ -113,6 +117,24 @@ macro_rules! cfg_fold_reduce {
     }};
 }
 
+/// Fallible parallel fold-reduce over a range.
+///
+/// Without `parallel`, this uses the equivalent sequential `try_fold`.
+#[macro_export]
+macro_rules! cfg_try_fold_reduce {
+    ($range:expr, $identity:expr, $fold_op:expr, $reduce_op:expr) => {{
+        #[cfg(feature = "parallel")]
+        let result = $range
+            .into_par_iter()
+            .try_fold($identity, $fold_op)
+            .try_reduce($identity, $reduce_op);
+        #[cfg(not(feature = "parallel"))]
+        let result = $range.into_iter().try_fold(($identity)(), $fold_op);
+        result
+    }};
+}
+
 pub use crate::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
+    cfg_try_fold_reduce,
 };

@@ -1698,8 +1698,13 @@ mod tests {
     /// no-table rows, both RAF branches, and edge indices (0, all-ones,
     /// all-ones upper half — the canonical-address path).
     fn fixture_rows(log_t: usize, seed: u64) -> Vec<InstructionReadRafWitness> {
-        let count = LookupTableKind::<RISCV_XLEN>::COUNT;
-        let tables = [0, 3 % count, 7 % count, 11 % count, count - 1];
+        let tables = [
+            LookupTableKind::<RISCV_XLEN>::And(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::Andn(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::Or(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::Xor(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::VirtualXORROTW7(Default::default()).index(),
+        ];
         let mut state = seed;
         (0..1usize << log_t)
             .map(|j| {

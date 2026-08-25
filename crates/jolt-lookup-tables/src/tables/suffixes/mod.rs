@@ -12,8 +12,6 @@ use crate::lookup_bits::LookupBits;
 
 mod and;
 mod andnot;
-mod change_divisor;
-mod change_divisor_w;
 mod div_by_zero;
 mod eq;
 mod gt;
@@ -45,18 +43,18 @@ mod right_shift_w_helper;
 mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
+mod sign_extension_w;
 mod two_lsb;
 mod upper_word;
 mod window_sign;
 mod window_sign_pow2;
+mod x31_y0;
 mod xor;
 mod xor_rot;
 mod xor_rotw;
 
 use and::AndSuffix;
 use andnot::AndNotSuffix;
-use change_divisor::ChangeDivisorSuffix;
-use change_divisor_w::ChangeDivisorWSuffix;
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;
@@ -91,11 +89,13 @@ use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use sign_extension_w::SignExtensionWSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 pub(crate) use window_sign::window_sign_bit;
 use window_sign::WindowSignSuffix;
 use window_sign_pow2::WindowSignPow2Suffix;
+use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
@@ -126,8 +126,6 @@ pub enum Suffixes {
     Or,
     RightOperand,
     RightOperandW,
-    ChangeDivisor,
-    ChangeDivisorW,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -167,6 +165,13 @@ pub enum Suffixes {
     PextHelper,
     WindowSign,
     WindowSignPow2,
+    XorRotW22,
+    XorRotW19,
+    XorRotW6,
+    /// SRAW sign-fill terms whose variables remain in the suffix.
+    SignExtensionW,
+    /// The suffix-owned product `x_{XLEN/2-1} * y_0` used by SRLW.
+    X31Y0,
 }
 
 /// Total number of suffix variants.
@@ -191,8 +196,6 @@ impl Suffixes {
                 | Suffixes::TwoLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
-                | Suffixes::ChangeDivisor
-                | Suffixes::ChangeDivisorW
                 | Suffixes::WindowSign
         )
     }
@@ -207,8 +210,6 @@ impl Suffixes {
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
             Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::suffix_mle(b),
@@ -248,6 +249,11 @@ impl Suffixes {
             Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
             Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::XorRotW22 => XorRotWSuffix::<22>::suffix_mle(b),
+            Suffixes::XorRotW19 => XorRotWSuffix::<19>::suffix_mle(b),
+            Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
+            Suffixes::SignExtensionW => SignExtensionWSuffix::suffix_mle(b),
+            Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
         }
     }
 

@@ -13,36 +13,36 @@ pub(in crate::expand) fn expand_lwu(
 
     // The source op still requires word alignment even though the physical
     // proof row reads the aligned containing doubleword.
-    asm.expand_address(
+    asm.emit_address(
         SourceInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ADDI,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
     // v1 = containing doubleword address, v0 = byte offset within it.
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ANDI,
         v1.operand(),
         v0.operand(),
         format_i_imm(-8),
     );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    asm.emit_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
     // XOR with 4 selects the opposite 32-bit lane after the doubleword is
     // shifted left, so the requested word lands in bits 63:32.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 4);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
+    asm.emit_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 4);
+    asm.emit_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+    asm.emit_r(
         SourceInstructionKind::SLL,
         v1.operand(),
         v1.operand(),
         v0.operand(),
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::SRLI,
         reg(rd(instruction)?),
         v1.operand(),

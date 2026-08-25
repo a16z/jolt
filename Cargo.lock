@@ -3427,6 +3427,8 @@ dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "bincode 2.0.1",
+ "cc",
+ "criterion",
  "num-bigint",
  "num-traits",
  "rand 0.8.7",
@@ -3435,26 +3437,6 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "jolt-hyperkzg"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "jolt-crypto",
- "jolt-field",
- "jolt-openings",
- "jolt-poly",
- "jolt-transcript",
- "num-traits",
- "rand 0.8.7",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -3652,7 +3634,6 @@ dependencies = [
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
- "jolt-hyperkzg",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.7",

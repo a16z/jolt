@@ -16,34 +16,34 @@ pub(in crate::expand) fn expand_lw(
     // assertion is still required by the source `LW` semantics; it also
     // guarantees the effective address's bits 0-1 are zero, which
     // `VirtualWindowMaskW` relies on (it reads only bit 2).
-    asm.expand_address(
+    asm.emit_address(
         SourceInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ADDI,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
     // v1 = containing doubleword address, v0 = effective (byte) address.
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ANDI,
         v1.operand(),
         v0.operand(),
         format_i_imm(-8),
     );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    asm.emit_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
     // v0 = byte mask of the word lane at offset `ea mod 8`.
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::VirtualWindowMaskW,
         v0.operand(),
         v0.operand(),
         0,
     );
     // rd = sign-extended word lane of the loaded doubleword.
-    asm.expand_r(
+    asm.emit_r(
         SourceInstructionKind::VirtualPextSigned,
         reg(rd(instruction)?),
         v1.operand(),
