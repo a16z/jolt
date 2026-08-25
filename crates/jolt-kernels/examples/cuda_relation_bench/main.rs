@@ -324,7 +324,8 @@ const MIB: f64 = 1024.0 * 1024.0;
 fn main() {
     let args = parse_args();
     let mut csv = String::from(
-        "arm,tier,log_t,prepare_ms,address_ms,handoff_ms,cycle_ms,claims_ms,total_ms\n",
+        "arm,tier,log_t,prepare_ms,address_ms,handoff_ms,cycle_ms,claims_ms,total_ms,\
+         d2h_calls,d2h_bytes,d2h_blocked_ms,h2d_calls,h2d_bytes,h2d_ms\n",
     );
     let mut gpu_csv = String::from(
         "arm,log_t,gpu,baseline_mib,peak_mib,own_mib,util_pct,mem_util_pct,watts,iteration_ms,polled_iteration_ms\n",
@@ -358,9 +359,11 @@ fn main() {
                 Plane::Advice => &advice,
             };
             for (tier, backend) in TIERS {
+                jolt_kernels::cuda::xfer_stats::reset();
                 let runs: Vec<VerticalTiming> = (0..args.repeats)
                     .map(|_| (arm.run)(&fixture, witness, backend))
                     .collect();
+                let transfers = jolt_kernels::cuda::xfer_stats::snapshot();
                 let timing = median_timing(runs);
                 if timing.total().is_zero() {
                     println!(
@@ -381,9 +384,10 @@ fn main() {
                     timing.total(),
                 );
                 let ms = |d: Duration| d.as_secs_f64() * 1e3;
+                let per = |value: u64| value / args.repeats.max(1) as u64;
                 let _ = writeln!(
                     csv,
-                    "{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
+                    "{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{:.4},{},{},{:.4}",
                     arm.name,
                     tier,
                     timing.log_t,
@@ -393,7 +397,25 @@ fn main() {
                     ms(timing.cycle),
                     ms(timing.claims),
                     ms(timing.total()),
+                    per(transfers.d2h.calls),
+                    per(transfers.d2h.bytes),
+                    transfers.d2h.nanos as f64 / 1.0e6 / args.repeats.max(1) as f64,
+                    per(transfers.h2d.calls),
+                    per(transfers.h2d.bytes),
+                    transfers.h2d.nanos as f64 / 1.0e6 / args.repeats.max(1) as f64,
                 );
+                if transfers.d2h.calls > 0 {
+                    println!(
+                        "{:>34}  {:>9}  D2H {} calls, {:.1} MB, {:.1} ms blocked | H2D {} calls, {:.1} MB",
+                        "",
+                        tier,
+                        per(transfers.d2h.calls),
+                        per(transfers.d2h.bytes) as f64 / MIB,
+                        transfers.d2h.nanos as f64 / 1.0e6 / args.repeats.max(1) as f64,
+                        per(transfers.h2d.calls),
+                        per(transfers.h2d.bytes) as f64 / MIB,
+                    );
+                }
                 if probing && backend == BackendKind::Cuda {
                     probes.push((
                         arm.name,

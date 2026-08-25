@@ -65,6 +65,11 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::NoChallenges;
 use jolt_dory::DoryScheme;
+
+#[cfg(feature = "cuda")]
+type CommitScheme = jolt_kernels::cuda::CudaDoryScheme;
+#[cfg(not(feature = "cuda"))]
+type CommitScheme = DoryScheme;
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, ProverInputs};
 use jolt_program::preprocess::PublicIoMemory;
@@ -1892,7 +1897,7 @@ pub fn measure_commit(
                 })
                 .collect();
         let setup = DoryScheme::setup_prover(grid.total_vars);
-        let selected = selected_backend(backend);
+        let selected = selected_commit_backend(backend);
         let mut session = ProofSession::default();
         warm_shared_witness(&mut session, witness, backend, f.log_t);
         let start = Instant::now();
@@ -2028,6 +2033,15 @@ pub fn measure_advice_opening(
             claims: Duration::ZERO,
         }
     })
+}
+
+fn selected_commit_backend(backend: BackendKind) -> JoltBackend<Fr, CommitScheme> {
+    match backend {
+        BackendKind::Reference => JoltBackend::<Fr, CommitScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, CommitScheme>::optimized(),
+        #[cfg(feature = "cuda")]
+        BackendKind::Cuda => JoltBackend::<Fr, CommitScheme>::cuda(),
+    }
 }
 
 fn selected_backend(backend: BackendKind) -> JoltBackend<Fr, DoryScheme> {
