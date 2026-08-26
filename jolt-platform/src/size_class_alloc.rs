@@ -116,6 +116,13 @@ pub fn dealloc(ptr_in: *mut u8, layout: Layout) {
 
 /// Same-class and shrinking reallocs are free; growth extends the newest bump
 /// block in place when possible, else allocate-copy-free.
+///
+/// `ptr_in` must be null or a live block previously returned by this allocator
+/// for `old_layout` — the standard `GlobalAlloc::realloc` contract.
+#[expect(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "installed as a safe fn pointer in zeroos MemoryOps; callers uphold the GlobalAlloc realloc contract"
+)]
 pub fn realloc(ptr_in: *mut u8, old_layout: Layout, new_size: usize) -> *mut u8 {
     if ptr_in.is_null() {
         return match Layout::from_size_align(new_size, old_layout.align()) {
