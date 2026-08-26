@@ -84,9 +84,9 @@ impl BytecodePreprocessing {
     }
 }
 
-/// An address's rows form a descending `virtual_sequence_remaining` run at
-/// consecutive PCs, so these three bounds determine every `(address, vsr) -> pc`.
-/// Field order keeps each per-address mapping to one 8-byte slot.
+/// An address expands to a full descending `virtual_sequence_remaining` run —
+/// `first_vsr` down to 0 — at consecutive PCs, so these two bounds determine
+/// every `(address, vsr) -> pc`. `try_new` rejects any bytecode that violates it.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
@@ -101,19 +101,21 @@ impl BytecodePreprocessing {
 struct PcSlot {
     /// PC of the address's first row; `u32::MAX` marks an unmapped slot.
     first_pc: u32,
-    /// `virtual_sequence_remaining` of that first row — the run's upper bound.
+    /// `virtual_sequence_remaining` of that first row — one less than the number
+    /// of rows the address expands to.
     first_vsr: u16,
-    /// `virtual_sequence_remaining` of the address's last row — the run's lower
-    /// bound, and the cursor the build walk decrements. Always 0 for sequences
-    /// the expander stamps; nonzero only for a run that stops short of its anchor.
-    last_vsr: u16,
 }
 
 const EMPTY_SLOT: PcSlot = PcSlot {
     first_pc: u32::MAX,
     first_vsr: 0,
-    last_vsr: 0,
 };
+
+impl PcSlot {
+    const fn is_empty(&self) -> bool {
+        self.first_pc == EMPTY_SLOT.first_pc
+    }
+}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
@@ -135,90 +137,99 @@ impl BytecodePCMapper {
         // first slot (`index_count` is always >= 1).
         let mut slots = vec![EMPTY_SLOT; Self::index_count(bytecode)?];
         if let Some(first) = slots.first_mut() {
-            *first = PcSlot {
-                first_pc: 0,
-                first_vsr: 0,
-                last_vsr: 0,
-            };
+            first.first_pc = 0;
         }
-        let mut last_pc = 0u32;
 
-        for (pc, instruction) in bytecode.iter().enumerate() {
-            if instruction.address == 0 {
-                if pc == 0 {
-                    continue;
-                }
+        // The leading no-op sentinel is the only row allowed at address 0.
+        let rows = match bytecode.split_first() {
+            Some((first, rest)) if first.address == 0 => rest,
+            _ => bytecode,
+        };
+
+        // Rows sharing an address must be adjacent, so every maximal run of
+        // equal addresses is exactly one inline sequence.
+        let mut last_pc = 0u32;
+        for run in rows.chunk_by(|a, b| a.address == b.address) {
+            let Some(first_row) = run.first() else {
+                continue;
+            };
+            let address = first_row.address;
+            if address == 0 {
                 return Err(PreprocessingError::InvalidBytecodeAddress(0));
             }
+            let bytecode_index = Self::try_get_index(address)?;
+            let first_vsr = Self::validate_run(bytecode_index, address, run)?;
 
             // `u32::MAX` is reserved as the unmapped-slot marker.
-            last_pc = last_pc
+            let first_pc = last_pc
                 .checked_add(1)
+                .ok_or(PreprocessingError::BytecodeTooLarge)?;
+            last_pc = first_pc
+                .checked_add(first_vsr.into())
                 .filter(|pc| *pc < u32::MAX)
                 .ok_or(PreprocessingError::BytecodeTooLarge)?;
-            let bytecode_index = Self::try_get_index(instruction.address)?;
-            let sequence = instruction.virtual_sequence_remaining.unwrap_or(0);
-            let slot =
-                slots
-                    .get_mut(bytecode_index)
-                    .ok_or(PreprocessingError::InvalidBytecodeAddress(
-                        instruction.address,
-                    ))?;
-            if *slot == EMPTY_SLOT {
-                *slot = PcSlot {
-                    first_pc: last_pc,
-                    first_vsr: sequence,
-                    last_vsr: sequence,
-                };
-                continue;
-            }
-            // Each row at an address decrements the previous sequence number
-            // by one.
-            let expected_sequence =
-                slot.last_vsr
-                    .checked_sub(1)
-                    .ok_or(PreprocessingError::InvalidInlineSequence {
-                        bytecode_index,
-                        address: instruction.address,
-                        previous_sequence: slot.last_vsr,
-                        expected_sequence: 0,
-                        new_sequence: sequence,
-                    })?;
-            if sequence != expected_sequence {
-                return Err(PreprocessingError::InvalidInlineSequence {
-                    bytecode_index,
-                    address: instruction.address,
-                    previous_sequence: slot.last_vsr,
-                    expected_sequence,
-                    new_sequence: sequence,
-                });
-            }
-            // The slot arithmetic assumes the address's bytecode indices are
-            // consecutive; an inline sequence interleaved with another
-            // address would break that silently, so reject it.
-            if last_pc - slot.first_pc != (slot.first_vsr - sequence) as u32 {
+
+            let slot = slots
+                .get_mut(bytecode_index)
+                .ok_or(PreprocessingError::InvalidBytecodeAddress(address))?;
+            if !slot.is_empty() {
                 return Err(PreprocessingError::NonContiguousInlineSequence {
                     bytecode_index,
-                    address: instruction.address,
+                    address,
                 });
             }
-            slot.last_vsr = sequence;
+            *slot = PcSlot {
+                first_pc,
+                first_vsr,
+            };
         }
 
         Ok(Self { slots })
     }
 
+    /// Checks that `run` counts down by one to its anchor at 0, returning the
+    /// sequence number it starts from (equivalently, `run.len() - 1`).
+    fn validate_run(
+        bytecode_index: usize,
+        address: usize,
+        run: &[JoltInstructionRow],
+    ) -> Result<u16, PreprocessingError> {
+        let Some((first_row, rest)) = run.split_first() else {
+            return Ok(0);
+        };
+        let first_sequence = first_row.virtual_sequence_remaining.unwrap_or(0);
+        let mut previous_sequence = first_sequence;
+        for row in rest {
+            let sequence = row.virtual_sequence_remaining.unwrap_or(0);
+            let expected_sequence = previous_sequence.checked_sub(1);
+            if expected_sequence != Some(sequence) {
+                return Err(PreprocessingError::InvalidInlineSequence {
+                    bytecode_index,
+                    address,
+                    previous_sequence,
+                    expected_sequence: expected_sequence.unwrap_or(0),
+                    new_sequence: sequence,
+                });
+            }
+            previous_sequence = sequence;
+        }
+        if previous_sequence != 0 {
+            return Err(PreprocessingError::UnterminatedInlineSequence {
+                bytecode_index,
+                address,
+                last_sequence: previous_sequence,
+            });
+        }
+        Ok(first_sequence)
+    }
+
     pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> Option<usize> {
         let index = Self::try_get_index(address).ok()?;
         let slot = *self.slots.get(index)?;
-        if slot.first_pc == u32::MAX {
+        if slot.is_empty() || virtual_sequence_remaining > slot.first_vsr {
             return None;
         }
-        (slot.last_vsr..=slot.first_vsr)
-            .contains(&virtual_sequence_remaining)
-            .then(|| {
-                slot.first_pc as usize + (slot.first_vsr - virtual_sequence_remaining) as usize
-            })
+        Some(slot.first_pc as usize + (slot.first_vsr - virtual_sequence_remaining) as usize)
     }
 
     pub fn get_first_pc(&self, address: usize) -> Option<usize> {
@@ -228,7 +239,7 @@ impl BytecodePCMapper {
             Self::try_get_index(address).ok()?
         };
         let slot = *self.slots.get(index)?;
-        (slot.first_pc != u32::MAX).then_some(slot.first_pc as usize)
+        (!slot.is_empty()).then_some(slot.first_pc as usize)
     }
 
     fn try_get_index(address: usize) -> Result<usize, PreprocessingError> {
@@ -348,6 +359,10 @@ mod tests {
             preprocessing.get_pc(&instruction(0x8000_0004, Some(0))),
             Some(3)
         );
+        assert_eq!(
+            preprocessing.get_pc(&instruction(0x8000_0004, Some(3))),
+            None
+        );
     }
 
     #[test]
@@ -394,6 +409,7 @@ mod tests {
     fn rejects_interleaved_inline_sequences() {
         let bytecode = vec![
             instruction(0x8000_0004, Some(1)),
+            instruction(0x8000_0004, Some(0)),
             instruction(0x8000_0008, None),
             instruction(0x8000_0004, Some(0)),
         ];
@@ -409,11 +425,29 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_address_outside_sentinel() {
+    fn rejects_unterminated_inline_sequences() {
         let bytecode = vec![
             instruction(0x8000_0004, Some(1)),
+            instruction(0x8000_0008, None),
+        ];
+
+        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::UnterminatedInlineSequence {
+                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
+                address: 0x8000_0004,
+                last_sequence: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_zero_address_outside_sentinel() {
+        let bytecode = vec![
+            instruction(0x8000_0004, None),
             instruction(0, None),
-            instruction(0x8000_0004, Some(0)),
+            instruction(0x8000_0008, None),
         ];
 
         let err =

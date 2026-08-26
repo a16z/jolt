@@ -25,6 +25,14 @@ pub enum PreprocessingError {
         bytecode_index: usize,
         address: usize,
     },
+    #[error(
+        "bytecode inline sequence at index {bytecode_index} (address {address:#x}) ends at sequence {last_sequence} without reaching its anchor at 0"
+    )]
+    UnterminatedInlineSequence {
+        bytecode_index: usize,
+        address: usize,
+        last_sequence: u16,
+    },
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
     #[cfg(feature = "field-inline")]
