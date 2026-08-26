@@ -237,7 +237,7 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 ### Code Style
 
 - Codebase uses `non_snake_case` convention for math variables: `log_T`, `ram_K`, `log_K`, etc.
-- Import types and structs, then reference them by short names; use fully qualified paths only to resolve ambiguity.
+- Import types, traits, and enums, then reference them by short names. Keep enum variants qualified by the enum type (`Kind::ADD`). Lowercase namespace function calls (`std::mem::take`) may stay qualified; use fully qualified paths only to resolve ambiguity.
 - Alias an instruction-kind enum as `Kind` at emitter call sites and write `Kind::INSTRUCTION`; never qualify emitted instructions with `SourceInstructionKind`, `JoltInstructionKind`, or a module path.
 - Before PR handoff, audit every added test and helper. Remove development-only probes, ignored tests, temporary benchmarks, diagnostic counters or histograms, and one-off fuzz or parity scaffolding. Keep permanent tests only when they add a distinct failure signal beyond existing tests, golden fixtures, or CI. If a manual diagnostic is worth keeping, make it an intentional tool or benchmark with a documented command.
 
@@ -250,12 +250,11 @@ Machine-checked, repo-wide:
 
 Machine-checked, added lines only:
 
-- A file that imports a path (`use a::b::C;`) never also spells `a::b::C` qualified. Qualified paths are for ambiguity, attribute arguments (`allocative(visit = jolt_poly::visit_scalars)`), and macro bodies — there the path is the interface.
+- Import types, traits, enums, and constants; reference them by short name. Keep enum variants qualified by the imported enum type (`Kind::ADD`, not an imported bare `ADD`). Lowercase namespace function calls (`std::mem::take`) may stay qualified. Fully qualified paths remain valid for ambiguity, attribute arguments (`allocative(visit = jolt_poly::visit_scalars)`), and macro bodies — there the path is the interface. Once a path is imported, never spell it qualified in the same file.
 - `TODO`/`FIXME` carries an issue link: `TODO(#123):` or a full issue URL.
 
 Review-level (needs judgment; the checker cannot see these):
 
-- Don't introduce fully-qualified paths where an import would do — the checker only catches the import-plus-qualified inconsistency, not "should have imported". Restoring imports beats five-line `where`-clause wraps of `jolt_verifier::stages::relations::...`.
 - Derive trait impls instead of hand-rolling; exhaust derive escapes (`#[allocative(bound = "F: JoltField")]`, `visit = ...`, `skip`) before writing a manual impl. Hand-written impls drift from the struct (field renames, uncounted fields). Hand-write only what a derive cannot express, keep it local to the one type that needs it, and size buffers by `capacity()`, not `len()`.
 - A shared helper needs ≥2 callers; a helper with one caller gets inlined into its only user or hand-written locally.
 - No speculative lifecycle guards: don't wrap state in `RwLock<Option<...>>`-style locks for a release/failure step nothing exercises; delete unreachable error paths instead of making the hot path pay for them. (Lazy-init globals and error slots are fine — the test is whether the transition actually happens.)

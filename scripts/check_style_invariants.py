@@ -11,9 +11,10 @@ Repo-wide rules (always checked, on every tracked `.rs` file):
 Diff-scoped rules (checked on lines added relative to `--base`; without
 `--base`, or when the merge base equals HEAD, they are skipped):
 
-  no-qualified-dup   A file that imports a path must not also spell that path
-                     qualified outside use statements, attribute arguments,
-                     macro bodies, comments, and strings.
+  nominal-imports    Types, traits, enums, and constants use imported short
+                     names. Enum variants remain qualified by the enum type;
+                     lowercase namespace function calls may stay qualified.
+                     An imported path is never also spelled qualified.
   todo-issue-link    `TODO`/`FIXME` comments must carry an issue reference
                      (`#123` or a URL).
 
@@ -22,10 +23,6 @@ passes fix what a PR introduces and leave predating sites alone.
 
 CLAUDE.md rules that are NOT checked here, and why:
 
-  - "should have imported instead of qualifying" (no import present) — needs
-    resolution of what the path refers to and whether importing is possible
-    without ambiguity; regex-level checking would flag legitimate
-    disambiguation sites.
   - derive-over-hand-rolled impls, single-caller helper inlining — need call
     graphs and knowledge of what a derive can express.
   - speculative lifecycle guards (`RwLock<Option<..>>`) — the same type shape
@@ -62,6 +59,15 @@ ISSUE_REF = re.compile(r"#\d+|https?://\S+")
 USE_LINE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+(.+?);\s*(?://.*)?$", re.DOTALL)
 MACRO_BODY_OPEN = re.compile(r"\b(?:macro_rules!\s*\w+|quote!|quote_spanned!)\s*[({\[]")
 CFG_GATE = re.compile(r"^\s*#\[cfg(?:_attr)?\(")
+QUALIFIED_PATH = re.compile(
+    r"(?<![\w:$])(?P<path>(?:::)?(?:[A-Za-z_]\w*::)+[A-Za-z_]\w*)"
+)
+NOMINAL_SEGMENT = re.compile(r"^[A-Z][A-Za-z0-9]*$")
+CONSTANT_SEGMENT = re.compile(r"^[A-Z][A-Z0-9_]*$")
+ENUM_VARIANT_IMPORT = re.compile(
+    r"(?P<enum>(?:[A-Za-z_]\w*::)*[A-Z][A-Za-z0-9]*)::"
+    r"(?:[A-Z][A-Za-z0-9_]*|\{|\*)"
+)
 
 
 def run_git(args: list[str]) -> str:
@@ -366,11 +372,100 @@ def check_qualified_dup(
                 findings.append(
                     (
                         i + 1,
-                        f"[no-qualified-dup] `{path}` is already imported in this "
+                        f"[nominal-imports] `{path}` is already imported in this "
                         f"file; use the imported name",
                     )
                 )
                 break
+    return findings
+
+
+def check_nominal_paths(
+    rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
+) -> list[tuple[int, str]]:
+    in_mod = inline_mod_mask(lines, in_raw)
+    in_attr = [False] * len(lines)
+    for start, end, _text in whole_line_attrs(lines):
+        for k in range(start, end + 1):
+            in_attr[k] = True
+
+    findings = []
+    for i, ln in enumerate(lines):
+        if in_raw[i] or in_macro[i] or in_attr[i] or in_mod[i]:
+            continue
+        stripped = ln.strip()
+        if stripped.startswith(("//", "///", "//!", "*")) or re.search(
+            r"\buse\b", stripped
+        ):
+            continue
+        clean = strip_strings_and_line_comments(ln)
+        clean = re.sub(r"#!?\[[^\]]*\]", "", clean)
+        clean = re.sub(r"<[^<>]*\bas\s+[^<>]*>", "", clean)
+        for match in QUALIFIED_PATH.finditer(clean):
+            path = match.group("path").removeprefix("::")
+            parts = path.split("::")
+            suffix = clean[match.end():].lstrip()
+            nominal = next(
+                (j for j, part in enumerate(parts) if NOMINAL_SEGMENT.match(part)),
+                None,
+            )
+            if (
+                nominal == len(parts) - 1
+                and len(parts) == 2
+                and re.fullmatch(PRIMITIVE, parts[0])
+            ):
+                continue
+            if nominal is not None and nominal > 0:
+                import_path = "::".join(parts[: nominal + 1])
+                short_path = "::".join(parts[nominal:])
+                findings.append(
+                    (
+                        i + 1,
+                        f"[nominal-imports] import `{import_path}` and use "
+                        f"`{short_path}`",
+                    )
+                )
+                break
+            if nominal is None and CONSTANT_SEGMENT.match(parts[-1]):
+                findings.append(
+                    (
+                        i + 1,
+                        f"[nominal-imports] import `{path}` and use "
+                        f"`{parts[-1]}`",
+                    )
+                )
+                break
+            if nominal is None and not suffix.startswith(("(", "::<", "!")):
+                findings.append(
+                    (
+                        i + 1,
+                        f"[nominal-imports] import `{path}` and use "
+                        f"`{parts[-1]}`",
+                    )
+                )
+                break
+    return findings
+
+
+def check_enum_variant_imports(
+    rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
+) -> list[tuple[int, str]]:
+    in_mod = inline_mod_mask(lines, in_raw)
+    findings = []
+    for i, ln in enumerate(lines):
+        if in_raw[i] or in_macro[i] or in_mod[i] or not re.search(r"\buse\b", ln):
+            continue
+        clean = strip_strings_and_line_comments(ln)
+        if match := ENUM_VARIANT_IMPORT.search(clean):
+            enum_path = match.group("enum")
+            enum_name = enum_path.rsplit("::", 1)[-1]
+            findings.append(
+                (
+                    i + 1,
+                    f"[nominal-imports] import enum `{enum_path}` and keep its "
+                    f"variant qualified as `{enum_name}::VARIANT`",
+                )
+            )
     return findings
 
 
@@ -444,6 +539,8 @@ def main() -> int:
             in_raw, in_macro = line_masks(lines)
             scoped = (
                 check_qualified_dup(rel, lines, in_raw, in_macro)
+                + check_nominal_paths(rel, lines, in_raw, in_macro)
+                + check_enum_variant_imports(rel, lines, in_raw, in_macro)
                 + check_todo_issue(rel, lines)
             )
             for line_no, msg in scoped:
