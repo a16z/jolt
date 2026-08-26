@@ -5,8 +5,13 @@
 //! edge, not the target architecture, and is removed in the final migration
 //! PR together with the `akita` feature.
 
-use akita_config::proof_optimized::fp128::Field as AkitaField;
 use rand_core::RngCore;
+
+/// The Akita proof field (fp128, `p = 2^128 - 2^32 + 22537`). Re-exported so
+/// akita-conditional callers (the tracer's field-inline `ProofField`) name the
+/// exact type the witness and kernel planes prove over, through the same
+/// bootstrap edge that carries its trait impls.
+pub use akita_config::proof_optimized::fp128::Field as AkitaField;
 
 use crate::{
     AdditiveGroup, AkitaAccumulator, AkitaSignedAccumulator, CanonicalBytes, CanonicalEncoding,

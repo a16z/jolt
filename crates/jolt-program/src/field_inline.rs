@@ -76,8 +76,8 @@ impl FieldValueEncoding {
     };
 
     /// 128-bit canonical two-limb encoding: two 64-bit limbs in the low 16
-    /// bytes of the value buffer, upper 16 bytes zero. Declared ahead of the
-    /// 128-bit base-field switch; no build activates it yet.
+    /// bytes of the value buffer, upper 16 bytes zero. Active under
+    /// `fp128-field-inline` (the packed/akita configuration's proof field).
     pub const TWO_LIMB_128_CANONICAL: Self = Self {
         byte_len: 16,
         limb_bits: 64,
@@ -88,9 +88,13 @@ impl FieldValueEncoding {
     /// The encoding this build emits and accepts. Metadata carrying any other
     /// encoding fails validation, so preprocessing built under a different
     /// proof field is rejected at load time rather than misdecoded during
-    /// proving. Switching the proof field repoints this (and the tracer's
-    /// `ProofField` alias) in one commit.
+    /// proving. The `fp128-field-inline` feature (the packed/akita chain)
+    /// selects the two-limb encoding together with the tracer's `ProofField`
+    /// alias; homomorphic (Dory) builds keep the BN254 form.
+    #[cfg(not(feature = "fp128-field-inline"))]
     pub const ACTIVE: Self = Self::BN254_SCALAR_CANONICAL;
+    #[cfg(feature = "fp128-field-inline")]
+    pub const ACTIVE: Self = Self::TWO_LIMB_128_CANONICAL;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -450,24 +454,43 @@ mod tests {
         }
     }
 
+    // The declared encoding this build is NOT on: the other side of the
+    // ACTIVE equality gate, so the mismatch tests cover both directions
+    // (BN254 rejects two-limb, and under fp128-field-inline vice versa).
+    const FOREIGN: FieldValueEncoding = if cfg!(feature = "fp128-field-inline") {
+        FieldValueEncoding::BN254_SCALAR_CANONICAL
+    } else {
+        FieldValueEncoding::TWO_LIMB_128_CANONICAL
+    };
+
     #[test]
     fn metadata_with_foreign_encoding_rejects_fail_closed() {
         // A well-formed encoding that is not the build's own must reject: this
         // metadata decodes correctly only under the field it was built for.
-        let foreign = metadata_with_encoding(FieldValueEncoding::TWO_LIMB_128_CANONICAL);
+        let foreign = metadata_with_encoding(FOREIGN);
         assert!(matches!(
             foreign.validate(0),
             Err(FieldInlineMetadataError::InvalidValueEncoding(encoding))
-                if encoding == FieldValueEncoding::TWO_LIMB_128_CANONICAL
+                if encoding == FOREIGN
         ));
         assert!(roundtrip(&foreign, Validate::Yes).is_err());
     }
 
     #[test]
-    fn two_limb_encoding_metadata_roundtrips_unvalidated() {
-        // The declared-but-inactive variant must survive the wire byte-faithfully
-        // so a future two-limb build can read back what it wrote.
-        let metadata = metadata_with_encoding(FieldValueEncoding::TWO_LIMB_128_CANONICAL);
+    fn active_encoding_tracks_the_proof_field_feature() {
+        let expected = if cfg!(feature = "fp128-field-inline") {
+            FieldValueEncoding::TWO_LIMB_128_CANONICAL
+        } else {
+            FieldValueEncoding::BN254_SCALAR_CANONICAL
+        };
+        assert_eq!(FieldValueEncoding::ACTIVE, expected);
+    }
+
+    #[test]
+    fn foreign_encoding_metadata_roundtrips_unvalidated() {
+        // The other build's variant must survive the wire byte-faithfully so
+        // that build can read back what it wrote.
+        let metadata = metadata_with_encoding(FOREIGN);
         assert_eq!(roundtrip(&metadata, Validate::No).unwrap(), metadata);
     }
 

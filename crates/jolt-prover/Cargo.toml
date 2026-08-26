@@ -48,6 +48,11 @@ akita = [
   "jolt-field/akita",
   "jolt-kernels/akita",
   "jolt-prover-legacy/akita",
+  # The packed axis proves over fp128, so FR execution and the value encoding
+  # flip with it (inert while field-inline is off; the tracer forward is the
+  # same weak edge the field-inline feature uses).
+  "jolt-program/fp128-field-inline",
+  "tracer?/fp128-field-inline",
 ]
 # Compile-time ZK mode: committed sumcheck recorders, hiding witness
 # commitments and stage-8 opening, and the BlindFold tail. One compiled

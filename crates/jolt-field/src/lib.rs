@@ -107,6 +107,8 @@ pub mod solinas;
 mod unreduced;
 
 #[cfg(feature = "akita")]
+pub use akita::AkitaField;
+#[cfg(feature = "akita")]
 pub use akita_accumulators::{AkitaAccumulator, AkitaSignedAccumulator};
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,

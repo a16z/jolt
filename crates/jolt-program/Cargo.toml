@@ -17,6 +17,12 @@ serialization = ["dep:ark-serialize", "dep:serde", "jolt-riscv/serialization"]
 std = ["common/std"]
 image = ["dep:object"]
 field-inline = ["jolt-riscv/field-inline"]
+# Selects the two-limb 16-byte `FieldValueEncoding::ACTIVE` for the fp128
+# proof field of the packed (akita) configuration. Enabled by the provers'
+# `akita` features together with the tracer's `fp128-field-inline`, so
+# metadata and trace always agree on the encoding; inert while the
+# `field-inline` metadata paths are compiled out.
+fp128-field-inline = []
 
 [dependencies]
 ark-serialize = { workspace = true, optional = true }

@@ -35,6 +35,10 @@ akita = [
   "jolt-claims?/akita",
   "jolt-field/akita",
   "jolt-verifier/akita",
+  # The packed axis proves over fp128, so FR execution and the value encoding
+  # flip with it (inert while field-inline is off).
+  "jolt-program/fp128-field-inline",
+  "tracer/fp128-field-inline",
 ]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
 host = [

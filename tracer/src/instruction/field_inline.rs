@@ -128,12 +128,16 @@ field_instruction!(
     SourceInstructionKind::FIELD_LOAD_IMM
 );
 
-// The proof field the tracer executes over. jolt-field selects its backend by
-// Cargo feature (bn254 by default, solinas for Fp128) and exposes no
-// proof-field alias, so this is the single selection point: switching fields
-// means repointing this alias and FieldValueEncoding::ACTIVE in jolt-program.
-// Everything below is generic over F; no other line names a concrete field.
+// The proof field the tracer executes over — the single selection point:
+// `fp128-field-inline` (the akita chain) selects the fp128 akita field, the
+// homomorphic (Dory) builds keep BN254 Fr. FieldValueEncoding::ACTIVE in
+// jolt-program flips with the same feature, so a trace and its metadata
+// always agree on the encoding. Everything below is generic over F; no other
+// line names a concrete field.
+#[cfg(not(feature = "fp128-field-inline"))]
 type ProofField = jolt_field::Fr;
+#[cfg(feature = "fp128-field-inline")]
+type ProofField = jolt_field::AkitaField;
 
 fn execute_field_inline(
     op: FieldInlineOp,
@@ -380,4 +384,35 @@ fn encode_field<F: CanonicalEncoding>(value: F) -> FieldEncodedValue {
     // zero (FieldValueEncoding::byte_len tags the valid width).
     value.to_bytes_le(&mut encoded.bytes_le[..F::NUM_BYTES]);
     encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_field::{CanonicalBytes, Ring};
+
+    use super::*;
+
+    /// Encode/decode roundtrip over the build's ProofField, including values
+    /// above 2^64 (multi-limb) and the buffer-width contract a narrower field
+    /// relies on: bytes past NUM_BYTES stay zero, so downstream full-buffer
+    /// reduced decodes (jolt-witness) see the same element.
+    #[test]
+    fn proof_field_roundtrips_through_the_register_encoding() {
+        let wide = ProofField::from_u128((1u128 << 64) + 3);
+        let values = [
+            ProofField::from_u64(0),
+            ProofField::from_u64(1),
+            ProofField::from_u64(u64::MAX),
+            wide,
+            ProofField::from_u64(0) - ProofField::from_u64(1),
+            wide.inverse().unwrap(),
+        ];
+        for value in values {
+            let encoded = encode_field(value);
+            assert!(encoded.bytes_le[ProofField::NUM_BYTES..]
+                .iter()
+                .all(|byte| *byte == 0));
+            assert_eq!(decode_field::<ProofField>(encoded), value);
+        }
+    }
 }
