@@ -351,6 +351,25 @@ mod tests {
         assert_eq!(err, PreprocessingError::InvalidBytecodeAddress(0x7fff_fffc));
     }
 
+    /// Every `NoOp` lands on bytecode slot 0 regardless of its address, and
+    /// an instruction with no mapping fails materialization outright. Together
+    /// those make the witness layer's `BytecodePc` total — one column for both
+    /// the read-RAF pushforward and the committed one-hot.
+    #[test]
+    fn noop_maps_to_bytecode_slot_zero() {
+        let bytecode = vec![instruction(0x8000_0000, None)];
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT).unwrap();
+
+        let mut noop = instruction(0x8000_0004, None);
+        noop.instruction_kind = JoltInstructionKind::NoOp;
+        assert_eq!(preprocessing.get_pc(&noop), Some(0));
+
+        // Not merely because the address is unmapped: the same address as a
+        // non-no-op has no slot at all.
+        assert_eq!(preprocessing.get_pc(&instruction(0x8000_0004, None)), None);
+    }
+
     fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltInstructionRow {
         JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,

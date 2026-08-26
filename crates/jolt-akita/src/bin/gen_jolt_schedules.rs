@@ -42,7 +42,7 @@ fn main() {
         let source = emit_family_module(&family).expect("table generation must succeed");
         std::fs::write(&path, source).expect("write generated table");
         // The emitter's fixed import header is not rustfmt-stable; format the
-        // module so the checked-in file passes the workspace fmt lane. The
+        // module so the checked-in file passes the workspace fmt check. The
         // drift oracle compares schedule data only, so formatting is free.
         let status = std::process::Command::new("rustfmt")
             .arg("--edition")

@@ -96,7 +96,7 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
         let cycles = 1usize << log_t;
         let rows: Vec<SpartanShiftRow> = collect_rows(witness, cycles)?;
 
-        let gamma_powers: [F; 5] = gamma_powers_array(inputs.challenges.gamma);
+        let gamma_powers = gamma_powers_array(inputs.challenges.gamma);
 
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);
@@ -184,71 +184,57 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 enum Phase<F> {
     /// First half of the rounds: the four `(P, Q)` pairs over the prefix
     /// variables (outer 0/1, product 0/1 — product Qs carry the γ⁴ scale).
-    PrefixSuffix { pairs: [(Vec<F>, Vec<F>); 4] },
+    PrefixSuffix {
+        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_scalar_pairs))]
+        pairs: [(Vec<F>, Vec<F>); 4],
+    },
     /// Remaining rounds: the two `eq+1` tables and the five columns, dense.
     Dense {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_plus_one_outer: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_plus_one_product: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         unexpanded_pc: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         pc: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_virtual: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_first_in_sequence: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_noop: Vec<F>,
     },
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct ShiftKernel<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; 5],
     /// The two `eq+1` points (big-endian) the summand factors fix.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_outer: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_product: Vec<F>,
     /// Raw per-cycle values, kept for the phase-2 regeneration.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rows: Vec<SpartanShiftRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ShiftKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    let phase = match &kernel.phase {
-        Phase::PrefixSuffix { pairs } => pairs
-            .iter()
-            .flat_map(|(p, q)| [p, q])
-            .map(vec_heap_bytes)
-            .sum::<usize>(),
-        Phase::Dense {
-            eq_plus_one_outer,
-            eq_plus_one_product,
-            unexpanded_pc,
-            pc,
-            is_virtual,
-            is_first_in_sequence,
-            is_noop,
-        } => [
-            eq_plus_one_outer,
-            eq_plus_one_product,
-            unexpanded_pc,
-            pc,
-            is_virtual,
-            is_first_in_sequence,
-            is_noop,
-        ]
-        .into_iter()
-        .map(vec_heap_bytes)
-        .sum::<usize>(),
-    };
-    vec_heap_bytes(&kernel.r_outer)
-        + vec_heap_bytes(&kernel.r_product)
-        + vec_heap_bytes(&kernel.rows)
-        + phase
-        + kernel.challenges.heap_bytes()
-});
-
 impl<F: JoltField> ShiftKernel<F> {
     /// Regenerate the dense phase from the raw values: the five columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
@@ -496,14 +482,8 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
             (SpartanShiftPublic::EqPlusOneOuter, eq_plus_one_outer[0]),
             (SpartanShiftPublic::EqPlusOneProduct, eq_plus_one_product[0]),
         ] {
-            pin_derived_term(
-                relation,
-                JoltDerivedId::from(public),
-                input_points,
-                output_points,
-                challenges,
-                got,
-            )?;
+            let id = JoltDerivedId::from(public);
+            pin_derived_term(relation, id, input_points, output_points, challenges, got)?;
         }
         Ok(())
     }

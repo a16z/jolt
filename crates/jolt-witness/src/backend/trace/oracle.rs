@@ -41,7 +41,7 @@ fn not_served(id: JoltPolynomialId, reason: &'static str) -> WitnessError {
     }
 }
 
-impl<T: TraceSource + Clone> TraceBackend<T> {
+impl<T: TraceSource> TraceBackend<T> {
     pub(crate) fn shape_of(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         use JoltCommittedPolynomial as C;
         use JoltVirtualPolynomial as V;
@@ -205,7 +205,7 @@ fn advice_bytes_cell_vars(max_bytes: usize) -> usize {
     )
 }
 
-impl<F: JoltField, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> {
+impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         self.shape_of(id)
     }
@@ -242,13 +242,13 @@ impl<F: JoltField, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
                 C::BalancedIncDigit(index) => self.materialize_balanced_inc_one_hot(
-                    crate::witnesses::BalancedIncLane::Digit {
+                    crate::witnesses::BalancedIncColumn::Digit {
                         width: self.config.one_hot.committed_chunk_bits(),
                         index,
                     },
                 ),
                 C::BalancedIncCarry => self.materialize_balanced_inc_one_hot(
-                    crate::witnesses::BalancedIncLane::Carry {
+                    crate::witnesses::BalancedIncColumn::Carry {
                         width: self.config.one_hot.committed_chunk_bits(),
                     },
                 ),
