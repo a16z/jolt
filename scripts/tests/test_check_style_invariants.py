@@ -41,6 +41,20 @@ class CheckStyleInvariantsTests(unittest.TestCase):
             check_variant_imports(["use crate::instruction::Kind;"]), []
         )
 
+    def test_rejects_singleton_self_import(self) -> None:
+        lines = ["use crate::instruction::Kind::{", "    self,", "};"]
+        in_raw, in_macro = CHECKER.line_masks(lines)
+        findings = CHECKER.check_nominal_imports(
+            "test.rs", lines, in_raw, in_macro
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("import `crate::instruction::Kind` directly", findings[0][1])
+
+    def test_requires_import_for_pascal_case_macro(self) -> None:
+        self.assertEqual(len(check(["let value = ark_ff::BigInt!(\"1\");"])), 1)
+        self.assertEqual(check(["let value = ArkBigInt!(\"1\");"]), [])
+        self.assertEqual(check(["tracing::info!(\"message\");"]), [])
+
     def test_allows_namespace_function_calls(self) -> None:
         self.assertEqual(
             check(

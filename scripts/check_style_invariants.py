@@ -11,10 +11,12 @@ Repo-wide rules (always checked, on every tracked `.rs` file):
 Diff-scoped rules (checked on lines added relative to `--base`; without
 `--base`, or when the merge base equals HEAD, they are skipped):
 
-  nominal-imports    Types, traits, enums, and constants use imported short
-                     names. Enum variants remain qualified by the enum type;
-                     lowercase namespace free functions may stay qualified.
-                     An imported path is never also spelled qualified.
+  nominal-imports    Types, traits, enums, constants, and PascalCase macros use
+                     imported short names. Enum variants remain qualified by
+                     the enum type; lowercase namespace free functions and
+                     macros may stay qualified. Singleton paths use direct
+                     imports, never `use path::{self}`. An imported path is
+                     never also spelled qualified.
 
 Diff-scoping exists because the rules are debt-tolerant by convention: style
 passes fix what a PR introduces and leave predating sites alone.
@@ -69,6 +71,9 @@ CONSTANT_SEGMENT = re.compile(r"^[A-Z][A-Z0-9_]*$")
 ENUM_VARIANT_IMPORT = re.compile(
     r"(?P<enum>(?:[A-Za-z_]\w*::)*[A-Z][A-Za-z0-9]*)::"
     r"(?:[A-Z][A-Za-z0-9_]*|\{|\*)"
+)
+SINGLETON_SELF_IMPORT = re.compile(
+    r"^(?P<path>(?:::)?(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)::\{self,?\}$"
 )
 
 
@@ -197,6 +202,37 @@ def use_item_mask(
             i += 1
         i += 1
     return mask
+
+
+def singleton_self_imports(
+    lines: list[str], in_raw: list[bool], in_macro: list[bool], in_mod: list[bool]
+) -> list[tuple[int, int, int, str]]:
+    imports = []
+    i = 0
+    while i < len(lines):
+        if in_raw[i] or in_macro[i] or in_mod[i] or not re.match(
+            r"^\s*(?:pub(?:\([^)]*\))?\s+)?use\b", lines[i]
+        ):
+            i += 1
+            continue
+        start = i
+        statement = []
+        while i < len(lines):
+            statement.append(strip_strings_and_line_comments(lines[i]))
+            if ";" in lines[i]:
+                break
+            i += 1
+        if match := USE_LINE.match(" ".join(statement).strip()):
+            tree = re.sub(r"\s+", "", match.group(1))
+            if self_import := SINGLETON_SELF_IMPORT.match(tree):
+                self_line = next(
+                    line
+                    for line in range(start, i + 1)
+                    if re.search(r"\bself\b", lines[line])
+                )
+                imports.append((start, i, self_line, self_import.group("path")))
+        i += 1
+    return imports
 
 
 def brace_depths(lines: list[str], in_raw: list[bool]) -> list[int]:
@@ -496,9 +532,22 @@ def check_enum_variant_imports(
     rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
 ) -> list[tuple[int, str]]:
     in_mod = inline_mod_mask(lines, in_raw)
+    singleton_lines = {
+        line
+        for start, end, _self_line, _path in singleton_self_imports(
+            lines, in_raw, in_macro, in_mod
+        )
+        for line in range(start, end + 1)
+    }
     findings = []
     for i, ln in enumerate(lines):
-        if in_raw[i] or in_macro[i] or in_mod[i] or not re.search(r"\buse\b", ln):
+        if (
+            in_raw[i]
+            or in_macro[i]
+            or in_mod[i]
+            or i in singleton_lines
+            or not re.search(r"\buse\b", ln)
+        ):
             continue
         clean = strip_strings_and_line_comments(ln)
         if match := ENUM_VARIANT_IMPORT.search(clean):
@@ -514,17 +563,33 @@ def check_enum_variant_imports(
     return findings
 
 
+def check_singleton_self_imports(
+    rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
+) -> list[tuple[int, str]]:
+    in_mod = inline_mod_mask(lines, in_raw)
+    return [
+        (
+            self_line + 1,
+            f"[nominal-imports] import `{path}` directly; replace "
+            f"`use {path}::{{self}}` with `use {path}`",
+        )
+        for _start, _end, self_line, path in singleton_self_imports(
+            lines, in_raw, in_macro, in_mod
+        )
+    ]
+
+
 def check_nominal_imports(
     rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
 ) -> list[tuple[int, str]]:
-    findings = check_qualified_dup(rel, lines, in_raw, in_macro)
+    findings = check_singleton_self_imports(rel, lines, in_raw, in_macro)
     reported_lines = {line for line, _message in findings}
-    findings.extend(
-        finding
-        for finding in check_nominal_paths(rel, lines, in_raw, in_macro)
-        if finding[0] not in reported_lines
-    )
-    findings.extend(check_enum_variant_imports(rel, lines, in_raw, in_macro))
+    for check in (check_qualified_dup, check_nominal_paths, check_enum_variant_imports):
+        new_findings = check(rel, lines, in_raw, in_macro)
+        findings.extend(
+            finding for finding in new_findings if finding[0] not in reported_lines
+        )
+        reported_lines.update(line for line, _message in new_findings)
     return findings
 
 
