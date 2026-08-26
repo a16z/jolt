@@ -3,7 +3,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
@@ -145,7 +145,7 @@ where
         .as_ref()
         .map(|object| {
             (
-                PrecommittedRole::UntrustedAdvice,
+                JoltAdviceKind::Untrusted.precommitted_role(),
                 &object.commitment,
                 &object.hint,
             )
@@ -153,7 +153,7 @@ where
         .into_iter()
         .chain(trusted_advice.map(|object| {
             (
-                PrecommittedRole::TrustedAdvice,
+                JoltAdviceKind::Trusted.precommitted_role(),
                 &object.commitment,
                 &object.hint,
             )

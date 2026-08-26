@@ -20,9 +20,7 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltPolynomialId,
 };
 use jolt_field::{CanonicalBytes, JoltField};
-use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim, PrecommittedRole,
-};
+use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -299,12 +297,12 @@ where
     let mut precommitted = Vec::with_capacity(2);
     for (role, object, claim) in [
         (
-            PrecommittedRole::UntrustedAdvice,
+            JoltAdviceKind::Untrusted.precommitted_role(),
             untrusted.as_ref(),
             untrusted_claim.as_ref(),
         ),
         (
-            PrecommittedRole::TrustedAdvice,
+            JoltAdviceKind::Trusted.precommitted_role(),
             trusted.as_ref(),
             trusted_claim.as_ref(),
         ),

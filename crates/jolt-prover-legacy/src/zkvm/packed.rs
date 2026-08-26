@@ -31,7 +31,7 @@ use jolt_claims::protocols::jolt::lattice::{
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, GroupOpeningClaim,
-    PrecommittedClaim, PrecommittedRole, PrefixPackedClaims, TransparentObjectSetup,
+    PrecommittedClaim, PrefixPackedClaims, TransparentObjectSetup,
 };
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
@@ -1521,14 +1521,14 @@ impl AkitaPackedProver<'_> {
         let mut precommitted = Vec::with_capacity(2);
         if let Some(object) = advice_object.as_ref() {
             precommitted.push((
-                PrecommittedRole::UntrustedAdvice,
+                JoltAdviceKind::Untrusted.precommitted_role(),
                 &object.commitment,
                 &object.hint,
             ));
         }
         if let Some(object) = trusted_advice {
             precommitted.push((
-                PrecommittedRole::TrustedAdvice,
+                JoltAdviceKind::Trusted.precommitted_role(),
                 &object.commitment,
                 &object.hint,
             ));
@@ -1665,12 +1665,12 @@ impl AkitaPackedProver<'_> {
         let mut batch_precommitted = Vec::with_capacity(2);
         for (role, object, claim) in [
             (
-                PrecommittedRole::UntrustedAdvice,
+                JoltAdviceKind::Untrusted.precommitted_role(),
                 advice_object.as_ref(),
                 untrusted_physical.as_ref(),
             ),
             (
-                PrecommittedRole::TrustedAdvice,
+                JoltAdviceKind::Trusted.precommitted_role(),
                 trusted_advice,
                 trusted_physical.as_ref(),
             ),

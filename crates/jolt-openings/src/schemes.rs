@@ -745,31 +745,40 @@ impl<F, C> GroupOpeningClaim<F, C> {
     }
 }
 
-/// Identity of one precommitted group. The variant order *is* the canonical
-/// public batch order, which precedes the final trace group:
-/// `[UntrustedAdvice, TrustedAdvice, OneHotTrace]`. The role is bound into the
-/// statement transcript, so a group's semantics never rest on position alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PrecommittedRole {
-    UntrustedAdvice,
-    TrustedAdvice,
+/// Protocol-supplied identity of one precommitted group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrecommittedRole {
+    order: u64,
+    transcript_label: &'static [u8],
+    diagnostic_name: &'static str,
 }
 
 impl PrecommittedRole {
-    /// Domain-separating transcript tag for this group.
-    pub const fn transcript_label(self) -> &'static [u8] {
-        match self {
-            Self::UntrustedAdvice => b"untrusted_advice",
-            Self::TrustedAdvice => b"trusted_advice",
+    pub const fn new(
+        order: u64,
+        transcript_label: &'static [u8],
+        diagnostic_name: &'static str,
+    ) -> Self {
+        Self {
+            order,
+            transcript_label,
+            diagnostic_name,
         }
     }
 
-    /// Human-readable role used in validation diagnostics.
+    /// Protocol-defined canonical batch position.
+    pub const fn order(self) -> u64 {
+        self.order
+    }
+
+    /// Protocol-defined domain-separating transcript tag.
+    pub const fn transcript_label(self) -> &'static [u8] {
+        self.transcript_label
+    }
+
+    /// Protocol-defined name used in validation diagnostics.
     pub const fn diagnostic_name(self) -> &'static str {
-        match self {
-            Self::UntrustedAdvice => "untrusted-advice",
-            Self::TrustedAdvice => "trusted-advice",
-        }
+        self.diagnostic_name
     }
 }
 

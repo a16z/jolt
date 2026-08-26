@@ -56,7 +56,7 @@ pub(crate) fn validate_precommitted_order(
     let mut previous: Option<PrecommittedRole> = None;
     for role in roles {
         if let Some(previous) = previous {
-            if role <= previous {
+            if role.order() <= previous.order() {
                 return Err(invalid_batch(format!(
                     "Akita precommitted groups must be in canonical ascending order, found {} after {}",
                     role.diagnostic_name(),

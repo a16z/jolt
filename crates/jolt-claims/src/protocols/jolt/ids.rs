@@ -175,6 +175,21 @@ pub enum JoltAdviceKind {
     Untrusted,
 }
 
+#[cfg(feature = "akita")]
+impl JoltAdviceKind {
+    /// Role descriptor for the final heterogeneous Akita opening.
+    pub const fn precommitted_role(self) -> jolt_openings::PrecommittedRole {
+        match self {
+            Self::Untrusted => {
+                jolt_openings::PrecommittedRole::new(0, b"untrusted_advice", "untrusted-advice")
+            }
+            Self::Trusted => {
+                jolt_openings::PrecommittedRole::new(1, b"trusted_advice", "trusted-advice")
+            }
+        }
+    }
+}
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AdviceClaimReductionPublic {
     FinalScale(JoltAdviceKind),
@@ -588,5 +603,16 @@ mod tests {
                 relation,
             }
         );
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn advice_precommit_roles_fix_order_and_transcript_tags() {
+        let untrusted = JoltAdviceKind::Untrusted.precommitted_role();
+        let trusted = JoltAdviceKind::Trusted.precommitted_role();
+
+        assert!(untrusted.order() < trusted.order());
+        assert_eq!(untrusted.transcript_label(), b"untrusted_advice");
+        assert_eq!(trusted.transcript_label(), b"trusted_advice");
     }
 }

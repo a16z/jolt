@@ -6,12 +6,10 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
 use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim, PrecommittedRole,
-};
+use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::AkitaJointOpeningProof;
@@ -131,12 +129,12 @@ where
     let mut precommitted = Vec::with_capacity(2);
     for (role, object, claim) in [
         (
-            PrecommittedRole::UntrustedAdvice,
+            JoltAdviceKind::Untrusted.precommitted_role(),
             untrusted_advice,
             untrusted_physical.as_ref(),
         ),
         (
-            PrecommittedRole::TrustedAdvice,
+            JoltAdviceKind::Trusted.precommitted_role(),
             trusted_advice,
             trusted_physical.as_ref(),
         ),
