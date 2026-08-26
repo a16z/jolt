@@ -461,28 +461,26 @@ fn advice_physical_num_vars(
     Ok(plan.packing().packed_num_vars())
 }
 
-fn provision_advice_schedules(
+fn advice_schedule_params(
     max_untrusted_advice_bytes: usize,
     max_trusted_advice_bytes: usize,
-    one_hot_k: usize,
     max_final_num_vars: usize,
-) -> Result<(), VerifierError> {
+) -> Result<Option<jolt_akita::AdviceScheduleParams>, VerifierError> {
     let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
         .then(|| advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes))
         .transpose()?;
     let trusted_physical_vars = (max_trusted_advice_bytes > 0)
         .then(|| advice_physical_num_vars(JoltAdviceKind::Trusted, max_trusted_advice_bytes))
         .transpose()?;
-    jolt_akita::schedule_registry::provision_advice_for_k(
-        untrusted_physical_vars,
-        trusted_physical_vars,
-        one_hot_k,
-        max_final_num_vars,
+    Ok(
+        (untrusted_physical_vars.is_some() || trusted_physical_vars.is_some()).then(|| {
+            jolt_akita::AdviceScheduleParams::new(
+                untrusted_physical_vars,
+                trusted_physical_vars,
+                max_final_num_vars,
+            )
+        }),
     )
-    .map(|_| ())
-    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
-    })
 }
 
 /// An advice commitment object: the canonical word polynomial used by
@@ -725,7 +723,7 @@ impl AkitaPackedProver<'_> {
             self.program_io.memory_layout.max_trusted_advice_size as usize;
         let max_untrusted_advice_bytes =
             self.program_io.memory_layout.max_untrusted_advice_size as usize;
-        if max_trusted_advice_bytes > 0 || max_untrusted_advice_bytes > 0 {
+        let advice_schedule = if max_trusted_advice_bytes > 0 || max_untrusted_advice_bytes > 0 {
             // The trace this prove uses may be shorter than the program's
             // padded ceiling, but preprocessing must cover every arity a proof
             // of this program can select, so sweep up to the ceiling's arity.
@@ -736,14 +734,15 @@ impl AkitaPackedProver<'_> {
                 })
                 .expect("the padded-ceiling OneHotTrace layout must exist")
                 .num_vars;
-            provision_advice_schedules(
+            advice_schedule_params(
                 max_untrusted_advice_bytes,
                 max_trusted_advice_bytes,
-                one_hot_k,
                 max_final_num_vars,
             )
-            .expect("advice grouped schedules must provision");
-        }
+            .expect("advice grouped schedule parameters must derive")
+        } else {
+            None
+        };
         jolt_akita::AkitaSetupParams::one_hot_only_grouped(
             shape.num_vars,
             shape.num_polys,
@@ -751,6 +750,7 @@ impl AkitaPackedProver<'_> {
                 + usize::from(max_trusted_advice_bytes > 0),
             layout_digest,
             one_hot_k,
+            advice_schedule,
         )
     }
 
@@ -1819,26 +1819,12 @@ pub fn akita_verifier_preprocessing(
         }
     };
     let committed_mode = preprocessing.shared.program.is_committed();
-    let one_hot_k = akita_verifier_setup.one_hot_k();
-    // The verifier's setup is shape-exact, so its own arity is the only final
-    // arity any proof it accepts can carry — a tight bound on the sweep.
-    let akita_verifier_max_final_num_vars = akita_verifier_setup.max_num_vars();
     let mut verifier_preprocessing = JoltVerifierPreprocessing::new(
         program,
         preprocessing.shared.digest(),
         akita_verifier_setup,
         None,
     );
-    // The verifier owns its own copy of the grouped advice rows. A verifier in
-    // its own process re-derives them from the same public advice capacities, so
-    // the set is identical by construction rather than by trust.
-    provision_advice_schedules(
-        preprocessing.shared.memory_layout.max_untrusted_advice_size as usize,
-        preprocessing.shared.memory_layout.max_trusted_advice_size as usize,
-        one_hot_k,
-        akita_verifier_max_final_num_vars,
-    )
-    .expect("advice grouped schedules must provision for the verifier");
     // The per-kind advice commitment-object setups are derived from the
     // public advice shapes with the same fixed seed the prover uses (the
     // Akita setup is transparent).

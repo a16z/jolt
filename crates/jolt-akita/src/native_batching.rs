@@ -353,6 +353,7 @@ impl AkitaNativeBatching {
     where
         T: Transcript<Challenge = AkitaField>,
     {
+        setup.ensure_schedule_rows()?;
         validate_trace_batch_statement(setup, precommitted, main)?;
         let backend_main_point = reverse_point(&main.point);
         let precommitted_commitments = precommitted

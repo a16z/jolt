@@ -17,6 +17,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
+use crate::schedule_registry::AdviceScheduleParams;
 use crate::trace_onehot::TracePackedOneHot;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
@@ -103,6 +104,10 @@ pub struct AkitaSetupParams {
     /// flavor dominates the setup cost (~30x the dense flavor at advice
     /// shapes), and a sparse-unit or dense commitment object never touches it.
     pub(crate) dense_only: bool,
+    /// Recipe for the dynamic grouped rows accepted by this setup. Unlike the
+    /// process-local row cache, this metadata survives verifier serialization.
+    #[serde(default)]
+    pub(crate) advice_schedule: Option<AdviceScheduleParams>,
 }
 
 impl AkitaSetupParams {
@@ -119,6 +124,7 @@ impl AkitaSetupParams {
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
             dense_only: false,
+            advice_schedule: None,
         }
     }
 
@@ -139,6 +145,7 @@ impl AkitaSetupParams {
             one_hot_k,
             one_hot_only: true,
             dense_only: false,
+            advice_schedule: None,
         }
     }
 
@@ -150,6 +157,7 @@ impl AkitaSetupParams {
         max_total_batch_polys: usize,
         default_layout_digest: AkitaLayoutDigest,
         one_hot_k: usize,
+        advice_schedule: Option<AdviceScheduleParams>,
     ) -> Self {
         Self {
             max_num_vars,
@@ -159,6 +167,7 @@ impl AkitaSetupParams {
             one_hot_k,
             one_hot_only: true,
             dense_only: false,
+            advice_schedule,
         }
     }
 
@@ -179,6 +188,7 @@ impl AkitaSetupParams {
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
             dense_only: true,
+            advice_schedule: None,
         }
     }
 
@@ -266,11 +276,8 @@ impl AkitaProverSetup {
     }
 }
 
-/// The verifier setup is pure shape: the backend keys are a deterministic
-/// function of `(max_num_vars, max_num_polys_per_commitment_group, one_hot_k)`
-/// over a fixed internal seed, so they are never serialized or
-/// transcript-absorbed — [`append_verifier_setup`] binds these parameters and
-/// both sides derive the same keys from them.
+/// Serializable public inputs for deriving the backend keys and any dynamic
+/// grouped schedules. The derived keys and schedule rows are not serialized.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
@@ -279,6 +286,8 @@ pub struct AkitaVerifierSetup {
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
+    #[serde(default)]
+    pub(crate) advice_schedule: Option<AdviceScheduleParams>,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
 }
@@ -319,6 +328,21 @@ impl AkitaVerifierSetup {
         }
     }
 
+    /// Restores dynamic rows before schedule resolution or lazy key derivation.
+    pub(crate) fn ensure_schedule_rows(&self) -> Result<(), OpeningsError> {
+        let result = self.backend_cache.schedule_rows.get_or_init(|| {
+            self.advice_schedule
+                .map_or(Ok(()), |params| {
+                    params.provision(self.one_hot_k).map(|_| ())
+                })
+                .map_err(|error| error.to_string())
+        });
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OpeningsError::InvalidSetup(error.clone())),
+        }
+    }
+
     /// Backend verifier key for `flavor`, cached after the first use.
     /// [`AkitaScheme::setup`](crate::AkitaScheme) primes the cache with the
     /// freshly built keys; a serde-transported setup re-derives them from the
@@ -327,6 +351,9 @@ impl AkitaVerifierSetup {
         &self,
         flavor: AkitaBackendFlavor,
     ) -> Result<&AkitaBackendVerifier, OpeningsError> {
+        if flavor == AkitaBackendFlavor::OneHot {
+            self.ensure_schedule_rows()?;
+        }
         let cache = match flavor {
             AkitaBackendFlavor::Dense => &self.backend_cache.dense,
             AkitaBackendFlavor::OneHot => &self.backend_cache.one_hot,
@@ -376,6 +403,16 @@ impl AkitaVerifierSetup {
 pub(crate) struct BackendVerifierCache {
     dense: Arc<OnceLock<AkitaBackendVerifier>>,
     one_hot: Arc<OnceLock<AkitaBackendVerifier>>,
+    schedule_rows: Arc<OnceLock<Result<(), String>>>,
+}
+
+impl BackendVerifierCache {
+    pub(crate) fn with_schedule_rows() -> Self {
+        Self {
+            schedule_rows: Arc::new(OnceLock::from(Ok(()))),
+            ..Self::default()
+        }
+    }
 }
 
 impl fmt::Debug for BackendVerifierCache {

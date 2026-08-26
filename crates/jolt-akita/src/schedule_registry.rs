@@ -17,9 +17,42 @@ use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
     FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout, ScheduleRowDigest,
 };
+use serde::{Deserialize, Serialize};
 
 /// Upper bound on preprocessing-provisioned rows per config (currently at most 3 × 32).
 pub const MAX_REGISTERED_ROWS: usize = 128;
+
+/// Public inputs needed to restore this setup's grouped advice schedules.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdviceScheduleParams {
+    untrusted_physical_arity: Option<usize>,
+    trusted_physical_arity: Option<usize>,
+    final_arity_ceiling: usize,
+}
+
+impl AdviceScheduleParams {
+    pub fn new(
+        untrusted_physical_num_vars: Option<usize>,
+        trusted_physical_num_vars: Option<usize>,
+        max_final_num_vars: usize,
+    ) -> Self {
+        Self {
+            untrusted_physical_arity: untrusted_physical_num_vars,
+            trusted_physical_arity: trusted_physical_num_vars,
+            final_arity_ceiling: max_final_num_vars,
+        }
+    }
+
+    pub(crate) fn provision(self, one_hot_k: usize) -> Result<RegisteredRows, AkitaError> {
+        provision_advice_for_k(
+            self.untrusted_physical_arity,
+            self.trusted_physical_arity,
+            one_hot_k,
+            self.final_arity_ceiling,
+        )
+    }
+}
 
 /// One config's preprocessing-provisioned rows.
 #[derive(Clone, Debug, Default)]

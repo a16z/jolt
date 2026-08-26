@@ -500,6 +500,11 @@ impl CommitmentScheme for AkitaScheme {
             !(params.one_hot_only && params.dense_only),
             "a setup cannot skip both backend flavors"
         );
+        if let Some(advice_schedule) = params.advice_schedule {
+            let _registered_rows = advice_schedule
+                .provision(params.one_hot_k)
+                .map_err(|error| invalid_setup(&error))?;
+        }
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
             .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
         let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) = if params
@@ -553,7 +558,8 @@ impl CommitmentScheme for AkitaScheme {
             max_total_batch_polys: params.max_total_batch_polys,
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
-            backend_cache: Default::default(),
+            advice_schedule: params.advice_schedule,
+            backend_cache: crate::adapters::BackendVerifierCache::with_schedule_rows(),
         };
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
         let prover = AkitaProverSetup {
@@ -846,6 +852,7 @@ mod tests {
             max_total_batch_polys: 1,
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
+            advice_schedule: None,
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -982,6 +989,49 @@ mod tests {
             serialize_akita(primed).unwrap(),
             "re-derived backend key must match the primed one"
         );
+    }
+
+    #[test]
+    fn serde_transported_grouped_setup_restores_its_schedule_rows() {
+        use akita_config::CommitmentConfig;
+
+        use crate::configs::JoltOneHotK16;
+        use crate::schedule_registry::{
+            self, AdviceScheduleParams, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+        };
+
+        schedule_registry::reset_for_tests();
+        let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.0;
+        let advice_schedule = AdviceScheduleParams::new(
+            None,
+            Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
+            final_num_vars,
+        );
+        let (_, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
+            final_num_vars,
+            1,
+            2,
+            [3; 32],
+            AKITA_ONE_HOT_K16,
+            Some(advice_schedule),
+        ))
+        .unwrap();
+        let selection = schedule_registry::registered_rows::<JoltOneHotK16>()
+            .unwrap()
+            .rows()
+            .next()
+            .unwrap()
+            .selection();
+        let json = serde_json::to_string(&verifier_setup).unwrap();
+
+        schedule_registry::reset_for_tests();
+        let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
+        let _ = transported
+            .backend_verifier(AkitaBackendFlavor::OneHot)
+            .unwrap();
+        let _ = JoltOneHotK16::resolve_schedule_selection(selection)
+            .expect("transported grouped setup must restore its schedule rows");
+        schedule_registry::reset_for_tests();
     }
 
     #[test]
