@@ -836,16 +836,16 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
                         let left = u64::from(left);
                         if left != 0 {
-                            scan.left[chunk].add(u.mul_u64(left));
+                            scan.left[chunk].fmadd_u64(u, left);
                         }
                         let right = u64::from(right);
                         if right != 0 {
-                            scan.right[chunk].add(u.mul_u64(right));
+                            scan.right[chunk].fmadd_u64(u, right);
                         }
                     } else {
                         scan.shift_full[chunk].add(u);
                         if suffix_bits != 0 {
-                            scan.identity[chunk].add(u.mul_u128(suffix_bits));
+                            scan.identity[chunk].fmadd_u128(u, suffix_bits);
                         }
                     }
                 }
@@ -984,7 +984,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                             } else {
                                 let value = suffix.suffix_mle(suffix_bits);
                                 if value != 0 {
-                                    slot.add(u.mul_u64(value));
+                                    slot.fmadd_u64(u, value);
                                 }
                             }
                         }

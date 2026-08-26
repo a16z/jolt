@@ -396,6 +396,12 @@ pub trait Accumulator: Default + Copy + Send + Sync {
         self.fmadd(a, Self::Element::from_u64(b));
     }
 
+    /// Fused multiply-add with a `u128` scalar: `self += a * F::from(b)`.
+    #[inline]
+    fn fmadd_u128(&mut self, a: Self::Element, b: u128) {
+        self.fmadd(a, Self::Element::from_u128(b));
+    }
+
     /// Fused multiply-add with an `i64` scalar: `self += a * F::from(b)`.
     #[inline]
     fn fmadd_i64(&mut self, a: Self::Element, b: i64) {
