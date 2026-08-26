@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackend<T> {
+impl<T: TraceSource> TraceBackend<T> {
     pub(crate) fn materialize_ram_read_write_virtual<F: JoltField>(
         &self,
         id: JoltVirtualPolynomial,
@@ -24,29 +24,24 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         let addresses = self.config.ram_k;
         let mut state = self.initial_ram_state()?;
         let mut values = jolt_utils::unsafe_allocate_zero_vec(addresses * cycles);
-        let mut trace = self.trace.trace.clone();
 
         for cycle in 0..cycles {
             for (address, value) in state.iter().copied().enumerate() {
                 values[address * cycles + cycle] = F::from_u64(value);
             }
 
-            let Some(row) = trace.next_row() else {
+            let Some(row) = self.trace.trace.get(cycle) else {
                 continue;
             };
-            match row.ram_access {
-                RamAccess::Read(read) => {
-                    if let Some(address) = self.remapped_ram_address(read.address)? {
-                        values[address * cycles + cycle] = F::from_u64(read.value);
-                    }
+            if row.is_load() {
+                if let Some(address) = self.remapped_ram_address(row.ram_address())? {
+                    values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
                 }
-                RamAccess::Write(write) => {
-                    if let Some(address) = self.remapped_ram_address(write.address)? {
-                        values[address * cycles + cycle] = F::from_u64(write.pre_value);
-                        state[address] = write.post_value;
-                    }
+            } else if row.is_store() {
+                if let Some(address) = self.remapped_ram_address(row.ram_address())? {
+                    values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
+                    state[address] = row.ram_write_value();
                 }
-                RamAccess::NoOp => {}
             }
         }
 
@@ -57,13 +52,12 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
         let mut values = jolt_utils::unsafe_allocate_zero_vec(addresses * cycles);
-        let mut trace = self.trace.trace.clone();
 
         for cycle in 0..cycles {
-            let Some(row) = trace.next_row() else {
+            let Some(row) = self.trace.trace.get(cycle) else {
                 continue;
             };
-            if let Some(raw_address) = ram_access_address(row.ram_access) {
+            if let Some(raw_address) = ram_access_address(row) {
                 if let Some(address) = self.remapped_ram_address(raw_address)? {
                     values[address * cycles + cycle] = F::one();
                 }

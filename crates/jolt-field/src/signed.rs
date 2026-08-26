@@ -253,6 +253,17 @@ impl<const N: usize> SignedBigInt<N> {
         )
     }
 
+    /// Adds `self * rhs` to `acc`, truncating the product and sum to `P` limbs.
+    #[inline]
+    pub fn fmadd_trunc<const M: usize, const P: usize>(
+        &self,
+        rhs: &SignedBigInt<M>,
+        acc: &mut SignedBigInt<P>,
+    ) {
+        let product = self.mul_trunc::<M, P>(rhs);
+        acc.add_assign_in_place(&product);
+    }
+
     #[inline]
     pub fn from_u64(value: u64) -> Self {
         Self::from_u64_with_sign(value, true)

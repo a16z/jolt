@@ -96,10 +96,16 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for ReferenceBackend 
 /// address identity): `poly(k) = P(chunk) · Q_shift + Q_value` over the
 /// current phase's chunk domain, with the fully bound `P` becoming the next
 /// phase's checkpoint.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RafDecomposition<F: JoltField> {
     prefix: Polynomial<F>,
     q_shift: Polynomial<F>,
     q_value: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     checkpoint: F,
 }
 
@@ -157,30 +163,47 @@ fn extension_eval<F: JoltField>(evals: &[F], b: usize, half: usize, c: usize) ->
 /// Cycle-indexed tables for the last `log_T` rounds: `eq(r_reduction, ·)`,
 /// the combined `Val + γ·RafVal` at the bound address, and the virtual `ra`
 /// chunk selectors.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct CycleTables<F: JoltField> {
     eq_reduction: Polynomial<F>,
     combined_val: Polynomial<F>,
     ra: Vec<Polynomial<F>>,
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct InstructionReadRafKernel<F: JoltField> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: InstructionReadRafDimensions,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_reduction: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rows: Vec<InstructionReadRafWitness>,
     /// Per-table cycle buckets, indexed by `LookupTableKind::index()`.
     buckets: Vec<Vec<usize>>,
     /// Condensed per-cycle eq weights: after phase `p` starts,
     /// `u[j] = eq(r_reduction, j) · Π_{q<p} eq(phase-q challenges, chunk_q(k_j))`.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     u_evals: Vec<F>,
     /// The table-prefix checkpoints, one per `ALL_PREFIXES` entry (fully
     /// bound values of completed phases' prefix chunk polynomials).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
     /// The materialized prefix chunk polynomials for the current phase,
     /// in `ALL_PREFIXES` order.
     prefix_tables: Vec<Polynomial<F>>,
     /// Per present table (enum index, suffix `Q` polynomials in
     /// `table.suffixes()` order) for the current phase.
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_keyed_polys))]
     suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
     raf_left: RafDecomposition<F>,
     raf_right: RafDecomposition<F>,
@@ -191,94 +214,15 @@ pub struct InstructionReadRafKernel<F: JoltField> {
     raf_upper_all_ones: RafDecomposition<F>,
     /// Completed phases' bound-challenge eq tables (`v[p][x] =
     /// eq(phase-p challenges, x)`, MSB-first).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     v_tables: Vec<Vec<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     phase_challenges: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     cycle_challenges: Vec<F>,
     cycle_tables: Option<CycleTables<F>>,
     rounds_bound: usize,
 }
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> RafDecomposition<F> {
-    fn heap_bytes(&self) -> usize {
-        use crate::backend::poly_heap_bytes;
-        poly_heap_bytes(&self.prefix)
-            + poly_heap_bytes(&self.q_shift)
-            + poly_heap_bytes(&self.q_value)
-    }
-}
-
-// Size arithmetic rather than a derive, so `F` stays unbounded; `Polynomial`
-// sizing is by `len()`, exact at the mid-stage snapshot.
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for InstructionReadRafKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{
-            nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
-        };
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("r_reduction"),
-            vec_heap_bytes(&self.r_reduction),
-        );
-        visitor.visit_simple(allocative::Key::new("rows"), vec_heap_bytes(&self.rows));
-        visitor.visit_simple(
-            allocative::Key::new("buckets"),
-            nested_vec_heap_bytes(&self.buckets),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("u_evals"),
-            vec_heap_bytes(&self.u_evals),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("prefix_checkpoints"),
-            vec_heap_bytes(&self.prefix_checkpoints),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("prefix_tables"),
-            polys_heap_bytes(&self.prefix_tables),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("suffix_tables"),
-            self.suffix_tables.capacity()
-                * size_of::<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>()
-                + self
-                    .suffix_tables
-                    .iter()
-                    .map(|(_, polys)| polys_heap_bytes(polys))
-                    .sum::<usize>(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("raf"),
-            self.raf_left.heap_bytes()
-                + self.raf_right.heap_bytes()
-                + self.raf_identity.heap_bytes()
-                + self.raf_upper_all_ones.heap_bytes(),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("v_tables"),
-            nested_vec_heap_bytes(&self.v_tables),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("phase_challenges"),
-            vec_heap_bytes(&self.phase_challenges),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("cycle_challenges"),
-            vec_heap_bytes(&self.cycle_challenges),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("cycle_tables"),
-            self.cycle_tables.as_ref().map_or(0, |tables| {
-                poly_heap_bytes(&tables.eq_reduction)
-                    + poly_heap_bytes(&tables.combined_val)
-                    + polys_heap_bytes(&tables.ra)
-            }),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> InstructionReadRafKernel<F> {
     pub fn new(
         dimensions: InstructionReadRafDimensions,
