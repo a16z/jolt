@@ -261,6 +261,14 @@ impl JoltTraceRow {
         bytecode_pc: u32,
     ) -> Result<Self, TraceRowError> {
         let (circuit_flags, instruction_flags) = row_flags(instruction);
+        // `BytecodePreprocessing::get_pc` maps every no-op to slot 0, and the
+        // witness layer's `BytecodePc` is total because of it — no cycle is
+        // ever missing its bytecode slot. See `jolt-program`'s
+        // `noop_maps_to_bytecode_slot_zero`.
+        debug_assert!(
+            !instruction_flags.get(InstructionFlags::IsNoop) || bytecode_pc == 0,
+            "a no-op row must sit on bytecode slot 0"
+        );
         let kind = instruction.instruction_kind;
         let values = state.into_value_slots(
             circuit_flags.get(CircuitFlags::Load),
@@ -274,6 +282,39 @@ impl JoltTraceRow {
             return Err(TraceRowError::ImmTooWide { imm });
         }
 
+        // FR instructions repurpose the encoded operand slots for FR-register
+        // indices; only the bridge x-register role reaches the ordinary
+        // register plane. Suppress the rest exactly like the bytecode side's
+        // `suppress_field_operand_slots`, so trace-derived one-hots and the
+        // masked bytecode fold agree at FR-active cycles.
+        #[cfg(feature = "field-inline")]
+        let (rs1, rs2, rd) = match crate::field_inline::field_inline_operand_shape(kind) {
+            Some(shape) => {
+                use crate::field_inline::FieldInlineXRegisterRole as Role;
+                let rs1 = match shape.bridge_x_register_role {
+                    Some(Role::ReadRs1) => instruction.operands.rs1,
+                    _ => None,
+                };
+                let rd = match shape.bridge_x_register_role {
+                    Some(Role::WriteRd) => instruction.operands.rd,
+                    _ => None,
+                };
+                // No field op reads an ordinary rs2.
+                (rs1, None, rd)
+            }
+            None => (
+                instruction.operands.rs1,
+                instruction.operands.rs2,
+                instruction.operands.rd,
+            ),
+        };
+        #[cfg(not(feature = "field-inline"))]
+        let (rs1, rs2, rd) = (
+            instruction.operands.rs1,
+            instruction.operands.rs2,
+            instruction.operands.rd,
+        );
+
         Ok(Self {
             values,
             unexpanded_pc: instruction.address as u64,
@@ -281,9 +322,9 @@ impl JoltTraceRow {
             bytecode_pc,
             meta: pack_meta(circuit_flags, instruction_flags, imm < 0),
             jolt_tag: kind.tag().0,
-            rs1_id: checked_register_id(instruction.operands.rs1)?,
-            rs2_id: checked_register_id(instruction.operands.rs2)?,
-            rd_id: checked_register_id(instruction.operands.rd)?,
+            rs1_id: checked_register_id(rs1)?,
+            rs2_id: checked_register_id(rs2)?,
+            rd_id: checked_register_id(rd)?,
             _reserved: [0; 3],
         })
     }
