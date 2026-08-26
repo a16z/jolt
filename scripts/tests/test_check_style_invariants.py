@@ -1,0 +1,156 @@
+import importlib.util
+from pathlib import Path
+import unittest
+
+
+MODULE_PATH = Path(__file__).parents[1] / "check_style_invariants.py"
+SPEC = importlib.util.spec_from_file_location("check_style_invariants", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError(f"could not load {MODULE_PATH}")
+CHECKER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(CHECKER)
+
+
+def check(lines: list[str]) -> list[tuple[int, str]]:
+    in_raw, in_macro = CHECKER.line_masks(lines)
+    return CHECKER.check_nominal_paths("test.rs", lines, in_raw, in_macro)
+
+
+def check_variant_imports(lines: list[str]) -> list[tuple[int, str]]:
+    in_raw, in_macro = CHECKER.line_masks(lines)
+    return CHECKER.check_enum_variant_imports("test.rs", lines, in_raw, in_macro)
+
+
+class CheckStyleInvariantsTests(unittest.TestCase):
+    def test_requires_import_for_nominal_item(self) -> None:
+        findings = check(["let value = std::sync::Arc::new(1);"])
+        self.assertEqual(len(findings), 1)
+        self.assertIn("import `std::sync::Arc`", findings[0][1])
+
+    def test_requires_enum_import_but_keeps_variant_qualified(self) -> None:
+        findings = check(["let kind = crate::instruction::Kind::ADD;"])
+        self.assertEqual(len(findings), 1)
+        self.assertIn("use `Kind::ADD`", findings[0][1])
+        self.assertEqual(check(["let kind = Kind::ADD;"]), [])
+
+    def test_rejects_imported_enum_variant(self) -> None:
+        findings = check_variant_imports(["use crate::instruction::Kind::ADD;"])
+        self.assertEqual(len(findings), 1)
+        self.assertIn("import enum `crate::instruction::Kind`", findings[0][1])
+        self.assertEqual(
+            check_variant_imports(["use crate::instruction::Kind;"]), []
+        )
+
+    def test_rejects_singleton_self_import(self) -> None:
+        lines = ["use crate::instruction::Kind::{", "    self,", "};"]
+        in_raw, in_macro = CHECKER.line_masks(lines)
+        findings = CHECKER.check_nominal_imports(
+            "test.rs", lines, in_raw, in_macro
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("import `crate::instruction::Kind` directly", findings[0][1])
+
+    def test_requires_import_for_pascal_case_macro(self) -> None:
+        self.assertEqual(len(check(["let value = ark_ff::BigInt!(\"1\");"])), 1)
+        self.assertEqual(check(["let value = ArkBigInt!(\"1\");"]), [])
+        self.assertEqual(check(["tracing::info!(\"message\");"]), [])
+
+    def test_allows_namespace_function_calls(self) -> None:
+        self.assertEqual(
+            check(
+                [
+                    "std::mem::take(&mut value);",
+                    "std::alloc::alloc(layout);",
+                    "ram::reconstruct_full_eval();",
+                ]
+            ),
+            [],
+        )
+        self.assertEqual(check(["let take = std::mem::take;"]), [])
+
+    def test_ignores_multiline_crate_attributes(self) -> None:
+        self.assertEqual(
+            check(
+                [
+                    "#![expect(",
+                    "    clippy::module_name_repetitions,",
+                    "    reason = \"generated names\"",
+                    ")]",
+                ]
+            ),
+            [],
+        )
+
+    def test_reports_imported_qualified_path_once(self) -> None:
+        lines = ["use std::sync::Arc;", "let value = std::sync::Arc::new(1);"]
+        in_raw, in_macro = CHECKER.line_masks(lines)
+        findings = CHECKER.check_nominal_imports(
+            "test.rs", lines, in_raw, in_macro
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("already imported", findings[0][1])
+
+    def test_allows_qualified_items_through_module_alias(self) -> None:
+        self.assertEqual(
+            check(
+                [
+                    "use crate::{field::Fr, witness as prover_witness};",
+                    "let poly: prover_witness::VirtualPolynomial;",
+                ]
+            ),
+            [],
+        )
+
+    def test_ignores_multiline_use_items(self) -> None:
+        self.assertEqual(
+            check(
+                [
+                    "use crate::{",
+                    "    instruction::ADD,",
+                    "    witness::VirtualPolynomial,",
+                    "};",
+                ]
+            ),
+            [],
+        )
+
+    def test_local_import_does_not_apply_to_file_scope(self) -> None:
+        lines = [
+            "fn local() {",
+            "    use std::sync::Arc;",
+            "}",
+            "fn other() -> std::sync::Arc<u8> { todo!() }",
+        ]
+        in_raw, in_macro = CHECKER.line_masks(lines)
+        findings = CHECKER.check_nominal_imports(
+            "test.rs", lines, in_raw, in_macro
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertNotIn("already imported", findings[0][1])
+
+    def test_char_literal_does_not_change_import_scope(self) -> None:
+        lines = [
+            "fn local() {",
+            "    let brace = b'{';",
+            "}",
+            "use std::sync::Arc;",
+            "fn other() -> std::sync::Arc<u8> { todo!() }",
+        ]
+        in_raw, in_macro = CHECKER.line_masks(lines)
+        findings = CHECKER.check_nominal_imports(
+            "test.rs", lines, in_raw, in_macro
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("already imported", findings[0][1])
+
+    def test_allows_associated_items_on_short_type_names(self) -> None:
+        self.assertEqual(check(["let max = u64::MAX;", "let kind = Kind::ADD;"]), [])
+
+    def test_allows_ufcs_for_disambiguation(self) -> None:
+        self.assertEqual(
+            check(["<D::Error as serde::de::Error>::custom(message);"]), []
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
