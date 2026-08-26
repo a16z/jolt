@@ -1,6 +1,7 @@
 use common::constants::RAM_START_ADDRESS;
 
 use super::*;
+use crate::jolt_asm;
 
 /// Emits the common LR/SC proof guard that rejects non-RAM reservation targets.
 ///
@@ -39,33 +40,22 @@ pub(in crate::expand) fn expand_byte_load(
     let mut asm = ExpansionBuilder::new(*instruction);
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
+    let base = reg(rs1(instruction)?);
+    let destination = reg(rd(instruction)?);
+    let offset = format_i_imm(instruction.operands.imm);
 
     // v1 = aligned address of the containing doubleword; the fused lookup
     // computes `(rs1 + imm) & !7` in one row.
-    asm.emit_i(
-        SourceInstructionKind::VirtualAlignAddr,
-        v1.operand(),
-        reg(rs1(instruction)?),
-        format_i_imm(instruction.operands.imm),
-    );
-    asm.emit_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // v0 = byte mask of the lane at offset `(rs1 + imm) mod 8`.
-    asm.emit_i(
-        SourceInstructionKind::VirtualWindowMaskB,
-        v0.operand(),
-        reg(rs1(instruction)?),
-        format_i_imm(instruction.operands.imm),
-    );
-    asm.emit_r(
-        if signed {
-            SourceInstructionKind::VirtualPextSigned
-        } else {
-            SourceInstructionKind::VirtualPext
-        },
-        reg(rd(instruction)?),
-        v1.operand(),
-        v0.operand(),
-    );
+    jolt_asm!(asm, {
+        align_addr v1, base, offset;
+        ld v1, v1, 0;
+        window_mask_b v0, base, offset;
+    });
+    if signed {
+        jolt_asm!(asm, { pext_signed destination, v1, v0; });
+    } else {
+        jolt_asm!(asm, { pext destination, v1, v0; });
+    }
     asm.release_many([v0, v1]);
 
     asm.finalize()
@@ -84,41 +74,26 @@ pub(in crate::expand) fn expand_halfword_load(
     let mut asm = ExpansionBuilder::new(*instruction);
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
+    let base = reg(rs1(instruction)?);
+    let destination = reg(rd(instruction)?);
+    let offset = instruction.operands.imm;
+    let formatted_offset = format_i_imm(offset);
 
     // Halfword loads may start at byte offsets 0, 2, 4, or 6 within the
     // containing doubleword.
-    asm.emit_address(
-        SourceInstructionKind::VirtualAssertHalfwordAlignment,
-        reg(rs1(instruction)?),
-        instruction.operands.imm,
-    );
     // v1 = aligned address of the containing doubleword; the fused lookup
     // computes `(rs1 + imm) & !7` in one row.
-    asm.emit_i(
-        SourceInstructionKind::VirtualAlignAddr,
-        v1.operand(),
-        reg(rs1(instruction)?),
-        format_i_imm(instruction.operands.imm),
-    );
-    asm.emit_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // v0 = byte mask of the halfword lane at offset `(rs1 + imm) mod 8`
-    // (VirtualWindowMaskH ignores bit 0, which the assert above zeroes).
-    asm.emit_i(
-        SourceInstructionKind::VirtualWindowMaskH,
-        v0.operand(),
-        reg(rs1(instruction)?),
-        format_i_imm(instruction.operands.imm),
-    );
-    asm.emit_r(
-        if signed {
-            SourceInstructionKind::VirtualPextSigned
-        } else {
-            SourceInstructionKind::VirtualPext
-        },
-        reg(rd(instruction)?),
-        v1.operand(),
-        v0.operand(),
-    );
+    jolt_asm!(asm, {
+        assert_halfword_alignment base, offset;
+        align_addr v1, base, formatted_offset;
+        ld v1, v1, 0;
+        window_mask_h v0, base, formatted_offset;
+    });
+    if signed {
+        jolt_asm!(asm, { pext_signed destination, v1, v0; });
+    } else {
+        jolt_asm!(asm, { pext destination, v1, v0; });
+    }
     asm.release_many([v0, v1]);
 
     asm.finalize()
@@ -138,38 +113,24 @@ pub(in crate::expand) fn expand_word_load(
     let mut asm = ExpansionBuilder::new(*instruction);
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
+    let base = reg(rs1(instruction)?);
+    let destination = reg(rd(instruction)?);
+    let offset = instruction.operands.imm;
+    let formatted_offset = format_i_imm(offset);
 
-    asm.emit_address(
-        SourceInstructionKind::VirtualAssertWordAlignment,
-        reg(rs1(instruction)?),
-        instruction.operands.imm,
-    );
     // v1 = aligned address of the containing doubleword; the fused lookup
     // computes `(rs1 + imm) & !7` in one row.
-    asm.emit_i(
-        SourceInstructionKind::VirtualAlignAddr,
-        v1.operand(),
-        reg(rs1(instruction)?),
-        format_i_imm(instruction.operands.imm),
-    );
-    asm.emit_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // v0 = byte mask of the word lane at offset `(rs1 + imm) mod 8`.
-    asm.emit_i(
-        SourceInstructionKind::VirtualWindowMaskW,
-        v0.operand(),
-        reg(rs1(instruction)?),
-        format_i_imm(instruction.operands.imm),
-    );
-    asm.emit_r(
-        if signed {
-            SourceInstructionKind::VirtualPextSigned
-        } else {
-            SourceInstructionKind::VirtualPext
-        },
-        reg(rd(instruction)?),
-        v1.operand(),
-        v0.operand(),
-    );
+    jolt_asm!(asm, {
+        assert_word_alignment base, offset;
+        align_addr v1, base, formatted_offset;
+        ld v1, v1, 0;
+        window_mask_w v0, base, formatted_offset;
+    });
+    if signed {
+        jolt_asm!(asm, { pext_signed destination, v1, v0; });
+    } else {
+        jolt_asm!(asm, { pext destination, v1, v0; });
+    }
     asm.release(v0);
     asm.release(v1);
 
