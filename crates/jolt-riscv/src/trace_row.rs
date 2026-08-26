@@ -261,6 +261,14 @@ impl JoltTraceRow {
         bytecode_pc: u32,
     ) -> Result<Self, TraceRowError> {
         let (circuit_flags, instruction_flags) = row_flags(instruction);
+        // `BytecodePreprocessing::get_pc` maps every no-op to slot 0, and the
+        // witness layer relies on it: `BytecodePc` (which zeroes no-op rows)
+        // and `MappedPc` (which does not) are the same column only under this
+        // invariant. See `jolt-program`'s `noop_maps_to_bytecode_slot_zero`.
+        debug_assert!(
+            !instruction_flags.get(InstructionFlags::IsNoop) || bytecode_pc == 0,
+            "a no-op row must sit on bytecode slot 0"
+        );
         let kind = instruction.instruction_kind;
         let values = state.into_value_slots(
             circuit_flags.get(CircuitFlags::Load),
