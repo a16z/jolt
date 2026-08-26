@@ -23,9 +23,8 @@ const GATE: &str = "feature = \"field-inline\"";
 /// maximum number of `feature = "field-inline"` occurrences it may carry
 /// (production and test text alike — the cap is the ratchet).
 const WHITELIST: &[(&str, usize, &str)] = &[
-    // Compile-time protocol selection: the FR config constant pair and the
-    // field-inline/akita mutual-exclusion compile error.
-    ("config.rs", 3, "compile-time protocol config"),
+    // Compile-time protocol selection: the FR config constant pair.
+    ("config.rs", 2, "compile-time protocol config"),
     // The packed FR absorb helper re-export beside the packed absorb helpers.
     ("lib.rs", 1, "packed FR absorb re-export"),
     // The FR commitment payload is proof shape: carrier struct/field,

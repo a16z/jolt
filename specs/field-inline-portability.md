@@ -118,28 +118,39 @@ slice (Axis 2) lands with or after the field switch itself.
    encoding.
    Review gate: encoding-mismatch proofs reject fail-closed; e2e both modes.
 
-## Status (2026-08-26): Axis 1 is fixture-blocked on Axis 2's field switch
+## Status (2026-08-26): both axes landed under the fp128 ruling
 
-Step 1's ordering assumed a packed FR fixture was creatable independently of
-Axis 2. #1718/#1732 falsified that: the merged akita axis proves exclusively
-over fp128 (`jolt-akita::adapters::AkitaField`; no BN254 akita configuration
-exists), while FR trace execution is pinned to BN254 by the tracer's
-`ProofField` alias and `FieldValueEncoding::ACTIVE`. A nontrivial packed FR
-fixture therefore requires FR execution over fp128 — the field switch itself.
-The FR-profile muldiv (`FieldRdInc` identically zero, every limb column empty)
-is the only accept fixture constructible before the switch; it never exercises
-the recomposition identity nontrivially, so it does not meet step 1's review
-gate and the `field-inline x akita` compile error stays.
+The fp128 switch decision came down as a ruling: the packed (akita) axis
+proves exclusively over fp128, and no BN254 akita configuration will ever
+exist. FR execution is therefore configuration-selected — the akita feature
+chain repoints the tracer's `ProofField` to `jolt_field::AkitaField` and
+`FieldValueEncoding::ACTIVE` to `TWO_LIMB_128_CANONICAL` (inert while
+field-inline is off); Dory keeps BN254 Fr. FR guests are
+configuration-specific, and cross-configuration proofs reject fail-closed on
+the metadata encoding-equality gate (intended behavior, tested in both
+directions).
 
-Landed under this constraint: the claims-layer slice of step 1 (shared
-`jolt-claims/src/lattice.rs` digit algebra, `protocols/field_inline/lattice/`
-limb geometry + recomposition identity + packing plan, the norm-budget check —
-2 limbs over fp128, planner-admitted with headroom) and all of step 2 except
-the switch (tracer generic over `Field + CanonicalEncoding`,
-`TWO_LIMB_128_CANONICAL` declared, mismatch rejection fail-closed). Remaining,
-as one unit gated on the fp128 switch decision: repoint `ProofField` and
-`ACTIVE` under the akita configuration, re-fixture the eq-MLE guest at the
-16-byte encoding, then the withheld Axis 1 wiring (stage-8 reconstruction
-member mirroring `UntrustedAdviceReconstruction`, stage-0 packed FR commit,
-`FieldIncLimbPackingPlan` prover kernel), packed accept/tamper fixtures, and
-compile-error removal last.
+Everything above is implemented; the `field-inline x akita` compile error is
+removed. Axis 1 as landed, with two dispositions the design left open:
+
+- `FieldRegistersIncClaimReduction` stays a stage-6b member unchanged; on the
+  packed axis its reduced claim feeds a stage-8 reconstruction member
+  (`FieldIncLimbReconstruction`: per-column booleanity legs at a fresh
+  reference point plus the balanced-digit decode leg) instead of the
+  homomorphic RLC splice (`stage8/field_inline.rs` stays homomorphic-only;
+  the packed seam is `stage8/field_inline_packed.rs` on both fronts).
+- The limb object's presence is claim-gated: `FieldRdInc` identically zero
+  means every limb column is empty, and the catalogued Akita fold schedules
+  cannot open an all-zero one-hot object — so the object (commitment +
+  opening) exists exactly when the stage-6b reduced `FieldRdInc` claim is
+  nonzero, enforced both ways fail-closed at the stage-8 opening
+  (Schwartz-Zippel over the reduction chain; the reconstruction member
+  itself always runs).
+
+Review gates met: FR-off akita byte-identity (the legacy byte-diff ratchets),
+dory FR-on identity (the dory e2e's reference/optimized wire equality), and
+the packed accept/tamper suite (`jolt-prover/tests/akita_field_inline_e2e.rs`:
+eq-MLE re-fixtured at the 16-byte encoding via host-side fp128 evaluation,
+the FR-inactive muldiv with the object absent, and five rejected tampers).
+The packed reconstruction kernel is the naive reference tier on both
+backends; a sparse optimized kernel is the noted follow-up.
