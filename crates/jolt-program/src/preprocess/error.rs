@@ -33,6 +33,14 @@ pub enum PreprocessingError {
         address: usize,
         last_sequence: u16,
     },
+    #[error(
+        "bytecode inline sequence at index {bytecode_index} (address {address:#x}) has {length} rows, exceeding the packed slot's u16 sequence length"
+    )]
+    InlineSequenceTooLong {
+        bytecode_index: usize,
+        address: usize,
+        length: usize,
+    },
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
     #[cfg(feature = "field-inline")]

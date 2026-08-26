@@ -85,10 +85,11 @@ impl BytecodePreprocessing {
 }
 
 /// An address expands to a full descending `virtual_sequence_remaining` run —
-/// `first_vsr` down to 0 — at consecutive PCs, so these two bounds determine
-/// every `(address, vsr) -> pc`. `try_new` rejects any bytecode that violates it.
+/// `virtual_sequence_length - 1` down to 0 — at consecutive PCs, so these two
+/// fields determine every `(address, vsr) -> pc`. `try_new` rejects any bytecode
+/// that violates it.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
     derive(
@@ -99,21 +100,16 @@ impl BytecodePreprocessing {
     )
 )]
 struct PcSlot {
-    /// PC of the address's first row; `u32::MAX` marks an unmapped slot.
+    /// PC of the address's first row.
     first_pc: u32,
-    /// `virtual_sequence_remaining` of that first row — one less than the number
-    /// of rows the address expands to.
-    first_vsr: u16,
+    /// Number of bytecode rows the address expands to; 0 marks an unmapped slot,
+    /// which is why `MAX_INLINE_ROWS_PER_SOURCE` stops one short of `u16` range.
+    virtual_sequence_length: u16,
 }
-
-const EMPTY_SLOT: PcSlot = PcSlot {
-    first_pc: u32::MAX,
-    first_vsr: 0,
-};
 
 impl PcSlot {
     const fn is_empty(&self) -> bool {
-        self.first_pc == EMPTY_SLOT.first_pc
+        self.virtual_sequence_length == 0
     }
 }
 
@@ -135,9 +131,9 @@ impl BytecodePCMapper {
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
         // One allocation at the final size; the no-op sentinel lives in the
         // first slot (`index_count` is always >= 1).
-        let mut slots = vec![EMPTY_SLOT; Self::index_count(bytecode)?];
+        let mut slots = vec![PcSlot::default(); Self::index_count(bytecode)?];
         if let Some(first) = slots.first_mut() {
-            first.first_pc = 0;
+            first.virtual_sequence_length = 1;
         }
 
         // The leading no-op sentinel is the only row allowed at address 0.
@@ -150,7 +146,7 @@ impl BytecodePCMapper {
         // equal addresses is exactly one inline sequence.
         let mut last_pc = 0u32;
         for run in rows.chunk_by(|a, b| a.address == b.address) {
-            let Some(first_row) = run.first() else {
+            let Some((first_row, rest)) = run.split_first() else {
                 continue;
             };
             let address = first_row.address;
@@ -158,15 +154,14 @@ impl BytecodePCMapper {
                 return Err(PreprocessingError::InvalidBytecodeAddress(0));
             }
             let bytecode_index = Self::try_get_index(address)?;
-            let first_vsr = Self::validate_run(bytecode_index, address, run)?;
+            let virtual_sequence_length =
+                Self::validate_run(bytecode_index, address, first_row, rest)?;
 
-            // `u32::MAX` is reserved as the unmapped-slot marker.
             let first_pc = last_pc
                 .checked_add(1)
                 .ok_or(PreprocessingError::BytecodeTooLarge)?;
             last_pc = first_pc
-                .checked_add(first_vsr.into())
-                .filter(|pc| *pc < u32::MAX)
+                .checked_add(u32::from(virtual_sequence_length - 1))
                 .ok_or(PreprocessingError::BytecodeTooLarge)?;
 
             let slot = slots
@@ -180,23 +175,21 @@ impl BytecodePCMapper {
             }
             *slot = PcSlot {
                 first_pc,
-                first_vsr,
+                virtual_sequence_length,
             };
         }
 
         Ok(Self { slots })
     }
 
-    /// Checks that `run` counts down by one to its anchor at 0, returning the
-    /// sequence number it starts from (equivalently, `run.len() - 1`).
+    /// Checks that the run headed by `first_row` counts down by one to its
+    /// anchor at 0, returning its length.
     fn validate_run(
         bytecode_index: usize,
         address: usize,
-        run: &[JoltInstructionRow],
+        first_row: &JoltInstructionRow,
+        rest: &[JoltInstructionRow],
     ) -> Result<u16, PreprocessingError> {
-        let Some((first_row, rest)) = run.split_first() else {
-            return Ok(0);
-        };
         let first_sequence = first_row.virtual_sequence_remaining.unwrap_or(0);
         let mut previous_sequence = first_sequence;
         for row in rest {
@@ -220,16 +213,25 @@ impl BytecodePCMapper {
                 last_sequence: previous_sequence,
             });
         }
-        Ok(first_sequence)
+        // The run counts down to 0, so its length is `first_sequence + 1`.
+        first_sequence
+            .checked_add(1)
+            .ok_or(PreprocessingError::InlineSequenceTooLong {
+                bytecode_index,
+                address,
+                length: rest.len() + 1,
+            })
     }
 
     pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> Option<usize> {
         let index = Self::try_get_index(address).ok()?;
         let slot = *self.slots.get(index)?;
-        if slot.is_empty() || virtual_sequence_remaining > slot.first_vsr {
+        // An unmapped slot has length 0, so this also rejects it.
+        if virtual_sequence_remaining >= slot.virtual_sequence_length {
             return None;
         }
-        Some(slot.first_pc as usize + (slot.first_vsr - virtual_sequence_remaining) as usize)
+        let offset = slot.virtual_sequence_length - 1 - virtual_sequence_remaining;
+        Some(slot.first_pc as usize + offset as usize)
     }
 
     pub fn get_first_pc(&self, address: usize) -> Option<usize> {

@@ -17,7 +17,7 @@ use crate::expand::{
 };
 
 pub(super) const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
-pub(super) const MAX_INLINE_ROWS_PER_SOURCE: usize = u16::MAX as usize + 1;
+pub(super) const MAX_INLINE_ROWS_PER_SOURCE: usize = u16::MAX as usize;
 
 type StampSequenceFn = fn(
     Vec<JoltInstructionRow>,
