@@ -23,7 +23,7 @@ impl VirtualPextSigned {
 /// `pext(x, y)`: packs `x`'s bits at `y`'s set positions toward bit 0,
 /// preserving order (the window's top bit lands at `popcount(y) − 1`).
 #[inline]
-fn pext(x: u64, y: u64) -> u64 {
+pub(crate) fn pext(x: u64, y: u64) -> u64 {
     if y == 0 {
         return 0;
     }

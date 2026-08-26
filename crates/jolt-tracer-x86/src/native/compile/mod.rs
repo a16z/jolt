@@ -19,7 +19,7 @@ use jolt_riscv::SourceInstructionKind;
 
 use super::state::{AdviceCompute, AdviceJob, GuestState};
 use emitter::EmitterSet;
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
+use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow};
 
 /// One compiled code body (fast or record) with its dispatch table.
 struct CompiledBody {
@@ -68,12 +68,13 @@ impl CompiledProgram {
         if rows.is_empty() {
             return Err(TraceError::Backend("program has no expanded bytecode"));
         }
-        // VirtualPextSigned uses `pext` and `popcnt`; refuse on CPUs without
-        // them rather than fault at run time. Gated per program so pext-free
-        // guests keep compiling on pre-BMI2 hosts.
+        // VirtualPextSigned and VirtualPext use `pext` (PextSigned also
+        // `popcnt`); refuse on CPUs without them rather than fault at run
+        // time. Gated per program so pext-free guests keep compiling on
+        // pre-BMI2 hosts.
         let uses_pext = rows
             .iter()
-            .any(|row| matches!(row.instruction_kind, JoltInstructionKind::PextSigned(_)));
+            .any(|row| matches!(row.instruction_kind, Kind::PextSigned(_) | Kind::Pext(_)));
         if uses_pext
             && (!std::arch::is_x86_feature_detected!("bmi2")
                 || !std::arch::is_x86_feature_detected!("popcnt"))

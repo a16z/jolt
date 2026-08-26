@@ -7,6 +7,7 @@
 //! value becomes the prefix's checkpoint for the next phase. Checkpoints are
 //! initialized via [`SparseDensePrefix::default_checkpoint`].
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod div_by_zero;
@@ -26,7 +27,7 @@ pub mod lt;
 pub mod or;
 pub mod overflow_bits_zero;
 pub mod pow2;
-pub mod pow2_offset_w;
+pub mod pow2_offset;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -54,6 +55,8 @@ use std::fmt::Display;
 use std::ops::Index;
 
 use crate::lookup_bits::LookupBits;
+use align_addr::AlignAddrPrefix;
+use pow2_offset::Pow2OffsetPrefix;
 
 /// A prefix polynomial evaluated at binary points during materialization.
 ///
@@ -167,6 +170,9 @@ pub enum Prefixes {
     SignExtensionW,
     /// The prefix-owned portion of SRLW's `x_{XLEN/2-1} * y_0` predicate.
     SrlwSext,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
 }
 
 /// Total number of prefix variants.
@@ -223,7 +229,7 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
             Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
-            Prefixes::Pow2OffsetW => pow2_offset_w::Pow2OffsetWPrefix::$method($($args),*),
+            Prefixes::Pow2OffsetW => Pow2OffsetPrefix::<2>::$method($($args),*),
             Prefixes::WindowSign => window_sign::WindowSignPrefix::$method($($args),*),
             Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
             Prefixes::XorRotW22 => xor_rotw::XorRotWPrefix::<22>::$method($($args),*),
@@ -232,6 +238,9 @@ macro_rules! dispatch_prefix {
             Prefixes::WordMsb => word_msb::WordMsbPrefix::$method($($args),*),
             Prefixes::SignExtensionW => sign_extension_w::SignExtensionWPrefix::$method($($args),*),
             Prefixes::SrlwSext => srlw_sext::SrlwSextPrefix::$method($($args),*),
+            Prefixes::Pow2OffsetB => Pow2OffsetPrefix::<0>::$method($($args),*),
+            Prefixes::Pow2OffsetH => Pow2OffsetPrefix::<1>::$method($($args),*),
+            Prefixes::AlignAddr => AlignAddrPrefix::$method($($args),*),
         }
     };
 }
