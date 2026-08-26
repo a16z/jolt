@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787719509761,
+  "lastUpdate": 1787768488957,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -145534,6 +145534,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864312,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "centelles.alberto@gmail.com",
+            "name": "Alberto Centelles",
+            "username": "Acentelles"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e25e9703a75d61157ba41294da529de6c5f072d",
+          "message": "feat: fused extraction for the remaining loads (LB/LBU/LH/LHU/LWU) (#1762)\n\n* feat: fused extraction for the remaining loads (LB/LBU/LH/LHU/LWU)\n\nExtends the WindowMaskW/PextSigned pattern to the full load side:\n\n- New tables: Pext (unsigned parallel extract; prefixes [RightShift],\n  suffixes [Pext, PextHelper]), WindowMaskB (reads the low 3 address\n  bits; 0xFF << 8*(ea mod 8)), WindowMaskH (reads bits 1-2 only, bit 0\n  is zeroed by the halfword-alignment assert; 0xFFFF << 8*(ea mod 8 & !1)).\n  Each mask table decomposes rank-1 via its own Pow2Offset prefix/suffix\n  pair; both stay in u64 range on the full domain with no clipping.\n- New virtual instructions VirtualPext (0x0092), VirtualWindowMaskB\n  (0x0093), VirtualWindowMaskH (0x0094) across jolt-riscv, tracer,\n  bindings, legacy mirrors, and z3-verifier (0x0089-0x0090 are taken by\n  the RV64 word-arith fusion and the LW slice; 0x0091 is held for the\n  store slice's AlignAddr).\n- Expansions: LB/LBU 8 -> 5 traced cycles, LH/LHU 9 -> 6, LWU 9 -> 6.\n  PextSigned is width-independent, so signed extraction reuses the\n  slice-1 table; only the masks are width-specialized.\n- Golden fixture: 60 hashes re-baselined (12 each LB/LBU/LH/LHU/LWU),\n  blessed at the renumbered tags.\n- The new materialize_entry paths and the tracer interpreter reuse the\n  pext helpers single-sourced on main instead of re-inlining the loop.\n\nValidation: modular + legacy table/binding tests, ABI test, jolt-program\n38/38 against the 360-case fixture, muldiv e2e.\n\n* refactor(lookup): consolidate the Pow2Offset prefixes into one const-generic impl\n\nThe W/H/B variants were three hand-written copies of the same checkpoint\nstate machine differing only in which of index bits 2..0 contribute.\nReplace them with Pow2OffsetPrefix<LOW_BIT> (legacy: <XLEN, LOW_BIT>)\nwhose per-bit factor 1 + (2^(8*2^k) - 1)*bit_k is included for\nk >= LOW_BIT, following the XorRotWPrefix dispatch pattern.\n\nRestack notes: main's Pow2OffsetW had meanwhile been made\nphase-boundary-agnostic (ab9ac541a); the consolidation carries that fix\ngenerically — both stacks split the index around the low 3 offset bits\nper position (checkpoint updates keyed on the bound bit's position), and\nthe B/H suffixes carry partial factors for offset bits below a boundary,\nwhich the W variant never needed. WindowMaskB/H gain the same\ntwo-round-phase boundary tests main added for WindowMaskW.\n\n* fix(tables): pin the 8-bit lane granularity in WindowMaskB/H decompositions\n\nThe tables are XLEN-generic but the Pow2Offset prefix/suffix pair\nhardcodes 8-bit lanes; make any non-64 instantiation a compile error via\ninline const asserts in suffixes()/combine() in both stacks and in the\nlegacy const-generic prefix, mirroring the WindowMaskW pin on main\n(828157100).\n\n* fix(z3): contiguity-guard the Pext model, scale the B/H window masks\n\nMirror the base branch's VirtualPextSigned fix onto VirtualPext: gate\nthe shl/lshr model on symbolic mask contiguity and havoc rd with a\nfresh unconstrained BV otherwise. Derive the B/H lane masks and shift\nunits from bv_bits instead of hardcoded 0xFF/0xFFFF/8/16 so\nreduced-width solver models stay faithful.\n\n* refactor(expand): fold LW/LWU into a shared word-load expansion\n\nexpand_lw and expand_lwu were line-for-line identical except the\nsigned/unsigned parallel-extract kind; share them through\nexpand_word_load(instruction, signed) like the byte and halfword\nhelpers. Emitted sequences are unchanged (golden fixture parity\npasses).\n\n* feat(expand): fuse the effective-address computation into the load lookups\n\nPorts the address-fusion idea from #1755: a new rank-1 AlignAddr table\n(VirtualAlignAddr, 0x0091) computes (rs1 + imm) & !7 in one AddOperands\nlookup, replacing every load's ADDI + ANDI pair, and the WindowMask\ninstructions take the immediate directly (RightOperandIsImm), indexing\nthe unwrapped rs1 + imm sum whose low three bits agree with the wrapped\nADDI. Loads drop to LB/LBU 4 and LH/LHU/LW/LWU 5 traced cycles,\nmatching #1755's load counts while keeping this stack's stores.\n\nThe AlignAddr decomposition is the LowerWord accumulator with bits 2..0\ncleared and the carry bit dropped (mod 2^XLEN), rank 1 as\nprefix * one + suffix. 78 golden hashes re-baselined: all six loads,\n12 each, plus LRW/SCW, which embed the word load.\n\n* fix(tracer-x86): AOT templates for the fused sub-word extraction kinds\n\nThe base's AOT backend (post-cut #1729 + c070b9f0a) predates this PR's\ninstruction set: its exhaustive kind match missed Pext, WindowMaskB,\nWindowMaskH, and AlignAddr (E0004 on x86_64-linux), and its WindowMaskW\ntemplate still read the pre-AlignAddr-fusion rs1-only form, ignoring the\nimmediate the expansion now carries. Add the four templates, fold the\nimmediate into WindowMaskW, extend the per-program BMI2 gate to VirtualPext,\nand cover all five imm-bearing kinds in the per-instruction difftests\n(alu_ri so the immediate path is exercised).\n\nAlso debug_assert the phase-boundary assumption in AlignAddrPrefix: zeroing\ncarry-range chunks is only sound when no chunk straddles index bit XLEN,\nmatching the Pow2Offset prefix's documented invariant.\n\n* test(tracer-x86): bump the SUPPORTED pin to 77 for the four new kinds\n\nThe difftests landed with fb87c1d41 (and pass on the x86 leg); only the\ngrowth-guard count was left behind.\n\n* test(z3): enable the five remaining load obligations over the symbolic RAM\n\nThe base's e5cad92ef added the symbolic RAM model and enabled LW, leaving\nLB/LBU/LH/LHU/LWU commented until their sequences land; they land in this\nPR. Each expected model mirrors LW's: lane-select bits of the wrapped\nrs1 + imm against the aligned doubleword, scaled to the reduced solver\nwidths, with the sequence's alignment asserts covering the ignored low bits.\nAll 12 obligations (correctness + consistency) pass at the default 64-bit\nmodel.\n\n* refactor(program): use jolt_asm for fused loads\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-08-26T13:09:23-04:00",
+          "tree_id": "ac925344153089df97750dfc38081a81fbf5f4ab",
+          "url": "https://github.com/a16z/jolt/commit/1e25e9703a75d61157ba41294da529de6c5f072d"
+        },
+        "date": 1787768482458,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.8273,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 869692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.418,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 511224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 497732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 511236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7618,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 502312,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6038,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 499740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0568,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.0741,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3973,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5901,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4876,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 507400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.3056,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.9038,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 502464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.0084,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1085240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.9287,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 653620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 90.0773,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2124964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4042,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7003,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507036,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.3009,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866648,
             "unit": "KB",
             "extra": ""
           }
