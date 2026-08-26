@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::cmp::max;
 use std::collections::HashMap;
-use std::fmt::{self};
+use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
 
