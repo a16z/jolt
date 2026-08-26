@@ -13,6 +13,15 @@ use jolt_riscv::{
     JoltInstructionRow, FIELD_REGISTER_LOG_K,
 };
 
+/// A field element in canonical little-endian bytes.
+///
+/// The buffer is 32 bytes under every encoding: a narrower field (e.g.
+/// [`FieldValueEncoding::TWO_LIMB_128_CANONICAL`]) occupies the low
+/// `byte_len` bytes and leaves the rest zero. Sizing the buffer per encoding
+/// would push a width parameter through the register file, trace rows, and
+/// bytecode metadata for no versioning benefit; the encoding (plus the
+/// profile fingerprint) already stamps preprocessing artifacts, so the valid
+/// width is tagged by [`FieldValueEncoding::byte_len`] instead.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
@@ -65,6 +74,23 @@ impl FieldValueEncoding {
         limb_count: 4,
         canonical: true,
     };
+
+    /// 128-bit canonical two-limb encoding: two 64-bit limbs in the low 16
+    /// bytes of the value buffer, upper 16 bytes zero. Declared ahead of the
+    /// 128-bit base-field switch; no build activates it yet.
+    pub const TWO_LIMB_128_CANONICAL: Self = Self {
+        byte_len: 16,
+        limb_bits: 64,
+        limb_count: 2,
+        canonical: true,
+    };
+
+    /// The encoding this build emits and accepts. Metadata carrying any other
+    /// encoding fails validation, so preprocessing built under a different
+    /// proof field is rejected at load time rather than misdecoded during
+    /// proving. Switching the proof field repoints this (and the tracer's
+    /// `ProofField` alias) in one commit.
+    pub const ACTIVE: Self = Self::BN254_SCALAR_CANONICAL;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +156,7 @@ impl FieldInlineBytecodeMetadata {
         let metadata = Self {
             rows,
             field_register_log_k: FIELD_REGISTER_LOG_K,
-            value_encoding: FieldValueEncoding::BN254_SCALAR_CANONICAL,
+            value_encoding: FieldValueEncoding::ACTIVE,
             profile_fingerprint,
         };
         metadata.validate(bytecode.len())?;
@@ -149,11 +175,11 @@ impl FieldInlineBytecodeMetadata {
                 log_k: self.field_register_log_k,
             });
         }
-        if self.value_encoding.byte_len != FieldEncodedValue::BYTE_LEN
-            || self.value_encoding.limb_bits != 64
-            || self.value_encoding.limb_count != 4
-            || !self.value_encoding.canonical
-        {
+        // Fail closed on any encoding other than the build's own, including
+        // well-formed ones: row immediates only decode correctly under the
+        // field ACTIVE describes, so metadata from a different-field build
+        // must never reach proving.
+        if self.value_encoding != FieldValueEncoding::ACTIVE {
             return Err(FieldInlineMetadataError::InvalidValueEncoding(
                 self.value_encoding,
             ));
@@ -408,10 +434,55 @@ mod tests {
         let tampered = FieldInlineBytecodeMetadata {
             rows: Vec::new(),
             field_register_log_k: FIELD_REGISTER_LOG_K + 1,
-            value_encoding: FieldValueEncoding::BN254_SCALAR_CANONICAL,
+            value_encoding: FieldValueEncoding::ACTIVE,
             profile_fingerprint: 0,
         };
         assert!(roundtrip(&tampered, Validate::Yes).is_err());
         assert!(roundtrip(&tampered, Validate::No).is_ok());
+    }
+
+    fn metadata_with_encoding(value_encoding: FieldValueEncoding) -> FieldInlineBytecodeMetadata {
+        FieldInlineBytecodeMetadata {
+            rows: Vec::new(),
+            field_register_log_k: FIELD_REGISTER_LOG_K,
+            value_encoding,
+            profile_fingerprint: 0,
+        }
+    }
+
+    #[test]
+    fn metadata_with_foreign_encoding_rejects_fail_closed() {
+        // A well-formed encoding that is not the build's own must reject: this
+        // metadata decodes correctly only under the field it was built for.
+        let foreign = metadata_with_encoding(FieldValueEncoding::TWO_LIMB_128_CANONICAL);
+        assert!(matches!(
+            foreign.validate(0),
+            Err(FieldInlineMetadataError::InvalidValueEncoding(encoding))
+                if encoding == FieldValueEncoding::TWO_LIMB_128_CANONICAL
+        ));
+        assert!(roundtrip(&foreign, Validate::Yes).is_err());
+    }
+
+    #[test]
+    fn two_limb_encoding_metadata_roundtrips_unvalidated() {
+        // The declared-but-inactive variant must survive the wire byte-faithfully
+        // so a future two-limb build can read back what it wrote.
+        let metadata = metadata_with_encoding(FieldValueEncoding::TWO_LIMB_128_CANONICAL);
+        assert_eq!(roundtrip(&metadata, Validate::No).unwrap(), metadata);
+    }
+
+    #[test]
+    fn declared_encodings_fit_the_value_buffer() {
+        for encoding in [
+            FieldValueEncoding::BN254_SCALAR_CANONICAL,
+            FieldValueEncoding::TWO_LIMB_128_CANONICAL,
+        ] {
+            assert!(encoding.byte_len <= FieldEncodedValue::BYTE_LEN);
+            assert_eq!(
+                u32::from(encoding.byte_len) * 8,
+                u32::from(encoding.limb_bits) * u32::from(encoding.limb_count)
+            );
+            assert!(encoding.canonical);
+        }
     }
 }
