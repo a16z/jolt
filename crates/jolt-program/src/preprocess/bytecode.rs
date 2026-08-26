@@ -136,9 +136,12 @@ impl BytecodePCMapper {
         }
         let mut last_pc = 0u32;
 
-        for instruction in bytecode {
+        for (pc, instruction) in bytecode.iter().enumerate() {
             if instruction.address == 0 {
-                continue;
+                if pc == 0 {
+                    continue;
+                }
+                return Err(PreprocessingError::InvalidBytecodeAddress(0));
             }
 
             // `u32::MAX` is reserved as the unmapped-slot marker.
@@ -396,6 +399,19 @@ mod tests {
                 address: 0x8000_0004,
             }
         );
+    }
+
+    #[test]
+    fn rejects_zero_address_outside_sentinel() {
+        let bytecode = vec![
+            instruction(0x8000_0004, Some(1)),
+            instruction(0, None),
+            instruction(0x8000_0004, Some(0)),
+        ];
+
+        let err =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0004, RV64IMAC_JOLT).unwrap_err();
+        assert_eq!(err, PreprocessingError::InvalidBytecodeAddress(0));
     }
 
     #[test]
