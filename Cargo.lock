@@ -3278,6 +3278,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "criterion",
+ "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",

@@ -199,6 +199,72 @@ mod tests {
         assert!(JoltOneHotK256::setup_matrix_capacity(43, 1).is_ok());
     }
 
+    /// Norm-budget headroom for the packed `FieldRdInc` limb columns
+    /// (`specs/field-inline-portability.md`, Axis 1): over the 128-bit akita
+    /// field the decomposition is two u64 limbs, whose packed object is
+    /// shape-identical to the `OneHotTrace` class this crate's catalogs and
+    /// fold policies already price — same packed arity, one polynomial,
+    /// strictly fewer hot cells per row (limb columns vs. the full trace
+    /// column set, and only on FR-writing cycles). The 254-bit (four-limb)
+    /// decomposition also lands on catalogued arities.
+    #[test]
+    #[expect(clippy::unwrap_used, reason = "test-only shape construction")]
+    fn field_inc_limb_objects_fit_the_one_hot_norm_budget() {
+        use jolt_claims::protocols::field_inline::lattice::{
+            field_inc_limb_count, FieldIncLimbPackingPlan, FieldIncLimbShape,
+        };
+        use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+        use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
+
+        assert_eq!(field_inc_limb_count::<crate::AkitaField>(), 2);
+
+        let setup_ok = |log_k_chunk: usize, num_vars: usize| match log_k_chunk {
+            4 => JoltOneHotK16::setup_matrix_capacity(num_vars, 1).is_ok(),
+            8 => JoltOneHotK256::setup_matrix_capacity(num_vars, 1).is_ok(),
+            _ => false,
+        };
+
+        for log_k_chunk in [4usize, 8] {
+            // 2·XLEN/w instruction columns (XLEN = 64), one bytecode, one RAM.
+            let ra_layout = JoltRaPolynomialLayout::new(2 * 64 / log_k_chunk, 1, 1).unwrap();
+            for log_t in [10usize, 16, 24] {
+                let trace_plan = ONE_HOT_TRACE_LAYOUT
+                    .plan(&OneHotTraceShape {
+                        ra_layout,
+                        log_t,
+                        log_k_chunk,
+                    })
+                    .unwrap();
+                let limb_plan = FieldIncLimbPackingPlan::new(&FieldIncLimbShape {
+                    limbs: 2,
+                    log_t,
+                    log_k_chunk,
+                })
+                .unwrap();
+                assert_eq!(
+                    limb_plan.packing().packed_num_vars(),
+                    trace_plan.packing().packed_num_vars(),
+                    "two-limb object leaves the catalogued shape class at w={log_k_chunk}, log_T={log_t}"
+                );
+                assert!(
+                    limb_plan.packing().ids().len() < trace_plan.packing().ids().len(),
+                    "limb object must carry fewer hot cells per row than OneHotTrace"
+                );
+                assert!(setup_ok(log_k_chunk, limb_plan.packing().packed_num_vars()));
+
+                // The 254-bit instantiation (four limbs) doubles the slot
+                // capacity but still lands on catalogued arities.
+                let four_limb = FieldIncLimbPackingPlan::new(&FieldIncLimbShape {
+                    limbs: 4,
+                    log_t,
+                    log_k_chunk,
+                })
+                .unwrap();
+                assert!(setup_ok(log_k_chunk, four_limb.packing().packed_num_vars()));
+            }
+        }
+    }
+
     #[test]
     #[expect(clippy::unwrap_used)]
     fn k256_policy_uses_adaptive_dimensions() {

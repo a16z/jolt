@@ -60,6 +60,13 @@ pub enum FieldInlineChallengeId {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineCommittedPolynomial {
     FieldRdInc,
+    // Packed-mode committed polynomials (slots of the FR packed limb
+    // object): the balanced digit and signed carry columns of one u64 limb
+    // of `FieldRdInc`'s canonical representative
+    // (`specs/field-inline-portability.md`, Axis 1). The homomorphic mode
+    // never constructs these. Appended for codec stability.
+    FieldIncLimbDigit { limb: usize, index: usize },
+    FieldIncLimbCarry { limb: usize },
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

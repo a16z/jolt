@@ -151,6 +151,26 @@ fn twist_reference_no_protocol_module() {
     );
 }
 
+/// The shared balanced-digit algebra is id-free like `twist`: both packed
+/// protocol families ride it, so it must not reference either protocol
+/// module.
+#[test]
+fn lattice_algebra_references_no_protocol_module() {
+    let mut violations = Vec::new();
+    let lattice = src_dir().join("lattice.rs");
+    let code = code_text(&lattice);
+    for needle in ["protocols::", "FieldInline", "field_inline", "Jolt"] {
+        if code.contains(needle) {
+            violations.push(format!("{} references `{needle}`", lattice.display()));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "the shared lattice algebra must stay protocol-id-free:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// Both protocol families always compile in this crate: the `field-inline`
 /// feature exists only in `jolt-verifier` (and above), so no source here may
 /// gate on it.

@@ -1,4 +1,4 @@
-use jolt_claims::protocols::jolt::lattice::FUSED_INC_BITS;
+use jolt_claims::lattice::{balanced_carry_row, balanced_digit_row};
 use jolt_field::Field;
 use jolt_riscv::CircuitFlags;
 use jolt_riscv::JoltTraceRow as TraceRow;
@@ -65,32 +65,13 @@ impl Extract for RamInc {
 pub struct FusedInc(pub i128);
 
 impl FusedInc {
-    fn balanced_bias(width: usize) -> i128 {
-        debug_assert!(width > 0 && FUSED_INC_BITS.is_multiple_of(width));
-        let radix = 1i128 << width;
-        (radix / 2) * (((1i128 << FUSED_INC_BITS) - 1) / (radix - 1))
-    }
-
-    fn biased_for_balanced_digits(self, width: usize) -> i128 {
-        debug_assert!(self.0.unsigned_abs() < 1u128 << FUSED_INC_BITS);
-        self.0 + Self::balanced_bias(width)
-    }
-
-    /// The selected row of one centered digit or its signed carry.
+    /// The selected row of one centered digit or its signed carry — the
+    /// shared balanced-numeral encoder (`jolt_claims::lattice`) applied to
+    /// the fused delta.
     pub fn selected_row(self, column: BalancedIncColumn) -> usize {
         match column {
-            BalancedIncColumn::Digit { width, index } => {
-                let radix = 1i128 << width;
-                let standard =
-                    (self.biased_for_balanced_digits(width) >> (width * index)) & (radix - 1);
-                ((standard + radix / 2) & (radix - 1)) as usize
-            }
-            BalancedIncColumn::Carry { width } => {
-                let radix = 1i128 << width;
-                let carry = self.biased_for_balanced_digits(width) >> FUSED_INC_BITS;
-                debug_assert!((-1..=1).contains(&carry));
-                carry.rem_euclid(radix) as usize
-            }
+            BalancedIncColumn::Digit { width, index } => balanced_digit_row(self.0, width, index),
+            BalancedIncColumn::Carry { width } => balanced_carry_row(self.0, width),
         }
     }
 }
@@ -161,6 +142,7 @@ impl ExtractIndexed<BalancedIncColumn> for BalancedIncRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_claims::protocols::jolt::lattice::FUSED_INC_BITS;
 
     const LOG_K_CHUNK: usize = 8;
     const DIGITS: usize = FUSED_INC_BITS / LOG_K_CHUNK;

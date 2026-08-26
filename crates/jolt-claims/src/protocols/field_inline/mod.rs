@@ -9,6 +9,7 @@
 //! (pinned by the `protocol_modules_are_import_disjoint` boundary test).
 
 pub mod geometry;
+pub mod lattice;
 pub mod relations;
 
 mod config;
