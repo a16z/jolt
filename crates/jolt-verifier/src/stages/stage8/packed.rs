@@ -848,6 +848,8 @@ mod tests {
                 trusted_advice: Some(TrustedAdviceReconstructionOutputClaims { bytes: fr(43) }),
                 bytecode: Some(bytecode_values),
                 program_image: Some(ProgramImageReconstructionOutputClaims { bytes: fr(47) }),
+                #[cfg(feature = "field-inline")]
+                field_inc_limbs: None,
             },
             output_points: ReconstructionOutputPoints {
                 untrusted_advice: Some(UntrustedAdviceReconstructionOutputClaims {
@@ -860,6 +862,8 @@ mod tests {
                 program_image: Some(ProgramImageReconstructionOutputClaims {
                     bytes: point(word_byte_num_vars(LOG_IMAGE_WORDS)),
                 }),
+                #[cfg(feature = "field-inline")]
+                field_inc_limbs: None,
             },
         }
     }

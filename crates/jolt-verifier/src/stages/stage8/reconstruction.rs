@@ -50,6 +50,11 @@ use crate::stages::stage7::Stage7ClearOutput;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
+// Re-exported so the derive-emitted member-list macro's single-ident relation
+// name resolves at the prover's driver site, like the jolt-family members.
+#[cfg(feature = "field-inline")]
+pub use super::field_inline_packed::FieldIncLimbReconstructionInstance;
+
 fn public_input_failed(stage: JoltRelationId, reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage,
@@ -472,10 +477,10 @@ pub struct ReconstructionSumchecks<F: JoltField> {
     pub bytecode: Option<BytecodeChunkReconstructionInstance<F>>,
     pub program_image: Option<ProgramImageReconstructionInstance<F>>,
     /// The packed FR limb member — always present on the field-inline build
-    /// (every FR-on packed proof carries the limb object), so the phase
-    /// always runs there.
+    /// (the member runs whether or not the proof carries the limb object;
+    /// the object's presence is claim-gated at the stage-8 opening).
     #[cfg(feature = "field-inline")]
-    pub field_inc_limbs: Option<super::field_inline_packed::FieldIncLimbReconstructionInstance<F>>,
+    pub field_inc_limbs: Option<FieldIncLimbReconstructionInstance<F>>,
 }
 
 pub struct ReconstructionClearOutput<F: JoltField> {
@@ -635,8 +640,8 @@ where
     let bytecode_layout = checked.precommitted.bytecode.as_ref();
     let image_layout = checked.precommitted.program_image.as_ref();
 
-    // Under field-inline the phase always runs: every FR-on packed proof
-    // carries the limb object, FieldRdInc zero or not.
+    // Under field-inline the phase always runs: the FR limb member settles
+    // the reduced FieldRdInc claim, zero or not.
     let phase_runs = cfg!(feature = "field-inline")
         || untrusted_layout.is_some()
         || trusted_layout.is_some()

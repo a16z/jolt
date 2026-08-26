@@ -32,11 +32,11 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // constructor default, and the attach builders for both the homomorphic
     // commitment slot and the packed limb commitment/opening slots.
     ("proof.rs", 10, "FR commitment payload carriers"),
-    // The payload presence checks (homomorphic and packed), the FR commitment
-    // absorb seams, and the mode-specific test fixtures. (The fail-closed
+    // The payload presence check, the FR commitment absorb seams, and the
+    // mode-specific test fixtures. (The fail-closed
     // require_field_inline_slices gate lived here until the FR prover
     // fixtures landed.)
-    ("verifier.rs", 12, "commitment absorb seams + budget test"),
+    ("verifier.rs", 13, "commitment absorb seams + test fixtures"),
     // Module registration of the shared FR bytecode side-table seam.
     ("stages/mod.rs", 1, "seam module registration"),
     // Per-stage seam-module and FR-twin module registrations.
@@ -57,7 +57,7 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ("stages/stage6a/verify.rs", 2, "flagged seam calls"),
     (
         "stages/stage6b/verify.rs",
-        9,
+        11,
         "flagged seam calls + test fixtures",
     ),
     (
@@ -70,9 +70,12 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // legs that assemble it from the field_inline_packed seam.
     (
         "stages/stage8/reconstruction.rs",
-        10,
+        11,
         "FR batch member + flagged seam calls",
     ),
+    // Packed statement assembly's test fixtures construct the reconstruction
+    // carrier, whose FR slots are cfg'd fields.
+    ("stages/stage8/packed.rs", 2, "FR carrier test fixtures"),
     // outputs.rs carrier fields are proof shape: FR batch-member slots,
     // output-claim carrier fields, point accessors, re-exports, and the
     // mode-specific test fixtures that construct them.

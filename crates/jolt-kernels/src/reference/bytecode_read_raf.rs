@@ -84,7 +84,7 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
 };
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 #[cfg(feature = "field-inline")]
-use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafOutputClaims;
+use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycleOutputClaims;
 use jolt_witness::witnesses::BytecodePc;
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
@@ -755,8 +755,11 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
             }
 
             let gamma = inputs.challenges.gamma;
-            let mut gamma_powers = [F::one(); 8];
-            for i in 1..8 {
+            // γ^0..γ^{S+2}: the S stage weights (5, or 9 on the packed
+            // shape), then the RAF outer/shift and entry weights.
+            let num_stages = stage_cycle_points.len();
+            let mut gamma_powers = vec![F::one(); num_stages + 3];
+            for i in 1..gamma_powers.len() {
                 gamma_powers[i] = gamma_powers[i - 1] * gamma;
             }
             fn accumulate<F: JoltField>(coefficient: &mut [F], cycle_point: &[F], weight: F) {
@@ -765,16 +768,16 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
                 }
             }
             let mut coefficient = vec![F::zero(); cycles];
-            for (s, cycle_point) in stage_cycle_points.iter().enumerate() {
+            for (s, cycle_point) in stage_cycle_points.iter().enumerate().take(BASE_STAGES) {
                 // The FR stage-1 leg shares the ordinary stage-1 cycle
                 // binding, so its fold merges into the stage-0 weight; the
-                // RAF terms ride the stage-1/3 cycle eq tables at γ⁵/γ⁶.
+                // RAF terms ride the stage-1/3 cycle eq tables at γ^S/γ^{S+1}.
                 let mut weight = gamma_powers[s] * stage_values_at_r_address[s];
                 if s == 0 {
-                    weight += fr_folds[0] + gamma_powers[5] * int_at_r_address;
+                    weight += fr_folds[0] + gamma_powers[num_stages] * int_at_r_address;
                 }
                 if s == 2 {
-                    weight += gamma_powers[6] * int_at_r_address;
+                    weight += gamma_powers[num_stages + 1] * int_at_r_address;
                 }
                 accumulate(&mut coefficient, cycle_point, weight);
             }
@@ -788,13 +791,41 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
                 &fold.val_evaluation_cycle,
                 gamma_powers[4] * fr_folds[4],
             );
-            coefficient[0] += gamma_powers[7] * entry_scalar;
+            coefficient[0] += gamma_powers[num_stages + 2] * entry_scalar;
+
+            // The packed shape's four fused-inc consumer stages cannot
+            // pre-fold into `C` (`FusedInc(j)` is a second cycle multilinear):
+            // they get their own coefficient, the staged store fold for the
+            // two RAM legs and its complement for the two register legs
+            // (the verifier's `fused_stage_value` resolution).
+            #[cfg(feature = "akita")]
+            let fused = {
+                let store = stage_values_at_r_address[BASE_STAGES];
+                let mut fused_coefficient = vec![F::zero(); cycles];
+                for (offset, cycle_point) in stage_cycle_points.iter().skip(BASE_STAGES).enumerate()
+                {
+                    let address_fold = if offset < 2 { store } else { F::one() - store };
+                    accumulate(
+                        &mut fused_coefficient,
+                        cycle_point,
+                        gamma_powers[BASE_STAGES + offset] * address_fold,
+                    );
+                }
+                let fused_values: Vec<F> = witness
+                    .oracle_table(JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc))?;
+                FusedIncCycleLeg {
+                    coefficient: Polynomial::new(fused_coefficient),
+                    values: Polynomial::new(fused_values),
+                }
+            };
 
             Ok(Box::new(ComposedBytecodeReadRafCycleKernel {
                 rounds: relation.rounds(),
                 degree: relation.degree(),
                 coefficient: Polynomial::new(coefficient),
                 bytecode_ra: ra_folds.into_iter().map(Polynomial::new).collect(),
+                #[cfg(feature = "akita")]
+                fused,
                 rounds_bound: 0,
             }))
         }
@@ -803,16 +834,28 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
 
 /// The FR-on cycle-phase kernel: `Σ_j C(j) · Π_i BytecodeRa_i(j)` with the
 /// composed coefficient multilinear `C` (see the module doc and the prepare
-/// arm above). Samples the anchor relation's `degree() + 1` points per round
-/// — with `C` pre-folded the true degree is exactly `num_ra + 1`, the anchor
-/// degree.
+/// arm above); the packed shape adds `C_fused(j) · FusedInc(j)` to `C(j)`.
+/// Samples the anchor relation's `degree() + 1` points per round — with the
+/// coefficients pre-folded the true degree is exactly the anchor degree
+/// (`num_ra + 1`, or `num_ra + 2` packed).
 #[cfg(feature = "field-inline")]
 struct ComposedBytecodeReadRafCycleKernel<F: JoltField> {
     rounds: usize,
     degree: usize,
     coefficient: Polynomial<F>,
     bytecode_ra: Vec<Polynomial<F>>,
+    #[cfg(feature = "akita")]
+    fused: FusedIncCycleLeg<F>,
     rounds_bound: usize,
+}
+
+/// The packed fused-inc leg of the composed cycle kernel: the four consumer
+/// stages' scalar-folded coefficient and the `FusedInc` trace column it
+/// multiplies (also the source of the lattice `fused_inc` output claim).
+#[cfg(all(feature = "field-inline", feature = "akita"))]
+struct FusedIncCycleLeg<F: JoltField> {
+    coefficient: Polynomial<F>,
+    values: Polynomial<F>,
 }
 
 // Size arithmetic rather than a derive, like the sibling kernels.
@@ -829,6 +872,11 @@ impl<F: JoltField> allocative::Allocative for ComposedBytecodeReadRafCycleKernel
             allocative::Key::new("bytecode_ra"),
             self.bytecode_ra.iter().map(poly_heap_bytes).sum::<usize>(),
         );
+        #[cfg(feature = "akita")]
+        visitor.visit_simple(
+            allocative::Key::new("fused"),
+            poly_heap_bytes(&self.fused.coefficient) + poly_heap_bytes(&self.fused.values),
+        );
         visitor.exit();
     }
 }
@@ -840,6 +888,15 @@ impl<F: JoltField> ComposedBytecodeReadRafCycleKernel<F> {
             .bind_with_order(challenge, BindingOrder::LowToHigh);
         for table in &mut self.bytecode_ra {
             table.bind_with_order(challenge, BindingOrder::LowToHigh);
+        }
+        #[cfg(feature = "akita")]
+        {
+            self.fused
+                .coefficient
+                .bind_with_order(challenge, BindingOrder::LowToHigh);
+            self.fused
+                .values
+                .bind_with_order(challenge, BindingOrder::LowToHigh);
         }
         self.rounds_bound += 1;
     }
@@ -867,13 +924,24 @@ impl<F: JoltField> ProveRounds<F> for ComposedBytecodeReadRafCycleKernel<F> {
             let point = F::from_u64(sample as u64);
             let sum = (0..half)
                 .map(|y| {
-                    self.bytecode_ra.iter().fold(
-                        self.coefficient
-                            .sumcheck_round_eval_with_order(y, point, order),
-                        |product, table| {
-                            product * table.sumcheck_round_eval_with_order(y, point, order)
-                        },
-                    )
+                    #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
+                    let mut coefficient = self
+                        .coefficient
+                        .sumcheck_round_eval_with_order(y, point, order);
+                    #[cfg(feature = "akita")]
+                    {
+                        coefficient += self
+                            .fused
+                            .coefficient
+                            .sumcheck_round_eval_with_order(y, point, order)
+                            * self
+                                .fused
+                                .values
+                                .sumcheck_round_eval_with_order(y, point, order);
+                    }
+                    self.bytecode_ra.iter().fold(coefficient, |product, table| {
+                        product * table.sumcheck_round_eval_with_order(y, point, order)
+                    })
                 })
                 .sum::<F>();
             evals.push(sum);
@@ -908,12 +976,14 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedBytecodeReadRafCycleKernel<F> {
                 remaining: self.rounds - self.rounds_bound,
             });
         }
-        Ok(BytecodeReadRafOutputClaims {
+        Ok(BytecodeReadRafCycleOutputClaims {
             bytecode_ra: self
                 .bytecode_ra
                 .iter()
                 .map(|table| table.evals()[0])
                 .collect(),
+            #[cfg(feature = "akita")]
+            fused_inc: self.fused.values.evals()[0],
         })
     }
 }

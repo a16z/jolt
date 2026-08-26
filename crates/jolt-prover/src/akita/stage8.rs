@@ -51,6 +51,9 @@ pub fn prove_stage8<F, PCS, VC, T>(
     untrusted_advice: Option<&AdviceOneHot<PCS>>,
     trusted_advice: Option<&AdviceOneHot<PCS>>,
     program: Option<&ProgramOneHot<PCS>>,
+    #[cfg(feature = "field-inline")] field_inc_limbs: Option<
+        super::field_inline_packed::FieldIncLimbOneHot<PCS>,
+    >,
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
     transcript: &mut T,
@@ -155,5 +158,23 @@ where
         }
     }
 
-    Ok(AkitaJointOpeningProof::new(one_hot_trace, auxiliary))
+    let proof = AkitaJointOpeningProof::new(one_hot_trace, auxiliary);
+
+    // The packed FR limb object opens last, from the reconstruction member's
+    // per-column leaves (the verifier's order), exactly when stage 0
+    // committed it.
+    #[cfg(feature = "field-inline")]
+    let proof = match field_inc_limbs {
+        Some(object) => proof.with_field_inc_limbs(
+            super::field_inline_packed::open_field_inc_limbs::<F, PCS, T>(
+                &preprocessing.pcs_setup,
+                object,
+                reconstruction,
+                transcript,
+            )?,
+        ),
+        None => proof,
+    };
+
+    Ok(proof)
 }

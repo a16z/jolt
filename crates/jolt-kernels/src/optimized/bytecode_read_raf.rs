@@ -352,8 +352,16 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             let missing = || KernelError::InvariantViolation {
                 reason: "FR pushforwards missing from the shared walk",
             };
-            let val_evaluation = Polynomial::new(pushforwards.pop().ok_or_else(missing)?);
-            let read_write = Polynomial::new(pushforwards.pop().ok_or_else(missing)?);
+            // The two FR walks sit between the base and fused blocks (the
+            // walk's output order is [base..., weighted...] and the FR points
+            // ride the base list) — on the packed shape the fused
+            // pushforwards follow them, so the global tail is wrong there.
+            let fr_start = stage_cycle_points.len();
+            if pushforwards.len() < fr_start + 2 {
+                return Err(missing());
+            }
+            let val_evaluation = Polynomial::new(pushforwards.remove(fr_start + 1));
+            let read_write = Polynomial::new(pushforwards.remove(fr_start));
             let stage1 = Polynomial::new(pushforwards.first().cloned().ok_or_else(missing)?);
             [stage1, read_write, val_evaluation]
         };

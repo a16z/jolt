@@ -172,6 +172,11 @@ where
     // object as an argument, the ProgramOneHot objects retained in the
     // preprocessing — so stage 8 opens them directly; stage 0 already
     // cross-checked their commitments against the verifier preprocessing.
+    #[cfg(feature = "field-inline")]
+    let field_inc_limbs_commitment = stage0
+        .field_inc_limbs
+        .as_ref()
+        .map(|object| object.commitment.clone());
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
@@ -183,6 +188,8 @@ where
             .committed_program
             .as_ref()
             .map(|data| &data.program_one_hot),
+        #[cfg(feature = "field-inline")]
+        stage0.field_inc_limbs,
         &stage7.clear_output,
         &reconstruction.clear_output,
         &mut transcript,
@@ -191,6 +198,8 @@ where
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
         commitments: stage0.commitment,
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs_commitment,
         stages: JoltStageProofs {
             stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
             stage1_sumcheck_proof: stage1.sumcheck_proof,

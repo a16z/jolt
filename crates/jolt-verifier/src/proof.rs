@@ -35,10 +35,9 @@ pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 pub struct AkitaJointOpeningProof<P> {
     pub one_hot_trace: P,
     pub auxiliary: Vec<P>,
-    /// The packed FR limb object's opening. Present on every field-inline
-    /// proof; an `Option` because this type is shared with producers that
-    /// cannot supply it (the legacy packed converter), whose proofs the
-    /// stage-8 opening rejects fail-closed.
+    /// The packed FR limb object's opening. Present exactly when the stage-6b
+    /// reduced `FieldRdInc` claim is nonzero (the stage-8 opening enforces the
+    /// gate both ways fail-closed); the legacy packed converter never sets it.
     #[cfg(feature = "field-inline")]
     pub field_inc_limbs: Option<P>,
 }
@@ -85,10 +84,11 @@ pub struct JoltProof<
 {
     pub protocol: JoltProtocolConfig,
     pub commitments: ProofCommitments<PCS>,
-    /// The packed FR limb object's commitment. Present on every field-inline
-    /// packed proof; an `Option` for the same producer-sharing reason as the
-    /// homomorphic `JoltCommitments::field_inline`, and required fail-closed
-    /// by `validate_proof_consistency`.
+    /// The packed FR limb object's commitment. Present exactly when the
+    /// stage-6b reduced `FieldRdInc` claim is nonzero — a zero claim means an
+    /// identically-zero `FieldRdInc` (Schwartz-Zippel), whose empty one-hot
+    /// object the Akita fold schedules cannot open; the stage-8 opening
+    /// enforces the gate both ways fail-closed.
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     pub field_inc_limbs_commitment: Option<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,

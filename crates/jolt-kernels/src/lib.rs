@@ -46,6 +46,8 @@ pub mod reference;
 pub mod uniskip;
 
 pub use backend::{BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession};
+#[cfg(feature = "field-inline")]
+pub use commitment::FieldInlineWitnessCommitment;
 pub use commitment::{
     finish_streamed, CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment,
 };

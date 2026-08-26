@@ -874,14 +874,27 @@ pub(crate) mod twins {
             &stage5.clear_output.output_values,
         )
         .unwrap();
+        let base_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
+            &stage1.clear_output.output_values,
+            &stage2.clear_output.output_values,
+            &stage3.clear_output.output_values,
+            &stage4.clear_output.output_values,
+            &stage5.clear_output.output_values,
+        );
+        // The packed shape folds the four reduced Inc claims into the
+        // fused-inc consumer stage slots (stage6a::verify's own wrapper).
+        #[cfg(feature = "akita")]
+        let base_input_values =
+            jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
+                base: base_input_values,
+                inc: jolt_verifier::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
+                    &stage2.clear_output.output_values,
+                    &stage4.clear_output.output_values,
+                    &stage5.clear_output.output_values,
+                ),
+            };
         let input_values = Stage6aInputClaims {
-            bytecode_read_raf: bytecode_read_raf_address_phase_input_values_from_upstream(
-                &stage1.clear_output.output_values,
-                &stage2.clear_output.output_values,
-                &stage3.clear_output.output_values,
-                &stage4.clear_output.output_values,
-                &stage5.clear_output.output_values,
-            ),
+            bytecode_read_raf: base_input_values,
             booleanity: BooleanityAddressPhaseInputClaims::default(),
         };
         let input_points = sumchecks.empty_input_points();

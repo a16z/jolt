@@ -624,8 +624,10 @@ mod tests {
                 ram_ra: vec![fr(5)],
             },
         );
-        #[cfg(feature = "akita")]
+        #[cfg(all(feature = "akita", not(feature = "field-inline")))]
         let last = 11;
+        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        let last = 12;
         #[cfg(feature = "akita")]
         let (bytecode_read_raf, booleanity) = (
             LatticeBytecodeReadRafOutputClaims {
@@ -665,7 +667,9 @@ mod tests {
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_claim_reduction:
                     super::super::field_registers_inc_claim_reduction::FieldRegistersIncClaimReductionOutputClaims {
-                        rd_inc: fr(11),
+                        // The FR member appends last in canonical order on
+                        // both commitment axes.
+                        rd_inc: fr(last),
                     },
                 trusted_advice: None,
                 untrusted_advice: None,

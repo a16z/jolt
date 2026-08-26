@@ -60,6 +60,8 @@ use super::JoltAkitaBackend;
 use crate::{ProverError, StageProver as _};
 
 mod drivers {
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage8::reconstruction::FieldIncLimbReconstructionInstance;
     use jolt_verifier::stages::stage8::reconstruction::{
         BytecodeChunkReconstructionInstance, ProgramImageReconstructionInstance,
         ReconstructionChallenges, ReconstructionInputClaims, ReconstructionInputPoints,
@@ -113,6 +115,8 @@ where
                 trusted_advice: None,
                 bytecode: None,
                 program_image: None,
+                #[cfg(feature = "field-inline")]
+                field_inc_limbs: None,
             },
             clear_output: ReconstructionClearOutput {
                 output_values: ReconstructionOutputClaims {
@@ -120,12 +124,16 @@ where
                     trusted_advice: None,
                     bytecode: None,
                     program_image: None,
+                    #[cfg(feature = "field-inline")]
+                    field_inc_limbs: None,
                 },
                 output_points: ReconstructionOutputPoints {
                     untrusted_advice: None,
                     trusted_advice: None,
                     bytecode: None,
                     program_image: None,
+                    #[cfg(feature = "field-inline")]
+                    field_inc_limbs: None,
                 },
             },
         });

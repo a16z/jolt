@@ -21,6 +21,7 @@ use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, EvaluationClaim};
 use jolt_poly::{try_eq_mle, Point};
 use jolt_transcript::Transcript;
+use num_traits::Zero as _;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::Stage6bClearOutput;
@@ -146,8 +147,9 @@ pub struct FieldIncLimbMember<F: JoltField> {
 }
 
 /// The member and its consumed claim, built from the stage-6b FR increment
-/// reduction's terminus: the packed FR phase always runs (every FR-on proof
-/// carries the limb object, `FieldRdInc` zero or not).
+/// reduction's terminus: the packed FR reconstruction member always runs
+/// (`FieldRdInc` zero or not — the sumcheck is plain field arithmetic); only
+/// the PCS object's presence is claim-gated (see [`verify_proof_opening`]).
 pub fn build_member<F: JoltField>(
     shape: FieldIncLimbShape,
     stage6b: &Stage6bClearOutput<F>,
@@ -267,9 +269,22 @@ pub fn limb_plan<F: JoltField>(
 
 /// The stage-8 entry: resolve the proof's FR limb slots (commitment, opening,
 /// reconstruction leaves) fail-closed and verify the packed opening.
+///
+/// Presence is gated on the stage-6b reduced `FieldRdInc` claim: zero at the
+/// reduction's random point means `FieldRdInc` is identically zero
+/// (Schwartz-Zippel over the reduction chain), every limb column is empty,
+/// and the all-zero one-hot object is unprovable under the catalogued Akita
+/// fold schedules — so the object must be absent exactly then, both
+/// directions rejected fail-closed. The reconstruction member itself always
+/// runs (its all-zero columns are plain field arithmetic).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the stage-8 entry's fixed slot list: shape, gate claim, setup, and the proof's three FR slots"
+)]
 pub fn verify_proof_opening<PCS, T>(
     log_t: usize,
     one_hot_config: JoltOneHotConfig,
+    reduced_rd_inc_claim: PCS::Field,
     setup: &PCS::VerifierSetup,
     commitment: Option<&PCS::Output>,
     opening_proof: Option<&PCS::Proof>,
@@ -282,6 +297,14 @@ where
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     T: Transcript<Challenge = PCS::Field>,
 {
+    if reduced_rd_inc_claim.is_zero() {
+        if commitment.is_some() || opening_proof.is_some() {
+            return Err(batch_failed(
+                "a zero reduced FieldRdInc claim admits no FR limb object",
+            ));
+        }
+        return Ok(());
+    }
     let commitment = commitment.ok_or(VerifierError::MissingProofPayload {
         field: "field_inc_limbs_commitment",
     })?;

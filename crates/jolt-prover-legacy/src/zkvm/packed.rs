@@ -1655,6 +1655,10 @@ impl AkitaPackedProver<'_> {
                 field_inline: jolt_verifier::config::FieldInlineConfig::disabled(),
             },
             commitments: commitment,
+            // Legacy has no packed FR path; the modular verifier requires the
+            // slot and rejects its absence fail-closed.
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs_commitment: None,
             stages,
             joint_opening_proof,
             untrusted_advice_commitment: advice_object

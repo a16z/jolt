@@ -513,17 +513,13 @@ where
 {
     // An FR-on build proves every guest under the composed protocol, so the
     // field-inline committed payload is unconditionally required (absence means
-    // a producer without FR semantics — reject before any stage logic).
+    // a producer without FR semantics — reject before any stage logic). The
+    // packed axis has no unconditional slot: the FR limb object's presence is
+    // gated on the stage-6b reduced claim, checked at the stage-8 opening.
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     if proof.commitments.field_inline.is_none() {
         return Err(VerifierError::MissingProofPayload {
             field: "commitments.field_inline",
-        });
-    }
-    #[cfg(all(feature = "field-inline", feature = "akita"))]
-    if proof.field_inc_limbs_commitment.is_none() {
-        return Err(VerifierError::MissingProofPayload {
-            field: "field_inc_limbs_commitment",
         });
     }
 
@@ -1504,6 +1500,8 @@ mod tests {
             joint_opening_proof: (),
             #[cfg(feature = "akita")]
             joint_opening_proof: crate::proof::AkitaJointOpeningProof::new((), Vec::new()),
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_limbs_commitment: None,
             untrusted_advice_commitment: None,
             claims,
             trace_length: 1,
@@ -1560,6 +1558,8 @@ mod tests {
                 trusted_advice: None,
                 bytecode: None,
                 program_image: None,
+                #[cfg(feature = "field-inline")]
+                field_inc_limbs: None,
             },
             stage2: stage2::outputs::Stage2OutputClaims::new(
                 zero,

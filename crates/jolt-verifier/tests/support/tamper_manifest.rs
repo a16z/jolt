@@ -1170,6 +1170,15 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the reconstruction final-claim fold covers the program image leaf",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "reconstruction.claims.field_inc_limbs",
+        "claims.reconstruction.field_inc_limbs",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the reconstruction final-claim fold covers every FR limb column leaf",
+    ),
 ];
 
 pub fn all_targets() -> Vec<TamperTarget> {
@@ -1438,6 +1447,8 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
             trusted_advice: None,
             bytecode: None,
             program_image: None,
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs: None,
         },
         stage1: stage1::outputs::Stage1OutputClaims::new(
             zero,

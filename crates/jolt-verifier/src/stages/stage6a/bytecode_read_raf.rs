@@ -495,7 +495,10 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "field-inline"))]
+// The dory-shaped composition pins (base input-claims struct, five stage
+// points); the packed composition is covered by the prover's FR stage
+// round-trips and the packed e2e suite.
+#[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,

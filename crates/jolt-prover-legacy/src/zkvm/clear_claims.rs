@@ -678,6 +678,10 @@ mod packed {
             stage1: Stage1OutputClaims {
                 uniskip_output_claim: claims.require(outer_uniskip_opening())?,
                 outer: spartan_outer_claims_from_openings(&claims)?,
+                // Legacy has no packed FR path; an FR-on verifier rejects the
+                // converted proof fail-closed on its disabled FR config.
+                #[cfg(feature = "field-inline")]
+                field_inline_outer: None,
             },
             stage2: stage2_claims_from_openings(&claims)?,
             stage3: stage3_claims_from_openings(&claims)?,
@@ -771,6 +775,8 @@ mod packed {
         }
 
         Ok(Stage6bOutputClaims {
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: Default::default(),
             bytecode_read_raf: LatticeBytecodeReadRafOutputClaims {
                 bytecode_ra,
                 fused_inc: claims.require(fused_inc_read_raf_opening())?,
@@ -868,6 +874,8 @@ mod packed {
         claims: &OpeningClaimMap<F>,
     ) -> ReconstructionOutputClaims<F> {
         ReconstructionOutputClaims {
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs: None,
             untrusted_advice: claims
                 .get(advice_reconstruction::untrusted_advice_bytes_opening())
                 .map(|bytes| UntrustedAdviceReconstructionOutputClaims { bytes }),

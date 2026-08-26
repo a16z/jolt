@@ -38,6 +38,10 @@ where
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceOneHot<PCS>>,
+    /// The packed FR limb object, committed exactly when `FieldRdInc` is not
+    /// identically zero (the verifier's presence gate).
+    #[cfg(feature = "field-inline")]
+    pub field_inc_limbs: Option<super::field_inline_packed::FieldIncLimbOneHot<PCS>>,
 }
 
 /// Validate inputs, seed the transcript, assemble and commit the
@@ -189,6 +193,15 @@ where
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
+    // The packed FR limb object, on the trace's own setup (same packed arity
+    // by the norm-budget geometry), committed before the residency release.
+    #[cfg(feature = "field-inline")]
+    let field_inc_limbs = super::field_inline_packed::commit_field_inc_limbs::<F, PCS>(
+        &preprocessing.pcs_setup,
+        config.one_hot_config,
+        log_t,
+        witness,
+    )?;
     PCS::release_post_commit_residency(&preprocessing.pcs_setup).map_err(|error| {
         VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
@@ -218,6 +231,12 @@ where
             .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
         &mut transcript,
     );
+    // The FR limb commitment absorbs right after the packed commitment
+    // objects (the verifier's own absorb order), when present.
+    #[cfg(feature = "field-inline")]
+    if let Some(object) = field_inc_limbs.as_ref() {
+        jolt_verifier::absorb_field_inc_limbs_commitment(&object.commitment, &mut transcript);
+    }
 
     Ok(Stage0Output {
         checked,
@@ -225,5 +244,7 @@ where
         commitment,
         hint,
         untrusted_advice,
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs,
     })
 }

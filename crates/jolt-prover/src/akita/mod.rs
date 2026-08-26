@@ -27,6 +27,8 @@ use jolt_kernels::{JoltBackend, KernelSlots, PrepareKernel, ProofSession, Refere
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltProof;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage8::reconstruction::FieldIncLimbReconstructionInstance;
 use jolt_verifier::stages::stage8::reconstruction::{
     BytecodeChunkReconstructionInstance, ProgramImageReconstructionInstance,
     TrustedAdviceReconstructionInstance, UntrustedAdviceReconstructionInstance,
@@ -35,6 +37,10 @@ use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
+/// The packed FR seam: limb extraction, the stage-0 limb commit, the FR
+/// reconstruction kernel, and the stage-8 limb opening.
+#[cfg(feature = "field-inline")]
+mod field_inline_packed;
 mod prover;
 mod setup;
 pub use setup::one_hot_trace_setup_shape;
@@ -72,6 +78,9 @@ where
     pub bytecode_reconstruction: Box<dyn PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>>,
     pub program_image_reconstruction:
         Box<dyn PrepareKernel<F, ProgramImageReconstructionInstance<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_inc_limb_reconstruction:
+        Box<dyn PrepareKernel<F, FieldIncLimbReconstructionInstance<F>>>,
 }
 
 /// The packed path's stand-in for the streaming witness-commit slot: stage 0
@@ -111,6 +120,22 @@ where
                      the streaming advice-commit slot is unreachable",
         })
     }
+
+    #[cfg(feature = "field-inline")]
+    fn commit_field_inline_witness(
+        &self,
+        _session: &mut ProofSession,
+        _witness: &dyn JoltWitnessPlane<F>,
+        _ids: &[jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial],
+        _grid: jolt_kernels::CommitmentGrid,
+        _setup: &PCS::ProverSetup,
+    ) -> Result<Vec<jolt_kernels::FieldInlineWitnessCommitment<PCS>>, jolt_kernels::KernelError<F>>
+    {
+        Err(jolt_kernels::KernelError::Unsupported {
+            reason: "the packed (Akita) path commits the FR limb object in stage 0; the \
+                     streaming field-inline commit slot is unreachable",
+        })
+    }
 }
 
 impl<F, PCS> JoltAkitaBackend<F, PCS>
@@ -131,6 +156,8 @@ where
             trusted_advice_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             bytecode_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             program_image_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
+            #[cfg(feature = "field-inline")]
+            field_inc_limb_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
                 round_scheduler: Box::new(ReferenceBackend),
@@ -140,17 +167,23 @@ where
                 spartan_product_remainder: Box::new(jolt_kernels::reference::spartan_product::ReferenceProductRemainder),
                 ram_read_write: Box::new(ReferenceBackend),
                 instruction_claim_reduction: Box::new(ReferenceBackend),
+                #[cfg(feature = "field-inline")]
+                field_registers_claim_reduction: Box::new(ReferenceBackend),
                 ram_raf_evaluation: Box::new(ReferenceBackend),
                 ram_output_check: Box::new(ReferenceBackend),
                 spartan_shift: Box::new(ReferenceBackend),
                 instruction_input: Box::new(ReferenceBackend),
                 registers_claim_reduction: Box::new(ReferenceBackend),
                 registers_read_write: Box::new(ReferenceBackend),
+                #[cfg(feature = "field-inline")]
+                field_registers_read_write: Box::new(ReferenceBackend),
                 ram_val_check: Box::new(ReferenceBackend),
                 advice_opening: Box::new(ReferenceBackend),
                 instruction_read_raf: Box::new(ReferenceBackend),
                 ram_ra_claim_reduction: Box::new(ReferenceBackend),
                 registers_val_evaluation: Box::new(ReferenceBackend),
+                #[cfg(feature = "field-inline")]
+                field_registers_val_evaluation: Box::new(ReferenceBackend),
                 bytecode_read_raf_address: Box::new(ReferenceBackend),
                 booleanity_address: Box::new(ReferenceBackend),
                 bytecode_read_raf_cycle: Box::new(ReferenceBackend),
@@ -159,6 +192,8 @@ where
                 ram_ra_virtualization: Box::new(ReferenceBackend),
                 instruction_ra_virtualization: Box::new(ReferenceBackend),
                 inc_claim_reduction: Box::new(ReferenceBackend),
+                #[cfg(feature = "field-inline")]
+                field_registers_inc_claim_reduction: Box::new(ReferenceBackend),
                 trusted_advice_cycle: Box::new(ReferenceBackend),
                 untrusted_advice_cycle: Box::new(ReferenceBackend),
                 bytecode_reduction_cycle: Box::new(ReferenceBackend),

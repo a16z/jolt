@@ -712,12 +712,17 @@ where
     )?;
 
     // The packed FR limb object opens last, from the reconstruction member's
-    // per-column leaves (commitment presence was checked fail-closed up
-    // front; the opening and leaf slots are required here).
+    // per-column leaves. Presence is gated fail-closed on the stage-6b
+    // reduced FieldRdInc claim (see the seam module).
     #[cfg(feature = "field-inline")]
     super::field_inline_packed::verify_proof_opening::<PCS, _>(
         formula_dimensions.trace.log_t(),
         proof.one_hot_config,
+        stage6
+            .clear()?
+            .output_values
+            .field_registers_inc_claim_reduction
+            .rd_inc,
         &preprocessing.pcs_setup,
         proof.field_inc_limbs_commitment.as_ref(),
         proof.joint_opening_proof.field_inc_limbs.as_ref(),
