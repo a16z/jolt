@@ -1,11 +1,11 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_riscv::instructions::WindowMaskW;
+use jolt_riscv::instructions::WindowMaskH;
 use jolt_riscv::{JoltCycle, JoltInstructionRow};
 
-impl_lookup_table!(WindowMaskW, Some(WindowMaskW));
+impl_lookup_table!(WindowMaskH, Some(WindowMaskH));
 
-impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for WindowMaskW<C> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for WindowMaskH<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
@@ -28,9 +28,9 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for WindowMaskW<C> {
 
     fn to_lookup_output(&self) -> u64 {
         let index = LookupQuery::<XLEN>::to_lookup_index(self);
-        let half = XLEN / 2;
-        let mask = ((1u128 << half) - 1) as u64;
-        mask << (half as u32 * ((index >> 2) & 1) as u32)
+        let eighth = XLEN / 8;
+        let mask = ((1u128 << (2 * eighth)) - 1) as u64;
+        mask << (eighth as u32 * (index & 6) as u32)
     }
 }
 
@@ -41,20 +41,20 @@ mod tests {
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
         materialize_entry_test,
     };
-    use tracer::instruction::virtual_window_mask_w::VirtualWindowMaskW;
+    use tracer::instruction::virtual_window_mask_h::VirtualWindowMaskH;
 
     #[test]
-    fn materialize_entry_windowmaskw() {
-        materialize_entry_test!(WindowMaskW, VirtualWindowMaskW);
+    fn materialize_entry_windowmaskh() {
+        materialize_entry_test!(WindowMaskH, VirtualWindowMaskH);
     }
 
     #[test]
-    fn instruction_inputs_match_constraint_windowmaskw() {
-        instruction_inputs_match_constraint_test!(WindowMaskW, VirtualWindowMaskW);
+    fn instruction_inputs_match_constraint_windowmaskh() {
+        instruction_inputs_match_constraint_test!(WindowMaskH, VirtualWindowMaskH);
     }
 
     #[test]
-    fn lookup_output_matches_trace_windowmaskw() {
-        lookup_output_matches_trace_test!(WindowMaskW, VirtualWindowMaskW);
+    fn lookup_output_matches_trace_windowmaskh() {
+        lookup_output_matches_trace_test!(WindowMaskH, VirtualWindowMaskH);
     }
 }

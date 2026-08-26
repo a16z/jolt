@@ -371,6 +371,10 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualSRAW | JoltInstructionKind::VirtualSRAIW => {
                 LookupTables::VirtualSRAW(Default::default())
             }
+            JoltInstruction::Pext(_) => LookupTables::Pext(Default::default()),
+            JoltInstruction::WindowMaskB(_) => LookupTables::WindowMaskB(Default::default()),
+            JoltInstruction::WindowMaskH(_) => LookupTables::WindowMaskH(Default::default()),
+            JoltInstruction::AlignAddr(_) => LookupTables::AlignAddr(Default::default()),
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -523,7 +527,9 @@ define_rv64imac_trait_impls! {
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
         VirtualXORROTW22, VirtualXORROTW19, VirtualXORROTW6,
         VirtualWindowMaskW, VirtualPextSigned,
-        VirtualShiftRightBitmaskW, VirtualSRLW, VirtualSRLIW, VirtualSRAW, VirtualSRAIW
+        VirtualShiftRightBitmaskW, VirtualSRLW, VirtualSRLIW, VirtualSRAW, VirtualSRAIW,
+        VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
+        VirtualAlignAddr
     ]
 }
 
@@ -563,6 +569,7 @@ pub mod subw;
 pub mod virtual_advice;
 pub mod virtual_advice_len;
 pub mod virtual_advice_load;
+pub mod virtual_align_addr;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -575,6 +582,7 @@ pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_muliw;
 pub mod virtual_negate_if;
+pub mod virtual_pext;
 pub mod virtual_pext_signed;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
@@ -595,6 +603,8 @@ pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod virtual_srliw;
 pub mod virtual_srlw;
+pub mod virtual_window_mask_b;
+pub mod virtual_window_mask_h;
 pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;

@@ -1,17 +1,17 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_window_mask_w::VirtualWindowMaskW, RISCVCycle};
+use tracer::instruction::{virtual_window_mask_b::VirtualWindowMaskB, RISCVCycle};
 
-use crate::zkvm::lookup_table::{window_mask_w::WindowMaskWTable, LookupTables};
+use crate::zkvm::lookup_table::{window_mask_b::WindowMaskBTable, LookupTables};
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualWindowMaskW {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualWindowMaskB {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(WindowMaskWTable.into())
+        Some(WindowMaskBTable.into())
     }
 }
 
-impl Flags for VirtualWindowMaskW {
+impl Flags for VirtualWindowMaskB {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::AddOperands] = true;
@@ -32,7 +32,7 @@ impl Flags for VirtualWindowMaskW {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualWindowMaskW> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualWindowMaskB> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         match XLEN {
             #[cfg(test)]
@@ -63,9 +63,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualWindowMaskW> {
 
     fn to_lookup_output(&self) -> u64 {
         let index = LookupQuery::<XLEN>::to_lookup_index(self);
-        let half = XLEN / 2;
-        let mask = ((1u128 << half) - 1) as u64;
-        mask << (half as u32 * ((index >> 2) & 1) as u32)
+        let eighth = XLEN / 8;
+        let mask = ((1u128 << eighth) - 1) as u64;
+        mask << (eighth as u32 * (index & 7) as u32)
     }
 }
 
@@ -80,11 +80,11 @@ mod test {
 
     #[test]
     fn materialize_entry() {
-        materialize_entry_test::<Fr, VirtualWindowMaskW>();
+        materialize_entry_test::<Fr, VirtualWindowMaskB>();
     }
 
     #[test]
     fn lookup_output_matches_trace() {
-        lookup_output_matches_trace_test::<VirtualWindowMaskW>();
+        lookup_output_matches_trace_test::<VirtualWindowMaskB>();
     }
 }
