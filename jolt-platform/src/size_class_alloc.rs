@@ -79,16 +79,23 @@ pub fn alloc(layout: Layout) -> *mut u8 {
 
         // Fast path: recycle from the class free list. Blocks grown in place
         // (see `realloc`) are only guaranteed their ORIGINAL class alignment,
-        // so re-check the requested alignment; on mismatch fall through to the
-        // bump path (the head stays put for smaller-alignment requests).
+        // so re-check the requested alignment. On mismatch fall through to the
+        // bump path: only the head is ever examined, so an under-aligned head
+        // strands any aligned blocks deeper in the list for over-aligned
+        // requests until a smaller-alignment request pops it.
         let head = a.free[class];
         if head != 0 && head & (layout.align() - 1) == 0 {
             a.free[class] = *(head as *const usize);
             return head as *mut u8;
         }
 
-        // Bump path: blocks are class-size aligned.
-        let start = (a.cursor + size - 1) & !(size - 1);
+        // Bump path: blocks are class-size aligned. Checked arithmetic
+        // throughout: a wrapped intermediate would corrupt the cursor for
+        // later calls even when this call itself returns null.
+        let Some(rounded) = a.cursor.checked_add(size - 1) else {
+            return ptr::null_mut();
+        };
+        let start = rounded & !(size - 1);
         let Some(new_cursor) = start.checked_add(size) else {
             return ptr::null_mut();
         };
@@ -100,7 +107,9 @@ pub fn alloc(layout: Layout) -> *mut u8 {
     }
 }
 
-/// O(1): push onto the class free list.
+/// O(1): push onto the class free list. `ptr_in` must originate from this
+/// allocator under the same layout class — callers uphold the allocator
+/// contract (zeroos `MemoryOps` takes safe fn pointers).
 pub fn dealloc(ptr_in: *mut u8, layout: Layout) {
     if ptr_in.is_null() {
         return;
@@ -163,7 +172,11 @@ pub fn realloc(ptr_in: *mut u8, old_layout: Layout, new_size: usize) -> *mut u8 
         let old_size = 1usize << (old_class + MIN_SHIFT);
         let new_class_size = 1usize << (new_class + MIN_SHIFT);
         let addr = ptr_in as usize;
-        if addr + old_size == a.cursor && addr + new_class_size <= a.end {
+        if addr + old_size == a.cursor
+            && addr
+                .checked_add(new_class_size)
+                .is_some_and(|grown_end| grown_end <= a.end)
+        {
             a.cursor = addr + new_class_size;
             return ptr_in;
         }

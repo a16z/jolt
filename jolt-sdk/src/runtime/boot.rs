@@ -34,11 +34,14 @@ pub extern "C" fn __platform_bootstrap() {
 
     zeroos::initialize();
 
-    // no_std guests: swap ZeroOS's first-fit linked-list allocator for the O(1)
-    // size-class allocator BEFORE kinit (the registered ops receive the heap);
-    // motivation and measurements in `jolt_platform::size_class_alloc`.
-    // std/musl guests keep the ZeroOS allocator (musl's malloc manages its own
-    // arenas over mmap/brk).
+    // no_std guests: register the O(1) size-class allocator BEFORE kinit (the
+    // registered ops receive the heap). This is the only registration —
+    // no_std builds enable just zeroos's `memory` feature, so `initialize()`
+    // above registers no allocator and `linked_list_allocator` stays out of
+    // the guest binary. Motivation and measurements in
+    // `jolt_platform::size_class_alloc`. std/musl guests keep ZeroOS's
+    // linked-list allocator (musl's malloc manages its own arenas over
+    // mmap/brk).
     #[cfg(target_os = "none")]
     zeroos::foundation::register_memory(zeroos::foundation::ops::MemoryOps {
         init: jolt_platform::size_class_alloc::init,
