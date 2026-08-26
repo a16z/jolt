@@ -13,7 +13,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_openings::StreamingCommitment;
 #[cfg(feature = "zk")]
 use jolt_openings::ZkStreamingCommitment;
-use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
+use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
 use jolt_witness::{JoltWitnessOracle, RowSource, WitnessBundle};
 
 use crate::{KernelError, ProofSession};
@@ -27,7 +27,7 @@ pub struct CommittedColumnsWitness {
     pub rd_inc: RdInc,
     pub ram_inc: RamInc,
     pub lookup_index: LookupIndex,
-    pub bytecode_pc: MappedPc,
+    pub bytecode_pc: BytecodePc,
     pub ram_address: RemappedRamAddress,
 }
 

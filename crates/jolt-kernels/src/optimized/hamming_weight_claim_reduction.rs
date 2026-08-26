@@ -115,9 +115,7 @@ fn pushforwards<F: JoltField>(
                 slot += 1;
             }
             for selector in &selectors.bytecode {
-                if let Some(pc) = row.mapped_pc() {
-                    partial[slot][selector.chunk_usize(pc)] += eq;
-                }
+                partial[slot][selector.chunk_usize(row.bytecode_pc())] += eq;
                 slot += 1;
             }
             for selector in &selectors.ram {

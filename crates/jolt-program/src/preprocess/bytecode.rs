@@ -351,11 +351,10 @@ mod tests {
         assert_eq!(err, PreprocessingError::InvalidBytecodeAddress(0x7fff_fffc));
     }
 
-    /// Every `NoOp` lands on bytecode slot 0 regardless of its address. The
-    /// witness layer leans on this: `BytecodePc` (which zeroes no-op rows)
-    /// and `MappedPc` (which does not) agree on every row only because of
-    /// this rule, and the optimized bytecode read-RAF kernel derives the
-    /// address-phase pushforward slot from `MappedPc`.
+    /// Every `NoOp` lands on bytecode slot 0 regardless of its address, and
+    /// an instruction with no mapping fails materialization outright. Together
+    /// those make the witness layer's `BytecodePc` total — one column for both
+    /// the read-RAF pushforward and the committed one-hot.
     #[test]
     fn noop_maps_to_bytecode_slot_zero() {
         let bytecode = vec![instruction(0x8000_0000, None)];

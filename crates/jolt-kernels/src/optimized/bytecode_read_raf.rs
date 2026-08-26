@@ -36,8 +36,9 @@
 //!
 //! Both phases read the stage-5 [`InstructionCycleRow`] carry their Booleanity
 //! and RA-virtualization peers already retain, so neither protocol pays for a
-//! second per-cycle PC cache. The row stores `MappedPc`, which equals the
-//! address phase's `BytecodePc` on every row (see the `push_pc` comment).
+//! second per-cycle PC cache. Both phases read the same total `BytecodePc`
+//! column: the pushforward slot and the committed one-hot hot index are the
+//! same value on every row.
 
 use std::sync::Arc;
 
@@ -243,11 +244,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             }
         }
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        // The address phase wants `BytecodePc` (no-ops on slot 0) and the row
-        // carries `MappedPc`; the two agree on every row, because
-        // `BytecodePreprocessing::get_pc` already maps every `NoOp` to slot 0
-        // and padding rows are built with `bytecode_pc: 0`.
-        let push_pc = |row: &InstructionCycleRow| row.mapped_pc().unwrap_or(0);
+        let push_pc = InstructionCycleRow::bytecode_pc;
         let entry_bytecode_index = relation.entry_bytecode_index();
         if entry_bytecode_index >= addresses || rows.iter().any(|row| push_pc(row) >= addresses) {
             return Err(KernelError::InvariantViolation {
@@ -704,9 +701,7 @@ impl ChunkIndexSource for BytecodePcChunks {
 
     #[inline]
     fn index(&self, i: usize, j: usize) -> Option<usize> {
-        self.rows[j]
-            .mapped_pc()
-            .map(|pc| self.selectors[i].chunk_usize(pc))
+        Some(self.selectors[i].chunk_usize(self.rows[j].bytecode_pc()))
     }
 }
 

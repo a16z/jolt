@@ -45,7 +45,7 @@ pub use operands::{
     Imm, LeftInstructionInput, LeftLookupOperand, Product, RightInstructionInput,
     RightLookupOperand,
 };
-pub use pc::{BytecodePc, MappedPc, NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
+pub use pc::{BytecodePc, NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
 pub use ram::{RamAddress, RamHammingWeight, RamReadValue, RamWriteValue, RemappedRamAddress};
 pub use registers::{RdWriteValue, Rs1Value, Rs2Value};
 

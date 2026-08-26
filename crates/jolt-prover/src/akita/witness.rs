@@ -23,7 +23,7 @@ use jolt_riscv::{
     JoltInstructionRow, CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 use jolt_witness::witnesses::{
-    BalancedIncColumn, FusedInc, LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress,
+    BalancedIncColumn, BytecodePc, FusedInc, LookupIndex, RaChunkSelector, RemappedRamAddress,
 };
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
@@ -131,7 +131,7 @@ impl<F: JoltField> MultilinearPoly<F> for SparseUnitPolynomial<F> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct OneHotTraceSourceRow {
     lookup_index: LookupIndex,
-    mapped_pc: MappedPc,
+    bytecode_pc: BytecodePc,
     ram_address: RemappedRamAddress,
     fused_inc: FusedInc,
 }
@@ -209,30 +209,19 @@ impl TraceOneHotRows for PackedTraceRows {
     }
 }
 
-#[derive(Clone, Copy)]
-struct TraceRowStatus {
-    bytecode_valid: bool,
-    ram_active: bool,
-}
-
+/// Fills one row's selected-row bytes; returns whether the cycle makes a
+/// remappable RAM access (the only per-row fact the caller still needs — the
+/// bytecode column is total, so no cycle can be missing its slot).
 fn fill_trace_row(
     row: OneHotTraceSourceRow,
     columns: &[OneHotTraceColumn],
     selected_rows: &mut [u8],
-) -> TraceRowStatus {
+) -> bool {
     debug_assert_eq!(columns.len(), selected_rows.len());
-    let mut valid = true;
     for (column, selected_row) in columns.iter().zip(selected_rows) {
         let row_index = match column {
             OneHotTraceColumn::Instruction(selector) => selector.chunk_u128(row.lookup_index.0),
-            OneHotTraceColumn::Bytecode(selector) => {
-                if let Some(pc) = row.mapped_pc.0 {
-                    selector.chunk_usize(pc)
-                } else {
-                    valid = false;
-                    0
-                }
-            }
+            OneHotTraceColumn::Bytecode(selector) => selector.chunk_usize(row.bytecode_pc.0),
             OneHotTraceColumn::Ram(selector) => row
                 .ram_address
                 .0
@@ -242,10 +231,7 @@ fn fill_trace_row(
         debug_assert!(row_index <= u8::MAX as usize);
         *selected_row = row_index as u8;
     }
-    TraceRowStatus {
-        bytecode_valid: valid,
-        ram_active: row.ram_address.0.is_some(),
-    }
+    row.ram_address.0.is_some()
 }
 
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
@@ -306,7 +292,6 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
     if let Some(access) = witness.random_access() {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
-            let bytecode_rows_valid = std::sync::atomic::AtomicBool::new(true);
             selected_rows
                 .par_chunks_mut(num_columns * u64::BITS as usize)
                 .zip(ram_active_rows.par_iter_mut())
@@ -318,12 +303,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                         let row_index = word_index * u64::BITS as usize + row_offset;
                         match access.window::<OneHotTraceSourceRow>(row_index) {
                             Ok(row) => {
-                                let status = fill_trace_row(row, &columns, selected_rows);
-                                if !status.bytecode_valid {
-                                    bytecode_rows_valid
-                                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                                }
-                                if status.ram_active {
+                                if fill_trace_row(row, &columns, selected_rows) {
                                     *ram_active_word |= 1u64 << row_offset;
                                 }
                             }
@@ -338,11 +318,6 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
             #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
             if let Some(error) = extraction_error.into_inner().unwrap() {
                 return Err(error.into());
-            }
-            if !bytecode_rows_valid.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(ProverError::InvariantViolation {
-                    reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
-                });
             }
             return Ok(Arc::new(PackedTraceRows {
                 num_rows,
@@ -360,13 +335,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         .zip(selected_rows.chunks_exact_mut(num_columns))
         .enumerate()
     {
-        let status = fill_trace_row(row, &columns, selected_rows);
-        if !status.bytecode_valid {
-            return Err(ProverError::InvariantViolation {
-                reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
-            });
-        }
-        if status.ram_active {
+        if fill_trace_row(row, &columns, selected_rows) {
             ram_active_rows[row_index / u64::BITS as usize] |=
                 1u64 << (row_index % u64::BITS as usize);
         }

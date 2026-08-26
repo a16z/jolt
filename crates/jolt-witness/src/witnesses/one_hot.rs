@@ -5,7 +5,7 @@
 
 use jolt_riscv::JoltTraceRow as TraceRow;
 
-use super::{Extract, ExtractIndexed, LookupIndex, MappedPc, RemappedRamAddress, WitnessEnv};
+use super::{BytecodePc, Extract, ExtractIndexed, LookupIndex, RemappedRamAddress, WitnessEnv};
 use crate::{WitnessError, JOLT_VM_LABEL};
 
 /// Selects one `chunk_bits`-wide chunk of a decomposed address, indexed from
@@ -58,7 +58,8 @@ impl RaChunkSelector {
 pub struct InstructionRaChunk(pub usize);
 
 /// Hot address of one committed `BytecodeRa` chunk: the selected chunk of
-/// the bytecode PC; cold when the row has no bytecode mapping.
+/// the bytecode PC. Always hot — [`BytecodePc`] is total; the `Option` is the
+/// shared shape of the one-hot materializer, which `RamRaChunk` does need.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BytecodeRaChunk(pub Option<usize>);
 
@@ -106,11 +107,8 @@ impl ExtractIndexed<RaChunkSelector> for BytecodeRaChunk {
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(
-            MappedPc::extract(row, next, env)?
-                .0
-                .map(|pc| selector.chunk_usize(pc)),
-        ))
+        let pc = BytecodePc::extract(row, next, env)?.0;
+        Ok(Self(Some(selector.chunk_usize(pc))))
     }
 }
 

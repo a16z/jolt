@@ -470,7 +470,7 @@ mod tests {
                     row.lookup_index.0,
                     row.table_index.0,
                     row.raf_flag.0,
-                    None,
+                    0,
                     None,
                     #[cfg(feature = "akita")]
                     FusedInc::default(),

@@ -114,7 +114,7 @@ impl ColumnSelector {
     fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
         match self {
             Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index())),
-            Self::Bytecode(selector) => row.mapped_pc().map(|pc| selector.chunk_usize(pc)),
+            Self::Bytecode(selector) => Some(selector.chunk_usize(row.bytecode_pc())),
             Self::Ram(selector) => row
                 .remapped_ram_address()
                 .map(|address| selector.chunk_usize(address as usize)),

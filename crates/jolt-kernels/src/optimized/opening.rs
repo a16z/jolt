@@ -47,7 +47,7 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder
 use jolt_field::JoltField;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_utils::unsafe_allocate_zero_vec;
-use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
+use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -171,7 +171,7 @@ pub(crate) struct OpeningColumns {
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
     lookup_index: Vec<u128>,
-    /// Mapped bytecode pc per cycle; [`COLD`] when the cycle reads no
+    /// Bytecode slot per cycle; total, so no
     /// bytecode row.
     bytecode_pc: Vec<u64>,
     /// Remapped RAM word address per cycle; [`COLD`] on no-access cycles.
@@ -244,11 +244,6 @@ impl OpeningColumns {
                     match access.window::<CommittedColumnsWitness>(base + offset) {
                         Ok(row) => {
                             debug_assert_ne!(
-                                row.bytecode_pc.0.map(|pc| pc as u64),
-                                Some(COLD),
-                                "a live mapped pc collides with the COLD sentinel"
-                            );
-                            debug_assert_ne!(
                                 row.ram_address.0,
                                 Some(COLD),
                                 "a live remapped RAM address collides with the COLD sentinel"
@@ -256,7 +251,7 @@ impl OpeningColumns {
                             rd[offset] = row.rd_inc.0;
                             ram[offset] = row.ram_inc.0;
                             lookup[offset] = row.lookup_index.0;
-                            pc[offset] = row.bytecode_pc.0.map_or(COLD, |pc| pc as u64);
+                            pc[offset] = row.bytecode_pc.0 as u64;
                             address[offset] = row.ram_address.0.unwrap_or(COLD);
                         }
                         Err(failure) => {
@@ -294,7 +289,7 @@ impl OpeningColumns {
             rd_inc: RdInc(self.rd_inc[cycle]),
             ram_inc: RamInc(self.ram_inc[cycle]),
             lookup_index: LookupIndex(self.lookup_index[cycle]),
-            bytecode_pc: MappedPc((bytecode_pc != COLD).then_some(bytecode_pc as usize)),
+            bytecode_pc: BytecodePc(bytecode_pc as usize),
             ram_address: RemappedRamAddress((ram_address != COLD).then_some(ram_address)),
         }
     }
@@ -311,11 +306,6 @@ impl StreamConsumer for CollectOpeningColumns {
         let columns = &mut self.columns;
         for row in chunk {
             debug_assert_ne!(
-                row.bytecode_pc.0.map(|pc| pc as u64),
-                Some(COLD),
-                "a live mapped pc collides with the COLD sentinel"
-            );
-            debug_assert_ne!(
                 row.ram_address.0,
                 Some(COLD),
                 "a live remapped RAM address collides with the COLD sentinel"
@@ -323,9 +313,7 @@ impl StreamConsumer for CollectOpeningColumns {
             columns.rd_inc.push(row.rd_inc.0);
             columns.ram_inc.push(row.ram_inc.0);
             columns.lookup_index.push(row.lookup_index.0);
-            columns
-                .bytecode_pc
-                .push(row.bytecode_pc.0.map_or(COLD, |pc| pc as u64));
+            columns.bytecode_pc.push(row.bytecode_pc.0 as u64);
             columns.ram_address.push(row.ram_address.0.unwrap_or(COLD));
         }
     }

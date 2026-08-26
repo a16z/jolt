@@ -156,7 +156,7 @@ impl ColumnKind {
     pub(crate) fn hot_address(self, row: &CommittedColumnsWitness) -> Option<usize> {
         match self {
             Self::InstructionRa(selector) => Some(selector.chunk_u128(row.lookup_index.0)),
-            Self::BytecodeRa(selector) => row.bytecode_pc.0.map(|pc| selector.chunk_usize(pc)),
+            Self::BytecodeRa(selector) => Some(selector.chunk_usize(row.bytecode_pc.0)),
             Self::RamRa(selector) => row
                 .ram_address
                 .0

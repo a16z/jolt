@@ -1,17 +1,21 @@
 use jolt_field::JoltField;
 use jolt_riscv::JoltTraceRow as TraceRow;
 
-use super::{row_is_noop, Extract, ToField, WitnessEnv};
+use super::{Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 
-/// Bytecode PC with the read-RAF pushforward convention: no-op rows land on
-/// slot 0.
+/// The cycle's bytecode slot, for both the read-RAF pushforward and the
+/// committed one-hot.
+///
+/// Total, and total on purpose: a row whose instruction has no bytecode
+/// mapping cannot be materialized (`BytecodePreprocessing::get_pc` returning
+/// `None` is a hard trace error), and every no-op already sits on slot 0, so
+/// there is no cold cycle for this column to represent. The two conventions
+/// this used to be split across — `BytecodePc`, which zeroed no-op rows, and
+/// `MappedPc`, which did not — were the same value on every row. See
+/// `jolt-program`'s `noop_maps_to_bytecode_slot_zero`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BytecodePc(pub usize);
-
-/// Bytecode PC for the committed one-hot convention (no-ops map to slot 0).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MappedPc(pub Option<usize>);
 
 impl Extract for BytecodePc {
     fn extract(
@@ -19,20 +23,7 @@ impl Extract for BytecodePc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        if row_is_noop(row) {
-            return Ok(Self(0));
-        }
         Ok(Self(row.pc() as usize))
-    }
-}
-
-impl Extract for MappedPc {
-    fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        Ok(Self(Some(row.pc() as usize)))
     }
 }
 

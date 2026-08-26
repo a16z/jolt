@@ -52,7 +52,7 @@ use jolt_verifier::stages::stage5::InstructionReadRaf;
 #[cfg(feature = "akita")]
 use jolt_witness::witnesses::{BalancedIncColumn, FusedInc};
 use jolt_witness::witnesses::{
-    InstructionRafFlag, LookupIndex, MappedPc, RemappedRamAddress, TableIndex,
+    BytecodePc, InstructionRafFlag, LookupIndex, RemappedRamAddress, TableIndex,
 };
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
@@ -108,22 +108,18 @@ impl InstructionCycleRow {
         lookup_index: u128,
         table_index: Option<usize>,
         raf_flag: bool,
-        mapped_pc: Option<usize>,
+        bytecode_pc: usize,
         remapped_ram_address: Option<u64>,
         #[cfg(feature = "akita")] fused_inc: FusedInc,
     ) -> Self {
         debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
         #[cfg(feature = "akita")]
         debug_assert!(fused_inc.0.unsigned_abs() <= u64::MAX as u128);
-        let pc_plus_one = mapped_pc.map_or(0, |pc| pc as u64 + 1);
-        assert!(
-            pc_plus_one <= PACKED_PC_MASK,
-            "mapped PC exceeds packed row"
-        );
+        let pc = bytecode_pc as u64;
+        assert!(pc <= PACKED_PC_MASK, "bytecode PC exceeds packed row");
         let table_plus_one = table_index.map_or(0, |index| index as u64 + 1);
-        let packed_pc_and_flags = pc_plus_one
-            | (table_plus_one << PACKED_TABLE_SHIFT)
-            | (u64::from(raf_flag) << PACKED_RAF_SHIFT);
+        let packed_pc_and_flags =
+            pc | (table_plus_one << PACKED_TABLE_SHIFT) | (u64::from(raf_flag) << PACKED_RAF_SHIFT);
         #[cfg(feature = "akita")]
         let packed_pc_and_flags =
             packed_pc_and_flags | (u64::from(fused_inc.0 < 0) << PACKED_INC_SIGN_SHIFT);
@@ -150,10 +146,8 @@ impl InstructionCycleRow {
     }
 
     #[inline]
-    pub(crate) fn mapped_pc(&self) -> Option<usize> {
-        (self.packed_pc_and_flags & PACKED_PC_MASK)
-            .checked_sub(1)
-            .map(|pc| pc as usize)
+    pub(crate) fn bytecode_pc(&self) -> usize {
+        (self.packed_pc_and_flags & PACKED_PC_MASK) as usize
     }
 
     #[inline]
@@ -202,7 +196,7 @@ struct WideInstructionRow {
     lookup_index: LookupIndex,
     table_index: TableIndex,
     raf_flag: InstructionRafFlag,
-    mapped_pc: MappedPc,
+    bytecode_pc: BytecodePc,
     remapped_ram_address: RemappedRamAddress,
     #[cfg(feature = "akita")]
     fused_inc: FusedInc,
@@ -221,7 +215,7 @@ impl StreamConsumer for PackRows {
                 row.lookup_index.0,
                 row.table_index.0,
                 row.raf_flag.0,
-                row.mapped_pc.0,
+                row.bytecode_pc.0,
                 row.remapped_ram_address.0,
                 #[cfg(feature = "akita")]
                 row.fused_inc,
@@ -246,7 +240,7 @@ impl InstructionCycleRow {
                         row.lookup_index.0,
                         row.table_index.0,
                         row.raf_flag.0,
-                        row.mapped_pc.0,
+                        row.bytecode_pc.0,
                         row.remapped_ram_address.0,
                         #[cfg(feature = "akita")]
                         row.fused_inc,
@@ -1518,7 +1512,7 @@ mod tests {
                     row.lookup_index.0,
                     row.table_index.0,
                     row.raf_flag.0,
-                    None,
+                    0,
                     None,
                     #[cfg(feature = "akita")]
                     FusedInc::default(),
@@ -1599,14 +1593,14 @@ mod tests {
             lookup_index,
             Some(table),
             true,
-            Some(u32::MAX as usize),
+            u32::MAX as usize,
             Some(u64::MAX - 1),
             #[cfg(feature = "akita")]
             FusedInc(-123),
         );
         assert_eq!(row.lookup_index(), lookup_index);
         assert_eq!(row.table_index(), Some(table));
-        assert_eq!(row.mapped_pc(), Some(u32::MAX as usize));
+        assert_eq!(row.bytecode_pc(), u32::MAX as usize);
         assert_eq!(row.remapped_ram_address(), Some(u64::MAX - 1));
         assert!(row.raf_flag());
         #[cfg(feature = "akita")]
