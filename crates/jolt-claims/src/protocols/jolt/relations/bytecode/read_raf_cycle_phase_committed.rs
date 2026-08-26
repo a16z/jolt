@@ -1,6 +1,6 @@
 //! The committed-program cycle phase of the bytecode read-RAF symbolic sumcheck.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use super::{BytecodeReadRafCycleShape, BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims};
 use crate::protocols::jolt::geometry::bytecode::{
@@ -15,6 +15,7 @@ use crate::{opening, SumcheckChallenges, SymbolicSumcheck};
 /// Fiat-Shamir challenge drawn by the committed-program cycle phase of the
 /// bytecode read-RAF sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReadRafCyclePhaseCommittedChallenges<F> {
     #[challenge(BytecodeReadRafChallenge::Gamma)]
     pub gamma: F,
@@ -54,11 +55,11 @@ impl SymbolicSumcheck for ReadRafCyclePhaseCommitted {
         self.shape.0.num_committed_ra_polys() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(bytecode_read_raf_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_cycle_output_committed(self.shape.0, self.shape.1)
     }
 }

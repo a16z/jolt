@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_riscv::instructions::AlignAddr;
-use jolt_riscv::JoltCycle;
+use jolt_riscv::{JoltCycle, JoltInstructionRow};
 
 impl_lookup_table!(AlignAddr, Some(AlignAddr));
 
@@ -19,7 +19,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AlignAddr<C> {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             self.0.rs1_val().unwrap_or(0) & mask,
-            Into::<jolt_riscv::JoltInstructionRow>::into(self.0.instruction())
+            Into::<JoltInstructionRow>::into(self.0.instruction())
                 .operands
                 .imm
                 & mask as i128,
@@ -40,28 +40,20 @@ mod tests {
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
         materialize_entry_test,
     };
+    use tracer::instruction::virtual_align_addr::VirtualAlignAddr;
 
     #[test]
     fn materialize_entry_alignaddr() {
-        materialize_entry_test!(
-            AlignAddr,
-            tracer::instruction::virtual_align_addr::VirtualAlignAddr
-        );
+        materialize_entry_test!(AlignAddr, VirtualAlignAddr);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_alignaddr() {
-        instruction_inputs_match_constraint_test!(
-            AlignAddr,
-            tracer::instruction::virtual_align_addr::VirtualAlignAddr
-        );
+        instruction_inputs_match_constraint_test!(AlignAddr, VirtualAlignAddr);
     }
 
     #[test]
     fn lookup_output_matches_trace_alignaddr() {
-        lookup_output_matches_trace_test!(
-            AlignAddr,
-            tracer::instruction::virtual_align_addr::VirtualAlignAddr
-        );
+        lookup_output_matches_trace_test!(AlignAddr, VirtualAlignAddr);
     }
 }

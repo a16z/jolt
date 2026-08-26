@@ -109,6 +109,7 @@ pub use m::RemW;
 pub use virt::AlignAddr;
 pub use virt::MovSign;
 pub use virt::MulI;
+pub use virt::MulIW;
 pub use virt::Pext;
 pub use virt::PextSigned;
 pub use virt::Pow2;
@@ -121,25 +122,32 @@ pub use virt::ShiftDataW;
 pub use virt::VirtualAdvice;
 pub use virt::VirtualAdviceLen;
 pub use virt::VirtualAdviceLoad;
-pub use virt::VirtualChangeDivisor;
-pub use virt::VirtualChangeDivisorW;
 pub use virt::VirtualHostIO;
+pub use virt::VirtualNegateIf;
 pub use virt::VirtualRev8W;
 pub use virt::VirtualRotri;
 pub use virt::VirtualRotriw;
 pub use virt::VirtualShiftRightBitmask;
+pub use virt::VirtualShiftRightBitmaskW;
 pub use virt::VirtualShiftRightBitmaski;
 pub use virt::VirtualSignExtendWord;
 pub use virt::VirtualSra;
 pub use virt::VirtualSrai;
+pub use virt::VirtualSraiw;
+pub use virt::VirtualSraw;
 pub use virt::VirtualSrl;
 pub use virt::VirtualSrli;
+pub use virt::VirtualSrliw;
+pub use virt::VirtualSrlw;
 pub use virt::VirtualXorRot16;
 pub use virt::VirtualXorRot24;
 pub use virt::VirtualXorRot32;
 pub use virt::VirtualXorRot63;
 pub use virt::VirtualXorRotW12;
 pub use virt::VirtualXorRotW16;
+pub use virt::VirtualXorRotW19;
+pub use virt::VirtualXorRotW22;
+pub use virt::VirtualXorRotW6;
 pub use virt::VirtualXorRotW7;
 pub use virt::VirtualXorRotW8;
 pub use virt::VirtualZeroExtendWord;
@@ -177,8 +185,6 @@ pub use virt::AdviceLb;
 pub use virt::AdviceLd;
 pub use virt::AdviceLh;
 pub use virt::AdviceLw;
-pub use virt::VirtualLw;
-pub use virt::VirtualSw;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
@@ -339,21 +345,24 @@ crate::for_each_instruction_kind!(define_source_instruction);
 ///
 /// Deliberately omitted instruction kinds (declared and re-exported above
 /// but not proven by Jolt): the Zicsr ops (`Csrrs`, `Csrrw`), `Mret`,
-/// the atomic family (`Amo*`, `Lr*`, `Sc*`),
-/// the advice-load helpers (`AdviceLb`/`Ld`/`Lh`/`Lw`), and `VirtualLw` /
-/// `VirtualSw`. These are intentionally absent from `JoltInstruction` and
-/// from the flag-exclusivity tests below.
+/// the atomic family (`Amo*`, `Lr*`, `Sc*`), and the advice-load helpers
+/// (`AdviceLb`/`Ld`/`Lh`/`Lw`). These are intentionally absent from
+/// `JoltInstruction` and from the flag-exclusivity tests below.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoltInstruction<T = JoltInstructionRow> {
     Noop(Noop<T>),
     Add(Add<T>),
     Addi(Addi<T>),
+    AddW(AddW<T>),
+    AddiW(AddiW<T>),
     Sub(Sub<T>),
+    SubW(SubW<T>),
     Lui(Lui<T>),
     Auipc(Auipc<T>),
     Mul(Mul<T>),
     MulHU(MulHU<T>),
+    MulW(MulW<T>),
     And(And<T>),
     AndI(AndI<T>),
     Or(Or<T>),
@@ -388,10 +397,10 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     Pow2W(Pow2W<T>),
     Pow2IW(Pow2IW<T>),
     MulI(MulI<T>),
+    MulIW(MulIW<T>),
     MovSign(MovSign<T>),
     VirtualRev8W(VirtualRev8W<T>),
-    VirtualChangeDivisor(VirtualChangeDivisor<T>),
-    VirtualChangeDivisorW(VirtualChangeDivisorW<T>),
+    VirtualNegateIf(VirtualNegateIf<T>),
     VirtualSignExtendWord(VirtualSignExtendWord<T>),
     VirtualZeroExtendWord(VirtualZeroExtendWord<T>),
     VirtualSrl(VirtualSrl<T>),
@@ -410,8 +419,16 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualXorRotW12(VirtualXorRotW12<T>),
     VirtualXorRotW8(VirtualXorRotW8<T>),
     VirtualXorRotW7(VirtualXorRotW7<T>),
+    VirtualXorRotW22(VirtualXorRotW22<T>),
+    VirtualXorRotW19(VirtualXorRotW19<T>),
+    VirtualXorRotW6(VirtualXorRotW6<T>),
     WindowMaskW(WindowMaskW<T>),
     PextSigned(PextSigned<T>),
+    VirtualShiftRightBitmaskW(VirtualShiftRightBitmaskW<T>),
+    VirtualSrlw(VirtualSrlw<T>),
+    VirtualSrliw(VirtualSrliw<T>),
+    VirtualSraw(VirtualSraw<T>),
+    VirtualSraiw(VirtualSraiw<T>),
     Pext(Pext<T>),
     WindowMaskB(WindowMaskB<T>),
     WindowMaskH(WindowMaskH<T>),
@@ -560,11 +577,15 @@ macro_rules! impl_jolt_instructions_flags {
 impl_jolt_instructions_flags! {
     Add => ADD,
     Addi => ADDI,
+    AddW => ADDW,
+    AddiW => ADDIW,
     Sub => SUB,
+    SubW => SUBW,
     Lui => LUI,
     Auipc => AUIPC,
     Mul => MUL,
     MulHU => MULHU,
+    MulW => MULW,
     And => AND,
     AndI => ANDI,
     Or => OR,
@@ -599,10 +620,10 @@ impl_jolt_instructions_flags! {
     Pow2W => VirtualPow2W,
     Pow2IW => VirtualPow2IW,
     MulI => VirtualMULI,
+    MulIW => VirtualMULIW,
     MovSign => VirtualMovsign,
     VirtualRev8W => VirtualRev8W,
-    VirtualChangeDivisor => VirtualChangeDivisor,
-    VirtualChangeDivisorW => VirtualChangeDivisorW,
+    VirtualNegateIf => VirtualNegateIf,
     VirtualSignExtendWord => VirtualSignExtendWord,
     VirtualZeroExtendWord => VirtualZeroExtendWord,
     VirtualSrl => VirtualSRL,
@@ -621,8 +642,16 @@ impl_jolt_instructions_flags! {
     VirtualXorRotW12 => VirtualXORROTW12,
     VirtualXorRotW8 => VirtualXORROTW8,
     VirtualXorRotW7 => VirtualXORROTW7,
+    VirtualXorRotW22 => VirtualXORROTW22,
+    VirtualXorRotW19 => VirtualXORROTW19,
+    VirtualXorRotW6 => VirtualXORROTW6,
     WindowMaskW => VirtualWindowMaskW,
     PextSigned => VirtualPextSigned,
+    VirtualShiftRightBitmaskW => VirtualShiftRightBitmaskW,
+    VirtualSrlw => VirtualSRLW,
+    VirtualSrliw => VirtualSRLIW,
+    VirtualSraw => VirtualSRAW,
+    VirtualSraiw => VirtualSRAIW,
     Pext => VirtualPext,
     WindowMaskB => VirtualWindowMaskB,
     WindowMaskH => VirtualWindowMaskH,
@@ -790,13 +819,11 @@ mod tests {
             Ok(JoltInstruction::Add(..))
         ));
         for kind in [
-            SourceInstructionKind::ADDW,
             SourceInstructionKind::DIV,
             SourceInstructionKind::LW,
             SourceInstructionKind::SW,
             SourceInstructionKind::AMOADDW,
             SourceInstructionKind::CSRRS,
-            SourceInstructionKind::VirtualSW,
         ] {
             assert_eq!(
                 JoltInstructionRow::try_from(&SourceInstruction::new(
@@ -821,6 +848,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside a Result-returning test"
+    )]
     fn terminal_virtual_instruction_marks_last_in_sequence() -> Result<(), JoltInstructionKind> {
         fn flags_for(
             row: JoltInstructionRow,

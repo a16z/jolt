@@ -7,7 +7,7 @@
 
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use jolt_claims::{InputClaims, MissingOpeningValue, OutputClaims, SumcheckChallenges};
-use jolt_field::{Field, FieldCore};
+use jolt_field::{Field, JoltField};
 use jolt_sumcheck::ProveRounds;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -23,7 +23,7 @@ use crate::ProofSession;
 /// [`KernelError`](crate::KernelError), which wraps this one; only the
 /// failures the *typed extraction seam* can produce live here.
 #[derive(Debug, thiserror::Error)]
-pub enum SumcheckKernelError<F: FieldCore> {
+pub enum SumcheckKernelError<F: Field> {
     /// Relation-level failures (claim wiring, point derivation): kernels run
     /// the verifier's own relation methods as hard self-checks.
     #[error(transparent)]
@@ -62,7 +62,14 @@ pub enum SumcheckKernelError<F: FieldCore> {
 /// [`validate_derived_tables`](Self::validate_derived_tables). A kernel that
 /// does keep a copy (the naive tier clones the driver-supplied instance)
 /// must treat the threaded-in relation as authoritative.
-pub trait SumcheckKernel<F: Field>: ProveRounds<F>
+///
+/// Kernels are [`MaybeAllocative`](crate::MaybeAllocative): under the
+/// `allocative` feature the generated drivers snapshot every live member
+/// into a mid-stage heap flamegraph right after `prepare` — the stage's
+/// retained-memory peak. Implement it with size arithmetic
+/// (`Vec` capacity × element size; see the reference kernels) so `F` stays
+/// unbounded.
+pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + crate::backend::MaybeAllocative
 where
     SumcheckInputClaims<F, Self::Relation>: InputClaims<F>,
     SumcheckOutputClaims<F, Self::Relation>: OutputClaims<F>,
@@ -129,7 +136,7 @@ where
 /// of [`PrepareKernel::prepare`](crate::PrepareKernel::prepare).
 pub struct ProverInputs<'a, F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,

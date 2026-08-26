@@ -34,7 +34,7 @@ use jolt_claims::protocols::jolt::{
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::{protocols::jolt::geometry::spartan, protocols::jolt::relations, OutputClaims};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]

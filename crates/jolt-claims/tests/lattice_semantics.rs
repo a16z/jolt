@@ -8,16 +8,18 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-use jolt_claims::protocols::jolt::lattice::geometry::{byte_decode_weight, selector_block_weight};
+use jolt_claims::protocols::jolt::lattice::geometry::{
+    balanced_inc_value, byte_decode_weight, selector_block_weight,
+};
 use jolt_claims::protocols::jolt::lattice::{
-    one_hot_trace_columns, OneHotTraceShape, UnsignedIncChunking,
+    one_hot_trace_columns, BalancedIncChunking, OneHotTraceShape,
 };
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
-use jolt_field::{Fr, FromPrimitiveInt, RingCore};
+use jolt_field::{Fr, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
-use jolt_poly::math::Math;
 use jolt_poly::{boolean_point_msb, eq_index_msb, EqPolynomial, Polynomial};
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_utils::Math;
 
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
@@ -45,6 +47,16 @@ fn one_hot_evals(value_bits: usize, log_rows: usize, hot: &[usize]) -> Vec<Fr> {
     for (row, &value) in hot.iter().enumerate() {
         assert!(value < (1 << value_bits));
         data[(value << log_rows) | row] = fr(1);
+    }
+    data
+}
+
+fn digit_zero_evals(value_bits: usize, log_rows: usize, hot: &[usize]) -> Vec<Fr> {
+    let mut data = one_hot_evals(value_bits, log_rows, hot);
+    for (row, value) in hot.iter().copied().enumerate() {
+        if value == 0 {
+            data[row] = fr(0);
+        }
     }
     data
 }
@@ -78,33 +90,29 @@ fn byte_decode_sum(partials: &[Fr], place_bits: usize) -> Fr {
     sum
 }
 
-/// Every OneHotTrace column is a full `K x T` one-hot polynomial in the canonical
-/// native-batch order, including the MSB member at address zero or one.
+/// Every semantic column uses the same `K x T` domain before the digit-zero row is
+/// omitted from the commitment.
 #[test]
 #[expect(clippy::unwrap_used)]
-fn one_hot_trace_columns_are_uniform_native_one_hot_polynomials() {
+fn one_hot_trace_columns_share_a_uniform_semantic_domain() {
     let log_t = 3;
     let log_k_chunk = 4;
     let shape = OneHotTraceShape {
-        ra_layout: JoltRaPolynomialLayout::new(1, 1, 1).unwrap(),
+        ra_layout: JoltRaPolynomialLayout::new(32, 1, 1).unwrap(),
         log_t,
         log_k_chunk,
     };
     let members = one_hot_trace_columns(&shape).unwrap();
 
-    // Size accounting: 3 Ra + 16 chunk polynomials + the MSB polynomial,
-    // all represented as 4-address-bit one-hot matrices over 3 cycle bits.
-    let chunk_count = UnsignedIncChunking::new(log_k_chunk).unwrap().chunk_count();
+    let chunk_count = BalancedIncChunking::new(log_k_chunk).unwrap().chunk_count();
     assert_eq!(chunk_count, 16);
-    assert_eq!(members.len(), 20);
+    assert_eq!(members.len(), 51);
     assert_eq!(members[0], JoltCommittedPolynomial::InstructionRa(0));
-    assert_eq!(
-        members.last(),
-        Some(&JoltCommittedPolynomial::UnsignedIncMsb)
-    );
+    assert_eq!(members[48], JoltCommittedPolynomial::BalancedIncCarry);
+    assert_eq!(members.last(), Some(&JoltCommittedPolynomial::RamRa(0)));
 
     for (index, polynomial) in members.iter().enumerate() {
-        let hot = if *polynomial == JoltCommittedPolynomial::UnsignedIncMsb {
+        let hot = if *polynomial == JoltCommittedPolynomial::BalancedIncCarry {
             (0..1 << log_t).map(|t| t % 2).collect::<Vec<_>>()
         } else {
             (0..1 << log_t)
@@ -122,22 +130,83 @@ fn one_hot_trace_columns_are_uniform_native_one_hot_polynomials() {
     }
 }
 
-/// The inc-chain identities over a concrete trace of signed increments:
-/// per-row hamming weight, and the shifted decode
-/// `Σ_j place_j · Σ_a id(a) · chunk_j(a, r_cycle) + 2^64·msb = FusedInc + 2^64`
-/// — including the padding subtlety that a zero increment encodes as msb = 1
-/// with all chunks hot at value 0 (an all-zero or msb-cold padding row would
-/// falsify both legs).
+#[test]
+fn digit_zero_reconstruction_matches_semantic_one_hot_at_random_points() {
+    let log_t = 3;
+    let value_bits = 4;
+    let rows = 1 << log_t;
+    let r_address = point(value_bits, 2);
+    let r_cycle = point(log_t, 5);
+    let eq_cycle = EqPolynomial::<Fr>::evals(&r_cycle, None);
+    let eq_zero = eq_index_msb::<Fr>(&r_address, 0);
+
+    for hot in [
+        vec![
+            Some(0),
+            Some(3),
+            Some(0),
+            Some(15),
+            Some(1),
+            Some(0),
+            Some(8),
+            Some(2),
+        ],
+        vec![
+            None,
+            Some(0),
+            Some(7),
+            None,
+            Some(1),
+            Some(0),
+            None,
+            Some(12),
+        ],
+    ] {
+        let mut semantic = vec![fr(0); 1 << (value_bits + log_t)];
+        let mut sparse = semantic.clone();
+        let mut activation = vec![fr(0); rows];
+        for (cycle, row) in hot.iter().copied().enumerate() {
+            if let Some(row) = row {
+                semantic[(row << log_t) | cycle] = fr(1);
+                activation[cycle] = fr(1);
+                if row != 0 {
+                    sparse[(row << log_t) | cycle] = fr(1);
+                }
+            }
+        }
+
+        let full_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
+        let semantic_eval = eval_mle(&semantic, &full_point);
+        let activation_eval = eval_mle(&activation, &r_cycle);
+        let sparse_by_row = (0..1 << value_bits)
+            .map(|row| {
+                (0..rows)
+                    .map(|cycle| eq_cycle[cycle] * sparse[(row << log_t) | cycle])
+                    .sum::<Fr>()
+            })
+            .collect::<Vec<_>>();
+        let recentered = eq_zero * activation_eval
+            + sparse_by_row
+                .iter()
+                .enumerate()
+                .map(|(row, value)| {
+                    *value * (eq_index_msb::<Fr>(&r_address, row as u128) - eq_zero)
+                })
+                .sum::<Fr>();
+        assert_eq!(recentered, semantic_eval);
+    }
+}
+
+/// Centered radix digits and their signed carry reconstruct the fused
+/// increment when digit-zero entries are absent from the commitment.
 #[test]
 #[expect(clippy::unwrap_used)]
-fn chunk_decomposition_reconstructs_signed_increments() {
+fn balanced_chunk_decomposition_reconstructs_signed_increments() {
     let log_t = 3;
-    let chunking = UnsignedIncChunking::new(8).unwrap();
+    let chunking = BalancedIncChunking::new(8).unwrap();
     let count = chunking.chunk_count();
     assert_eq!(count, 8);
 
-    // A trace mixing positive, negative, extreme, and zero ("padding")
-    // increments.
     let values: [i128; 8] = [
         5,
         -7,
@@ -149,34 +218,30 @@ fn chunk_decomposition_reconstructs_signed_increments() {
         0,
     ];
 
+    let radix = 1i128 << chunking.chunk_width();
+    let bias = (radix / 2) * (((1i128 << 64) - 1) / (radix - 1));
+    let mask = radix - 1;
     let mut chunk_hot = vec![vec![0usize; values.len()]; count];
-    let mut msb_data = Vec::with_capacity(values.len());
+    let mut carry_hot = Vec::with_capacity(values.len());
     let mut fused_data = Vec::with_capacity(values.len());
     for (t, &value) in values.iter().enumerate() {
-        let unsigned = (value + (1i128 << 64)) as u128;
-        let msb = (unsigned >> 64) as u64;
-        let lower = (unsigned & ((1u128 << 64) - 1)) as u64;
+        let biased = value + bias;
         for (j, hot) in chunk_hot.iter_mut().enumerate() {
-            hot[t] = ((lower >> (8 * j)) & 0xff) as usize;
+            let standard = (biased >> (chunking.chunk_width() * j)) & mask;
+            hot[t] = ((standard + radix / 2) & mask) as usize;
         }
-        if value == 0 {
-            // The padding encoding: one-hot of zero with a HOT msb (0 + 2^64
-            // has bit 64 set). Witness generation must not zero these rows.
-            assert_eq!(msb, 1);
-            assert!(chunk_hot.iter().all(|hot| hot[t] == 0));
-        }
-        msb_data.push(fr(msb));
+        carry_hot.push((biased >> 64).rem_euclid(radix) as usize);
         fused_data.push(Fr::from_i128(value));
     }
     let chunk_polynomials: Vec<Vec<Fr>> = chunk_hot
         .iter()
-        .map(|hot| one_hot_evals(8, log_t, hot))
+        .map(|hot| digit_zero_evals(8, log_t, hot))
         .collect();
+    let carry_polynomial = digit_zero_evals(8, log_t, &carry_hot);
 
     let r_cycle = point(log_t, 1);
     let eq_cycle = EqPolynomial::<Fr>::evals(&r_cycle, None);
 
-    // Partial evaluation of chunk j at (a, r_cycle) for every address a.
     let partial = |chunk: &[Fr]| -> Vec<Fr> {
         (0..256)
             .map(|a| {
@@ -190,21 +255,21 @@ fn chunk_decomposition_reconstructs_signed_increments() {
     let mut reconstructed = fr(0);
     for (j, chunk) in chunk_polynomials.iter().enumerate() {
         let partials = partial(chunk);
-        // Hamming: exactly one hot address per cycle extends to Σ_a chunk(a, r) = 1
-        // at any cycle point.
-        assert_eq!(partials.iter().copied().sum::<Fr>(), fr(1));
-        // Identity decode of the chunk's address value.
         let decoded: Fr = partials
             .iter()
             .enumerate()
-            .map(|(a, value)| fr(a as u64) * *value)
+            .map(|(a, value)| balanced_inc_value(&boolean_point_msb::<Fr>(8, a)) * *value)
             .sum();
         reconstructed += chunking.place_value::<Fr>(j) * decoded;
     }
+    let carry: Fr = partial(&carry_polynomial)
+        .iter()
+        .enumerate()
+        .map(|(a, value)| balanced_inc_value(&boolean_point_msb::<Fr>(8, a)) * *value)
+        .sum();
 
     let fused = eval_mle(&fused_data, &r_cycle);
-    let msb = eval_mle(&msb_data, &r_cycle);
-    assert_eq!(reconstructed + Fr::pow2(64) * msb, fused + Fr::pow2(64));
+    assert_eq!(reconstructed + Fr::pow2(64) * carry, fused);
 }
 
 /// The bytecode chunk decode identity behind `BytecodeChunkReconstruction`: a

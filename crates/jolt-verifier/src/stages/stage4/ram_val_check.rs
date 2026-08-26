@@ -27,7 +27,7 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltDerivedId, JoltOpeningId, JoltRelationId, RamValCheckPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
 use jolt_transcript::{LabelWithCount, Transcript};
 
@@ -43,7 +43,7 @@ use super::outputs::Stage4OutputClaims;
 /// same advice / program-image openings the init evaluation is decomposed
 /// into). Only these values feed the input claim; clear-only because the values
 /// come from proof claims.
-pub fn ram_val_check_input_values_from_upstream<F: Field>(
+pub fn ram_val_check_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     init: &RamValCheckInitialEvaluation<F>,
 ) -> RamValCheckInputClaims<F> {
@@ -65,7 +65,7 @@ pub fn ram_val_check_input_values_from_upstream<F: Field>(
 /// (carried for completeness though only the values feed the input claim).
 /// ZK-agnostic: it reads the stage-2 point aggregate and the pre-branch init
 /// structure, so the same wiring serves both paths.
-pub fn ram_val_check_input_points_from_upstream<F: Field>(
+pub fn ram_val_check_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     structure: &RamValCheckInitStructure<F>,
 ) -> RamValCheckInputClaims<Vec<F>> {
@@ -84,7 +84,7 @@ pub fn ram_val_check_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RamValCheck<F: Field> {
+pub struct RamValCheck<F: JoltField> {
     symbolic: RamValCheckSymbolic,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
@@ -101,7 +101,7 @@ pub struct RamValCheck<F: Field> {
     contribution_openings: Vec<JoltOpeningId>,
 }
 
-impl<F: Field> RamValCheck<F> {
+impl<F: JoltField> RamValCheck<F> {
     /// Build the relation from its per-proof init decomposition. `init` carries
     /// the public initial-RAM evaluation plus the present advice/program-image
     /// contributions; their *structure* feeds the symbolic input `Expr` and their
@@ -161,7 +161,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
     type Symbolic = RamValCheckSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -198,6 +198,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
         input_points: &RamValCheckInputClaims<Vec<F>>,
     ) -> Result<RamValCheckOutputClaims<Vec<F>>, VerifierError> {
         let log_t = self.trace_dimensions.log_t();
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "ram_log_k and log_t are ilog2 results (< 64); the sum cannot overflow usize"
+        )]
         let expected_len = self.ram_log_k + log_t;
         let ram_read_write_point = input_points.ram_val();
         if ram_read_write_point.len() != expected_len {
@@ -206,7 +210,9 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
                 ram_read_write_point.len()
             )));
         }
-        let r_address = &ram_read_write_point[..self.ram_log_k];
+        let r_address = ram_read_write_point.get(..self.ram_log_k).ok_or_else(|| {
+            public_input_failed("RAM read-write opening point address prefix is out of range")
+        })?;
         let cycle = self
             .trace_dimensions
             .cycle_opening_point(sumcheck_point)
@@ -265,8 +271,25 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
             // the produced cycle point against the fixed read-write cycle. Gamma comes
             // from the drawn `challenges` (the value `draw_challenges` produced).
             RamValCheckPublic::LtCyclePlusGamma => {
-                let output_cycle = &output_points.ram_ra()[self.ram_log_k..];
-                let fixed_cycle = &input_points.ram_val()[self.ram_log_k..];
+                let output_cycle =
+                    output_points
+                        .ram_ra()
+                        .get(self.ram_log_k..)
+                        .ok_or_else(|| {
+                            public_input_failed(
+                                "RAM value-check output opening point is shorter than the address \
+                                 width",
+                            )
+                        })?;
+                let fixed_cycle =
+                    input_points
+                        .ram_val()
+                        .get(self.ram_log_k..)
+                        .ok_or_else(|| {
+                            public_input_failed(
+                                "RAM read-write opening point is shorter than the address width",
+                            )
+                        })?;
                 Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + challenges.gamma)
             }
             // Input publics — resolved in `derive_input_term`, never in the output expr.
@@ -289,7 +312,7 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
 ///
 /// [`decomposition`]: Self::decomposition
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RamValCheckInitStructure<F: Field> {
+pub struct RamValCheckInitStructure<F: JoltField> {
     pub public_eval: F,
     /// The staged program-image contribution's opening point (committed program
     /// mode only): the full RAM address point.
@@ -299,7 +322,7 @@ pub struct RamValCheckInitStructure<F: Field> {
     pub advice_blocks: Vec<(JoltAdviceKind, RamValCheckAdviceBlock<F>)>,
 }
 
-impl<F: Field> RamValCheckInitStructure<F> {
+impl<F: JoltField> RamValCheckInitStructure<F> {
     pub fn advice_block(&self, kind: JoltAdviceKind) -> Option<&RamValCheckAdviceBlock<F>> {
         self.advice_blocks
             .iter()
@@ -334,7 +357,7 @@ impl<F: Field> RamValCheckInitStructure<F> {
 /// geometry. Runs before the zk/clear branch in both modes; the advice selectors
 /// and opening points come from [`ram_val_check_advice_block`], the same
 /// computation the prover uses.
-pub fn ram_val_check_init_structure<F: Field>(
+pub fn ram_val_check_init_structure<F: JoltField>(
     checked: &CheckedInputs,
     untrusted_advice_present: bool,
     r_address: &[F],
@@ -370,7 +393,8 @@ pub fn ram_val_check_init_structure<F: Field>(
 /// [`RamValCheckInitStructure`] and the proof's claimed opening values; consumed by
 /// the stage-4 input wiring and the downstream stage-6/7 address-phase reductions.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RamValCheckInitialEvaluation<F: Field> {
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+pub struct RamValCheckInitialEvaluation<F: JoltField> {
     pub public_eval: F,
     /// The staged program-image contribution's opening point (the full RAM address
     /// point) and value; committed-program mode only.
@@ -378,7 +402,7 @@ pub struct RamValCheckInitialEvaluation<F: Field> {
     pub advice_contributions: Vec<VerifiedRamValCheckAdviceContribution<F>>,
 }
 
-impl<F: Field> RamValCheckInitialEvaluation<F> {
+impl<F: JoltField> RamValCheckInitialEvaluation<F> {
     pub fn advice_contribution(
         &self,
         kind: JoltAdviceKind,
@@ -390,7 +414,8 @@ impl<F: Field> RamValCheckInitialEvaluation<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+pub struct VerifiedRamValCheckAdviceContribution<F: JoltField> {
     pub kind: JoltAdviceKind,
     pub selector: F,
     /// The advice block opening *point* (the address sub-point it was evaluated
@@ -405,7 +430,7 @@ pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
 /// exactly when its contribution is. Clear-only (the values come from proof
 /// claims); mirrors the prover's own init reconstruction so both decompose
 /// `Val_init` identically.
-pub(crate) fn ram_val_check_initial_evaluation<F: Field>(
+pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
     structure: &RamValCheckInitStructure<F>,
     claims: &Stage4OutputClaims<F>,
 ) -> Result<RamValCheckInitialEvaluation<F>, VerifierError> {
@@ -464,7 +489,7 @@ pub(crate) fn ram_val_check_initial_evaluation<F: Field>(
 /// WARNING: the ZK path recomputes the same geometry in `zk::blindfold`'s
 /// `advice_selector`, so the two must stay in lockstep.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RamValCheckAdviceBlock<F: Field> {
+pub struct RamValCheckAdviceBlock<F: JoltField> {
     pub selector: F,
     pub opening_point: Vec<F>,
 }
@@ -474,7 +499,7 @@ pub struct RamValCheckAdviceBlock<F: Field> {
 ///
 /// WARNING: the ZK path recomputes the same geometry in `zk::blindfold`'s
 /// `advice_selector`, so the two must stay in lockstep.
-fn ram_val_check_advice_block<F: Field>(
+fn ram_val_check_advice_block<F: JoltField>(
     kind: JoltAdviceKind,
     checked: &CheckedInputs,
     r_address: &[F],
@@ -492,19 +517,36 @@ fn ram_val_check_advice_block<F: Field>(
             "{kind:?} advice commitment is present but configured size is zero"
         )));
     }
-    let start_index = layout
-        .remapped_word_address(start_address)
-        .map_err(public_input_failed)? as u128;
-    let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
-    if advice_num_vars > r_address.len() {
-        return Err(public_input_failed(format!(
-            "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
-            r_address.len()
-        )));
-    }
+    let start_index = u128::from(
+        layout
+            .remapped_word_address(start_address)
+            .map_err(public_input_failed)?,
+    );
+    let max_size = usize::try_from(max_size).map_err(|_| {
+        public_input_failed(format!("{kind:?} advice size {max_size} exceeds usize"))
+    })?;
+    // Floor division mirrors the shared advice geometry in jolt-claims
+    // (`geometry/dimensions.rs`): the advice block holds `max_size / 8` words.
+    #[expect(
+        clippy::integer_division,
+        reason = "floor division bytes -> words matches the prover-shared advice geometry"
+    )]
+    let advice_num_vars = crate::num::ilog2((max_size / 8).next_power_of_two());
+    let opening_start = r_address
+        .len()
+        .checked_sub(advice_num_vars)
+        .ok_or_else(|| {
+            public_input_failed(format!(
+                "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
+                r_address.len()
+            ))
+        })?;
     let selector = block_selector_mle_msb(start_index, advice_num_vars, r_address)
         .map_err(public_input_failed)?;
-    let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
+    let opening_point = r_address
+        .get(opening_start..)
+        .ok_or_else(|| public_input_failed("advice opening point is out of range"))?
+        .to_vec();
     Ok(RamValCheckAdviceBlock {
         selector,
         opening_point,
@@ -522,7 +564,11 @@ fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "test code indexes its own fixed-size fixtures"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};

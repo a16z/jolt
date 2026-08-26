@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::dimensions::{
@@ -27,7 +27,7 @@ impl<C> Default for OuterUniskipInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for OuterUniskipInputClaims<F> {
+impl<F: JoltField> InputClaims<F> for OuterUniskipInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -40,6 +40,7 @@ impl<F: Field> InputClaims<F> for OuterUniskipInputClaims<F> {
 /// Produced Spartan outer univariate-skip opening (the single reduced
 /// univariate-skip value). Generic over the opening cell (`F` for the serialized
 /// wire value, `Vec<F>` for the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -87,11 +88,11 @@ impl SymbolicSumcheck for OuterUniskip {
         OUTER_UNISKIP_FIRST_ROUND_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(outer_uniskip_opening())
     }
 }

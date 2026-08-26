@@ -138,8 +138,14 @@ pub enum HammingWeightClaimReductionChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
+    /// Packed path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
+    /// weight of a Booleanity leg (`specs/digit-zero-virtualization.md`).
+    EqBooleanityAtDigitZero,
     EqVirtualization(usize),
-    IdentityAtAddress,
+    /// Packed path: `eq(r_virtualization_address_i, 0)` — the digit-zero
+    /// baseline weight of a virtualization leg.
+    EqVirtualizationAtDigitZero(usize),
+    BalancedIncValueAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -165,6 +171,7 @@ pub enum BytecodeReadRafPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub enum JoltAdviceKind {
     Trusted,
     Untrusted,
@@ -391,9 +398,8 @@ impl BytecodeRegisterLane {
     pub const ALL: [Self; 3] = [Self::Rs1, Self::Rs2, Self::Rd];
 }
 
-/// WARNING: `Ord` is protocol data — the lattice `PrefixPacking` assigns
-/// slots by `(num_vars, Ord)` order, so reordering variants silently changes
-/// the packed witness layout.
+/// Lattice layouts supply an explicit canonical identifier order; `Ord` is
+/// used only for keyed lookup and does not assign physical slots.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltCommittedPolynomial {
     RdInc,
@@ -407,8 +413,8 @@ pub enum JoltCommittedPolynomial {
     ProgramImageInit,
     // Lattice-mode committed polynomials (slots of the packed witness); base
     // mode never constructs these. Appended for codec stability.
-    UnsignedIncChunk(usize),
-    UnsignedIncMsb,
+    BalancedIncDigit(usize),
+    BalancedIncCarry,
     TrustedAdviceBytes,
     UntrustedAdviceBytes,
     // Lattice-mode precommitted bytecode decompositions: the per-lane one-hot /

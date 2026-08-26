@@ -1,5 +1,5 @@
 use jolt_crypto::VectorOpeningError;
-use jolt_field::FieldCore;
+use jolt_field::JoltField;
 use jolt_r1cs::{ClaimLoweringError, ConstraintMatrixEvalError};
 use jolt_sumcheck::{SumcheckError, SumcheckR1csError};
 use thiserror::Error as ThisError;
@@ -85,7 +85,7 @@ pub enum RelaxedError {
 }
 
 #[derive(Debug, ThisError)]
-pub enum ProverError<F: FieldCore> {
+pub enum ProverError<F: JoltField> {
     #[error(transparent)]
     Relaxed(#[from] RelaxedError),
     #[error(transparent)]
@@ -135,10 +135,25 @@ pub enum ProverError<F: FieldCore> {
     MultilinearLengthMismatch { expected: usize, actual: usize },
     #[error("{name} must have at least one sumcheck round")]
     DegenerateSumcheck { name: &'static str },
+    #[error("witness assignment: {0}")]
+    Domain(#[from] SumcheckError<F>),
+    #[error("stage {stage_index} witness {name} mismatch: expected {expected}, got {actual}")]
+    StageWitnessShape {
+        stage_index: usize,
+        name: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("witness variable {index} is out of bounds")]
+    WitnessVariableOutOfBounds { index: usize },
+    #[error("witness variable {index} assigned twice")]
+    WitnessVariableReassigned { index: usize },
+    #[error("product constraint {constraint} references unassigned operands")]
+    UnsolvableProduct { constraint: usize },
 }
 
 #[derive(Debug, ThisError)]
-pub enum VerificationError<F: FieldCore> {
+pub enum VerificationError<F: JoltField> {
     #[error("claims have {claim_stages} stages but proof has {proof_stages}")]
     StageCountMismatch {
         claim_stages: usize,

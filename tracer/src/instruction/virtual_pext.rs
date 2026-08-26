@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
+use super::virtual_pext_signed::pext;
 use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
@@ -18,17 +19,6 @@ impl VirtualPext {
         let y = cpu.x[self.operands.rs2 as usize] as u64;
         cpu.write_register(self.operands.rd as usize, pext(x, y) as i64);
     }
-}
-
-/// Packs `x`'s bits at `y`'s set positions (MSB-first), zero-extended.
-pub(crate) fn pext(x: u64, y: u64) -> u64 {
-    let mut pext = 0u64;
-    for i in (0..64).rev() {
-        if (y >> i) & 1 == 1 {
-            pext = (pext << 1) | ((x >> i) & 1);
-        }
-    }
-    pext
 }
 
 impl RISCVTrace for VirtualPext {}

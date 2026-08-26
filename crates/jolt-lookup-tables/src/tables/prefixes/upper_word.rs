@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -7,7 +7,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum UpperWordPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for UpperWordPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for UpperWordPrefix {
     fn default_checkpoint() -> F {
         F::zero()
     }

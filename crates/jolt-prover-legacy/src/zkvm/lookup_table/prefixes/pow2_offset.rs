@@ -45,58 +45,39 @@ impl<const XLEN: usize, const LOW_BIT: usize, F: JoltField> SparseDensePrefix<F>
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        // The 8-bit lane granularity below is what makes this the doubleword
+        // lane offset; other instantiations are a compile error.
+        const { assert!(XLEN == 64, "Pow2Offset hardcodes 8-bit lanes") };
+        // Phase-boundary-agnostic split of the index around the low 3 offset
+        // bits: the suffix owns bits [0, suffix_len), the unbound bits `b`
+        // own [suffix_len, suffix_len + b.len()), the current variable `c`
+        // sits at suffix_len + b.len(), the pending challenge `r_x` (when
+        // present) one above that, and everything higher is bound into the
+        // checkpoint. Each side supplies the per-bit factors it owns (the
+        // suffixes carry partial factors for offset bits below a boundary).
         let suffix_len = LOG_K - j - b.len() - 1;
-        // The low 3 bits of the raw index stay in the suffix until the final
-        // phase; this pairing with the suffix's `b.len() < 3` guard assumes
-        // phase boundaries never fall inside the low three index bits.
-        debug_assert!(suffix_len == 0 || suffix_len >= 3);
-        if suffix_len != 0 {
+        if suffix_len >= 3 {
+            // All offset bits are in the suffix, which supplies the factor.
             return F::one();
         }
 
         let checkpoint = checkpoints[Self::VARIANT].unwrap_or(F::one());
         let bits: u128 = b.into();
+        let offset_in_b = ((bits << suffix_len) & Self::OFFSET_MASK) as u32;
+        let mut result = checkpoint * F::from_u64(1 << (8 * offset_in_b));
 
-        match b.len() {
-            // Bits 2..0 are all still among the unbound bits `b`.
-            n if n >= 3 => {
-                let offset = (bits & Self::OFFSET_MASK) as u32;
-                checkpoint * F::from_u64(1 << (8 * offset))
-            }
-            // The current variable `c` is bit 2; bits 1..0 are in `b`.
-            2 => {
-                let offset = (bits & (Self::OFFSET_MASK & 3)) as u32;
-                checkpoint * Self::bit_factor(2, F::from_u32(c)) * F::from_u64(1 << (8 * offset))
-            }
-            // The current variable `c` is bit 1; bit 0 is in `b`; bit 2 has
-            // been bound and lives in the checkpoint.
-            1 => {
-                let factor = if LOW_BIT <= 1 {
-                    Self::bit_factor(1, F::from_u32(c))
-                } else {
-                    F::one()
-                };
-                let offset = (bits & (Self::OFFSET_MASK & 1)) as u32;
-                checkpoint * factor * F::from_u64(1 << (8 * offset))
-            }
-            // The current variable `c` is bit 0; bit 1 is the pending
-            // challenge `r_x`; bit 2 lives in the checkpoint. `r_x` is always
-            // `Some` here: `b.len() == 0` with `suffix_len == 0` forces
-            // `j = LOG_K − 1`, which is odd.
-            _ => {
-                let factor_1 = if LOW_BIT <= 1 {
-                    Self::bit_factor(1, F::one() * r_x.unwrap())
-                } else {
-                    F::one()
-                };
-                let factor_0 = if LOW_BIT == 0 {
-                    Self::bit_factor(0, F::from_u32(c))
-                } else {
-                    F::one()
-                };
-                checkpoint * factor_1 * factor_0
-            }
+        let c_pos = suffix_len + b.len();
+        if (LOW_BIT..3).contains(&c_pos) {
+            result *= Self::bit_factor(c_pos, F::from_u32(c));
         }
+        // Offset bits 0 and 2 sit on the even (y) side of the interleaving,
+        // so bit 1 is the only offset bit a pending `r_x` can be. `r_x` is
+        // always `Some` here: `c` at bit 0 means `j = LOG_K − 1`, which is
+        // odd (mid-pair).
+        if c_pos == 0 && LOW_BIT <= 1 {
+            result *= Self::bit_factor(1, F::one() * r_x.unwrap());
+        }
+        result
     }
 
     fn update_prefix_checkpoint<C>(
@@ -104,28 +85,32 @@ impl<const XLEN: usize, const LOW_BIT: usize, F: JoltField> SparseDensePrefix<F>
         r_x: C,
         r_y: C,
         j: usize,
-        suffix_len: usize,
+        _suffix_len: usize,
     ) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        debug_assert!(suffix_len == 0 || suffix_len >= 3);
-        if suffix_len != 0 {
-            return Some(F::one()).into();
-        }
-
         let checkpoint = checkpoints[Self::VARIANT].unwrap_or(F::one());
 
+        // The pair binds `r_x` at index bit LOG_K − j and `r_y` at
+        // LOG_K − 1 − j; keying on the bound bit's position (rather than the
+        // final-phase round number) folds each offset bit into the checkpoint
+        // exactly once under any phase layout.
+        let y_pos = LOG_K - 1 - j;
+
         // r_y is bit 2 of the index.
-        if j == 2 * XLEN - 3 {
+        if y_pos == 2 {
             let updated = checkpoint * Self::bit_factor(2, F::one() * r_y);
             return Some(updated).into();
         }
 
         // r_x is bit 1 and r_y is bit 0 of the index.
-        if j == 2 * XLEN - 1 && LOW_BIT <= 1 {
-            let mut updated = checkpoint * Self::bit_factor(1, F::one() * r_x);
+        if y_pos == 0 {
+            let mut updated = checkpoint;
+            if LOW_BIT <= 1 {
+                updated *= Self::bit_factor(1, F::one() * r_x);
+            }
             if LOW_BIT == 0 {
                 updated *= Self::bit_factor(0, F::one() * r_y);
             }

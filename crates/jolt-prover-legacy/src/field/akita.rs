@@ -305,9 +305,9 @@ impl FieldOps<&AkitaFp128, AkitaFp128> for &AkitaFp128 {}
 
 /// Reinterpret a (canonical) unreduced element as a field element.
 ///
-/// `from_canonical_u128` only debug-asserts canonicity; values produced by
-/// `to_unreduced` are always canonical, and the subsequent widening multiply
-/// plus Solinas reduce are correct for any 128-bit integer regardless.
+/// Values produced by `to_unreduced` are canonical. The external Akita field
+/// constructor accepts that representative directly. The subsequent widening
+/// multiply and Solinas reduction are correct for every 128-bit integer.
 #[inline(always)]
 fn elem_to_field(a: &BigInt<2>) -> AkitaField {
     AkitaField::from_canonical_u128(a.0[0] as u128 | (a.0[1] as u128) << 64)
@@ -419,6 +419,14 @@ impl JoltField for AkitaFp128 {
 
     #[inline]
     fn from_bytes(bytes: &[u8]) -> Self {
+        Self(<AkitaField as ReducingBytes>::from_le_bytes_mod_order(
+            bytes,
+        ))
+    }
+
+    /// Akita transcripts interpret digest bytes directly as little-endian.
+    #[inline]
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
         Self(<AkitaField as ReducingBytes>::from_le_bytes_mod_order(
             bytes,
         ))
@@ -659,6 +667,21 @@ mod tests {
             F::from_bytes(&u128::MAX.to_le_bytes()),
             F::from_u128(u128::MAX)
         );
+    }
+
+    #[test]
+    fn scalar_challenge_uses_akita_little_endian_convention() {
+        let bytes = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ];
+        let direct = F::from_bytes(&bytes);
+        let challenge = F::from_scalar_challenge_bytes(&bytes);
+        let mut reversed = bytes;
+        reversed.reverse();
+
+        assert_eq!(challenge, direct);
+        assert_ne!(challenge, F::from_bytes(&reversed));
     }
 
     #[test]

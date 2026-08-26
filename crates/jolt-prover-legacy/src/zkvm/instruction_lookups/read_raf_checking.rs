@@ -1,4 +1,5 @@
 use std::iter::zip;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -63,6 +64,13 @@ use crate::subprotocols::blindfold::{
 };
 
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+
+/// Maximum number of suffixes any lookup table can have (currently
+/// PextSigned, with 5). Sized against the fixed-size partition arrays in
+/// `init_suffix_polys`; `max_suffixes_matches_lookup_tables` pins it to the
+/// actual table implementations, so a new table with more suffixes fails
+/// that test instead of a release-mode bounds check mid-proof.
+const MAX_SUFFIXES: usize = 5;
 
 // Instruction lookups: Read + RAF batched sumcheck
 //
@@ -452,24 +460,72 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 .par_extend(cycle_data.par_iter().map(|data| data.is_interleaved));
         }
 
-        // Build lookup_indices_by_table fully in parallel
-        // Create a vector for each table in parallel
-        let lookup_indices_by_table: Vec<Vec<usize>> = (0..num_tables)
-            .into_par_iter()
-            .map(|t_idx| {
-                // Each table gets its own parallel collection
-                cycle_data
-                    .par_iter()
-                    .filter_map(|data| {
-                        data.table.and_then(|t| {
-                            if LookupTables::<XLEN>::enum_index(&t) == t_idx {
-                                Some(data.idx)
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .collect()
+        const BUCKET_CHUNKS_PER_THREAD: usize = 16;
+        let bucket_chunk_count =
+            rayon::current_num_threads().saturating_mul(BUCKET_CHUNKS_PER_THREAD);
+        let bucket_chunk_size = cycle_data.len().div_ceil(bucket_chunk_count).max(1);
+        let bucket_counts_by_chunk: Vec<Vec<usize>> = cycle_data
+            .par_chunks(bucket_chunk_size)
+            .map(|chunk| {
+                let mut counts = vec![0; num_tables];
+                for data in chunk {
+                    if let Some(table) = data.table {
+                        counts[LookupTables::<XLEN>::enum_index(&table)] += 1;
+                    }
+                }
+                counts
+            })
+            .collect();
+        let mut bucket_totals = vec![0; num_tables];
+        for counts in &bucket_counts_by_chunk {
+            for (total, count) in bucket_totals.iter_mut().zip(counts) {
+                *total += count;
+            }
+        }
+        let mut uninit_lookup_indices_by_table: Vec<Vec<MaybeUninit<usize>>> = bucket_totals
+            .into_iter()
+            .map(|len| {
+                let mut bucket = Vec::with_capacity(len);
+                bucket.resize_with(len, MaybeUninit::uninit);
+                bucket
+            })
+            .collect();
+        let mut bucket_outputs_by_chunk: Vec<Vec<&mut [MaybeUninit<usize>]>> = (0
+            ..bucket_counts_by_chunk.len())
+            .map(|_| Vec::with_capacity(num_tables))
+            .collect();
+        for (table_index, bucket) in uninit_lookup_indices_by_table.iter_mut().enumerate() {
+            let mut remaining = bucket.as_mut_slice();
+            for (chunk_index, counts) in bucket_counts_by_chunk.iter().enumerate() {
+                let (output, rest) = remaining.split_at_mut(counts[table_index]);
+                bucket_outputs_by_chunk[chunk_index].push(output);
+                remaining = rest;
+            }
+            debug_assert!(remaining.is_empty());
+        }
+        cycle_data
+            .par_chunks(bucket_chunk_size)
+            .zip(bucket_outputs_by_chunk.into_par_iter())
+            .for_each(|(chunk, mut outputs)| {
+                let mut positions = vec![0; num_tables];
+                for data in chunk {
+                    if let Some(table) = data.table {
+                        let table_index = LookupTables::<XLEN>::enum_index(&table);
+                        outputs[table_index][positions[table_index]].write(data.idx);
+                        positions[table_index] += 1;
+                    }
+                }
+                debug_assert!(positions
+                    .iter()
+                    .zip(&outputs)
+                    .all(|(position, output)| *position == output.len()));
+            });
+        let lookup_indices_by_table = uninit_lookup_indices_by_table
+            .into_iter()
+            .map(|bucket| {
+                // SAFETY: each chunk writes exactly the per-table count used to
+                // partition every bucket, checked above in debug builds.
+                unsafe { bucket.into_boxed_slice().assume_init().into_vec() }
             })
             .collect();
         drop_in_background_thread(cycle_data);
@@ -592,11 +648,6 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     /// - **General suffixes**: Multiply `u_evals[j]` by `suffix_mle` value.
     #[tracing::instrument(skip_all, name = "InstructionReadRafProver::init_suffix_polys")]
     fn init_suffix_polys(&mut self, phase: usize) {
-        /// Maximum number of suffixes any lookup table can have.
-        /// Keep this in sync with the lookup-table implementations
-        /// (currently PextSigned, with 5).
-        const MAX_SUFFIXES: usize = 5;
-
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
         let m_mask = m - 1;
@@ -1506,6 +1557,21 @@ mod tests {
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
+    /// `MAX_SUFFIXES` sizes fixed arrays in `init_suffix_polys`; a table with
+    /// more suffixes would hit a release-mode bounds check mid-proof, so pin
+    /// the constant to the actual maximum over the table implementations.
+    #[test]
+    fn max_suffixes_matches_lookup_tables() {
+        let max = LookupTables::<XLEN>::iter()
+            .map(|table| table.suffixes().len())
+            .max()
+            .unwrap();
+        assert_eq!(
+            MAX_SUFFIXES, max,
+            "MAX_SUFFIXES must equal the maximum suffix count over all lookup tables"
+        );
+    }
+
     fn random_instruction(rng: &mut StdRng, instruction: &Option<Cycle>) -> Cycle {
         let instruction = instruction.unwrap_or_else(|| {
             let index = rng.next_u64() as usize % Cycle::COUNT;
@@ -1556,6 +1622,7 @@ mod tests {
             Cycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
             Cycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
             Cycle::VirtualMULI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualMULIW(cycle) => cycle.random(rng).into(),
             Cycle::VirtualPow2(cycle) => cycle.random(rng).into(),
             Cycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
             Cycle::VirtualPow2W(cycle) => cycle.random(rng).into(),
@@ -1571,8 +1638,7 @@ mod tests {
             Cycle::VirtualSignExtendWord(cycle) => cycle.random(rng).into(),
             Cycle::VirtualROTRI(cycle) => cycle.random(rng).into(),
             Cycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
-            Cycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
-            Cycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualNegateIf(cycle) => cycle.random(rng).into(),
             Cycle::VirtualAssertMulUNoOverflow(cycle) => cycle.random(rng).into(),
             _ => Cycle::NoOp,
         }
@@ -1908,6 +1974,11 @@ mod tests {
     }
 
     #[test]
+    fn test_muliw() {
+        test_read_raf_sumcheck(Some(Cycle::VirtualMULIW(Default::default())));
+    }
+
+    #[test]
     fn test_pow2() {
         test_read_raf_sumcheck(Some(Cycle::VirtualPow2(Default::default())));
     }
@@ -1983,13 +2054,8 @@ mod tests {
     }
 
     #[test]
-    fn test_virtualchangedivisor() {
-        test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisor(Default::default())));
-    }
-
-    #[test]
-    fn test_virtualchangedivisorw() {
-        test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisorW(Default::default())));
+    fn test_virtualnegateif() {
+        test_read_raf_sumcheck(Some(Cycle::VirtualNegateIf(Default::default())));
     }
 
     #[test]

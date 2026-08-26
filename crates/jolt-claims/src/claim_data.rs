@@ -15,7 +15,7 @@
 //! verifier-side `append_openings` is a thin consumer of [`OutputClaims::opening_values`],
 //! so it cannot disagree with the canonical order defined here.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use thiserror::Error;
 
 use crate::protocols::jolt::{JoltChallengeId, JoltOpeningId};
@@ -59,7 +59,7 @@ pub struct MissingOpeningValue<O: core::fmt::Debug> {
 ///
 /// Generic over the opening-id type `O` (defaulting to [`JoltOpeningId`]) so the
 /// trait can live in the framework half and be reused by other protocol families.
-pub trait OutputClaims<F: Field, O = JoltOpeningId> {
+pub trait OutputClaims<F: JoltField, O = JoltOpeningId> {
     /// Produced opening scalars in canonical (field-declaration) order. Built from
     /// [`canonical_order`](Self::canonical_order) + [`resolve_output`](Self::resolve_output),
     /// both derived from the same fields, so `opening_values()[k]` is exactly
@@ -111,7 +111,7 @@ pub trait OutputClaims<F: Field, O = JoltOpeningId> {
 /// (populated by explicit cross-stage wiring).
 ///
 /// Generic over the opening-id type `O` (defaulting to [`JoltOpeningId`]).
-pub trait InputClaims<F: Field, O = JoltOpeningId> {
+pub trait InputClaims<F: JoltField, O = JoltOpeningId> {
     /// The consumed opening ids in canonical (field-declaration) order. Takes
     /// `&self` because `Vec`/`Option` fields make the length and presence
     /// instance-dependent.
@@ -129,7 +129,7 @@ pub trait InputClaims<F: Field, O = JoltOpeningId> {
 /// reads each field's value directly.
 ///
 /// Generic over the challenge-id type `C` (defaulting to [`JoltChallengeId`]).
-pub trait SumcheckChallenges<F: Field, C = JoltChallengeId>: Sized {
+pub trait SumcheckChallenges<F: JoltField, C = JoltChallengeId>: Sized {
     /// Build this `Challenges` struct from already-drawn Fiat-Shamir scalars,
     /// consuming one value per field in canonical (field-declaration) order.
     ///
@@ -156,9 +156,10 @@ pub trait SumcheckChallenges<F: Field, C = JoltChallengeId>: Sized {
 /// `Challenges` for a relation that draws no Fiat-Shamir challenges: resolves
 /// every id to `None`. Generic over the field so it fits `type Challenges<F>`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct NoChallenges<F>(::core::marker::PhantomData<F>);
 
-impl<F: Field, C> SumcheckChallenges<F, C> for NoChallenges<F> {
+impl<F: JoltField, C> SumcheckChallenges<F, C> for NoChallenges<F> {
     fn from_transcript_values<I: Iterator<Item = F>>(
         _values: I,
     ) -> Result<Self, ChallengeDrawError> {
@@ -183,7 +184,7 @@ mod sumcheck_challenges_tests {
     // The `SumcheckChallenges` re-export from the crate root covers both the trait
     // (type namespace) and the derive macro (macro namespace).
     use crate::{ChallengeDrawError, SumcheckChallenges};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

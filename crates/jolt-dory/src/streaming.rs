@@ -1,7 +1,8 @@
 //! Streaming (chunked) commitment for the Dory scheme.
 
+use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
-use dory::backends::arkworks::{ArkG1, G1Routines};
+use dory::backends::arkworks::ArkG1;
 use dory::primitives::arithmetic::DoryRoutines;
 use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
 use jolt_crypto::Bn254G1;
@@ -9,9 +10,10 @@ use jolt_field::Fr;
 use jolt_openings::{StreamingCommitment, ZkStreamingCommitment};
 use rayon::prelude::*;
 
+use crate::routines::JoltG1Routines;
 use crate::scheme::{
     ark_to_jolt_fr, ark_to_jolt_g1, ark_to_jolt_g1_vec, ark_to_jolt_gt, commit_rows_tier_2,
-    jolt_fr_to_ark, jolt_g1_vec_to_ark, ArkFr,
+    jolt_fr_to_ark, jolt_g1_vec_to_ark, srs_prefix, ArkFr,
 };
 use crate::types::{DoryCommitment, DoryHint, DoryPartialCommitment, DoryProverSetup};
 
@@ -61,9 +63,9 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
 
-        let g1_bases = &setup.0.g1_vec[..chunk.len()];
+        let g1_bases = srs_prefix(&setup.0.g1_vec, chunk.len());
         let scalars: Vec<ArkFr> = chunk.iter().map(jolt_fr_to_ark).collect();
-        let row_commitment = G1Routines::msm(g1_bases, &scalars);
+        let row_commitment = JoltG1Routines::msm(g1_bases, &scalars);
         partial.row_commitments.push(ark_to_jolt_g1(row_commitment));
     }
 
@@ -82,7 +84,7 @@ impl StreamingCommitment for crate::DoryScheme {
     }
 
     type OneHotChunkCommitment = Vec<Bn254G1>;
-    type OneHotStreamContext = Vec<ark_bn254::G1Affine>;
+    type OneHotStreamContext = Vec<G1Affine>;
 
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_feed_zeros")]
     fn feed_zeros(
@@ -123,8 +125,8 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
 
-        let row_commitment = ark_ec::scalar_mul::variable_base::msm_u64::<ark_bn254::G1Projective>(
-            scalar_affine_bases(partial, chunk.len(), setup),
+        let row_commitment = ark_ec::scalar_mul::variable_base::msm_u64::<G1Projective>(
+            scalar_affine_bases(&mut partial.scalar_affine_bases, chunk.len(), setup),
             chunk,
             true,
         );
@@ -147,14 +149,61 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
 
-        let row_commitment = ark_ec::scalar_mul::variable_base::msm_i128::<ark_bn254::G1Projective>(
-            scalar_affine_bases(partial, chunk.len(), setup),
+        let row_commitment = ark_ec::scalar_mul::variable_base::msm_i128::<G1Projective>(
+            scalar_affine_bases(&mut partial.scalar_affine_bases, chunk.len(), setup),
             chunk,
             true,
         );
         partial
             .row_commitments
             .push(ark_to_jolt_g1(ArkG1(row_commitment)));
+    }
+
+    /// The parallel batch counterpart of [`feed_i128`](Self::feed_i128):
+    /// windows materialize their own `row_width` values on the worker (a
+    /// transient hundreds of KiB each) and commit in parallel (each MSM
+    /// serial to avoid nested-pool oversubscription), appended in window
+    /// order — the same row-commitment sequence as serial feeding, without
+    /// ever staging the batch.
+    #[tracing::instrument(
+        skip_all,
+        name = "DoryScheme::stream_feed_i128_rows_with",
+        fields(rows = count / row_width.max(1))
+    )]
+    fn feed_i128_rows_with(
+        partial: &mut Self::PartialCommitment,
+        value: impl Fn(usize) -> i128 + Sync,
+        count: usize,
+        row_width: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        assert!(
+            row_width.is_power_of_two(),
+            "streaming: row width ({row_width}) must be a power of two",
+        );
+        assert!(
+            row_width <= setup.0.g1_vec.len(),
+            "streaming: row width ({}) exceeds Dory SRS size ({})",
+            row_width,
+            setup.0.g1_vec.len(),
+        );
+        assert!(
+            count.is_multiple_of(row_width),
+            "streaming: batch length ({count}) must be a multiple of the row width ({row_width})",
+        );
+
+        let bases = scalar_affine_bases(&mut partial.scalar_affine_bases, row_width, setup);
+        let commitments: Vec<Bn254G1> = (0..count / row_width)
+            .into_par_iter()
+            .map(|window| {
+                let base = window * row_width;
+                let chunk: Vec<i128> = (base..base + row_width).map(&value).collect();
+                ark_to_jolt_g1(ArkG1(ark_ec::scalar_mul::variable_base::msm_i128::<
+                    G1Projective,
+                >(bases, &chunk, true)))
+            })
+            .collect();
+        partial.row_commitments.extend(commitments);
     }
 
     fn begin_one_hot_column_major_stream(
@@ -171,7 +220,7 @@ impl StreamingCommitment for crate::DoryScheme {
             row_width,
             setup.0.g1_vec.len(),
         );
-        setup.0.g1_vec[..row_width]
+        srs_prefix(&setup.0.g1_vec, row_width)
             .par_iter()
             .map(|base| base.0.into_affine())
             .collect()
@@ -184,49 +233,42 @@ impl StreamingCommitment for crate::DoryScheme {
         one_hot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::OneHotChunkCommitment {
-        assert!(
-            one_hot_k != 0,
-            "streaming one-hot: one_hot_k must be nonzero",
-        );
-        assert!(
-            chunk.len().is_power_of_two(),
-            "streaming one-hot: chunk length ({}) must be a power of two",
-            chunk.len(),
-        );
-        assert!(
-            chunk.len() <= setup.0.g1_vec.len(),
-            "streaming one-hot: chunk length ({}) exceeds Dory SRS size ({})",
-            chunk.len(),
-            setup.0.g1_vec.len(),
-        );
-        assert!(
-            chunk.len() <= context.len(),
-            "streaming one-hot: chunk length ({}) exceeds cached base count ({})",
-            chunk.len(),
-            context.len(),
-        );
-        let mut indices_per_k = vec![Vec::new(); one_hot_k];
-        for (column, hot_row) in chunk.iter().copied().enumerate() {
-            if let Some(hot_row) = hot_row {
-                assert!(
-                    hot_row < one_hot_k,
-                    "streaming one-hot: hot row {hot_row} outside k={one_hot_k}",
-                );
-                indices_per_k[hot_row].push(column);
-            }
-        }
+        one_hot_chunk_commitments(context, setup, one_hot_k, chunk)
+    }
 
-        let additions = batch_g1_additions_multi_affine(&context[..chunk.len()], &indices_per_k);
-        let mut row_commitments = vec![Bn254G1::default(); one_hot_k];
-        for (row_commitment, (indices, addition)) in row_commitments
-            .iter_mut()
-            .zip(indices_per_k.iter().zip(additions))
-        {
-            if !indices.is_empty() {
-                *row_commitment = ark_to_jolt_g1(ArkG1(addition.into()));
-            }
-        }
-        row_commitments
+    /// The parallel batch counterpart of
+    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk): windows
+    /// materialize their own `chunk_width` hot addresses on the worker,
+    /// share the cached affine bases read-only, and commit in parallel,
+    /// collected in window order — the same chunk-commitment sequence as
+    /// serial calls, without ever staging the batch.
+    #[tracing::instrument(
+        skip_all,
+        name = "DoryScheme::stream_process_one_hot_chunks_with",
+        fields(chunks = count / chunk_width.max(1))
+    )]
+    fn process_one_hot_chunks_with(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        hot_address: impl Fn(usize) -> Option<usize> + Sync,
+        count: usize,
+        chunk_width: usize,
+    ) -> Vec<Self::OneHotChunkCommitment> {
+        assert!(
+            chunk_width != 0,
+            "streaming one-hot: chunk width must be nonzero",
+        );
+        let context: &Self::OneHotStreamContext = context;
+        (0..count.div_ceil(chunk_width))
+            .into_par_iter()
+            .map(|window| {
+                let base = window * chunk_width;
+                let top = (base + chunk_width).min(count);
+                let chunk: Vec<Option<usize>> = (base..top).map(&hot_address).collect();
+                one_hot_chunk_commitments(context, setup, one_hot_k, &chunk)
+            })
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish_with_hint")]
@@ -300,8 +342,13 @@ fn finish_one_hot_column_major_chunks<M: dory::Mode>(
         .par_chunks_mut(chunk_count)
         .enumerate()
         .for_each(|(row, row_commitments)| {
-            for (chunk_index, chunk) in chunks.iter().enumerate() {
-                row_commitments[chunk_index] = chunk[row];
+            for (row_commitment, chunk) in row_commitments.iter_mut().zip(chunks) {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "every chunk is asserted to have one_hot_k rows and par_chunks_mut(chunk_count) yields one_hot_k row slices"
+                )]
+                let value = chunk[row];
+                *row_commitment = value;
             }
         });
     validate_row_count(row_commitments.len(), setup);
@@ -312,6 +359,63 @@ fn finish_one_hot_column_major_chunks<M: dory::Mode>(
         DoryCommitment(ark_to_jolt_gt(&tier_2)),
         DoryHint::new(ark_to_jolt_g1_vec(ark_rows), ark_to_jolt_fr(&commit_blind)),
     )
+}
+
+/// One column-major one-hot chunk's `one_hot_k` partial row commitments —
+/// the shared body behind the single and batch streaming entry points.
+fn one_hot_chunk_commitments(
+    bases: &[G1Affine],
+    setup: &DoryProverSetup,
+    one_hot_k: usize,
+    chunk: &[Option<usize>],
+) -> Vec<Bn254G1> {
+    assert!(
+        one_hot_k != 0,
+        "streaming one-hot: one_hot_k must be nonzero",
+    );
+    assert!(
+        chunk.len().is_power_of_two(),
+        "streaming one-hot: chunk length ({}) must be a power of two",
+        chunk.len(),
+    );
+    assert!(
+        chunk.len() <= setup.0.g1_vec.len(),
+        "streaming one-hot: chunk length ({}) exceeds Dory SRS size ({})",
+        chunk.len(),
+        setup.0.g1_vec.len(),
+    );
+    assert!(
+        chunk.len() <= bases.len(),
+        "streaming one-hot: chunk length ({}) exceeds cached base count ({})",
+        chunk.len(),
+        bases.len(),
+    );
+    let mut indices_per_k = vec![Vec::new(); one_hot_k];
+    for (column, hot_row) in chunk.iter().copied().enumerate() {
+        if let Some(hot_row) = hot_row {
+            assert!(
+                hot_row < one_hot_k,
+                "streaming one-hot: hot row {hot_row} outside k={one_hot_k}",
+            );
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "hot_row < one_hot_k is asserted above and indices_per_k has one_hot_k buckets"
+            )]
+            indices_per_k[hot_row].push(column);
+        }
+    }
+
+    let additions = batch_g1_additions_multi_affine(srs_prefix(bases, chunk.len()), &indices_per_k);
+    let mut row_commitments = vec![Bn254G1::default(); one_hot_k];
+    for (row_commitment, (indices, addition)) in row_commitments
+        .iter_mut()
+        .zip(indices_per_k.iter().zip(additions))
+    {
+        if !indices.is_empty() {
+            *row_commitment = ark_to_jolt_g1(ArkG1(addition.into()));
+        }
+    }
+    row_commitments
 }
 
 fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
@@ -327,33 +431,38 @@ fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
     );
 }
 
+/// Fill and borrow the partial commitment's affine-base cache. Takes the
+/// cache field (not the whole partial) so callers can hold the bases while
+/// appending to the sibling `row_commitments` field.
 fn scalar_affine_bases<'a>(
-    partial: &'a mut DoryPartialCommitment,
+    cache: &'a mut Option<Vec<G1Affine>>,
     row_width: usize,
     setup: &DoryProverSetup,
-) -> &'a [ark_bn254::G1Affine] {
-    let bases = partial.scalar_affine_bases.get_or_insert_with(|| {
-        setup.0.g1_vec[..row_width]
+) -> &'a [G1Affine] {
+    let bases = cache.get_or_insert_with(|| {
+        srs_prefix(&setup.0.g1_vec, row_width)
             .iter()
             .map(|base| base.0.into_affine())
             .collect()
     });
     if bases.len() < row_width {
         bases.extend(
-            setup.0.g1_vec[bases.len()..row_width]
+            srs_prefix(&setup.0.g1_vec, row_width)
                 .iter()
+                .skip(bases.len())
                 .map(|base| base.0.into_affine()),
         );
     }
-    &bases[..row_width]
+    srs_prefix(bases, row_width)
 }
 
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
+    #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
-    use jolt_field::FromPrimitiveInt;
-    use jolt_field::RandomSampling;
+    use jolt_field::Field;
+    use jolt_field::Ring;
     use jolt_openings::{
         CommitmentScheme, StreamingCommitment, ZkOpeningScheme, ZkStreamingCommitment,
     };
@@ -376,7 +485,7 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
 
         let evals: Vec<Fr> = (0..num_rows * num_cols)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
@@ -394,7 +503,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"stream-open");
@@ -451,7 +560,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"u64-stream-open");
@@ -516,7 +625,7 @@ mod tests {
 
         let mut rng = ChaCha20Rng::seed_from_u64(313);
         let point = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect::<Vec<_>>();
         let eval = Fr::from_u64(0);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zero-zk-open");
@@ -623,7 +732,7 @@ mod tests {
 
         let mut rng = ChaCha20Rng::seed_from_u64(317);
         let point = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect::<Vec<_>>();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"one-hot-zk-open");
@@ -686,7 +795,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"i128-stream-open");
@@ -713,5 +822,72 @@ mod tests {
             result.is_ok(),
             "i128 streaming hint should open: {result:?}"
         );
+    }
+
+    #[test]
+    fn feed_i128_rows_with_matches_serial_feeds() {
+        let num_vars: usize = 6;
+        let num_cols = 1usize << num_vars.div_ceil(2);
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let rows_i128: Vec<i128> = (0..(1usize << num_vars))
+            .map(|index| {
+                let magnitude = (index as i128 + 7) * 23;
+                if index % 2 == 0 {
+                    -magnitude
+                } else {
+                    magnitude
+                }
+            })
+            .collect();
+
+        let mut serial = DoryScheme::begin(&prover_setup);
+        for row in rows_i128.chunks(num_cols) {
+            DoryScheme::feed_i128(&mut serial, row, &prover_setup);
+        }
+        let (serial_commitment, serial_hint) = DoryScheme::finish_with_hint(serial, &prover_setup);
+
+        let mut batched = DoryScheme::begin(&prover_setup);
+        DoryScheme::feed_i128_rows_with(
+            &mut batched,
+            |index| rows_i128[index],
+            rows_i128.len(),
+            num_cols,
+            &prover_setup,
+        );
+        let (batched_commitment, batched_hint) =
+            DoryScheme::finish_with_hint(batched, &prover_setup);
+
+        assert_eq!(serial_commitment, batched_commitment);
+        assert_eq!(serial_hint.row_commitments, batched_hint.row_commitments);
+    }
+
+    #[test]
+    fn process_one_hot_chunks_with_matches_serial_calls() {
+        let trace_rows = 16usize;
+        let one_hot_k = 4usize;
+        let num_vars = (trace_rows * one_hot_k).ilog2() as usize;
+        let chunk_width = 1usize << num_vars.div_ceil(2);
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let indices: Vec<Option<usize>> = (0..trace_rows)
+            .map(|cycle| (cycle % 5 != 4).then_some(cycle % one_hot_k))
+            .collect();
+
+        let mut context = DoryScheme::begin_one_hot_column_major_stream(&prover_setup, chunk_width);
+        let serial = indices
+            .chunks(chunk_width)
+            .map(|chunk| {
+                DoryScheme::process_one_hot_chunk(&mut context, &prover_setup, one_hot_k, chunk)
+            })
+            .collect::<Vec<_>>();
+        let batched = DoryScheme::process_one_hot_chunks_with(
+            &mut context,
+            &prover_setup,
+            one_hot_k,
+            |index| indices[index],
+            indices.len(),
+            chunk_width,
+        );
+
+        assert_eq!(serial, batched);
     }
 }

@@ -1,6 +1,6 @@
 //! Spartan product univariate-skip symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::dimensions::{
@@ -33,6 +33,7 @@ pub struct ProductUniskipInputClaims<C> {
 /// Produced product uni-skip opening (the single reduced univariate-skip value).
 /// Generic over the opening cell (`F` for the serialized wire value, `Vec<F>` for
 /// the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -79,13 +80,13 @@ impl SymbolicSumcheck for ProductUniskip {
         PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_uniskip_weight(0) * opening(product_outer_opening())
             + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
             + product_uniskip_weight(2) * opening(product_should_jump_outer_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(product_uniskip_opening())
     }
 }

@@ -11,7 +11,7 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RegistersValEvaluationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::LtPolynomial;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -20,7 +20,7 @@ use crate::VerifierError;
 
 /// Wire the consumed `RegistersVal` opening *value* from the upstream register
 /// read-write checking (stage 4). Takes the ZK-agnostic output-claims aggregate.
-pub fn registers_val_evaluation_input_values_from_upstream<F: Field>(
+pub fn registers_val_evaluation_input_values_from_upstream<F: JoltField>(
     stage4: &Stage4OutputClaims<F>,
 ) -> RegistersValEvaluationInputClaims<F> {
     RegistersValEvaluationInputClaims {
@@ -30,7 +30,7 @@ pub fn registers_val_evaluation_input_values_from_upstream<F: Field>(
 
 /// Wire the consumed `RegistersVal` opening *point* from the upstream register
 /// read-write checking (stage 4).
-pub fn registers_val_evaluation_input_points_from_upstream<F: Field>(
+pub fn registers_val_evaluation_input_points_from_upstream<F: JoltField>(
     stage4: &Stage4OutputPoints<F>,
 ) -> RegistersValEvaluationInputClaims<Vec<F>> {
     RegistersValEvaluationInputClaims {
@@ -39,13 +39,13 @@ pub fn registers_val_evaluation_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RegistersValEvaluation<F: Field> {
+pub struct RegistersValEvaluation<F: JoltField> {
     symbolic: relations::registers::ValEvaluation,
     trace_dimensions: TraceDimensions,
     _field: PhantomData<F>,
 }
 
-impl<F: Field> RegistersValEvaluation<F> {
+impl<F: JoltField> RegistersValEvaluation<F> {
     pub fn new(trace_dimensions: TraceDimensions) -> Self {
         Self {
             symbolic: relations::registers::ValEvaluation::new(trace_dimensions),
@@ -62,13 +62,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> RegistersValEvaluation<F> {
+impl<F: JoltField> RegistersValEvaluation<F> {
     pub fn trace_dimensions(&self) -> TraceDimensions {
         self.trace_dimensions
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
     type Symbolic = relations::registers::ValEvaluation;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -80,6 +80,10 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
         sumcheck_point: &[F],
         input_points: &RegistersValEvaluationInputClaims<Vec<F>>,
     ) -> Result<RegistersValEvaluationOutputClaims<Vec<F>>, VerifierError> {
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "REGISTER_ADDRESS_BITS is a small constant and log_t an ilog2 result (< 64); the sum cannot overflow usize"
+        )]
         let expected_len = REGISTER_ADDRESS_BITS + self.trace_dimensions.log_t();
         let register_point = input_points.registers_val();
         if register_point.len() != expected_len {
@@ -88,7 +92,9 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
                 register_point.len()
             )));
         }
-        let address = &register_point[..REGISTER_ADDRESS_BITS];
+        let address = register_point.get(..REGISTER_ADDRESS_BITS).ok_or_else(|| {
+            public_input_failed("register read-write opening point address prefix is out of range")
+        })?;
         let cycle = self
             .trace_dimensions
             .cycle_opening_point(sumcheck_point)
@@ -101,6 +107,10 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
         })
     }
 
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
+    )]
     fn derive_output_term(
         &self,
         id: &JoltDerivedId,
@@ -110,8 +120,23 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
     ) -> Result<F, VerifierError> {
         match id {
             JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
-                let registers_cycle = &output_points.rd_inc()[REGISTER_ADDRESS_BITS..];
-                let fixed_cycle = &input_points.registers_val()[REGISTER_ADDRESS_BITS..];
+                let registers_cycle = output_points
+                    .rd_inc()
+                    .get(REGISTER_ADDRESS_BITS..)
+                    .ok_or_else(|| {
+                        public_input_failed(
+                            "rd_inc opening point is shorter than the register address width",
+                        )
+                    })?;
+                let fixed_cycle = input_points
+                    .registers_val()
+                    .get(REGISTER_ADDRESS_BITS..)
+                    .ok_or_else(|| {
+                        public_input_failed(
+                            "register read-write opening point is shorter than the register \
+                             address width",
+                        )
+                    })?;
                 Ok(LtPolynomial::evaluate(registers_cycle, fixed_cycle))
             }
             _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),

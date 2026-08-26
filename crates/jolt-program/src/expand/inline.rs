@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use jolt_riscv::{
-    JoltInstructionKind, NormalizedOperands, SourceInstructionKind, SourceInstructionRow,
+    JoltInstructionKind as Kind, NormalizedOperands, SourceInstructionKind, SourceInstructionRow,
 };
 
 use crate::expand::{
@@ -95,37 +95,6 @@ impl Deref for InlineRegister {
     }
 }
 
-/// Marker trait that lets inline crates keep `emit_r::<ADD>(...)` ergonomics.
-///
-/// `SOURCE_KIND` is always the decoded source instruction. `JOLT_KIND` is
-/// `Some` only for target-legal final instructions; when it is `None`, the
-/// builder records a source-only helper row and the materializer recursively
-/// expands it through the central `jolt-program` pipeline.
-pub trait InlineInstruction {
-    const SOURCE_KIND: SourceInstructionKind;
-    const JOLT_KIND: Option<JoltInstructionKind>;
-}
-
-macro_rules! impl_inline_instruction {
-    (
-        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
-    ) => {
-        $(
-            $(#[$meta])*
-            impl<T> InlineInstruction for jolt_riscv::instructions::$marker<T> {
-                const SOURCE_KIND: SourceInstructionKind =
-                    jolt_riscv::SourceInstruction::$marker(
-                        jolt_riscv::instructions::$marker(())
-                    );
-                const JOLT_KIND: Option<JoltInstructionKind> =
-                    Self::SOURCE_KIND.jolt_kind();
-            }
-        )*
-    };
-}
-
-jolt_riscv::for_each_instruction_kind!(impl_inline_instruction);
-
 /// Public recipe builder for registered inline static expansion.
 ///
 /// The builder records symbolic operations, not concrete tracer instructions.
@@ -156,10 +125,15 @@ impl InlineExpansionBuilder {
     /// be released before `finalize`; the materializer rejects leaked handles
     /// and appends reset rows for all handles that were allocated and released.
     pub fn allocate_for_inline(&mut self) -> Result<InlineRegister, ExpansionError> {
-        let Some(index) = self.inline_live.iter().position(|allocated| !allocated) else {
+        let Some((index, slot)) = self
+            .inline_live
+            .iter_mut()
+            .enumerate()
+            .find(|(_, allocated)| !**allocated)
+        else {
             return Err(ExpansionError::VirtualRegisterExhausted { pool: "inline" });
         };
-        self.inline_live[index] = true;
+        *slot = true;
         let temp = InlineTempId(index as u8);
         self.inner.allocate_inline(temp);
         Ok(InlineRegister::new(temp))
@@ -172,9 +146,8 @@ impl InlineExpansionBuilder {
     /// materialization when the symbolic release cannot be matched to a live
     /// allocation.
     pub fn release(&mut self, register: InlineRegister) {
-        let index = register.temp.index();
-        if index < self.inline_live.len() {
-            self.inline_live[index] = false;
+        if let Some(live) = self.inline_live.get_mut(register.temp.index()) {
+            *live = false;
         }
         self.inner.release_inline(register.temp);
     }
@@ -192,7 +165,9 @@ impl InlineExpansionBuilder {
         }
         match registers.try_into() {
             Ok(registers) => Ok(registers),
-            Err(_) => unreachable!("vector length is fixed by the loop"),
+            Err(_) => {
+                unreachable!("vector length is fixed by the loop")
+            }
         }
     }
 
@@ -210,120 +185,118 @@ impl InlineExpansionBuilder {
         }
     }
 
-    /// Emit an R-format row or recursively expand a source-only R-format helper.
-    pub fn emit_r<Op: InlineInstruction>(&mut self, rd: u8, rs1: u8, rs2: u8) {
-        match Op::JOLT_KIND {
-            Some(kind) => self.inner.emit_r(
-                kind,
-                Self::register_operand(rd),
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-            ),
-            None => self.inner.expand_r(
-                Op::SOURCE_KIND,
-                Self::register_operand(rd),
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-            ),
-        }
+    /// Emit or expand an R-format row.
+    pub fn emit_r(
+        &mut self,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rd: u8,
+        rs1: u8,
+        rs2: u8,
+    ) {
+        self.inner.emit_r(
+            instruction_kind,
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            Self::register_operand(rs2),
+        );
     }
 
-    /// Emit an I-format row with an unsigned immediate.
-    pub fn emit_i<Op: InlineInstruction>(&mut self, rd: u8, rs1: u8, imm: u64) {
-        self.emit_i_signed::<Op>(rd, rs1, imm as i128);
+    /// Emit or expand an I-format row with an unsigned immediate.
+    pub fn emit_i(
+        &mut self,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rd: u8,
+        rs1: u8,
+        imm: u64,
+    ) {
+        self.inner.emit_i(
+            instruction_kind,
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            imm as i128,
+        );
     }
 
-    /// Emit a load-shaped I-format row with a signed byte offset.
-    pub fn emit_ld<Op: InlineInstruction>(&mut self, rd: u8, rs1: u8, imm: i64) {
-        self.emit_i_signed::<Op>(rd, rs1, imm as i128);
+    /// Emit or expand a load-shaped I-format row with a signed byte offset.
+    pub fn emit_ld(
+        &mut self,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rd: u8,
+        rs1: u8,
+        imm: i64,
+    ) {
+        self.inner.emit_ld(
+            instruction_kind,
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            imm as i128,
+        );
     }
 
-    /// Emit a J-format virtual row or recursively expand a source-only helper.
-    pub fn emit_j<Op: InlineInstruction>(&mut self, rd: u8, imm: u64) {
-        match Op::JOLT_KIND {
-            Some(kind) => self
-                .inner
-                .emit_j(kind, Self::register_operand(rd), imm as i128),
-            None => self
-                .inner
-                .expand_j(Op::SOURCE_KIND, Self::register_operand(rd), imm as i128),
-        }
-    }
-
-    /// Emit a U-format row or recursively expand a source-only helper.
-    pub fn emit_u<Op: InlineInstruction>(&mut self, rd: u8, imm: u64) {
-        match Op::JOLT_KIND {
-            Some(kind) => self
-                .inner
-                .emit_u(kind, Self::register_operand(rd), imm as i128),
-            None => self
-                .inner
-                .expand_u(Op::SOURCE_KIND, Self::register_operand(rd), imm as i128),
-        }
-    }
-
-    /// Emit an S-format row with a signed byte offset.
-    pub fn emit_s<Op: InlineInstruction>(&mut self, rs1: u8, rs2: u8, imm: i64) {
-        match Op::JOLT_KIND {
-            Some(kind) => self.inner.emit_s(
-                kind,
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-                imm as i128,
-            ),
-            None => self.inner.expand_s(
-                Op::SOURCE_KIND,
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-                imm as i128,
-            ),
-        }
-    }
-
-    /// Emit a B-format row with a signed branch offset.
-    pub fn emit_b<Op: InlineInstruction>(&mut self, rs1: u8, rs2: u8, imm: i64) {
-        match Op::JOLT_KIND {
-            Some(kind) => self.inner.emit_b(
-                kind,
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-                imm as i128,
-            ),
-            None => self.inner.expand_b(
-                Op::SOURCE_KIND,
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-                imm as i128,
-            ),
-        }
-    }
-
-    /// Emit a virtual shift row whose immediate encodes the shift mask.
-    pub fn emit_vshift_i<Op: InlineInstruction>(&mut self, rd: u8, rs1: u8, imm: u64) {
-        self.emit_i::<Op>(rd, rs1, imm);
-    }
-
-    /// Emit a virtual shift row whose shift amount comes from `rs2`.
-    pub fn emit_vshift_r<Op: InlineInstruction>(&mut self, rd: u8, rs1: u8, rs2: u8) {
-        self.emit_r::<Op>(rd, rs1, rs2);
-    }
-
-    /// Emit an address/alignment assertion helper.
-    ///
-    /// These helpers are source-only pseudo-I rows: they read `rs1` and an
-    /// immediate offset but do not write `rd`, so they must always be routed
-    /// through recursive source expansion.
-    pub fn emit_align<Op: InlineInstruction>(&mut self, rs1: u8, imm: i64) {
+    /// Emit or expand a J-format row.
+    pub fn emit_j(&mut self, instruction_kind: impl Into<SourceInstructionKind>, rd: u8, imm: u64) {
         self.inner
-            .expand_address(Op::SOURCE_KIND, Self::register_operand(rs1), imm as i128);
+            .emit_j(instruction_kind, Self::register_operand(rd), imm as i128);
+    }
+
+    /// Emit or expand a U-format row.
+    pub fn emit_u(&mut self, instruction_kind: impl Into<SourceInstructionKind>, rd: u8, imm: u64) {
+        self.inner
+            .emit_u(instruction_kind, Self::register_operand(rd), imm as i128);
+    }
+
+    /// Emit or expand an S-format row with a signed byte offset.
+    pub fn emit_s(
+        &mut self,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rs1: u8,
+        rs2: u8,
+        imm: i64,
+    ) {
+        self.inner.emit_s(
+            instruction_kind,
+            Self::register_operand(rs1),
+            Self::register_operand(rs2),
+            imm as i128,
+        );
+    }
+
+    /// Emit or expand a B-format row with a signed branch offset.
+    pub fn emit_b(
+        &mut self,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rs1: u8,
+        rs2: u8,
+        imm: i64,
+    ) {
+        self.inner.emit_b(
+            instruction_kind,
+            Self::register_operand(rs1),
+            Self::register_operand(rs2),
+            imm as i128,
+        );
+    }
+
+    /// Emit an address-form alignment assertion with a signed byte offset.
+    pub fn emit_align(
+        &mut self,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rs1: u8,
+        imm: i64,
+    ) {
+        self.inner
+            .emit_address(instruction_kind, Self::register_operand(rs1), imm as i128);
     }
 
     /// Emit or constant-fold a binary operation.
     ///
-    /// Register/register operands use `OR`, register/immediate operands use
-    /// `OI`, and immediate/immediate operands are folded with `fold`.
-    pub fn bin<OR: InlineInstruction, OI: InlineInstruction>(
+    /// Register/register operands use `register_kind`, register/immediate
+    /// operands use `immediate_kind`, and immediate/immediate operands are
+    /// folded with `fold`.
+    pub fn bin(
         &mut self,
+        register_kind: Kind,
+        immediate_kind: Kind,
         rs1: Value,
         rs2: Value,
         rd: u8,
@@ -331,26 +304,25 @@ impl InlineExpansionBuilder {
     ) -> Value {
         match (rs1, rs2) {
             (Value::Reg(r1), Value::Reg(r2)) => {
-                self.emit_r::<OR>(rd, r1, r2);
+                self.emit_r(register_kind, rd, r1, r2);
                 Value::Reg(rd)
             }
             (Value::Reg(r1), Value::Imm(imm)) => {
-                self.emit_i::<OI>(rd, r1, imm);
+                self.emit_i(immediate_kind, rd, r1, imm);
                 Value::Reg(rd)
             }
-            (Value::Imm(_), Value::Reg(_)) => self.bin::<OR, OI>(rs2, rs1, rd, fold),
+            (Value::Imm(_), Value::Reg(_)) => {
+                self.bin(register_kind, immediate_kind, rs2, rs1, rd, fold)
+            }
             (Value::Imm(i1), Value::Imm(i2)) => Value::Imm(fold(i1, i2)),
         }
     }
 
     /// Emit or constant-fold wrapping addition.
     pub fn add(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin::<jolt_riscv::instructions::Add, jolt_riscv::instructions::Addi>(
-            rs1,
-            rs2,
-            rd,
-            |x, y| x.wrapping_add(y),
-        )
+        self.bin(Kind::ADD, Kind::ADDI, rs1, rs2, rd, |x, y| {
+            x.wrapping_add(y)
+        })
     }
 
     /// Emit or constant-fold a 32-bit logical right shift.
@@ -360,7 +332,7 @@ impl InlineExpansionBuilder {
         }
         match rs1 {
             Value::Reg(rs1) => {
-                self.emit_i::<jolt_riscv::instructions::SrlIW>(rd, rs1, (shamt & 0x1f) as u64);
+                self.emit_i(SourceInstructionKind::SRLIW, rd, rs1, (shamt & 0x1f) as u64);
                 Value::Reg(rd)
             }
             Value::Imm(val) => Value::Imm(((val as u32) >> shamt) as u64),
@@ -377,7 +349,7 @@ impl InlineExpansionBuilder {
         let mask = ones << shamt;
         match rs1 {
             Value::Reg(rs1_reg) => {
-                self.emit_vshift_i::<jolt_riscv::instructions::VirtualRotriw>(rd, rs1_reg, mask);
+                self.emit_i(Kind::VirtualROTRIW, rd, rs1_reg, mask);
                 Value::Reg(rd)
             }
             Value::Imm(val) => Value::Imm(((val as u32).rotate_right(shamt)) as u64),
@@ -400,29 +372,19 @@ impl InlineExpansionBuilder {
 
     /// Emit or constant-fold bitwise XOR.
     pub fn xor(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin::<jolt_riscv::instructions::Xor, jolt_riscv::instructions::XorI>(
-            rs1,
-            rs2,
-            rd,
-            |x, y| x ^ y,
-        )
+        self.bin(Kind::XOR, Kind::XORI, rs1, rs2, rd, |x, y| x ^ y)
     }
 
     /// Emit or constant-fold bitwise AND.
     pub fn and(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin::<jolt_riscv::instructions::And, jolt_riscv::instructions::AndI>(
-            rs1,
-            rs2,
-            rd,
-            |x, y| x & y,
-        )
+        self.bin(Kind::AND, Kind::ANDI, rs1, rs2, rd, |x, y| x & y)
     }
 
     /// Emit or constant-fold a 64-bit rotate-right operation.
     pub fn rotri(&mut self, rs1: Value, imm: u64, rd: u8) -> Value {
         match rs1 {
             Value::Reg(rs1) => {
-                self.emit_vshift_i::<jolt_riscv::instructions::VirtualRotri>(rd, rs1, imm);
+                self.emit_i(Kind::VirtualROTRI, rd, rs1, imm);
                 Value::Reg(rd)
             }
             Value::Imm(val) => {
@@ -462,23 +424,6 @@ impl InlineExpansionBuilder {
     /// are validated in one central place.
     pub fn finalize(self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.inner.finalize()
-    }
-
-    fn emit_i_signed<Op: InlineInstruction>(&mut self, rd: u8, rs1: u8, imm: i128) {
-        match Op::JOLT_KIND {
-            Some(kind) => self.inner.emit_i(
-                kind,
-                Self::register_operand(rd),
-                Self::register_operand(rs1),
-                imm,
-            ),
-            None => self.inner.expand_i(
-                Op::SOURCE_KIND,
-                Self::register_operand(rd),
-                Self::register_operand(rs1),
-                imm,
-            ),
-        }
     }
 
     fn register_operand(register: u8) -> RegisterOperand {

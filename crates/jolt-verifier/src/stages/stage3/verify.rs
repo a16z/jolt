@@ -2,7 +2,7 @@
 
 use jolt_claims::protocols::jolt::{geometry::dimensions::TraceDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
@@ -31,7 +31,7 @@ use crate::{
 /// the generated `Stage3InputClaims` aggregate. This is the single place the
 /// stage's Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream`
 /// helper wires which upstream opening feeds which downstream input.
-pub fn stage3_input_values_from_upstream<F: Field>(
+pub fn stage3_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> Stage3InputClaims<F> {
@@ -42,6 +42,7 @@ pub fn stage3_input_values_from_upstream<F: Field>(
     }
 }
 
+#[jolt_verifier_derive::fs_scope(Stage3)]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -54,7 +55,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
+    let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = TraceDimensions::new(log_t);
 
     // The shift/register relations evaluate their `EqPlusOne`/`EqSpartan` publics

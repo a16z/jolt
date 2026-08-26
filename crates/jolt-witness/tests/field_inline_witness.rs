@@ -1,6 +1,8 @@
 #![cfg(feature = "field-inline")]
 #![cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 
+use std::sync::Arc;
+
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::{
     field_inline::{
@@ -9,7 +11,7 @@ use jolt_claims::protocols::{
     },
     jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId},
 };
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_program::{
     execution::{
         JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,
@@ -63,38 +65,38 @@ fn instruction(
 fn preprocessing(
     bytecode: Vec<JoltInstructionRow>,
     profile: JoltInstructionProfile,
-) -> JoltProgramPreprocessing {
-    JoltProgramPreprocessing {
+) -> Arc<JoltProgramPreprocessing> {
+    Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, profile).unwrap(),
         ram: RAMPreprocessing::default(),
         memory_layout: Default::default(),
         max_padded_trace_length: 8,
-    }
+    })
 }
 
-fn program(bytecode: Vec<JoltInstructionRow>, profile: JoltInstructionProfile) -> JoltProgram {
-    JoltProgram::from_parts_with_profile(
+fn program(bytecode: Vec<JoltInstructionRow>, profile: JoltInstructionProfile) -> Arc<JoltProgram> {
+    Arc::new(JoltProgram::from_parts_with_profile(
         Vec::new(),
         bytecode,
         Vec::new(),
         ENTRY + 4,
         ENTRY,
         profile,
-    )
+    ))
 }
 
-fn witness<'a>(
-    program: &'a JoltProgram,
-    preprocessing: &'a JoltProgramPreprocessing,
+fn witness(
+    program: &Arc<JoltProgram>,
+    preprocessing: &Arc<JoltProgramPreprocessing>,
     rows: Vec<TraceRow>,
     log_t: usize,
-) -> TraceBackend<'a, OwnedTrace> {
+) -> TraceBackend<OwnedTrace> {
     TraceBackend::new(
         config(log_t),
         JoltVmWitnessInputs::new(
             program,
             preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
         ),
     )
 }
@@ -189,13 +191,13 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
 }
 
 fn owned_view(
-    provider: &TraceBackedFieldInlineWitness<'_>,
+    provider: &TraceBackedFieldInlineWitness,
     id: impl Into<FieldInlinePolynomialId>,
 ) -> Vec<Fr> {
     provider.oracle_table::<Fr>(id.into()).unwrap()
 }
 
-fn field_rd_inc_column(provider: &TraceBackedFieldInlineWitness<'_>) -> Vec<Fr> {
+fn field_rd_inc_column(provider: &TraceBackedFieldInlineWitness) -> Vec<Fr> {
     owned_view(
         provider,
         FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc),

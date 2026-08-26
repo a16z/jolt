@@ -5,8 +5,8 @@
     reason = "the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
 )]
 
-use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
-use dory::mode::Transparent;
+use dory::backends::arkworks::ArkworksProverSetup;
+use dory::mode::{Transparent, ZK};
 use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
@@ -19,6 +19,7 @@ use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
 use rayon::prelude::*;
 
+use crate::routines::{JoltG1Routines, JoltG2Routines};
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
@@ -31,7 +32,19 @@ pub(crate) type ArkGT = dory::backends::arkworks::ArkGT;
 type InnerBN254 = dory::backends::arkworks::BN254;
 
 // All conversion functions below rely on repr(transparent) layout identity
-// between jolt and dory-pcs wrappers over the same arkworks inner type.
+// between jolt and dory-pcs wrappers over the same arkworks inner type. The
+// size and alignment halves of that reliance are checked at compile time; a
+// wrapper gaining a field or losing repr(transparent) fails these asserts
+// before any transmute can misbehave.
+const _: () = {
+    use std::mem::{align_of, size_of};
+    assert!(size_of::<Fr>() == size_of::<ArkFr>());
+    assert!(align_of::<Fr>() == align_of::<ArkFr>());
+    assert!(size_of::<Bn254GT>() == size_of::<ArkGT>());
+    assert!(align_of::<Bn254GT>() == align_of::<ArkGT>());
+    assert!(size_of::<Bn254G1>() == size_of::<ArkG1>());
+    assert!(align_of::<Bn254G1>() == align_of::<ArkG1>());
+};
 
 #[inline]
 pub(crate) fn jolt_fr_to_ark(f: &Fr) -> ArkFr {
@@ -59,21 +72,42 @@ pub(crate) fn ark_to_jolt_gt(ark: &ArkGT) -> Bn254GT {
 
 #[inline]
 pub(crate) fn jolt_g1_vec_to_ark(v: Vec<Bn254G1>) -> Vec<ArkG1> {
-    // SAFETY: Bn254G1 and ArkG1 have identical size/align (repr(transparent)
-    // over G1Projective), so Vec layout is identical.
-    unsafe { std::mem::transmute(v) }
+    let mut v = std::mem::ManuallyDrop::new(v);
+    let (ptr, len, capacity) = (v.as_mut_ptr(), v.len(), v.capacity());
+    // SAFETY: Bn254G1 and ArkG1 are both repr(transparent) over G1Projective
+    // (size/align compile-checked above), so the buffer's elements can be
+    // reinterpreted in place. `Vec`'s internal layout across distinct element
+    // types is unspecified, so the container is rebuilt from raw parts
+    // rather than transmuted whole; ManuallyDrop keeps the original from
+    // freeing the buffer it hands over.
+    unsafe { Vec::from_raw_parts(ptr.cast::<ArkG1>(), len, capacity) }
 }
 
 #[inline]
 pub(crate) fn ark_to_jolt_g1_vec(v: Vec<ArkG1>) -> Vec<Bn254G1> {
-    // SAFETY: same layout as jolt_g1_vec_to_ark.
-    unsafe { std::mem::transmute(v) }
+    let mut v = std::mem::ManuallyDrop::new(v);
+    let (ptr, len, capacity) = (v.as_mut_ptr(), v.len(), v.capacity());
+    // SAFETY: same layout facts as jolt_g1_vec_to_ark.
+    unsafe { Vec::from_raw_parts(ptr.cast::<Bn254G1>(), len, capacity) }
 }
 
 #[inline]
 pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     // SAFETY: Bn254G1 and ArkG1 are both repr(transparent) over G1Projective.
     unsafe { std::mem::transmute(ark) }
+}
+
+/// First `n` bases of an SRS table. Callers size `n` from the polynomial
+/// being committed; the assert keeps a descriptive panic if it outgrows the
+/// setup instead of a bare slice-bounds failure.
+#[inline]
+pub(crate) fn srs_prefix<T>(bases: &[T], n: usize) -> &[T] {
+    assert!(
+        n <= bases.len(),
+        "requested {n} SRS bases but the setup has {}",
+        bases.len(),
+    );
+    bases.split_at(n).0
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +144,12 @@ impl DoryScheme {
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
+        // Deliberately NOT priming dory's global prepared-point cache (the
+        // legacy prover does): the cache only grows and its consumers
+        // prefix-match blindly, so any process touching two setup sizes —
+        // the URS seeds generators on the exact size — silently pairs
+        // against the wrong generators. The saving is ~0.2 s wall of G2
+        // Miller preprocessing per 2^20 proof; not worth the footgun.
         DoryProverSetup(setup)
     }
 
@@ -120,21 +160,24 @@ impl DoryScheme {
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
 
-    fn commit_with_mode<P, M>(poly: &P, setup: &DoryProverSetup) -> (DoryCommitment, DoryHint)
+    fn commit_with_mode<P, M>(
+        poly: &P,
+        setup: &DoryProverSetup,
+    ) -> Result<(DoryCommitment, DoryHint), OpeningsError>
     where
         P: MultilinearPoly<Fr> + ?Sized,
         M: Mode,
     {
-        let row_commitments = compute_row_commitments(poly, setup);
+        let row_commitments = compute_row_commitments(poly, setup)?;
         let (tier_2, commit_blind) = commit_rows_tier_2::<M>(&row_commitments, setup);
 
-        (
+        Ok((
             DoryCommitment(ark_to_jolt_gt(&tier_2)),
             DoryHint::new(
                 ark_to_jolt_g1_vec(row_commitments),
                 ark_to_jolt_fr(&commit_blind),
             ),
-        )
+        ))
     }
 }
 
@@ -146,7 +189,8 @@ impl DeriveSetup<DoryProverSetup> for PedersenSetup<Bn254G1> {
             capacity,
             source.0.g1_vec.len(),
         );
-        let generators = ark_to_jolt_g1_vec(source.0.g1_vec[..capacity].to_vec());
+        let generators =
+            ark_to_jolt_g1_vec(source.0.g1_vec.iter().take(capacity).copied().collect());
         let blinding = ark_to_jolt_g1(source.0.h1);
         PedersenSetup::new(generators, blinding)
     }
@@ -181,7 +225,7 @@ impl CommitmentScheme for DoryScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Ok(Self::commit_with_mode::<P, Transparent>(poly, setup))
+        Self::commit_with_mode::<P, Transparent>(poly, setup)
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
@@ -201,7 +245,7 @@ impl CommitmentScheme for DoryScheme {
         let (row_commitments, commit_blind) = match hint {
             Some(h) => h.into_ark_parts(),
             None => (
-                compute_row_commitments(poly, setup),
+                compute_row_commitments(poly, setup)?,
                 <ArkFr as DoryField>::zero(),
             ),
         };
@@ -214,7 +258,7 @@ impl CommitmentScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, _blind) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, Transparent>(
                 &adapter,
                 &ark_point,
                 row_commitments,
@@ -252,7 +296,7 @@ impl CommitmentScheme for DoryScheme {
             return Err(OpeningsError::VerificationFailed);
         }
 
-        dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             ark_eval,
             &ark_point,
@@ -324,7 +368,7 @@ impl ZkOpeningScheme for DoryScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Ok(Self::commit_with_mode::<P, dory::ZK>(poly, setup))
+        Self::commit_with_mode::<P, dory::ZK>(poly, setup)
     }
 
     #[expect(
@@ -350,7 +394,7 @@ impl ZkOpeningScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, y_blinding) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, dory::mode::ZK>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, ZK>(
                 &adapter,
                 &ark_point,
                 row_commitments,
@@ -393,7 +437,7 @@ impl ZkOpeningScheme for DoryScheme {
             .map(ark_to_jolt_g1)
             .ok_or(OpeningsError::VerificationFailed)?;
 
-        dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             dummy_eval,
             &ark_point,
@@ -414,7 +458,7 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
     setup: &ArkworksProverSetup,
 ) -> Vec<ArkG1> {
     let num_cols = 1usize << sigma;
-    let g1_bases = &setup.g1_vec[..num_cols];
+    let g1_bases = srs_prefix(&setup.g1_vec, num_cols);
 
     let mut rows: Vec<Vec<Fr>> = Vec::new();
     poly.for_each_row(sigma, &mut |_, row| rows.push(row.to_vec()));
@@ -422,7 +466,7 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
     rows.par_iter()
         .map(|row| {
             let scalars: Vec<ArkFr> = row.iter().map(jolt_fr_to_ark).collect();
-            G1Routines::msm(&g1_bases[..scalars.len()], &scalars)
+            JoltG1Routines::msm(srs_prefix(g1_bases, scalars.len()), &scalars)
         })
         .collect()
 }
@@ -434,7 +478,7 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
     num_cols: usize,
     setup: &ArkworksProverSetup,
 ) -> Vec<ArkG1> {
-    let g1_bases = &setup.g1_vec[..num_cols];
+    let g1_bases = srs_prefix(&setup.g1_vec, num_cols);
 
     let mut cols_per_row: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
     poly.for_each_one(&mut |flat_idx| {
@@ -444,6 +488,10 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
             row < num_rows && col < num_cols,
             "for_each_one out-of-bounds flat_idx: row={row} num_rows={num_rows} col={col} num_cols={num_cols}",
         );
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "for_each_one yields flat_idx < num_rows * num_cols, so row = flat_idx / num_cols < num_rows"
+        )]
         cols_per_row[row].push(col);
     });
 
@@ -452,7 +500,12 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
         .map(|cols| {
             cols.iter()
                 .fold(<InnerBN254 as PairingCurve>::G1::identity(), |acc, &col| {
-                    <InnerBN254 as PairingCurve>::G1::add(&acc, &g1_bases[col])
+                    #[expect(
+                        clippy::indexing_slicing,
+                        reason = "col = flat_idx % num_cols and g1_bases has exactly num_cols bases"
+                    )]
+                    let base = &g1_bases[col];
+                    <InnerBN254 as PairingCurve>::G1::add(&acc, base)
                 })
         })
         .collect()
@@ -461,24 +514,37 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
 fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     setup: &DoryProverSetup,
-) -> Vec<ArkG1> {
+) -> Result<Vec<ArkG1>, OpeningsError> {
     let num_vars = poly.num_vars();
     let sigma = num_vars.div_ceil(2);
+    let max_cols = setup.0.g1_vec.len();
+    let max_rows = setup.0.g2_vec.len();
+    // An oversized polynomial must surface as the commit API's Err, not as an
+    // out-of-bounds slice panic on the SRS below.
+    let fits = sigma < usize::BITS as usize
+        && (1usize << sigma) <= max_cols
+        && (1usize << (num_vars - sigma)) <= max_rows;
+    if !fits {
+        return Err(OpeningsError::PolynomialTooLarge {
+            poly_size: num_vars,
+            setup_max: max_cols.ilog2() as usize + max_rows.ilog2() as usize,
+        });
+    }
     let num_cols = 1usize << sigma;
     let num_rows = 1usize << (num_vars - sigma);
 
-    if poly.is_one_hot() {
+    Ok(if poly.is_one_hot() {
         commit_rows_one_hot(poly, num_rows, num_cols, &setup.0)
     } else {
         commit_rows_dense(poly, sigma, &setup.0)
-    }
+    })
 }
 
 pub(crate) fn commit_rows_tier_2<M: Mode>(
     row_commitments: &[ArkG1],
     setup: &DoryProverSetup,
 ) -> (ArkGT, ArkFr) {
-    let g2_bases = &setup.0.g2_vec[..row_commitments.len()];
+    let g2_bases = srs_prefix(&setup.0.g2_vec, row_commitments.len());
     let tier_2 = <InnerBN254 as PairingCurve>::multi_pair_g2_setup(row_commitments, g2_bases);
     let commit_blind = M::sample::<ArkFr>();
     let tier_2 = M::mask(tier_2, &setup.0.ht, &commit_blind);
@@ -557,7 +623,7 @@ mod tests {
 
     use super::*;
     use jolt_crypto::{Pedersen, VectorCommitment};
-    use jolt_field::{FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Ring};
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -572,7 +638,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -602,6 +668,19 @@ mod tests {
     }
 
     #[test]
+    fn commit_rejects_polynomial_exceeding_setup_capacity() {
+        let mut rng = ChaCha20Rng::seed_from_u64(700);
+        let prover_setup = DoryScheme::setup_prover(2);
+        // 6-variable poly: 8 columns > the 2-var setup's SRS width.
+        let poly = Polynomial::<Fr>::random(6, &mut rng);
+        let err = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap_err();
+        assert!(
+            matches!(err, OpeningsError::PolynomialTooLarge { .. }),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn combine_commitments_homomorphic() {
         let num_vars = 2;
         let mut rng = ChaCha20Rng::seed_from_u64(300);
@@ -624,10 +703,7 @@ mod tests {
 
         let combined = DoryScheme::combine(
             &[commit_a, commit_b],
-            &[
-                <Fr as FromPrimitiveInt>::from_u64(1),
-                <Fr as FromPrimitiveInt>::from_u64(1),
-            ],
+            &[<Fr as Ring>::from_u64(1), <Fr as Ring>::from_u64(1)],
         );
 
         assert_eq!(
@@ -646,7 +722,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -689,11 +765,11 @@ mod tests {
         );
 
         let values = vec![
-            <Fr as FromPrimitiveInt>::from_u64(1),
-            <Fr as FromPrimitiveInt>::from_u64(2),
-            <Fr as FromPrimitiveInt>::from_u64(3),
+            <Fr as Ring>::from_u64(1),
+            <Fr as Ring>::from_u64(2),
+            <Fr as Ring>::from_u64(3),
         ];
-        let blinding = <Fr as FromPrimitiveInt>::from_u64(42);
+        let blinding = <Fr as Ring>::from_u64(42);
         let commitment =
             <Pedersen<Bn254G1> as VectorCommitment>::commit(&vc_setup, &values, &blinding);
         assert!(<Pedersen<Bn254G1> as VectorCommitment>::verify(

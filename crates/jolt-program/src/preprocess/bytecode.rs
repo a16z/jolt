@@ -100,9 +100,13 @@ pub struct BytecodePCMapper {
 
 impl BytecodePCMapper {
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
-        let mut indices = vec![Vec::new(); Self::index_count(bytecode)?];
         let mut last_pc = 0;
-        indices[0].push((0, last_pc));
+        // One allocation at the final size; the no-op sentinel lives in the
+        // first bucket (`index_count` is always >= 1).
+        let mut indices = vec![Vec::new(); Self::index_count(bytecode)?];
+        if let Some(first) = indices.first_mut() {
+            first.push((0, last_pc));
+        }
 
         for instruction in bytecode {
             if instruction.address == 0 {
@@ -111,7 +115,11 @@ impl BytecodePCMapper {
 
             last_pc += 1;
             let bytecode_index = Self::try_get_index(instruction.address)?;
-            indices[bytecode_index]
+            indices
+                .get_mut(bytecode_index)
+                .ok_or(PreprocessingError::InvalidBytecodeAddress(
+                    instruction.address,
+                ))?
                 .push((instruction.virtual_sequence_remaining.unwrap_or(0), last_pc));
         }
 
@@ -166,10 +174,9 @@ impl BytecodePCMapper {
         bytecode_index: usize,
         entries: &[(u16, usize)],
     ) -> Result<(), PreprocessingError> {
-        for window in entries.windows(2) {
-            let [(previous_sequence, _), (new_sequence, _)] = window else {
-                unreachable!("windows(2) always yields two entries");
-            };
+        for ((previous_sequence, _), (new_sequence, _)) in
+            entries.iter().zip(entries.iter().skip(1))
+        {
             let Some(expected_sequence) = previous_sequence.checked_sub(1) else {
                 return Err(PreprocessingError::InvalidInlineSequence {
                     bytecode_index,
@@ -246,6 +253,7 @@ const fn noop_instruction() -> JoltInstructionRow {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
@@ -341,6 +349,25 @@ mod tests {
 
         let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
         assert_eq!(err, PreprocessingError::InvalidBytecodeAddress(0x7fff_fffc));
+    }
+
+    /// Every `NoOp` lands on bytecode slot 0 regardless of its address, and
+    /// an instruction with no mapping fails materialization outright. Together
+    /// those make the witness layer's `BytecodePc` total — one column for both
+    /// the read-RAF pushforward and the committed one-hot.
+    #[test]
+    fn noop_maps_to_bytecode_slot_zero() {
+        let bytecode = vec![instruction(0x8000_0000, None)];
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT).unwrap();
+
+        let mut noop = instruction(0x8000_0004, None);
+        noop.instruction_kind = JoltInstructionKind::NoOp;
+        assert_eq!(preprocessing.get_pc(&noop), Some(0));
+
+        // Not merely because the address is unmapped: the same address as a
+        // non-no-op has no slot at all.
+        assert_eq!(preprocessing.get_pc(&instruction(0x8000_0004, None)), None);
     }
 
     fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltInstructionRow {

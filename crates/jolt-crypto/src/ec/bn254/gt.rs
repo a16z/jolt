@@ -3,7 +3,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -170,15 +170,20 @@ impl JoltGroup for Bn254GT {
     }
 
     #[inline]
-    fn scalar_mul<F: Field>(&self, scalar: &F) -> Self {
+    fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
         // GT exponentiation: self^scalar (written additively as scalar * self).
         let fr = field_to_fr(scalar);
         Self(self.0.pow(fr.into_bigint()))
     }
 
     #[inline]
-    fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self {
-        debug_assert_eq!(bases.len(), scalars.len());
+    fn msm<F: JoltField>(bases: &[Self], scalars: &[F]) -> Self {
+        // zip would silently truncate to the shorter slice.
+        assert_eq!(
+            bases.len(),
+            scalars.len(),
+            "msm: bases/scalars length mismatch"
+        );
         // GT "MSM" is Π bases[i]^scalars[i] (written additively as Σ scalars[i] * bases[i]).
         let mut acc = Fq12::ONE;
         for (base, scalar) in bases.iter().zip(scalars.iter()) {
@@ -202,8 +207,17 @@ impl serde::Serialize for Bn254GT {
 
 impl<'de> serde::Deserialize<'de> for Bn254GT {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use ark_serialize::CanonicalDeserialize;
+        use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
         let buf = <Vec<u8>>::deserialize(deserializer)?;
+        // Exact-size gate: rejects oversized/truncated payloads before any
+        // field parsing and makes the encoding canonical (no trailing bytes).
+        let expected_len = Fq12::ONE.compressed_size();
+        if buf.len() != expected_len {
+            return Err(serde::de::Error::custom(format!(
+                "GT element encoding must be exactly {expected_len} bytes, got {}",
+                buf.len()
+            )));
+        }
         let inner = Fq12::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)?;
         // Reject Fq12::ZERO: not in any multiplicative subgroup, and later
         // Neg/Sub/SubAssign would call .inverse().expect(...) and panic.
@@ -212,12 +226,93 @@ impl<'de> serde::Deserialize<'de> for Bn254GT {
                 "GT element is zero (not in r-torsion subgroup)",
             ));
         }
+        // Unitarity pre-filter: GT ⊂ the norm-1 (unitary) subgroup of Fq12
+        // over Fq6, i.e. x^(q^6+1) = conj(x)·x = 1. A non-GT Fq12 element is
+        // unitary with probability ~q^-6, so one conjugation + multiplication
+        // rejects virtually all malformed input before the 254-bit
+        // exponentiation below (which would otherwise be attacker-triggerable
+        // per element).
+        let mut conj = inner;
+        let _ = conj.conjugate_in_place();
+        if conj * inner != Fq12::ONE {
+            return Err(serde::de::Error::custom(
+                "GT element is not unitary (not in the r-torsion subgroup)",
+            ));
+        }
         // Subgroup membership: GT is the r-torsion subgroup, so x^r == 1.
+        // Unitarity is necessary but not sufficient; this check is exact.
         if inner.pow(Fr::MODULUS) != Fq12::ONE {
             return Err(serde::de::Error::custom(
                 "GT element is not in the r-torsion subgroup",
             ));
         }
         Ok(Self(inner))
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests may fail loudly")]
+mod tests {
+    use super::*;
+    use crate::PairingGroup;
+    use ark_serialize::CanonicalSerialize;
+    use ark_std::UniformRand;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    fn encode_as_json(fq12: &Fq12) -> String {
+        let mut buf = Vec::new();
+        fq12.serialize_compressed(&mut buf).unwrap();
+        serde_json::to_string(&buf).unwrap()
+    }
+
+    #[test]
+    fn deserialize_accepts_pairing_output() {
+        let gt =
+            crate::Bn254::pairing(&crate::Bn254::g1_generator(), &crate::Bn254::g2_generator());
+        let recovered: Bn254GT = serde_json::from_str(&encode_as_json(&gt.0)).unwrap();
+        assert_eq!(recovered, gt);
+    }
+
+    #[test]
+    fn deserialize_rejects_zero() {
+        let err = serde_json::from_str::<Bn254GT>(&encode_as_json(&Fq12::ZERO)).unwrap_err();
+        assert!(err.to_string().contains("zero"), "{err}");
+    }
+
+    #[test]
+    fn deserialize_rejects_non_unitary_element() {
+        let mut rng = ChaCha20Rng::seed_from_u64(7);
+        // A random Fq12 element is unitary with probability ~q^-6.
+        let z = Fq12::rand(&mut rng);
+        let err = serde_json::from_str::<Bn254GT>(&encode_as_json(&z)).unwrap_err();
+        assert!(err.to_string().contains("not unitary"), "{err}");
+    }
+
+    #[test]
+    fn deserialize_rejects_unitary_non_r_torsion_element() {
+        let mut rng = ChaCha20Rng::seed_from_u64(8);
+        // u = z^(q^6-1) = conj(z)/z is unitary by construction but lies in the
+        // full norm-1 subgroup (order q^6+1), outside GT w.o.p. This must pass
+        // the unitarity pre-filter and be caught by the exact x^r check.
+        let z = Fq12::rand(&mut rng);
+        let mut conj = z;
+        let _ = conj.conjugate_in_place();
+        let u = conj * z.inverse().unwrap();
+        assert_ne!(u.pow(Fr::MODULUS), Fq12::ONE, "unlucky sample landed in GT");
+        let err = serde_json::from_str::<Bn254GT>(&encode_as_json(&u)).unwrap_err();
+        assert!(err.to_string().contains("r-torsion"), "{err}");
+    }
+
+    #[test]
+    fn deserialize_rejects_wrong_length_encoding() {
+        let gt =
+            crate::Bn254::pairing(&crate::Bn254::g1_generator(), &crate::Bn254::g2_generator());
+        let mut buf = Vec::new();
+        gt.0.serialize_compressed(&mut buf).unwrap();
+        buf.push(0);
+        let json = serde_json::to_string(&buf).unwrap();
+        let err = serde_json::from_str::<Bn254GT>(&json).unwrap_err();
+        assert!(err.to_string().contains("exactly"), "{err}");
     }
 }

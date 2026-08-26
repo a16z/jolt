@@ -2,8 +2,10 @@ use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
 
-/// `P_s = 2^(8·(y mod 8 & (8−EIGHTHS)))` over the suffix bits of the second
-/// operand (1 once the offset bits have been bound).
+/// `P_s = 2^((XLEN/8)·(y mod 8 & (8−EIGHTHS)))` over the suffix bits of the
+/// second operand. The suffix owns index bits [0, b.len()); with a boundary
+/// inside the low offset bits this is the partial factor for the offset bits
+/// it owns, and the OffsetScale/ShiftData prefixes supply the rest.
 pub enum OffsetScaleSuffix<const EIGHTHS: usize> {}
 
 impl SparseDenseSuffix for OffsetScaleSuffix<1> {
@@ -25,13 +27,14 @@ impl SparseDenseSuffix for OffsetScaleSuffix<4> {
 }
 
 fn offset_scale_suffix(b: LookupBits, eighths: u64) -> u64 {
-    // WARNING: assumes suffix windows are empty or at least 6 bits (the
-    // offset bits of y sit at interleaved index bits 0/2/4); the ShiftData
-    // and OffsetScale prefixes assert the matching phase-cut invariant.
-    if b.len() < 6 {
-        return 1;
+    let bits: u128 = b.into();
+    let mask = 8 - eighths;
+    let mut shift = 0u64;
+    // Offset bit y_i sits at even index position 2i.
+    for i in 0..3 {
+        if (mask >> i) & 1 == 1 && 2 * i < b.len() && (bits >> (2 * i)) & 1 == 1 {
+            shift += ((XLEN / 8) << i) as u64;
+        }
     }
-    let (_, yb) = b.uninterleave();
-    let offset = u64::from(yb) & (8 - eighths);
-    1 << ((XLEN / 8) as u64 * offset)
+    1 << shift
 }

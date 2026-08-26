@@ -1,16 +1,16 @@
 //! The Akita final opening.
 //!
-//! `OneHotTrace` is one native group of uniform one-hot columns, all opened
-//! directly at one canonical point. Optional advice and committed-program
-//! objects have distinct domains and are discharged separately through
-//! [`jolt_openings::verify_packed_openings`].
+//! `OneHotTrace` prefix-packs its uniform semantic columns into one physical
+//! polynomial. Optional advice and committed-program objects use the same
+//! fixed-prefix reduction and are opened independently at their own points.
 
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::lattice::geometry::word_byte_num_vars;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_bytes_packing, precommitted_packing, OneHotTraceShape, PrecommittedPackingShape,
+    advice_bytes_packing_plan, precommitted_packing_plan, OneHotTraceShape,
+    PrecommittedPackingShape, PrefixPackedObjectPlan,
 };
 use jolt_claims::protocols::jolt::lattice::strategy::{
     OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
@@ -18,11 +18,8 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
 use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltPolynomialId,
 };
-use jolt_field::{Field, FixedByteSize};
-use jolt_openings::{
-    verify_packed_openings, CommitmentScheme, EvaluationClaim, PackedObjectGroup,
-    PackedVerifierObject, PrefixPackedStatement, PrefixPacking,
-};
+use jolt_field::{CanonicalBytes, JoltField};
+use jolt_openings::{CommitmentScheme, EvaluationClaim};
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -47,8 +44,8 @@ fn validate_one_hot_trace_metadata<C, S>(
     commitment: &C,
     setup: &S,
     canonical_digest: [u8; 32],
-    column_arity: usize,
-    column_count: usize,
+    packed_arity: usize,
+    physical_poly_count: usize,
     one_hot_k: usize,
 ) -> Result<(), VerifierError>
 where
@@ -70,21 +67,56 @@ where
             "OneHotTrace commitment has a noncanonical layout digest",
         ));
     }
-    if commitment.num_vars() != column_arity || setup.max_num_vars() != column_arity {
+    if commitment.num_vars() != packed_arity || setup.max_num_vars() != packed_arity {
         return Err(batch_failed(format!(
-            "OneHotTrace commitment/setup arity must equal canonical arity {column_arity}"
+            "OneHotTrace commitment/setup arity must equal canonical packed arity {packed_arity}"
         )));
     }
-    if commitment.poly_count() != column_count
-        || setup.max_num_polys_per_commitment_group() != column_count
+    if commitment.poly_count() != physical_poly_count
+        || setup.max_num_polys_per_commitment_group() != physical_poly_count
     {
         return Err(batch_failed(format!(
-            "OneHotTrace commitment/setup column count must equal canonical count {column_count}"
+            "OneHotTrace commitment/setup physical polynomial count must equal {physical_poly_count}"
         )));
     }
     if setup.default_layout_digest() != canonical_digest {
         return Err(batch_failed(
             "OneHotTrace verifier setup has a noncanonical layout digest",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_auxiliary_metadata<C, S>(
+    commitment: &C,
+    setup: &S,
+    plan: &PrefixPackedObjectPlan,
+) -> Result<(), VerifierError>
+where
+    C: OneHotTraceCommitmentMetadata,
+    S: OneHotTraceSetupMetadata,
+{
+    if commitment.is_one_hot_backend() {
+        return Err(batch_failed(
+            "auxiliary prefix-packed commitments must use Akita's dense backend",
+        ));
+    }
+    let packed_num_vars = plan.packing().packed_num_vars();
+    if commitment.layout_digest() != plan.layout_digest()
+        || setup.default_layout_digest() != plan.layout_digest()
+    {
+        return Err(batch_failed(
+            "auxiliary commitment/setup has a noncanonical layout digest",
+        ));
+    }
+    if commitment.num_vars() != packed_num_vars || setup.max_num_vars() != packed_num_vars {
+        return Err(batch_failed(format!(
+            "auxiliary commitment/setup arity must equal canonical packed arity {packed_num_vars}"
+        )));
+    }
+    if commitment.poly_count() != 1 || setup.max_num_polys_per_commitment_group() != 1 {
+        return Err(batch_failed(
+            "auxiliary prefix-packed objects must contain one physical polynomial",
         ));
     }
     Ok(())
@@ -104,11 +136,11 @@ fn leaf_word_vars(cell_vars: usize) -> Result<usize, VerifierError> {
 
 /// One resolved commitment object: its canonical packing plus the borrowed
 /// commitment and shape-exact setup the final PCS opening runs against.
-type ResolvedObject<'a, PCS> = (
-    PrefixPacking<JoltCommittedPolynomial>,
-    &'a <PCS as jolt_crypto::Commitment>::Output,
-    &'a <PCS as CommitmentScheme>::VerifierSetup,
-);
+struct ResolvedObject<'a, PCS: CommitmentScheme> {
+    plan: PrefixPackedObjectPlan,
+    commitment: &'a PCS::Output,
+    setup: &'a PCS::VerifierSetup,
+}
 
 /// Resolve one advice object's packing/commitment/setup triple, or `None`
 /// when the kind is absent; a commitment without a reconstruction leaf, or a
@@ -132,9 +164,13 @@ fn advice_object<'a, PCS: CommitmentScheme>(
             "{kind:?} advice object without a commitment or setup"
         )));
     };
-    let packing =
-        advice_bytes_packing(kind, leaf_word_vars(leaf_point.len())?).map_err(batch_failed)?;
-    Ok(Some((packing, commitment, setup)))
+    let plan =
+        advice_bytes_packing_plan(kind, leaf_word_vars(leaf_point.len())?).map_err(batch_failed)?;
+    Ok(Some(ResolvedObject {
+        plan,
+        commitment,
+        setup,
+    }))
 }
 
 #[expect(
@@ -148,7 +184,7 @@ pub fn verify<PCS, VC, T>(
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    proof: &crate::proof::AkitaJointOpeningProof<PCS::Field, PCS::Proof>,
+    proof: &crate::proof::AkitaJointOpeningProof<PCS::Proof>,
     transcript: &mut T,
     stage7: &Stage7ClearOutput<PCS::Field>,
     reconstruction: &ReconstructionClearOutput<PCS::Field>,
@@ -161,7 +197,7 @@ where
     T: Transcript<Challenge = PCS::Field>,
 {
     // Per-object packings, commitments, and setups in canonical object order:
-    // `OneHotTrace` is one native group of uniform one-hot columns, followed
+    // `OneHotTrace` is one prefix-packed polynomial, followed
     // by the optional auxiliary commitment objects. The shared layout is the
     // same one the prover committed under.
     // Optional objects join exactly when their reconstruction outputs exist;
@@ -175,25 +211,159 @@ where
     let plan = ONE_HOT_TRACE_LAYOUT
         .plan(&one_hot_trace_shape)
         .map_err(batch_failed)?;
-    let canonical_digest = ONE_HOT_TRACE_LAYOUT
-        .layout_digest(&one_hot_trace_shape)
-        .map_err(batch_failed)?;
-    let OneHotTraceLayoutPlan {
-        columns,
-        column_arity,
-    } = &plan;
     validate_one_hot_trace_metadata(
         one_hot_trace_commitment,
         &preprocessing.pcs_setup,
-        canonical_digest,
-        *column_arity,
-        columns.len(),
+        plan.layout_digest(),
+        plan.packing().packed_num_vars(),
+        1,
         1 << chunk_width,
     )?;
     let leaves = leaf_claims(stage7, reconstruction);
-    let mut common_point: Option<Vec<PCS::Field>> = None;
-    let mut evaluations = Vec::with_capacity(columns.len());
-    for polynomial in columns {
+    let packed_claims = one_hot_trace_packed_claims(&plan, chunk_width, &leaves)?;
+    let packed_claim = plan
+        .packing()
+        .reduce_claims(&packed_claims, transcript)
+        .map_err(batch_failed)?;
+    PCS::verify_batch(
+        one_hot_trace_commitment,
+        packed_claim.point.as_slice(),
+        std::slice::from_ref(&packed_claim.value),
+        &proof.one_hot_trace,
+        &preprocessing.pcs_setup,
+        transcript,
+    )
+    .map_err(opening_failed)?;
+
+    let mut objects = Vec::new();
+
+    if let Some(object) = advice_object::<PCS>(
+        reconstruction
+            .output_points
+            .untrusted_advice
+            .as_ref()
+            .map(|points| &points.bytes),
+        untrusted_advice_commitment,
+        preprocessing.untrusted_advice_setup.as_ref(),
+        JoltAdviceKind::Untrusted,
+    )? {
+        objects.push(object);
+    }
+    if let Some(object) = advice_object::<PCS>(
+        reconstruction
+            .output_points
+            .trusted_advice
+            .as_ref()
+            .map(|points| &points.bytes),
+        trusted_advice_commitment,
+        preprocessing.trusted_advice_setup.as_ref(),
+        JoltAdviceKind::Trusted,
+    )? {
+        objects.push(object);
+    }
+    match (
+        reconstruction.output_points.bytecode.as_ref(),
+        preprocessing.program.committed(),
+    ) {
+        (Some(bytecode_points), Some(committed)) => {
+            // The `ProgramOneHot` shape is claim-derived: the packing must match the
+            // committed witness or its PCS opening fails, so the lane/image
+            // point arities are an honest source for the row/word counts.
+            let log_bytecode_rows = bytecode_points
+                .pc_bytes
+                .first()
+                .map(|point| leaf_word_vars(point.len()))
+                .transpose()?
+                .ok_or_else(|| batch_failed("program reconstruction has no pc lanes"))?;
+            let program_image_log_words = reconstruction
+                .output_points
+                .program_image
+                .as_ref()
+                .map(|points| leaf_word_vars(points.bytes.len()))
+                .transpose()?;
+            let plan = precommitted_packing_plan(&PrecommittedPackingShape {
+                bytecode_chunks: committed.bytecode_chunk_count(),
+                log_bytecode_rows,
+                imm_byte_width: <PCS::Field as CanonicalBytes>::NUM_BYTES,
+                program_image_log_words,
+            })
+            .map_err(batch_failed)?;
+            let plans = plan.objects().cloned().collect::<Vec<_>>();
+            if committed.program_one_hot_commitments.len() != plans.len()
+                || preprocessing.program_one_hot_setups.len() != plans.len()
+            {
+                return Err(batch_failed(format!(
+                    "committed-program prefix objects require {} commitments and setups",
+                    plans.len()
+                )));
+            }
+            objects.extend(
+                plans
+                    .into_iter()
+                    .zip(&committed.program_one_hot_commitments)
+                    .zip(&preprocessing.program_one_hot_setups)
+                    .map(|((plan, commitment), setup)| ResolvedObject {
+                        plan,
+                        commitment,
+                        setup,
+                    }),
+            );
+        }
+        (None, None) => {}
+        (Some(_), None) => {
+            return Err(batch_failed(
+                "program reconstruction leaves without a ProgramOneHot commitment",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(batch_failed(
+                "ProgramOneHot commitment supplied without program reconstruction leaves",
+            ));
+        }
+    }
+
+    if proof.auxiliary.len() != objects.len() {
+        return Err(batch_failed(format!(
+            "expected {} auxiliary prefix-packed opening proofs, got {}",
+            objects.len(),
+            proof.auxiliary.len()
+        )));
+    }
+
+    for (object, auxiliary_proof) in objects.into_iter().zip(&proof.auxiliary) {
+        validate_auxiliary_metadata(object.commitment, object.setup, &object.plan)?;
+        let claims = object_leaf_claims(&object.plan, &leaves)?;
+        let semantic_claims = object.plan.packed_claims(&claims).map_err(batch_failed)?;
+        let physical_claim = object
+            .plan
+            .packing()
+            .reduce_claims(&semantic_claims, transcript)
+            .map_err(batch_failed)?;
+        PCS::verify_batch(
+            object.commitment,
+            physical_claim.point.as_slice(),
+            std::slice::from_ref(&physical_claim.value),
+            auxiliary_proof,
+            object.setup,
+            transcript,
+        )
+        .map_err(opening_failed)?;
+    }
+    Ok(())
+}
+
+/// Assembles the `OneHotTrace` prefix-packed claims: every canonical
+/// column's leaf claim, its point mapped to the committed row-major order,
+/// all required to share one canonical opening point. Shared verbatim by the
+/// packed prover's stage 8, so both sides derive the same packed statement.
+pub fn one_hot_trace_packed_claims<F: JoltField>(
+    plan: &OneHotTraceLayoutPlan,
+    chunk_width: usize,
+    leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+) -> Result<jolt_openings::PrefixPackedClaims<F>, VerifierError> {
+    let mut common_point: Option<Vec<F>> = None;
+    let mut evaluations = Vec::with_capacity(plan.packing().ids().len());
+    for polynomial in plan.packing().ids() {
         let claim = leaves.get(polynomial).ok_or_else(|| {
             batch_failed(format!(
                 "missing final OneHotTrace claim for {polynomial:?}"
@@ -214,173 +384,47 @@ where
         evaluations.push(claim.value);
     }
     let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
-    PCS::verify_batch(
-        one_hot_trace_commitment,
-        &common_point,
-        &evaluations,
-        &proof.one_hot_trace,
-        &preprocessing.pcs_setup,
-        transcript,
-    )
-    .map_err(opening_failed)?;
-
-    let mut packings = Vec::new();
-    let mut commitments = Vec::new();
-    let mut setups = Vec::new();
-    let mut groups = Vec::new();
-
-    if let Some((packing, commitment, setup)) = advice_object::<PCS>(
-        reconstruction
-            .output_points
-            .untrusted_advice
-            .as_ref()
-            .map(|points| &points.bytes),
-        untrusted_advice_commitment,
-        preprocessing.untrusted_advice_setup.as_ref(),
-        JoltAdviceKind::Untrusted,
-    )? {
-        groups.push(PackedObjectGroup::singleton(packings.len()));
-        packings.push(packing);
-        commitments.push(commitment);
-        setups.push(setup);
-    }
-    if let Some((packing, commitment, setup)) = advice_object::<PCS>(
-        reconstruction
-            .output_points
-            .trusted_advice
-            .as_ref()
-            .map(|points| &points.bytes),
-        trusted_advice_commitment,
-        preprocessing.trusted_advice_setup.as_ref(),
-        JoltAdviceKind::Trusted,
-    )? {
-        groups.push(PackedObjectGroup::singleton(packings.len()));
-        packings.push(packing);
-        commitments.push(commitment);
-        setups.push(setup);
-    }
-    match (
-        reconstruction.output_points.bytecode.as_ref(),
-        preprocessing.program.committed(),
-    ) {
-        (Some(bytecode_points), Some(committed)) => {
-            let setup = preprocessing
-                .program_one_hot_setup
-                .as_ref()
-                .ok_or_else(|| {
-                    batch_failed(
-                        "committed-program object without a verifier setup in preprocessing",
-                    )
-                })?;
-            // The `ProgramOneHot` shape is claim-derived: the packing must match the
-            // committed witness or its PCS opening fails, so the lane/image
-            // point arities are an honest source for the row/word counts.
-            let log_bytecode_rows = bytecode_points
-                .pc_bytes
-                .first()
-                .map(|point| leaf_word_vars(point.len()))
-                .transpose()?
-                .ok_or_else(|| batch_failed("program reconstruction has no pc lanes"))?;
-            let program_image_log_words = reconstruction
-                .output_points
-                .program_image
-                .as_ref()
-                .map(|points| leaf_word_vars(points.bytes.len()))
-                .transpose()?;
-            groups.push(PackedObjectGroup::singleton(packings.len()));
-            packings.push(
-                precommitted_packing(&PrecommittedPackingShape {
-                    bytecode_chunks: committed.bytecode_chunk_count(),
-                    log_bytecode_rows,
-                    imm_byte_width: <PCS::Field as FixedByteSize>::NUM_BYTES,
-                    program_image_log_words,
-                })
-                .map_err(batch_failed)?,
-            );
-            commitments.push(&committed.program_one_hot_commitment);
-            setups.push(setup);
-        }
-        (None, None) => {}
-        (Some(_), None) => {
-            return Err(batch_failed(
-                "program reconstruction leaves without a ProgramOneHot commitment",
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(batch_failed(
-                "ProgramOneHot commitment supplied without program reconstruction leaves",
-            ));
-        }
-    }
-
-    // Auxiliary objects retain their own logical leaf points and packings.
-    let statements = packings
-        .iter()
-        .zip(&commitments)
-        .map(|(packing, commitment)| object_statement(packing, (*commitment).clone(), &leaves))
-        .collect::<Result<Vec<_>, _>>()?;
-    let objects: Vec<PackedVerifierObject<'_, PCS, JoltCommittedPolynomial>> = packings
-        .iter()
-        .zip(&statements)
-        .zip(setups)
-        .map(|((packing, statement), setup)| PackedVerifierObject {
-            packing,
-            statement,
-            setup,
-        })
-        .collect();
-
-    match (&proof.auxiliary, objects.is_empty()) {
-        (None, true) => Ok(()),
-        (Some(auxiliary), false) => {
-            verify_packed_openings(&objects, &groups, auxiliary, transcript).map_err(opening_failed)
-        }
-        (None, false) => Err(batch_failed("missing auxiliary packed opening proof")),
-        (Some(_), true) => Err(batch_failed("unexpected auxiliary packed opening proof")),
-    }
+    Ok(plan.packed_claims(common_point, evaluations))
 }
 
-/// Assembles one object's statement: each of its packing's canonical columns
-/// paired with that column's leaf claim.
-fn object_statement<F, C>(
-    packing: &PrefixPacking<JoltCommittedPolynomial>,
-    commitment: C,
+/// One auxiliary object's leaf claims: each of the plan's canonical columns
+/// paired with its resolved leaf claim. Shared verbatim by the packed
+/// prover's stage 8, so both sides fail on the same missing leaf.
+pub fn object_leaf_claims<F: JoltField>(
+    plan: &PrefixPackedObjectPlan,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
-) -> Result<PrefixPackedStatement<F, JoltCommittedPolynomial, C>, VerifierError>
-where
-    F: Field,
-{
-    let claims = packing
+) -> Result<BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>, VerifierError> {
+    plan.packing()
+        .ids()
         .iter()
-        .map(|(polynomial, _slot)| {
+        .map(|id| {
             leaves
-                .get(polynomial)
+                .get(id)
                 .cloned()
-                .map(|claim| (*polynomial, claim))
+                .map(|claim| (*id, claim))
                 .ok_or_else(|| {
                     batch_failed(format!(
-                        "missing stage output claim for packed leaf {polynomial:?}"
+                        "missing final auxiliary claim for packed leaf {id:?}"
                     ))
                 })
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(PrefixPackedStatement::new(commitment, claims))
+        .collect()
 }
 
 /// Every packed column's single leaf claim, resolved from the stage-7 and
-/// reconstruction outputs and keyed by committed polynomial. Coverage against
-/// the packings is machine-checked downstream by `prepare_statement`
-/// (one-claim-per-slot, no gaps, per-slot point arity).
-fn leaf_claims<F: Field>(
+/// reconstruction outputs and keyed by committed polynomial. The canonical
+/// object plans check coverage, point arity, and suffix compatibility.
+/// Shared verbatim by the packed prover's stage 8.
+pub fn leaf_claims<F: JoltField>(
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
 ) -> BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>> {
     use JoltCommittedPolynomial as Poly;
 
-    fn leaf<F: Field>(value: F, point: &[F]) -> EvaluationClaim<F> {
+    fn leaf<F: JoltField>(value: F, point: &[F]) -> EvaluationClaim<F> {
         EvaluationClaim::new(Point::high_to_low(point.to_vec()), value)
     }
-    fn insert<F: Field>(
+    fn insert<F: JoltField>(
         leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
         polynomial: JoltCommittedPolynomial,
         claim: EvaluationClaim<F>,
@@ -388,7 +432,7 @@ fn leaf_claims<F: Field>(
         // Keys are distinct by construction, so no entry is ever displaced.
         let _previous = BTreeMap::insert(leaves, polynomial, claim);
     }
-    fn insert_indexed<F: Field>(
+    fn insert_indexed<F: JoltField>(
         leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
         values: &[F],
         points: &[Vec<F>],
@@ -423,16 +467,16 @@ fn leaf_claims<F: Field>(
 
     insert_indexed(
         &mut leaves,
-        &hamming_values.unsigned_inc_chunks,
-        &hamming_points.unsigned_inc_chunks,
-        Poly::UnsignedIncChunk,
+        &hamming_values.balanced_inc_digits,
+        &hamming_points.balanced_inc_digits,
+        Poly::BalancedIncDigit,
     );
     insert(
         &mut leaves,
-        Poly::UnsignedIncMsb,
+        Poly::BalancedIncCarry,
         leaf(
-            hamming_values.unsigned_inc_msb,
-            &hamming_points.unsigned_inc_msb,
+            hamming_values.balanced_inc_carry,
+            &hamming_points.balanced_inc_carry,
         ),
     );
 
@@ -499,6 +543,11 @@ fn leaf_claims<F: Field>(
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
@@ -512,9 +561,9 @@ mod tests {
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::BytecodeChunkReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::ProgramImageReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::BytecodeRegisterLane;
-    use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::math::Math;
+    use jolt_field::{Fr, Ring};
     use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+    use jolt_utils::Math;
 
     use super::super::reconstruction::{ReconstructionOutputClaims, ReconstructionOutputPoints};
     use crate::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;
@@ -595,17 +644,17 @@ mod tests {
         let commitment = CommitmentMetadata {
             one_hot: true,
             digest,
-            num_vars: 12,
-            poly_count: 17,
+            num_vars: 18,
+            poly_count: 1,
             one_hot_k: 256,
         };
         let setup = SetupMetadata {
             digest,
-            num_vars: 12,
-            poly_count: 17,
+            num_vars: 18,
+            poly_count: 1,
             one_hot_k: 256,
         };
-        assert!(validate_one_hot_trace_metadata(&commitment, &setup, digest, 12, 17, 256).is_ok());
+        assert!(validate_one_hot_trace_metadata(&commitment, &setup, digest, 18, 1, 256).is_ok());
 
         for invalid in [
             CommitmentMetadata {
@@ -617,11 +666,11 @@ mod tests {
                 ..commitment
             },
             CommitmentMetadata {
-                num_vars: 13,
+                num_vars: 19,
                 ..commitment
             },
             CommitmentMetadata {
-                poly_count: 18,
+                poly_count: 2,
                 ..commitment
             },
             CommitmentMetadata {
@@ -629,9 +678,7 @@ mod tests {
                 ..commitment
             },
         ] {
-            assert!(
-                validate_one_hot_trace_metadata(&invalid, &setup, digest, 12, 17, 256).is_err()
-            );
+            assert!(validate_one_hot_trace_metadata(&invalid, &setup, digest, 18, 1, 256).is_err());
         }
         for invalid in [
             SetupMetadata {
@@ -639,11 +686,11 @@ mod tests {
                 ..setup
             },
             SetupMetadata {
-                num_vars: 13,
+                num_vars: 19,
                 ..setup
             },
             SetupMetadata {
-                poly_count: 18,
+                poly_count: 2,
                 ..setup
             },
             SetupMetadata {
@@ -652,9 +699,66 @@ mod tests {
             },
         ] {
             assert!(
-                validate_one_hot_trace_metadata(&commitment, &invalid, digest, 12, 17, 256)
-                    .is_err()
+                validate_one_hot_trace_metadata(&commitment, &invalid, digest, 18, 1, 256).is_err()
             );
+        }
+    }
+
+    #[test]
+    fn auxiliary_metadata_is_enforced_before_pcs_verification() {
+        let plan = advice_bytes_packing_plan(JoltAdviceKind::Untrusted, 3).unwrap();
+        let digest = plan.layout_digest();
+        let num_vars = plan.packing().packed_num_vars();
+        let commitment = CommitmentMetadata {
+            one_hot: false,
+            digest,
+            num_vars,
+            poly_count: 1,
+            one_hot_k: 0,
+        };
+        let setup = SetupMetadata {
+            digest,
+            num_vars,
+            poly_count: 1,
+            one_hot_k: 0,
+        };
+        assert!(validate_auxiliary_metadata(&commitment, &setup, &plan).is_ok());
+
+        for invalid in [
+            CommitmentMetadata {
+                one_hot: true,
+                ..commitment
+            },
+            CommitmentMetadata {
+                digest: [0; 32],
+                ..commitment
+            },
+            CommitmentMetadata {
+                num_vars: num_vars + 1,
+                ..commitment
+            },
+            CommitmentMetadata {
+                poly_count: 2,
+                ..commitment
+            },
+        ] {
+            assert!(validate_auxiliary_metadata(&invalid, &setup, &plan).is_err());
+        }
+        for invalid in [
+            SetupMetadata {
+                digest: [0; 32],
+                ..setup
+            },
+            SetupMetadata {
+                num_vars: num_vars + 1,
+                ..setup
+            },
+            SetupMetadata {
+                poly_count: 2,
+                ..setup
+            },
+        ] {
+            assert!(validate_auxiliary_metadata(&commitment, &invalid, &plan).is_err());
         }
     }
 
@@ -670,15 +774,15 @@ mod tests {
                 .collect(),
             bytecode_ra: (0..layout.bytecode()).map(|i| fr(200 + i as u64)).collect(),
             ram_ra: (0..layout.ram()).map(|i| fr(300 + i as u64)).collect(),
-            unsigned_inc_chunks: (0..INC_CHUNKS).map(|i| fr(400 + i as u64)).collect(),
-            unsigned_inc_msb: fr(500),
+            balanced_inc_digits: (0..INC_CHUNKS).map(|i| fr(400 + i as u64)).collect(),
+            balanced_inc_carry: fr(500),
         };
         let hamming_points = HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![point(one_hot_arity); layout.instruction()],
             bytecode_ra: vec![point(one_hot_arity); layout.bytecode()],
             ram_ra: vec![point(one_hot_arity); layout.ram()],
-            unsigned_inc_chunks: vec![point(one_hot_arity); INC_CHUNKS],
-            unsigned_inc_msb: point(one_hot_arity),
+            balanced_inc_digits: vec![point(one_hot_arity); INC_CHUNKS],
+            balanced_inc_carry: point(one_hot_arity),
         };
         Stage7ClearOutput {
             output_values: Stage7OutputClaims {
@@ -730,7 +834,7 @@ mod tests {
             imm_bytes: vec![
                 point(
                     jolt_claims::protocols::jolt::lattice::geometry::byte_num_vars(
-                        <Fr as FixedByteSize>::NUM_BYTES,
+                        <Fr as CanonicalBytes>::NUM_BYTES,
                         LOG_BYTECODE_ROWS,
                     )
                     .unwrap()
@@ -760,32 +864,39 @@ mod tests {
         }
     }
 
-    /// Every auxiliary object's packing resolves exactly one leaf claim per
-    /// column at the slot's arity — `prepare_statement` machine-checks
-    /// one-claim-per-slot, full coverage, and per-slot point arity, so a
-    /// passing preparation pins the leaf-resolution map against the canonical
-    /// packings.
+    /// Every auxiliary object resolves exactly one claim per canonical column;
+    /// shorter bytecode claims are zero-prefix embedded at the common point.
     #[test]
-    fn auxiliary_packed_statements_cover_every_column_at_slot_arity() {
+    fn auxiliary_prefix_objects_cover_every_column_at_logical_arity() {
         let layout = JoltRaPolynomialLayout::new(2, 1, 1).unwrap();
         let leaves = leaf_claims(&stage7(layout), &reconstruction());
 
-        let objects = [
-            advice_bytes_packing(JoltAdviceKind::Untrusted, ADVICE_WORD_VARS).unwrap(),
-            advice_bytes_packing(JoltAdviceKind::Trusted, ADVICE_WORD_VARS).unwrap(),
-            precommitted_packing(&PrecommittedPackingShape {
-                bytecode_chunks: BYTECODE_CHUNKS,
-                log_bytecode_rows: LOG_BYTECODE_ROWS,
-                imm_byte_width: <Fr as FixedByteSize>::NUM_BYTES,
-                program_image_log_words: Some(LOG_IMAGE_WORDS),
-            })
-            .unwrap(),
+        let program = precommitted_packing_plan(&PrecommittedPackingShape {
+            bytecode_chunks: BYTECODE_CHUNKS,
+            log_bytecode_rows: LOG_BYTECODE_ROWS,
+            imm_byte_width: <Fr as CanonicalBytes>::NUM_BYTES,
+            program_image_log_words: Some(LOG_IMAGE_WORDS),
+        })
+        .unwrap();
+        let advice = [
+            advice_bytes_packing_plan(JoltAdviceKind::Untrusted, ADVICE_WORD_VARS).unwrap(),
+            advice_bytes_packing_plan(JoltAdviceKind::Trusted, ADVICE_WORD_VARS).unwrap(),
         ];
-        for packing in &objects {
-            let statement = object_statement(packing, (), &leaves).unwrap();
-            assert_eq!(statement.claims.len(), packing.iter().count());
-            let prepared = packing.prepare_statement(&statement).unwrap();
-            assert_eq!(prepared.num_claims(), packing.iter().count());
+        for object in advice.iter().chain(program.objects()) {
+            let claims = object
+                .packing()
+                .ids()
+                .iter()
+                .filter_map(|id| leaves.get(id).cloned().map(|claim| (*id, claim)))
+                .collect::<BTreeMap<_, _>>();
+            assert_eq!(
+                claims.len(),
+                object.packing().ids().len(),
+                "every packing id must have a reconstructed leaf claim"
+            );
+            let packed = object.packed_claims(&claims).unwrap();
+            assert_eq!(packed.evaluations().len(), object.packing().ids().len());
+            assert_eq!(packed.point().len(), object.packing().logical_num_vars());
         }
     }
 

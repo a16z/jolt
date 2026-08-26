@@ -2,17 +2,21 @@
 //! of consumers.
 
 use std::ops::Range;
+use std::sync::Arc;
 
-use jolt_program::execution::TraceRow;
+use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_riscv::JoltTraceRow as TraceRow;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use crate::bundle::WitnessBundle;
 use crate::witnesses::WitnessEnv;
-use crate::WitnessError;
+use crate::{WitnessError, JOLT_VM_LABEL};
 
 /// One consumer of a bundle stream. `Option<C>` is also a consumer:
 /// membership in a set is static, presence is runtime.
 pub trait StreamConsumer: Send + Sync {
-    type Witness: WitnessBundle;
+    type Witness: WitnessBundle + Send;
 
     fn consume(&mut self, chunk: &[Self::Witness]);
 
@@ -49,6 +53,11 @@ pub trait ConsumerSet {
     ) -> Result<(), WitnessError>;
 }
 
+/// Buffers below this size extract serially — rayon dispatch would cost more
+/// than the extraction itself.
+#[cfg(feature = "parallel")]
+const PAR_EXTRACT_THRESHOLD: usize = 128;
+
 fn deliver<C: StreamConsumer>(
     consumer: &mut C,
     rows: &[TraceRow],
@@ -58,11 +67,29 @@ fn deliver<C: StreamConsumer>(
     if !consumer.is_active() {
         return Ok(());
     }
-    let mut bundles = Vec::with_capacity(rows.len());
-    for (index, row) in rows.iter().enumerate() {
-        let next = rows.get(index + 1).or(next_after);
-        bundles.push(C::Witness::from_row(row, next, env)?);
-    }
+    // Extraction is pure per cycle window, so buffers extract in parallel;
+    // chunk order (the consumer's contract) is unchanged.
+    let extract = |(index, row): (usize, &TraceRow)| {
+        C::Witness::from_row(row, rows.get(index + 1).or(next_after), env)
+    };
+    #[cfg(feature = "parallel")]
+    let bundles: Vec<C::Witness> = if rows.len() >= PAR_EXTRACT_THRESHOLD {
+        rows.par_iter()
+            .enumerate()
+            .map(extract)
+            .collect::<Result<_, _>>()?
+    } else {
+        rows.iter()
+            .enumerate()
+            .map(extract)
+            .collect::<Result<_, _>>()?
+    };
+    #[cfg(not(feature = "parallel"))]
+    let bundles: Vec<C::Witness> = rows
+        .iter()
+        .enumerate()
+        .map(extract)
+        .collect::<Result<_, _>>()?;
     consumer.consume(&bundles);
     Ok(())
 }
@@ -98,8 +125,7 @@ consumer_set_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, G: 5, H: 6, I: 7);
 pub type ChunkVisitor<'a> =
     dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
-/// Sequential row access for the pass: trace-backed today, segment-backed
-/// later. Random access is deliberately inexpressible.
+/// Sequential row access, with an optional random-access fast path.
 pub trait RowSource {
     /// Visits the half-open cycle `range` in order as buffers of at most
     /// `chunk_size` rows; `[0, T)` today, segments later.
@@ -109,10 +135,67 @@ pub trait RowSource {
         chunk_size: usize,
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
+
+    /// Returns shared random access when the source can provide it.
+    fn random_access(&self) -> Option<RandomAccessRows> {
+        None
+    }
+}
+
+/// Shared random access to compact rows and their extraction context.
+#[derive(Clone)]
+pub struct RandomAccessRows {
+    rows: Arc<Vec<TraceRow>>,
+    cycles: usize,
+    preprocessing: Arc<JoltProgramPreprocessing>,
+    padding: TraceRow,
+}
+
+impl RandomAccessRows {
+    pub(crate) fn new(
+        rows: Arc<Vec<TraceRow>>,
+        cycles: usize,
+        preprocessing: Arc<JoltProgramPreprocessing>,
+    ) -> Result<Self, WitnessError> {
+        if rows.len() > cycles {
+            return Err(WitnessError::InvalidWitnessData {
+                label: JOLT_VM_LABEL,
+                reason: format!(
+                    "physical trace has {} rows but the cycle domain has {cycles}",
+                    rows.len()
+                ),
+            });
+        }
+        Ok(Self {
+            rows,
+            cycles,
+            preprocessing,
+            padding: TraceRow::default(),
+        })
+    }
+
+    /// Padded cycle-domain size.
+    pub fn cycles(&self) -> usize {
+        self.cycles
+    }
+
+    /// Extracts one bundle with padding and one-row lookahead semantics.
+    #[inline]
+    pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {
+        let current = self.rows.get(index).unwrap_or(&self.padding);
+        let next =
+            (index + 1 < self.cycles).then(|| self.rows.get(index + 1).unwrap_or(&self.padding));
+        B::from_row(current, next, &WitnessEnv::new(&self.preprocessing))
+    }
 }
 
 /// The fused pass: walk `range` once and deliver each chunk to every
 /// consumer in the set.
+#[tracing::instrument(
+    skip_all,
+    name = "stream_witnesses",
+    fields(cycles = range.end.saturating_sub(range.start))
+)]
 pub fn stream_witnesses<S: RowSource + ?Sized, C: ConsumerSet>(
     source: &S,
     range: Range<usize>,
@@ -137,10 +220,25 @@ const BUNDLE_PASS_CHUNK: usize = 1 << 12;
 /// object-safe counterpart of [`crate::BundleSource::bundles`] — `&dyn
 /// RowSource` consumers (kernels behind the witness plane) collect their
 /// typed rows through this.
+#[tracing::instrument(
+    skip_all,
+    name = "collect_bundles",
+    fields(bundle = core::any::type_name::<B>(), cycles)
+)]
 pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
+    // Out-of-range requests fall through to the validated chunk walk.
+    if let Some(access) = source.random_access() {
+        if cycles <= access.cycles() {
+            let window = |index| access.window::<B>(index);
+            #[cfg(feature = "parallel")]
+            return (0..cycles).into_par_iter().map(window).collect();
+            #[cfg(not(feature = "parallel"))]
+            return (0..cycles).map(window).collect();
+        }
+    }
     let mut consumers = (CollectBundles::<B>::default(),);
     stream_witnesses(source, 0..cycles, BUNDLE_PASS_CHUNK, &mut consumers)?;
     Ok(consumers.0.into_rows())
@@ -184,6 +282,7 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltPolynomialId;
     use jolt_field::Fr;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     /// A hand-implemented bundle carrying a lookahead witness, so chunk
     /// boundaries are observable.
@@ -250,6 +349,29 @@ mod tests {
             let expected = whole.get(index + 1).map_or(0, |next| next.pc.0);
             assert_eq!(bundle.next_pc.0, expected);
         }
+    }
+
+    #[test]
+    fn random_access_collection_matches_the_chunked_walk() {
+        with_sample_backend(|backend| {
+            // The routed path (index-parallel over the slice-backed trace).
+            let routed: Vec<WindowBundle> = collect_bundles(backend, 4).unwrap();
+            // The chunked walk, forced.
+            let mut consumers = (CollectBundles::<WindowBundle>::default(),);
+            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
+            assert_eq!(routed, consumers.0.into_rows());
+        });
+    }
+
+    #[test]
+    fn random_access_rejects_rows_beyond_cycle_domain() {
+        with_sample_backend(|backend| {
+            let rows = Arc::new(vec![TraceRow::default(); 2]);
+            assert!(matches!(
+                RandomAccessRows::new(rows, 1, Arc::clone(&backend.preprocessing)),
+                Err(WitnessError::InvalidWitnessData { .. })
+            ));
+        });
     }
 
     #[test]

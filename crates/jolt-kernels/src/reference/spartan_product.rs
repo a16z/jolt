@@ -24,7 +24,7 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
     write_lookup_output_to_rd_product,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
@@ -39,11 +39,14 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 use jolt_witness::JoltWitnessPlane;
-
-impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
     /// the slot as the single `late_tau` entry of
     /// [`first_round_poly`](UniskipKernel::first_round_poly).
+    // The backend-neutral `SpartanProductUniskip::*` spans live at the
+    // stage-2 call boundary (`crates/jolt-prover/src/stages/stage2.rs`), so
+    // every `UniskipKernel` implementation inherits them — see the
+    // taxonomy's kernel-seam contract.
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -78,7 +81,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
 /// the uni-skip slot parked and binds it into the batch member.
 pub struct ReferenceProductRemainder;
 
-impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRemainder {
+impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRemainder {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -97,20 +100,34 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRemaind
 /// The shared product compute state: the eight cycle-indexed factor/wire
 /// tables and `eq(τ_low, ·)` — everything the uni-skip polynomial and the
 /// remainder member both consume.
-pub struct SpartanProductKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub struct SpartanProductKernel<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     eq_cycle: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     left_instruction_input: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     lookup_output: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     jump_flag: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     right_instruction_input: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     branch_flag: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     next_is_noop: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     write_lookup_output_to_rd: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     virtual_instruction: Vec<F>,
 }
 
-impl<F: Field> SpartanProductKernel<F> {
+impl<F: JoltField> SpartanProductKernel<F> {
     pub fn prepare(
         log_t: usize,
         tau_low: &[F],

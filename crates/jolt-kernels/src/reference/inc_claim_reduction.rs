@@ -15,7 +15,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
 use jolt_claims::protocols::jolt::{IncClaimReductionPublic, JoltDerivedId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
@@ -26,7 +26,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

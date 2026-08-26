@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::Polynomial;
 
@@ -27,7 +27,7 @@ use crate::Polynomial;
 /// determined by its $2^n$ evaluations on the Boolean hypercube. This trait
 /// exposes point evaluation and dimensional metadata without prescribing how
 /// the evaluations are stored.
-pub trait MultilinearEvaluation<F: Field>: Send + Sync {
+pub trait MultilinearEvaluation<F: JoltField>: Send + Sync {
     /// Number of variables $n$. The polynomial has $2^n$ evaluations.
     fn num_vars(&self) -> usize;
 
@@ -50,7 +50,7 @@ pub trait MultilinearEvaluation<F: Field>: Send + Sync {
 /// $$g(x_2, \ldots, x_n) = (1 - s) \cdot f(0, x_2, \ldots, x_n) + s \cdot f(1, x_2, \ldots, x_n)$$
 ///
 /// After calling `bind`, `num_vars` decreases by 1 and `len` halves.
-pub trait MultilinearBinding<F: Field>: Send + Sync {
+pub trait MultilinearBinding<F: JoltField>: Send + Sync {
     fn bind(&mut self, scalar: F);
 }
 
@@ -71,7 +71,7 @@ pub trait MultilinearBinding<F: Field>: Send + Sync {
 /// - [`fold_rows`](Self::fold_rows): matrix-vector product $v \cdot M$ (opening protocols)
 /// - [`is_one_hot`](Self::is_one_hot) / [`for_each_one`](Self::for_each_one): unit-entry
 ///   one-hot hints for PCS commit optimization (e.g., batch addition instead of MSM)
-pub trait MultilinearPoly<F: Field>: Send + Sync {
+pub trait MultilinearPoly<F: JoltField>: Send + Sync {
     /// Number of variables $n$. The polynomial has $2^n$ evaluations.
     fn num_vars(&self) -> usize;
 
@@ -106,7 +106,7 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// Panics if `left.len() != 2^(num_vars - sigma)`.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
-        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
+        let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);
         self.for_each_row(sigma, &mut |row_idx, row| {
             let l = left[row_idx];
             for (r, &val) in result.iter_mut().zip(row.iter()) {
@@ -146,7 +146,7 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
     /// Borrows the full evaluation table when this polynomial is backed by
     /// dense storage.
     ///
-    /// PCS backends that need the dense table (e.g. HyperKZG) use this to
+    /// PCS backends that need the dense table use this to
     /// skip materializing a copy via [`for_each_row`](Self::for_each_row).
     /// Lazy or sparse sources return `None` and take the materializing path.
     fn dense_evaluations(&self) -> Option<&[F]> {
@@ -180,7 +180,7 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
 // MultilinearPoly impls for Polynomial<F>, [F], Vec<F>, and source pointers.
 // ---------------------------------------------------------------------------
 
-impl<F: Field> MultilinearPoly<F> for Polynomial<F> {
+impl<F: JoltField> MultilinearPoly<F> for Polynomial<F> {
     #[inline]
     fn num_vars(&self) -> usize {
         Polynomial::num_vars(self)
@@ -206,7 +206,7 @@ impl<F: Field> MultilinearPoly<F> for Polynomial<F> {
             "left vector length must equal number of rows"
         );
 
-        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
+        let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);
         for (row_idx, row) in evals.chunks(num_cols).enumerate() {
             let l = left[row_idx];
             for (r, &val) in result.iter_mut().zip(row.iter()) {
@@ -221,7 +221,7 @@ impl<F: Field> MultilinearPoly<F> for Polynomial<F> {
     }
 }
 
-impl<F: Field> MultilinearPoly<F> for [F] {
+impl<F: JoltField> MultilinearPoly<F> for [F] {
     #[inline]
     fn num_vars(&self) -> usize {
         if self.is_empty() {
@@ -249,7 +249,7 @@ impl<F: Field> MultilinearPoly<F> for [F] {
 
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
-        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
+        let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);
         for (row_idx, row) in self.chunks(num_cols).enumerate() {
             let l = left[row_idx];
             for (r, &val) in result.iter_mut().zip(row.iter()) {
@@ -264,7 +264,7 @@ impl<F: Field> MultilinearPoly<F> for [F] {
     }
 }
 
-impl<F: Field> MultilinearPoly<F> for Vec<F> {
+impl<F: JoltField> MultilinearPoly<F> for Vec<F> {
     #[inline]
     fn num_vars(&self) -> usize {
         self.as_slice().num_vars()
@@ -292,7 +292,7 @@ macro_rules! forward_multilinear_poly {
     ($($wrapper:ty),* $(,)?) => {$(
         impl<F, P> MultilinearPoly<F> for $wrapper
         where
-            F: Field,
+            F: JoltField,
             P: MultilinearPoly<F> + ?Sized,
         {
             #[inline]
@@ -355,13 +355,13 @@ forward_multilinear_poly!(&P, Box<P>, std::sync::Arc<P>);
 /// - [`fold_rows`](MultilinearPoly::fold_rows): $\sum_i s_i \cdot (v \cdot M_i)$ —
 ///   each polynomial computes its own fold, results are combined with scalars.
 ///   No evaluation table is ever materialized.
-pub struct RlcSource<F: Field, S: MultilinearPoly<F>> {
+pub struct RlcSource<F: JoltField, S: MultilinearPoly<F>> {
     sources: Vec<S>,
     scalars: Vec<F>,
     num_vars: usize,
 }
 
-impl<F: Field, S: MultilinearPoly<F>> RlcSource<F, S> {
+impl<F: JoltField, S: MultilinearPoly<F>> RlcSource<F, S> {
     /// Creates a lazy RLC composition.
     ///
     /// # Panics
@@ -391,7 +391,7 @@ impl<F: Field, S: MultilinearPoly<F>> RlcSource<F, S> {
     }
 }
 
-impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
+impl<F: JoltField, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -432,7 +432,7 @@ impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
             })
             .collect();
 
-        let mut combined = crate::thread::unsafe_allocate_zero_vec(num_cols);
+        let mut combined = jolt_utils::unsafe_allocate_zero_vec(num_cols);
         for row_idx in 0..num_rows {
             combined.fill(F::zero());
             for (source_rows, &scalar) in all_rows.iter().zip(&self.scalars) {
@@ -451,7 +451,7 @@ impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
     /// ever materialized — this is the key streaming win.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
-        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
+        let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);
         for (source, &scalar) in self.sources.iter().zip(&self.scalars) {
             let contribution = source.fold_rows(left, sigma);
             for (r, &c) in result.iter_mut().zip(contribution.iter()) {
@@ -465,7 +465,7 @@ impl<F: Field, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, RandomSampling};
+    use jolt_field::{Field, Fr};
     use num_traits::Zero;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -658,7 +658,7 @@ mod tests {
     }
 
     /// Calls the default `fold_rows` implementation (via `for_each_row`).
-    fn default_fold_rows<F: Field>(
+    fn default_fold_rows<F: JoltField>(
         source: &impl MultilinearPoly<F>,
         left: &[F],
         sigma: usize,

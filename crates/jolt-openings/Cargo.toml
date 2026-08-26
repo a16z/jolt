@@ -13,18 +13,16 @@ jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-transcript.workspace = true
-rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 jolt-dory.workspace = true
-jolt-hyperkzg.workspace = true
 jolt-crypto = { workspace = true, features = ["bn254"] }
 rand.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["rand", "jolt-crypto"]
+ignored = ["rand"]

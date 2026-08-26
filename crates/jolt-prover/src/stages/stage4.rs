@@ -14,12 +14,14 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
-use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
-use jolt_transcript::{AppendToTranscript, Transcript};
+#[cfg(feature = "zk")]
+use jolt_sumcheck::CommittedSumcheckWitness;
+use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::{
@@ -35,21 +37,26 @@ use jolt_verifier::stages::stage4::{
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::JoltWitnessPlane;
 
+use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
-pub struct Stage4ProverOutput<F: Field, C> {
+pub struct Stage4ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage4OutputClaims<F>,
     pub clear_output: Stage4ClearOutput<F>,
+    #[cfg(feature = "zk")]
+    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 4 on `transcript` (positioned at the stage-3 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
-pub fn prove_stage4<F, PCS, VC, C, T>(
+#[tracing::instrument(skip_all)]
+pub fn prove_stage4<F, PCS, VC, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
+    mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -57,12 +64,11 @@ pub fn prove_stage4<F, PCS, VC, C, T>(
     stage3: &Stage3ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
-) -> Result<Stage4ProverOutput<F, C>, ProverError<F>>
+) -> Result<Stage4ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
@@ -111,11 +117,10 @@ where
                     reason: "program-image init contribution without a committed layout",
                 },
             )?;
-            let program = preprocessing
-                .program()
-                .ok_or(ProverError::InvariantViolation {
-                    reason: "full program preprocessing is unavailable",
-                })?;
+            // The full program rides the witness plane (witness generation
+            // requires it in every mode, including committed-program runs
+            // whose PREPROCESSING retains only commitments).
+            let program = witness.program_preprocessing();
             let value = sparse_segments_mle_msb(
                 std::iter::once((
                     layout.start_index() as u128,
@@ -134,10 +139,19 @@ where
         .advice_blocks
         .iter()
         .map(|(kind, block)| {
+            // Backend-neutral kernel-seam span at the call boundary — see
+            // the taxonomy's kernel-seam contract.
             let opening_value =
-                backend
-                    .advice_opening
-                    .evaluate(session, *kind, &block.opening_point, witness)?;
+                tracing::info_span!("AdviceOpeningEvaluation::evaluate", kind = ?kind).in_scope(
+                    || {
+                        backend.advice_opening.evaluate(
+                            session,
+                            *kind,
+                            &block.opening_point,
+                            witness,
+                        )
+                    },
+                )?;
             Ok(VerifiedRamValCheckAdviceContribution {
                 kind: *kind,
                 selector: block.selector,
@@ -177,24 +191,32 @@ where
     // at prepare), and the stage's `no_opening_values` absorb order is the
     // batch's hand-written `opening_values` replacement (staged openings
     // first, then registers, then RAM) — the driver's default curation.
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,
         &challenges,
-        ClearSumcheckRecorder::<F, C>::new(),
+        mode.recorder()?,
         transcript,
     )?;
+    #[cfg(feature = "zk")]
+    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
+    #[cfg(not(feature = "zk"))]
+    let sumcheck_proof = proved.recorded.proof;
 
     Ok(Stage4ProverOutput {
-        sumcheck_proof: proved.recorded.proof,
+        sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage4ClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,
             ram_val_check_init,
         },
+        #[cfg(feature = "zk")]
+        committed_witness,
     })
 }

@@ -50,12 +50,12 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskHTable<XLE
     fn suffixes(&self) -> Vec<Suffixes> {
         // The Pow2Offset prefix/suffix pair hardcodes the 8-bit lane
         // granularity.
-        debug_assert_eq!(XLEN, 64);
+        const { assert!(XLEN == 64, "Pow2Offset hardcodes 8-bit lanes") };
         vec![Suffixes::Pow2OffsetH]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        debug_assert_eq!(XLEN, 64);
+        const { assert!(XLEN == 64, "Pow2Offset hardcodes 8-bit lanes") };
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2_offset_h] = suffixes.try_into().unwrap();
         F::from_u128((1u128 << (XLEN / 4)) - 1) * prefixes[Prefixes::Pow2OffsetH] * pow2_offset_h
@@ -69,6 +69,7 @@ mod test {
     use super::WindowMaskHTable;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        prefix_suffix_test_with_phase_size,
     };
     use common::constants::XLEN;
 
@@ -85,5 +86,13 @@ mod test {
     #[test]
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, WindowMaskHTable<XLEN>>();
+    }
+
+    /// Two-round phases put a phase boundary inside the low three index bits
+    /// (suffix_len hits 2), exercising every placement of bits 2-1 relative
+    /// to the phase window in the Pow2OffsetH prefix/suffix pair.
+    #[test]
+    fn prefix_suffix_small_phases() {
+        prefix_suffix_test_with_phase_size::<XLEN, Fr, WindowMaskHTable<XLEN>>(2, 20);
     }
 }

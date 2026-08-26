@@ -34,7 +34,7 @@ use jolt_claims::protocols::jolt::lattice::relations::{
     program_image_reconstruction::ProgramImageReconstructionOutputClaims,
     read_raf::LatticeBytecodeReadRafOutputClaims,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_prover_legacy::zkvm::packed::{AkitaField, AkitaJoltProof, AkitaScheme};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
@@ -106,7 +106,7 @@ fn clear_claims_mut(proof: &mut AkitaJoltProof) -> &mut ClearProofClaims<AkitaFi
 /// a fixed order. Each aggregate is fully destructured (no `..`), so a new
 /// claim field is a compile error here until it is threaded through — the wire
 /// coverage the sweep depends on cannot silently regress.
-fn for_each_scalar_mut<F: Field>(claims: &mut ClearProofClaims<F>, f: &mut impl FnMut(&mut F)) {
+fn for_each_scalar_mut<F: JoltField>(claims: &mut ClearProofClaims<F>, f: &mut impl FnMut(&mut F)) {
     let f: &mut dyn FnMut(&mut F) = f;
     let ClearProofClaims {
         stage1,
@@ -130,7 +130,7 @@ fn for_each_scalar_mut<F: Field>(claims: &mut ClearProofClaims<F>, f: &mut impl 
     visit_reconstruction(reconstruction, f);
 }
 
-fn visit_stage1<F: Field>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage1<F: JoltField>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage1OutputClaims {
         uniskip_output_claim,
         outer,
@@ -215,7 +215,7 @@ fn visit_stage1<F: Field>(claims: &mut Stage1OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage2<F: Field>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage2<F: JoltField>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage2OutputClaims {
         product_uniskip_output_claim,
         batch_outputs,
@@ -272,7 +272,7 @@ fn visit_stage2<F: Field>(claims: &mut Stage2OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage3<F: Field>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage3OutputClaims {
         shift,
         instruction_input,
@@ -322,7 +322,7 @@ fn visit_stage3<F: Field>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage4<F: Field>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage4<F: JoltField>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage4OutputClaims {
         registers_read_write,
         ram_val_check,
@@ -355,7 +355,7 @@ fn visit_stage4<F: Field>(claims: &mut Stage4OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage5<F: Field>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage5<F: JoltField>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage5OutputClaims {
         instruction_read_raf,
         ram_ra_claim_reduction,
@@ -381,7 +381,7 @@ fn visit_stage5<F: Field>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_stage6a<F: Field>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage6a<F: JoltField>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6aOutputClaims {
         bytecode_read_raf,
         booleanity,
@@ -400,7 +400,7 @@ fn visit_stage6a<F: Field>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMu
     f(booleanity_intermediate);
 }
 
-fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6bOutputClaims {
         bytecode_read_raf,
         booleanity,
@@ -424,8 +424,8 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
         instruction_ra,
         bytecode_ra: booleanity_bytecode_ra,
         ram_ra,
-        unsigned_inc_chunks,
-        unsigned_inc_msb,
+        balanced_inc_digits,
+        balanced_inc_carry,
     } = booleanity;
     for scalar in instruction_ra.iter_mut() {
         f(scalar);
@@ -436,10 +436,10 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    for scalar in unsigned_inc_chunks.iter_mut() {
+    for scalar in balanced_inc_digits.iter_mut() {
         f(scalar);
     }
-    f(unsigned_inc_msb);
+    f(balanced_inc_carry);
     let RamHammingBooleanityOutputClaims { ram_hamming_weight } = ram_hamming_booleanity;
     f(ram_hamming_weight);
     let RamRaVirtualizationOutputClaims {
@@ -479,7 +479,7 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
     }
 }
 
-fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
+fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage7OutputClaims {
         hamming_weight_claim_reduction,
         trusted_advice,
@@ -491,8 +491,8 @@ fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(
         instruction_ra,
         bytecode_ra,
         ram_ra,
-        unsigned_inc_chunks,
-        unsigned_inc_msb,
+        balanced_inc_digits,
+        balanced_inc_carry,
     } = hamming_weight_claim_reduction;
     for scalar in instruction_ra.iter_mut() {
         f(scalar);
@@ -503,10 +503,10 @@ fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    for scalar in unsigned_inc_chunks.iter_mut() {
+    for scalar in balanced_inc_digits.iter_mut() {
         f(scalar);
     }
-    f(unsigned_inc_msb);
+    f(balanced_inc_carry);
     if let Some(TrustedAdviceAddressPhaseOutputClaims { trusted }) = trusted_advice {
         f(trusted);
     }
@@ -525,7 +525,7 @@ fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(
     }
 }
 
-fn visit_reconstruction<F: Field>(
+fn visit_reconstruction<F: JoltField>(
     claims: &mut ReconstructionOutputClaims<F>,
     f: &mut dyn FnMut(&mut F),
 ) {
@@ -728,7 +728,7 @@ fn every_commitment_wire_rejects_perturbation() {
 }
 
 /// Proof-shape tampers: a swapped phase proof, dropped reconstruction /
-/// auxiliary proofs, and an auxiliary evaluation offset — each fail-closed.
+/// auxiliary proofs, and swapped auxiliary object proofs — each fail-closed.
 #[test]
 fn akita_proof_shape_tampers_reject() {
     let muldiv = akita_muldiv_case();
@@ -742,18 +742,16 @@ fn akita_proof_shape_tampers_reject() {
     assert_rejects(advice.verify_proof(&proof));
 
     let mut proof = advice.proof.clone();
-    proof.joint_opening_proof.auxiliary = None;
+    proof.joint_opening_proof.auxiliary.clear();
     assert_rejects(advice.verify_proof(&proof));
 
     let committed = akita_committed_muldiv_case();
     let mut proof = committed.proof.clone();
-    proof.joint_opening_proof.auxiliary = None;
+    proof.joint_opening_proof.auxiliary.clear();
     assert_rejects(committed.verify_proof(&proof));
 
     let mut proof = committed.proof.clone();
-    if let Some(auxiliary) = proof.joint_opening_proof.auxiliary.as_mut() {
-        auxiliary.evaluations[0] += one();
-    }
+    proof.joint_opening_proof.auxiliary.swap(0, 1);
     assert_rejects(committed.verify_proof(&proof));
 }
 

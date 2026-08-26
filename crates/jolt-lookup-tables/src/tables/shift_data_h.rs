@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -28,7 +28,7 @@ impl<const XLEN: usize> LookupTable for ShiftDataHTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let eighth = XLEN / 8;
@@ -61,7 +61,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ShiftDataHTable<XLEN
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [offset_scale, shift_data] = suffixes.try_into().unwrap();
@@ -73,7 +73,10 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ShiftDataHTable<XLEN
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{
+        mle_full_hypercube_test, mle_random_test, prefix_suffix_materialization_test,
+        prefix_suffix_test,
+    };
     use crate::XLEN;
     use jolt_field::Fr;
 
@@ -85,6 +88,14 @@ mod tests {
     #[test]
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, ShiftDataHTable<XLEN>>();
+    }
+
+    /// Two-round phases put boundaries inside the low six index bits,
+    /// exercising every placement of the lane and offset bits relative to
+    /// the phase window in the ShiftData/OffsetScale prefix/suffix pairs.
+    #[test]
+    fn prefix_suffix_small_phases() {
+        prefix_suffix_materialization_test::<XLEN, Fr, ShiftDataHTable<XLEN>>(2, 3);
     }
 
     #[test]

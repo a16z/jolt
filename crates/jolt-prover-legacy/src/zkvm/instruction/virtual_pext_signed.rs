@@ -1,7 +1,10 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{virtual_pext_signed::VirtualPextSigned, RISCVCycle};
 
-use crate::zkvm::lookup_table::{pext_signed::PextSignedTable, LookupTables};
+use crate::zkvm::lookup_table::{
+    pext_signed::{pext_signed, PextSignedTable},
+    LookupTables,
+};
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
@@ -50,27 +53,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualPextSigned> {
 
     fn to_lookup_output(&self) -> u64 {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let y = y as u64;
-
-        let mut pext = 0u64;
-        let mut sign = 0u64;
-        let mut pc = 0u32;
-        for i in (0..XLEN).rev() {
-            if (y >> i) & 1 == 1 {
-                let x_i = (x >> i) & 1;
-                if pc == 0 {
-                    sign = x_i;
-                }
-                pext = (pext << 1) | x_i;
-                pc += 1;
-            }
-        }
-        let ext = if sign == 1 {
-            ((1u128 << XLEN) - (1u128 << pc)) as u64
-        } else {
-            0
-        };
-        pext + ext
+        pext_signed::<XLEN>(x, y as u64)
     }
 }
 

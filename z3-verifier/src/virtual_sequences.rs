@@ -16,8 +16,15 @@ use tracer::{
         divu::DIVU,
         divuw::DIVUW,
         divw::DIVW,
-        format::{format_i::FormatI, format_r::FormatR, normalize_imm},
+        format::{format_i::FormatI, format_load::FormatLoad, format_r::FormatR, normalize_imm},
+        lb::LB,
+        lbu::LBU,
+        ld::LD,
+        lh::LH,
+        lhu::LHU,
         lui::LUI,
+        lw::LW,
+        lwu::LWU,
         mul::MUL,
         mulh::MULH,
         mulhsu::MULHSU,
@@ -52,10 +59,10 @@ use tracer::{
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
         virtual_assert_word_alignment::VirtualAssertWordAlignment,
-        virtual_change_divisor::VirtualChangeDivisor,
-        virtual_change_divisor_w::VirtualChangeDivisorW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
+        virtual_muliw::VirtualMULIW,
+        virtual_negate_if::VirtualNegateIf,
         virtual_pext::VirtualPext,
         virtual_pext_signed::VirtualPextSigned,
         virtual_pow2::VirtualPow2,
@@ -79,12 +86,12 @@ use tracer::{
     utils::virtual_registers::VirtualRegisterAllocator,
 };
 use z3::{
-    ast::{Bool, BV},
-    Params, SatResult, Solver,
+    ast::{Array, Bool, BV},
+    Params, SatResult, Solver, Sort,
 };
 
-const _Z3_TIMEOUT_MS: u32 = 30_000;
-const Z3_RANDOM_SEED: u32 = 42;
+use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
+
 const DEFAULT_BV_BITS: u32 = 64;
 const BV_BITS_ENV: &str = "Z3_VERIFIER_BV_BITS";
 
@@ -133,6 +140,11 @@ fn scale_imm_u64(imm: u64, cpu: &SymbolicCpu) -> u64 {
 struct SymbolicCpu {
     var_prefix: String,
     x: [BV; REGISTER_COUNT as usize],
+    /// Byte-addressed RAM, one doubleword per address. The load sequences
+    /// only ever read at 8-byte-aligned addresses, so no cell overlap is
+    /// modeled. Clones share the same array constant, so an expected-model
+    /// read at the same address yields the same value as the sequence's.
+    ram: Array,
     advice_vars: Vec<BV>,
     asserts: Vec<Bool>,
     bv_bits: u32,
@@ -150,14 +162,25 @@ impl SymbolicCpu {
             .try_into()
             .unwrap();
         let asserts = vec![regs[0].eq(BV::from_u64(0, bv_bits))];
+        let ram = Array::new_const(
+            format!("{var_prefix}_ram"),
+            &Sort::bitvector(bv_bits),
+            &Sort::bitvector(bv_bits),
+        );
         SymbolicCpu {
             var_prefix: var_prefix.to_string(),
             x: regs,
+            ram,
             advice_vars: Vec::new(),
             asserts, // x0 is always 0
             bv_bits,
             word_bits,
         }
+    }
+
+    fn load_doubleword(&self, addr: &BV) -> BV {
+        // The array's range sort is BV, so the downcast cannot fail.
+        self.ram.select(addr).as_bv().unwrap()
     }
 
     fn bv_u64(&self, v: u64) -> BV {
@@ -267,6 +290,10 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & rs2.bvnot()));
         }
+        Instruction::LD(LD { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.load_doubleword(&(rs1 + operands.imm));
+        }
         Instruction::LUI(LUI { operands, .. }) => {
             let imm = normalize_imm(operands.imm);
             cpu.x[operands.rd as usize] = BV::from_i64(imm, cpu.bv_bits);
@@ -291,6 +318,26 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 - rs2));
+        }
+        Instruction::ADDW(ADDW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 + rs2)));
+        }
+        Instruction::ADDIW(ADDIW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 + imm)));
+        }
+        Instruction::SUBW(SUBW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 - rs2)));
+        }
+        Instruction::MULW(MULW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 * rs2)));
         }
         Instruction::VirtualAssertEQ(VirtualAssertEQ { operands, .. }) => {
             let val1 = cpu.x[operands.rs1 as usize].clone();
@@ -339,27 +386,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
             cpu.asserts.push(addr.extract(1, 0).eq(0))
         }
-        Instruction::VirtualChangeDivisor(VirtualChangeDivisor { operands, .. }) => {
+        Instruction::VirtualNegateIf(VirtualNegateIf { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
-            let dividend = rs1;
-            let divisor = rs2;
-            let min = SymbolicCpu::signed_min(cpu.bv_bits);
-            let ones = cpu.bv_ones();
-            cpu.x[operands.rd as usize] =
-                (dividend.eq(&min) & divisor.eq(&ones)).ite(&BV::from_u64(1, cpu.bv_bits), &divisor)
-        }
-        Instruction::VirtualChangeDivisorW(VirtualChangeDivisorW { operands, .. }) => {
-            let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let rs2 = cpu.x[operands.rs2 as usize].clone();
-            let dividend = rs1.extract(cpu.word_bits - 1, 0);
-            let divisor = rs2.extract(cpu.word_bits - 1, 0);
-            let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-            let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
-            cpu.x[operands.rd as usize] = (dividend.eq(&word_min) & divisor.eq(&word_ones)).ite(
-                &BV::from_u64(1, cpu.bv_bits),
-                &divisor.sign_ext(cpu.bv_bits - cpu.word_bits),
-            )
+            let sign = rs1.extract(cpu.bv_bits - 1, cpu.bv_bits - 1);
+            cpu.x[operands.rd as usize] = sign.eq(1).ite(&rs2.bvneg(), &rs2)
         }
         Instruction::VirtualMovsign(VirtualMovsign { operands, .. }) => {
             let val = cpu.x[operands.rs1 as usize].clone();
@@ -531,6 +562,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let imm = scale_imm_u64(operands.imm, cpu);
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 * imm));
         }
+        Instruction::VirtualMULIW(VirtualMULIW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = scale_imm_u64(operands.imm, cpu);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 * imm)));
+        }
         Instruction::VirtualSRLI(VirtualSRLI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             // Bitmask immediate: compute trailing_zeros, then scale the shift amount
@@ -588,7 +624,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     RISCVCycle<I>: Into<Cycle>,
 {
     let mut solver_params = Params::default();
-    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();
@@ -653,7 +689,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
 
 fn test_consistency(instr: &Instruction) {
     let mut solver_params = Params::default();
-    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();
@@ -669,6 +705,7 @@ fn test_consistency(instr: &Instruction) {
     for (x1, x2) in cpu1.x.iter().zip(cpu2.x.iter()) {
         solver += &x1.eq(x2);
     }
+    solver += &cpu1.ram.eq(&cpu2.ram);
 
     let seq = instr.inline_sequence(&allocator);
     for instr in &seq {
@@ -863,13 +900,74 @@ test_sequence!(
         cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
     }
 );
-// Memory operations are not tested at the moment
-// test_sequence!(LB, FormatLoad);
-// test_sequence!(LBU, FormatLoad);
-// test_sequence!(LH, FormatLoad);
-// test_sequence!(LHU, FormatLoad);
-// test_sequence!(LW, FormatLoad);
-// test_sequence!(LWU, FormatLoad);
+test_sequence!(LB, FormatLoad, |instr: &LB, cpu| {
+    // rd = sign-extended byte lane of the containing aligned doubleword:
+    // bits 2-0 of `ea` select one of 8 lanes of bv_bits/8 bits (the model
+    // width's byte).
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let byte_bits = cpu.bv_bits / 8;
+    let shift = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3) * cpu.bv_u64(byte_bits as u64);
+    let byte = dword.bvlshr(&shift).extract(byte_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = byte.sign_ext(cpu.bv_bits - byte_bits);
+});
+test_sequence!(LBU, FormatLoad, |instr: &LBU, cpu| {
+    // rd = zero-extended byte lane; same layout as LB.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let byte_bits = cpu.bv_bits / 8;
+    let shift = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3) * cpu.bv_u64(byte_bits as u64);
+    let byte = dword.bvlshr(&shift).extract(byte_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = byte.zero_ext(cpu.bv_bits - byte_bits);
+});
+test_sequence!(LH, FormatLoad, |instr: &LH, cpu| {
+    // rd = sign-extended halfword lane of the containing aligned doubleword:
+    // bits 2-1 of `ea` select one of 4 lanes of bv_bits/4 bits; the
+    // sequence's halfword-alignment assert covers bit 0.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let half_bits = cpu.bv_bits / 4;
+    let shift = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2) * cpu.bv_u64(half_bits as u64);
+    let half = dword.bvlshr(&shift).extract(half_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = half.sign_ext(cpu.bv_bits - half_bits);
+});
+test_sequence!(LHU, FormatLoad, |instr: &LHU, cpu| {
+    // rd = zero-extended halfword lane; same layout as LH.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let half_bits = cpu.bv_bits / 4;
+    let shift = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2) * cpu.bv_u64(half_bits as u64);
+    let half = dword.bvlshr(&shift).extract(half_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = half.zero_ext(cpu.bv_bits - half_bits);
+});
+test_sequence!(LWU, FormatLoad, |instr: &LWU, cpu| {
+    // rd = zero-extended word lane; same layout as LW, with the sequence's
+    // word-alignment assert covering bits 0-1.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let hi = dword.extract(cpu.bv_bits - 1, cpu.word_bits);
+    let lo = dword.extract(cpu.word_bits - 1, 0);
+    let lane = ea.extract(2, 2).eq(1).ite(&hi, &lo);
+    cpu.x[instr.operands.rd as usize] = lane.zero_ext(cpu.bv_bits - cpu.word_bits);
+});
+test_sequence!(LW, FormatLoad, |instr: &LW, cpu| {
+    // rd = sign-extended word lane of the containing aligned doubleword. The
+    // lane arithmetic mirrors the byte-addressed RV64 layout at any model
+    // width: the aligned base is `ea & !7`, bit 2 of `ea` selects the lane,
+    // and the sequence's word-alignment assert covers bits 0-1.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let hi = dword.extract(cpu.bv_bits - 1, cpu.word_bits);
+    let lo = dword.extract(cpu.word_bits - 1, 0);
+    let lane = ea.extract(2, 2).eq(1).ite(&hi, &lo);
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&lane);
+});
 test_sequence!(
     #[ignore = "solver-heavy under the default 64-bit Z3 model"]
     MULH,

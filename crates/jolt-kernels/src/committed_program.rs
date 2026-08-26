@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     COMMITTED_BYTECODE_LANE_CAPACITY,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
 use jolt_riscv::instructions::Noop;
 use jolt_riscv::{
@@ -40,7 +40,7 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
 ];
 
 /// The sparse `(lane, value)` encoding of one committed bytecode row.
-fn for_each_active_lane_value<F: Field>(
+fn for_each_active_lane_value<F: JoltField>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
 ) {
@@ -87,7 +87,8 @@ fn for_each_active_lane_value<F: Field>(
 
 /// Build the per-chunk committed bytecode coefficient grids, interleaved by
 /// the proof's trace order.
-pub fn build_committed_bytecode_chunk_coeffs<F: Field>(
+#[tracing::instrument(skip_all, name = "build_committed_bytecode_chunk_coeffs")]
+pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     instructions: &[JoltInstructionRow],
     chunk_count: usize,
     order: TracePolynomialOrder,

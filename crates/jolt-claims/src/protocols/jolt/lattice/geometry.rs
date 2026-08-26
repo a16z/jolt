@@ -3,18 +3,16 @@
 //! relations' deriveds. Vocabulary is inherited — see the
 //! [module doc](super).
 
-use jolt_field::{Field, RingCore};
-use jolt_poly::math::Math;
+use jolt_field::{JoltField, Ring};
 use jolt_poly::{eq_index_msb, IdentityPolynomial, MultilinearEvaluation};
+use jolt_utils::Math;
 use thiserror::Error;
 
 use super::super::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 
-/// Bit width of the unsigned fused increment (`FusedInc + 2^64` fits in 65
-/// bits: the chunk polynomials carry the low 64,
-/// [`UnsignedIncMsb`](crate::protocols::jolt::JoltCommittedPolynomial::UnsignedIncMsb)
-/// the top bit).
-pub const UNSIGNED_INC_BITS: usize = 64;
+/// Bit width the balanced fused-increment digits cover, and hence the place
+/// value of [`BalancedIncCarry`](crate::protocols::jolt::JoltCommittedPolynomial::BalancedIncCarry).
+pub const FUSED_INC_BITS: usize = 64;
 
 /// Bytecode read-raf val stages in lattice mode: the base stages plus one
 /// carrying the `OpFlags(Store)` opening that `IncVirtualization` consumes as
@@ -34,29 +32,53 @@ pub const WORD_BYTES: usize = 8;
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum LatticeGeometryError {
     #[error(transparent)]
-    PackingRegistration(#[from] jolt_openings::OpeningsError),
-    #[error("unsigned inc chunk width must be nonzero")]
+    PrefixLayout(#[from] jolt_openings::OpeningsError),
+    #[error("increment digit width must be nonzero")]
     ZeroChunkWidth,
-    #[error("unsigned inc chunk width {chunk_width} must divide {UNSIGNED_INC_BITS}")]
+    #[error("increment digit width {chunk_width} must divide {FUSED_INC_BITS}")]
     ChunkWidthMisaligned { chunk_width: usize },
-    #[error("unsigned inc chunk width {chunk_width} does not fit the address domain")]
+    #[error("increment digit width {chunk_width} does not fit the address domain")]
     ChunkWidthTooLarge { chunk_width: usize },
+    #[error("OneHotTrace supports only 4-bit or 8-bit one-hot chunks, got {chunk_width}")]
+    UnsupportedOneHotTraceChunkWidth { chunk_width: usize },
+    #[error(
+        "OneHotTrace at K=2^{chunk_width} requires {expected} instruction columns, got {actual}"
+    )]
+    UnexpectedOneHotTraceInstructionColumns {
+        chunk_width: usize,
+        actual: usize,
+        expected: usize,
+    },
+    #[error(
+        "OneHotTrace has {actual} columns, exceeding the K=2^{chunk_width} packed capacity {capacity}"
+    )]
+    TooManyOneHotTraceColumns {
+        chunk_width: usize,
+        actual: usize,
+        capacity: usize,
+    },
     #[error("byte one-hot byte count must be nonzero")]
     ZeroByteCount,
 }
 
-/// The base-`2^chunk_width` one-hot decomposition of the low
-/// [`UNSIGNED_INC_BITS`] bits of the fused unsigned increment.
+/// The balanced radix-`2^chunk_width` decomposition of the fused increment:
+/// `FUSED_INC_BITS / chunk_width` digit columns plus the signed
+/// [`BalancedIncCarry`](crate::protocols::jolt::JoltCommittedPolynomial::BalancedIncCarry),
+/// every digit centered in `[-2^(chunk_width-1), 2^(chunk_width-1))` so that
+/// `Σ_j 2^(chunk_width·j)·digit_j + 2^FUSED_INC_BITS·carry` is the signed
+/// increment itself — no unsigned shift. See [`balanced_inc_value`] for the
+/// value map, which sends digit zero to zero and therefore lets a
+/// zero increment sit entirely on the row the commitment omits.
 ///
 /// The chunk width is fixed to the shared one-hot chunk size (`log_k_chunk`)
-/// so the chunk polynomials sit in the `Ra` families' variable-count class
+/// so the digit polynomials sit in the `Ra` families' variable-count class
 /// and can share their final packed point (see `specs/lattice-claims.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct UnsignedIncChunking {
+pub struct BalancedIncChunking {
     chunk_width: usize,
 }
 
-impl UnsignedIncChunking {
+impl BalancedIncChunking {
     pub const fn new(chunk_width: usize) -> Result<Self, LatticeGeometryError> {
         if chunk_width == 0 {
             return Err(LatticeGeometryError::ZeroChunkWidth);
@@ -64,7 +86,7 @@ impl UnsignedIncChunking {
         if chunk_width >= usize::BITS as usize {
             return Err(LatticeGeometryError::ChunkWidthTooLarge { chunk_width });
         }
-        if !UNSIGNED_INC_BITS.is_multiple_of(chunk_width) {
+        if !FUSED_INC_BITS.is_multiple_of(chunk_width) {
             return Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width });
         }
         Ok(Self { chunk_width })
@@ -75,12 +97,12 @@ impl UnsignedIncChunking {
     }
 
     pub const fn chunk_count(self) -> usize {
-        UNSIGNED_INC_BITS / self.chunk_width
+        FUSED_INC_BITS / self.chunk_width
     }
 
     /// The place value `2^(chunk_width * index)` weighting chunk `index` in
     /// the little-endian reconstruction of the low 64 bits.
-    pub fn place_value<F: RingCore>(self, index: usize) -> F {
+    pub fn place_value<F: Ring>(self, index: usize) -> F {
         F::pow2(self.chunk_width * index)
     }
 }
@@ -120,7 +142,7 @@ pub fn word_byte_num_vars(log_words: usize) -> usize {
 /// `Π_position ((256^(2^(bits − 1 − position)) − 1) · point[position] + 1)`.
 /// The radix half of the byte decode; the value half is `jolt-poly`'s
 /// `IdentityPolynomial`.
-pub fn place_value_weight<F: RingCore>(point: &[F]) -> F {
+pub fn place_value_weight<F: Ring>(point: &[F]) -> F {
     let bits = point.len();
     point
         .iter()
@@ -137,7 +159,7 @@ pub fn place_value_weight<F: RingCore>(point: &[F]) -> F {
 /// decode(byte, place) · Bytes(byte ‖ place ‖ instance)`. This is the
 /// semantic definition of the `ByteDecode` deriveds of the reconstruction
 /// relations.
-pub fn byte_decode_weight<F: Field>(byte_point: &[F], place_point: &[F]) -> F {
+pub fn byte_decode_weight<F: JoltField>(byte_point: &[F], place_point: &[F]) -> F {
     IdentityPolynomial::new(byte_point.len()).evaluate(byte_point) * place_value_weight(place_point)
 }
 
@@ -147,7 +169,7 @@ pub fn byte_decode_weight<F: Field>(byte_point: &[F], place_point: &[F]) -> F {
 /// `LookupSelectorWeight` deriveds (a one-hot selector's lane-eq weights, one
 /// lane per register / table index); the `LaneWeight(lane)` deriveds of the
 /// direct 0/1 flag lanes are plain `eq_index_msb(lane_point, lane)`.
-pub fn selector_block_weight<F: Field>(
+pub fn selector_block_weight<F: JoltField>(
     lane_point: &[F],
     block_start: usize,
     value_point: &[F],
@@ -161,32 +183,39 @@ pub fn selector_block_weight<F: Field>(
         .sum()
 }
 
+/// MLE of the centered row value used by balanced increment digits.
+pub fn balanced_inc_value<F: JoltField>(address_point: &[F]) -> F {
+    let unsigned = IdentityPolynomial::new(address_point.len()).evaluate(address_point);
+    let msb = address_point.first().copied().unwrap_or_else(F::zero);
+    unsigned - F::pow2(address_point.len()) * msb
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{boolean_point_msb, EqPolynomial};
 
     #[test]
     fn chunking_requires_divisor_widths() {
         assert_eq!(
-            UnsignedIncChunking::new(0),
+            BalancedIncChunking::new(0),
             Err(LatticeGeometryError::ZeroChunkWidth)
         );
         assert_eq!(
-            UnsignedIncChunking::new(7),
+            BalancedIncChunking::new(7),
             Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width: 7 })
         );
 
-        let chunking = UnsignedIncChunking::new(8).unwrap();
+        let chunking = BalancedIncChunking::new(8).unwrap();
         assert_eq!(chunking.chunk_width(), 8);
         assert_eq!(chunking.chunk_count(), 8);
     }
 
     #[test]
     fn place_values_reconstruct_little_endian_chunks() {
-        let chunking = UnsignedIncChunking::new(16).unwrap();
+        let chunking = BalancedIncChunking::new(16).unwrap();
         assert_eq!(chunking.chunk_count(), 4);
 
         let value: u64 = 0x0123_4567_89ab_cdef;
@@ -195,6 +224,24 @@ mod tests {
             acc + chunking.place_value::<Fr>(index) * Fr::from_u64(chunk)
         });
         assert_eq!(reconstructed, Fr::from_u64(value));
+    }
+
+    #[test]
+    fn balanced_inc_value_matches_centered_boolean_rows() {
+        for width in [4, 8] {
+            let radix = 1usize << width;
+            for row in 0..radix {
+                let expected = if row < radix / 2 {
+                    row as i128
+                } else {
+                    row as i128 - radix as i128
+                };
+                assert_eq!(
+                    balanced_inc_value(&boolean_point_msb::<Fr>(width, row)),
+                    Fr::from_i128(expected)
+                );
+            }
+        }
     }
 
     #[test]

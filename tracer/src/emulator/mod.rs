@@ -21,6 +21,7 @@ use alloc::{
 };
 
 pub mod cpu;
+pub mod decode_cache;
 pub mod default_terminal;
 pub mod elf_analyzer;
 pub mod memory;
@@ -268,6 +269,18 @@ impl Emulator {
         assert_eq!(header.e_width, 64, "tracer only supports RV64 ELF inputs");
 
         if self.tohost_addr != 0 {
+            // WARNING: a `tohost` symbol is how riscv-tests ELFs are
+            // recognized; a Jolt guest built by a foreign toolchain that
+            // defines one silently loses the layout-derived memory sizing
+            // configured below.
+            #[cfg(feature = "std")]
+            if self.cpu.get_mut_mmu().jolt_device.is_some() {
+                tracing::warn!(
+                    "ELF defines a `tohost` symbol, so the tracer is entering riscv-tests mode: \
+                    emulator memory is sized to the riscv-tests test capacity instead of the \
+                    Jolt memory layout. If this is a Jolt guest, do not emit a `tohost` symbol."
+                );
+            }
             self.is_test = true;
             self.cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
         } else {
@@ -293,6 +306,27 @@ impl Emulator {
                         .setup_bytecode(sh_addr + j as u64, analyzer.read_byte(sh_offset + j));
                 }
             }
+        }
+
+        // Cover the executable sections with the pre-decoded instruction
+        // cache. (Initialized after the section copy so the setup stores don't
+        // walk the invalidation path.)
+        const SHF_EXECINSTR: u64 = 0x4;
+        let mut text_base = u64::MAX;
+        let mut text_end = 0;
+        for header in &program_data_section_headers {
+            if header.sh_flags & SHF_EXECINSTR != 0
+                && header.sh_addr >= RAM_START_ADDRESS
+                && header.sh_size > 0
+            {
+                text_base = text_base.min(header.sh_addr);
+                text_end = text_end.max(header.sh_addr + header.sh_size);
+            }
+        }
+        if text_base < text_end {
+            self.cpu
+                .get_mut_mmu()
+                .init_decode_cache(text_base, text_end);
         }
 
         self.cpu.update_pc(header.e_entry);

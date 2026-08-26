@@ -200,6 +200,27 @@ variant dispatch. Tier 0 may relax the asserts from "naturally aligned" to "does
 doubleword boundary" (a new assert table) as an intermediate Zicclsm step: this covers all
 misaligned accesses except crossing ones.
 
+**Tier 0 as implemented (PRs #1761, #1762, #1768).** The fused single-lookup extract sketched
+above was rejected during implementation: with the offset delivered in *binary* form, the
+per-offset lane functionals are linearly independent at every phase-boundary cut, so the table
+has intrinsic prefix rank ≥ 8 per width (~16 new prefix/suffix families per width, per registry
+side). The implementation instead follows the codebase's own SRL/SRA binary-to-positional
+pattern, at one extra cycle per access: a rank-1 mask lookup converts the effective address to
+the addressed lane's byte mask (`WindowMask{B,H,W}`, each reading only the offset bits its
+alignment class allows, which also keeps every output in u64 range), and a constant-rank
+extract pulls the lane through the mask (`PextSigned` = `pext(x,y) + σ·(2^64 − 2^popcount(y))`,
+width-independent, full-domain testable; unsigned loads use plain `Pext`). Stores mirror this:
+`ANDN` clears the lane and width-specialized `ShiftData{B,H,W}` tables
+(`(rs2 mod 2^8w)·2^{8·offset}`, a rank-2 product over disjoint variables) place the store data;
+a general `Pdep` table was analyzed and rejected (deposited bit positions depend on the suffix
+popcount: prefix rank ~57). Total new machinery: 11 tables, 11 virtual instructions, 5 prefix
+and 9 suffix families across both registry sides. Realized traced cycles: LB/LBU 8→5,
+LH/LHU 9→6, LW 8→6, LWU 9→6, SB 13→8, SH 14→9, SW 15→9. Measured trace deltas:
+`btreemap` −8.9%, `sha2-chain` −7.2%, `fibonacci` ~0%. Measured prover wall-time: parity at
+fixed padded trace length (trace savings inside a power-of-two instance are invisible; the two
+extra globally-materialized prefixes cost nothing measurable); −27% at a padding-boundary
+crossing. The benefit unit is guest cycles per padded instance, not per-input wall time.
+
 ### Tier 1 — Offset via the memory cycle's idle lookup slot; floor addressing
 
 Kill the `ADDI`/`ANDI` address-materialization cycles by letting the memory instruction itself
@@ -372,8 +393,11 @@ stores — on btreemap ~4% more trace reduction.
 | `SD` misaligned | ✗ | ✗ | — | — | ~9–11 |
 
 Projected trace deltas (from the measured mixes): `btreemap` −13% (Tier 0), −17% (Tier 2),
-−21% (Tier 3); `sha2-chain` −10–15%; `fibonacci` ~0%. Prover time tracks trace length nearly
-1:1 at these scales; the offset columns cost ~+2% commit against that.
+−21% (Tier 3); `sha2-chain` −10–15%; `fibonacci` ~0%. (Tier 0 as implemented measures
+`btreemap` −8.9% and `sha2-chain` −7.2% — the gap to the −13% projection is the one extra
+mask-lookup cycle per access; see "Tier 0 as implemented".) Prover time tracks trace length
+nearly 1:1 at these scales *only across padded-instance boundaries*; within a fixed padded
+size the measured effect is nil, and the benefit is guest cycles per instance.
 
 ### Verifier / proof-size impact
 
@@ -403,7 +427,11 @@ Verified shape of the blast radius:
 - **akita is neutral to R1CS/Spartan changes** (no `cfg(akita)` in those trees; both modes share
   the claims path); it matters only for new committed polynomials and the packed witness
   (fused Inc column).
-- **Two hard budgets**: the committed bytecode width is 447 of 512 lanes
+- **Three hard budgets**: the legacy prover's suffix-accumulation hot path caps
+  `MAX_SUFFIXES` (`jolt-prover-legacy/src/zkvm/instruction_lookups/read_raf_checking.rs`,
+  a stack-scratch partition bound; raised 4→5 for `PextSigned`, the first 5-suffix table —
+  any table with more suffixes must bump it, and only the muldiv e2e catches the miss since
+  the assert is debug-only). The committed bytecode width is 447 of 512 lanes
   (`bytecode/chunks.rs` — `3·128 + 2 + 14 + 6 + 40 + 1`); every new lookup table and every new
   circuit flag consumes a lane, and crossing 512 doubles the committed width. This design adds
   ~15–22 tables + 0–2 flags — it fits, but economize the table family (parameterize widths
@@ -577,11 +605,16 @@ Both-mode (`host`, `host,zk`) CI lanes as per `CLAUDE.md`; akita lane for the pa
 2. ~~Instruction-input flags~~ **Resolved**: the operand mux identity is a plain sum with no
    exclusivity constraint anywhere; dual-set flags yield `Rs2Value + Imm` for free and soundly
    (flags are bytecode read-values). Add an explicit regression test pinning this behavior.
-3. **Extract-table decomposition**: fused per-width extract tables vs reusing the
-   bitmask-shift decomposition (`ShiftRightBitmask` + `VirtualSRL` pattern) — how many new
-   prefix/suffix families are actually needed, and does the 3-low-bits-of-y dependence sit on
-   the right side of the prefix/suffix split at all chunk configs (d=4 and d=8)? Same question
-   for the `AddressOffset` marker tables (offset + width gate + `2^32` marker term).
+3. ~~Extract-table decomposition~~ **Resolved** (see "Tier 0 as implemented"): the low-bits-of-y
+   dependence itself is harmless (offset bits never straddle a phase boundary), but the fused
+   per-offset form has intrinsic prefix rank ≥ 8 per width — a bilinear decomposition restricted
+   to any cut with ≥ 32 bound x-bits is a rank decomposition of a matrix whose factor families
+   (the 8 lane functionals, the 8 offset indicators) are each linearly independent. The
+   implemented mask-form two-step costs one extra cycle and ~6× less machinery; its
+   decompositions are total-domain (no `random_lookup_index` restriction). The fused form
+   remains an option for Tier 1's 2-cycle loads, ideally after the legacy registry mirror is
+   gone. The `AddressOffset` marker-table question (offset + width gate + marker term) remains
+   open for Tier 1.
 4. **Marker constant**: `2^32` assumes guest addresses < 2^32 − 8K − lowest; pick the marker
    from `MemoryLayout` bounds (or use a field-huge constant) and prove the no-solution range
    argument once, centrally.

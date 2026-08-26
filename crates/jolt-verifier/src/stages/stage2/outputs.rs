@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 2 verification.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ pub use super::ram_read_write_checking::{RamReadWriteChecking, RamReadWriteOutpu
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct Stage2OutputClaims<F: Field> {
+pub struct Stage2OutputClaims<F: JoltField> {
     pub product_uniskip_output_claim: F,
     pub batch_outputs: Stage2BatchOutputClaims<F>,
 }
@@ -43,7 +43,7 @@ pub struct Stage2OutputClaims<F: Field> {
 /// The two RAM relations slice their point at the phase-1 `instance_point_offset`.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-pub struct Stage2BatchSumchecks<F: Field> {
+pub struct Stage2BatchSumchecks<F: JoltField> {
     pub ram_read_write: RamReadWriteChecking<F>,
     /// On the prove side the remainder kernel is minted from the state the
     /// product uni-skip slot parked in the proof session, through its
@@ -56,7 +56,7 @@ pub struct Stage2BatchSumchecks<F: Field> {
 
 /// The shared per-relation opening-point accessors over the point-only stage-2
 /// batch aggregate.
-impl<F: Field> Stage2BatchOutputPoints<F> {
+impl<F: JoltField> Stage2BatchOutputPoints<F> {
     /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
     pub fn ram_read_write_point(&self) -> &[F] {
         self.ram_read_write.val()
@@ -84,7 +84,8 @@ impl<F: Field> Stage2BatchOutputPoints<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2ClearOutput<F: Field> {
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+pub struct Stage2ClearOutput<F: JoltField> {
     /// The produced batch opening *values* (wire form); later stages read each
     /// opening's value directly off these fields.
     pub output_values: Stage2BatchOutputClaims<F>,
@@ -111,7 +112,7 @@ pub struct Stage2ClearOutput<F: Field> {
 /// [`Stage2Output::product_tau_low`]; BlindFold independently recomputes it from
 /// `stage1.remainder_consistency`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2ZkOutput<F: Field, C> {
+pub struct Stage2ZkOutput<F: JoltField, C> {
     pub challenges: Stage2BatchChallenges<F>,
     pub product_uniskip_challenge: F,
     pub product_tau_low: Vec<F>,
@@ -126,12 +127,12 @@ pub struct Stage2ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage2Output<F: Field, C> {
+pub enum Stage2Output<F: JoltField, C> {
     Clear(Stage2ClearOutput<F>),
     Zk(Stage2ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage2Output<F, C> {
+impl<F: JoltField, C> Stage2Output<F, C> {
     /// The product uni-skip `tau_low` (stage 1's remainder point low half,
     /// reversed), available regardless of proving mode. Stage 3's relation
     /// construction evaluates its `EqPlusOne`/`EqSpartan` publics against it.
@@ -167,6 +168,10 @@ impl<F: Field, C> Stage2Output<F, C> {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
@@ -177,7 +182,7 @@ mod tests {
         ram::RamRafEvaluationDimensions,
         spartan::SpartanProductDimensions,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::Transcript;
 

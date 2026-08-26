@@ -8,7 +8,7 @@
 //! extract to zero / false.
 
 use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
-use jolt_field::{Field, ReducingBytes};
+use jolt_field::{CanonicalEncoding, JoltField};
 use jolt_program::{execution::TraceRow, field_inline::FieldEncodedValue};
 use jolt_riscv::FieldInlineOp;
 
@@ -69,13 +69,13 @@ field_value!(
     FieldRdInc,
 );
 
-impl<F: Field> FieldValue<F> for FieldOpFlag {
+impl<F: JoltField> FieldValue<F> for FieldOpFlag {
     fn value(self) -> F {
         F::from_bool(self.0)
     }
 }
 
-impl<F: Field> Extract for FieldRs1Value<F> {
+impl<F: JoltField> Extract<TraceRow> for FieldRs1Value<F> {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -90,7 +90,7 @@ impl<F: Field> Extract for FieldRs1Value<F> {
     }
 }
 
-impl<F: Field> Extract for FieldRs2Value<F> {
+impl<F: JoltField> Extract<TraceRow> for FieldRs2Value<F> {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -105,7 +105,7 @@ impl<F: Field> Extract for FieldRs2Value<F> {
     }
 }
 
-impl<F: Field> Extract for FieldRdValue<F> {
+impl<F: JoltField> Extract<TraceRow> for FieldRdValue<F> {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -120,7 +120,7 @@ impl<F: Field> Extract for FieldRdValue<F> {
     }
 }
 
-impl<F: Field> Extract for FieldProduct<F> {
+impl<F: JoltField> Extract<TraceRow> for FieldProduct<F> {
     fn extract(
         row: &TraceRow,
         next: Option<&TraceRow>,
@@ -132,7 +132,7 @@ impl<F: Field> Extract for FieldProduct<F> {
     }
 }
 
-impl<F: Field> Extract for FieldInvProduct<F> {
+impl<F: JoltField> Extract<TraceRow> for FieldInvProduct<F> {
     fn extract(
         row: &TraceRow,
         next: Option<&TraceRow>,
@@ -144,7 +144,7 @@ impl<F: Field> Extract for FieldInvProduct<F> {
     }
 }
 
-impl ExtractIndexed<FieldInlineOpFlag> for FieldOpFlag {
+impl ExtractIndexed<FieldInlineOpFlag, TraceRow> for FieldOpFlag {
     fn extract_indexed(
         flag: FieldInlineOpFlag,
         row: &TraceRow,
@@ -159,7 +159,7 @@ impl ExtractIndexed<FieldInlineOpFlag> for FieldOpFlag {
     }
 }
 
-impl<F: Field> Extract for FieldRdInc<F> {
+impl<F: JoltField> Extract<TraceRow> for FieldRdInc<F> {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -176,13 +176,13 @@ impl<F: Field> Extract for FieldRdInc<F> {
     }
 }
 
-pub(crate) fn decode_value<F: Field>(value: FieldEncodedValue) -> F {
+pub(crate) fn decode_value<F: JoltField>(value: FieldEncodedValue) -> F {
     if value.bytes_le[8..].iter().all(|byte| *byte == 0) {
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&value.bytes_le[..8]);
         return F::from_u64(u64::from_le_bytes(bytes));
     }
-    <F as ReducingBytes>::from_le_bytes_mod_order(&value.bytes_le)
+    <F as CanonicalEncoding>::from_bytes_le_reduced(&value.bytes_le)
 }
 
 pub(crate) const fn op(flag: FieldInlineOpFlag) -> FieldInlineOp {

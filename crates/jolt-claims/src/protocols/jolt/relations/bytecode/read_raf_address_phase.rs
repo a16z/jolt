@@ -1,6 +1,6 @@
 //! The address phase of the bytecode read-RAF symbolic sumcheck.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +17,7 @@ use crate::{opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumc
 /// The address-phase produced openings: the `BytecodeReadRafAddrClaim`
 /// intermediate, plus (committed-program mode only) the staged `BytecodeValClaim`
 /// openings. In full-program mode `val_stages` is empty.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -119,6 +120,7 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
 /// sumcheck: the batching `gamma` plus the five per-stage gammas (the same set
 /// the full monolith folds).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     #[challenge(BytecodeReadRafChallenge::Gamma)]
     pub gamma: F,
@@ -134,7 +136,7 @@ pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     pub stage5_gamma: F,
 }
 
-impl<F: jolt_field::Field> BytecodeReadRafAddressPhaseChallenges<F> {
+impl<F: jolt_field::JoltField> BytecodeReadRafAddressPhaseChallenges<F> {
     /// Expand the five drawn per-stage scalars into the gamma-power vectors the
     /// bytecode folds consume (`[1, γ, γ², …]` — the recurrence the prover's
     /// `challenge_scalar_powers` applies to its single squeezed scalar), sized
@@ -190,11 +192,11 @@ impl SymbolicSumcheck for ReadRafAddressPhase {
         self.shape.num_committed_ra_polys() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_address_input_fold(Vec::new())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(bytecode_read_raf_address_phase_opening())
     }
 }

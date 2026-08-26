@@ -13,24 +13,43 @@ workspace = true
 
 [features]
 default = ["parallel"]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
+akita = ["jolt-claims/akita", "jolt-verifier/akita"]
+# Shallow heap visitation of the proof session (profile harness flamegraphs).
+allocative = ["dep:allocative", "jolt-poly/allocative"]
+parallel = [
+  "dep:rayon",
+  "jolt-poly/parallel",
+  "jolt-utils/parallel",
+  "jolt-witness/parallel",
+]
+# Compile-time ZK mode: witness commitments finish through the hiding
+# streaming paths. Selected by jolt-prover's `zk` feature.
+zk = []
 
 [dependencies]
+allocative = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-field.workspace = true
 jolt-kernels-derive.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
+jolt-program.workspace = true
 jolt-riscv.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck.workspace = true
+jolt-utils.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
+jolt-dory.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
