@@ -11,6 +11,9 @@ macro_rules! debug_writeln {
     };
 }
 
+#[cfg(target_os = "none")]
+use zeroos::foundation::ops::MemoryOps;
+
 extern "C" {
     static __heap_start: u8;
     static __heap_end: u8;
@@ -43,7 +46,7 @@ pub extern "C" fn __platform_bootstrap() {
     // linked-list allocator (musl's malloc manages its own arenas over
     // mmap/brk).
     #[cfg(target_os = "none")]
-    zeroos::foundation::register_memory(zeroos::foundation::ops::MemoryOps {
+    zeroos::foundation::register_memory(MemoryOps {
         init: jolt_platform::size_class_alloc::init,
         alloc: jolt_platform::size_class_alloc::alloc,
         dealloc: jolt_platform::size_class_alloc::dealloc,
