@@ -34,9 +34,10 @@
 //! - **Eval-at-1 recovery** and **rayon walks**, both phases (see the module
 //!   docs on [`crate::optimized`]).
 //!
-//! In the base protocol the two phases share one compact PC scan through the
-//! [`ProofSession`]. The packed phases instead share the wider rows their
-//! Booleanity peers already retain, avoiding a second cycle cache.
+//! Both phases read the stage-5 [`InstructionCycleRow`] carry their Booleanity
+//! and RA-virtualization peers already retain, so neither protocol pays for a
+//! second per-cycle PC cache. The row stores `MappedPc`, which equals the
+//! address phase's `BytecodePc` on every row (see the `push_pc` comment).
 
 use std::sync::Arc;
 
@@ -62,19 +63,12 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
 };
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::witnesses::RaChunkSelector;
-#[cfg(not(feature = "akita"))]
-use jolt_witness::witnesses::{BytecodePc, MappedPc};
 use jolt_witness::JoltWitnessPlane;
-#[cfg(not(feature = "akita"))]
-use jolt_witness::WitnessBundle;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "akita")]
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-#[cfg(not(feature = "akita"))]
-use super::support::collect_rows;
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, par_sum_pair_groups_reusing,
     round_poly_from_skipped_evals, scaled_eq_table, RoundProgress,
@@ -82,91 +76,6 @@ use super::support::{
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-
-/// Sentinel for a cold cycle (no bytecode mapping) in [`PcRow::mapped_pc`].
-#[cfg(not(feature = "akita"))]
-const COLD: u32 = u32::MAX;
-
-/// One cycle's packed bytecode PC facts: the pushforward slot (no-ops and
-/// unmapped rows land on 0 — the address-phase convention) and the committed
-/// one-hot hot index (unmapped rows are cold — the cycle-phase convention).
-#[derive(Clone, Copy, Debug)]
-#[cfg(not(feature = "akita"))]
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct PcRow {
-    push_pc: u32,
-    #[cfg(not(feature = "akita"))]
-    mapped_pc: u32,
-}
-
-/// The session key of the shared per-cycle PC scan.
-#[cfg(not(feature = "akita"))]
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct PcRowsKey(Arc<Vec<PcRow>>);
-
-#[cfg(not(feature = "akita"))]
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-struct PcBundle {
-    bytecode_pc: BytecodePc,
-    #[cfg(not(feature = "akita"))]
-    mapped_pc: MappedPc,
-}
-
-#[cfg(not(feature = "akita"))]
-impl PcRow {
-    /// One trace scan per proof, shared by both phases through the session.
-    fn shared<F: JoltField>(
-        session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Arc<Vec<Self>>, KernelError<F>> {
-        if session.state::<PcRowsKey>().is_none() {
-            let bundles: Vec<PcBundle> = collect_rows(witness, cycles)?;
-            let pack = |bundle: &PcBundle| {
-                let mapped = match bundle.mapped_pc.0 {
-                    Some(pc) if pc as u32 as usize == pc && pc as u32 != COLD => pc as u32,
-                    Some(_) => {
-                        return Err(KernelError::InvariantViolation {
-                            reason: "bytecode PC exceeds the packed u32 range",
-                        })
-                    }
-                    None => COLD,
-                };
-                if bundle.bytecode_pc.0 as u32 as usize != bundle.bytecode_pc.0 {
-                    return Err(KernelError::InvariantViolation {
-                        reason: "bytecode PC exceeds the packed u32 range",
-                    });
-                }
-                Ok(Self {
-                    push_pc: bundle.bytecode_pc.0 as u32,
-                    mapped_pc: mapped,
-                })
-            };
-            #[cfg(feature = "parallel")]
-            let rows = bundles
-                .par_iter()
-                .map(pack)
-                .collect::<Result<Vec<_>, _>>()?;
-            #[cfg(not(feature = "parallel"))]
-            let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
-            session.park(PcRowsKey(Arc::new(rows)));
-        }
-        let rows = session
-            .state::<PcRowsKey>()
-            .map(|key| Arc::clone(&key.0))
-            .ok_or(KernelError::InvariantViolation {
-                reason: "bytecode PC rows vanished from the session",
-            })?;
-        if rows.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: "bytecode cycle PC rows".to_owned(),
-                expected: cycles,
-                got: rows.len(),
-            });
-        }
-        Ok(rows)
-    }
-}
 
 /// Per-stage cycle-eq pushforwards onto the bytecode address domain. Base and
 /// row-weighted stages share one trace walk over the split-eq decomposition.
@@ -333,13 +242,11 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 });
             }
         }
-        #[cfg(not(feature = "akita"))]
-        let rows = PcRow::shared(session, witness, cycles)?;
-        #[cfg(feature = "akita")]
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        #[cfg(not(feature = "akita"))]
-        let push_pc = |row: &PcRow| row.push_pc as usize;
-        #[cfg(feature = "akita")]
+        // The address phase wants `BytecodePc` (no-ops on slot 0) and the row
+        // carries `MappedPc`; the two agree on every row, because
+        // `BytecodePreprocessing::get_pc` already maps every `NoOp` to slot 0
+        // and padding rows are built with `bytecode_pc: 0`.
         let push_pc = |row: &InstructionCycleRow| row.mapped_pc().unwrap_or(0);
         let entry_bytecode_index = relation.entry_bytecode_index();
         if entry_bytecode_index >= addresses || rows.iter().any(|row| push_pc(row) >= addresses) {
@@ -353,7 +260,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
 
         #[cfg(not(feature = "akita"))]
-        let row_weight = |_: &PcRow| F::one();
+        let row_weight = |_: &InstructionCycleRow| F::one();
         #[cfg(feature = "akita")]
         let row_weight = InstructionCycleRow::fused_inc::<F>;
         let pushforwards = stage_pushforwards::<F, _>(
@@ -673,13 +580,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                 reason: "bytecode address chunk count disagrees with the committed RA count",
             });
         }
-        #[cfg(not(feature = "akita"))]
-        let rows = PcRow::shared(session, witness, cycles)?;
-        #[cfg(feature = "akita")]
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        // In base mode this is the compact PC scan's last consumer.
-        #[cfg(not(feature = "akita"))]
-        let _ = session.take::<PcRowsKey>();
 
         // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
         // one-hot grid, served lazily off the sparse per-cycle indices for
@@ -784,12 +685,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
 }
 
 /// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
-/// cold on unmapped cycles, off the session-shared PC scan.
+/// cold on unmapped cycles, off the shared stage-5 rows.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BytecodePcChunks {
-    #[cfg(not(feature = "akita"))]
-    rows: Arc<Vec<PcRow>>,
-    #[cfg(feature = "akita")]
     rows: Arc<Vec<InstructionCycleRow>>,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     selectors: Vec<RaChunkSelector>,
@@ -806,18 +704,9 @@ impl ChunkIndexSource for BytecodePcChunks {
 
     #[inline]
     fn index(&self, i: usize, j: usize) -> Option<usize> {
-        let row = &self.rows[j];
-        #[cfg(not(feature = "akita"))]
-        {
-            if row.mapped_pc == COLD {
-                return None;
-            }
-            Some(self.selectors[i].chunk_usize(row.mapped_pc as usize))
-        }
-        #[cfg(feature = "akita")]
-        {
-            row.mapped_pc().map(|pc| self.selectors[i].chunk_usize(pc))
-        }
+        self.rows[j]
+            .mapped_pc()
+            .map(|pc| self.selectors[i].chunk_usize(pc))
     }
 }
 
@@ -1036,8 +925,8 @@ mod stage_pushforward_tests {
 }
 
 /// Byte-parity of both phases against the reference kernels, run as a PAIR
-/// through one shared [`ProofSession`] so the parked per-cycle PC scan flows
-/// the way production stages would exercise it.
+/// through one shared [`ProofSession`] so the parked per-cycle rows flow the
+/// way production stages would exercise them.
 ///
 /// Fixture honesty: `with_sample_backend` is the only witness plane
 /// constructible without a `jolt-program` dependency. At its scale the
@@ -1062,6 +951,7 @@ mod tests {
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::{JoltWitnessOracle, ProgramSource};
 
+    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
     use super::*;
     use crate::optimized::parity::{
         probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
@@ -1145,8 +1035,9 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                session.state::<PcRowsKey>().is_some(),
-                "the address phase must park the shared PC scan"
+                session.state::<SharedInstructionRows>().is_some()
+                    || session.state::<SharedInstructionRowsWeak>().is_some(),
+                "the address phase must park the shared cycle rows"
             );
 
             let claim = probe_input_claim(reference.as_mut());
@@ -1166,7 +1057,7 @@ mod tests {
             );
 
             // ---- Stage 6b: cycle phase, from the same session (the parked
-            // PC scan is reclaimed, mirroring the production 6a→6b flow) and
+            // cycle rows are reused, mirroring the production 6a→6b flow) and
             // the production r_address wiring (the reversed 6a point).
             let r_address: Vec<Fr> = address_sumcheck_challenges.iter().rev().copied().collect();
             let stage_gammas = address_challenges.stage_gamma_powers();
