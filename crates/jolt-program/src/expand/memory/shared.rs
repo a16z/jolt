@@ -491,49 +491,31 @@ pub(in crate::expand) fn expand_narrow_store(
     let v1 = asm.allocate()?;
     let v2 = asm.allocate()?;
     let v3 = asm.allocate()?;
+    let base = reg(rs1(instruction)?);
+    let source = reg(rs2(instruction)?);
+    let offset = instruction.operands.imm;
+    let formatted_offset = format_i_imm(offset);
 
     if let Some(alignment) = alignment {
         // `SH`/`SW` assert alignment; `SB` passes `None`. The asserts also
         // guarantee the offset bits the window-mask and shift-data tables do
         // not read are zero.
-        asm.emit_address(alignment, reg(rs1(instruction)?), instruction.operands.imm);
+        asm.emit_address(alignment, base, offset);
     }
-    asm.emit_i(
-        SourceInstructionKind::ADDI,
-        v0.operand(),
-        reg(rs1(instruction)?),
-        format_i_imm(instruction.operands.imm),
-    );
-    asm.emit_i(
-        SourceInstructionKind::ANDI,
-        v1.operand(),
-        v0.operand(),
-        format_i_imm(-8),
-    );
-    asm.emit_i(SourceInstructionKind::LD, v2.operand(), v1.operand(), 0);
-    // v3 = byte mask of the addressed lane.
+    jolt_asm!(asm, {
+        addi v0, base, formatted_offset;
+        andi v1, v0, format_i_imm(-8);
+        ld v2, v1, 0;
+    });
+    // v3 = mask of the addressed lane.
     asm.emit_i(window_mask, v3.operand(), v0.operand(), 0);
-    // v2 = doubleword with the lane cleared.
-    asm.emit_r(
-        SourceInstructionKind::ANDN,
-        v2.operand(),
-        v2.operand(),
-        v3.operand(),
-    );
+    jolt_asm!(asm, { andn v2, v2, v3; });
     // v3 = store data shifted into the lane.
-    asm.emit_r(
-        shift_data,
-        v3.operand(),
-        reg(rs2(instruction)?),
-        v0.operand(),
-    );
-    asm.emit_r(
-        SourceInstructionKind::ADD,
-        v2.operand(),
-        v2.operand(),
-        v3.operand(),
-    );
-    asm.emit_s(SourceInstructionKind::SD, v1.operand(), v2.operand(), 0);
+    asm.emit_r(shift_data, v3.operand(), source, v0.operand());
+    jolt_asm!(asm, {
+        add v2, v2, v3;
+        sd v1, v2, 0;
+    });
     asm.release_many([v0, v1, v2, v3]);
 
     asm.finalize()
