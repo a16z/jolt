@@ -18,7 +18,11 @@
 //! optimized/reference wire divergence fails here as a verification error
 //! even before the kernel-level parity tests localize it.
 
-#[cfg(all(feature = "prover-fixtures", feature = "field-inline"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "field-inline",
+    not(feature = "akita")
+))]
 #[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod support {
     use std::sync::Arc;
@@ -282,7 +286,8 @@ mod support {
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "field-inline",
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "akita")
 ))]
 #[expect(
     clippy::expect_used,
@@ -455,7 +460,12 @@ mod clear {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "field-inline", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "field-inline",
+    feature = "zk",
+    not(feature = "akita")
+))]
 #[expect(
     clippy::expect_used,
     clippy::panic,
@@ -536,7 +546,12 @@ mod zk {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", feature = "field-inline")))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    feature = "field-inline",
+    not(feature = "akita")
+)))]
 #[test]
-#[ignore = "enable --features prover-fixtures,field-inline (optionally +zk) to run the field-inline e2e"]
+#[ignore = "enable --features prover-fixtures,field-inline (optionally +zk) to run the dory \
+            field-inline e2e; the packed suite is akita_field_inline_e2e.rs"]
 fn field_inline_e2e() {}

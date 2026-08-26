@@ -17,7 +17,11 @@
 
 /// Shared scaffolding: the legacy-side guest artifacts every packed test
 /// starts from, and the modular-side trace/config/witness pipeline pieces.
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod support {
     use std::sync::Arc;
@@ -142,7 +146,11 @@ mod support {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
     use std::sync::Arc;
@@ -395,7 +403,11 @@ mod muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod advice {
     use std::sync::Arc;
@@ -675,7 +687,11 @@ mod advice {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod committed {
     use std::sync::Arc;
@@ -840,7 +856,12 @@ mod committed {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", feature = "akita")))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+)))]
 #[test]
-#[ignore = "enable --features akita,prover-fixtures to build the packed (Akita) e2e suite"]
+#[ignore = "enable --features akita,prover-fixtures (without field-inline: an FR-on packed build \
+            proves only FR-profile guests) to build the packed (Akita) e2e suite"]
 fn muldiv_e2e_akita() {}
