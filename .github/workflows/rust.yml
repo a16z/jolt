@@ -45,6 +45,18 @@ jobs:
       - name: taplo fmt --check
         run: taplo fmt --check
 
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history (blobs lazily fetched) so the diff-scoped rules can
+      # resolve an exact merge base; see scripts/check_style_invariants.py.
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: check style invariants
+        run: python3 scripts/check_style_invariants.py --base "origin/${{ github.base_ref || 'main' }}"
+
   field-stack:
     name: Shared field feature matrix
     runs-on: ubuntu-latest

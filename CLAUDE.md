@@ -227,6 +227,7 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 - Benchmark changes to `poly/` code — small regressions multiply across thousands of sumcheck rounds
 - Use `#[inline]` judiciously in hot paths
 - Pre-allocate vectors unsafely when size is known; avoid clones in hot paths
+- Hot trace paths get one pass and one owner of trace-sized storage. Produce or share derived rows during the existing pass instead of walking or materializing the trace again.
 
 ### Prover Hot Paths
 
@@ -234,12 +235,24 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 - `CompactPolynomial` bind converts small scalars to field elements — keep scalars small
 - `SharedRaPolynomials` avoids per-polynomial memory duplication for RA indices
 
-### Code Style
+### Code Style Invariants
 
-- Codebase uses `non_snake_case` convention for math variables: `log_T`, `ram_K`, `log_K`, etc.
-- Import types and structs, then reference them by short names; use fully qualified paths only to resolve ambiguity.
+- Use `non_snake_case` for math variables: `log_T`, `ram_K`, `log_K`, etc.
+- **Machine-checked, repo-wide:** one `cfg_attr` per predicate per item; fold adjacent `#[cfg_attr(P, A)]` `#[cfg_attr(P, B)]` into `#[cfg_attr(P, A, B)]`.
+- **Machine-checked, repo-wide:** `#[allocative(visit = ...)]` never decorates a container of primitives (`Vec<u32>`, `Vec<Vec<usize>>`, `Vec<Option<u8>>`, ...). Native impls report element types and unused capacity; `jolt_poly::visit_scalars`/`visit_scalar_rows` exist only to avoid the `F: Allocative` bound on foreign-scalar containers.
+- **Machine-checked on added lines:** import types, traits, enums, constants, and PascalCase macros; reference them by short name. Keep enum variants qualified by the imported enum type (`Kind::ADD`, not bare `ADD`). Import singleton paths directly (`use x::Kind`, never `use x::Kind::{self}`). Lowercase namespace free functions and macros (`std::mem::take`, `tracing::info!`) may stay qualified. Fully qualified paths remain valid for ambiguity, attribute arguments (`allocative(visit = jolt_poly::visit_scalars)`), and macro bodies. Once a path is imported, never spell it qualified in the same file.
 - Alias an instruction-kind enum as `Kind` at emitter call sites and write `Kind::INSTRUCTION`; never qualify emitted instructions with `SourceInstructionKind`, `JoltInstructionKind`, or a module path.
-- Before PR handoff, audit every added test and helper. Remove development-only probes, ignored tests, temporary benchmarks, diagnostic counters or histograms, and one-off fuzz or parity scaffolding. Keep permanent tests only when they add a distinct failure signal beyond existing tests, golden fixtures, or CI. If a manual diagnostic is worth keeping, make it an intentional tool or benchmark with a documented command.
+- Give each protocol formula, geometry or sizing law, schedule, and state transition one owner. Consumers call the canonical implementation instead of mirroring or open-coding it. Tests use independent ground truth or the production computation; never a second implementation of the same rule as their oracle.
+- Encode correlated state and absence with typed requests, structs, enums, and `Option`; never value sentinels, decomposed arguments, or parallel options that can disagree.
+- Serialized or ordinal enums are append-only; keep feature-gated and test-only variants last so feature selection cannot shift real discriminants.
+- Enforce public-boundary invariants at the point of fault in release builds with typed errors. Use `debug_assert` only for properties already pinned by types or release checks; keep recoverable capability gaps separate from invariant violations.
+- Derive trait impls instead of hand-rolling; exhaust derive escapes (`#[allocative(bound = "F: JoltField")]`, `visit = ...`, `skip`) first. Hand-write only what a derive cannot express, keep it local to the one type that needs it, and size buffers by `capacity()`, not `len()`.
+- A free function is pure or shared across ≥2 callers. Otherwise make it a method on the type whose state it uses; inline it when no type owns the behavior.
+- No public API, abstraction, mode, or state container without an in-repo production caller or documented external contract; add it with its first use. Lazy-init globals and error slots are valid, but speculative lifecycle guards and unreachable transitions are not.
+- State enforcement honestly in docs: never describe a property as constraint-enforced when it holds only for the honest encoder or under a `debug_assert`; name the mechanism and location that pins each invariant. If reviewers independently misread a deliberate gap, the missing argument belongs in a comment.
+- Make names track current semantics: rename vocabulary when an encoding changes (`UnsignedIncMsb` → `BalancedIncCarry`); keep no compatibility names.
+- Add `cfg`/`cfg_attr` gates only where the build requires them.
+- Before PR handoff, audit every added test and helper. Remove development-only probes, ignored tests, temporary benchmarks, diagnostic counters or histograms, and one-off fuzz or parity scaffolding. Keep permanent tests only when they add a distinct failure signal beyond existing tests, golden fixtures, or CI. Make a worthwhile manual diagnostic an intentional tool or benchmark with a documented command.
 
 ### Testing Guidelines
 
@@ -254,5 +267,5 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 
 ### Comments
 
-Match the codebase's low comment density. Worth writing: WHY comments, WARNING for non-obvious gotchas, SAFETY on unsafe blocks, algorithm explanations (link to paper if applicable), public API docs stating behavior or invariants. TODOs need issue links.
+Match the codebase's low comment density. Worth writing: WHY comments, WARNING for non-obvious gotchas, SAFETY on unsafe blocks, algorithm explanations (link to paper if applicable), public API docs stating behavior or invariants.
 Do not narrate code or test assertions. If a comment only restates an expression, make the code self-documenting instead.
