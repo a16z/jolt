@@ -3,7 +3,7 @@
     reason = "Tracer concrete instruction names mirror generated Jolt instruction constants"
 )]
 
-use jolt_field::{CanonicalBytes, CanonicalEncoding, Field, Fr};
+use jolt_field::{CanonicalEncoding, Field};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
     FieldRegisterWrite,
@@ -128,32 +128,47 @@ field_instruction!(
     SourceInstructionKind::FIELD_LOAD_IMM
 );
 
+// The proof field the tracer executes over. jolt-field selects its backend by
+// Cargo feature (bn254 by default, solinas for Fp128) and exposes no
+// proof-field alias, so this is the single selection point: switching fields
+// means repointing this alias and FieldValueEncoding::ACTIVE in jolt-program.
+// Everything below is generic over F; no other line names a concrete field.
+type ProofField = jolt_field::Fr;
+
 fn execute_field_inline(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
 ) -> FieldInlineTraceData {
+    execute_over::<ProofField>(op, operands, cpu)
+}
+
+fn execute_over<F: Field + CanonicalEncoding>(
+    op: FieldInlineOp,
+    operands: FormatFieldInline,
+    cpu: &mut Cpu,
+) -> FieldInlineTraceData {
     match op {
-        FieldInlineOp::Add => execute_binary(op, operands, cpu, |left, right| left + right),
-        FieldInlineOp::Sub => execute_binary(op, operands, cpu, |left, right| left - right),
+        FieldInlineOp::Add => execute_binary::<F>(op, operands, cpu, |left, right| left + right),
+        FieldInlineOp::Sub => execute_binary::<F>(op, operands, cpu, |left, right| left - right),
         FieldInlineOp::Mul => {
-            let mut trace = execute_binary(op, operands, cpu, |left, right| left * right);
+            let mut trace = execute_binary::<F>(op, operands, cpu, |left, right| left * right);
             trace.product = trace.rd.map(|write| write.post_value);
             trace
         }
-        FieldInlineOp::Inv => execute_inverse(op, operands, cpu),
-        FieldInlineOp::AssertEq => execute_assert_eq(op, operands, cpu),
-        FieldInlineOp::LoadFromX => execute_load_from_x(op, operands, cpu),
-        FieldInlineOp::StoreToX => execute_store_to_x(op, operands, cpu),
+        FieldInlineOp::Inv => execute_inverse::<F>(op, operands, cpu),
+        FieldInlineOp::AssertEq => execute_assert_eq::<F>(op, operands, cpu),
+        FieldInlineOp::LoadFromX => execute_load_from_x::<F>(op, operands, cpu),
+        FieldInlineOp::StoreToX => execute_store_to_x::<F>(op, operands, cpu),
         FieldInlineOp::LoadImm => execute_load_imm(op, operands, cpu),
     }
 }
 
-fn execute_binary(
+fn execute_binary<F: CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
-    f: impl FnOnce(Fr, Fr) -> Fr,
+    f: impl FnOnce(F, F) -> F,
 ) -> FieldInlineTraceData {
     let rs1_register = operands.rs1.unwrap_or(0);
     let rs2_register = operands.rs2.unwrap_or(0);
@@ -182,7 +197,7 @@ fn execute_binary(
     }
 }
 
-fn execute_inverse(
+fn execute_inverse<F: Field + CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
@@ -196,7 +211,7 @@ fn execute_inverse(
     // containing FIELD_INV(0) can never be proven. Trapping here surfaces the
     // guest bug at trace time instead of as a downstream sumcheck failure; the
     // guest-side API is responsible for guarding zero before emitting FIELD_INV.
-    let inverse = decode_field(rs1_value).inverse().unwrap_or_else(|| {
+    let inverse = decode_field::<F>(rs1_value).inverse().unwrap_or_else(|| {
         panic!(
             "FIELD_INV of zero at pc 0x{:x} (fr{}): the inverse constraint is \
              unsatisfiable for a zero operand; guard the guest-side inverse",
@@ -217,12 +232,12 @@ fn execute_inverse(
             pre_value,
             post_value,
         }),
-        inv_product: Some(encode_field(decode_field(rs1_value) * inverse)),
+        inv_product: Some(encode_field(decode_field::<F>(rs1_value) * inverse)),
         ..Default::default()
     }
 }
 
-fn execute_assert_eq(
+fn execute_assert_eq<F: CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
@@ -232,8 +247,8 @@ fn execute_assert_eq(
     let rs1_value = cpu.field_registers.read(rs1_register);
     let rs2_value = cpu.field_registers.read(rs2_register);
     assert_eq!(
-        decode_field(rs1_value),
-        decode_field(rs2_value),
+        decode_field::<F>(rs1_value),
+        decode_field::<F>(rs2_value),
         "field-inline assert_eq failed"
     );
     FieldInlineTraceData {
@@ -250,7 +265,7 @@ fn execute_assert_eq(
     }
 }
 
-fn execute_load_from_x(
+fn execute_load_from_x<F: Field + CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
@@ -258,7 +273,7 @@ fn execute_load_from_x(
     let x_register = operands.rs1.unwrap_or(0);
     let rd_register = operands.rd.unwrap_or(0);
     let x_value = cpu.read_register(x_register) as u64;
-    let field_value = encode_field(Fr::from(x_value));
+    let field_value = encode_field(F::from_u64(x_value));
     let pre_value = cpu.field_registers.read(rd_register);
     cpu.field_registers.write(rd_register, field_value);
     FieldInlineTraceData {
@@ -277,7 +292,7 @@ fn execute_load_from_x(
     }
 }
 
-fn execute_store_to_x(
+fn execute_store_to_x<F: CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
@@ -291,7 +306,7 @@ fn execute_store_to_x(
     // value already fits in 64 bits (x-register values are u64-range). A wider value
     // would make an honest trace unprovable, so trap here at trace time. Full-width
     // extraction is the advice pattern's job (advice limbs + Horner + FIELD_ASSERT_EQ).
-    let x_value = decode_field(field_value)
+    let x_value = decode_field::<F>(field_value)
         .to_u64_checked()
         .unwrap_or_else(|| {
             panic!(
@@ -352,12 +367,17 @@ fn execute_load_imm(
     }
 }
 
-fn decode_field(value: FieldEncodedValue) -> Fr {
-    <Fr as CanonicalEncoding>::from_bytes_le_reduced(&value.bytes_le)
+fn decode_field<F: CanonicalEncoding>(value: FieldEncodedValue) -> F {
+    F::from_bytes_le_reduced(&value.bytes_le)
 }
 
-fn encode_field(value: Fr) -> FieldEncodedValue {
-    let mut bytes_le = [0u8; 32];
-    value.to_bytes_le(&mut bytes_le);
-    FieldEncodedValue { bytes_le }
+fn encode_field<F: CanonicalEncoding>(value: F) -> FieldEncodedValue {
+    // A field wider than the fixed 32-byte register buffer cannot ride
+    // FieldEncodedValue; reject it at monomorphization, not per encode.
+    const { assert!(F::NUM_BYTES <= FieldEncodedValue::BYTE_LEN as usize) }
+    let mut encoded = FieldEncodedValue::zero();
+    // Narrower fields occupy the low NUM_BYTES; the rest of the buffer stays
+    // zero (FieldValueEncoding::byte_len tags the valid width).
+    value.to_bytes_le(&mut encoded.bytes_le[..F::NUM_BYTES]);
+    encoded
 }
