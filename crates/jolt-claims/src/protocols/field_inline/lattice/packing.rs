@@ -86,6 +86,17 @@ impl FieldIncLimbPackingPlan {
         self.layout_digest
     }
 
+    /// The packed opening statement in canonical logical-slot order, tagged
+    /// with this layout's digest (the `OneHotTrace` plan's `packed_claims`,
+    /// for the limb object).
+    pub fn packed_claims<F: Field>(
+        &self,
+        point: Vec<F>,
+        evaluations: Vec<F>,
+    ) -> jolt_openings::PrefixPackedClaims<F> {
+        jolt_openings::PrefixPackedClaims::new(self.layout_digest, point, evaluations)
+    }
+
     /// Maps a limb column's leaf-claim point from `(digit-value ‖ cycle)` to
     /// the row-major committed order `(cycle ‖ digit-value)`.
     pub fn column_point<F: Field>(

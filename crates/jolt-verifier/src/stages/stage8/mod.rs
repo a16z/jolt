@@ -3,6 +3,8 @@
 
 #[cfg(all(feature = "field-inline", not(feature = "akita")))]
 pub mod field_inline;
+#[cfg(all(feature = "field-inline", feature = "akita"))]
+pub mod field_inline_packed;
 pub mod outputs;
 /// Packed-build statement assembly: per-object packings, leaf-claim
 /// resolution, and the joint opening call. Public because the prover's

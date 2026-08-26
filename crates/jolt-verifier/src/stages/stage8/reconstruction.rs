@@ -471,6 +471,11 @@ pub struct ReconstructionSumchecks<F: JoltField> {
     pub trusted_advice: Option<TrustedAdviceReconstructionInstance<F>>,
     pub bytecode: Option<BytecodeChunkReconstructionInstance<F>>,
     pub program_image: Option<ProgramImageReconstructionInstance<F>>,
+    /// The packed FR limb member — always present on the field-inline build
+    /// (every FR-on packed proof carries the limb object), so the phase
+    /// always runs there.
+    #[cfg(feature = "field-inline")]
+    pub field_inc_limbs: Option<super::field_inline_packed::FieldIncLimbReconstructionInstance<F>>,
 }
 
 pub struct ReconstructionClearOutput<F: JoltField> {
@@ -486,12 +491,16 @@ impl<F: JoltField> ReconstructionClearOutput<F> {
                 trusted_advice: None,
                 bytecode: None,
                 program_image: None,
+                #[cfg(feature = "field-inline")]
+                field_inc_limbs: None,
             },
             output_points: ReconstructionOutputPoints {
                 untrusted_advice: None,
                 trusted_advice: None,
                 bytecode: None,
                 program_image: None,
+                #[cfg(feature = "field-inline")]
+                field_inc_limbs: None,
             },
         }
     }
@@ -626,7 +635,10 @@ where
     let bytecode_layout = checked.precommitted.bytecode.as_ref();
     let image_layout = checked.precommitted.program_image.as_ref();
 
-    let phase_runs = untrusted_layout.is_some()
+    // Under field-inline the phase always runs: every FR-on packed proof
+    // carries the limb object, FieldRdInc zero or not.
+    let phase_runs = cfg!(feature = "field-inline")
+        || untrusted_layout.is_some()
         || trusted_layout.is_some()
         || bytecode_layout.is_some()
         || image_layout.is_some();
@@ -729,6 +741,17 @@ where
         })
         .transpose()?;
 
+    // The FR limb member consumes the stage-6b FR increment reduction's
+    // terminus; its shape comes off the checked public inputs.
+    #[cfg(feature = "field-inline")]
+    let field_inc_limbs = {
+        let shape = super::field_inline_packed::limb_shape::<F>(
+            checked.trace_length.log_2(),
+            checked.one_hot_config,
+        );
+        super::field_inline_packed::build_member(shape, stage6b)?
+    };
+
     let input_values = ReconstructionInputClaims {
         untrusted_advice: untrusted
             .as_ref()
@@ -744,6 +767,8 @@ where
         program_image: program_image
             .as_ref()
             .map(|(_, word)| ProgramImageReconstructionInputClaims { word: word.value }),
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs: Some(field_inc_limbs.input_values.clone()),
     };
     let input_points = ReconstructionInputPoints {
         untrusted_advice: untrusted.as_ref().map(|(_, word)| {
@@ -766,6 +791,8 @@ where
                 word: word.point.clone(),
             }
         }),
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs: Some(field_inc_limbs.input_points.clone()),
     };
 
     let sumchecks = ReconstructionSumchecks {
@@ -773,6 +800,8 @@ where
         trusted_advice: trusted.map(|(instance, _)| instance),
         bytecode: bytecode.map(|(instance, _, _)| instance),
         program_image: program_image.map(|(instance, _)| instance),
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs: Some(field_inc_limbs.instance),
     };
 
     Ok(Some(ReconstructionParts {
@@ -803,12 +832,18 @@ where
     }) = build_reconstruction_parts(checked, stage6b, stage7)?
     else {
         // Fail-closed: no advice and a full program in the public shape means
-        // no reconstruction anywhere in the proof.
+        // no reconstruction anywhere in the proof. (Never reached on the
+        // field-inline build, where the FR limb member always runs.)
+        #[cfg(feature = "field-inline")]
+        let field_inc_limbs_present = claims.field_inc_limbs.is_some();
+        #[cfg(not(feature = "field-inline"))]
+        let field_inc_limbs_present = false;
         if sumcheck_proof.is_some()
             || claims.untrusted_advice.is_some()
             || claims.trusted_advice.is_some()
             || claims.bytecode.is_some()
             || claims.program_image.is_some()
+            || field_inc_limbs_present
         {
             return Err(public_input_failed(
                 JoltRelationId::UntrustedAdviceReconstruction,

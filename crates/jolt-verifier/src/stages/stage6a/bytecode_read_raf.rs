@@ -394,7 +394,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     #[cfg(feature = "field-inline")]
     fn input_claim(
         &self,
-        input_values: &BytecodeReadRafAddressPhaseInputClaims<F>,
+        input_values: &crate::stages::relations::SumcheckInputClaims<F, Self>,
         challenges: &jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         use jolt_claims::{InputClaims as _, SumcheckChallenges as _};

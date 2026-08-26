@@ -711,5 +711,19 @@ where
         &reconstruction,
     )?;
 
+    // The packed FR limb object opens last, from the reconstruction member's
+    // per-column leaves (commitment presence was checked fail-closed up
+    // front; the opening and leaf slots are required here).
+    #[cfg(feature = "field-inline")]
+    super::field_inline_packed::verify_proof_opening::<PCS, _>(
+        formula_dimensions.trace.log_t(),
+        proof.one_hot_config,
+        &preprocessing.pcs_setup,
+        proof.field_inc_limbs_commitment.as_ref(),
+        proof.joint_opening_proof.field_inc_limbs.as_ref(),
+        &reconstruction,
+        transcript,
+    )?;
+
     Ok(Stage8Output::Clear)
 }

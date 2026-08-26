@@ -22,7 +22,6 @@ pub use jolt_verifier_derive::SumcheckBatch;
 
 use std::collections::BTreeSet;
 
-use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_transcript::Transcript;
@@ -382,21 +381,21 @@ where
     F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
-    // `StageClaimPublicInputFailed` attributes to a typed `JoltRelationId`, so
-    // this helper is pinned to jolt-family relation ids until that diagnostic
-    // grows a composite stage id.
-    SymbolicOf<F, I>: SymbolicSumcheck<RelationId = JoltRelationId>,
+    // The diagnostic formats the relation id, so the helper spans every
+    // protocol family a batch mixes (the derive's own presence errors use the
+    // same string-typed variant).
+    <SymbolicOf<F, I> as SymbolicSumcheck>::RelationId: core::fmt::Debug,
 {
     match (member, claims) {
         (Some(_), Some(_)) | (None, None) => Ok(()),
-        (Some(member), None) => Err(VerifierError::StageClaimPublicInputFailed {
-            stage: member.id(),
+        (Some(member), None) => Err(VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{:?}", member.id()),
             reason: "present instance is missing its output claims".to_string(),
         }),
         (None, Some(claims)) => Err(match claims.canonical_order().into_iter().next() {
             Some(opening) => VerifierError::UnexpectedOpeningClaim { id: opening.into() },
-            None => VerifierError::StageClaimPublicInputFailed {
-                stage: <I::Symbolic as SymbolicSumcheck>::id(),
+            None => VerifierError::StageClaimSumcheckFailed {
+                stage: format!("{:?}", <I::Symbolic as SymbolicSumcheck>::id()),
                 reason: "output claims supplied for an absent instance".to_string(),
             },
         }),

@@ -322,6 +322,7 @@ pub struct CheckedInputs {
     pub zk: bool,
     pub trace_length: usize,
     pub ram_K: usize,
+    pub one_hot_config: JoltOneHotConfig,
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
     pub trusted_advice_commitment_present: bool,
@@ -467,6 +468,7 @@ where
         zk,
         trace_length,
         ram_K: ram_k,
+        one_hot_config,
         entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
@@ -512,10 +514,16 @@ where
     // An FR-on build proves every guest under the composed protocol, so the
     // field-inline committed payload is unconditionally required (absence means
     // a producer without FR semantics — reject before any stage logic).
-    #[cfg(feature = "field-inline")]
+    #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     if proof.commitments.field_inline.is_none() {
         return Err(VerifierError::MissingProofPayload {
             field: "commitments.field_inline",
+        });
+    }
+    #[cfg(all(feature = "field-inline", feature = "akita"))]
+    if proof.field_inc_limbs_commitment.is_none() {
+        return Err(VerifierError::MissingProofPayload {
+            field: "field_inc_limbs_commitment",
         });
     }
 
@@ -706,6 +714,10 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
             .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
         transcript,
     );
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    if let Some(commitment) = proof.field_inc_limbs_commitment.as_ref() {
+        absorb_field_inc_limbs_commitment(commitment, transcript);
+    }
 }
 
 /// Absorbs the packed commitment objects in canonical object order:
@@ -731,6 +743,17 @@ pub fn absorb_packed_commitments<C, T>(
         append_length_prefixed(transcript, b"trusted_advice", commitment);
     }
     absorb_packed_program_commitments(program_one_hot_commitments, transcript);
+}
+
+/// Absorbs the packed FR limb object's commitment, immediately after the
+/// packed commitment objects. Shared verbatim by the packed prover's stage 0.
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+pub fn absorb_field_inc_limbs_commitment<C, T>(commitment: &C, transcript: &mut T)
+where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    append_length_prefixed(transcript, b"field_inc_limbs", commitment);
 }
 
 #[cfg(feature = "akita")]
@@ -1091,6 +1114,7 @@ where
         zk,
         trace_length,
         ram_K: ram_k,
+        one_hot_config,
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,

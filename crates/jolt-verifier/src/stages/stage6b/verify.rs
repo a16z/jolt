@@ -459,7 +459,11 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
 pub fn stage6b_input_points_from_upstream<F: JoltField>(
     sumchecks: &Stage6bSumchecks<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputPoints<F>,
-    #[cfg_attr(feature = "akita", expect(unused_variables))] stage4: &Stage4OutputPoints<F>,
+    #[cfg_attr(
+        all(feature = "akita", not(feature = "field-inline")),
+        expect(unused_variables)
+    )]
+    stage4: &Stage4OutputPoints<F>,
     stage5: &Stage5OutputPoints<F>,
 ) -> Stage6bInputPoints<F> {
     Stage6bInputPoints {

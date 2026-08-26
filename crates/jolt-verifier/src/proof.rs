@@ -35,6 +35,12 @@ pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 pub struct AkitaJointOpeningProof<P> {
     pub one_hot_trace: P,
     pub auxiliary: Vec<P>,
+    /// The packed FR limb object's opening. Present on every field-inline
+    /// proof; an `Option` because this type is shared with producers that
+    /// cannot supply it (the legacy packed converter), whose proofs the
+    /// stage-8 opening rejects fail-closed.
+    #[cfg(feature = "field-inline")]
+    pub field_inc_limbs: Option<P>,
 }
 
 #[cfg(feature = "akita")]
@@ -43,7 +49,17 @@ impl<P> AkitaJointOpeningProof<P> {
         Self {
             one_hot_trace,
             auxiliary,
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs: None,
         }
+    }
+
+    /// Attach the packed FR limb opening (the modular prover's stage 8 sets
+    /// this on every FR-on packed proof).
+    #[cfg(feature = "field-inline")]
+    pub fn with_field_inc_limbs(mut self, field_inc_limbs: P) -> Self {
+        self.field_inc_limbs = Some(field_inc_limbs);
+        self
     }
 }
 
@@ -69,6 +85,12 @@ pub struct JoltProof<
 {
     pub protocol: JoltProtocolConfig,
     pub commitments: ProofCommitments<PCS>,
+    /// The packed FR limb object's commitment. Present on every field-inline
+    /// packed proof; an `Option` for the same producer-sharing reason as the
+    /// homomorphic `JoltCommitments::field_inline`, and required fail-closed
+    /// by `validate_proof_consistency`.
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub field_inc_limbs_commitment: Option<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
@@ -106,6 +128,8 @@ where
         JoltProof {
             protocol: self.protocol,
             commitments: self.commitments,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_limbs_commitment: self.field_inc_limbs_commitment,
             stages: self.stages,
             joint_opening_proof: self.joint_opening_proof,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
