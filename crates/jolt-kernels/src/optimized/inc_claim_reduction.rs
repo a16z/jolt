@@ -110,6 +110,11 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct IncKernel<F: JoltField> {
     progress: RoundProgress,
     ram_inc: Polynomial<F>,
@@ -117,15 +122,6 @@ struct IncKernel<F: JoltField> {
     ram_weights: Polynomial<F>,
     rd_weights: Polynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(IncKernel, |kernel| {
-    use crate::backend::poly_heap_bytes;
-    poly_heap_bytes(&kernel.ram_inc)
-        + poly_heap_bytes(&kernel.rd_inc)
-        + poly_heap_bytes(&kernel.ram_weights)
-        + poly_heap_bytes(&kernel.rd_weights)
-});
 
 impl<F: JoltField> IncKernel<F> {
     fn bind(&mut self, challenge: F) {

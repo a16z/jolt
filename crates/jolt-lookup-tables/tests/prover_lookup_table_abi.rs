@@ -247,6 +247,22 @@ fn modular_lookup_table_indices_match_prover_abi() {
             LookupTableKind::<XLEN>::VirtualSRAW(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::VirtualSRAW(Default::default())),
         ),
+        (
+            LookupTableKind::<XLEN>::Pext(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::Pext(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::WindowMaskB(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::WindowMaskB(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::WindowMaskH(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::WindowMaskH(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::AlignAddr(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::AlignAddr(Default::default())),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());

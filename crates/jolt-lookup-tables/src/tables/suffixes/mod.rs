@@ -10,6 +10,7 @@
 
 use crate::lookup_bits::LookupBits;
 
+mod align_addr;
 mod and;
 mod andnot;
 mod div_by_zero;
@@ -29,6 +30,8 @@ mod overflow_bits_zero;
 mod pext;
 mod pext_helper;
 mod pow2;
+mod pow2_offset_b;
+mod pow2_offset_h;
 mod pow2_offset_w;
 mod pow2_w;
 mod rev8w;
@@ -53,6 +56,7 @@ mod xor;
 mod xor_rot;
 mod xor_rotw;
 
+use align_addr::AlignAddrSuffix;
 use and::AndSuffix;
 use andnot::AndNotSuffix;
 use div_by_zero::DivByZeroSuffix;
@@ -75,6 +79,8 @@ use pext_helper::PextHelperSuffix;
 // the window-sign convention, reused by the corresponding tables/prefixes.
 pub(crate) use pext::pext;
 use pow2::Pow2Suffix;
+use pow2_offset_b::Pow2OffsetBSuffix;
+use pow2_offset_h::Pow2OffsetHSuffix;
 use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8WSuffix;
@@ -172,6 +178,9 @@ pub enum Suffixes {
     SignExtensionW,
     /// The suffix-owned product `x_{XLEN/2-1} * y_0` used by SRLW.
     X31Y0,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
 }
 
 /// Total number of suffix variants.
@@ -254,6 +263,9 @@ impl Suffixes {
             Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
             Suffixes::SignExtensionW => SignExtensionWSuffix::suffix_mle(b),
             Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
+            Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
+            Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
+            Suffixes::AlignAddr => AlignAddrSuffix::suffix_mle(b),
         }
     }
 

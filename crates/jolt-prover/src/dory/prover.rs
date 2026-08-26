@@ -3,7 +3,6 @@
 //! the complete [`JoltProof`].
 
 use core::any::Any;
-use std::sync::Arc;
 
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -91,9 +90,8 @@ fn stage_flamegraph(_stage: &str, _session: &ProofSession, _output: &dyn Any) {}
 /// mode — clear claims without the `zk` feature, the BlindFold tail with it.
 ///
 /// `config` is the derived proof shape (its five wire fields are copied into
-/// the proof verbatim), `witness` the owned trace-backed provider the kernels
-/// read and retain for deferred extraction, and `public_io` the Fiat-Shamir
-/// preamble's program I/O.
+/// the proof verbatim), `witness` the trace-backed provider the kernels read,
+/// and `public_io` the Fiat-Shamir preamble's program I/O.
 ///
 /// `trusted_advice` is the externally supplied (preprocessing-time)
 /// trusted-advice commitment and opening hint; pass it exactly when the guest
@@ -114,7 +112,7 @@ pub fn prove<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
-    witness: Arc<W>,
+    witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
@@ -126,20 +124,18 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F> + 'static,
+    W: JoltWitnessPlane<F>,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let mut session = backend.begin_proof();
-    let session_witness: Arc<dyn JoltWitnessPlane<F>> = witness.clone();
-    session.set_witness(session_witness);
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
         backend,
         &mut session,
         preprocessing,
         config,
         trusted_advice,
-        witness.as_ref(),
+        witness,
         public_io,
     )?;
     stage_flamegraph("stage0", &session, &());
@@ -152,7 +148,7 @@ where
         &mut session,
         &mode,
         log_t,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage1", &session, &stage1.clear_output);
@@ -163,7 +159,7 @@ where
         config,
         public_io,
         &stage1.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage2", &session, &stage2.clear_output);
@@ -174,7 +170,7 @@ where
         config,
         &stage1.clear_output,
         &stage2.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage3", &session, &stage3.clear_output);
@@ -187,7 +183,7 @@ where
         preprocessing,
         &stage2.clear_output,
         &stage3.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage4", &session, &stage4.clear_output);
@@ -200,7 +196,7 @@ where
         preprocessing,
         &stage2.clear_output,
         &stage4.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage5", &session, &stage5.clear_output);
@@ -216,7 +212,7 @@ where
         &stage3.clear_output,
         &stage4.clear_output,
         &stage5.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage6a", &session, &stage6a.clear_output);
@@ -233,7 +229,7 @@ where
         &stage4.clear_output,
         &stage5.clear_output,
         &stage6a.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage6b", &session, &stage6b.clear_output);
@@ -246,7 +242,7 @@ where
         preprocessing,
         &stage4.clear_output,
         &stage6b.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage7", &session, &stage7.clear_output);
@@ -262,7 +258,7 @@ where
         &stage0.hints,
         &stage6b.clear_output,
         &stage7.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage8", &session, &());

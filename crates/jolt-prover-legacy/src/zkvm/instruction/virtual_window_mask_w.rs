@@ -27,6 +27,7 @@ impl Flags for VirtualWindowMaskW {
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
         flags[InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[InstructionFlags::RightOperandIsImm] = true;
         flags
     }
 }
@@ -35,16 +36,25 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualWindowMaskW> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         match XLEN {
             #[cfg(test)]
-            8 => (self.register_state.rs1 as u8 as u64, 0),
-            32 => (self.register_state.rs1 as u32 as u64, 0),
-            64 => (self.register_state.rs1, 0),
+            8 => (
+                self.register_state.rs1 as u8 as u64,
+                self.instruction.operands.imm as u8 as u64 as i128,
+            ),
+            32 => (
+                self.register_state.rs1 as u32 as u64,
+                self.instruction.operands.imm as u32 as u64 as i128,
+            ),
+            64 => (
+                self.register_state.rs1,
+                self.instruction.operands.imm as i128,
+            ),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        (0, x as u128 + y as u64 as u128)
+        (0, (x as i128 + y) as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {

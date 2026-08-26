@@ -1,7 +1,6 @@
 use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
-use jolt_program::execution::TraceRow;
-use jolt_riscv::JoltInstruction;
+use jolt_riscv::{JoltInstruction, JoltTraceRow as TraceRow};
 
 use super::{decode_instruction, lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
