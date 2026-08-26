@@ -1488,6 +1488,28 @@ mod akita_tests {
                 },
                 0,
             );
+            // All-inactive and well-formed, mirroring `run_pair`: the geometry
+            // attach is required fail-closed under `field-inline`.
+            #[cfg(feature = "field-inline")]
+            relation
+                .set_field_inline_geometry(
+                    jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry {
+                        table: jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeTable {
+                            rows: vec![Default::default(); bytecode_len],
+                            field_register_log_k:
+                                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K,
+                        },
+                        read_write_point: synthetic_point(
+                            jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
+                            61,
+                        ),
+                        val_evaluation_point: synthetic_point(
+                            jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
+                            67,
+                        ),
+                    },
+                )
+                .unwrap();
             let challenges = BytecodeReadRafAddressPhaseChallenges {
                 gamma: Fr::from_u64(3),
                 stage1_gamma: Fr::from_u64(5),
@@ -1566,6 +1588,16 @@ mod akita_tests {
                 stage5_gamma: Fr::from_u64(17),
             };
             let stage_gammas = address_challenges.stage_gamma_powers();
+            #[cfg(feature = "field-inline")]
+            let field_read_write_point = synthetic_point(
+                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
+                41,
+            );
+            #[cfg(feature = "field-inline")]
+            let field_val_evaluation_point = synthetic_point(
+                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
+                43,
+            );
             let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
                 dimensions,
                 r_address: synthetic_point(dimensions.log_k(), 19),
@@ -1578,6 +1610,34 @@ mod akita_tests {
                     register_val_evaluation_point: &synthetic_point(REGISTER_ADDRESS_BITS, 29),
                     stage_gammas: std::array::from_fn(|stage| stage_gammas[stage].as_slice()),
                 }),
+                // All-inactive and well-formed, mirroring `run_pair`: the
+                // composed reference cycle kernel folds the FR rows (all zero)
+                // at these points, so parity with the optimized kernel holds.
+                #[cfg(feature = "field-inline")]
+                field_inline:
+                    jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold {
+                        table: jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeTable {
+                            rows: vec![Default::default(); bytecode_len],
+                            field_register_log_k:
+                                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K,
+                        },
+                        read_write_address: field_read_write_point
+                            [..jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K]
+                            .to_vec(),
+                        read_write_cycle: field_read_write_point
+                            [jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K..]
+                            .to_vec(),
+                        val_evaluation_address: field_val_evaluation_point
+                            [..jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K]
+                            .to_vec(),
+                        val_evaluation_cycle: field_val_evaluation_point
+                            [jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K..]
+                            .to_vec(),
+                        gammas:
+                            jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(
+                                &address_challenges,
+                            ),
+                    },
             })
             .unwrap();
             let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {

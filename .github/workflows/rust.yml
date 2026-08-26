@@ -472,6 +472,11 @@ jobs:
       # The combined-feature verifier unit suite (no fixtures).
       - name: Run jolt-verifier with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features field-inline,akita
+      # The combined-feature kernels unit suite: the composed FR-on packed
+      # kernels (akita parity tests with the FR geometry attached) run only
+      # under this pair.
+      - name: Run jolt-kernels with field-inline,akita
+        run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest

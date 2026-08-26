@@ -812,7 +812,7 @@ fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     memory_layout: &common::jolt_device::MemoryLayout,
     max_trace_length: usize,
-    trace_output: TraceOutput<Arc<Vec<JoltTraceRow>>>,
+    trace_output: TraceOutput<ProfileTrace>,
     backend: BackendKind,
 ) -> ProvenRun {
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
@@ -834,8 +834,24 @@ fn prove_workload(
         JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
     let legacy_preprocessing = LegacyProverPreprocessing::new(shared_preprocessing);
 
+    #[cfg(not(feature = "field-inline"))]
     let config = ProverConfig::derive_compact::<AkitaField>(
         trace_output.trace.as_slice(),
+        memory_layout,
+        legacy_preprocessing
+            .shared
+            .program_meta
+            .min_bytecode_address,
+        legacy_preprocessing
+            .shared
+            .program
+            .program_image_len_words(),
+        max_trace_length,
+    )
+    .expect("derive config");
+    #[cfg(feature = "field-inline")]
+    let config = ProverConfig::derive::<AkitaField>(
+        trace_output.trace.rows(),
         memory_layout,
         legacy_preprocessing
             .shared
@@ -871,6 +887,7 @@ fn prove_workload(
         .expect("full program preprocessing");
 
     let public_io = trace_output.device.clone();
+    #[cfg(not(feature = "field-inline"))]
     let witness = TraceBackend::<OwnedTrace>::from_compact(
         JoltVmWitnessConfig::new(
             config.trace_length.ilog2() as usize,
@@ -879,6 +896,29 @@ fn prove_workload(
         ),
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
     );
+    // D1, as in the homomorphic arm: an FR-on build proves only FR-profile
+    // guests, and the raw rows are padded through `TraceBackend::new` so the
+    // FR view can walk them.
+    #[cfg(feature = "field-inline")]
+    let witness = {
+        let padded_output = pad_trace(trace_output, config.trace_length);
+        let witness = TraceBackend::new(
+            JoltVmWitnessConfig::new(
+                config.trace_length.ilog2() as usize,
+                config.ram_K,
+                config.one_hot_config,
+            ),
+            JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, padded_output),
+        );
+        match program_preprocessing.bytecode.field_inline.as_ref() {
+            Some(_) => witness
+                .with_field_inline()
+                .expect("field-inline witness view"),
+            None => panic!(
+                "field-inline build requires an FR-profile guest: this guest has no field-inline bytecode metadata"
+            ),
+        }
+    };
     let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
         verifier: verifier_preprocessing,
         pcs_setup: object_setup,
