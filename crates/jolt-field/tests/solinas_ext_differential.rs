@@ -630,6 +630,28 @@ fn degree_one_reflexive_ext_matches() {
 }
 
 #[test]
+fn ext_field_coefficient_primitives_round_trip() {
+    type F = two::Prime32Offset99;
+
+    fn check<E: ExtField<F>>() {
+        let value = E::from_base_fn(|index| F::from_u64((index + 3) as u64));
+        let expected = (0..E::DEGREE)
+            .map(|index| F::from_u64((index + 3) as u64))
+            .collect::<Vec<_>>();
+
+        assert_eq!(value.to_base_vec(), expected);
+        for (index, expected) in expected.into_iter().enumerate() {
+            assert_eq!(value.base_coefficient(index), expected);
+        }
+    }
+
+    check::<F>();
+    check::<two::Ext2<F>>();
+    check::<two::FpExt4<F>>();
+    check::<two::FpExt8<F>>();
+}
+
+#[test]
 #[should_panic(expected = "assertion")]
 fn ext2_from_base_slice_wrong_length_panics() {
     let one = <two::Prime32Offset99 as Ring>::from_u64(1);
