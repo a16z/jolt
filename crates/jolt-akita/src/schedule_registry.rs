@@ -284,6 +284,22 @@ fn publish<Cfg: CommitmentConfig + 'static>(
             ));
         }
     }
+    let new_rows = rows
+        .by_digest
+        .keys()
+        .filter(|digest| !ambient.by_digest.contains_key(digest))
+        .count();
+    let combined_rows = ambient
+        .by_digest
+        .len()
+        .checked_add(new_rows)
+        .ok_or_else(|| AkitaError::InvalidSetup("schedule row count overflow".to_owned()))?;
+    if combined_rows > MAX_REGISTERED_ROWS {
+        return Err(AkitaError::InvalidSetup(format!(
+            "publishing these rows would grow the registry to {combined_rows}, above the \
+             {MAX_REGISTERED_ROWS}-row cap"
+        )));
+    }
     for (digest, row) in &rows.by_digest {
         let _ = ambient
             .by_digest
@@ -442,6 +458,41 @@ mod tests {
             format!("{error}").contains("cap"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn publishing_cannot_grow_registry_past_the_cap() {
+        reset_for_tests();
+        let profile =
+            dense_precommit_profile(PolynomialGroupLayout::new(emit::DENSE_NUM_VARS.0, 1)).unwrap();
+        let row = plan_row::<JoltOneHotK256>(
+            &AkitaScheduleLookupKey {
+                final_group: PolynomialGroupLayout::new(27, 1),
+                precommitteds: vec![profile],
+            },
+            &[honest_fold_policy_of::<JoltDenseBounded>()],
+        )
+        .unwrap();
+        let rows = |range: std::ops::Range<usize>| RegisteredRows {
+            by_digest: range
+                .map(|index| {
+                    (
+                        ScheduleRowDigest::from_bytes([u8::try_from(index).unwrap(); 32]),
+                        row.clone(),
+                    )
+                })
+                .collect(),
+        };
+
+        let _published = publish::<JoltOneHotK256>(rows(0..MAX_REGISTERED_ROWS / 2)).unwrap();
+        let error =
+            publish::<JoltOneHotK256>(rows(MAX_REGISTERED_ROWS / 2..MAX_REGISTERED_ROWS + 1))
+                .expect_err("the accumulated registry must enforce the cap");
+        assert!(
+            format!("{error}").contains("cap"),
+            "unexpected error: {error}"
+        );
+        reset_for_tests();
     }
 
     mod fixture {
