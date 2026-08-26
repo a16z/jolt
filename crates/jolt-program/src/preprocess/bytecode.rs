@@ -84,6 +84,8 @@ impl BytecodePreprocessing {
     }
 }
 
+/// An address's rows form a descending `virtual_sequence_remaining` run at
+/// consecutive PCs, so these three bounds determine every `(address, vsr) -> pc`.
 /// Field order keeps each per-address mapping to one 8-byte slot.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,8 +99,13 @@ impl BytecodePreprocessing {
     )
 )]
 struct PcSlot {
+    /// PC of the address's first row; `u32::MAX` marks an unmapped slot.
     first_pc: u32,
+    /// `virtual_sequence_remaining` of that first row — the run's upper bound.
     first_vsr: u16,
+    /// `virtual_sequence_remaining` of the address's last row — the run's lower
+    /// bound, and the cursor the build walk decrements. Always 0 for sequences
+    /// the expander stamps; nonzero only for a run that stops short of its anchor.
     last_vsr: u16,
 }
 
