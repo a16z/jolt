@@ -269,6 +269,18 @@ impl Emulator {
         assert_eq!(header.e_width, 64, "tracer only supports RV64 ELF inputs");
 
         if self.tohost_addr != 0 {
+            // WARNING: a `tohost` symbol is how riscv-tests ELFs are
+            // recognized; a Jolt guest built by a foreign toolchain that
+            // defines one silently loses the layout-derived memory sizing
+            // configured below.
+            #[cfg(feature = "std")]
+            if self.cpu.get_mut_mmu().jolt_device.is_some() {
+                tracing::warn!(
+                    "ELF defines a `tohost` symbol, so the tracer is entering riscv-tests mode: \
+                    emulator memory is sized to the riscv-tests test capacity instead of the \
+                    Jolt memory layout. If this is a Jolt guest, do not emit a `tohost` symbol."
+                );
+            }
             self.is_test = true;
             self.cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
         } else {

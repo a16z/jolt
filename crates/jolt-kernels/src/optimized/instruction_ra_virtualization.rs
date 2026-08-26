@@ -38,6 +38,15 @@
 
 use std::sync::Arc;
 
+use super::instruction_read_raf::InstructionCycleRow;
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::support::{
+    accumulate_product_grid, map_indices, pin_derived_term, GruenRoundMessage, RoundProgress,
+};
+use crate::reference::views::eq_table;
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
@@ -49,17 +58,6 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
-
-use super::instruction_read_raf::InstructionCycleRow;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::{
-    accumulate_product_grid, gamma_power_pairs, map_indices, pin_derived_term, GruenRoundMessage,
-    RoundProgress,
-};
-use crate::reference::views::eq_table;
-use crate::{
-    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
-};
 
 /// Optimized [`PrepareKernel`] implementor for the
 /// `instruction_ra_virtualization` slot.
@@ -93,6 +91,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
 
 /// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
 /// hot), off the stage-5 shared rows.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct LookupIndexChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
     num_committed: usize,
@@ -112,16 +111,22 @@ impl ChunkIndexSource for LookupIndexChunks {
     fn index(&self, i: usize, j: usize) -> Option<usize> {
         let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
         let mask = (1u128 << self.committed_chunk_bits) - 1;
-        Some(((self.rows[j].lookup_index >> shift) & mask) as usize)
+        Some(((self.rows[j].lookup_index() >> shift) & mask) as usize)
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     num_committed_per_virtual: usize,
     /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
     /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
     /// exactly, so unscaling is byte-exact).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_powers_inv: Vec<F>,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
@@ -131,16 +136,6 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedInstructionRaVirtualizationKernel, |kernel| {
-    use crate::backend::{arc_vec_heap_bytes, vec_heap_bytes};
-    vec_heap_bytes(&kernel.gamma_powers_inv)
-        + kernel
-            .folded_ra
-            .heap_bytes(|source| arc_vec_heap_bytes(&source.rows))
-        + kernel.gruen.heap_bytes()
-});
 
 impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
@@ -183,11 +178,19 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             });
         }
 
-        let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(
-            gamma,
-            num_virtual,
-            "instruction RA batching gamma must be invertible",
-        )?;
+        let gamma_inv = gamma.inverse().ok_or(KernelError::InvariantViolation {
+            reason: "instruction RA batching gamma must be invertible",
+        })?;
+        let mut gamma_powers = Vec::with_capacity(num_virtual);
+        let mut gamma_powers_inv = Vec::with_capacity(num_virtual);
+        let mut power = F::one();
+        let mut power_inv = F::one();
+        for _ in 0..num_virtual {
+            gamma_powers.push(power);
+            gamma_powers_inv.push(power_inv);
+            power *= gamma;
+            power_inv *= gamma_inv;
+        }
 
         // One eq table per committed chunk point (each `2^w` entries); the
         // point-mass fold stays lazy — one table lookup per gathered cycle —
@@ -410,9 +413,10 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle),
+            id,
             input_points,
             output_points,
             challenges,
@@ -442,6 +446,8 @@ mod tests {
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
+    #[cfg(feature = "akita")]
+    use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
 
@@ -464,8 +470,10 @@ mod tests {
                     row.lookup_index.0,
                     row.table_index.0,
                     row.raf_flag.0,
+                    0,
                     None,
-                    None,
+                    #[cfg(feature = "akita")]
+                    FusedInc::default(),
                 )
             })
             .collect()
@@ -727,9 +735,8 @@ mod tests {
 
     #[test]
     fn parity_past_lazy_materialization() {
-        // log_t = 6: three lazy binds, the dense materialization at the
-        // fourth (`T/16` = 4 entries), and two plain multilinear binds
-        // after it.
+        // log_t = 6: three lazy binds, dense materialization at the fourth
+        // (`T/16` = 4 entries), then two plain multilinear binds.
         assert_parity(6, 2, 2, 4, 7, false);
     }
 

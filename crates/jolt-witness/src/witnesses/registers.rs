@@ -1,5 +1,5 @@
 use jolt_field::JoltField;
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::{Extract, ToField, WitnessEnv};
 use crate::WitnessError;
@@ -28,7 +28,7 @@ impl Extract for Rs1Value {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.registers.rs1.map_or(0, |read| read.value)))
+        Ok(Self(row.rs1_value()))
     }
 }
 
@@ -44,7 +44,7 @@ impl Extract for Rs2Value {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.registers.rs2.map_or(0, |read| read.value)))
+        Ok(Self(row.rs2_value()))
     }
 }
 
@@ -60,6 +60,6 @@ impl Extract for RdWriteValue {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.registers.rd.map_or(0, |write| write.post_value)))
+        Ok(Self(row.rd_write_value()))
     }
 }

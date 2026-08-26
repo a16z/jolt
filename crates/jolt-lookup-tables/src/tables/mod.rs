@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::traits::LookupTable;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
@@ -23,6 +24,7 @@ pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
+pub mod pext;
 pub mod pext_signed;
 pub mod pow2;
 pub mod pow2_w;
@@ -53,6 +55,8 @@ pub mod virtual_srlw;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
+pub mod window_mask_b;
+pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod word_alignment;
 pub mod xor;
@@ -60,6 +64,7 @@ pub mod xor;
 pub use prefixes::{PrefixEval, Prefixes};
 pub use suffixes::{SuffixEval, Suffixes};
 
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
@@ -68,6 +73,7 @@ use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
+use pext::PextTable;
 use pext_signed::PextSignedTable;
 use pow2::Pow2Table;
 use pow2_w::Pow2WTable;
@@ -96,6 +102,8 @@ use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
 use virtual_xor_rotl1::VirtualXORROTL1Table;
 use virtual_xor_rotw::VirtualXORROTWTable;
+use window_mask_b::WindowMaskBTable;
+use window_mask_h::WindowMaskHTable;
 use window_mask_w::WindowMaskWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
@@ -170,6 +178,10 @@ pub enum LookupTableKind<const XLEN: usize> {
     ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
     VirtualSRLW(VirtualSRLWTable<XLEN>),
     VirtualSRAW(VirtualSRAWTable<XLEN>),
+    Pext(PextTable<XLEN>),
+    WindowMaskB(WindowMaskBTable<XLEN>),
+    WindowMaskH(WindowMaskHTable<XLEN>),
+    AlignAddr(AlignAddrTable<XLEN>),
     VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
@@ -227,6 +239,10 @@ macro_rules! dispatch {
             Self::ShiftRightBitmaskW($t) => $expr,
             Self::VirtualSRLW($t) => $expr,
             Self::VirtualSRAW($t) => $expr,
+            Self::Pext($t) => $expr,
+            Self::WindowMaskB($t) => $expr,
+            Self::WindowMaskH($t) => $expr,
+            Self::AlignAddr($t) => $expr,
             Self::VirtualXORROTL1($t) => $expr,
         }
     };

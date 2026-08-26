@@ -65,49 +65,26 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBack
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct BooleanityAddressKernel<F: JoltField> {
     rounds: usize,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_weights: Vec<F>,
     /// The linear-term tables (plain multilinear binding).
     linear: Vec<Polynomial<F>>,
     /// The squared-term tables (squared-weight binding); raw vectors because
     /// the bind rule is not a multilinear bind.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
     rounds_bound: usize,
 }
-
-// Size arithmetic rather than a derive, so `F` stays unbounded; `Polynomial`
-// sizing is by `len()`, exact at the mid-stage snapshot.
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for BooleanityAddressKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{
-            nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
-        };
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("gamma_weights"),
-            vec_heap_bytes(&self.gamma_weights),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("linear"),
-            polys_heap_bytes(&self.linear),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("squared"),
-            nested_vec_heap_bytes(&self.squared),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("eq_address"),
-            poly_heap_bytes(&self.eq_address),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> BooleanityAddressKernel<F> {
     pub fn new(
         relation: &BooleanityAddressPhase<F>,

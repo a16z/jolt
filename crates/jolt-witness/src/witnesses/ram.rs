@@ -1,15 +1,11 @@
 use jolt_field::JoltField;
-use jolt_program::execution::{RamAccess, TraceRow};
+use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::{Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 
-pub(crate) const fn ram_access_address(access: RamAccess) -> Option<u64> {
-    match access {
-        RamAccess::Read(read) => Some(read.address),
-        RamAccess::Write(write) => Some(write.address),
-        RamAccess::NoOp => None,
-    }
+pub(crate) fn ram_access_address(row: &TraceRow) -> Option<u64> {
+    (row.is_load() || row.is_store()).then(|| row.ram_address())
 }
 
 /// Raw (unremapped) RAM access address; 0 when the cycle makes no RAM
@@ -48,7 +44,7 @@ impl Extract for RamAddress {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(ram_access_address(row.ram_access).unwrap_or(0)))
+        Ok(Self(row.ram_address()))
     }
 }
 
@@ -64,11 +60,7 @@ impl Extract for RamReadValue {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.ram_access {
-            RamAccess::Read(read) => read.value,
-            RamAccess::Write(write) => write.pre_value,
-            RamAccess::NoOp => 0,
-        }))
+        Ok(Self(row.ram_read_value()))
     }
 }
 
@@ -84,11 +76,7 @@ impl Extract for RamWriteValue {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.ram_access {
-            RamAccess::Read(read) => read.value,
-            RamAccess::Write(write) => write.post_value,
-            RamAccess::NoOp => 0,
-        }))
+        Ok(Self(row.ram_write_value()))
     }
 }
 
@@ -105,7 +93,7 @@ impl Extract for RamHammingWeight {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(
-            ram_access_address(row.ram_access).is_some_and(|address| address != 0),
+            ram_access_address(row).is_some_and(|address| address != 0),
         ))
     }
 }
@@ -117,7 +105,7 @@ impl Extract for RemappedRamAddress {
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(
-            ram_access_address(row.ram_access)
+            ram_access_address(row)
                 .and_then(|address| {
                     env.preprocessing
                         .memory_layout

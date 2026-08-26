@@ -9,8 +9,8 @@ use akita_config::proof_optimized::fp128::Field as AkitaField;
 use rand_core::RngCore;
 
 use crate::{
-    AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring,
-    WithAccumulator,
+    AdditiveGroup, AkitaAccumulator, AkitaSignedAccumulator, CanonicalBytes, CanonicalEncoding,
+    Field, Ring, WithAccumulator,
 };
 
 impl AdditiveGroup for AkitaField {}
@@ -108,9 +108,9 @@ impl CanonicalEncoding for AkitaField {
 }
 
 impl WithAccumulator for AkitaField {
-    type Accumulator = NaiveAccumulator<Self>;
-    type SmallScalarAccumulator = NaiveAccumulator<Self>;
-    type SignedProductAccumulator = NaiveAccumulator<Self>;
+    type Accumulator = AkitaAccumulator;
+    type SmallScalarAccumulator = AkitaSignedAccumulator;
+    type SignedProductAccumulator = AkitaSignedAccumulator;
 }
 
 #[cfg(test)]
