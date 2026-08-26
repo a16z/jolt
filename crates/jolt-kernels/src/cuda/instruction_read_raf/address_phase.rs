@@ -15,7 +15,7 @@ pub const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
 pub const NO_TABLE: u32 = u32::MAX;
 const SKIP: u32 = u32::MAX;
-const RAF_LANES: usize = 6;
+pub(super) const RAF_LANES: usize = 6;
 
 pub(super) const RAF_CHUNKS: usize = 64;
 
@@ -193,7 +193,6 @@ pub(super) fn segment_rows(
     })
 }
 
-#[tracing::instrument(skip_all, name = "ap_init_raf_buckets")]
 pub fn init_raf_buckets(
     context: &CudaKernelContext,
     rows: &DeviceRows,
@@ -212,6 +211,53 @@ pub fn init_raf_buckets_chunked(
     phase: usize,
     chunks: usize,
 ) -> Result<RafBuckets, CudaError> {
+    raf_lanes(&init_raf_columns_chunked(
+        context,
+        rows,
+        u_evals,
+        address_bits,
+        phase,
+        chunks,
+    )?)
+}
+
+pub(super) fn raf_lanes(columns: &DeviceFrVec) -> Result<RafBuckets, CudaError> {
+    if columns.len() != RAF_LANES * CHUNK_SIZE {
+        return Err(CudaError::LengthMismatch {
+            expected: RAF_LANES * CHUNK_SIZE,
+            got: columns.len(),
+        });
+    }
+    let lane = |index: usize| columns.slice_elements(index * CHUNK_SIZE, CHUNK_SIZE);
+    Ok(RafBuckets {
+        shift_half: lane(0)?,
+        shift_full: lane(1)?,
+        left: lane(2)?,
+        right: lane(3)?,
+        identity: lane(4)?,
+        upper_all_ones: lane(5)?,
+    })
+}
+
+pub(super) fn init_raf_columns(
+    context: &CudaKernelContext,
+    rows: &DeviceRows,
+    u_evals: &DeviceFrVec,
+    address_bits: usize,
+    phase: usize,
+) -> Result<DeviceFrVec, CudaError> {
+    init_raf_columns_chunked(context, rows, u_evals, address_bits, phase, RAF_CHUNKS)
+}
+
+#[tracing::instrument(skip_all, name = "ap_init_raf_buckets")]
+pub(super) fn init_raf_columns_chunked(
+    context: &CudaKernelContext,
+    rows: &DeviceRows,
+    u_evals: &DeviceFrVec,
+    address_bits: usize,
+    phase: usize,
+    chunks: usize,
+) -> Result<DeviceFrVec, CudaError> {
     if u_evals.len() != rows.cycles {
         return Err(CudaError::LengthMismatch {
             expected: rows.cycles,
@@ -300,18 +346,9 @@ pub fn init_raf_buckets_chunked(
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(chunk_count)) }?;
     context.stream().synchronize()?;
 
-    let lane = |index: usize| buckets.slice_elements(index * CHUNK_SIZE, CHUNK_SIZE);
-    Ok(RafBuckets {
-        shift_half: lane(0)?,
-        shift_full: lane(1)?,
-        left: lane(2)?,
-        right: lane(3)?,
-        identity: lane(4)?,
-        upper_all_ones: lane(5)?,
-    })
+    Ok(buckets)
 }
 
-#[tracing::instrument(skip_all, name = "ap_init_suffix_buckets")]
 pub fn init_suffix_buckets(
     context: &CudaKernelContext,
     rows: &DeviceRows,
@@ -340,6 +377,65 @@ pub fn init_suffix_buckets_chunked(
     phase: usize,
     chunks: usize,
 ) -> Result<Vec<Vec<DeviceFrVec>>, CudaError> {
+    let (columns, plan) =
+        init_suffix_columns_chunked(context, rows, u_evals, present, address_bits, phase, chunks)?;
+    suffix_lanes(&columns, &plan)
+}
+
+#[derive(Default)]
+pub(super) struct SuffixPlan {
+    slots: Vec<u32>,
+    ids: Vec<u32>,
+    offsets: Vec<u32>,
+    counts: Vec<u32>,
+}
+
+pub(super) fn suffix_lanes(
+    columns: &DeviceFrVec,
+    plan: &SuffixPlan,
+) -> Result<Vec<Vec<DeviceFrVec>>, CudaError> {
+    let mut tables = Vec::with_capacity(plan.offsets.len());
+    for (base, families) in plan.offsets.iter().zip(&plan.counts) {
+        let base = *base as usize;
+        let mut lanes = Vec::with_capacity(*families as usize);
+        for family in 0..*families as usize {
+            lanes.push(columns.slice_elements((base + family) * CHUNK_SIZE, CHUNK_SIZE)?);
+        }
+        tables.push(lanes);
+    }
+    Ok(tables)
+}
+
+pub(super) fn init_suffix_columns(
+    context: &CudaKernelContext,
+    rows: &DeviceRows,
+    u_evals: &DeviceFrVec,
+    present: &[LookupTableKind<RISCV_XLEN>],
+    address_bits: usize,
+    phase: usize,
+) -> Result<DeviceFrVec, CudaError> {
+    Ok(init_suffix_columns_chunked(
+        context,
+        rows,
+        u_evals,
+        present,
+        address_bits,
+        phase,
+        SUFFIX_CHUNKS,
+    )?
+    .0)
+}
+
+#[tracing::instrument(skip_all, name = "ap_init_suffix_buckets")]
+pub(super) fn init_suffix_columns_chunked(
+    context: &CudaKernelContext,
+    rows: &DeviceRows,
+    u_evals: &DeviceFrVec,
+    present: &[LookupTableKind<RISCV_XLEN>],
+    address_bits: usize,
+    phase: usize,
+    chunks: usize,
+) -> Result<(DeviceFrVec, SuffixPlan), CudaError> {
     if chunks == 0 {
         return Err(CudaError::InvariantViolation {
             reason: "a chunked suffix reduce needs at least one chunk",
@@ -352,39 +448,17 @@ pub fn init_suffix_buckets_chunked(
         });
     }
     if present.is_empty() {
-        return Ok(Vec::new());
+        return Ok((context.alloc(0)?, SuffixPlan::default()));
     }
     let suffix_len = suffix_len(address_bits, phase)?;
 
     let table_count = LookupTableKind::<RISCV_XLEN>::COUNT;
-    let mut table_slots = vec![SKIP; table_count];
-    let mut suffix_ids = Vec::new();
-    let mut suffix_offsets = Vec::with_capacity(present.len());
-    let mut suffix_counts = Vec::with_capacity(present.len());
-    for (slot, table) in present.iter().enumerate() {
-        let index = table.index();
-        if index >= table_count {
-            return Err(CudaError::LengthMismatch {
-                expected: table_count,
-                got: index,
-            });
-        }
-        table_slots[index] = slot as u32;
-        let suffixes = table.suffixes();
-        if suffixes.len() > MAX_SUFFIXES {
-            return Err(CudaError::InvariantViolation {
-                reason: "a lookup table declares more suffixes than the device kernel supports",
-            });
-        }
-        suffix_offsets.push(suffix_ids.len() as u32);
-        suffix_counts.push(suffixes.len() as u32);
-        suffix_ids.extend(suffixes.iter().map(|suffix| *suffix as u32));
-    }
+    let plan = suffix_plan(present, table_count)?;
 
     let count = CudaKernelContext::count_of(rows.cycles)?;
     let suffix_len_arg = CudaKernelContext::count_of(suffix_len)?;
     let table_count_arg = CudaKernelContext::count_of(table_count)?;
-    let device_slots = context.upload_u32_slice(&table_slots)?;
+    let device_slots = context.upload_u32_slice(&plan.slots)?;
 
     let mut keys = context.alloc_u32(rows.cycles)?;
     let mut builder = context.stream().launch_builder(context.ap_table_keys());
@@ -405,11 +479,11 @@ pub fn init_suffix_buckets_chunked(
     let bucket_count = present.len() * CHUNK_SIZE;
     let segments = segment_rows(context, &keys, rows.cycles, bucket_count)?;
 
-    let device_suffix_ids = context.upload_u32_slice(&suffix_ids)?;
-    let device_suffix_offsets = context.upload_u32_slice(&suffix_offsets)?;
-    let device_suffix_counts = context.upload_u32_slice(&suffix_counts)?;
+    let device_suffix_ids = context.upload_u32_slice(&plan.ids)?;
+    let device_suffix_offsets = context.upload_u32_slice(&plan.offsets)?;
+    let device_suffix_counts = context.upload_u32_slice(&plan.counts)?;
 
-    let groups = suffix_ids.len() * CHUNK_SIZE;
+    let groups = plan.ids.len() * CHUNK_SIZE;
     let mut slots = alloc_slots(context, groups * chunks)?;
     let blocks = CudaKernelContext::count_of(bucket_count)?;
     let chunks_arg = CudaKernelContext::count_of(chunks)?;
@@ -458,17 +532,37 @@ pub fn init_suffix_buckets_chunked(
     };
     let buckets = finalize_slots(context, &folded, groups)?;
 
-    let mut tables = Vec::with_capacity(present.len());
-    for (slot, _) in present.iter().enumerate() {
-        let base = suffix_offsets[slot] as usize;
-        let families = suffix_counts[slot] as usize;
-        let mut columns = Vec::with_capacity(families);
-        for family in 0..families {
-            columns.push(buckets.slice_elements((base + family) * CHUNK_SIZE, CHUNK_SIZE)?);
+    Ok((buckets, plan))
+}
+
+fn suffix_plan(
+    present: &[LookupTableKind<RISCV_XLEN>],
+    table_count: usize,
+) -> Result<SuffixPlan, CudaError> {
+    let mut plan = SuffixPlan {
+        slots: vec![SKIP; table_count],
+        ids: Vec::new(),
+        offsets: Vec::with_capacity(present.len()),
+        counts: Vec::with_capacity(present.len()),
+    };
+    for (slot, table) in present.iter().enumerate() {
+        let index = table.index();
+        *plan.slots.get_mut(index).ok_or(CudaError::LengthMismatch {
+            expected: table_count,
+            got: index,
+        })? = slot as u32;
+        let suffixes = table.suffixes();
+        if suffixes.len() > MAX_SUFFIXES {
+            return Err(CudaError::InvariantViolation {
+                reason: "a lookup table declares more suffixes than the device kernel supports",
+            });
         }
-        tables.push(columns);
+        plan.offsets.push(plan.ids.len() as u32);
+        plan.counts.push(suffixes.len() as u32);
+        plan.ids
+            .extend(suffixes.iter().map(|suffix| *suffix as u32));
     }
-    Ok(tables)
+    Ok(plan)
 }
 
 #[tracing::instrument(skip_all, name = "ap_condense_u_evals")]
@@ -616,8 +710,9 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use super::{
-        condense_u_evals, init_raf_buckets, init_raf_buckets_chunked, init_suffix_buckets,
-        init_suffix_buckets_chunked, DeviceRows, CHUNK_LEN, CHUNK_SIZE,
+        condense_u_evals, init_raf_buckets, init_raf_buckets_chunked, init_raf_columns,
+        init_suffix_buckets, init_suffix_buckets_chunked, init_suffix_columns, DeviceRows,
+        CHUNK_LEN, CHUNK_SIZE, RAF_LANES,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
     use crate::cuda::common::testing::fr;
@@ -828,6 +923,101 @@ mod tests {
             }
             prop_assert_eq!(flags, expected_flags, "lookup table flag claims diverged");
             prop_assert_eq!(raf_flag, expected_raf, "instruction RAF flag claim diverged");
+        }
+    }
+
+    #[test]
+    fn raf_columns_match_their_concatenated_lanes() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for phase in [0usize, 1, 3] {
+            let host = reference_at_phase(8, 17, phase);
+            let rows = device_rows(context, host.rows());
+            let u_evals = context.upload(host.u_evals()).expect("upload u_evals");
+
+            let got = init_raf_columns(context, &rows, &u_evals, ADDRESS_BITS, phase)
+                .expect("contiguous raf columns")
+                .to_host()
+                .expect("download the contiguous raf columns");
+            let lanes = init_raf_buckets(context, &rows, &u_evals, ADDRESS_BITS, phase)
+                .expect("sliced raf buckets");
+            let expected: Vec<Fr> = [
+                &lanes.shift_half,
+                &lanes.shift_full,
+                &lanes.left,
+                &lanes.right,
+                &lanes.identity,
+                &lanes.upper_all_ones,
+            ]
+            .into_iter()
+            .flat_map(|lane| lane.to_host().expect("download a raf lane"))
+            .collect();
+
+            assert_eq!(
+                expected.len(),
+                RAF_LANES * CHUNK_SIZE,
+                "phase {phase}: the lane fixture is the wrong width",
+            );
+            assert!(
+                got.iter().any(|value| *value != got[0]),
+                "phase {phase}: the raf columns collapsed to one value, so the comparison proves \
+                 nothing",
+            );
+            assert_eq!(
+                got, expected,
+                "phase {phase}: the contiguous raf buffer the multi-shard download sends to the \
+                 host must hold the six lanes in the order the round-message kernel reads them — \
+                 shift_half, shift_full, left, right, identity, upper_all_ones",
+            );
+        }
+    }
+
+    #[test]
+    fn suffix_columns_match_their_concatenated_lanes() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for phase in [0usize, 1, 3] {
+            let host = reference_at_phase(8, 19, phase);
+            let present: Vec<LookupTableKind<RISCV_XLEN>> =
+                host.suffix_tables.iter().map(|(table, _)| *table).collect();
+            assert!(
+                present.len() > 1,
+                "phase {phase}: the fixture selects one table, so the concatenation order across \
+                 tables is untested",
+            );
+            let rows = device_rows(context, host.rows());
+            let u_evals = context.upload(host.u_evals()).expect("upload u_evals");
+
+            let got = init_suffix_columns(context, &rows, &u_evals, &present, ADDRESS_BITS, phase)
+                .expect("contiguous suffix columns")
+                .to_host()
+                .expect("download the contiguous suffix columns");
+            let expected: Vec<Fr> =
+                init_suffix_buckets(context, &rows, &u_evals, &present, ADDRESS_BITS, phase)
+                    .expect("sliced suffix buckets")
+                    .iter()
+                    .flatten()
+                    .flat_map(|lane| lane.to_host().expect("download a suffix lane"))
+                    .collect();
+
+            assert!(
+                expected.len() > present.len() * CHUNK_SIZE,
+                "phase {phase}: every table declared one suffix family, so the within-table \
+                 concatenation order is untested",
+            );
+            assert!(
+                got.iter().any(|value| *value != got[0]),
+                "phase {phase}: the suffix columns collapsed to one value, so the comparison \
+                 proves nothing",
+            );
+            assert_eq!(
+                got, expected,
+                "phase {phase}: the contiguous suffix buffer the multi-shard download sends to \
+                 the host must hold the columns in (table, family) order, which is the order the \
+                 round-message kernel indexes them through suffix_bases + suffix_slots",
+            );
         }
     }
 

@@ -10,8 +10,8 @@ use jolt_lookup_tables::tables::LookupTableKind;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 
 use super::address_phase::{
-    condense_u_evals, init_raf_buckets, init_suffix_buckets, DeviceRows, RafBuckets, CHUNK_LEN,
-    CHUNK_SIZE,
+    condense_u_evals, init_raf_buckets, init_raf_columns, init_suffix_columns, DeviceRows,
+    RafBuckets, CHUNK_LEN, CHUNK_SIZE, RAF_LANES,
 };
 use super::combine::{combine_terms, CombineTerm};
 use super::prefixes::{default_checkpoints, prefix_mle_round, update_checkpoints, HINT_POINTS};
@@ -250,7 +250,7 @@ impl DeviceAddressPhase {
                 )?;
             }
             let raf = init_raf_buckets(device, &shard.rows, &shard.u_evals, address_bits, phase)?;
-            let columns = init_suffix_buckets(
+            let suffixes = init_suffix_columns(
                 device,
                 &shard.rows,
                 &shard.u_evals,
@@ -258,7 +258,7 @@ impl DeviceAddressPhase {
                 address_bits,
                 phase,
             )?;
-            (raf, flatten(context, columns)?)
+            (raf, suffixes)
         } else {
             let parts =
                 shard_phase_tables(shards, present, address_bits, phase, v_prev.as_deref())?;
@@ -590,11 +590,9 @@ pub(super) fn bind_lanes(
 }
 
 struct ShardPhaseTables {
-    raf: [Vec<Fr>; RAF_COLUMNS],
+    raf: Vec<Fr>,
     suffixes: Vec<Fr>,
 }
-
-const RAF_COLUMNS: usize = 6;
 
 fn shard_phase_tables(
     shards: &mut [AddressShard],
@@ -623,8 +621,8 @@ fn shard_phase_tables(
                     )?;
                 }
                 let raf =
-                    init_raf_buckets(device, &shard.rows, &shard.u_evals, address_bits, phase)?;
-                let columns = init_suffix_buckets(
+                    init_raf_columns(device, &shard.rows, &shard.u_evals, address_bits, phase)?;
+                let suffixes = init_suffix_columns(
                     device,
                     &shard.rows,
                     &shard.u_evals,
@@ -632,20 +630,9 @@ fn shard_phase_tables(
                     address_bits,
                     phase,
                 )?;
-                let mut suffixes = Vec::with_capacity(columns.len() * CHUNK_SIZE);
-                for column in columns.into_iter().flatten() {
-                    suffixes.extend_from_slice(&column.to_host()?);
-                }
                 Ok(ShardPhaseTables {
-                    raf: [
-                        raf.shift_half.to_host()?,
-                        raf.shift_full.to_host()?,
-                        raf.left.to_host()?,
-                        raf.right.to_host()?,
-                        raf.identity.to_host()?,
-                        raf.upper_all_ones.to_host()?,
-                    ],
-                    suffixes,
+                    raf: raf.to_host()?,
+                    suffixes: suffixes.to_host()?,
                 })
             });
             task
@@ -660,16 +647,10 @@ fn sum_phase_tables(parts: Vec<ShardPhaseTables>) -> Result<ShardPhaseTables, Cu
         reason: "the address-phase reduce produced no window",
     })?;
     for part in parts {
-        if part.suffixes.len() != total.suffixes.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: total.suffixes.len(),
-                got: part.suffixes.len(),
-            });
-        }
-        for (slot, value) in total.suffixes.iter_mut().zip(&part.suffixes) {
-            *slot += *value;
-        }
-        for (column, addend) in total.raf.iter_mut().zip(&part.raf) {
+        for (column, addend) in [
+            (&mut total.suffixes, &part.suffixes),
+            (&mut total.raf, &part.raf),
+        ] {
             if column.len() != addend.len() {
                 return Err(CudaError::LengthMismatch {
                     expected: column.len(),
@@ -684,33 +665,30 @@ fn sum_phase_tables(parts: Vec<ShardPhaseTables>) -> Result<ShardPhaseTables, Cu
     Ok(total)
 }
 
-fn upload_raf(
-    context: &CudaKernelContext,
-    columns: &[Vec<Fr>; RAF_COLUMNS],
-) -> Result<RafBuckets, CudaError> {
+fn upload_raf(context: &CudaKernelContext, columns: &[Fr]) -> Result<RafBuckets, CudaError> {
+    if columns.len() != RAF_LANES * CHUNK_SIZE {
+        return Err(CudaError::LengthMismatch {
+            expected: RAF_LANES * CHUNK_SIZE,
+            got: columns.len(),
+        });
+    }
+    let lane = |index: usize| {
+        columns
+            .get(index * CHUNK_SIZE..(index + 1) * CHUNK_SIZE)
+            .ok_or(CudaError::LengthMismatch {
+                expected: RAF_LANES * CHUNK_SIZE,
+                got: columns.len(),
+            })
+            .and_then(|values| context.upload(values))
+    };
     Ok(RafBuckets {
-        shift_half: context.upload(&columns[0])?,
-        shift_full: context.upload(&columns[1])?,
-        left: context.upload(&columns[2])?,
-        right: context.upload(&columns[3])?,
-        identity: context.upload(&columns[4])?,
-        upper_all_ones: context.upload(&columns[5])?,
+        shift_half: lane(0)?,
+        shift_full: lane(1)?,
+        left: lane(2)?,
+        right: lane(3)?,
+        identity: lane(4)?,
+        upper_all_ones: lane(5)?,
     })
-}
-
-fn flatten(
-    context: &CudaKernelContext,
-    columns: Vec<Vec<DeviceFrVec>>,
-) -> Result<DeviceFrVec, CudaError> {
-    let flat: Vec<DeviceFrVec> = columns.into_iter().flatten().collect();
-    if flat.is_empty() {
-        return context.alloc(0);
-    }
-    let mut out = context.alloc(flat.len() * CHUNK_SIZE)?;
-    for (index, column) in flat.iter().enumerate() {
-        context.copy_into(&mut out, index * CHUNK_SIZE, column)?;
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
