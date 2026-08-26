@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787692298417,
+  "lastUpdate": 1787719509761,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -145282,6 +145282,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 862048,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b7aa1ac03a12e570b47c1c3f80ac7ab0e625dc3f",
+          "message": "perf(prover): port optimized Akita to the modular prover (#1732)\n\n* feat(openings): add fixed-capacity prefix layouts\n\n* refactor(akita): port adapter to group-local points\n\n* feat(akita): prefix-pack virtualized one-hot trace\n\n* refactor(openings): specialize prefix-packed openings\n\n* feat(akita): support D128 one-hot commitments\n\n* perf(akita): catalog prefix-packed schedules\n\n* perf(akita): restore rank-aware large-trace schedules\n\n* chore(deps): remove unused packed-opening dependencies\n\n* chore(akita): align protocol stack with current planner\n\n* ci(akita): serialize prover fixture tests\n\n* chore(akita): pin rustfmt-stable schedule emitter\n\n* fix(openings): retain tracing for current instrumentation\n\n* fix(claims): expose packed outputs to heap profiler\n\n* chore(akita): track reviewed planner head\n\n* feat(openings): add fixed-capacity prefix layouts\n\n* refactor(akita): port adapter to group-local points\n\n* feat(akita): prefix-pack virtualized one-hot trace\n\n* refactor(openings): specialize prefix-packed openings\n\n* test(jolt-prover): Akita port scaffolding — two-path layout, packed prove seam, byte-diff + e2e harnesses\n\nReorganize the crate as two parallel prover paths sharing the root\norchestration (config/preprocessing/driver/error): src/dory (the\nhomomorphic elliptic-curve pipeline, was src/prover.rs + src/stages)\nand src/akita (the packed lattice pipeline, port in progress). Like\njolt-verifier, one compiled prover proves exactly one protocol: the\nakita feature swaps the wire types to the packed envelope, so exactly\none path module compiles per build.\n\n- akita::prove stub (returns ProverError::Unsupported) pins the packed\n  seam: backend-first signature over a JoltAkitaBackend registry-to-be,\n  generic over the scheme — concrete Akita types bind at call sites.\n  JoltAkitaBackend is a parallel struct rather than cfg-gated\n  JoltBackend fields: jolt-kernels deliberately has no akita feature\n  (see jolt-claims' CANONICAL_INSTRUCTION_ADDRESS).\n- tests/akita_byte_diff.rs: legacy-vs-new whole-proof ratchets\n  (muldiv, advice consumer, committed muldiv x {1,2} chunks), all\n  #[ignore]d until the port lands; component-wise asserts give\n  per-stage granularity on the packed wire fields.\n- tests/akita_e2e.rs: analogs of the legacy packed e2e suite (muldiv,\n  forced-K256, advice, full-advice, committed program), #[ignore]d;\n  un-ignoring them is the port's acceptance gate.\n- tests/dory_byte_diff.rs (was byte_diff.rs): modules re-gated\n  all(prover-fixtures, not(akita)) — the two harnesses are mutually\n  exclusive by feature.\n- jolt-kernels: the bytecode read-raf reference kernel takes the\n  jolt-claims NUM_BYTECODE_VAL_STAGES seam (5 base / 6 akita) and\n  guards its base-five fold at runtime; byte-neutral in base mode\n  (the dory_byte_diff muldiv ratchet passes).\n- Cargo: akita = [jolt-verifier/akita, jolt-claims/akita,\n  jolt-field/akita, jolt-prover-legacy/akita] — legacy must flip\n  together with the verifier; the verifier's own akita edge to it is a\n  dev-dep edge that does not propagate.\n- CI: clippy lanes for -p jolt-prover --features\n  akita[,prover-fixtures] so the ignored suites keep compiling.\n\nVerified: clippy -D warnings on {default, prover-fixtures, akita,\nakita+prover-fixtures}; workspace clippy under host and host,zk;\nnextest default and akita lanes; dory_byte_diff muldiv end-to-end.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-prover): hoist protocol-agnostic stage recipes to shared src/stages\n\nStages 1-7 and the generated stage-driver expansions are protocol-agnostic:\nthe protocol differences are carried by jolt-verifier's feature-swapped\nbatch internals, plus two small cfg blocks here that mirror the verifier's\nown (the stage-6a lattice input wrapper folding the four reduced Inc claims,\nthe stage-7 lattice hamming dimensions). The dory module keeps its\nprotocol-specific pipeline ends (stage 0 witness commitment, stage 8 RLC\njoint opening, prover.rs); the akita port adds its own.\n\nVerified: clippy -D warnings on jolt-prover x {default, akita}.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-witness): serve the lattice packed-witness columns from TraceBackend\n\nFusedInc (the per-cycle fused increment: RAM delta on store cycles, rd delta\notherwise), the UnsignedIncChunk/UnsignedIncMsb one-hot K x T grids of its\nshifted encoding, and the TrustedAdviceBytes/UntrustedAdviceBytes dense byte\none-hot cell tables over the (byte || place || word) domain. The bytecode\nsub-columns and program-image bytes stay unserved: they are preprocessing\ndata, not trace derivations.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-openings): native group-commit and transparent object-setup seams\n\ncommit_batch is the commit-side sibling of open_batch/verify_batch (the\nnative same-point commitment-group seam only schemes like Akita implement);\nTransparentObjectSetup derives a singleton commitment-object setup from the\nobject's public shape alone (fixed seed), so the packed prover and verifier\nre-derive byte-identical auxiliary setups independently. AkitaScheme\nimplements both; the legacy packed path's transparent_object_setup now\ndelegates to the trait so the convention stays single-sourced.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-verifier): promote packed stage-8 assembly for prover reuse\n\nbuild_reconstruction_parts factors the reconstruction batch construction\n(instances from the public shape + completed upstream claims, input cells)\nout of reconstruction::verify so the packed prover's recipe runs the same\nconstruction; stage8::packed and its leaf_claims/object_statement assembly\ngo public; absorb_packed_commitments promotes the akita commitment-absorb\narm as the shared stage-0 helper.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-kernels): lattice arms for the read-raf, booleanity, and hamming kernels\n\nThe reference kernels adapt to the packed (lattice) jolt-claims shape at\nruntime — jolt-kernels stays feature-free:\n\n- bytecode read-raf address kernel: the nine-stage fold. The four fused-inc\n  consumer stages (gamma^5..8) discharge the reduced Inc claims — fused-delta-\n  weighted PC pushforwards against the staged store column and its\n  complement — with the RAF/entry weights shifted to gamma^9..11. The\n  consumer cycle points ride the relation (BytecodeStagePoints grows a\n  fused_inc_cycle_points leg, populated by bytecode_stage_points on akita).\n- bytecode read-raf cycle kernel: serves the dense FusedInc trace column\n  when the relation's expression references it; the staged-val and\n  StageCycleEq loops already scale with the shape.\n- booleanity address kernel: the checked-column masses extend over the\n  fused-inc one-hot columns (lattice_booleanity_output_openings order,\n  continuing the gamma^{2i} weights) exactly on the lattice shape.\n- booleanity cycle / hamming-weight kernels: extra opening tables (address/\n  cycle folds of the UnsignedIncChunk/Msb grids) and the IdentityAtAddress\n  chunk-domain identity, served per the relations' own expression leaves.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-prover): the packed (Akita) prove path\n\nThe full pipeline behind akita::prove: stage 0 assembles the OneHotTrace\ncolumns from the witness plane's typed rows and commits them as one native\ngroup (commit_batch), commits the per-proof untrusted-advice byte object,\nand absorbs the packed commitment objects through the verifier's own\nabsorb helper; stages 1-7 run the shared recipes against the embedded\nJoltBackend registry (naive-served; the reference kernels adapt to the\npacked shape); the reconstruction phase proves through the verifier's\npromoted batch construction with naive kernels for the four reconstruction\nrelations (implemented on JoltAkitaBackend — the relations exist only on\nthe packed build); stage 8 opens OneHotTrace as one native same-point\nbatch from the stage-0 hint and discharges the auxiliary objects\n(advice byte columns, ProgramOneHot) through prove_packed_openings.\n\nThe precommitted auxiliary objects' opening material is transparently\nre-derived at prove time from the public advice bytes / retained program\nand cross-checked against the passed commitments.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(jolt-prover): packed trace floor, witness-plane program reads, fused cycle suffixes\n\n- ProverConfig::derive pads to the compiled protocol's PCS floor (2^12 on\n  the packed build — Akita cannot schedule the OneHotTrace group below 16\n  variables; 256 on Dory), matching legacy's PCS::MIN_PADDED_TRACE_LENGTH.\n- The stage-4 program-image contribution and stage-6b full-mode table fold\n  read the full program off the witness plane (witness generation requires\n  it in every mode) instead of the prover preprocessing, whose committed\n  arm retains only commitments on the packed path.\n- The fused-inc consumer cycle points carried on BytecodeStagePoints are\n  the log_t cycle SUFFIXES of the recorded inc openings (the aggregates\n  carry full (address || cycle) points), mirroring the stage-6b batch's\n  splits.\n\nmuldiv_e2e_akita (prove + verify + fused-inc claim-wire tampers) passes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-akita): GroupSetupMetadata for the prover setup\n\nThe packed prover's generic stage 0 reads the group shape (layout digest,\narity, column count) off PCS::ProverSetup through the same jolt-openings\nmetadata trait the verifier setup already implements; plus the jolt-prover\njolt-riscv dependency edge in the lockfile.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(jolt-prover): reconstruction leg conventions; un-ignore the packed acceptance suites\n\nTwo packed-kernel fixes the byte-diff ratchets caught:\n- the lookup-selector block pads the (non-power-of-two) table count up\n  (ceil, matching jolt-poly's log_2), not down;\n- the bytecode reconstruction COLUMN tables replicate across the missing\n  high variables instead of zero-extending: the verifier folds the\n  zero-pin into the DERIVED weight, so a zero-extended column squares the\n  pin — internally consistent through every driver self-check and caught\n  only by the committed ProgramOneHot packed opening.\n\nWith those, all nine packed acceptance tests pass and their #[ignore]s\ncome off: five e2es (muldiv, forced-K256, advice, full-advice,\ncommitted-program x {1,2} chunks, with live tampers) and four byte-diff\nratchets (wire-for-wire equality with jolt-prover-legacy's prove_packed).\ntests/dory_byte_diff.rs follows the shared stage recipes' new paths.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(jolt-prover): fail-closed hardening from the port review\n\n- Stage 0 rejects a ProgramOneHot commitment argument that disagrees with\n  the preprocessing-held one the verifier absorbs (was an opaque\n  Fiat-Shamir divergence at verification) and a packed setup whose\n  declared dimensions disagree with the canonical OneHotTrace shape (was a\n  late backend failure).\n- commit_advice_one_hot rejects advice exceeding the configured maximum\n  instead of silently truncating.\n- FusedInc::extract regains legacy's store/rd disjointness debug-assert;\n  the shifted-encoding roundtrip and padding-convention unit tests port\n  to jolt-witness (deltas at the +-(2^64 - 1) extremes included).\n- INSTRUCTION_FLAG_ORDER is pinned to the enum's discriminant order at\n  compile time; the reconstruction replicate helper asserts divisibility\n  and truncates.\n\nAll 17 akita-lane tests still pass.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* ci: run the modular jolt-prover akita acceptance suites\n\nThe clippy lanes existed since the scaffolding commit; with the port\nlanded, the nine un-ignored tests (five e2es with live tampers, four\nlegacy byte-diff ratchets) now run in the test-prover-akita job alongside\nthe legacy packed suite.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* docs(jolt-prover): dory module doc reflects the shared stage recipes\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(prover): align modular Akita with fixed-prefix protocol\n\n* chore(akita): pin optimized prover backend\n\n* feat(prover): compose optimized kernels into Akita\n\n* bench(akita): add modular prover harness\n\n* perf(akita): optimize packed booleanity kernels\n\n* perf(akita): optimize packed hamming reduction\n\n* perf(akita): optimize packed bytecode cycle\n\n* perf(akita): optimize packed bytecode address\n\n* chore(akita): pin latest prover optimizations\n\n* perf(akita): release post-commit NTT residency\n\n* perf(akita): stream packed trace commitment\n\n* perf(field): add deferred fp128 accumulators\n\n* perf(spartan): skip zero uniskip terms\n\n* perf(witness): fuse Spartan row extraction\n\n* perf(spartan): specialize one-limb claim folds\n\n* perf(witness): fuse lookup query dispatch\n\n* perf(witness): activate compact proof trace\n\n* perf(witness): elide canonical trace padding\n\n* feat(akita): support D128 one-hot commitments\n\n* perf(kernels): compact register matrix entries\n\n* perf(kernels): build read-RAF buckets in two passes\n\n* perf(kernels): compact shared instruction rows\n\n* test(kernels): repair compact trace fixtures\n\n* perf(kernels): release RAM value columns after stage 4\n\n* perf(kernels): collect RAM columns without wide staging\n\n* docs(specs): define Akita upstream review split\n\n* chore: keep host feature clippy clean\n\n* perf(akita): catalog prefix-packed schedules\n\n* feat(akita): support D128 one-hot commitments\n\n* perf(akita): catalog prefix-packed schedules\n\n* docs(specs): record distilled Akita acceptance\n\n* docs(specs): add final low-scale Akita run\n\n* perf(akita): restore rank-aware large-trace schedules\n\n* docs(specs): record rank-aware schedule validation\n\n* chore(deps): remove unused packed-opening dependencies\n\n* chore(akita): align protocol stack with current planner\n\n* ci(akita): serialize prover fixture tests\n\n* chore(akita): pin rustfmt-stable schedule emitter\n\n* fix(openings): retain tracing for current instrumentation\n\n* fix(claims): expose packed outputs to heap profiler\n\n* ci(bench): run feature-gated field benchmarks explicitly\n\n* fix(witness): scope parallel collector locals\n\n* ci(akita): serialize modular prover fixtures\n\n* chore: reconcile rebase with main's post-#1714 kernels/witness refactor\n\nCross-evolution integration that belongs to no single branch commit:\njolt-utils extraction re-points (jolt_poly::{math,thread} moved), the\nstage-flamegraph port into dory/prover.rs, profile/zk_e2e adaptation to\nthe borrowed TraceBackend witness API, session-witness removal from\nProofSession (superseded by owned_rows), and byte-diff harness\nreconciliation.\n\n* chore(witness): drop unused jolt-utils dependency\n\nThe Akita port removed the last jolt_utils usage from jolt-witness\n(cargo-machete failure). The parallel feature's jolt-utils/parallel\nforward goes with it: jolt-kernels, the only jolt-witness/parallel\nconsumer, already enables jolt-utils/parallel directly.\n\n* test(fs): bless the inventory for the Akita port's transcript changes\n\nRegenerated with JOLT_FS_BLESS=1 cargo nextest run -p jolt-verifier\n--test fs_obligations --features fs-audit after merging main (which\nbrought #1702's gate to this branch). Unlike a mechanical re-spell,\nthese diffs are this PR's intentional protocol-surface changes; for\nthe security review they group as:\n\n- Packed-opening redesign: the jolt-openings packing.rs batch absorbs\n  and its three challenge draws are replaced by the prefix.rs\n  PrefixPackedLayout::reduce_claims schedule (layout digest + logical\n  num_vars/slot capacity absorbs, one challenge_vector draw).\n- Akita domain separation: append_verifier_setup now absorbs the\n  b\"akita/fp128\" label plus a runtime ring_dimension instead of the\n  baked d64 label/AKITA_D constant; AkitaCommitment additionally\n  absorbs ring_dimension before backend_coeff_len and the bytes.\n- Committed-program plurals: absorb_commitments defers to new\n  absorb_packed_commitments/absorb_packed_program_commitments helpers\n  over program_one_hot_commitments (source schema:\n  program_one_hot_commitment(s)/program_one_hot_setup(s) renames).\n\n* revert(akita): drop payload-slack schedule selection\n\nUpstream review (akita#344, closed) rejected baking a payload-slack\npolicy into catalog identity. Remove the preset slack overrides, pin\nakita at upstream main, and regenerate the K16/K256 catalogs under the\ndefault min-payload objective. Geometry pin tests now assert D64 rank 7\n(P=2^20) and D128 rank 4 (P=2^18, 11 GiB setup envelope).\n\n* fix(merge): adapt to main's Math move and fmt-stable catalogs\n\njolt-utils now owns the Math trait; the generated catalog headers are\nrustfmt-formatted (the emitter's fixed import list is not fmt-stable),\ngen_jolt_schedules formats its output, and the drift oracle compares\nschedule data with the import boilerplate stripped.\n\n* fix(merge): pass explicit ram hamming default in the kernels fixture\n\nThe prefix-packed statement adds a fifth constructor argument; the\nDory-shape fixture carries no packed RAM hamming weight.\n\n* test(fs): bless the inventory for the prefix-packed transcript surface\n\nThe prefix-packed layout absorbs (claim label, logical arity, slot\ncapacity, layout digest), the D128 ring-dimension binding, and the\nplural program one-hot commitments replace the retired generic packing\nabsorbs. All are the protocol changes this PR reviews.\n\n* feat(akita): port to the reconciled upstream substrate\n\nPins akita at the reconciled prover stack (flattened setup, compressed\npayloads, catalog-row schedule selection). The adapter moves to\nself-describing committed groups — verify reconstructs each group's\nprofile from the trusted catalog row while proofs carry payload\ncoefficients only — and batched prove/verify thread the public\nrow-digest selection.\n\nThe verifier accepts only cataloged rows now, so every provable shape\nis an approved row: the D64 one-hot grids extend down to the adapter\ntest shapes, and D128 one-hot and dense advice/program families gain\ntheir own generated catalogs (the dense fp128 D64 floor is nv=14;\nsmaller objects pad up). Geometry pins re-derived under upstream's\nevolved sizing: D64 K256 selects rank 6 at P=2^20 and D128 rank 3 at\nP=2^19 natively — most of the retired payload-slack policy's geometry\nreturns as the min-payload choice — and the D128 setup capacity drops\n11 GiB -> 4.125 GiB under prefix-exact accounting.\n\n* fix(akita): port adapter to current upstream\n\nPin Jolt to the current LayerZero Akita commit and migrate the fixed-dimension configs, generated catalog identity, CPU backend, grouped root commitment, wide-ring, and sparse challenge APIs.\n\nPreserve Jolt's shared matrix cache release boundaries with Akita's explicit root-fold policy while leaving compression NTT state resident. Propagate cleanup failures through the prover error path.\n\n* chore(akita): pin stacked upstream head\n\nAdvance every Akita workspace dependency and lockfile source to fc948f942, the PR #375 merge commit stacked on benchmark report PR #378. The existing adapter API remains unchanged and passes the focused Akita prover and verifier acceptance suites.\n\n* chore(akita): pin final prover optimization stack\n\n* chore(akita): pin merged prover optimizations\n\n* fix(claims): pad auxiliary object capacity to the dense planner floor\n\nAkita's dense DP planner has no fold schedule below 13 variables for\nsingle-polynomial groups, so a guest needing only a couple bytes of\ntrusted/untrusted advice (an 11-variable byte-one-hot cell domain, or a\ntiny program image) failed at advice_object_setup with\nUnsupportedSchedule before anything was committed.\n\nPrefixPackedObjectPlan::new now widens slot capacity — never column\narity — until the physical polynomial reaches\nMIN_AUXILIARY_PACKED_NUM_VARS = 14 (one above the measured floor, whose\nsetup envelope is also smaller than 13's). Claim reduction is unchanged:\nthe padding rides the existing unused-slot mechanism, absorbed via the\nlayout digest and reduce_claims before the selector is sampled, and both\nprover and verifier derive plans through this one constructor. Shapes\nalready at or above 14 variables are untouched.\n\nTests pin the padded plan shapes at and below the boundary, the\nslot-zero claim embedding on a padded plan, and a full\ncommit/reduce/open/verify roundtrip of an 8-byte advice region (which\nfails with the clamp disabled). A guest-level e2e with a below-floor\nadvice region is left as a follow-up; the object-level roundtrip plus\nthe shared plan constructor cover the derivation chain.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(akita): adopt adaptive ring schedules\n\n* docs(akita): correct the increment carry column's description\n\nThe balanced-digit re-encoding turned the former MSB bit into a signed carry\nabove bit 63, valued in {-1, 0, 1} and stored as `carry.rem_euclid(K)`, so its\nhot lane is 0, 1, or K-1. Four doc comments still described it as a bit whose\n\"hot address is zero or one\".\n\nAlso record that Booleanity consumes the lane-zero-inclusive columns while the\ncommitment omits lane zero — the pairing Stage 7's reconstruction depends on.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(akita): rename the increment columns to match the balanced encoding\n\n`UnsignedIncChunk`/`UnsignedIncMsb` were kept as compatibility names when the\nfused increment moved to balanced digits, but nothing about the columns is\nunsigned and there is no MSB: they are centered radix-K digits and a signed\ncarry. Rename them, and the vocabulary around them, to say so:\n\n  UnsignedIncChunk    -> BalancedIncDigit\n  UnsignedIncMsb      -> BalancedIncCarry\n  UnsignedIncChunking -> BalancedIncChunking\n  UNSIGNED_INC_BITS   -> FUSED_INC_BITS\n\nMechanical: variant declaration order is unchanged (so `Ord` and the appended-\nfor-codec-stability positions are untouched), and the OneHotTrace layout digest\nhashes explicit per-variant tags rather than names, so this is not a protocol\nchange. Also refresh the prose that still described the shifted `delta + 2^64`\nencoding, including the spec's decode identity and padding invariant, and point\nthe synthetic booleanity fixture at the balanced encoder.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): stop asserting the carry's {-1,0,+1} range as enforced\n\nThe carry column is an ordinary full-K one-hot column: booleanity plus the\ndefinitional column sum pin it to the same [-K/2, K/2) alphabet as the digits,\nand nothing restricts its hot lane to {0, 1, K-1}. That set is a property of\nthe honest encoder, and the release build's only guard is a debug_assert. The\ncomments added a commit ago said otherwise, repeating the mistake they replaced.\n\nRecord the argument that makes the slack safe, since nothing tests it: the\nbalanced numeral is injective onto a contiguous K*2^64 window, fp128 leaves 56\nbits over 2^71, and base mode commits Inc with no range relation at all, so\nthis decomposition is strictly stronger than the non-akita baseline. Note too\nthat pinning the carry would still not yield a 64-bit range check -- the digit\ncolumns alone already span 2^64 consecutive integers.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): record where the RAM activation is pinned\n\nRamRa is the one OneHotTrace family whose activation is a prover-supplied claim\nrather than the constant 1, so its hamming leg is deliberately vacuous and base\nmode's direct tie (sum_k ra(k, r_cycle) = A against committed data) has no\nanalogue on this path. A is instead pinned by a five-hop chain ending at rv64\nrows 0/1, and that chain works only because unmap(0) = lowest_address is\nnonzero -- an invariant currently asserted prover-side only. None of this was\nwritten down, and two reviewers independently read the vacuous leg as a\nsoundness hole before reconstructing the chain.\n\nAlso refresh the stale HammingWeightClaimReductionPublic listing, which still\nnamed the removed IdentityAtAddress.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(akita): fold the lane-zero baselines into the hamming reduction's input claim\n\nThe lattice hamming reduction consumed the RAM activation through a\n`RamHammingWeight` derived in its output expression -- a prover-originated\nclaim riding the channel reserved for verifier-computed publics, because the\nexpression language has no source kind for a consumed opening on the output\nside. Restate each leg's identity with the baseline on the input side instead:\n\n  before: input gamma^e * c;             output (w(rho) - w(0))*V + eq(rho,0)*w(0)*A\n  after:  input gamma^e * (c - w(0)*A);  output (w(rho) - w(0))*V\n\nThe enforced equations are unchanged (c = Q~(w) + w(0)*(A - S), per gamma\npower). Consequences:\n\n- `A` is now consumed as an ordinary input opening\n  (`opening(ram_hamming_weight())`, provenance `from = RamHammingBooleanity`),\n  exactly as in base mode; the `RamHammingWeight` and `EqDefault` publics are\n  deleted, so every remaining `HammingWeightClaimReductionPublic` is a pure\n  function of transcript-fixed points.\n- The hamming legs vanish uniformly (w == 1 makes c - w(0)*A identically\n  zero): `Sum_k L(k,t) = A(t)` holds by construction once lane zero is defined\n  as `A - Sum Q`. Their gamma powers are left unused rather than renumbered so\n  the layout and the shared prover's `gamma_powers` indexing stay aligned with\n  base mode, where the hamming leg is a real anchor.\n- The output expression is purely sparse, so the prover drops the eq_zero\n  polynomial and the baseline_scale term from the summand and per-round binds.\n- The stage-7 verifier loses the stashed `ram_hamming_weight: Option<F>` and\n  gains a `derive_input_term` for the `*AtDefault` weights (the `RamValCheck`\n  input-public pattern).\n\nBase (non-akita) mode is untouched: `implicit_zero` is set only by\n`new_lattice`, and the base symbolic relation keeps its hamming leg.\n\nAkita proof bytes change (input claim and round polynomials); prover,\nverifier, and fixtures move together, as this PR already requires.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* fix(verifier): reject zero-based RAM remaps fail-closed\n\nThe stage-2 RAF-evaluation unmap is `8k + lowest_address`, and the lattice\nlane-zero reconstruction relies on `unmap(0) = lowest_address != 0` to\ndistinguish \"no RAM access\" from an access at remapped word zero -- the one\nresidual freedom booleanity and the activation claim leave open. That\nprecondition was asserted prover-side only (`UnmapRamAddressPolynomial::new`);\na verifier handed a zero-based memory layout would have accepted proofs the\nRAF identity can no longer discriminate.\n\nEnforce it in `validate_inputs` / `validate_inputs_from_parts`, mirroring the\nprover's `start_address > 8` bound, and pin it with a regression test.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): specify digit-zero virtualization with the flag-derived RAM activation\n\n* feat(akita): derive the RAM activation from the load/store flags\n\nDigit-zero virtualization per specs/digit-zero-virtualization.md: the\nstage-7 slot becomes LatticeDigitZeroClaimReduction (two gamma powers per\nRA family, one per increment column, then the decode power; the reserved\nhamming powers are gone), and the RAM activation M_RAM = Load + Store is\nsupplied by a new stage-6b RamActivationBooleanity member that binds the\nflag columns and proves the activation sum Boolean, replacing the\nprover-supplied RamHammingWeight claim, its A^2 = A sumcheck, and the\nfive-hop pinning argument on this path. The check is deliberately a\nsingle booleanity on the sum: the columns are virtual, so a gamma-batch\nof per-flag legs would admit non-Boolean solutions chosen after the\ndraws.\n\nBase mode is untouched semantically; its proof bytes re-encode because\nthe appended SumcheckId codec tag shifts the derived OpeningId tag bases\n(values and transcript unchanged). Layout digest bumped to\ndigit-zero-balanced-inc/v6; the implicit-zero/lane vocabulary is renamed\nto the digit-zero notation throughout the lattice path; tamper manifests\ncover the two new flag wires.\n\n* docs(akita): pin down why the activation zero-check binds over virtual columns\n\nA zero-check at a pre-known reference point over never-committed columns is\nnot pointwise-binding in isolation (true of the previous A^2 = A gadget too).\nRecord the composite argument: stage-7 overdetermination pins the gadget's\noutput value to the one consistent polynomial; the recentering identities\nconfine that polynomial's per-cycle values to commitment-determined finite\nsets whose quadratic misses zero exactly on weight >= 2 cycles; and the\nstage-1 reference point postdates the stage-0 commitment, so Schwartz-Zippel\nover those sets kills every such cycle. Also correct step 2: the\nempty-committed-row bit persists to that point in the argument, same as the\nprevious construction, and is closed by the RAF pincer in step 3.\n\n* docs(akita): FLAG open soundness gap in the RAM activation booleanity\n\nAdversarial review: the RamActivationBooleanity check proves\n(B^2-B)~(r1)=0 with B=Load+Store a virtual column materialized at stage 6b\nand r1 the stage-1 reference point drawn five stages earlier, and the two\nflag openings are tied to nothing else (verified: no link to the\nbytecode-bound Spartan flags or committed data). A booleanity zero-check\nbinds only when its point postdates the polynomial, so this does NOT force\nB Boolean. Base mode was sound because its hamming leg pinned H=sum ra to\nstage-0 committed rows before r1; digit-zero deleted that leg. The prior\nthree-move Schwartz-Zippel argument assumed r1 postdates the free\ndigit-zero/flag choices and is invalid.\n\nRAM per-cycle one-hotness therefore has no valid proof on this branch;\ninstruction/bytecode/increment families (activation = 1, Theorem 1) are\nunaffected. Records candidate hardenings for the human soundness review.\nDo not ship the RAM activation on the current argument.\n\n* docs(akita): don't virtualize RAM — full-commit + base hamming is the sound fix\n\nAdversarial review confirmed a real (not conjectural) break: the Twist\nread/write + val-check + output-check chain is linear in ra with no\nmultiset/one-hot check, so a weight-2 RAM tensor on an access cycle is\naccepted end to end — a malicious committed program forges M_RAM=2 and\nmakes a load return an attacker value, with booleanity/RAF/Spartan/\nread-write/val-check/output-check all satisfied. Latent in every\nvirtualized-RAM form (RamHammingWeight five-hop or Load+Store), because\nM_RAM's booleanity is checked at a reference point that predates the\nvirtual column, and RAF/Spartan constrain only the address sum not the\nweight.\n\nFix: don't virtualize RAM. Full-commit makes Sigma_k ra = H a real\nstage-0 tie, so RamHammingBooleanity's H^2=H at the stage-1 point is\nsound. Digit-zero stays for instruction/bytecode/increment (activation=1,\nTheorem 1, unconditionally sound). Spec rewritten to this design.\n\n* fix(akita): limit digit-zero virtualization to unit activation\n\n* test(akita): check packed fixture coverage\n\n* docs: record Akita versus Dory benchmarks\n\n* test(prover): repair byte-parity merge\n\n* chore(akita): update adaptive schedule API\n\n* chore(fs): refresh Akita transcript inventory\n\n* docs: refresh latest Akita benchmark sweep\n\n* fix(verifier): validate runtime bytecode aliases\n\n* refactor(akita): call one-hot values rows\n\n* refactor(akita): use row terminology in packed prover\n\n* docs(akita): remove one-hot lane wording\n\n* fix(prover): borrow witnesses in parity tests\n\n* fix(prover): preserve main Akita integration\n\n* fix(prover): borrow witnesses in zk fixtures\n\n* refactor(prover): narrow Akita integration surface\n\n* chore(field): drop auxiliary Akita benchmark\n\n* refactor(akita): reduce optimized prover surface\n\n* perf(trace): build compact proof rows at source\n\n* fix(kernels): reconcile optimized prover rebase\n\n* fix: address review follow-ups\n\n* fix: restore rebase review coverage\n\n* refactor: move optimized helpers onto owning types\n\n* fix(witness): reject physical rows beyond the cycle domain\n\n* test: restore optimized-backend akita coverage\n\nThe rebase review-coverage restore flipped every akita suite onto the\nreference backend, dropping the optimized packed pipeline from CI:\n\n- akita_byte_diff: prove each ratchet with both backends (dory pattern)\n- akita_e2e: back to the optimized backend; reference stays covered by\n  the byte-diff loop\n- committed e2e: restore the auxiliary.swap(0, 1) position-binding\n  tamper alongside the pop tamper\n- registers_read_write: restore the 125-combo count/write enumeration\n  test and add an rs1 == rs2 == rd step to the structured fixture\n\n* fix: address remaining akita review findings\n\n* refactor(akita): hold trace one-hot rows behind a plain Arc\n\nThe RwLock<Option<..>> around TracePackedOneHot's row source modelled a\nrelease step that never happens: nothing takes the write lock, so the\n\"opening storage was already released\" path was unreachable and every\nkernel view paid for a lock acquisition plus an Option unwrap on the hot\nread path. Post-commit memory release is handled separately by\nrelease_post_commit_residency.\n\nStoring Arc<dyn TraceOneHotRows> directly also removes the guard-carrying\nTracePackedOneHotKernelSource shim: kernels take &TracePackedOneHot and\nreach the rows through the Arc.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(kernels): derive Allocative instead of hand-rolled visitors\n\nEvery optimized/reference kernel wrote its own `Allocative::visit`,\nrecomputing heap bytes field by field through a `poly_heap_bytes` /\n`vec_heap_bytes` / `nested_vec_heap_bytes` / `polys_heap_bytes` helper\nfamily, and nested state (`gruen`, `rows`, `challenges`, `lt`, `ra`)\ncollapsed into one opaque `usize` per holder. Field names drifted from the\nstruct and three fields went uncounted.\n\nThe blocker to deriving was never the derive itself but its implicit\n`F: Allocative` bound: the foreign `akita-field` scalar cannot implement\n`Allocative` (both are foreign, so no impl can exist), and requiring it\nwould leak through every field-generic kernel and the `ProofSession`\ncarries that park them. `#[allocative(bound = \"F: JoltField\")]` drops that\nbound from the impl header, and scalar tables route to new\n`jolt_poly::visit_scalars` / `visit_scalar_rows` helpers via\n`#[allocative(visit = ...)]`, so no bound is needed in the body either.\n\n`Polynomial<T>` and `GruenSplitEqPolynomial<F>` gain real (bound-free)\n`Allocative` impls behind a new optional `jolt-poly/allocative` feature,\nso they nest as subtrees instead of being re-measured by each holder, and\ntheir tables are now sized by `capacity()` rather than `len()`. Shared\n`Arc`/`Weak` row buffers visit through allocative's own pointer-dedup\nimpls, retiring `visit_arc_vec`. What the derive still cannot reach —\ncontainers keyed by a foreign type — keeps three narrow helpers in\n`backend.rs`.\n\nNet: 606 fewer lines, per-field flamegraph keys that cannot drift from the\nstruct, and `OptimizedBooleanityAddressKernel`/`CycleKernel` no longer\nreport a single lumped `heap` node while their peers report per field.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* style(kernels): let primitive tables visit natively; fold the split cfg_attrs\n\nEight scalar tables with primitive element types (Vec<u32>, Vec<u64>,\nVec<Option<u8>>, Vec<Vec<u32>>, Vec<Vec<usize>>) were routed through\njolt_poly::visit_scalars for uniformity, but the uniformity was never real:\nVec<usize> fields left on the plain derive rendered a different frame shape\nin the same flamegraph. The helper exists to dodge the F: Allocative bound\nand the derive cascade for foreign element types; neither applies here, and\nallocative's own Vec impl reports strictly more (element type, unused\ncapacity), so drop the attribute and let it render.\n\nAlso fold the eight remaining two-line cfg_attr pairs into one, matching\nthe rest of the file. (jolt-field/src/solinas/ext.rs has three more, but\nthey predate this PR and are left alone.)\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* docs(jolt-poly): tie the scalar-table helpers to the akita-field cutover\n\nThe module already says why the helpers exist; record that the reason is\ntemporary and where the cleanup is tracked.\n\nRefs #1805\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* style: import types instead of spelling out qualified paths\n\nThe PR had replaced imports with fully-qualified paths in a number of\nplaces — most visibly parity.rs, where the two `where` clauses went from\n\n    R: ConcreteSumcheck<F>,\n    SumcheckInputClaims<F, R>: InputClaims<F>,\n\nto a five-line wrap of `jolt_verifier::stages::relations::…` and\n`jolt_claims::…`. Restore the imports there and in the other 25 sites the\nPR introduced, keeping the `#[cfg(not(feature = \"akita\"))]` gates the akita\nbuild actually needs. `registers_read_write/rows.rs` and\n`registers_claim_reduction.rs` had `use jolt_witness::__private::TraceRow`\non main; that comes back too.\n\nAlso folds in the same-file inconsistencies the scan turned up: Arc\nqualified in files that already import it, and `jolt_witness::WitnessError`\n/ `RandomAccessRows` / `RowSource`, `jolt_poly::BindingOrder` /\n`EqPolynomial` / `UnivariatePoly`, `jolt_claims::NoChallenges`,\n`jolt_program::{execution::OwnedTrace, preprocess::JoltProgramPreprocessing}`\nand `jolt_utils::par_collect_windows`.\n\nLeft qualified on purpose: attribute paths (`derive(allocative::Allocative)`,\n`allocative(visit = jolt_poly::visit_scalars)`) and macro bodies, where the\npath is the interface.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(kernels): hand-write NaiveSumcheckProver's Allocative impl\n\n`visit_poly_map` and `visit_scalar_map` existed in backend.rs to carry the\nreference prover's three id-keyed `BTreeMap` fields past the derive, and\nhad no other callers. Writing the impl by hand keeps the sizing local to\nthe one type that needs it and takes both helpers out of the shared backend\nsurface; `visit_keyed_polys` and `visit_scalar_pairs` stay, each with two\ncallers.\n\nThe heap frames are unchanged (`opening_tables`/`derived_tables` still\nreport `nodes` + `elements`); only the zero-byte `binding_order` and\n`rounds_bound` frames go, which also retires the now-dead `Allocative`\nderive on `jolt_poly::BindingOrder`.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* perf(kernels): drop the base-mode bytecode PC scan\n\nBoth bytecode read-RAF phases run at stage 6a/6b, after stage 5 parks the\nshared InstructionCycleRow carry that the Booleanity and RA-virtualization\nkernels already consume in both modes. Only the packed path read it; the\nbase path walked the trace a second time for a PcBundle stream and parked\nits own Arc<Vec<PcRow>> — 8 B/cycle live from 6a through 6b — even though\nthe shared row carries the same PC.\n\nIt carries MappedPc where the address phase wants BytecodePc, and the two\nextractors differ deliberately: BytecodePc zeroes no-op rows, MappedPc does\nnot. They nonetheless agree on every row, because both no-op sources\nalready sit on slot 0 — BytecodePreprocessing::get_pc maps every NoOp there\n(the only source of bytecode_pc for a materialized row), and padding rows\nare built from JoltTraceRow::no_op with bytecode_pc: 0. That rule was\nimplicit; it now has a test.\n\nSo the packed substitution was never packed-specific. Both phases take the\nshared rows unconditionally, and PcRow, PcRowsKey, PcBundle, PcRow::shared\nand the COLD sentinel go with the second scan. The one gate that stays is\nrow_weight: the base protocol has no fused-increment stages to weight by.\nBase mode loses a full trace walk and an 8 B/cycle buffer; akita gates in\nthis file drop 45 -> 12.\n\nByte parity against the legacy prover is unchanged in both modes.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* test(riscv): pin the no-op bytecode-slot invariant at row construction\n\n`JoltTraceRow::from_components` is public and takes an arbitrary\nbytecode_pc, so nothing stopped a caller building a row with IsNoop set at\na nonzero slot — the one case where `BytecodePc` and `MappedPc` disagree.\nBoth production constructors route through `BytecodePreprocessing::get_pc`\nand cannot, but the guarantee lived two crates away from the code that\nleans on it.\n\nA debug assertion at the single choke point every constructor passes\nthrough makes it checked in every test run, including the byte-diff\nratchets, rather than argued from the call sites.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(witness): one total BytecodePc column\n\n`BytecodePc` and `MappedPc` were the same value on every row. `BytecodePc`\nzeroed no-op rows, which `BytecodePreprocessing::get_pc` had already done;\n`MappedPc` was an `Option`, but the only producer was an extractor that\nalways returned `Some`, and a row whose instruction has no bytecode mapping\ncannot be materialized at all — both constructors treat a `get_pc` miss as\na hard error. So neither the no-op branch nor the `None` case was\nreachable, and the two conventions the split was meant to encode — \"no-ops\non slot 0\" for the read-RAF pushforward, \"unmapped is cold\" for the\ncommitted one-hot — had no member distinguishing them.\n\n`MappedPc` is gone; `BytecodePc(usize)` is the one column, total by type.\nThat deletes the dead cold paths behind it: the `COLD` sentinel round-trip\nfor the bytecode column in the opening kernel, the `map`/`if let Some`\narms in booleanity, hamming-weight and the reference commitment, the\n`pc_plus_one` encoding in the packed `InstructionCycleRow` (which now\nstores the slot directly, and whose accessor returns `usize`), and the\n`bytecode_rows_valid` gate in the packed witness assembly, whose error the\ntype now makes unrepresentable. `RamRaChunk` keeps its `Option` — RAM\ngenuinely has cold cycles — and so does `BytecodeRaChunk`, whose `Option`\nis the shared shape of the one-hot materializer rather than a claim.\n\nByte parity against the legacy prover is unchanged in clear, packed and ZK\nmodes.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(witness): flatten BytecodeRaChunk to match its total column\n\nLeft as Option<usize> in the BytecodePc unification on the theory that the\nOption was the one-hot materializer's shared shape. It is not:\nmaterialize_one_hot bounds on Into<Option<usize>>, and InstructionRaChunk\nalready sits in that same generic call as a plain usize with a\nSome(chunk.0) conversion. Bytecode needs nothing more.\n\nLeaving it also made the family inconsistent — InstructionRaChunk's doc\ncalled bytecode a cold sibling, which stopped being true when BytecodePc\nbecame total. Now instruction and bytecode chunks are both plain, and\nRamRaChunk is the only cold one, which is what the protocol actually says.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: Andrew Tretyakov <atretyakov@a16z.com>\nCo-authored-by: Quang Dao <quang.dao@layerzerolabs.org>\nCo-authored-by: Michael Zhu <mzhu@a16z.com>",
+          "timestamp": "2026-08-25T20:40:31-07:00",
+          "tree_id": "5944cdb27974a390971dfd733909784d546a1bbc",
+          "url": "https://github.com/a16z/jolt/commit/b7aa1ac03a12e570b47c1c3f80ac7ab0e625dc3f"
+        },
+        "date": 1787719504729,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.428,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 869284,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3449,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 497612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 507276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7134,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5723,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.4198,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 506720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.7799,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4303,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 867336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5955,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4704,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 506880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.2131,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 499068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.6188,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 502592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.2133,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1085648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.5281,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 630612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 88.7786,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2116128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.3357,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 511300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5493,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5296,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864312,
             "unit": "KB",
             "extra": ""
           }
