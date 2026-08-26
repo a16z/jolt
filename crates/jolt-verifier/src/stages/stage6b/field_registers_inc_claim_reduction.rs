@@ -21,20 +21,20 @@ use jolt_claims::protocols::field_inline::{
     FieldRegistersTraceDimensions,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 #[derive(Clone)]
-pub struct FieldRegistersIncClaimReduction<F: Field> {
+pub struct FieldRegistersIncClaimReduction<F: JoltField> {
     symbolic: increments::ClaimReduction,
     read_write_cycle: Vec<F>,
     val_evaluation_cycle: Vec<F>,
 }
 
-impl<F: Field> FieldRegistersIncClaimReduction<F> {
+impl<F: JoltField> FieldRegistersIncClaimReduction<F> {
     pub fn new(
         trace_dimensions: FieldRegistersTraceDimensions,
         read_write_cycle: Vec<F>,
@@ -64,7 +64,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for FieldRegistersIncClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersIncClaimReduction<F> {
     type Symbolic = increments::ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -114,7 +114,7 @@ mod tests {
     use super::*;
 
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     use crate::stages::stage6b::inc_claim_reduction::{
         IncClaimReduction, IncClaimReductionInputClaims,

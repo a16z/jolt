@@ -1,4 +1,4 @@
-use jolt_field::FieldCore;
+use jolt_field::JoltField;
 use jolt_kernels::{KernelError, SumcheckKernelError};
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
@@ -10,7 +10,7 @@ use thiserror::Error;
 /// [`VerifierError`] — the prover runs the verifier's own relation methods as
 /// hard self-checks, so their errors are prover errors here.
 #[derive(Debug, Error)]
-pub enum ProverError<F: FieldCore> {
+pub enum ProverError<F: JoltField> {
     #[error(transparent)]
     Sumcheck(#[from] SumcheckError<F>),
 
@@ -46,7 +46,7 @@ pub enum ProverError<F: FieldCore> {
 /// [`ProverError::Kernel`] — [`KernelError`] already wraps
 /// [`SumcheckKernelError`] transparently, so a dedicated variant would surface
 /// the same failure under two names depending on path.
-impl<F: FieldCore> From<SumcheckKernelError<F>> for ProverError<F> {
+impl<F: JoltField> From<SumcheckKernelError<F>> for ProverError<F> {
     fn from(error: SumcheckKernelError<F>) -> Self {
         Self::Kernel(error.into())
     }

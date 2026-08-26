@@ -33,7 +33,7 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
@@ -56,45 +56,7 @@ use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
-
-// Size arithmetic rather than a derive: a derive would demand
-// `F: Allocative` of the generic `UniskipKernel` impl below that parks this
-// kernel. Field elements are flat, so the tables size exactly.
-#[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for SpartanProductKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::vec_heap_bytes;
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        for (key, table) in [
-            (allocative::Key::new("eq_cycle"), &self.eq_cycle),
-            (
-                allocative::Key::new("left_instruction_input"),
-                &self.left_instruction_input,
-            ),
-            (allocative::Key::new("lookup_output"), &self.lookup_output),
-            (allocative::Key::new("jump_flag"), &self.jump_flag),
-            (
-                allocative::Key::new("right_instruction_input"),
-                &self.right_instruction_input,
-            ),
-            (allocative::Key::new("branch_flag"), &self.branch_flag),
-            (allocative::Key::new("next_is_noop"), &self.next_is_noop),
-            (
-                allocative::Key::new("write_lookup_output_to_rd"),
-                &self.write_lookup_output_to_rd,
-            ),
-            (
-                allocative::Key::new("virtual_instruction"),
-                &self.virtual_instruction,
-            ),
-        ] {
-            visitor.visit_simple(key, vec_heap_bytes(table));
-        }
-        visitor.exit();
-    }
-}
-
-impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
     /// the slot as the single `late_tau` entry of
     /// [`first_round_poly`](UniskipKernel::first_round_poly).
@@ -136,7 +98,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
 /// the uni-skip slot parked and binds it into the batch member.
 pub struct ReferenceProductRemainder;
 
-impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRemainder {
+impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRemainder {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -155,16 +117,30 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRemaind
 /// The shared product compute state: the eight cycle-indexed factor/wire
 /// tables and `eq(τ_low, ·)` — everything the uni-skip polynomial and the
 /// remainder member both consume.
-pub struct SpartanProductKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub struct SpartanProductKernel<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     eq_cycle: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     left_instruction_input: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     lookup_output: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     jump_flag: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     right_instruction_input: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     branch_flag: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     next_is_noop: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     write_lookup_output_to_rd: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     virtual_instruction: Vec<F>,
     /// The FR lane factor columns (`FieldRs1Value`, `FieldRs2Value`,
     /// `FieldRdValue`), cycle-indexed — the composed lanes' left/right
@@ -177,7 +153,7 @@ pub struct SpartanProductKernel<F: Field> {
     field_rd_value: Vec<F>,
 }
 
-impl<F: Field> SpartanProductKernel<F> {
+impl<F: JoltField> SpartanProductKernel<F> {
     pub fn prepare(
         log_t: usize,
         tau_low: &[F],
@@ -427,7 +403,7 @@ impl<F: Field> SpartanProductKernel<F> {
 /// values on the (`Arc`-shared) relation cell the driver's curated absorb and
 /// the stage-2 recipe read.
 #[cfg(feature = "field-inline")]
-struct ComposedProductRemainderKernel<F: Field> {
+struct ComposedProductRemainderKernel<F: JoltField> {
     relation: ProductRemainder<F>,
     tau_kernel: Polynomial<F>,
     left: Polynomial<F>,
@@ -441,7 +417,7 @@ struct ComposedProductRemainderKernel<F: Field> {
 
 // Size arithmetic rather than a derive, like the sibling kernels.
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
-impl<F: Field> allocative::Allocative for ComposedProductRemainderKernel<F> {
+impl<F: JoltField> allocative::Allocative for ComposedProductRemainderKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -470,7 +446,7 @@ impl<F: Field> allocative::Allocative for ComposedProductRemainderKernel<F> {
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: Field> ComposedProductRemainderKernel<F> {
+impl<F: JoltField> ComposedProductRemainderKernel<F> {
     fn remaining_rounds(&self) -> usize {
         use jolt_verifier::stages::relations::ConcreteSumcheck as _;
         self.relation.rounds() - self.rounds_bound
@@ -501,7 +477,7 @@ impl<F: Field> ComposedProductRemainderKernel<F> {
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: Field> jolt_sumcheck::ProveRounds<F> for ComposedProductRemainderKernel<F> {
+impl<F: JoltField> jolt_sumcheck::ProveRounds<F> for ComposedProductRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
         use jolt_verifier::stages::relations::ConcreteSumcheck as _;
         self.relation.rounds()
@@ -552,7 +528,7 @@ impl<F: Field> jolt_sumcheck::ProveRounds<F> for ComposedProductRemainderKernel<
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: Field> SumcheckKernel<F> for ComposedProductRemainderKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ComposedProductRemainderKernel<F> {
     type Relation = ProductRemainder<F>;
 
     fn output_claims(

@@ -7,7 +7,7 @@
 //! own stage error, so the per-family error content is byte-identical to the
 //! pre-consolidation hand-written derivations.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, LtPolynomial};
 
 /// The reversed sumcheck point — the opening point of every suffix-bound
@@ -19,7 +19,7 @@ pub(crate) fn reversed<F: Copy>(sumcheck_point: &[F]) -> Vec<F> {
 /// `Eq(reference, opening point)` — the EqSpartan / Eq-pair pattern: bind a
 /// produced opening point against a fixed reference point (`tau_low`, an
 /// upstream cycle).
-pub(crate) fn eq_at_point<F: Field>(opening_point: &[F], reference: &[F]) -> Result<F, String> {
+pub(crate) fn eq_at_point<F: JoltField>(opening_point: &[F], reference: &[F]) -> Result<F, String> {
     try_eq_mle(opening_point, reference).map_err(|error| error.to_string())
 }
 
@@ -27,7 +27,7 @@ pub(crate) fn eq_at_point<F: Field>(opening_point: &[F], reference: &[F]) -> Res
 /// sub-point)`, where the own cycle is the produced opening point past the
 /// family's address prefix. `family` labels the point in the error text
 /// (`"register"` / `"field-register"`).
-pub(crate) fn eq_at_cycle<F: Field>(
+pub(crate) fn eq_at_cycle<F: JoltField>(
     fixed_cycle: &[F],
     opening_point: &[F],
     address_bits: usize,
@@ -41,7 +41,7 @@ pub(crate) fn eq_at_cycle<F: Field>(
 
 /// The val-evaluation `LtCycle`: `Lt(own cycle sub-point, upstream read/write
 /// cycle sub-point)`, both behind the family's address prefix.
-pub(crate) fn lt_at_cycle<F: Field>(
+pub(crate) fn lt_at_cycle<F: JoltField>(
     own_point: &[F],
     upstream_point: &[F],
     address_bits: usize,

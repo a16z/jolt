@@ -8,7 +8,7 @@
 //! trusted-advice opening, so no runtime `kind → slot` match (with off-kind `None`
 //! filling) is needed. `FinalScale` is keyed by the now type-fixed kind.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::advice::{
@@ -97,11 +97,11 @@ impl SymbolicSumcheck for TrustedCyclePhase {
         TWO_PHASE_DEGREE_BOUND
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(ram_val_check_advice_opening(JoltAdviceKind::Trusted))
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         if self.dimensions.has_address_phase() {
             opening(cycle_phase_advice_opening(JoltAdviceKind::Trusted))
         } else {
@@ -146,11 +146,11 @@ impl SymbolicSumcheck for UntrustedCyclePhase {
         TWO_PHASE_DEGREE_BOUND
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(ram_val_check_advice_opening(JoltAdviceKind::Untrusted))
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         if self.dimensions.has_address_phase() {
             opening(cycle_phase_advice_opening(JoltAdviceKind::Untrusted))
         } else {
@@ -165,7 +165,7 @@ impl SymbolicSumcheck for UntrustedCyclePhase {
 mod tests {
     use super::*;
     use crate::protocols::jolt::PrecommittedReductionDimensions;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn with_address_phase() -> PrecommittedReductionDimensions {
         PrecommittedReductionDimensions::new(4, 3, true)

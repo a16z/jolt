@@ -102,7 +102,7 @@ use jolt_claims::{
     Expr, OutputClaims, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
@@ -192,7 +192,7 @@ impl From<FieldInlineChallengeId> for VerifierPublicId {
 }
 
 #[derive(Default)]
-struct SourceValues<F: Field> {
+struct SourceValues<F: JoltField> {
     publics: Vec<(VerifierPublicId, F)>,
 }
 
@@ -258,7 +258,7 @@ fn add_batched_stage<F, C>(
     equalities: Vec<OpeningEquality<VerifierOpeningId>>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     if claims.is_empty() {
@@ -336,7 +336,7 @@ fn add_stage<F, C>(
     output_claim: VerifierExpr<F>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     require_expr_sources(name, "input claim", &input_claim, values)?;
@@ -375,7 +375,7 @@ where
 /// expressions.
 fn relation_claim<F, S>(relation: &S) -> (usize, VerifierExpr<F>, VerifierExpr<F>)
 where
-    F: Field,
+    F: JoltField,
     S: SymbolicSumcheck,
     S::OpeningId: Into<VerifierOpeningId>,
     S::DerivedId: Into<VerifierPublicId>,
@@ -388,7 +388,7 @@ where
     )
 }
 
-fn scale_expr<F: Field>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr<F> {
+fn scale_expr<F: JoltField>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr<F> {
     if scale.is_zero() {
         return VerifierExpr::zero();
     }
@@ -403,7 +403,7 @@ fn scale_expr<F: Field>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr<F> 
 /// values and challenges both become baked publics.
 fn map_expr<F, O, P, C>(expr: Expr<F, O, P, C>) -> VerifierExpr<F>
 where
-    F: Field,
+    F: JoltField,
     O: Into<VerifierOpeningId>,
     P: Into<VerifierPublicId>,
     C: Into<VerifierPublicId>,
@@ -443,7 +443,7 @@ fn composite_aliases(
         .collect()
 }
 
-fn require_expr_sources<F: Field>(
+fn require_expr_sources<F: JoltField>(
     stage: &'static str,
     expression: &'static str,
     expr: &VerifierExpr<F>,
@@ -519,7 +519,7 @@ fn ram_val_check_init<F, PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
 ) -> Result<ram::RamValCheckInit<F>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
 {
@@ -1085,7 +1085,7 @@ where
     )
 }
 
-fn add_bytecode_chunk_weight_publics<F: Field>(
+fn add_bytecode_chunk_weight_publics<F: JoltField>(
     values: &mut SourceValues<F>,
     chunk_weights: Vec<F>,
 ) -> Result<(), VerifierError> {
@@ -1293,7 +1293,7 @@ where
         .collect()
 }
 
-fn hamming_virtualization_address_point<F: Field>(
+fn hamming_virtualization_address_point<F: JoltField>(
     log_k_chunk: usize,
     point: &[F],
 ) -> Result<Vec<F>, VerifierError> {
@@ -1308,7 +1308,7 @@ fn hamming_virtualization_address_point<F: Field>(
         })
 }
 
-impl<F: Field> SourceValues<F> {
+impl<F: JoltField> SourceValues<F> {
     fn public(&mut self, id: impl Into<VerifierPublicId>, value: F) -> Result<(), VerifierError> {
         let id = id.into();
         if let Some((_, existing)) = self.publics.iter().find(|(candidate, _)| *candidate == id) {
@@ -1328,7 +1328,7 @@ impl<F: Field> SourceValues<F> {
     }
 }
 
-fn stage_sumcheck_error<F: Field>(
+fn stage_sumcheck_error<F: JoltField>(
     stage: JoltRelationId,
     error: jolt_sumcheck::SumcheckError<F>,
 ) -> VerifierError {
@@ -1346,7 +1346,7 @@ fn public_error(stage: JoltRelationId, error: impl ToString) -> VerifierError {
 }
 
 /// The first `prefix_len` variables of an `address ++ cycle` opening point.
-fn point_prefix<F: Field>(
+fn point_prefix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
     stage: JoltRelationId,
@@ -1364,7 +1364,7 @@ fn point_prefix<F: Field>(
 
 /// The variables past the first `prefix_len` of an `address ++ cycle` opening
 /// point (the cycle sub-point).
-fn point_suffix<F: Field>(
+fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
     stage: JoltRelationId,
@@ -1410,7 +1410,7 @@ mod field_inline_relation_parity {
         FieldInlineOpeningId,
     };
     use jolt_claims::{InputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

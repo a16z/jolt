@@ -461,8 +461,8 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
     #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
-    use jolt_field::FromPrimitiveInt;
-    use jolt_field::RandomSampling;
+    use jolt_field::Field;
+    use jolt_field::Ring;
     use jolt_openings::{
         CommitmentScheme, StreamingCommitment, ZkOpeningScheme, ZkStreamingCommitment,
     };
@@ -485,7 +485,7 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
 
         let evals: Vec<Fr> = (0..num_rows * num_cols)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
@@ -503,7 +503,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"stream-open");
@@ -560,7 +560,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"u64-stream-open");
@@ -625,7 +625,7 @@ mod tests {
 
         let mut rng = ChaCha20Rng::seed_from_u64(313);
         let point = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect::<Vec<_>>();
         let eval = Fr::from_u64(0);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zero-zk-open");
@@ -732,7 +732,7 @@ mod tests {
 
         let mut rng = ChaCha20Rng::seed_from_u64(317);
         let point = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect::<Vec<_>>();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"one-hot-zk-open");
@@ -795,7 +795,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"i128-stream-open");

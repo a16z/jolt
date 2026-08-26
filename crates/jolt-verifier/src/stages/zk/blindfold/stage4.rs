@@ -9,7 +9,7 @@ pub(super) fn add_stage4<F, PCS, VC, ZkProof>(
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone,
@@ -161,7 +161,7 @@ where
 /// program-image openings first, the register read/write openings, then
 /// (under `field-inline`) the five FR read/write rows, then `ram_ra`/`ram_inc`
 /// — the clear absorb order (`Stage4OutputClaims::opening_values`) exactly.
-fn stage4_output_ids<F: Field>(
+fn stage4_output_ids<F: JoltField>(
     untrusted_advice: bool,
     trusted_advice: bool,
     program_image: bool,
@@ -211,7 +211,7 @@ fn stage4_output_ids<F: Field>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

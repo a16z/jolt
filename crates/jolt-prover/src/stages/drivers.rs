@@ -153,6 +153,9 @@ mod stage6b {
     };
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
+    // The packed batch has no inc member — the fused-inc read-raf stages
+    // discharge the reduced inc claims instead.
+    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
     use jolt_verifier::stages::stage6b::outputs::{
@@ -226,7 +229,7 @@ mod twin_tests {
         JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
-    use jolt_field::{Field, Fr, FromPrimitiveInt, MulPow2, RingCore};
+    use jolt_field::{Fr, JoltField, Ring};
     use jolt_kernels::{
         KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
         SumcheckKernelError,
@@ -313,14 +316,14 @@ mod twin_tests {
                     1
                 }
 
-                fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+                fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
                     opening(JoltOpeningId::virtual_polynomial(
                         JoltVirtualPolynomial::$input,
                         JoltRelationId::$rel,
                     ))
                 }
 
-                fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+                fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
                     opening(JoltOpeningId::virtual_polynomial(
                         JoltVirtualPolynomial::$output,
                         JoltRelationId::$rel,
@@ -329,12 +332,12 @@ mod twin_tests {
             }
 
             #[derive(Clone)]
-            struct $relation<F: Field> {
+            struct $relation<F: JoltField> {
                 symbolic: $symbolic,
                 _field: PhantomData<F>,
             }
 
-            impl<F: Field> $relation<F> {
+            impl<F: JoltField> $relation<F> {
                 fn new(rounds: usize) -> Self {
                     Self {
                         symbolic: $symbolic::new(rounds),
@@ -343,7 +346,7 @@ mod twin_tests {
                 }
             }
 
-            impl<F: Field> ConcreteSumcheck<F> for $relation<F> {
+            impl<F: JoltField> ConcreteSumcheck<F> for $relation<F> {
                 type Symbolic = $symbolic;
 
                 fn symbolic(&self) -> &$symbolic {
@@ -426,7 +429,7 @@ mod twin_tests {
     );
 
     #[derive(SumcheckBatch)]
-    struct ToyDriverSumchecks<F: Field> {
+    struct ToyDriverSumchecks<F: JoltField> {
         alpha: ToyAlpha<F>,
         beta: Option<ToyBeta<F>>,
         gamma: ToyGamma<F>,
@@ -436,7 +439,7 @@ mod twin_tests {
     /// member active from round 0, whose final bind the engine delivers only
     /// after the trailing dummy rounds (the delayed `finish_rounds` path).
     #[derive(SumcheckBatch)]
-    struct ToyHeadSumchecks<F: Field> {
+    struct ToyHeadSumchecks<F: JoltField> {
         alpha: ToyAlpha<F>,
         delta: ToyDelta<F>,
     }

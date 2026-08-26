@@ -153,7 +153,9 @@ fn validate_witness(
     }
     if matches!(
         hint.polynomials,
-        AkitaHintPolynomials::OneHot(_) | AkitaHintPolynomials::SparseUnit(_)
+        AkitaHintPolynomials::OneHot(_)
+            | AkitaHintPolynomials::TraceOneHot(_)
+            | AkitaHintPolynomials::SparseUnit(_)
     ) && !polynomials.iter().all(|polynomial| polynomial.is_one_hot())
     {
         return Err(invalid_batch(format!(
@@ -233,13 +235,14 @@ macro_rules! prove_dense_backend {
         .map_err(akita_error)?;
         let (backend_prover_setup, prepared_backend_setup) = $setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
         let transcript = $transcript;
         with_backend_pool(|| {
             AkitaBackendScheme::batched_prove(
                 backend_prover_setup,
                 claims,
-                &stack,
+                &releasing_stack,
                 transcript,
                 BasisMode::Lagrange,
             )
@@ -267,6 +270,7 @@ where
     let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
     let backend_point = reverse_point(point);
     let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+    let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     with_backend_pool(|| match setup.one_hot_k() {
         AKITA_ONE_HOT_K16 => {
@@ -280,7 +284,7 @@ where
             AkitaOneHotK16BackendScheme::batched_prove(
                 backend_prover_setup,
                 claims,
-                &stack,
+                &releasing_stack,
                 akita_transcript,
                 BasisMode::Lagrange,
             )
@@ -296,7 +300,7 @@ where
             AkitaOneHotK256BackendScheme::batched_prove(
                 backend_prover_setup,
                 claims,
-                &stack,
+                &releasing_stack,
                 akita_transcript,
                 BasisMode::Lagrange,
             )
@@ -371,6 +375,18 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             AkitaHintPolynomials::OneHot(one_hot) => {
                 let refs = one_hot.iter().collect::<Vec<_>>();
                 prove_one_hot::<AkitaBackendOneHotPoly>(
+                    setup,
+                    point,
+                    &evaluations,
+                    &refs,
+                    backend_commitment,
+                    backend_hint,
+                    &mut akita_transcript,
+                )?
+            }
+            AkitaHintPolynomials::TraceOneHot(one_hot) => {
+                let refs = [one_hot];
+                prove_one_hot::<crate::trace_onehot::TracePackedOneHot>(
                     setup,
                     point,
                     &evaluations,

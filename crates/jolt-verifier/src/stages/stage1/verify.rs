@@ -1,6 +1,6 @@
 use jolt_claims::protocols::jolt::{geometry::spartan::SpartanOuterDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::FromPrimitiveInt;
+use jolt_field::Ring;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 

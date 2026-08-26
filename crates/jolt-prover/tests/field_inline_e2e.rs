@@ -26,7 +26,7 @@ mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{CanonicalBytes, Fr, FromPrimitiveInt};
+    use jolt_field::{CanonicalBytes, Fr, Ring};
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
@@ -233,7 +233,7 @@ mod support {
             &prover_preprocessing,
             &config,
             None,
-            Arc::clone(&witness),
+            witness.as_ref(),
             &public_io,
         )
         .expect("modular FR prove");
@@ -290,7 +290,7 @@ mod support {
     reason = "integration tests should fail loudly"
 )]
 mod clear {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::CompressedPoly;
     use jolt_prover::JoltBackend;
     use jolt_sumcheck::{ClearProof, SumcheckProof};
@@ -462,7 +462,7 @@ mod clear {
     reason = "integration tests should fail loudly"
 )]
 mod zk {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_prover::JoltBackend;
     use jolt_verifier::proof::JoltProofClaims;
 

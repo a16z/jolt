@@ -9,7 +9,7 @@ pub(super) fn add_stage5<F, PCS, VC, ZkProof>(
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone,
@@ -188,7 +188,7 @@ where
 /// the reduced RAM RA, the register value-evaluation openings, then (under
 /// `field-inline`) the two FR val-evaluation rows at the tail — the clear
 /// absorb order (the generated `Stage5Sumchecks` member-declaration absorb).
-fn stage5_output_ids<F: Field>(
+fn stage5_output_ids<F: JoltField>(
     instruction_output_openings: instruction::InstructionReadRafOutputOpenings,
 ) -> Vec<VerifierOpeningId> {
     let mut output_ids: Vec<VerifierOpeningId> =
@@ -230,7 +230,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

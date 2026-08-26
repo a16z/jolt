@@ -3,7 +3,7 @@
     reason = "Tracer concrete instruction names mirror generated Jolt instruction constants"
 )]
 
-use jolt_field::{CanonicalBytes, CanonicalU64, Fr, Invertible, ReducingBytes};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Field, Fr};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
     FieldRegisterWrite,
@@ -292,7 +292,7 @@ fn execute_store_to_x(
     // would make an honest trace unprovable, so trap here at trace time. Full-width
     // extraction is the advice pattern's job (advice limbs + Horner + FIELD_ASSERT_EQ).
     let x_value = decode_field(field_value)
-        .to_canonical_u64_checked()
+        .to_u64_checked()
         .unwrap_or_else(|| {
             panic!(
                 "FIELD_STORE_TO_X of a value wider than 64 bits at pc 0x{:x} (fr{}): \
@@ -353,7 +353,7 @@ fn execute_load_imm(
 }
 
 fn decode_field(value: FieldEncodedValue) -> Fr {
-    <Fr as ReducingBytes>::from_le_bytes_mod_order(&value.bytes_le)
+    <Fr as CanonicalEncoding>::from_bytes_le_reduced(&value.bytes_le)
 }
 
 fn encode_field(value: Fr) -> FieldEncodedValue {

@@ -9,7 +9,7 @@
 use std::{fmt::Debug, marker::PhantomData};
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::{Field, FromPrimitiveInt};
+use jolt_field::{JoltField, Ring};
 use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
@@ -41,7 +41,7 @@ pub trait GroupSetupMetadata {
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
 pub trait CommitmentScheme: Commitment {
-    type Field: Field;
+    type Field: JoltField;
     type Proof: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
@@ -80,12 +80,33 @@ pub trait CommitmentScheme: Commitment {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
 
-    /// Opens every member of one commitment group at a shared point in a
-    /// single proof. Only schemes with a native same-point batch (e.g. Akita)
-    /// support this; the hint must be the group commit's hint covering all
-    /// members.
-    fn open_batch(
+    /// Commits a group of polynomials as one commitment object whose members
+    /// are opened together at a shared point
+    /// ([`open_batch_from_hint`](Self::open_batch_from_hint)). Only schemes
+    /// with a native commitment group (e.g. Akita's one-hot flavor) support
+    /// this; `layout_digest` is the protocol-owned digest binding the ordered
+    /// member identities.
+    fn commit_batch(
         _polynomials: &[&dyn MultilinearPoly<Self::Field>],
+        _layout_digest: [u8; 32],
+        _setup: &Self::ProverSetup,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Err(OpeningsError::InvalidBatch(
+            "this commitment scheme has no native commitment group".to_owned(),
+        ))
+    }
+
+    /// Opens every member of one commitment group at a shared point in a
+    /// single proof, from the scheme's retained commit-time state: `hint` is
+    /// the committed object [`commit_batch`](Self::commit_batch) produced and
+    /// owns everything the opening consumes (witness forms plus any
+    /// commit-time opening data, e.g. Akita's Ajtai digit decompositions).
+    /// There is deliberately no polynomial argument — a scheme whose openings
+    /// cannot run from retained state alone does not implement this.
+    // TODO(#1782): fold the retained-state contract into a first-class
+    // committed-object type on this trait instead of the `OpeningHint`
+    // side-channel.
+    fn open_batch_from_hint(
         _point: &[Self::Field],
         _evaluations: &[Self::Field],
         _setup: &Self::ProverSetup,
@@ -93,7 +114,7 @@ pub trait CommitmentScheme: Commitment {
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native same-point batch opening".to_owned(),
+            "this commitment scheme has no retained-state batch opening".to_owned(),
         ))
     }
 
@@ -111,6 +132,19 @@ pub trait CommitmentScheme: Commitment {
             "this commitment scheme has no native same-point batch opening".to_owned(),
         ))
     }
+}
+
+/// Transparent derivation of a singleton commitment-object setup from the
+/// object's public shape alone (one polynomial at `num_vars`, seeded by the
+/// object plan's layout digest): prover and verifier re-derive
+/// byte-identical setups independently, so auxiliary packed objects (advice
+/// byte columns, the precommitted program) need no setup ceremony or
+/// transport.
+pub trait TransparentObjectSetup: CommitmentScheme {
+    fn transparent_object_setup(
+        num_vars: usize,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 }
 
 /// C = Σ s_i · C_i.
@@ -164,7 +198,7 @@ pub trait StreamingCommitment: CommitmentScheme {
         let values: Vec<Self::Field> = chunk
             .iter()
             .copied()
-            .map(<Self::Field as FromPrimitiveInt>::from_u64)
+            .map(<Self::Field as Ring>::from_u64)
             .collect();
         Self::feed(partial, &values, setup);
     }
@@ -173,7 +207,7 @@ pub trait StreamingCommitment: CommitmentScheme {
         let values: Vec<Self::Field> = chunk
             .iter()
             .copied()
-            .map(<Self::Field as FromPrimitiveInt>::from_i128)
+            .map(<Self::Field as Ring>::from_i128)
             .collect();
         Self::feed(partial, &values, setup);
     }
@@ -340,7 +374,7 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
 /// - [`Hints`](Self::Hints) are the commit-time auxiliary data
 ///   ([`CommitmentScheme::OpeningHint`]) the PCS reuses when opening.
 pub trait BatchOpeningScheme {
-    type Field: Field;
+    type Field: JoltField;
     type ProverSetup;
     type VerifierSetup;
     /// Public opening claims plus the commitments they refer to.
@@ -539,14 +573,14 @@ where
     }
 }
 
-struct HomomorphicBatchStatement<'a, F: Field, C> {
+struct HomomorphicBatchStatement<'a, F: JoltField, C> {
     claims: &'a [VerifierOpeningClaim<F, C>],
     point: Point<HIGH_TO_LOW, F>,
 }
 
 impl<'a, F, C> HomomorphicBatchStatement<'a, F, C>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     fn new(claims: &'a [VerifierOpeningClaim<F, C>]) -> Result<Self, OpeningsError> {
@@ -584,7 +618,7 @@ where
 
 impl<F, C> AppendToTranscript for HomomorphicBatchStatement<'_, F, C>
 where
-    F: Field,
+    F: JoltField,
 {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         VerifierRlcClaims(self.claims).append_to_transcript(transcript);

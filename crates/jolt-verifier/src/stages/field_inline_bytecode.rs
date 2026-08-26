@@ -255,7 +255,7 @@ mod tests {
     use super::*;
     use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
     use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::field_inline::FieldEncodedValue;
     use jolt_riscv::NUM_CIRCUIT_FLAGS;
     use jolt_transcript::{Blake2bTranscript, Transcript};

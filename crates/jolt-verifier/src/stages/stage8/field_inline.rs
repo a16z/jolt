@@ -5,7 +5,7 @@
 use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
 use jolt_claims::protocols::jolt::geometry::committed_openings::commitment_embedding_scale;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use super::Stage8BatchEntry;
 use crate::proof::JoltCommitments;
@@ -39,7 +39,7 @@ pub fn splice_final_opening<'a, F, C>(
     opening_claim: Option<F>,
 ) -> Result<(), VerifierError>
 where
-    F: Field,
+    F: JoltField,
 {
     let field_inline =
         commitments

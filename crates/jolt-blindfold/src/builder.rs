@@ -1,5 +1,5 @@
 use jolt_claims::Expr;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::{
     CommittedOutputClaims, CommittedSumcheckConsistency, SumcheckDomainSpec, SumcheckStatement,
 };
@@ -64,7 +64,7 @@ impl<F, O, Com, P, Ch> Default for BlindFoldProtocolBuilder<F, O, Com, P, Ch> {
 
 impl<F, O, Com, P, Ch> BlindFoldProtocolBuilder<F, O, Com, P, Ch>
 where
-    F: Field + Clone,
+    F: JoltField + Clone,
     O: Clone + PartialEq,
     Com: Clone,
     P: Clone + PartialEq,

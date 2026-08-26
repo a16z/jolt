@@ -7,7 +7,7 @@
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId};
 use jolt_claims::MissingOpeningValue;
-use jolt_field::{Field, FieldCore};
+use jolt_field::{Field, JoltField};
 use jolt_sumcheck::ProveRounds;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -23,7 +23,7 @@ use crate::ProofSession;
 /// [`KernelError`](crate::KernelError), which wraps this one; only the
 /// failures the *typed extraction seam* can produce live here.
 #[derive(Debug, thiserror::Error)]
-pub enum SumcheckKernelError<F: FieldCore> {
+pub enum SumcheckKernelError<F: Field> {
     /// Relation-level failures (claim wiring, point derivation): kernels run
     /// the verifier's own relation methods as hard self-checks.
     #[error(transparent)]
@@ -74,7 +74,7 @@ pub enum SumcheckKernelError<F: FieldCore> {
 // site), and spelling them with the relation's own id families — required for
 // non-jolt protocol families — would name `Self` in a bound's type arguments,
 // which breaks dyn compatibility.
-pub trait SumcheckKernel<F: Field>: ProveRounds<F> + crate::backend::MaybeAllocative {
+pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + crate::backend::MaybeAllocative {
     type Relation: ConcreteSumcheck<F>;
 
     /// Extract the member's typed produced-opening values from its fully
@@ -136,7 +136,7 @@ pub trait SumcheckKernel<F: Field>: ProveRounds<F> + crate::backend::MaybeAlloca
 /// of [`PrepareKernel::prepare`](crate::PrepareKernel::prepare).
 pub struct ProverInputs<'a, F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
 {
     pub relation: &'a R,

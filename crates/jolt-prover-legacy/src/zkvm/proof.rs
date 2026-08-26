@@ -32,7 +32,7 @@ use jolt_crypto::{
     PedersenSetup, VectorCommitment as VerifierVectorCommitment,
 };
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
-use jolt_field::{Field as VerifierFieldTrait, Fr as VerifierFr};
+use jolt_field::{Fr as VerifierFr, JoltField as VerifierFieldTrait};
 #[cfg(not(feature = "akita"))]
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;

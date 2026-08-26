@@ -87,7 +87,7 @@ twist::instantiate_value_reduction! {
 mod tests {
     use super::*;
     use crate::SymbolicSumcheck;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

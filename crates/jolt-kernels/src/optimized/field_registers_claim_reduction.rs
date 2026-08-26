@@ -26,7 +26,7 @@ use jolt_claims::protocols::field_inline::{
     FieldRegistersClaimReductionPublic,
 };
 use jolt_claims::SumcheckChallenges as _;
-use jolt_field::{AdditiveAccumulator, Field, OptimizedMul, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -50,7 +50,7 @@ struct SparseCell<F> {
 
 pub struct OptimizedFieldRegistersClaimReduction;
 
-impl<F: Field> PrepareKernel<F, FieldRegistersClaimReduction<F>>
+impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
     for OptimizedFieldRegistersClaimReduction
 {
     fn prepare(
@@ -131,27 +131,25 @@ impl<F: Field> PrepareKernel<F, FieldRegistersClaimReduction<F>>
     }
 }
 
-struct FieldClaimReductionKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct FieldClaimReductionKernel<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     /// Sparse combined-column cells, sorted by `row`; merged on each bind.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     cells: Vec<SparseCell<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     scratch: Vec<SparseCell<F>>,
     /// The raw per-cycle value triples, retained for the opening extraction.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     triples: Vec<(u32, [F; 3])>,
     challenges: RoundChallenges<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(FieldClaimReductionKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    kernel.gruen.heap_bytes()
-        + vec_heap_bytes(&kernel.cells)
-        + vec_heap_bytes(&kernel.scratch)
-        + vec_heap_bytes(&kernel.triples)
-        + kernel.challenges.heap_bytes()
-});
-
-impl<F: Field> FieldClaimReductionKernel<F> {
+impl<F: JoltField> FieldClaimReductionKernel<F> {
     /// `q(1) = Σ_z E(z) · V(2z + 1)` over the remaining domain — only cells
     /// on odd rows contribute.
     fn q_at_one(&self) -> F {
@@ -192,21 +190,21 @@ impl<F: Field> FieldClaimReductionKernel<F> {
                     .get(index + 1)
                     .filter(|next| next.row == cell.row + 1)
                 {
-                    let value = cell.value + r.mul_0_optimized(odd.value - cell.value);
+                    let value = cell.value + r * (odd.value - cell.value);
                     index += 2;
                     SparseCell { row: pair, value }
                 } else {
                     index += 1;
                     SparseCell {
                         row: pair,
-                        value: (F::one() - r).mul_01_optimized(cell.value),
+                        value: (F::one() - r) * cell.value,
                     }
                 }
             } else {
                 index += 1;
                 SparseCell {
                     row: pair,
-                    value: r.mul_01_optimized(cell.value),
+                    value: r * cell.value,
                 }
             };
             self.scratch.push(merged);
@@ -234,11 +232,11 @@ impl<F: Field> FieldClaimReductionKernel<F> {
                 sum.fmadd(weight, value);
             }
         }
-        sums.map(AdditiveAccumulator::reduce)
+        sums.map(Accumulator::reduce)
     }
 }
 
-impl<F: Field> ProveRounds<F> for FieldClaimReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for FieldClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.challenges.total()
     }
@@ -283,7 +281,7 @@ impl<F: Field> ProveRounds<F> for FieldClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
     type Relation = FieldRegistersClaimReduction<F>;
 
     fn output_claims(
@@ -342,7 +340,7 @@ mod tests {
         FieldRegistersClaimReductionChallenges, FieldRegistersClaimReductionInputClaims,
     };
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     use super::*;
     use crate::optimized::field_registers_testing::{

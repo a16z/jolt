@@ -20,7 +20,7 @@
 //! an optimized tier.
 
 use jolt_claims::protocols::field_inline::{FieldInlineDerivedId, FieldRegistersReadWritePublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -36,7 +36,7 @@ use crate::kernel::{ProverInputs, SumcheckKernel};
 use crate::reference::ReferenceBackend;
 use crate::{KernelError, SumcheckKernelError};
 
-impl<F: Field> PrepareKernel<F, FieldRegistersReadWriteChecking<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -110,7 +110,7 @@ impl<F: Field> PrepareKernel<F, FieldRegistersReadWriteChecking<F>> for Referenc
     }
 }
 
-struct FieldRegistersReadWriteKernel<F: Field> {
+struct FieldRegistersReadWriteKernel<F: JoltField> {
     relation: FieldRegistersReadWriteChecking<F>,
     gamma: F,
     /// `eq(r_prod, ·)` over the cycle domain, tiled across the FR address
@@ -127,7 +127,7 @@ struct FieldRegistersReadWriteKernel<F: Field> {
 
 // Size arithmetic rather than a derive, like the sibling kernels.
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for FieldRegistersReadWriteKernel<F> {
+impl<F: JoltField> allocative::Allocative for FieldRegistersReadWriteKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -145,7 +145,7 @@ impl<F: Field> allocative::Allocative for FieldRegistersReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> FieldRegistersReadWriteKernel<F> {
+impl<F: JoltField> FieldRegistersReadWriteKernel<F> {
     fn remaining_rounds(&self) -> usize {
         self.relation.rounds() - self.rounds_bound
     }
@@ -172,7 +172,7 @@ impl<F: Field> FieldRegistersReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for FieldRegistersReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for FieldRegistersReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.rounds()
     }
@@ -224,7 +224,7 @@ impl<F: Field> ProveRounds<F> for FieldRegistersReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for FieldRegistersReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for FieldRegistersReadWriteKernel<F> {
     type Relation = FieldRegistersReadWriteChecking<F>;
 
     fn output_claims(

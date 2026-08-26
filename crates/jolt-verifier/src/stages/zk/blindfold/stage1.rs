@@ -9,7 +9,7 @@ pub(super) fn add_stage1<F, PCS, VC, ZkProof>(
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone,
@@ -138,7 +138,7 @@ pub(super) fn stage1_spartan_outer_opening_ids(
 /// the 35 ordinary openings followed (under `field-inline`) by the 13 FR-local
 /// openings, weighted by the SAME `JoltSpartanOuterRemainder` coefficient
 /// table at the appended indices.
-pub(super) fn stage1_spartan_outer_output_expr<F: Field>(
+pub(super) fn stage1_spartan_outer_output_expr<F: JoltField>(
     opening_ids: &[VerifierOpeningId],
 ) -> VerifierExpr<F> {
     let mut az = VerifierExpr::zero();
@@ -175,7 +175,7 @@ pub(super) fn stage1_spartan_outer_output_expr<F: Field>(
 )]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use std::collections::BTreeMap;
 
     /// Resolve one of the coefficient-table publics from its `(id, value)`

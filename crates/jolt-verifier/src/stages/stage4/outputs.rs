@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 4 verification.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
 
@@ -40,7 +40,7 @@ use super::registers_read_write_checking::RegistersReadWriteChecking;
 /// count/validator cover their presence and count.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(no_opening_values, crate = "crate")]
-pub struct Stage4Sumchecks<F: Field> {
+pub struct Stage4Sumchecks<F: JoltField> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
     /// The FR Twist read/write instance over `T * 2^log_k`. Declaration
     /// position (after the ordinary registers read-write, before the RAM
@@ -51,7 +51,7 @@ pub struct Stage4Sumchecks<F: Field> {
     pub ram_val_check: RamValCheck<F>,
 }
 
-impl<F: Field> Stage4OutputClaims<F> {
+impl<F: JoltField> Stage4OutputClaims<F> {
     /// Construct the ordinary stage-4 claims. Producers without field-inline
     /// semantics use this regardless of the build's feature set — the FR
     /// read-write slot defaults to all-zero claims, inert because such
@@ -71,7 +71,7 @@ impl<F: Field> Stage4OutputClaims<F> {
     }
 }
 
-impl<F: Field> Stage4Sumchecks<F> {
+impl<F: JoltField> Stage4Sumchecks<F> {
     /// The hand-written replacement for the absorb method the
     /// `no_opening_values` opt-out suppresses: stage 4's canonical order
     /// interleaves the RAM value-check's staged openings around the register
@@ -83,7 +83,7 @@ impl<F: Field> Stage4Sumchecks<F> {
     }
 }
 
-impl<F: Field> Stage4OutputClaims<F> {
+impl<F: JoltField> Stage4OutputClaims<F> {
     /// The produced opening claims in canonical (Fiat-Shamir) order, matching the
     /// prover's commitment (flush) order exactly: the `Val_init` advice openings,
     /// the committed program-image contribution, the register read-write openings,
@@ -118,7 +118,7 @@ impl<F: Field> Stage4OutputClaims<F> {
 }
 
 /// The shared opening-point accessors over the point-only stage-4 aggregate.
-impl<F: Field> Stage4OutputPoints<F> {
+impl<F: JoltField> Stage4OutputPoints<F> {
     /// The register read-write opening point (shared by all five register
     /// openings).
     pub fn registers_read_write_point(&self) -> &[F] {
@@ -139,7 +139,7 @@ impl<F: Field> Stage4OutputPoints<F> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct Stage4ClearOutput<F: Field> {
+pub struct Stage4ClearOutput<F: JoltField> {
     /// The produced stage-4 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage4OutputClaims<F>,
@@ -153,7 +153,7 @@ pub struct Stage4ClearOutput<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4ZkOutput<F: Field, C> {
+pub struct Stage4ZkOutput<F: JoltField, C> {
     pub challenges: Stage4Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
@@ -166,12 +166,12 @@ pub struct Stage4ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage4Output<F: Field, C> {
+pub enum Stage4Output<F: JoltField, C> {
     Clear(Stage4ClearOutput<F>),
     Zk(Stage4ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage4Output<F, C> {
+impl<F: JoltField, C> Stage4Output<F, C> {
     /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage4OutputPoints<F> {
         match self {
@@ -206,7 +206,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::ram::RamValCheckInit;
     use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_transcript::Transcript;
 
     fn fr(value: u64) -> Fr {

@@ -41,7 +41,6 @@ members = [
   "crates/jolt-witness",
   "crates/jolt-witness-derive",
   "crates/jolt-dory",
-  "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
   "crates/jolt-tracer-x86",
   "crates/jolt-transcript",
@@ -153,11 +152,8 @@ log.workspace = true
 env_logger.workspace = true
 zeroos-build.workspace = true
 
-ark-bn254.workspace = true
-
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-prover-legacy = { workspace = true, features = ["default"] }
-common = { workspace = true, features = ["std"] }
 
 [profile.test]
 opt-level = 3
@@ -285,7 +281,7 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b
   "sha3",
 ] }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.4.1", features = [
+dory = { package = "dory-pcs", version = "0.4.2", features = [
   "backends",
   "cache",
   "disk-persistence",
@@ -431,7 +427,6 @@ jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
-jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }

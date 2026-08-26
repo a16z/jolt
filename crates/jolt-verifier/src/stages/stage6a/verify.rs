@@ -186,7 +186,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -208,6 +208,7 @@ mod tests {
                     stage_cycle_points: Default::default(),
                     register_read_write_point: Vec::new(),
                     register_val_evaluation_point: Vec::new(),
+                    fused_inc_cycle_points: Vec::new(),
                 },
                 0,
             ),

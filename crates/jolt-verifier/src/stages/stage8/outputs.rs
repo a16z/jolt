@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::VerifierOpeningClaim;
 use jolt_poly::{Point, HIGH_TO_LOW};
@@ -7,7 +7,7 @@ use crate::stages::ids::VerifierOpeningId;
 
 #[cfg(not(feature = "akita"))]
 #[derive(Clone, Debug)]
-pub struct Stage8ClearOutput<F: Field, C> {
+pub struct Stage8ClearOutput<F: JoltField, C> {
     pub opening_claims: Vec<VerifierOpeningClaim<F, C>>,
     /// Composite ids: the batch is jolt-only under FR-off, and carries the
     /// spliced `FieldRdInc` entry under `field-inline` (mixed final opening
@@ -20,7 +20,7 @@ pub struct Stage8ClearOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Stage8ZkOutput<F: Field, C, H> {
+pub struct Stage8ZkOutput<F: JoltField, C, H> {
     /// Composite ids (see [`Stage8ClearOutput::opening_ids`]).
     pub opening_ids: Vec<VerifierOpeningId>,
     pub constraint_coefficients: Vec<F>,
@@ -30,7 +30,7 @@ pub struct Stage8ZkOutput<F: Field, C, H> {
 }
 
 #[derive(Clone, Debug)]
-pub enum Stage8Output<F: Field, C, H> {
+pub enum Stage8Output<F: JoltField, C, H> {
     #[cfg(not(feature = "akita"))]
     Clear(Stage8ClearOutput<F, C>),
     /// The akita build's clear stage 8 verifies to completion inside
@@ -41,7 +41,7 @@ pub enum Stage8Output<F: Field, C, H> {
     Zk(Stage8ZkOutput<F, C, H>),
 }
 
-impl<F: Field, C, H> Stage8Output<F, C, H> {
+impl<F: JoltField, C, H> Stage8Output<F, C, H> {
     pub fn zk(&self) -> Result<&Stage8ZkOutput<F, C, H>, crate::VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),

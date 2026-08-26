@@ -31,7 +31,7 @@ use jolt_claims::protocols::jolt::{
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{
@@ -50,7 +50,7 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 /// [`batch_entries`] wiring. The id is the composite [`VerifierOpeningId`] so
 /// the composed plan can carry the field-inline entry alongside the jolt ones
 /// (under `field-inline`, spliced by the stage-8 `field_inline` seam).
-pub struct Stage8BatchEntry<'a, F: Field, C> {
+pub struct Stage8BatchEntry<'a, F: JoltField, C> {
     pub id: crate::stages::ids::VerifierOpeningId,
     pub commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
@@ -77,7 +77,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
@@ -291,7 +291,7 @@ pub fn batch_entries<'a, F, PCS, VC>(
     clear_claims: Option<(&Stage6bOutputClaims<F>, &Stage7OutputClaims<F>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
 {
@@ -312,7 +312,7 @@ where
 
     // Resolves one member of an indexed one-hot RA family: its commitment from
     // the family's commitment list and, in clear mode, its opening claim.
-    fn ra_family_entry<'c, F: Field, O>(
+    fn ra_family_entry<'c, F: JoltField, O>(
         commitment_list: &'c [O],
         claim_list: Option<&[F]>,
         index: usize,
@@ -334,7 +334,7 @@ where
     }
 
     // Pairs a precommitted polynomial's final opening with its commitment.
-    fn precommitted_entry<'c, F: Field, O>(
+    fn precommitted_entry<'c, F: JoltField, O>(
         opening: Option<&'c PrecommittedFinalOpening<F>>,
         commitment: Option<&'c O>,
         polynomial: JoltCommittedPolynomial,
@@ -510,7 +510,7 @@ mod tests {
         final_opening_id, final_opening_polynomial_order,
     };
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn layout() -> JoltRaPolynomialLayout {
         JoltRaPolynomialLayout::new(2, 1, 2).unwrap()
@@ -678,7 +678,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     PCS::Output: Clone + AppendToTranscript + super::OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: super::OneHotTraceSetupMetadata,

@@ -451,7 +451,7 @@ pub(crate) mod twins {
     };
     use jolt_claims::protocols::jolt::TraceDimensions;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::{AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;

@@ -84,7 +84,7 @@ mod tests {
     use crate::protocols::field_inline::geometry::claim_reductions::increments::{
         claim_reduction_input_openings, claim_reduction_output_openings,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> FieldRegistersTraceDimensions {
         FieldRegistersTraceDimensions::new(5)

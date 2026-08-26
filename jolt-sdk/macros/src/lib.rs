@@ -9,13 +9,10 @@ use common::{
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use std::sync::Once;
 use syn::{
     parse_macro_input, punctuated::Punctuated, token::Comma, Ident, ItemFn, Meta, PatType,
     ReturnType, Token, Type,
 };
-
-static WASM_IMPORTS_INIT: Once = Once::new();
 
 #[proc_macro_attribute]
 pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -27,11 +24,6 @@ pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Add wasm utilities and functions if the function is marked as wasm
     if builder.has_wasm_attr() {
-        // wasm utilities should only be added once
-        WASM_IMPORTS_INIT.call_once(|| {
-            let wasm_utilities: TokenStream = builder.make_wasm_utilities().into();
-            token_stream.extend(wasm_utilities);
-        });
         let wasm_token_stream: TokenStream = builder.make_wasm_function().into();
         token_stream.extend(wasm_token_stream);
     }
@@ -947,7 +939,7 @@ impl MacroBuilder {
                     &trusted_advice_bytes,
                     #commitment_arg,
                     advice_tape,
-                );
+                ).expect("execution trace exceeds the max_trace_length configured in #[jolt::provable]");
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove()
                     .expect("prover should produce verifier-native proof");
@@ -1146,37 +1138,6 @@ impl MacroBuilder {
                 JoltVerifierPreprocessing,
                 JoltSharedPreprocessing
             };
-        }
-    }
-
-    fn make_wasm_utilities(&self) -> TokenStream2 {
-        quote! {
-            #[cfg(target_arch = "wasm32")]
-            use wasm_bindgen::prelude::*;
-            #[cfg(target_arch = "wasm32")]
-            use std::vec::Vec;
-            #[cfg(target_arch = "wasm32")]
-            use rmp_serde::Deserializer;
-            #[cfg(target_arch = "wasm32")]
-            use serde::{Deserialize, Serialize};
-
-            #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
-            use jolt::host::ELFInstruction;
-
-            #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
-            #[derive(Serialize, Deserialize)]
-            struct DecodedData {
-                bytecode: Vec<ELFInstruction>,
-                memory_init: Vec<(u64, u8)>,
-            }
-
-            #[cfg(target_arch = "wasm32")]
-            fn deserialize_from_bin<'a, T: Deserialize<'a>>(
-                data: &'a [u8],
-            ) -> Result<T, rmp_serde::decode::Error> {
-                let mut de = Deserializer::new(data);
-                Deserialize::deserialize(&mut de)
-            }
         }
     }
 
@@ -1383,29 +1344,44 @@ impl MacroBuilder {
         parse_attributes(&self.attr).wasm
     }
 
-    // TODO(moodlezoup): fix this
     fn make_wasm_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let verify_wasm_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
 
         quote! {
-            #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
-            pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8], io_bytes: &[u8]) -> bool {
-                use jolt::{deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof};
-
-                let preprocessing: JoltVerifierPreprocessing = match deserialize_verifier_object(preprocessing_data) {
+            #[wasm_bindgen::prelude::wasm_bindgen]
+            pub fn #verify_wasm_fn_name(
+                preprocessing_data: &[u8],
+                proof_bytes: &[u8],
+                io_bytes: &[u8],
+                trusted_advice_commitment_bytes: &[u8],
+            ) -> bool {
+                let preprocessing: jolt::JoltVerifierPreprocessing =
+                    match jolt::deserialize_verifier_object(preprocessing_data) {
                     Ok(preprocessing) => preprocessing,
                     Err(_) => return false,
                 };
-                let proof: RV64IMACProof = match deserialize_verifier_object(proof_bytes) {
+                let proof: jolt::RV64IMACProof =
+                    match jolt::deserialize_verifier_object(proof_bytes) {
                     Ok(proof) => proof,
                     Err(_) => return false,
                 };
-                let io_device: JoltDevice = match deserialize_verifier_object(io_bytes) {
+                let io_device: jolt::JoltDevice =
+                    match jolt::deserialize_verifier_object(io_bytes) {
                     Ok(io_device) => io_device,
                     Err(_) => return false,
                 };
+                let trusted_advice_commitment:
+                    Option<jolt::VerifierTrustedAdviceCommitment> =
+                    if trusted_advice_commitment_bytes.is_empty() {
+                        None
+                    } else {
+                        match jolt::deserialize_verifier_object(trusted_advice_commitment_bytes) {
+                            Ok(commitment) => commitment,
+                            Err(_) => return false,
+                        }
+                    };
 
                 jolt::jolt_verifier::verify::<
                     jolt::VerifierField,
@@ -1416,7 +1392,7 @@ impl MacroBuilder {
                     &preprocessing,
                     &io_device,
                     &proof,
-                    None,
+                    trusted_advice_commitment.as_ref(),
                 ).is_ok()
             }
         }

@@ -1,10 +1,11 @@
 //! Verifier-selected protocol configuration.
 //!
 //! Every protocol axis is fixed at compile time — the `zk` feature selects
-//! BlindFold, the `akita` feature selects the packed commitment mode, the
-//! `field-inline` feature enables the native field-register extension — so one
-//! compiled verifier runs exactly one protocol. A proof self-describes its
-//! axes and [`validate_proof_config`] rejects a mismatch fail-closed.
+//! BlindFold, the `akita` feature selects packed commitments and little-endian
+//! scalar challenges, the `field-inline` feature enables the native
+//! field-register extension — so one compiled verifier runs exactly one
+//! protocol. A proof self-describes its axes and [`validate_proof_config`]
+//! rejects a mismatch fail-closed.
 
 pub use jolt_claims::protocols::field_inline::FieldInlineConfig;
 use serde::{Deserialize, Serialize};
@@ -42,10 +43,18 @@ pub enum CommitmentConfig {
     Packed,
 }
 
+/// Byte order used to decode scalar Fiat-Shamir challenges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScalarChallengeEndianness {
+    Big,
+    Little,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
     pub commitment: CommitmentConfig,
+    pub scalar_challenge_endianness: ScalarChallengeEndianness,
     pub field_inline: FieldInlineConfig,
 }
 
@@ -58,6 +67,7 @@ impl JoltProtocolConfig {
                 ZkConfig::Transparent
             },
             commitment: SELECTED_COMMITMENT_CONFIG,
+            scalar_challenge_endianness: SELECTED_SCALAR_CHALLENGE_ENDIANNESS,
             field_inline: SELECTED_FIELD_INLINE_CONFIG,
         }
     }
@@ -75,6 +85,14 @@ pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Packe
 #[cfg(not(feature = "akita"))]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Homomorphic;
 
+#[cfg(feature = "akita")]
+pub const SELECTED_SCALAR_CHALLENGE_ENDIANNESS: ScalarChallengeEndianness =
+    ScalarChallengeEndianness::Little;
+
+#[cfg(not(feature = "akita"))]
+pub const SELECTED_SCALAR_CHALLENGE_ENDIANNESS: ScalarChallengeEndianness =
+    ScalarChallengeEndianness::Big;
+
 #[cfg(feature = "field-inline")]
 pub const SELECTED_FIELD_INLINE_CONFIG: FieldInlineConfig = FieldInlineConfig::enabled();
 
@@ -85,6 +103,7 @@ pub const SELECTED_FIELD_INLINE_CONFIG: FieldInlineConfig = FieldInlineConfig::d
 pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
     zk: SELECTED_ZK_CONFIG,
     commitment: SELECTED_COMMITMENT_CONFIG,
+    scalar_challenge_endianness: SELECTED_SCALAR_CHALLENGE_ENDIANNESS,
     field_inline: SELECTED_FIELD_INLINE_CONFIG,
 };
 
@@ -140,5 +159,16 @@ mod tests {
             validate_proof_config(&JOLT_VERIFIER_CONFIG, protocol),
             Err(VerifierError::ProtocolConfigMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn rejects_scalar_challenge_endianness_mismatch() {
+        let mut proof_config = JOLT_VERIFIER_CONFIG;
+        proof_config.scalar_challenge_endianness = match proof_config.scalar_challenge_endianness {
+            ScalarChallengeEndianness::Big => ScalarChallengeEndianness::Little,
+            ScalarChallengeEndianness::Little => ScalarChallengeEndianness::Big,
+        };
+
+        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, proof_config).is_err());
     }
 }

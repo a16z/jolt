@@ -90,7 +90,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
     use crate::SymbolicSumcheck;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 7, 2, 1)

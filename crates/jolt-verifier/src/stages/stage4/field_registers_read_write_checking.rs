@@ -24,20 +24,20 @@ use jolt_claims::protocols::field_inline::{
     FieldRegistersReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 #[derive(Clone)]
-pub struct FieldRegistersReadWriteChecking<F: Field> {
+pub struct FieldRegistersReadWriteChecking<F: JoltField> {
     symbolic: registers::ReadWriteChecking,
     dimensions: FieldRegistersReadWriteDimensions,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> FieldRegistersReadWriteChecking<F> {
+impl<F: JoltField> FieldRegistersReadWriteChecking<F> {
     pub fn new(dimensions: FieldRegistersReadWriteDimensions) -> Self {
         Self {
             symbolic: registers::ReadWriteChecking::new(dimensions),
@@ -61,7 +61,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
     type Symbolic = registers::ReadWriteChecking;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -123,7 +123,7 @@ mod tests {
     use super::*;
 
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

@@ -11,7 +11,7 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::OutputClaims as _;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use super::field_registers_inc_claim_reduction::{
@@ -71,7 +71,7 @@ pub(super) struct FieldInlineBatchLegs<F> {
 
 /// Split the stage-4/5 FR opening points past the FR address prefix and
 /// assemble the side-table fold legs.
-pub(super) fn bytecode_fold_and_cycles<F: Field>(
+pub(super) fn bytecode_fold_and_cycles<F: JoltField>(
     table: FieldInlineBytecodeTable,
     carried: &Stage6aCarriedChallenges<F>,
     stage4_points: &Stage4OutputPoints<F>,
@@ -106,7 +106,7 @@ pub(super) fn bytecode_fold_and_cycles<F: Field>(
 /// The stage-6b FR batch member: reduces the two semantic `FieldRdInc`
 /// openings to the single reduced opening the stage-8 joint opening consumes,
 /// with Eq publics over the given stage-4/5 FR cycle sub-points.
-pub(super) fn inc_claim_reduction_member<F: Field>(
+pub(super) fn inc_claim_reduction_member<F: JoltField>(
     log_t: usize,
     read_write_cycle: Vec<F>,
     val_evaluation_cycle: Vec<F>,
@@ -122,7 +122,7 @@ pub(super) fn inc_claim_reduction_member<F: Field>(
 /// read/write checking and the stage-5 FR val evaluation. The upstream cells
 /// are plain (non-optional) fields of the FR-on stage-4/5 claims, so presence
 /// is a compile-time fact.
-pub fn inc_claim_reduction_inputs<F: Field>(
+pub fn inc_claim_reduction_inputs<F: JoltField>(
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,
 ) -> FieldRegistersIncClaimReductionInputClaims<F> {
@@ -134,7 +134,7 @@ pub fn inc_claim_reduction_inputs<F: Field>(
 
 /// Wire the two consumed `FieldRdInc` opening *points* from the stage-4/5 FR
 /// members' output points. ZK-agnostic.
-pub fn inc_claim_reduction_input_points<F: Field>(
+pub fn inc_claim_reduction_input_points<F: JoltField>(
     stage4: &Stage4OutputPoints<F>,
     stage5: &Stage5OutputPoints<F>,
 ) -> FieldRegistersIncClaimReductionInputClaims<Vec<F>> {
@@ -148,6 +148,9 @@ pub fn inc_claim_reduction_input_points<F: Field>(
 /// order: at its member position, after the ordinary increment reduction and
 /// before the optional advice cycle phases (the spec's committed output row
 /// order).
-pub(super) fn splice_inc_values<F: Field>(values: &mut Vec<F>, claims: &Stage6bOutputClaims<F>) {
+pub(super) fn splice_inc_values<F: JoltField>(
+    values: &mut Vec<F>,
+    claims: &Stage6bOutputClaims<F>,
+) {
     values.extend(claims.field_registers_inc_claim_reduction.opening_values());
 }

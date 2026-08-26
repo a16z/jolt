@@ -9,7 +9,7 @@ pub(super) fn add_stage2<F, PCS, VC, ZkProof>(
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone,
@@ -242,7 +242,7 @@ where
 /// claim-reduction non-aliased outputs, with the FR claim-reduction member's
 /// rows at its member position (equality-constrained against the appendage by
 /// [`stage2_opening_equalities`], not alias-elided).
-fn stage2_output_ids_and_aliases<F: Field>(
+fn stage2_output_ids_and_aliases<F: JoltField>(
 ) -> (Vec<VerifierOpeningId>, Vec<OpeningAlias<VerifierOpeningId>>) {
     let product_order = relations::spartan::ProductRemainderOutputClaims::<F> {
         left_instruction_input: F::zero(),
@@ -332,7 +332,7 @@ fn stage2_opening_equalities() -> Vec<OpeningEquality<VerifierOpeningId>> {
 /// the two FR lanes — `FieldProduct`/`FieldInvProduct` from the STAGE-1 FR
 /// Spartan-outer rows — at the following Lagrange-weight indices, exactly the
 /// clear `ProductUniskip::input_claim` composition.
-fn selected_product_uniskip_input_expr<F: Field>(
+fn selected_product_uniskip_input_expr<F: JoltField>(
     weights: &[F],
 ) -> Result<VerifierExpr<F>, VerifierError> {
     let [product_weight, should_branch_weight, should_jump_weight, rest @ ..] = weights else {
@@ -377,7 +377,7 @@ fn selected_product_uniskip_input_expr<F: Field>(
 /// fr_right)`, where the FR factor terms reference the FR product-appendage
 /// rows at their composed Lagrange weights — exactly the clear
 /// `ProductRemainder::expected_output` composition.
-fn selected_product_remainder_output_expr<F: Field>(
+fn selected_product_remainder_output_expr<F: JoltField>(
     weights: &[F],
     tau_kernel: F,
 ) -> Result<VerifierExpr<F>, VerifierError> {
@@ -430,7 +430,7 @@ fn selected_product_remainder_output_expr<F: Field>(
 #[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

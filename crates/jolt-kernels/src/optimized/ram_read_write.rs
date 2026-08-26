@@ -32,7 +32,7 @@ use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -55,7 +55,12 @@ use crate::{
 /// The phase state machine: cycle rounds on the cycle-major matrix, address
 /// rounds on the address-major matrix, then the fully bound values. `None`
 /// only transiently inside a transition.
-enum Phase<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+enum Phase<F: JoltField> {
     Cycle {
         matrix: CycleMajorMatrix<F>,
         gruen: GruenSplitEqPolynomial<F>,
@@ -67,37 +72,31 @@ enum Phase<F: Field> {
     },
     Done {
         merged_eq: Polynomial<F>,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
         final_ra: F,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
         final_val: F,
     },
 }
 
-pub(crate) struct RamReadWriteKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
     /// The committed per-cycle increment column, bound alongside phase 1;
     /// a scalar once every cycle variable is bound.
     inc: Polynomial<F>,
     /// The initial-RAM column over addresses, bound alongside phase 2.
     val_init: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     log_t: usize,
     log_k: usize,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RamReadWriteKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    let phase = kernel.phase.as_ref().map_or(0, |phase| match phase {
-        Phase::Cycle { matrix, gruen } => vec_heap_bytes(&matrix.entries) + gruen.heap_bytes(),
-        Phase::Address { matrix, merged_eq } => {
-            vec_heap_bytes(&matrix.entries) + poly_heap_bytes(merged_eq)
-        }
-        Phase::Done { merged_eq, .. } => poly_heap_bytes(merged_eq),
-    });
-    phase + poly_heap_bytes(&kernel.inc) + poly_heap_bytes(&kernel.val_init)
-});
-
-impl<F: Field> Phase<F> {
+impl<F: JoltField> Phase<F> {
     /// The error for a bind or round message arriving outside its phase.
     fn error() -> SumcheckError<F> {
         SumcheckError::MissingEvaluationSource {
@@ -106,7 +105,7 @@ impl<F: Field> Phase<F> {
     }
 }
 
-impl<F: Field> RamReadWriteKernel<F> {
+impl<F: JoltField> RamReadWriteKernel<F> {
     /// Bind the challenge of `round` (0-indexed over the member's window),
     /// advancing the phase machine at the boundaries.
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
@@ -190,7 +189,7 @@ impl<F: Field> RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t + self.log_k
     }
@@ -216,7 +215,7 @@ impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
     type Relation = RamReadWriteChecking<F>;
 
     fn output_claims(
@@ -255,9 +254,10 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
                 remaining: self.num_rounds(),
             });
         };
+        let id = JoltDerivedId::from(RamReadWritePublic::EqCycle);
         pin_derived_term_if_derived(
             relation,
-            JoltDerivedId::from(RamReadWritePublic::EqCycle),
+            id,
             input_points,
             output_points,
             challenges,
@@ -266,7 +266,7 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -291,7 +291,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
             });
         }
 
-        let columns = RamAccessColumns::shared(session, witness, log_t)?;
+        let (columns, values) = RamAccessColumns::shared_with_values(session, witness, log_t)?;
         columns.validate_addresses(1usize << log_k)?;
 
         let entries: Vec<CycleMajorEntry<F>> = columns
@@ -300,12 +300,12 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
             .enumerate()
             .filter(|&(_, &address)| address != NO_ACCESS)
             .map(|(cycle, &address)| {
-                let pre_value = columns.pre_values[cycle];
+                let pre_value = values.pre_values[cycle];
                 CycleMajorEntry {
                     row: cycle,
                     col: address as usize,
                     prev_val: pre_value,
-                    next_val: columns.post_values[cycle],
+                    next_val: values.post_values[cycle],
                     val: F::from_u64(pre_value),
                     ra: F::one(),
                 }
@@ -321,7 +321,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
                 reason: "RAM read-write witness tables disagree with the relation geometry",
             });
         }
-        let val_init = Polynomial::new(columns.reconstruct_val_init(val_final));
+        let val_init = Polynomial::new(columns.reconstruct_val_init(&values.pre_values, val_final));
 
         Ok(Box::new(RamReadWriteKernel {
             phase: Some(Phase::Cycle {
@@ -340,14 +340,17 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,
     };
 
+    use super::super::ram_trace::RamAccessValues;
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
     };
@@ -424,6 +427,8 @@ mod tests {
                 },
             )
             .unwrap();
+            assert!(session.state::<RamAccessValues>().is_none());
+            assert!(session.state::<Arc<RamAccessColumns>>().is_some());
 
             let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k);
             assert_parity(

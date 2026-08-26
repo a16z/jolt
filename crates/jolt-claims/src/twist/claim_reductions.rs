@@ -2,7 +2,7 @@
 //! the Spartan point) and the increment reduction (per-source pairs folded by
 //! a drawn challenge under Eq-pair publics).
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::{challenge, derived, opening, Expr};
 
@@ -30,7 +30,7 @@ pub trait ValueReductionIds {
 pub const VALUE_REDUCTION_DEGREE: usize = 2;
 
 /// `c₀ + γ·c₁ + γ²·c₂` over the consumed openings.
-pub fn value_reduction_input<F: RingCore, S: ValueReductionIds>(
+pub fn value_reduction_input<F: Ring, S: ValueReductionIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma: Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> = challenge(S::gamma());
     let [c0, c1, c2] = S::consumed();
@@ -38,7 +38,7 @@ pub fn value_reduction_input<F: RingCore, S: ValueReductionIds>(
 }
 
 /// `EqSpartan · (r₀ + γ·r₁ + γ²·r₂)`, expanded.
-pub fn value_reduction_output<F: RingCore, S: ValueReductionIds>(
+pub fn value_reduction_output<F: Ring, S: ValueReductionIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma: Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> = challenge(S::gamma());
     let eq_spartan = derived(S::eq_spartan());
@@ -81,7 +81,7 @@ pub trait IncrementReductionIds {
 pub const INCREMENT_REDUCTION_DEGREE: usize = 2;
 
 /// `Σ_g γ^(2g) · (consumed_rw + γ·consumed_val)` over the source groups.
-pub fn increment_reduction_input<F: RingCore, S: IncrementReductionIds>(
+pub fn increment_reduction_input<F: Ring, S: IncrementReductionIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma: Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> = challenge(S::gamma());
     let mut expr = Expr::zero();
@@ -100,7 +100,7 @@ pub fn increment_reduction_input<F: RingCore, S: IncrementReductionIds>(
 }
 
 /// `Σ_g γ^(2g) · (Eq_rw + γ·Eq_val) · reduced_g`, expanded.
-pub fn increment_reduction_output<F: RingCore, S: IncrementReductionIds>(
+pub fn increment_reduction_output<F: Ring, S: IncrementReductionIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma: Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> = challenge(S::gamma());
     let mut expr = Expr::zero();
@@ -179,12 +179,12 @@ macro_rules! instantiate_value_reduction {
             fn degree(&self) -> usize {
                 $crate::twist::claim_reductions::VALUE_REDUCTION_DEGREE
             }
-            fn input_expression<F: ::jolt_field::RingCore>(
+            fn input_expression<F: ::jolt_field::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::claim_reductions::value_reduction_input::<F, Self>()
             }
-            fn output_expression<F: ::jolt_field::RingCore>(
+            fn output_expression<F: ::jolt_field::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::claim_reductions::value_reduction_output::<F, Self>()
@@ -248,12 +248,12 @@ macro_rules! instantiate_increment_reduction {
             fn degree(&self) -> usize {
                 $crate::twist::claim_reductions::INCREMENT_REDUCTION_DEGREE
             }
-            fn input_expression<F: ::jolt_field::RingCore>(
+            fn input_expression<F: ::jolt_field::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::claim_reductions::increment_reduction_input::<F, Self>()
             }
-            fn output_expression<F: ::jolt_field::RingCore>(
+            fn output_expression<F: ::jolt_field::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::claim_reductions::increment_reduction_output::<F, Self>()

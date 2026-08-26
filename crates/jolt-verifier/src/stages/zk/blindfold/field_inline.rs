@@ -23,7 +23,7 @@ use jolt_claims::protocols::field_inline::{
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::{BytecodeReadRafChallenge, JoltChallengeId};
 use jolt_claims::{derived, opening, SymbolicSumcheck as _};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{try_eq_mle, LtPolynomial};
@@ -46,7 +46,7 @@ pub(super) fn public_error(stage: FieldInlineRelationId, error: impl ToString) -
 
 /// The variables past the first `prefix_len` of an FR `address ++ cycle`
 /// opening point (the FR cycle sub-point).
-pub(super) fn point_suffix<F: Field>(
+pub(super) fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
     stage: FieldInlineRelationId,
@@ -74,7 +74,7 @@ pub(super) fn stage1_appended_opening_ids() -> impl Iterator<Item = VerifierOpen
 /// is the same `Eq(reduced point, tau_low)` derivation as the instruction
 /// reduction (same rounds, same batch suffix, same reversed opening point —
 /// pinned in stage2's clear tests); its gamma is the drawn batch challenge.
-pub(super) fn stage2_claim_reduction<F: Field, C>(
+pub(super) fn stage2_claim_reduction<F: JoltField, C>(
     values: &mut SourceValues<F>,
     log_t: usize,
     batch_consistency: &BatchedCommittedSumcheckConsistency<F, C>,
@@ -151,7 +151,7 @@ pub(super) fn stage2_opening_equalities() -> Vec<OpeningEquality<VerifierOpening
 /// clear composition consumes — at its composed Lagrange weight. The lane
 /// order and input-polynomial mapping are single-sourced from the jolt-claims
 /// lane table (`selected_product_lanes` / `input_opening`).
-pub(super) fn uniskip_lane_terms<F: Field>(
+pub(super) fn uniskip_lane_terms<F: JoltField>(
     field_weights: &[F],
 ) -> Result<VerifierExpr<F>, VerifierError> {
     use jolt_claims::protocols::field_inline::geometry::product::selected_product_lanes;
@@ -190,7 +190,7 @@ pub(super) fn uniskip_lane_terms<F: Field>(
 /// jolt-claims lane table (`selected_product_lanes` / `factor_openings`), the
 /// same table the clear `composed_remainder_factor_contributions` reads back
 /// as values.
-pub(super) fn remainder_factor_terms<F: Field>(
+pub(super) fn remainder_factor_terms<F: JoltField>(
     field_weights: &[F],
 ) -> Result<(VerifierExpr<F>, VerifierExpr<F>), VerifierError> {
     use jolt_claims::protocols::field_inline::geometry::product::selected_product_lanes;
@@ -219,7 +219,7 @@ pub(super) fn remainder_factor_terms<F: Field>(
 /// compile-time protocol config, gamma from the drawn batch, `EqCycle`
 /// mirroring the ordinary registers derivation — `Eq(upstream FR reduced cycle
 /// point, own cycle sub-point past the FR address prefix)`.
-pub(super) fn stage4_read_write<F: Field>(
+pub(super) fn stage4_read_write<F: JoltField>(
     values: &mut SourceValues<F>,
     log_t: usize,
     gamma: F,
@@ -262,7 +262,7 @@ pub(super) fn stage4_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
 /// The stage-5 FR val-evaluation member (declared last, no instance
 /// challenge) and its baked `LtCycle` public: `Lt(own cycle sub-point,
 /// upstream FR read/write cycle sub-point)` over the FR address prefix.
-pub(super) fn stage5_val_evaluation<F: Field>(
+pub(super) fn stage5_val_evaluation<F: JoltField>(
     values: &mut SourceValues<F>,
     log_t: usize,
     val_evaluation_point: &[F],
@@ -305,7 +305,7 @@ pub(super) fn stage5_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
 /// claim, with no new challenge draws (spec: `field-inline-protocol.md`,
 /// "Stage 6 Composition"). Value-parity with the clear composed `input_claim`
 /// override is pinned by `lowered_bytecode_input_extension_matches_the_clear_composed_claim`.
-pub(super) fn bytecode_input_extension_expr<F: Field>() -> VerifierExpr<F> {
+pub(super) fn bytecode_input_extension_expr<F: JoltField>() -> VerifierExpr<F> {
     use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
     use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
 
@@ -382,7 +382,7 @@ pub(super) fn bytecode_input_extension_expr<F: Field>() -> VerifierExpr<F> {
     clippy::too_many_arguments,
     reason = "the extension is a pure function of the bytecode bind points and the stage-4/5 FR opening points; bundling them would only rename the seam"
 )]
-pub(super) fn extend_bytecode_stage_values<F: Field, PCS: CommitmentScheme>(
+pub(super) fn extend_bytecode_stage_values<F: JoltField, PCS: CommitmentScheme>(
     stage_values: &mut [F; 5],
     program: &ProgramPreprocessing<PCS>,
     r_address: &[F],
@@ -417,7 +417,7 @@ pub(super) fn extend_bytecode_stage_values<F: Field, PCS: CommitmentScheme>(
 /// the same `read_raf_public_values` evaluation (over the same point splits)
 /// the clear composed relation performs, so the composed `StageValue(i)`
 /// publics cannot drift from the clear check.
-pub(super) fn composed_bytecode_stage_values<F: Field>(
+pub(super) fn composed_bytecode_stage_values<F: JoltField>(
     table: &crate::stages::field_inline_bytecode::FieldInlineBytecodeTable,
     r_address: &[F],
     r_cycle: &[F],
@@ -472,7 +472,7 @@ pub(super) fn stage6b_inc_relation(log_t: usize) -> field_increments::ClaimReduc
 /// opening point is the SAME `inc_opening_point`; the Eq publics mirror the
 /// ordinary member's derivations over the stage-4/5 FR cycle sub-points (past
 /// the FR address prefix).
-pub(super) fn stage6b_inc_publics<F: Field>(
+pub(super) fn stage6b_inc_publics<F: JoltField>(
     values: &mut SourceValues<F>,
     inc_opening_point: &[F],
     gamma: F,

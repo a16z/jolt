@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
-use jolt_field::{CanonicalBytes, Fr, FromPrimitiveInt};
+use jolt_field::{CanonicalBytes, Fr, Ring};
 use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,

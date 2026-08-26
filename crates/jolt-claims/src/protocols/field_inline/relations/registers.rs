@@ -150,7 +150,7 @@ mod tests {
         read_write_checking_input_openings, read_write_checking_output_openings,
         val_evaluation_input_openings, val_evaluation_output_openings,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> FieldRegistersTraceDimensions {
         FieldRegistersTraceDimensions::new(5)

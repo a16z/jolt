@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use super::super::{FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial};
 
@@ -60,7 +60,7 @@ pub struct FieldProductLaneInputs<F> {
     pub inv_product: F,
 }
 
-impl<F: RingCore> FieldProductLaneInputs<F> {
+impl<F: Ring> FieldProductLaneInputs<F> {
     fn input_value(&self, lane: FieldRegistersProductLane) -> F {
         match lane {
             FieldRegistersProductLane::Product => self.product,
@@ -78,7 +78,7 @@ pub struct FieldProductLaneFactors<F> {
     pub rd_value: F,
 }
 
-impl<F: RingCore> FieldProductLaneFactors<F> {
+impl<F: Ring> FieldProductLaneFactors<F> {
     /// The lane's `(left, right)` factor values, in
     /// [`FieldRegistersProductLane::factor_openings`] order.
     fn factor_values(&self, lane: FieldRegistersProductLane) -> [F; 2] {
@@ -94,7 +94,7 @@ impl<F: RingCore> FieldProductLaneFactors<F> {
 /// `weights` are the composed centered-domain Lagrange weights and the ordinary
 /// product lanes occupy indices `[0, base_lanes)`. `None` if `weights` does not
 /// cover the composed lane domain.
-pub fn composed_uniskip_input_contribution<F: RingCore>(
+pub fn composed_uniskip_input_contribution<F: Ring>(
     weights: &[F],
     base_lanes: usize,
     inputs: &FieldProductLaneInputs<F>,
@@ -113,7 +113,7 @@ pub fn composed_uniskip_input_contribution<F: RingCore>(
 /// order). The composed remainder output claim is then
 /// `tau_kernel · (ordinary_left + left) · (ordinary_right + right)`. `None` if
 /// `weights` does not cover the composed lane domain.
-pub fn composed_remainder_factor_contributions<F: RingCore>(
+pub fn composed_remainder_factor_contributions<F: Ring>(
     weights: &[F],
     base_lanes: usize,
     factors: &FieldProductLaneFactors<F>,
@@ -168,7 +168,7 @@ pub(crate) fn field_rd_value_product() -> FieldInlineOpeningId {
 #[expect(clippy::panic, reason = "tests may unwind via panic")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn inputs() -> FieldProductLaneInputs<Fr> {
         FieldProductLaneInputs {

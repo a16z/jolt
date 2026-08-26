@@ -19,20 +19,20 @@ use jolt_claims::protocols::field_inline::{
     FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 #[derive(Clone)]
-pub struct FieldRegistersValEvaluation<F: Field> {
+pub struct FieldRegistersValEvaluation<F: JoltField> {
     symbolic: registers::ValEvaluation,
     trace_dimensions: FieldRegistersTraceDimensions,
     _field: PhantomData<F>,
 }
 
-impl<F: Field> FieldRegistersValEvaluation<F> {
+impl<F: JoltField> FieldRegistersValEvaluation<F> {
     pub fn new(trace_dimensions: FieldRegistersTraceDimensions) -> Self {
         Self {
             symbolic: registers::ValEvaluation::new(trace_dimensions),
@@ -53,7 +53,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
     type Symbolic = registers::ValEvaluation;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -120,7 +120,7 @@ mod tests {
     use super::*;
     use jolt_poly::LtPolynomial;
 
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

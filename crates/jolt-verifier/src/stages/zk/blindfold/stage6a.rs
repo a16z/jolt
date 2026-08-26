@@ -152,7 +152,7 @@ mod field_inline_tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::{InputClaims as _, SumcheckChallenges as _};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
     fn fr(value: u64) -> Fr {
@@ -171,6 +171,7 @@ mod field_inline_tests {
             false,
             BytecodeStagePoints {
                 stage_cycle_points: Default::default(),
+                fused_inc_cycle_points: Vec::new(),
                 register_read_write_point: Vec::new(),
                 register_val_evaluation_point: Vec::new(),
             },

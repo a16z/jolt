@@ -23,7 +23,7 @@
     not(feature = "zk")
 ))]
 mod active {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 
     use crate::support::tamper_manifest::{

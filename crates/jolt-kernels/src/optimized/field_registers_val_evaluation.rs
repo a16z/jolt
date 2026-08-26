@@ -26,7 +26,7 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlinePolynomialId,
     FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -45,7 +45,7 @@ use crate::{
 
 pub struct OptimizedFieldRegistersValEvaluation;
 
-impl<F: Field> PrepareKernel<F, FieldRegistersValEvaluation<F>>
+impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
     for OptimizedFieldRegistersValEvaluation
 {
     fn prepare(
@@ -132,24 +132,19 @@ impl<F: Field> PrepareKernel<F, FieldRegistersValEvaluation<F>>
     }
 }
 
-struct FieldValEvaluationKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
+struct FieldValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: Polynomial<F>,
     wa: WaState<F>,
     lt: SplitLt<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(FieldValEvaluationKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    let wa = match &kernel.wa {
-        WaState::Indices { rd, eq_address } => vec_heap_bytes(rd) + vec_heap_bytes(eq_address),
-        WaState::Dense(table) => vec_heap_bytes(table),
-    };
-    poly_heap_bytes(&kernel.inc) + wa + kernel.lt.heap_bytes()
-});
-
-impl<F: Field> FieldValEvaluationKernel<F> {
+impl<F: JoltField> FieldValEvaluationKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);
         self.wa.bind(challenge);
@@ -158,7 +153,7 @@ impl<F: Field> FieldValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for FieldValEvaluationKernel<F> {
+impl<F: JoltField> ProveRounds<F> for FieldValEvaluationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -189,7 +184,7 @@ impl<F: Field> ProveRounds<F> for FieldValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
     type Relation = FieldRegistersValEvaluation<F>;
 
     fn output_claims(
@@ -246,7 +241,7 @@ mod tests {
     use jolt_claims::protocols::field_inline::relations::registers::FieldRegistersValEvaluationInputClaims;
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;

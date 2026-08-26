@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 /// An atomic value used inside a symbolic claim expression.
@@ -30,7 +30,7 @@ impl<F, O, P, C> Term<F, O, P, C> {
     }
 }
 
-impl<F: RingCore, O, P, C> Term<F, O, P, C> {
+impl<F: Ring, O, P, C> Term<F, O, P, C> {
     pub fn source(source: Source<O, P, C>) -> Self {
         Self {
             coefficient: F::one(),
@@ -55,7 +55,7 @@ impl<F, O, P, C> Expr<F, O, P, C> {
     }
 }
 
-impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
+impl<F: Ring, O, P, C> Expr<F, O, P, C> {
     pub fn one() -> Self {
         Self {
             terms: vec![Term::constant(F::one())],
@@ -125,7 +125,7 @@ impl<F: RingCore, O, P, C> Expr<F, O, P, C> {
     }
 }
 
-impl<F: RingCore, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
+impl<F: Ring, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
     pub fn pow(self, mut exponent: usize) -> Self {
         let mut result = Self::one();
         let mut base = self;
@@ -145,35 +145,35 @@ impl<F: RingCore, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
 }
 
 /// Builds an opening source expression.
-pub fn opening<F: RingCore, O, P, C>(id: impl Into<O>) -> Expr<F, O, P, C> {
+pub fn opening<F: Ring, O, P, C>(id: impl Into<O>) -> Expr<F, O, P, C> {
     Expr {
         terms: vec![Term::source(Source::Opening(id.into()))],
     }
 }
 
 /// Builds a Fiat-Shamir challenge source expression.
-pub fn challenge<F: RingCore, O, P, C>(id: impl Into<C>) -> Expr<F, O, P, C> {
+pub fn challenge<F: Ring, O, P, C>(id: impl Into<C>) -> Expr<F, O, P, C> {
     Expr {
         terms: vec![Term::source(Source::Challenge(id.into()))],
     }
 }
 
 /// Builds a named derived-value source expression.
-pub fn derived<F: RingCore, O, P, C>(id: impl Into<P>) -> Expr<F, O, P, C> {
+pub fn derived<F: Ring, O, P, C>(id: impl Into<P>) -> Expr<F, O, P, C> {
     Expr {
         terms: vec![Term::source(Source::Derived(id.into()))],
     }
 }
 
 /// Builds a constant expression.
-pub fn constant<F: RingCore, O, P, C>(value: F) -> Expr<F, O, P, C> {
+pub fn constant<F: Ring, O, P, C>(value: F) -> Expr<F, O, P, C> {
     Expr::constant(value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, RingCore};
+    use jolt_field::{Fr, Ring};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     enum Opening {

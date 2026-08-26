@@ -9,7 +9,7 @@
 
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_r1cs::constraints::jolt::{
@@ -33,7 +33,7 @@ use crate::{ProverError, StageProver as _};
 
 /// Stage 1's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
-pub struct Stage1ProverOutput<F: Field, C> {
+pub struct Stage1ProverOutput<F: JoltField, C> {
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage1OutputClaims<F>,
@@ -55,7 +55,7 @@ pub fn prove_stage1<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -149,7 +149,7 @@ where
 /// shared typed-claims constructor (ids resolved in appended-column order —
 /// the same `outer_output_openings` order the verifier's seam absorbs).
 #[cfg(feature = "field-inline")]
-fn field_inline_outer_claims<F: Field>(
+fn field_inline_outer_claims<F: JoltField>(
     sumchecks: &Stage1BatchSumchecks<F>,
 ) -> Result<
     jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims<F>,
@@ -194,7 +194,7 @@ fn field_inline_outer_claims<F: Field>(
 mod field_inline_round_trip {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::Polynomial;
     use jolt_program::execution::OwnedTrace;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;

@@ -27,7 +27,7 @@ use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTA
 use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
@@ -52,39 +52,7 @@ use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
-
-// Size arithmetic rather than a derive: a derive would demand
-// `F: Allocative` of the generic `UniskipKernel` impl below that parks this
-// kernel. Field elements are flat, so the tables size exactly; the
-// constraint templates (`matrices`) are cycle-independent and tiny, counted
-// at their spine size via `enter_self_sized`.
-#[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for SpartanOuterKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{nested_vec_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
-        visitor.visit_simple(
-            allocative::Key::new("input_tables"),
-            nested_vec_heap_bytes(&self.input_tables),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("az_rows"),
-            nested_vec_heap_bytes(&self.az_rows),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("bz_rows"),
-            nested_vec_heap_bytes(&self.bz_rows),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("eq_table"),
-            vec_heap_bytes(&self.eq_table),
-        );
-        visitor.exit();
-    }
-}
-
-impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
+impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
     // The backend-neutral `SpartanOuterUniskip::*` spans live at the stage-1
     // call boundary (`crates/jolt-prover/src/stages/stage1.rs`), so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's
@@ -118,7 +86,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
 /// uni-skip slot parked and binds it into the batch member.
 pub struct ReferenceOuterRemainder;
 
-impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemainder {
+impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemainder {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -137,9 +105,16 @@ impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemainder {
 /// The shared stage-1 compute state: the 35 R1CS input tables, the
 /// per-constraint Az/Bz row-value tables, and `eq(τ_low, ·)` — everything the
 /// uni-skip polynomial and the remainder member both consume.
-pub struct SpartanOuterKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub struct SpartanOuterKernel<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     matrices: ConstraintMatrices<F>,
     /// The composed opening-column selection (`spartan_outer_opening_columns`),
     /// aligned index-for-index with `input_tables`. Not contiguous under
@@ -149,18 +124,22 @@ pub struct SpartanOuterKernel<F: Field> {
     /// Cycle-indexed R1CS input tables (big-endian cycle index), in the
     /// composed opening-column order: the relation's 35 variables, then
     /// (under `field-inline`) the 13 FR-local columns.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     input_tables: Vec<Vec<F>>,
     /// Per-constraint-row value tables over the cycle domain:
     /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]`.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     az_rows: Vec<Vec<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     bz_rows: Vec<Vec<F>>,
     /// eq(τ_low, ·) over the (cycle ∥ stream) index `j = (t << 1) | s`
     /// (τ_low[0] pairs the index MSB, so the stream bit pairs τ_low's last
     /// entry — legacy's convention).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     eq_table: Vec<F>,
 }
 
-impl<F: Field> SpartanOuterKernel<F> {
+impl<F: JoltField> SpartanOuterKernel<F> {
     /// Materialize the stage's compute state from the witness. `tau` is the
     /// stage's full challenge vector (`log_t + 2` entries).
     pub fn prepare(
@@ -394,7 +373,7 @@ impl<F: Field> SpartanOuterKernel<F> {
 /// columns in `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — matching
 /// `spartan_outer_opening_columns()` index-for-index. Fails closed when an
 /// FR-on build proves a witness without the field-inline oracle.
-fn materialize_input_tables<F: Field>(
+fn materialize_input_tables<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     dimensions: &SpartanOuterDimensions,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
@@ -429,7 +408,7 @@ fn materialize_input_tables<F: Field>(
     clippy::type_complexity,
     reason = "the Az/Bz row-table pair, now fallible under the composed column selection"
 )]
-fn row_value_tables<F: Field>(
+fn row_value_tables<F: JoltField>(
     matrices: &ConstraintMatrices<F>,
     input_tables: &[Vec<F>],
     columns: &[usize],
@@ -491,7 +470,7 @@ fn row_value_tables<F: Field>(
 /// the 13 FR opening values on the (`Arc`-shared) relation cell the driver's
 /// curated absorb and the stage-1 recipe read.
 #[cfg(feature = "field-inline")]
-struct ComposedOuterRemainderKernel<F: Field> {
+struct ComposedOuterRemainderKernel<F: JoltField> {
     relation: OuterRemainder<F>,
     tau_kernel: Polynomial<F>,
     az: Polynomial<F>,
@@ -507,7 +486,7 @@ struct ComposedOuterRemainderKernel<F: Field> {
 // Size arithmetic rather than a derive, like the sibling kernels: `F` stays
 // unbounded and the tables dominate.
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
-impl<F: Field> allocative::Allocative for ComposedOuterRemainderKernel<F> {
+impl<F: JoltField> allocative::Allocative for ComposedOuterRemainderKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -529,7 +508,7 @@ impl<F: Field> allocative::Allocative for ComposedOuterRemainderKernel<F> {
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: Field> ComposedOuterRemainderKernel<F> {
+impl<F: JoltField> ComposedOuterRemainderKernel<F> {
     fn remaining_rounds(&self) -> usize {
         use jolt_verifier::stages::relations::ConcreteSumcheck as _;
         self.relation.rounds() - self.rounds_bound
@@ -555,7 +534,7 @@ impl<F: Field> ComposedOuterRemainderKernel<F> {
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: Field> jolt_sumcheck::ProveRounds<F> for ComposedOuterRemainderKernel<F> {
+impl<F: JoltField> jolt_sumcheck::ProveRounds<F> for ComposedOuterRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
         use jolt_verifier::stages::relations::ConcreteSumcheck as _;
         self.relation.rounds()
@@ -606,7 +585,7 @@ impl<F: Field> jolt_sumcheck::ProveRounds<F> for ComposedOuterRemainderKernel<F>
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: Field> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
     type Relation = OuterRemainder<F>;
 
     fn output_claims(
@@ -715,7 +694,7 @@ impl<F: Field> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
 
 #[cfg(test)]
 mod orientation_probes {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
 
     /// Pin the composite orientation assumption: an `EqPolynomial` table

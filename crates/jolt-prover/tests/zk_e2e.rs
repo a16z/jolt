@@ -25,7 +25,7 @@ mod support {
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_kernels::committed_program::{
         build_committed_bytecode_chunk_coeffs, program_image_words_padded,
     };
@@ -35,7 +35,7 @@ mod support {
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_prover::stages::stage0::TrustedAdviceCommitment;
+    use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
@@ -393,15 +393,16 @@ mod zk {
             pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(&memory_layout, &[])),
             committed_program: None,
         };
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            Arc::clone(&witness),
-            &public_io,
-        )
-        .expect("modular ZK prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                witness.as_ref(),
+                &public_io,
+            )
+            .expect("modular ZK prove");
         (prover_preprocessing.verifier, public_io, proof)
     }
 
@@ -552,16 +553,21 @@ mod zk {
                 &prover_preprocessing.pcs_setup,
             );
 
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    Some(&trusted),
-                    Arc::clone(&witness),
-                    &public_io,
-                )
-                .expect("modular ZK advice prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&trusted),
+                witness.as_ref(),
+                &public_io,
+            )
+            .expect("modular ZK advice prove");
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             assert!(
                 proof.untrusted_advice_commitment.is_some(),
@@ -670,16 +676,21 @@ mod zk {
                 }),
             };
             let backend = JoltBackend::<Fr, DoryScheme>::reference();
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    None,
-                    Arc::clone(&witness),
-                    &public_io,
-                )
-                .expect("modular committed ZK prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                witness.as_ref(),
+                &public_io,
+            )
+            .expect("modular committed ZK prove");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None)
                 .expect("modular committed ZK proof must verify");
         });

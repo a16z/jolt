@@ -16,7 +16,7 @@
 use jolt_claims::protocols::field_inline::{
     FieldInlineDerivedId, FieldRegistersIncClaimReductionPublic,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -32,7 +32,7 @@ use crate::kernel::{ProverInputs, SumcheckKernel};
 use crate::reference::ReferenceBackend;
 use crate::{KernelError, SumcheckKernelError};
 
-impl<F: Field> PrepareKernel<F, FieldRegistersIncClaimReduction<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -88,7 +88,7 @@ impl<F: Field> PrepareKernel<F, FieldRegistersIncClaimReduction<F>> for Referenc
     }
 }
 
-struct FieldRegistersIncClaimReductionKernel<F: Field> {
+struct FieldRegistersIncClaimReductionKernel<F: JoltField> {
     relation: FieldRegistersIncClaimReduction<F>,
     gamma: F,
     /// `eq(stage-4 FR read/write cycle, ·)` over the cycle domain
@@ -102,7 +102,7 @@ struct FieldRegistersIncClaimReductionKernel<F: Field> {
 
 // Size arithmetic rather than a derive, like the sibling kernels.
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for FieldRegistersIncClaimReductionKernel<F> {
+impl<F: JoltField> allocative::Allocative for FieldRegistersIncClaimReductionKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -120,7 +120,7 @@ impl<F: Field> allocative::Allocative for FieldRegistersIncClaimReductionKernel<
     }
 }
 
-impl<F: Field> FieldRegistersIncClaimReductionKernel<F> {
+impl<F: JoltField> FieldRegistersIncClaimReductionKernel<F> {
     fn remaining_rounds(&self) -> usize {
         self.relation.rounds() - self.rounds_bound
     }
@@ -144,7 +144,7 @@ impl<F: Field> FieldRegistersIncClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for FieldRegistersIncClaimReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for FieldRegistersIncClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.relation.rounds()
     }
@@ -196,7 +196,7 @@ impl<F: Field> ProveRounds<F> for FieldRegistersIncClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for FieldRegistersIncClaimReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for FieldRegistersIncClaimReductionKernel<F> {
     type Relation = FieldRegistersIncClaimReduction<F>;
 
     fn output_claims(

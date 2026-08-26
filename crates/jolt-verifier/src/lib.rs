@@ -61,12 +61,17 @@ pub mod proof;
 pub mod stages;
 pub mod verifier;
 
-pub use config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG};
+pub use config::{
+    validate_proof_config, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
+    JOLT_VERIFIER_CONFIG,
+};
 pub use error::VerifierError;
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+#[cfg(feature = "akita")]
+pub use verifier::absorb_packed_commitments;
 #[cfg(not(feature = "akita"))]
 pub use verifier::absorb_transcript_commitments;
 pub use verifier::{

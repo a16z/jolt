@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::JoltInstructionRow;
 use jolt_transcript::Transcript;
@@ -68,7 +68,7 @@ use crate::VerifierError;
 /// draws, the mode-agnostic upstream opening points, and the clear-only value
 /// aux (each empty/`None` in ZK, where `input_claim`/`expected_output` never
 /// run). Every field is data both the verifier and the prover hold.
-pub struct Stage6bBuildParts<'a, F: Field> {
+pub struct Stage6bBuildParts<'a, F: JoltField> {
     pub formula_dimensions: &'a JoltFormulaDimensions,
     pub ram_log_k: usize,
     pub committed_chunk_bits: usize,
@@ -114,7 +114,7 @@ pub struct Stage6bDraws<F> {
     pub eta: Option<F>,
 }
 
-impl<F: Field> Stage6bDraws<F> {
+impl<F: JoltField> Stage6bDraws<F> {
     pub fn draw<T: Transcript<Challenge = F>>(
         transcript: &mut T,
         committed_bytecode: bool,
@@ -132,7 +132,7 @@ impl<F: Field> Stage6bDraws<F> {
     }
 }
 
-impl<F: Field> Stage6bSumchecks<F> {
+impl<F: JoltField> Stage6bSumchecks<F> {
     #[expect(
         clippy::too_many_arguments,
         reason = "Stage 6b's batch is built from the stage-6a output plus all five prior stage outputs directly; bundling them would reintroduce the removed `Stage6bParams` pack/unpack indirection."

@@ -25,19 +25,19 @@ use jolt_claims::protocols::field_inline::{
     FieldRegistersTraceDimensions,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 #[derive(Clone)]
-pub struct FieldRegistersClaimReduction<F: Field> {
+pub struct FieldRegistersClaimReduction<F: JoltField> {
     symbolic: registers::ClaimReduction,
     tau_low: Vec<F>,
 }
 
-impl<F: Field> FieldRegistersClaimReduction<F> {
+impl<F: JoltField> FieldRegistersClaimReduction<F> {
     pub fn new(dimensions: FieldRegistersTraceDimensions, tau_low: Vec<F>) -> Self {
         Self {
             symbolic: registers::ClaimReduction::new(dimensions),
@@ -57,7 +57,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
     type Symbolic = registers::ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {

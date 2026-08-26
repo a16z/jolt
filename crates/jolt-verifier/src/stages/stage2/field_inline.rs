@@ -12,7 +12,7 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::OutputClaims as _;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use super::field_registers_claim_reduction::{
     FieldRegistersClaimReduction, FieldRegistersClaimReductionInputClaims,
@@ -30,7 +30,7 @@ use crate::VerifierError;
 /// The stage-2 FR batch member. The FR claim reduction shares the trace domain
 /// (`log_T` rounds) with the product remainder, so both bind the same batch
 /// suffix — the spec's `r_prod` sharing.
-pub fn claim_reduction_member<F: Field>(
+pub fn claim_reduction_member<F: JoltField>(
     log_t: usize,
     tau_low: Vec<F>,
 ) -> FieldRegistersClaimReduction<F> {
@@ -40,7 +40,7 @@ pub fn claim_reduction_member<F: Field>(
 /// Wire the consumed FR value opening *values* from stage 1's composed outer
 /// sumcheck (the FR-local appended segment). Fail-closed: an FR-on proof whose
 /// stage-1 carrier lacks the FR payload cannot feed this reduction.
-pub fn claim_reduction_inputs<F: Field>(
+pub fn claim_reduction_inputs<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> Result<FieldRegistersClaimReductionInputClaims<F>, VerifierError> {
     let outer =
@@ -61,7 +61,7 @@ pub fn claim_reduction_inputs<F: Field>(
 /// Spartan-outer segment) to the composed product uni-skip. They enter the
 /// composed input exactly as the ordinary lanes do — Lagrange-weighted at the
 /// lane indices following them. Fail-closed on a missing stage-1 FR carrier.
-pub fn attach_uniskip_inputs<F: Field>(
+pub fn attach_uniskip_inputs<F: JoltField>(
     uniskip: &ProductUniskip<F>,
     stage1: &Stage1ClearOutput<F>,
 ) -> Result<(), VerifierError> {
@@ -89,7 +89,7 @@ pub fn attach_uniskip_inputs<F: Field>(
 /// relations bind the same batch-point suffix and derive the same reversed
 /// opening point (pinned by
 /// `field_registers_claim_reduction_shares_the_product_remainder_point`).
-pub fn attach_product_outputs<F: Field>(
+pub fn attach_product_outputs<F: JoltField>(
     sumchecks: &Stage2BatchSumchecks<F>,
     claims: &Stage2OutputClaims<F>,
 ) -> Result<FieldRegistersProductOutputClaims<F>, VerifierError> {
@@ -124,7 +124,7 @@ pub(crate) fn product_alias_polynomials() -> [FieldInlineVirtualPolynomial; 3] {
 /// equals the FR product-remainder opening of the same polynomial (see the WHY
 /// on [`attach_product_outputs`]). Value-only, like the generated
 /// `validate_aliases`.
-fn validate_product_aliases<F: Field>(
+fn validate_product_aliases<F: JoltField>(
     batch_outputs: &Stage2BatchOutputClaims<F>,
     field_inline_product: &FieldRegistersProductOutputClaims<F>,
 ) -> Result<(), VerifierError> {
@@ -182,7 +182,7 @@ pub fn composed_output_claim_count(base: usize) -> Result<usize, VerifierError> 
 /// are equality-checked against the appendage by [`attach_product_outputs`]
 /// rather than alias-elided, so they stay Fiat-Shamir-bound like any member
 /// output).
-impl<F: Field> Stage2BatchSumchecks<F> {
+impl<F: JoltField> Stage2BatchSumchecks<F> {
     /// Absorbed opening scalars in the curated order above. This is the
     /// Fiat-Shamir order and MUST match the prover's commitment order.
     pub fn opening_values(
@@ -236,7 +236,7 @@ mod tests {
         RamReadWriteOutputClaims,
     };
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

@@ -1,6 +1,6 @@
 //! Spartan product remainder symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +68,7 @@ impl ProductRemainder {
     /// `tau_kernel · left · right` built from these factors — so the
     /// field-inline composed verifier can extend each factor with the FR lanes'
     /// contributions without restating the ordinary lane table.
-    pub fn left_factor_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    pub fn left_factor_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_weight(0) * opening(left_instruction_input_product())
             + product_weight(1) * opening(lookup_output_product())
             + product_weight(2) * opening(jump_flag_product())
@@ -76,7 +76,7 @@ impl ProductRemainder {
 
     /// The ordinary lanes' right-factor expression; see
     /// [`left_factor_expression`](Self::left_factor_expression).
-    pub fn right_factor_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    pub fn right_factor_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_weight(0) * opening(right_instruction_input_product())
             + product_weight(1) * opening(branch_flag_product())
             + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()))
@@ -109,11 +109,11 @@ impl SymbolicSumcheck for ProductRemainder {
         PRODUCT_REMAINDER_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(product_uniskip_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_tau_kernel() * self.left_factor_expression() * self.right_factor_expression()
     }
 }
@@ -122,7 +122,7 @@ impl SymbolicSumcheck for ProductRemainder {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn product_remainder_evaluates_like_core_formula() {

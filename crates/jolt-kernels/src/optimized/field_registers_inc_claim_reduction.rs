@@ -16,7 +16,7 @@ use jolt_claims::protocols::field_inline::{
     FieldRegistersIncClaimReductionPublic,
 };
 use jolt_claims::SumcheckChallenges as _;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -38,7 +38,7 @@ use crate::{
 
 pub struct OptimizedFieldRegistersIncClaimReduction;
 
-impl<F: Field> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
+impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
     for OptimizedFieldRegistersIncClaimReduction
 {
     fn prepare(
@@ -108,19 +108,14 @@ impl<F: Field> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
     }
 }
 
-struct FieldIncKernel<F: Field> {
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct FieldIncKernel<F: JoltField> {
     progress: RoundProgress,
     inc: Polynomial<F>,
     weights: Polynomial<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(FieldIncKernel, |kernel| {
-    use crate::backend::poly_heap_bytes;
-    poly_heap_bytes(&kernel.inc) + poly_heap_bytes(&kernel.weights)
-});
-
-impl<F: Field> FieldIncKernel<F> {
+impl<F: JoltField> FieldIncKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all([&mut self.inc, &mut self.weights], challenge);
         self.progress.advance();
@@ -138,7 +133,7 @@ impl<F: Field> FieldIncKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for FieldIncKernel<F> {
+impl<F: JoltField> ProveRounds<F> for FieldIncKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -169,7 +164,7 @@ impl<F: Field> ProveRounds<F> for FieldIncKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for FieldIncKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for FieldIncKernel<F> {
     type Relation = FieldRegistersIncClaimReduction<F>;
 
     fn output_claims(
@@ -234,7 +229,7 @@ mod tests {
         FieldRegistersIncClaimReductionChallenges, FieldRegistersIncClaimReductionInputClaims,
     };
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     use super::*;
     use crate::optimized::field_registers_testing::{

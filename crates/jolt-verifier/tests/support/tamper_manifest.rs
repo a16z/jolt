@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
@@ -1427,7 +1427,7 @@ fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>)
     }
 }
 
-pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
+pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
     let zero = F::zero();
     let optional = fill_optionals.then_some(zero);
 

@@ -13,7 +13,7 @@ use log::{debug, info};
 use rand::prelude::SliceRandom;
 use sysinfo::System;
 
-use build_wasm::{build_wasm, modify_cargo_toml};
+use build_wasm::build_wasm;
 use zeroos_build::cmds::{build::BacktraceMode, BuildArgs, StdMode};
 use zeroos_build::spec::TargetRenderOptions;
 
@@ -404,13 +404,10 @@ fn generate_linker_command(cli_args: JoltGenerateLinkerArgs) -> Result<()> {
 // Project scaffolding (original jolt new)
 // ============================================================================
 
-fn create_project(name: String, wasm: bool, zk: bool) {
+fn create_project(name: String, _wasm: bool, zk: bool) {
     create_folder_structure(&name).expect("could not create directory");
     create_host_files(&name, zk).expect("file creation failed");
     create_guest_files(&name, zk).expect("file creation failed");
-    if wasm {
-        modify_cargo_toml(&name).expect("Failed to update Cargo.toml");
-    }
     display_welcome();
 }
 

@@ -13,7 +13,7 @@ use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::OutputClaims as _;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
 
 use jolt_openings::CommitmentScheme;
@@ -59,7 +59,7 @@ pub struct FieldInlineBytecodeReadRafGeometry<F> {
 /// stage-4/5 FR opening points, and supply it to the composed bytecode
 /// read-RAF relation. Both fronts attach through this right after the batch
 /// build (fail-closed: a kernel prepared without it rejects).
-pub fn attach_bytecode_geometry<F: Field>(
+pub fn attach_bytecode_geometry<F: JoltField>(
     relation: &BytecodeReadRafAddressPhase<F>,
     table: FieldInlineBytecodeTable,
     stage4_points: &Stage4OutputPoints<F>,
@@ -96,7 +96,7 @@ pub struct FieldInlineBytecodeReadRafInputs<F> {
 /// Wire the FR opening values the extended bytecode read-RAF input claim
 /// consumes from the upstream clear outputs. Fail-closed: an FR-on proof
 /// whose stage-1 carrier lacks the FR payload cannot feed the extension.
-pub fn bytecode_read_raf_inputs<F: Field>(
+pub fn bytecode_read_raf_inputs<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,
@@ -132,7 +132,7 @@ pub fn bytecode_read_raf_inputs<F: Field>(
 /// the composed bytecode read-RAF relation (fail-closed on a missing stage-1
 /// FR carrier). Both fronts attach through this before the input claim is
 /// computed.
-pub fn attach_bytecode_inputs<F: Field>(
+pub fn attach_bytecode_inputs<F: JoltField>(
     relation: &BytecodeReadRafAddressPhase<F>,
     stage1: &Stage1ClearOutput<F>,
     stage4: &Stage4OutputClaims<F>,
@@ -149,7 +149,7 @@ pub fn attach_bytecode_inputs<F: Field>(
 /// extension riding the same outer gamma power as its ordinary stage claim
 /// (γ⁰/γ³/γ⁴). No new challenge draws: the powers extend (see
 /// `field_inline_stage_gamma_powers`).
-pub(super) fn input_claim_extension<F: Field>(
+pub(super) fn input_claim_extension<F: JoltField>(
     field_inline: &FieldInlineBytecodeReadRafInputs<F>,
     challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
 ) -> Result<F, VerifierError> {

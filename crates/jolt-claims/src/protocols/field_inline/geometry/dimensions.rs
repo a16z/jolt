@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::formula_error::JoltFormulaPointError;
 
@@ -18,7 +18,7 @@ impl FieldRegistersTraceDimensions {
 
     /// The reversed cycle opening point of a trace-domain FR sumcheck, mirroring
     /// `protocols::jolt`'s `TraceDimensions::cycle_opening_point`.
-    pub fn cycle_opening_point<F: Field>(
+    pub fn cycle_opening_point<F: JoltField>(
         self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -76,7 +76,7 @@ impl FieldRegistersReadWriteDimensions {
         self.log_t + self.log_k
     }
 
-    pub fn read_write_opening_point<F: Field>(
+    pub fn read_write_opening_point<F: JoltField>(
         self,
         challenges: &[F],
     ) -> Result<FieldRegistersReadWriteOpeningPoint<F>, JoltFormulaPointError> {
@@ -128,7 +128,7 @@ impl FieldRegistersReadWriteDimensions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FieldRegistersReadWriteOpeningPoint<F: Field> {
+pub struct FieldRegistersReadWriteOpeningPoint<F: JoltField> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,

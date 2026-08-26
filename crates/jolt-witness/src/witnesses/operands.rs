@@ -1,9 +1,9 @@
 use jolt_field::{
     signed::{S128, S64},
-    Field,
+    JoltField,
 };
 use jolt_lookup_tables::LookupQuery;
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::{lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
@@ -35,7 +35,7 @@ pub struct Product(pub S128);
 pub struct Imm(pub i128);
 
 impl ToField for LeftLookupOperand {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -52,7 +52,7 @@ impl Extract for LeftLookupOperand {
 }
 
 impl ToField for RightLookupOperand {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u128(self.0)
     }
 }
@@ -69,7 +69,7 @@ impl Extract for RightLookupOperand {
 }
 
 impl ToField for LeftInstructionInput {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -86,7 +86,7 @@ impl Extract for LeftInstructionInput {
 }
 
 impl ToField for RightInstructionInput {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_i128(self.0)
     }
 }
@@ -105,7 +105,7 @@ impl Extract for RightInstructionInput {
 impl ToField for Product {
     /// The product may exceed `i128`: fall back to the sign/magnitude split
     /// when the truncated representation does not fit.
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         if let Some(value) = self.0.to_i128() {
             F::from_i128(value)
         } else {
@@ -133,7 +133,7 @@ impl Extract for Product {
 }
 
 impl ToField for Imm {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_i128(self.0)
     }
 }
@@ -144,6 +144,6 @@ impl Extract for Imm {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.instruction.operands.imm))
+        Ok(Self(row.imm()))
     }
 }

@@ -31,7 +31,7 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -94,7 +94,7 @@ pub fn hamming_weight_claim_reduction_dimensions(
 /// The hamming reduction's consumed opening *values*, wired from the stage-6b
 /// cycle-phase output claims. The relation reads only their values (its produced
 /// points are derived from its own sumcheck point), so no input points are needed.
-pub fn hamming_weight_input_values_from_upstream<F: Field>(
+pub fn hamming_weight_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> HammingWeightClaimReductionInputClaims<F> {
     HammingWeightClaimReductionInputClaims {
@@ -121,7 +121,7 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
 /// `EqVirtualization` publics compare against, in canonical (instruction, bytecode,
 /// RAM) order: the leading `log_k_chunk` coordinates of each stage-6b RA
 /// virtualization opening point.
-pub fn stage7_hamming_virtualization_address_points<F: Field>(
+pub fn stage7_hamming_virtualization_address_points<F: JoltField>(
     dimensions: HammingWeightClaimReductionDimensions,
     stage6_points: &Stage6bOutputPoints<F>,
 ) -> Result<Vec<Vec<F>>, VerifierError> {
@@ -158,7 +158,7 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct HammingWeightClaimReduction<F: Field> {
+pub struct HammingWeightClaimReduction<F: JoltField> {
     symbolic: HammingWeightClaimReductionSymbolic,
     dimensions: HammingWeightClaimReductionDimensions,
     /// The shared cycle suffix appended to every produced opening point (the
@@ -171,7 +171,7 @@ pub struct HammingWeightClaimReduction<F: Field> {
     virtualization_points: Vec<Vec<F>>,
 }
 
-impl<F: Field> HammingWeightClaimReduction<F> {
+impl<F: JoltField> HammingWeightClaimReduction<F> {
     pub fn new(
         dimensions: HammingWeightClaimReductionDimensions,
         r_cycle: Vec<F>,
@@ -242,13 +242,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 /// `eq(point, 0) = Π (1 − point_j)` — the digit-zero weight of an `eq` leg,
 /// the `w(0)` baseline the input claim folds in under digit-zero
 /// virtualization (`specs/digit-zero-virtualization.md`).
-fn eq_at_digit_zero<F: Field>(point: &[F]) -> F {
+fn eq_at_digit_zero<F: JoltField>(point: &[F]) -> F {
     point.iter().fold(F::one(), |accumulator, value| {
         accumulator * (F::one() - *value)
     })
 }
 
-impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
     type Symbolic = HammingWeightClaimReductionSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {

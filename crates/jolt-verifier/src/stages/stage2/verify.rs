@@ -7,7 +7,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::Transcript;
@@ -42,14 +42,14 @@ use crate::{
 /// reduction challenge are extracted mode-agnostically (clear: the single-entry
 /// reduction point; ZK: the committed round challenge) so the batch relations —
 /// `ProductRemainder::new` in particular — can be built before the mode branch.
-struct ProductUniskipStep<F: Field, C> {
+struct ProductUniskipStep<F: JoltField, C> {
     tau_low: Vec<F>,
     tau_high: F,
     challenge: F,
     verified: ProductUniskipVerified<F, C>,
 }
 
-enum ProductUniskipVerified<F: Field, C> {
+enum ProductUniskipVerified<F: JoltField, C> {
     Clear,
     Zk(uniskip::UniskipZk<F, C>),
 }
@@ -61,7 +61,7 @@ enum ProductUniskipVerified<F: Field, C> {
 /// separate stage-2 sub-sumcheck), not an upstream stage's opening. Errors only
 /// under `field-inline`, where the FR claim-reduction inputs are required
 /// fail-closed from the stage-1 FR carrier.
-pub fn stage2_batch_input_values_from_upstream<F: Field>(
+pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
 ) -> Result<Stage2BatchInputClaims<F>, VerifierError> {
@@ -250,7 +250,7 @@ where
 /// The product uni-skip's low binding tau_low: the tail (`[1..]`) of stage
 /// 1's raw remainder point, reversed. Shared by `verify_product_uniskip` and
 /// the prove-side stage-2 recipe, so the derivation cannot drift.
-pub fn product_tau_low<F: Field>(
+pub fn product_tau_low<F: JoltField>(
     stage1_remainder: &[F],
     log_t: usize,
 ) -> Result<Vec<F>, VerifierError> {

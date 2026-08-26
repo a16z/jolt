@@ -96,7 +96,7 @@ mod tests {
     use crate::protocols::jolt::geometry::ram::{ram_inc, ram_inc_val_check};
     use crate::protocols::jolt::geometry::registers::{rd_inc_read_write, rd_inc_val_evaluation};
     use crate::SymbolicSumcheck;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

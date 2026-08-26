@@ -1,4 +1,4 @@
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind, XLEN};
 use jolt_poly::{EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
 use jolt_riscv::{
@@ -84,7 +84,7 @@ impl BytecodeReadRafDimensions {
 /// the constant entry term at the next three powers.
 pub(crate) fn read_raf_address_input_fold<F>(extra_stage_claims: Vec<JoltExpr<F>>) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
@@ -108,7 +108,7 @@ pub(crate) fn read_raf_cycle_output<F>(
     num_val_stages: usize,
 ) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     let mut output_coeff = JoltExpr::zero();
@@ -129,7 +129,7 @@ pub(crate) fn read_raf_cycle_output_committed<F>(
     num_val_stages: usize,
 ) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     // The staged Val factor multiplies after the RA product so the lowered
@@ -183,7 +183,7 @@ pub fn fused_inc_read_raf_opening() -> JoltOpeningId {
 /// `FusedInc` opening as a cycle factor (degree +1 over the base relation).
 pub(crate) fn read_raf_cycle_output_lattice<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
@@ -217,7 +217,7 @@ pub(crate) fn read_raf_cycle_output_committed_lattice<F>(
     dimensions: BytecodeReadRafDimensions,
 ) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
@@ -268,14 +268,14 @@ pub fn bytecode_read_raf_address_phase_opening() -> JoltOpeningId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafPublicValues<F: Field> {
+pub struct BytecodeReadRafPublicValues<F: JoltField> {
     pub stage_values: [F; 5],
     pub spartan_outer_raf: F,
     pub spartan_shift_raf: F,
     pub entry: F,
 }
 
-impl<F: Field> BytecodeReadRafPublicValues<F> {
+impl<F: JoltField> BytecodeReadRafPublicValues<F> {
     /// Returns `None` for committed-mode publics (`StageCycleEq`) and
     /// out-of-range stage indices so a wrong-mode formula fails loudly at the
     /// source instead of evaluating with a silently zeroed term.
@@ -296,14 +296,14 @@ impl<F: Field> BytecodeReadRafPublicValues<F> {
 /// per relation stage — five in base mode, nine in lattice mode (the four
 /// fused-inc consumer stages follow the base five).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReadRafCommittedPublicValues<F: Field> {
+pub struct BytecodeReadRafCommittedPublicValues<F: JoltField> {
     pub stage_cycle_eqs: [F; READ_RAF_CYCLE_STAGES],
     pub spartan_outer_raf: F,
     pub spartan_shift_raf: F,
     pub entry: F,
 }
 
-impl<F: Field> BytecodeReadRafCommittedPublicValues<F> {
+impl<F: JoltField> BytecodeReadRafCommittedPublicValues<F> {
     /// Returns `None` for full-mode publics (`StageValue`) and out-of-range
     /// stage indices so a wrong-mode formula fails loudly at the source
     /// instead of evaluating with a silently zeroed term.
@@ -331,7 +331,7 @@ pub fn read_raf_committed_public_values<F>(
     inputs: BytecodeReadRafCommittedEvaluationInputs<'_, F>,
 ) -> BytecodeReadRafCommittedPublicValues<F>
 where
-    F: Field,
+    F: JoltField,
 {
     let stage_cycle_eqs = inputs
         .stage_cycle_points
@@ -363,7 +363,7 @@ fn read_raf_raf_entry_publics<F>(
     entry_bytecode_index: usize,
 ) -> (F, F, F)
 where
-    F: Field,
+    F: JoltField,
 {
     let identity = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
     let spartan_outer_raf = identity * outer_stage_cycle_eq;
@@ -416,7 +416,7 @@ fn read_raf_register_eq_evals<F>(
     register_val_evaluation_point: &[F],
 ) -> BytecodeReadRafRegisterEqEvals<F>
 where
-    F: Field,
+    F: JoltField,
 {
     BytecodeReadRafRegisterEqEvals {
         read_write: EqPolynomial::<F>::evals(register_read_write_point, None),
@@ -431,7 +431,7 @@ pub fn read_raf_stage_values<F>(
     inputs: BytecodeReadRafStageValueInputs<'_, F>,
 ) -> Vec<[F; NUM_BYTECODE_VAL_STAGES]>
 where
-    F: Field,
+    F: JoltField,
 {
     let register_eq = read_raf_register_eq_evals(
         inputs.register_read_write_point,
@@ -459,7 +459,7 @@ pub fn read_raf_public_values<F>(
     inputs: BytecodeReadRafEvaluationInputs<'_, F>,
 ) -> Result<BytecodeReadRafPublicValues<F>, JoltFormulaPointError>
 where
-    F: Field,
+    F: JoltField,
 {
     require_len(inputs.stage1_gammas, BYTECODE_STAGE_GAMMA_COUNTS[0])?;
     require_len(inputs.stage2_gammas, BYTECODE_STAGE_GAMMA_COUNTS[1])?;
@@ -541,7 +541,7 @@ fn read_raf_row_values<F>(
     stage5_gammas: &[F],
 ) -> [F; NUM_BYTECODE_VAL_STAGES]
 where
-    F: Field,
+    F: JoltField,
 {
     let decoded = JoltInstruction::try_from(*instruction)
         .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
@@ -620,7 +620,7 @@ where
     }
 }
 
-fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
+fn register_eq<F: JoltField>(register: Option<u8>, eq: &[F]) -> F {
     register
         .and_then(|register| eq.get(register as usize))
         .copied()
@@ -643,7 +643,7 @@ pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
 
 pub(crate) fn stage1_claim<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage1Gamma);
     let mut claim =
@@ -658,7 +658,7 @@ where
 
 pub(crate) fn stage2_claim<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage2Gamma);
 
@@ -670,7 +670,7 @@ where
 
 pub(crate) fn stage3_claim<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage3Gamma);
 
@@ -693,7 +693,7 @@ where
 
 pub(crate) fn stage4_claim<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage4Gamma);
 
@@ -704,7 +704,7 @@ where
 
 pub(crate) fn stage5_claim<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage5Gamma);
     let mut claim =
@@ -719,7 +719,7 @@ where
 
 fn bytecode_ra_product<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut product = JoltExpr::one();
     for i in 0..dimensions.num_committed_ra_polys() {
@@ -795,7 +795,7 @@ pub fn bytecode_ra(index: usize) -> JoltOpeningId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
 

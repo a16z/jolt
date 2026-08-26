@@ -129,7 +129,7 @@ where
 /// `FieldRdInc` row after the ordinary increment-reduction outputs and before
 /// the optional advice cycle phases: the clear absorb order
 /// (`stage6b_opening_values`) exactly.
-fn stage6b_output_ids_and_aliases<F: Field>(
+fn stage6b_output_ids_and_aliases<F: JoltField>(
     formula_dimensions: JoltFormulaDimensions,
     bytecode_ra_opening_points: &[Vec<F>],
     booleanity_opening_point: &[F],
@@ -218,7 +218,7 @@ fn stage6b_output_ids_and_aliases<F: Field>(
     clippy::wildcard_enum_match_arm,
     reason = "fail-closed: unmatched opening ids yield no alias and are reported missing below"
 )]
-fn stage6_cycle_output_openings_and_aliases<F: Field>(
+fn stage6_cycle_output_openings_and_aliases<F: JoltField>(
     formula_dimensions: JoltFormulaDimensions,
     bytecode_ra_opening_points: &[Vec<F>],
     booleanity_opening_point: &[F],
@@ -269,7 +269,7 @@ mod tests {
     use crate::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use crate::stages::stage6b::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use crate::stages::stage6b::stage6b_opening_values;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -421,7 +421,7 @@ mod field_inline_tests {
     use jolt_claims::protocols::jolt::relations::bytecode::{
         BytecodeReadRafCyclePhaseChallenges, ReadRafCyclePhase,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
     fn fr(value: u64) -> Fr {

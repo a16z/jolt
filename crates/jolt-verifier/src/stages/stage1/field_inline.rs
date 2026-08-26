@@ -6,7 +6,7 @@
 use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT;
 use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_transcript::Transcript;
 
 use super::outputs::{Stage1BatchSumchecks, Stage1OutputClaims};
@@ -17,7 +17,7 @@ use crate::VerifierError;
 /// on an FR-on proof without it) and supply it to the composed remainder
 /// relation: the composed R1CS appends 13 FR-local columns whose openings ride
 /// the same remainder sumcheck and feed the composed expected-output check.
-pub fn attach_outer_outputs<F: Field>(
+pub fn attach_outer_outputs<F: JoltField>(
     sumchecks: &Stage1BatchSumchecks<F>,
     claims: &Stage1OutputClaims<F>,
 ) -> Result<FieldRegistersSpartanOuterOutputClaims<F>, VerifierError> {
@@ -36,7 +36,7 @@ pub fn attach_outer_outputs<F: Field>(
 
 /// Absorb the FR-local openings after the ordinary ones, in appended-column
 /// order — the same append the prover must perform.
-pub fn append_outer_openings<F: Field, T: Transcript<Challenge = F>>(
+pub fn append_outer_openings<F: JoltField, T: Transcript<Challenge = F>>(
     transcript: &mut T,
     outputs: &FieldRegistersSpartanOuterOutputClaims<F>,
 ) {

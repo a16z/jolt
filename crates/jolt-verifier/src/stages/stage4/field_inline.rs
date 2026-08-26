@@ -4,7 +4,7 @@
 //! `verify.rs`/`outputs.rs` interact with the FR protocol only through the
 //! functions here (plus the FR carrier fields, which are proof shape).
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use super::field_registers_read_write_checking::{
     FieldRegistersReadWriteChecking, FieldRegistersReadWriteInputClaims,
@@ -16,7 +16,7 @@ use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 /// The stage-4 FR batch member. FR dimensions are pinned by the compile-time
 /// protocol config (phase1 = log_t, phase2 = log_k), not the proof's
 /// rw_config, so no eager phase-split validation is needed.
-pub fn read_write_member<F: Field>(log_t: usize) -> FieldRegistersReadWriteChecking<F> {
+pub fn read_write_member<F: JoltField>(log_t: usize) -> FieldRegistersReadWriteChecking<F> {
     FieldRegistersReadWriteChecking::new(
         crate::config::JOLT_VERIFIER_CONFIG
             .field_inline
@@ -28,7 +28,7 @@ pub fn read_write_member<F: Field>(log_t: usize) -> FieldRegistersReadWriteCheck
 /// reduction. The upstream cells are plain (non-optional) fields of the FR-on
 /// stage-2 batch claims, so presence is a compile-time fact — an FR-on proof
 /// without them fails proof deserialization / shape validation upstream.
-pub fn read_write_inputs<F: Field>(
+pub fn read_write_inputs<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> FieldRegistersReadWriteInputClaims<F> {
     let reduction = &stage2.field_registers_claim_reduction;
@@ -41,7 +41,7 @@ pub fn read_write_inputs<F: Field>(
 
 /// Wire the consumed FR opening *points* from stage 2's FR claim reduction,
 /// all sharing that relation's reduced opening point (`r_prod`).
-pub fn read_write_input_points<F: Field>(
+pub fn read_write_input_points<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
 ) -> FieldRegistersReadWriteInputClaims<Vec<F>> {
     let reduction = &stage2.field_registers_claim_reduction;
@@ -56,7 +56,7 @@ pub fn read_write_input_points<F: Field>(
 /// order: after the ordinary register openings, before the RAM value-check
 /// ones (the spec's committed row order, `specs/field-inline-protocol.md`,
 /// "Stage 4 Composition").
-pub(super) fn splice_read_write_values<F: Field>(
+pub(super) fn splice_read_write_values<F: JoltField>(
     values: &mut Vec<F>,
     claims: &Stage4OutputClaims<F>,
 ) {

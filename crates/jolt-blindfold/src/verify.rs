@@ -1,5 +1,5 @@
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::{Field, FieldCore, RingAccumulator, WithAccumulator};
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
@@ -16,9 +16,8 @@ const INNER_SUMCHECK_LABEL: &[u8] = b"inner_sumcheck_poly";
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     pub fn verify<VC, T>(
         &self,
@@ -51,7 +50,7 @@ where
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     Com: Clone + HomomorphicCommitment<F> + AppendToTranscript,
 {
     fn folded_instance_from_proof<T>(
@@ -124,9 +123,8 @@ where
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     fn verify_outer_folded_r1cs<VC, T>(
         &self,
@@ -216,7 +214,7 @@ where
 
 impl<F, Com> BlindFoldProof<F, Com>
 where
-    F: Field,
+    F: JoltField,
     Com: Copy + AppendToTranscript,
 {
     fn verify_folded_eval_commitments<VC>(
@@ -245,9 +243,8 @@ where
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     fn verify_folded_eval_witness_bindings<VC, T>(
         &self,
@@ -360,7 +357,7 @@ where
 }
 
 impl WitnessCoordinate {
-    fn require_dedicated_row<F: Field>(
+    fn require_dedicated_row<F: JoltField>(
         self,
         opening: &VectorCommitmentOpening<F>,
         kind: &'static str,
@@ -381,10 +378,9 @@ impl WitnessCoordinate {
         opening: &VectorCommitmentOpening<F>,
     ) -> Result<F, VerificationError<F>>
     where
-        F: Field,
+        F: JoltField,
         VC: VectorCommitment<Field = F>,
         VC::Output: Copy + HomomorphicCommitment<F>,
-        <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
     {
         let witness_row_count = folded.witness_row_commitments.len();
         if witness_row_count == 0 || !witness_row_count.is_power_of_two() {
@@ -417,9 +413,8 @@ impl WitnessCoordinate {
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     Com: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     fn verify_inner_folded_r1cs<VC, T>(
         &self,
@@ -535,7 +530,7 @@ fn public_contributions<F>(
     u: F,
 ) -> Result<MatrixColumnContributions<F>, VerificationError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let eq_rx = EqPolynomial::<F>::evals(rx, None);
     Ok(r1cs.public_column_contributions(&eq_rx, 0, u)?)
@@ -550,7 +545,7 @@ fn compute_l_w_at_ry<F>(
     rc: F,
 ) -> Result<F, VerificationError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let eq_rx = EqPolynomial::<F>::evals(rx, None);
     let eq_ry = EqPolynomial::<F>::evals(ry, None);
@@ -560,7 +555,7 @@ where
 
 fn power_of_two_len<F>(name: &'static str, num_vars: usize) -> Result<usize, VerificationError<F>>
 where
-    F: FieldCore,
+    F: JoltField,
 {
     if num_vars >= usize::BITS as usize {
         return Err(VerificationError::InvalidPowerOfTwo {
@@ -573,7 +568,7 @@ where
 
 fn boolean_point<F>(index: usize, num_vars: usize) -> Result<Vec<F>, VerificationError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let len = power_of_two_len::<F>("boolean point dimension", num_vars)?;
     if index >= len {
@@ -617,7 +612,7 @@ mod tests {
     use jolt_crypto::{
         Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorOpeningError,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::CompressedPoly;
     use jolt_r1cs::ConstraintMatrices;
     use jolt_sumcheck::CompressedSumcheckProof;

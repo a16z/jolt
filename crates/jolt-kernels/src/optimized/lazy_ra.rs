@@ -31,7 +31,7 @@
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -52,12 +52,18 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily until the
 /// fourth bind materializes dense.
-pub(crate) enum LazyFoldedRa<F: Field, S> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField, S: allocative::Allocative")
+)]
+pub(crate) enum LazyFoldedRa<F: JoltField, S> {
     /// Fewer than four binds: per-polynomial branch scale tables (the base
     /// table pre-scaled by each bound-bit pattern's eq weight), flattened
     /// offset-major — `tables[i][offset · stride_i + k]` with
     /// `stride_i = tables[i].len() / width` — plus the compact index source.
     Lazy {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         tables: Vec<Vec<F>>,
         /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
         width: usize,
@@ -67,18 +73,7 @@ pub(crate) enum LazyFoldedRa<F: Field, S> {
     Dense(Vec<Polynomial<F>>),
 }
 
-impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
-    #[cfg(feature = "allocative")]
-    pub(crate) fn heap_bytes(&self, source_heap_bytes: impl FnOnce(&S) -> usize) -> usize {
-        use crate::backend::{nested_vec_heap_bytes, polys_heap_bytes};
-        match self {
-            Self::Lazy { tables, source, .. } => {
-                nested_vec_heap_bytes(tables) + source_heap_bytes(source)
-            }
-            Self::Dense(polys) => polys_heap_bytes(polys),
-        }
-    }
-
+impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     /// One scale table per selector polynomial, in polynomial order.
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
         debug_assert_eq!(tables.len(), source.num_polys());
@@ -154,8 +149,8 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// for the first three binds, materialize dense (and drop the source)
-    /// at the fourth, plain multilinear binds after.
+    /// until the fourth bind materializes dense (and drops the source), then
+    /// use plain multilinear binds.
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
@@ -188,7 +183,7 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
 /// one add per hot branch, no multiplications (the weights are pre-scaled
 /// into the branch tables).
 #[inline]
-fn gather<F: Field, S: ChunkIndexSource>(
+fn gather<F: JoltField, S: ChunkIndexSource>(
     table: &[F],
     width: usize,
     source: &S,
@@ -214,7 +209,7 @@ fn gather<F: Field, S: ChunkIndexSource>(
 /// half keeps the existing branches scaled by `1 − challenge` (bit 0), the
 /// second half by `challenge` (bit 1) — offset layout
 /// `b0 + 2·b1 + 4·b2`, matching the low bits of the original cycle index.
-fn double_branches<F: Field>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
+fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
     let one_minus = F::one() - challenge;
     let double = |table: Vec<F>| -> Vec<F> {
         let mut next = Vec::with_capacity(table.len() * 2);
@@ -238,7 +233,7 @@ fn double_branches<F: Field>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
 /// footprint (`N · T / branches` field elements — the stage-6b peak at
 /// large T) against one more gather round and double the branch tables;
 /// measured on a 64-thread host, T/16 beats the original T/8 on both axes.
-fn materialize<F: Field, S: ChunkIndexSource>(
+fn materialize<F: JoltField, S: ChunkIndexSource>(
     tables: &[Vec<F>],
     source: &S,
     branches: usize,

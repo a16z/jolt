@@ -1,6 +1,6 @@
 //! The Twist read/write-checking and value-evaluation identities.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::{challenge, derived, opening, Expr};
 
@@ -34,7 +34,7 @@ pub trait ReadWriteCheckingIds {
 pub const READ_WRITE_CHECKING_DEGREE: usize = 3;
 
 /// `rd + γ·rs1 + γ²·rs2` over the consumed value openings.
-pub fn read_write_checking_input<F: RingCore, S: ReadWriteCheckingIds>(
+pub fn read_write_checking_input<F: Ring, S: ReadWriteCheckingIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma = challenge(S::gamma());
     opening(S::rd_value())
@@ -43,7 +43,7 @@ pub fn read_write_checking_input<F: RingCore, S: ReadWriteCheckingIds>(
 }
 
 /// `EqCycle · (RdWa·Inc + RdWa·Val + γ·Rs1Ra·Val + γ²·Rs2Ra·Val)`, expanded.
-pub fn read_write_checking_output<F: RingCore, S: ReadWriteCheckingIds>(
+pub fn read_write_checking_output<F: Ring, S: ReadWriteCheckingIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma = challenge(S::gamma());
     let eq_cycle = derived(S::eq_cycle());
@@ -75,13 +75,13 @@ pub trait ValEvaluationIds {
 pub const VAL_EVALUATION_DEGREE: usize = 3;
 
 /// The bare consumed `Val` opening.
-pub fn val_evaluation_input<F: RingCore, S: ValEvaluationIds>(
+pub fn val_evaluation_input<F: Ring, S: ValEvaluationIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     opening(S::registers_val())
 }
 
 /// `LtCycle · Inc · Wa`.
-pub fn val_evaluation_output<F: RingCore, S: ValEvaluationIds>(
+pub fn val_evaluation_output<F: Ring, S: ValEvaluationIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     derived(S::lt_cycle()) * opening(S::rd_inc()) * opening(S::rd_wa())
 }
@@ -172,12 +172,12 @@ macro_rules! instantiate_read_write_checking {
             fn degree(&self) -> usize {
                 $crate::twist::memory_checking::READ_WRITE_CHECKING_DEGREE
             }
-            fn input_expression<F: ::jolt_field::RingCore>(
+            fn input_expression<F: ::jolt_field::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::memory_checking::read_write_checking_input::<F, Self>()
             }
-            fn output_expression<F: ::jolt_field::RingCore>(
+            fn output_expression<F: ::jolt_field::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::memory_checking::read_write_checking_output::<F, Self>()
@@ -246,12 +246,12 @@ macro_rules! instantiate_val_evaluation {
             fn degree(&self) -> usize {
                 $crate::twist::memory_checking::VAL_EVALUATION_DEGREE
             }
-            fn input_expression<F: ::jolt_field::RingCore>(
+            fn input_expression<F: ::jolt_field::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::memory_checking::val_evaluation_input::<F, Self>()
             }
-            fn output_expression<F: ::jolt_field::RingCore>(
+            fn output_expression<F: ::jolt_field::Ring>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
                 $crate::twist::memory_checking::val_evaluation_output::<F, Self>()

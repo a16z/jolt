@@ -60,7 +60,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
     use crate::SymbolicSumcheck;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)
