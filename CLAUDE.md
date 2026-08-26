@@ -243,8 +243,6 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 
 ### Style Invariants
 
-Distilled from maintainer style passes on #1732. `scripts/check_style_invariants.py` enforces the machine-checkable subset (CI job `style`); run it locally with `python3 scripts/check_style_invariants.py --base origin/main`. Diff-scoped rules apply to added lines only — pre-existing debt stays until touched.
-
 Machine-checked, repo-wide:
 
 - One `cfg_attr` per predicate per item: fold adjacent `#[cfg_attr(P, A)]` `#[cfg_attr(P, B)]` into `#[cfg_attr(P, A, B)]`.
