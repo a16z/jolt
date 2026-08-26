@@ -1,20 +1,19 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_window_mask_w::VirtualWindowMaskW, RISCVCycle};
+use tracer::instruction::{virtual_pext::VirtualPext, RISCVCycle};
 
-use crate::zkvm::lookup_table::{window_mask_w::WindowMaskWTable, LookupTables};
+use crate::zkvm::lookup_table::{pext::PextTable, LookupTables};
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualWindowMaskW {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualPext {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(WindowMaskWTable.into())
+        Some(PextTable.into())
     }
 }
 
-impl Flags for VirtualWindowMaskW {
+impl Flags for VirtualPext {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::AddOperands] = true;
         flags[CircuitFlags::WriteLookupOutputToRD] = true;
         flags[CircuitFlags::VirtualInstruction] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC] =
@@ -27,45 +26,39 @@ impl Flags for VirtualWindowMaskW {
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
         flags[InstructionFlags::LeftOperandIsRs1Value] = true;
-        flags[InstructionFlags::RightOperandIsImm] = true;
+        flags[InstructionFlags::RightOperandIsRs2Value] = true;
         flags
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualWindowMaskW> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualPext> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                self.instruction.operands.imm as u8 as u64 as i128,
+                self.register_state.rs2 as u8 as i128,
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                self.instruction.operands.imm as u32 as u64 as i128,
+                self.register_state.rs2 as u32 as i128,
             ),
-            64 => (
-                self.register_state.rs1,
-                self.instruction.operands.imm as i128,
-            ),
+            64 => (self.register_state.rs1, self.register_state.rs2 as i128),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
-    fn to_lookup_operands(&self) -> (u64, u128) {
-        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        (0, (x as i128 + y) as u128)
-    }
-
-    fn to_lookup_index(&self) -> u128 {
-        LookupQuery::<XLEN>::to_lookup_operands(self).1
-    }
-
     fn to_lookup_output(&self) -> u64 {
-        let index = LookupQuery::<XLEN>::to_lookup_index(self);
-        let half = XLEN / 2;
-        let mask = ((1u128 << half) - 1) as u64;
-        mask << (half as u32 * ((index >> 2) & 1) as u32)
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        let y = y as u64;
+
+        let mut pext = 0u64;
+        for i in (0..XLEN).rev() {
+            if (y >> i) & 1 == 1 {
+                pext = (pext << 1) | ((x >> i) & 1);
+            }
+        }
+        pext
     }
 }
 
@@ -80,11 +73,11 @@ mod test {
 
     #[test]
     fn materialize_entry() {
-        materialize_entry_test::<Fr, VirtualWindowMaskW>();
+        materialize_entry_test::<Fr, VirtualPext>();
     }
 
     #[test]
     fn lookup_output_matches_trace() {
-        lookup_output_matches_trace_test::<VirtualWindowMaskW>();
+        lookup_output_matches_trace_test::<VirtualPext>();
     }
 }
