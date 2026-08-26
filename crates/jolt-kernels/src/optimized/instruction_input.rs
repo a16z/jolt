@@ -107,28 +107,33 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
 
 /// The column state: native rows until the first bind, eight dense tables
 /// afterwards.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum InputState<F: JoltField> {
-    Native(Vec<InstructionInputRow>),
+    Native(
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        Vec<InstructionInputRow>,
+    ),
     Dense(Vec<Polynomial<F>>),
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct OptimizedInstructionInputKernel<F: JoltField> {
     progress: RoundProgress,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     state: InputState<F>,
     gruen: GruenSplitEqPolynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedInstructionInputKernel, |kernel| {
-    use crate::backend::{polys_heap_bytes, vec_heap_bytes};
-    let state = match &kernel.state {
-        InputState::Native(rows) => vec_heap_bytes(rows),
-        InputState::Dense(polys) => polys_heap_bytes(polys),
-    };
-    state + kernel.gruen.heap_bytes() + vec_heap_bytes(&kernel.bind_scratch)
-});
 
 /// `(value at t = 0, step)` of the pair's linear extension, as exact
 /// integers.
@@ -205,8 +210,8 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                     // even for full-range `i128` immediates.
                     let mut right =
                         S256::from_i128(i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m));
-                    right += S64::from_i64(f_imm * (1 - t)).mul_trunc::<3, 4>(&imm_even);
-                    right += S64::from_i64(f_imm * t).mul_trunc::<3, 4>(&imm_odd);
+                    S64::from_i64(f_imm * (1 - t)).fmadd_trunc::<3, 4>(&imm_even, &mut right);
+                    S64::from_i64(f_imm * t).fmadd_trunc::<3, 4>(&imm_odd, &mut right);
                     right_acc[t as usize].fmadd_s256(e_in, &right);
                     left_acc[t as usize].fmadd_s256(e_in, &S256::from_i128(left));
                 }
@@ -283,6 +288,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             InputState::Native(rows) => self.native_q_evals(rows),
             InputState::Dense(tables) => self.dense_q_evals(tables),
         };
+
         self.gruen
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
@@ -389,9 +395,10 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(InstructionInputPublic::EqProduct);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(InstructionInputPublic::EqProduct),
+            id,
             input_points,
             output_points,
             challenges,

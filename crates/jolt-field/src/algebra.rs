@@ -402,6 +402,16 @@ pub trait Accumulator: Default + Copy + Send + Sync {
         self.fmadd(a, Self::Element::from_i64(b));
     }
 
+    /// Fused multiply-add with a sign-and-magnitude `u64` scalar.
+    #[inline]
+    fn fmadd_signed_u64(&mut self, value: Self::Element, magnitude: u64, is_positive: bool) {
+        if is_positive {
+            self.fmadd_u64(value, magnitude);
+        } else {
+            self.fmadd_s256(value, &S256::new([magnitude, 0, 0, 0], false));
+        }
+    }
+
     /// Fused multiply-add with a signed 256-bit scalar.
     ///
     /// The fallback embeds the magnitude one limb at a time. Specialized

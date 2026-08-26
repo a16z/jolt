@@ -3248,8 +3248,10 @@ dependencies = [
 name = "jolt-akita"
 version = "0.1.0"
 dependencies = [
+ "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-field",
  "akita-pcs",
  "akita-planner",
  "akita-prover",
@@ -3678,6 +3680,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
@@ -3735,6 +3738,7 @@ dependencies = [
  "chrono",
  "clap",
  "common",
+ "jolt-akita",
  "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",

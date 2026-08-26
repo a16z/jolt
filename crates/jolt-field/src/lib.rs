@@ -91,6 +91,8 @@
 
 #[cfg(feature = "akita")]
 mod akita;
+#[cfg(feature = "akita")]
+mod akita_accumulators;
 mod algebra;
 #[cfg(feature = "bn254")]
 mod bn254;
@@ -104,6 +106,8 @@ pub mod signed;
 pub mod solinas;
 mod unreduced;
 
+#[cfg(feature = "akita")]
+pub use akita_accumulators::{AkitaAccumulator, AkitaSignedAccumulator};
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,

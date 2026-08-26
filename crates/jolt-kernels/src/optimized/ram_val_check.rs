@@ -38,6 +38,7 @@ use crate::{
 
 /// Lazy-RA index source over the full remapped RAM address (a single
 /// `K`-ary selector), cold on no-access cycles.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
     columns: Arc<RamAccessColumns>,
 }
@@ -97,19 +98,17 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: Polynomial<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,
     lt: SplitLt<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RamValCheckKernel, |kernel| {
-    crate::backend::poly_heap_bytes(&kernel.inc)
-        + kernel.ra.heap_bytes(|source| source.columns.heap_bytes())
-        + kernel.lt.heap_bytes()
-});
 
 impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
@@ -143,6 +142,7 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
             |y| self.ra.lo_hi(0, y),
             |y| self.lt.pair(y),
         );
+
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
 
@@ -181,9 +181,10 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
+            id,
             input_points,
             output_points,
             challenges,
