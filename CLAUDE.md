@@ -241,6 +241,30 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 - Alias an instruction-kind enum as `Kind` at emitter call sites and write `Kind::INSTRUCTION`; never qualify emitted instructions with `SourceInstructionKind`, `JoltInstructionKind`, or a module path.
 - Before PR handoff, audit every added test and helper. Remove development-only probes, ignored tests, temporary benchmarks, diagnostic counters or histograms, and one-off fuzz or parity scaffolding. Keep permanent tests only when they add a distinct failure signal beyond existing tests, golden fixtures, or CI. If a manual diagnostic is worth keeping, make it an intentional tool or benchmark with a documented command.
 
+### Style Invariants
+
+Distilled from maintainer style passes on #1732. `scripts/check_style_invariants.py` enforces the machine-checkable subset (CI job `style`); run it locally with `python3 scripts/check_style_invariants.py --base origin/main`. Diff-scoped rules apply to added lines only — pre-existing debt stays until touched.
+
+Machine-checked, repo-wide:
+
+- One `cfg_attr` per predicate per item: fold adjacent `#[cfg_attr(P, A)]` `#[cfg_attr(P, B)]` into `#[cfg_attr(P, A, B)]`.
+- `#[allocative(visit = ...)]` never decorates a container of primitives (`Vec<u32>`, `Vec<Vec<usize>>`, `Vec<Option<u8>>`, ...): allocative's native impls report strictly more (element type, unused capacity). The `jolt_poly::visit_scalars`/`visit_scalar_rows` helpers exist solely to dodge the `F: Allocative` bound on foreign-scalar containers.
+
+Machine-checked, added lines only:
+
+- A file that imports a path (`use a::b::C;`) never also spells `a::b::C` qualified. Qualified paths are for ambiguity, attribute arguments (`allocative(visit = jolt_poly::visit_scalars)`), and macro bodies — there the path is the interface.
+- `TODO`/`FIXME` carries an issue link: `TODO(#123):` or a full issue URL.
+
+Review-level (needs judgment; the checker cannot see these):
+
+- Don't introduce fully-qualified paths where an import would do — the checker only catches the import-plus-qualified inconsistency, not "should have imported". Restoring imports beats five-line `where`-clause wraps of `jolt_verifier::stages::relations::...`.
+- Derive trait impls instead of hand-rolling; exhaust derive escapes (`#[allocative(bound = "F: JoltField")]`, `visit = ...`, `skip`) before writing a manual impl. Hand-written impls drift from the struct (field renames, uncounted fields). Hand-write only what a derive cannot express, keep it local to the one type that needs it, and size buffers by `capacity()`, not `len()`.
+- A shared helper needs ≥2 callers; a helper with one caller gets inlined into its only user or hand-written locally.
+- No speculative lifecycle guards: don't wrap state in `RwLock<Option<...>>`-style locks for a release/failure step nothing exercises; delete unreachable error paths instead of making the hot path pay for them. (Lazy-init globals and error slots are fine — the test is whether the transition actually happens.)
+- Docs state enforcement honestly: never describe a property as constraint-enforced when it holds only for the honest encoder or under a `debug_assert`; name the mechanism and location that pins each invariant. If reviewers independently misread a deliberate gap (e.g. a vacuous sumcheck leg), the missing argument belongs in a comment.
+- Names track current semantics: when an encoding changes, rename its vocabulary (`UnsignedIncMsb` → `BalancedIncCarry`); no compatibility names.
+- `cfg`/`cfg_attr` gates only where the build actually needs them.
+
 ### Testing Guidelines
 
 - Do not add old-vs-new equivalence tests that reimplement the pre-change logic as the oracle. Transition-validation belongs in the PR process (byte-parity CI vs a living reference, one-off scripts), not the permanent suite. Permanent tests must assert against independent ground truth: spec vectors, golden fixtures, live reference paths (e.g. `jolt-kernels`' reference tier, the legacy-prover byte-parity suites), or properties. If the old code is deleted, its reimplementation in a test is dead weight — delete the test rather than keep the old logic alive inside it. A `#[cfg(test)]` copy of superseded production code "kept as the oracle" is the same anti-pattern.
