@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_program::execution::TraceRow;
 
 use super::{Extract, ToField, WitnessEnv};
@@ -17,7 +17,7 @@ pub struct Rs2Value(pub u64);
 pub struct RdWriteValue(pub u64);
 
 impl ToField for Rs1Value {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -33,7 +33,7 @@ impl Extract for Rs1Value {
 }
 
 impl ToField for Rs2Value {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -49,7 +49,7 @@ impl Extract for Rs2Value {
 }
 
 impl ToField for RdWriteValue {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }

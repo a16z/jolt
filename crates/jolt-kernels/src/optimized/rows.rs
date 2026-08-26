@@ -8,7 +8,7 @@
 #[cfg(feature = "parallel")]
 use core::ops::Range;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_program::execution::TraceRow;
 #[cfg(feature = "parallel")]
 use jolt_utils::{par_collect_windows, FirstErrorLatch};
@@ -34,7 +34,7 @@ pub(crate) struct RandomAccessRows<'a> {
 }
 
 impl<'a> RandomAccessRows<'a> {
-    pub(crate) fn new<F: Field>(
+    pub(crate) fn new<F: JoltField>(
         witness: &'a dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Option<Self>, WitnessError> {

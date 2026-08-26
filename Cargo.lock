@@ -1754,6 +1754,7 @@ version = "0.2.0"
 dependencies = [
  "allocative",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "bincode 2.0.1",
  "serde",
  "syn 2.0.119",
 ]
@@ -2272,9 +2273,9 @@ dependencies = [
 
 [[package]]
 name = "dory-pcs"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc655754c8ddb6b75f528efcfcddf2cd8db59bdea777de157400d642048bd2f4"
+checksum = "065945e9fff3c7dac5d6f72f8260eac82ad577e7c7009b6290847d1252d14d78"
 dependencies = [
  "ark-bn254 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3424,25 +3425,10 @@ dependencies = [
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-std 0.5.0",
+ "bincode 2.0.1",
+ "cc",
  "criterion",
- "num-traits",
- "rand 0.8.7",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "serde",
-]
-
-[[package]]
-name = "jolt-hyperkzg"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "jolt-crypto",
- "jolt-field",
- "jolt-openings",
- "jolt-poly",
- "jolt-transcript",
+ "num-bigint",
  "num-traits",
  "rand 0.8.7",
  "rand_chacha 0.3.1",
@@ -3450,7 +3436,6 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -3648,7 +3633,6 @@ dependencies = [
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
- "jolt-hyperkzg",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.7",
@@ -3768,6 +3752,7 @@ dependencies = [
  "jolt-witness",
  "postcard",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -7142,6 +7127,7 @@ dependencies = [
  "paste",
  "postcard",
  "rand 0.8.7",
+ "rayon",
  "serde",
  "serde_json",
  "strum 0.28.0",

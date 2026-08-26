@@ -19,7 +19,7 @@ use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
 #[cfg(all(not(feature = "akita"), not(feature = "zk")))]
-use jolt_field::FromPrimitiveInt;
+use jolt_field::Ring;
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::LegacyBlake2bTranscript;
 

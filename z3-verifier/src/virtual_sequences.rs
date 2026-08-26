@@ -53,11 +53,10 @@ use tracer::{
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
         virtual_assert_word_alignment::VirtualAssertWordAlignment,
-        virtual_change_divisor::VirtualChangeDivisor,
-        virtual_change_divisor_w::VirtualChangeDivisorW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
         virtual_muliw::VirtualMULIW,
+        virtual_negate_if::VirtualNegateIf,
         virtual_pext_signed::VirtualPextSigned,
         virtual_pow2::VirtualPow2,
         virtual_pow2_w::VirtualPow2W,
@@ -375,27 +374,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
             cpu.asserts.push(addr.extract(1, 0).eq(0))
         }
-        Instruction::VirtualChangeDivisor(VirtualChangeDivisor { operands, .. }) => {
+        Instruction::VirtualNegateIf(VirtualNegateIf { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
-            let dividend = rs1;
-            let divisor = rs2;
-            let min = SymbolicCpu::signed_min(cpu.bv_bits);
-            let ones = cpu.bv_ones();
-            cpu.x[operands.rd as usize] =
-                (dividend.eq(&min) & divisor.eq(&ones)).ite(&BV::from_u64(1, cpu.bv_bits), &divisor)
-        }
-        Instruction::VirtualChangeDivisorW(VirtualChangeDivisorW { operands, .. }) => {
-            let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let rs2 = cpu.x[operands.rs2 as usize].clone();
-            let dividend = rs1.extract(cpu.word_bits - 1, 0);
-            let divisor = rs2.extract(cpu.word_bits - 1, 0);
-            let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-            let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
-            cpu.x[operands.rd as usize] = (dividend.eq(&word_min) & divisor.eq(&word_ones)).ite(
-                &BV::from_u64(1, cpu.bv_bits),
-                &divisor.sign_ext(cpu.bv_bits - cpu.word_bits),
-            )
+            let sign = rs1.extract(cpu.bv_bits - 1, cpu.bv_bits - 1);
+            cpu.x[operands.rd as usize] = sign.eq(1).ite(&rs2.bvneg(), &rs2)
         }
         Instruction::VirtualMovsign(VirtualMovsign { operands, .. }) => {
             let val = cpu.x[operands.rs1 as usize].clone();

@@ -9,7 +9,7 @@ pub(super) fn add_stage4<F, PCS, VC, ZkProof>(
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone,

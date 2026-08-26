@@ -20,7 +20,7 @@
 //! commits delegate to the reference kernel unchanged.
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use crate::commitment::{finish_streamed, finish_streamed_one_hot, ModeStreamingCommitment};
@@ -74,7 +74,7 @@ fn superchunk_cycles() -> usize {
 
 impl<F, PCS> CommitWitness<F, PCS> for OptimizedBackend
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     // The backend-neutral `commit_witness` span lives at the stage-0 call
@@ -125,7 +125,7 @@ fn commit_streaming<F, PCS>(
     superchunk_cycles: usize,
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
@@ -154,7 +154,7 @@ fn commit_streamed<F, PCS>(
     superchunk: usize,
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
@@ -185,7 +185,7 @@ fn commit_pipelined<F, PCS>(
     superchunk: usize,
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
@@ -253,14 +253,15 @@ enum ColumnCommitState<PCS: ModeStreamingCommitment> {
 /// The superchunked commit consumer: every column advances over the same
 /// window sequence as the reference kernel, columns in parallel and windows
 /// in parallel inside each batch call.
-struct BatchedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> {
+struct BatchedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
+{
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     row_width: usize,
     setup: &'a PCS::ProverSetup,
 }
 
-impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
     BatchedColumns<'a, F, PCS>
 {
     fn begin(
@@ -313,7 +314,7 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
     }
 }
 
-impl<F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> StreamConsumer
+impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> StreamConsumer
     for BatchedColumns<'_, F, PCS>
 {
     type Witness = CommittedColumnsWitness;

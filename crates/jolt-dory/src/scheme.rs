@@ -623,7 +623,7 @@ mod tests {
 
     use super::*;
     use jolt_crypto::{Pedersen, VectorCommitment};
-    use jolt_field::{FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Ring};
     use jolt_poly::Polynomial;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -638,7 +638,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -703,10 +703,7 @@ mod tests {
 
         let combined = DoryScheme::combine(
             &[commit_a, commit_b],
-            &[
-                <Fr as FromPrimitiveInt>::from_u64(1),
-                <Fr as FromPrimitiveInt>::from_u64(1),
-            ],
+            &[<Fr as Ring>::from_u64(1), <Fr as Ring>::from_u64(1)],
         );
 
         assert_eq!(
@@ -725,7 +722,7 @@ mod tests {
 
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
 
@@ -768,11 +765,11 @@ mod tests {
         );
 
         let values = vec![
-            <Fr as FromPrimitiveInt>::from_u64(1),
-            <Fr as FromPrimitiveInt>::from_u64(2),
-            <Fr as FromPrimitiveInt>::from_u64(3),
+            <Fr as Ring>::from_u64(1),
+            <Fr as Ring>::from_u64(2),
+            <Fr as Ring>::from_u64(3),
         ];
-        let blinding = <Fr as FromPrimitiveInt>::from_u64(42);
+        let blinding = <Fr as Ring>::from_u64(42);
         let commitment =
             <Pedersen<Bn254G1> as VectorCommitment>::commit(&vc_setup, &values, &blinding);
         assert!(<Pedersen<Bn254G1> as VectorCommitment>::verify(

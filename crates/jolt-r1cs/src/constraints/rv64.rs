@@ -436,7 +436,7 @@ pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use num_traits::Zero;
 
     /// A no-op cycle: const=1, all else zero. All eq-conditional guards

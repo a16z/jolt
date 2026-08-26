@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::{JoltWitnessOracle, Shape, WitnessError};
 
@@ -58,7 +58,7 @@ impl<F> FixedBackend<F> {
     }
 }
 
-impl<F: Field> JoltWitnessOracle<F> for FixedBackend<F> {
+impl<F: JoltField> JoltWitnessOracle<F> for FixedBackend<F> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         self.column(id).map(|(shape, _)| *shape)
     }
@@ -76,7 +76,7 @@ impl<F: Field> JoltWitnessOracle<F> for FixedBackend<F> {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::JoltVirtualPolynomial;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     use super::*;
     use crate::PolynomialEncoding;

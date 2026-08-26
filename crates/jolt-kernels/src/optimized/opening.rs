@@ -46,7 +46,7 @@ use std::sync::Mutex;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
@@ -74,7 +74,7 @@ const COLLECT_CHUNK: usize = 1 << 12;
 #[cfg(feature = "parallel")]
 const MIN_RANGE: usize = 1 << 12;
 
-impl<F: Field> JointOpeningPolynomials<F> for OptimizedBackend {
+impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
     #[tracing::instrument(
         skip_all,
         name = "OptimizedJointOpening::prepare",
@@ -183,7 +183,7 @@ pub(crate) struct OpeningColumns {
 }
 
 impl OpeningColumns {
-    fn collect<F: Field>(
+    fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
@@ -218,7 +218,7 @@ impl OpeningColumns {
     /// to the streaming pass — extraction is pure per cycle window, and
     /// every slot is written).
     #[cfg(feature = "parallel")]
-    fn collect_par<F: Field>(
+    fn collect_par<F: JoltField>(
         access: &RandomAccessRows<'_>,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
@@ -379,7 +379,7 @@ impl TracePlacement {
 /// Fold `total` source slots into a `num_cols`-sized accumulator through
 /// `fill`, splitting into per-thread partial accumulators when parallel.
 /// Field addition is exact, so the merge order cannot change the values.
-fn scatter_fold<F: Field>(
+fn scatter_fold<F: JoltField>(
     total: usize,
     num_cols: usize,
     fill: impl Fn(Range<usize>, &mut [F]) + Send + Sync,
@@ -406,7 +406,7 @@ fn scatter_fold<F: Field>(
 
 /// Sum a per-slot contribution over `total` source slots, in parallel when
 /// worthwhile.
-fn scatter_sum<F: Field>(total: usize, sum: impl Fn(Range<usize>) -> F + Send + Sync) -> F {
+fn scatter_sum<F: JoltField>(total: usize, sum: impl Fn(Range<usize>) -> F + Send + Sync) -> F {
     #[cfg(feature = "parallel")]
     if total > MIN_RANGE {
         let ranges = split_ranges(total);
@@ -436,14 +436,14 @@ fn split_ranges(total: usize) -> Vec<Range<usize>> {
 /// One committed trace polynomial as a lazy view over the shared columns:
 /// per cycle one hot grid index (one-hot kinds) or one increment value at
 /// address slot zero (dense kinds).
-struct TraceOpeningPoly<F: Field> {
+struct TraceOpeningPoly<F: JoltField> {
     columns: Arc<OpeningColumns>,
     kind: ColumnKind,
     placement: TracePlacement,
     _field: PhantomData<F>,
 }
 
-impl<F: Field> TraceOpeningPoly<F> {
+impl<F: JoltField> TraceOpeningPoly<F> {
     /// The cycle's grid entry, `None` when the cycle contributes nothing
     /// (cold one-hot cycle, zero increment).
     #[inline]
@@ -462,7 +462,7 @@ impl<F: Field> TraceOpeningPoly<F> {
     }
 }
 
-impl<F: Field> MultilinearPoly<F> for TraceOpeningPoly<F> {
+impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
     fn num_vars(&self) -> usize {
         self.placement.total_vars
     }
@@ -518,14 +518,14 @@ impl<F: Field> MultilinearPoly<F> for TraceOpeningPoly<F> {
 /// its own balanced `(2^{ν_p} × 2^{σ_p})` matrix lands row-aligned in the
 /// grid matrix — coefficient `r · 2^{σ_p} + c` at grid index
 /// `r · 2^{σ_grid} + c`.
-struct BlockOpeningPoly<F: Field> {
+struct BlockOpeningPoly<F: JoltField> {
     table: Vec<F>,
     sigma_table: usize,
     sigma_grid: usize,
     total_vars: usize,
 }
 
-impl<F: Field> BlockOpeningPoly<F> {
+impl<F: JoltField> BlockOpeningPoly<F> {
     fn new(
         table: Vec<F>,
         grid: CommitmentGrid,
@@ -562,7 +562,7 @@ impl<F: Field> BlockOpeningPoly<F> {
     }
 }
 
-impl<F: Field> MultilinearPoly<F> for BlockOpeningPoly<F> {
+impl<F: JoltField> MultilinearPoly<F> for BlockOpeningPoly<F> {
     fn num_vars(&self) -> usize {
         self.total_vars
     }
@@ -620,7 +620,7 @@ impl<F: Field> MultilinearPoly<F> for BlockOpeningPoly<F> {
 /// 2^n)` time, `O(N + 2^σ)` space. The batch opening never calls this
 /// (it drives `fold_rows`); it serves the general [`MultilinearPoly`]
 /// contract (`to_dense`, tests).
-fn emit_sorted_rows<F: Field>(
+fn emit_sorted_rows<F: JoltField>(
     mut entries: Vec<(usize, F)>,
     num_vars: usize,
     sigma: usize,

@@ -32,3 +32,6 @@ declare_xorrotw!(VirtualXORROTW16, 16);
 declare_xorrotw!(VirtualXORROTW12, 12);
 declare_xorrotw!(VirtualXORROTW8, 8);
 declare_xorrotw!(VirtualXORROTW7, 7);
+declare_xorrotw!(VirtualXORROTW22, 22);
+declare_xorrotw!(VirtualXORROTW19, 19);
+declare_xorrotw!(VirtualXORROTW6, 6);

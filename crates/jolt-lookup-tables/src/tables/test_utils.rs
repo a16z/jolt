@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use rand::prelude::*;
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -9,7 +9,32 @@ use crate::tables::suffixes::SuffixEval;
 use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 
-pub fn index_to_field_bitvector<F: Field + ChallengeOps<F>>(value: u128, bits: usize) -> Vec<F> {
+pub fn gen_bitmask_lookup_index<const XLEN: usize>(rng: &mut StdRng) -> u128 {
+    let mask = ((1u128 << XLEN) - 1) as u64;
+    let x = rng.next_u64() & mask;
+    let zeros = rng.gen_range(0..=XLEN);
+    let y_full = (!0u64).wrapping_shl(zeros as u32);
+    let y = y_full & mask;
+    interleave_bits(x, y)
+}
+
+pub fn gen_bitmask_w_lookup_index<const XLEN: usize>(rng: &mut StdRng) -> u128 {
+    let x_mask = if XLEN == 64 {
+        u64::MAX
+    } else {
+        (1u64 << XLEN) - 1
+    };
+    let half = XLEN / 2;
+    let x = rng.next_u64() & x_mask;
+    let shift = rng.gen_range(0..half);
+    let y = ((1u128 << half) - (1u128 << shift)) as u64;
+    interleave_bits(x, y)
+}
+
+pub fn index_to_field_bitvector<F: JoltField + ChallengeOps<F>>(
+    value: u128,
+    bits: usize,
+) -> Vec<F> {
     if bits != 128 {
         assert!(value < 1u128 << bits);
     }
@@ -24,15 +49,6 @@ pub fn index_to_field_bitvector<F: Field + ChallengeOps<F>>(value: u128, bits: u
     bitvector
 }
 
-pub fn gen_bitmask_lookup_index<const XLEN: usize>(rng: &mut StdRng) -> u128 {
-    let mask = ((1u128 << XLEN) - 1) as u64;
-    let x = rng.next_u64() & mask;
-    let zeros = rng.gen_range(0..=XLEN);
-    let y_full = (!0u64).wrapping_shl(zeros as u32);
-    let y = y_full & mask;
-    interleave_bits(x, y)
-}
-
 /// Verify the MLE of `T` agrees with `materialize_entry` on every point of
 /// the boolean hypercube `{0, 1}^(2*XLEN)`.
 ///
@@ -40,7 +56,7 @@ pub fn gen_bitmask_lookup_index<const XLEN: usize>(rng: &mut StdRng) -> u128 {
 /// has `2^16` entries.
 pub fn mle_full_hypercube_test<const XLEN: usize, F, T>()
 where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
+    F: JoltField + FieldOps<F> + ChallengeOps<F>,
     T: LookupTable + Default,
 {
     assert!(
@@ -59,7 +75,7 @@ where
 
 pub fn mle_random_test<const XLEN: usize, F, T>()
 where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
+    F: JoltField + FieldOps<F> + ChallengeOps<F>,
     T: LookupTable + Default,
 {
     let mut rng = StdRng::seed_from_u64(12345);
@@ -87,7 +103,7 @@ where
 /// corresponding (partially random) evaluation point.
 pub fn prefix_suffix_test<const XLEN: usize, F, T>()
 where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
+    F: JoltField + FieldOps<F> + ChallengeOps<F>,
     T: PrefixSuffixDecomposition<XLEN>,
 {
     prefix_suffix_materialization_test::<XLEN, F, T>(16, 3);
@@ -101,7 +117,7 @@ pub fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
     rounds_per_phase: usize,
     num_runs: usize,
 ) where
-    F: Field + FieldOps<F> + ChallengeOps<F>,
+    F: JoltField + FieldOps<F> + ChallengeOps<F>,
     T: PrefixSuffixDecomposition<XLEN>,
 {
     let total_bits = XLEN * 2;
@@ -219,7 +235,7 @@ pub fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
 }
 
 #[expect(clippy::expect_used, reason = "writing to a String cannot fail")]
-fn format_prefix_evals<F: Field>(evals: &[PrefixEval<F>]) -> String {
+fn format_prefix_evals<F: JoltField>(evals: &[PrefixEval<F>]) -> String {
     use std::fmt::Write;
 
     let mut out = String::new();

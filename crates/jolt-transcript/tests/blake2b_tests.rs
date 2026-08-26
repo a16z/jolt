@@ -2,7 +2,7 @@
 
 mod common;
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_transcript::Blake2bTranscript;
 
 type B2b = Blake2bTranscript<Fr>;

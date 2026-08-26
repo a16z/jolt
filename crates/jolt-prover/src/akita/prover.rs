@@ -4,7 +4,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalBytes, Field};
+use jolt_field::{CanonicalBytes, JoltField};
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
@@ -38,7 +38,7 @@ pub fn prove<F, PCS, VC, T, W>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: Field + CanonicalBytes + AppendToTranscript,
+    F: JoltField + CanonicalBytes + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript,

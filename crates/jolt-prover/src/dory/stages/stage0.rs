@@ -12,7 +12,7 @@ use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment};
@@ -69,7 +69,7 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,

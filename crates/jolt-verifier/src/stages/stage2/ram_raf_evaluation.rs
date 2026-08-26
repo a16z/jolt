@@ -17,7 +17,7 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RamRafEvaluationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -26,7 +26,7 @@ use crate::VerifierError;
 
 /// Wire the consumed RAM address opening *value* from stage 1's outer sumcheck.
 /// (Verifier-side constructor for the moved [`RamRafEvaluationInputClaims`].)
-pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
+pub fn ram_raf_evaluation_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> RamRafEvaluationInputClaims<F> {
     RamRafEvaluationInputClaims {
@@ -35,7 +35,7 @@ pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RamRafEvaluation<F: Field> {
+pub struct RamRafEvaluation<F: JoltField> {
     symbolic: relations::ram::RafEvaluation,
     read_write_dimensions: ReadWriteDimensions,
     ram_log_k: usize,
@@ -43,7 +43,7 @@ pub struct RamRafEvaluation<F: Field> {
     tau_low: Vec<F>,
 }
 
-impl<F: Field> RamRafEvaluation<F> {
+impl<F: JoltField> RamRafEvaluation<F> {
     pub fn new(
         read_write_dimensions: ReadWriteDimensions,
         raf_dimensions: RamRafEvaluationDimensions,
@@ -68,7 +68,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> RamRafEvaluation<F> {
+impl<F: JoltField> RamRafEvaluation<F> {
     pub fn read_write_dimensions(&self) -> ReadWriteDimensions {
         self.read_write_dimensions
     }
@@ -86,7 +86,7 @@ impl<F: Field> RamRafEvaluation<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamRafEvaluation<F> {
     type Symbolic = relations::ram::RafEvaluation;
 
     fn symbolic(&self) -> &Self::Symbolic {
