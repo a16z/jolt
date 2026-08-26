@@ -448,8 +448,7 @@ impl TraceBackedFieldInlineWitness {
                 Ok(Shape::new(self.trace_log_rows(), PolynomialEncoding::Dense))
             }
             FieldInlinePolynomialId::Committed(
-                FieldInlineCommittedPolynomial::FieldIncLimbDigit { .. }
-                | FieldInlineCommittedPolynomial::FieldIncLimbCarry { .. },
+                FieldInlineCommittedPolynomial::FieldIncLimbColumn(_),
             ) => Err(WitnessError::NotServed {
                 oracle: format!("{id:?}"),
                 reason: "field-inc limb columns exist only on the packed commitment axis",
@@ -483,8 +482,7 @@ impl TraceBackedFieldInlineWitness {
             // Unreachable past `shape` (which rejects the packed-axis limb
             // columns), restated so the id map stays exhaustive.
             FieldInlinePolynomialId::Committed(
-                FieldInlineCommittedPolynomial::FieldIncLimbDigit { .. }
-                | FieldInlineCommittedPolynomial::FieldIncLimbCarry { .. },
+                FieldInlineCommittedPolynomial::FieldIncLimbColumn(_),
             ) => Err(WitnessError::NotServed {
                 oracle: format!("{id:?}"),
                 reason: "field-inc limb columns exist only on the packed commitment axis",

@@ -61,25 +61,80 @@ pub fn limb_place_value<F: Ring>(limb: usize) -> F {
     F::pow2(FIELD_INC_LIMB_BITS * limb)
 }
 
+/// The (limb, position) role of flat column `index` in the canonical
+/// limb-major layout: positions `0..chunk_count` are the limb's little-endian
+/// balanced digits, position `chunk_count` its signed carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldIncLimbColumnRole {
+    Digit { limb: usize, index: usize },
+    Carry { limb: usize },
+}
+
+/// Split a flat column index into its layout role. Total — the caller bounds
+/// the index by the shape's column count ([`super::field_inc_limb_columns`]).
+pub fn column_role(chunking: BalancedIncChunking, index: usize) -> FieldIncLimbColumnRole {
+    let group = chunking.chunk_count() + 1;
+    let limb = index / group;
+    let position = index % group;
+    if position < chunking.chunk_count() {
+        FieldIncLimbColumnRole::Digit {
+            limb,
+            index: position,
+        }
+    } else {
+        FieldIncLimbColumnRole::Carry { limb }
+    }
+}
+
 /// The coefficient of one committed limb column in the single linear
 /// recomposition of `FieldRdInc` from its balanced digit/carry columns:
 /// digit `(i, j) ↦ 2^(64·i) · 2^(w·j)` and carry `i ↦ 2^(64·i) · 2^64`, so
 /// that `FieldRdInc(cycle) = Σ_column coefficient · value(hot row)` under the
 /// shared centered value map ([`crate::lattice::balanced_inc_value`]).
-/// `None` for ids outside the limb decomposition or digits past the
-/// chunking's window.
+/// `None` for ids outside the `limbs`-limb layout.
 pub fn recomposition_coefficient<F: Ring>(
     chunking: BalancedIncChunking,
+    limbs: usize,
     polynomial: FieldInlineCommittedPolynomial,
 ) -> Option<F> {
     match polynomial {
-        FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb, index } => (index
-            < chunking.chunk_count())
-        .then(|| limb_place_value::<F>(limb) * chunking.place_value::<F>(index)),
-        FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb } => {
-            Some(limb_place_value::<F>(limb) * F::pow2(FIELD_INC_LIMB_BITS))
+        FieldInlineCommittedPolynomial::FieldIncLimbColumn(column) => {
+            if column >= limbs * (chunking.chunk_count() + 1) {
+                return None;
+            }
+            Some(match column_role(chunking, column) {
+                FieldIncLimbColumnRole::Digit { limb, index } => {
+                    limb_place_value::<F>(limb) * chunking.place_value::<F>(index)
+                }
+                FieldIncLimbColumnRole::Carry { limb } => {
+                    limb_place_value::<F>(limb) * F::pow2(FIELD_INC_LIMB_BITS)
+                }
+            })
         }
         FieldInlineCommittedPolynomial::FieldRdInc => None,
+    }
+}
+
+/// The honest encoder of one flat column: the one-hot row it selects for the
+/// canonical `limbs` of a `FieldRdInc` value, through the shared balanced
+/// digit/carry encoders. `None` for ids outside the layout the limb slice
+/// spans.
+pub fn column_selected_row(
+    chunking: BalancedIncChunking,
+    limbs: &[u64],
+    polynomial: FieldInlineCommittedPolynomial,
+) -> Option<usize> {
+    let FieldInlineCommittedPolynomial::FieldIncLimbColumn(column) = polynomial else {
+        return None;
+    };
+    let width = chunking.chunk_width();
+    match column_role(chunking, column) {
+        FieldIncLimbColumnRole::Digit { limb, index } => limbs
+            .get(limb)
+            .map(|limb| crate::lattice::balanced_digit_row(i128::from(*limb), width, index)),
+        FieldIncLimbColumnRole::Carry { limb } => limbs
+            .get(limb)
+            .map(|limb| crate::lattice::balanced_carry_row(i128::from(*limb), width)),
     }
 }
 
@@ -118,17 +173,9 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|column| {
-                let row = match column {
-                    FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb, index } => {
-                        balanced_digit_row(limbs[limb] as i128, log_k_chunk, index)
-                    }
-                    FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb } => {
-                        balanced_carry_row(limbs[limb] as i128, log_k_chunk)
-                    }
-                    FieldInlineCommittedPolynomial::FieldRdInc => unreachable!("not a limb column"),
-                };
+                let row = column_selected_row(chunking, &limbs, column).unwrap();
                 assert!(row < 1 << log_k_chunk);
-                recomposition_coefficient::<Fr>(chunking, column).unwrap()
+                recomposition_coefficient::<Fr>(chunking, shape.limbs, column).unwrap()
                     * balanced_inc_value(&boolean_point_msb::<Fr>(log_k_chunk, row))
             })
             .sum()
@@ -177,15 +224,51 @@ mod tests {
     fn recomposition_coefficient_is_none_off_the_limb_columns() {
         let chunking = BalancedIncChunking::new(8).unwrap();
         assert_eq!(
-            recomposition_coefficient::<Fr>(chunking, FieldInlineCommittedPolynomial::FieldRdInc),
+            recomposition_coefficient::<Fr>(
+                chunking,
+                2,
+                FieldInlineCommittedPolynomial::FieldRdInc
+            ),
             None
         );
+        // Column 18 is the first index past a two-limb layout at width 8
+        // (two groups of 8 digits + 1 carry).
         assert_eq!(
             recomposition_coefficient::<Fr>(
                 chunking,
-                FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb: 0, index: 8 },
+                2,
+                FieldInlineCommittedPolynomial::FieldIncLimbColumn(18),
             ),
             None
+        );
+        assert!(recomposition_coefficient::<Fr>(
+            chunking,
+            2,
+            FieldInlineCommittedPolynomial::FieldIncLimbColumn(17),
+        )
+        .is_some());
+    }
+
+    /// Flat indices split limb-major: digits little-endian, the limb's carry
+    /// last, exactly the [`super::packing::field_inc_limb_columns`] order.
+    #[test]
+    fn column_roles_split_limb_major() {
+        let chunking = BalancedIncChunking::new(8).unwrap();
+        assert_eq!(
+            column_role(chunking, 0),
+            FieldIncLimbColumnRole::Digit { limb: 0, index: 0 }
+        );
+        assert_eq!(
+            column_role(chunking, 8),
+            FieldIncLimbColumnRole::Carry { limb: 0 }
+        );
+        assert_eq!(
+            column_role(chunking, 9),
+            FieldIncLimbColumnRole::Digit { limb: 1, index: 0 }
+        );
+        assert_eq!(
+            column_role(chunking, 17),
+            FieldIncLimbColumnRole::Carry { limb: 1 }
         );
     }
 }

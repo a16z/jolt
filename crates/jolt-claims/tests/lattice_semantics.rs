@@ -499,11 +499,10 @@ fn advice_bytes_reconstruct_words_and_keep_hamming_one() {
 #[test]
 #[expect(clippy::unwrap_used)]
 fn field_inc_limb_columns_recompose_field_rd_inc_at_random_points() {
-    use jolt_claims::lattice::{balanced_carry_row, balanced_digit_row};
     use jolt_claims::protocols::field_inline::lattice::{
-        canonical_limbs, field_inc_limb_columns, recomposition_coefficient, FieldIncLimbShape,
+        canonical_limbs, column_selected_row, field_inc_limb_columns, recomposition_coefficient,
+        FieldIncLimbShape,
     };
-    use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
     use jolt_field::Field;
 
     let log_t = 3;
@@ -533,18 +532,7 @@ fn field_inc_limb_columns_recompose_field_rd_inc_at_random_points() {
     for column in field_inc_limb_columns(&shape).unwrap() {
         let hot: Vec<usize> = values
             .iter()
-            .map(|value| {
-                let limbs = canonical_limbs(value);
-                match column {
-                    FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb, index } => {
-                        balanced_digit_row(limbs[limb] as i128, log_k_chunk, index)
-                    }
-                    FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb } => {
-                        balanced_carry_row(limbs[limb] as i128, log_k_chunk)
-                    }
-                    FieldInlineCommittedPolynomial::FieldRdInc => unreachable!("not a limb column"),
-                }
-            })
+            .map(|value| column_selected_row(chunking, &canonical_limbs(value), column).unwrap())
             .collect();
         let evals = digit_zero_evals(log_k_chunk, log_t, &hot);
         let decoded: Fr = (0..1usize << log_k_chunk)
@@ -555,7 +543,8 @@ fn field_inc_limb_columns_recompose_field_rd_inc_at_random_points() {
                 balanced_inc_value(&boolean_point_msb::<Fr>(log_k_chunk, addr)) * bound
             })
             .sum();
-        reconstructed += recomposition_coefficient::<Fr>(chunking, column).unwrap() * decoded;
+        reconstructed +=
+            recomposition_coefficient::<Fr>(chunking, shape.limbs, column).unwrap() * decoded;
     }
 
     assert_eq!(reconstructed, eval_mle(&values, &r_cycle));

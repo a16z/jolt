@@ -30,7 +30,7 @@ pub struct FieldIncLimbShape {
 
 /// The canonical ordered limb columns: limb-major, digits little-endian, the
 /// limb's carry last — each limb group is the fused-inc column order applied
-/// to that limb.
+/// to that limb ([`super::geometry::column_role`] is the index split).
 pub fn field_inc_limb_columns(
     shape: &FieldIncLimbShape,
 ) -> Result<Vec<FieldInlineCommittedPolynomial>, FieldIncLimbGeometryError> {
@@ -38,15 +38,9 @@ pub fn field_inc_limb_columns(
         return Err(FieldIncLimbGeometryError::ZeroLimbCount);
     }
     let chunking = BalancedIncChunking::new(shape.log_k_chunk)?;
-    let mut columns = Vec::with_capacity(shape.limbs * (chunking.chunk_count() + 1));
-    for limb in 0..shape.limbs {
-        columns.extend(
-            (0..chunking.chunk_count())
-                .map(|index| FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb, index }),
-        );
-        columns.push(FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb });
-    }
-    Ok(columns)
+    Ok((0..shape.limbs * (chunking.chunk_count() + 1))
+        .map(FieldInlineCommittedPolynomial::FieldIncLimbColumn)
+        .collect())
 }
 
 /// Canonical column order and packed geometry of the FR limb object. Slot
@@ -136,22 +130,12 @@ fn layout_digest(
     append_usize(&mut hasher, shape.log_t);
     append_usize(&mut hasher, shape.log_k_chunk);
     for column in packing.ids() {
-        match column {
-            FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb, index } => {
-                hasher.update([0]);
-                append_usize(&mut hasher, *limb);
-                append_usize(&mut hasher, *index);
-            }
-            FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb } => {
-                hasher.update([1]);
-                append_usize(&mut hasher, *limb);
-            }
-            FieldInlineCommittedPolynomial::FieldRdInc => {
-                return Err(OpeningsError::InvalidBatch(
-                    "non-limb polynomial in the field-inc limb layout".to_owned(),
-                ));
-            }
-        }
+        let FieldInlineCommittedPolynomial::FieldIncLimbColumn(index) = column else {
+            return Err(OpeningsError::InvalidBatch(
+                "non-limb polynomial in the field-inc limb layout".to_owned(),
+            ));
+        };
+        append_usize(&mut hasher, *index);
     }
     Ok(hasher.finalize().into())
 }
@@ -176,23 +160,27 @@ mod tests {
 
     #[test]
     fn columns_are_limb_major_digits_then_carry() {
+        use super::super::geometry::{column_role, FieldIncLimbColumnRole};
+        use crate::lattice::BalancedIncChunking;
+
         let columns = field_inc_limb_columns(&shape(2, 5, 8)).unwrap();
         assert_eq!(columns.len(), 2 * 9);
         assert_eq!(
             columns.first(),
-            Some(&FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb: 0, index: 0 })
-        );
-        assert_eq!(
-            columns.get(8),
-            Some(&FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb: 0 })
-        );
-        assert_eq!(
-            columns.get(9),
-            Some(&FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb: 1, index: 0 })
+            Some(&FieldInlineCommittedPolynomial::FieldIncLimbColumn(0))
         );
         assert_eq!(
             columns.last(),
-            Some(&FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb: 1 })
+            Some(&FieldInlineCommittedPolynomial::FieldIncLimbColumn(17))
+        );
+        let chunking = BalancedIncChunking::new(8).unwrap();
+        assert_eq!(
+            column_role(chunking, 8),
+            FieldIncLimbColumnRole::Carry { limb: 0 }
+        );
+        assert_eq!(
+            column_role(chunking, 9),
+            FieldIncLimbColumnRole::Digit { limb: 1, index: 0 }
         );
         assert_eq!(
             field_inc_limb_columns(&shape(0, 5, 8)),
@@ -241,9 +229,11 @@ mod tests {
             .into_iter()
             .map(Fr::from_u64)
             .collect::<Vec<_>>();
+        // Column 33 = limb 1's first digit, column 32 = limb 0's carry
+        // (width 2 -> 32 digits + 1 carry per limb).
         for polynomial in [
-            FieldInlineCommittedPolynomial::FieldIncLimbDigit { limb: 1, index: 0 },
-            FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb: 0 },
+            FieldInlineCommittedPolynomial::FieldIncLimbColumn(33),
+            FieldInlineCommittedPolynomial::FieldIncLimbColumn(32),
         ] {
             assert_eq!(plan.column_point(polynomial, &leaf).unwrap(), expected);
         }
@@ -252,8 +242,8 @@ mod tests {
             .is_err());
         assert!(plan
             .column_point(
-                FieldInlineCommittedPolynomial::FieldIncLimbCarry { limb: 0 },
-                &leaf[..1],
+                FieldInlineCommittedPolynomial::FieldIncLimbColumn(2),
+                &leaf[..1]
             )
             .is_err());
     }

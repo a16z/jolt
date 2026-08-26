@@ -11,9 +11,16 @@
 
 pub mod geometry;
 pub mod packing;
+pub mod reconstruction;
 
 pub use geometry::{
-    canonical_limbs, field_inc_limb_count, limb_place_value, recomposition_coefficient,
-    FieldIncLimbGeometryError, FIELD_INC_LIMB_BITS,
+    canonical_limbs, column_role, column_selected_row, field_inc_limb_count, limb_place_value,
+    recomposition_coefficient, FieldIncLimbColumnRole, FieldIncLimbGeometryError,
+    FIELD_INC_LIMB_BITS,
 };
 pub use packing::{field_inc_limb_columns, FieldIncLimbPackingPlan, FieldIncLimbShape};
+pub use reconstruction::{
+    field_inc_limb_column_opening, FieldIncLimbReconstruction,
+    FieldIncLimbReconstructionChallenges, FieldIncLimbReconstructionInputClaims,
+    FieldIncLimbReconstructionOutputClaims,
+};

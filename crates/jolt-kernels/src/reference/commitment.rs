@@ -275,8 +275,7 @@ pub(crate) fn column_kinds<F: JoltField, Id: Copy + Into<CommittedColumnId>>(
             }
             #[cfg(feature = "field-inline")]
             CommittedColumnId::FieldInline(
-                id @ (FieldInlineCommittedPolynomial::FieldIncLimbDigit { .. }
-                | FieldInlineCommittedPolynomial::FieldIncLimbCarry { .. }),
+                id @ FieldInlineCommittedPolynomial::FieldIncLimbColumn(_),
             ) => Err(KernelError::InvalidGeometry {
                 reason: format!(
                     "{id:?} exists only on the packed commitment axis, not the streaming grid"
