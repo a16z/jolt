@@ -135,7 +135,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
-    allocative(bound = "F")
+    allocative(bound = "F: JoltField")
 )]
 struct FieldValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,

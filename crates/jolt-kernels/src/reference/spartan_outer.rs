@@ -488,19 +488,18 @@ struct ComposedOuterRemainderKernel<F: JoltField> {
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
 impl<F: JoltField> allocative::Allocative for ComposedOuterRemainderKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("tau_kernel"),
-            poly_heap_bytes(&self.tau_kernel),
+            self.tau_kernel.len() * size_of::<F>(),
         );
-        visitor.visit_simple(allocative::Key::new("az"), poly_heap_bytes(&self.az));
-        visitor.visit_simple(allocative::Key::new("bz"), poly_heap_bytes(&self.bz));
+        visitor.visit_simple(allocative::Key::new("az"), self.az.len() * size_of::<F>());
+        visitor.visit_simple(allocative::Key::new("bz"), self.bz.len() * size_of::<F>());
         visitor.visit_simple(
             allocative::Key::new("column_tables"),
             self.column_tables
                 .iter()
-                .map(poly_heap_bytes)
+                .map(|table| table.len() * size_of::<F>())
                 .sum::<usize>(),
         );
         visitor.exit();

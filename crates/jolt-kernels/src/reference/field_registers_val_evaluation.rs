@@ -113,14 +113,13 @@ struct FieldRegistersValEvaluationKernel<F: JoltField> {
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for FieldRegistersValEvaluationKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
         for (key, table) in [
             (allocative::Key::new("lt_cycle"), &self.lt_cycle),
             (allocative::Key::new("rd_inc"), &self.rd_inc),
             (allocative::Key::new("rd_wa"), &self.rd_wa),
         ] {
-            visitor.visit_simple(key, poly_heap_bytes(table));
+            visitor.visit_simple(key, table.len() * size_of::<F>());
         }
         visitor.exit();
     }

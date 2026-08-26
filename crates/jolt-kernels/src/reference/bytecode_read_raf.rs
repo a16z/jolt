@@ -862,20 +862,22 @@ struct FusedIncCycleLeg<F: JoltField> {
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
 impl<F: JoltField> allocative::Allocative for ComposedBytecodeReadRafCycleKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("coefficient"),
-            poly_heap_bytes(&self.coefficient),
+            self.coefficient.len() * size_of::<F>(),
         );
         visitor.visit_simple(
             allocative::Key::new("bytecode_ra"),
-            self.bytecode_ra.iter().map(poly_heap_bytes).sum::<usize>(),
+            self.bytecode_ra
+                .iter()
+                .map(|table| table.len() * size_of::<F>())
+                .sum::<usize>(),
         );
         #[cfg(feature = "akita")]
         visitor.visit_simple(
             allocative::Key::new("fused"),
-            poly_heap_bytes(&self.fused.coefficient) + poly_heap_bytes(&self.fused.values),
+            (self.fused.coefficient.len() + self.fused.values.len()) * size_of::<F>(),
         );
         visitor.exit();
     }

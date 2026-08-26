@@ -108,7 +108,11 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
     }
 }
 
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct FieldIncKernel<F: JoltField> {
     progress: RoundProgress,
     inc: Polynomial<F>,

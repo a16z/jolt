@@ -95,7 +95,6 @@ struct FieldRegistersClaimReductionKernel<F: JoltField> {
 #[cfg(feature = "allocative")]
 impl<F: JoltField> allocative::Allocative for FieldRegistersClaimReductionKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
         for (key, table) in [
             (allocative::Key::new("eq_spartan"), &self.eq_spartan),
@@ -103,7 +102,7 @@ impl<F: JoltField> allocative::Allocative for FieldRegistersClaimReductionKernel
             (allocative::Key::new("rs1_value"), &self.rs1_value),
             (allocative::Key::new("rs2_value"), &self.rs2_value),
         ] {
-            visitor.visit_simple(key, poly_heap_bytes(table));
+            visitor.visit_simple(key, table.len() * size_of::<F>());
         }
         visitor.exit();
     }

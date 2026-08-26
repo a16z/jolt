@@ -146,10 +146,13 @@ pub struct SpartanProductKernel<F: JoltField> {
     /// `FieldRdValue`), cycle-indexed — the composed lanes' left/right
     /// factors per `FieldRegistersProductLane::factor_openings`.
     #[cfg(feature = "field-inline")]
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     field_rs1_value: Vec<F>,
     #[cfg(feature = "field-inline")]
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     field_rs2_value: Vec<F>,
     #[cfg(feature = "field-inline")]
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     field_rd_value: Vec<F>,
 }
 
@@ -419,26 +422,31 @@ struct ComposedProductRemainderKernel<F: JoltField> {
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
 impl<F: JoltField> allocative::Allocative for ComposedProductRemainderKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("tau_kernel"),
-            poly_heap_bytes(&self.tau_kernel),
+            self.tau_kernel.len() * size_of::<F>(),
         );
-        visitor.visit_simple(allocative::Key::new("left"), poly_heap_bytes(&self.left));
-        visitor.visit_simple(allocative::Key::new("right"), poly_heap_bytes(&self.right));
+        visitor.visit_simple(
+            allocative::Key::new("left"),
+            self.left.len() * size_of::<F>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("right"),
+            self.right.len() * size_of::<F>(),
+        );
         visitor.visit_simple(
             allocative::Key::new("opening_tables"),
             self.opening_tables
                 .values()
-                .map(poly_heap_bytes)
+                .map(|table| table.len() * size_of::<F>())
                 .sum::<usize>(),
         );
         visitor.visit_simple(
             allocative::Key::new("field_inline_tables"),
             self.field_inline_tables
                 .iter()
-                .map(poly_heap_bytes)
+                .map(|table| table.len() * size_of::<F>())
                 .sum::<usize>(),
         );
         visitor.exit();
