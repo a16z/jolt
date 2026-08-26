@@ -52,7 +52,82 @@ class CheckStyleInvariantsTests(unittest.TestCase):
             ),
             [],
         )
-        self.assertEqual(len(check(["let take = std::mem::take;"])), 1)
+        self.assertEqual(check(["let take = std::mem::take;"]), [])
+
+    def test_ignores_multiline_crate_attributes(self) -> None:
+        self.assertEqual(
+            check(
+                [
+                    "#![expect(",
+                    "    clippy::module_name_repetitions,",
+                    "    reason = \"generated names\"",
+                    ")]",
+                ]
+            ),
+            [],
+        )
+
+    def test_reports_imported_qualified_path_once(self) -> None:
+        lines = ["use std::sync::Arc;", "let value = std::sync::Arc::new(1);"]
+        in_raw, in_macro = CHECKER.line_masks(lines)
+        findings = CHECKER.check_nominal_imports(
+            "test.rs", lines, in_raw, in_macro
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("already imported", findings[0][1])
+
+    def test_allows_qualified_items_through_module_alias(self) -> None:
+        self.assertEqual(
+            check(
+                [
+                    "use crate::{field::Fr, witness as prover_witness};",
+                    "let poly: prover_witness::VirtualPolynomial;",
+                ]
+            ),
+            [],
+        )
+
+    def test_ignores_multiline_use_items(self) -> None:
+        self.assertEqual(
+            check(
+                [
+                    "use crate::{",
+                    "    instruction::ADD,",
+                    "    witness::VirtualPolynomial,",
+                    "};",
+                ]
+            ),
+            [],
+        )
+
+    def test_local_import_does_not_apply_to_file_scope(self) -> None:
+        lines = [
+            "fn local() {",
+            "    use std::sync::Arc;",
+            "}",
+            "fn other() -> std::sync::Arc<u8> { todo!() }",
+        ]
+        in_raw, in_macro = CHECKER.line_masks(lines)
+        findings = CHECKER.check_nominal_imports(
+            "test.rs", lines, in_raw, in_macro
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertNotIn("already imported", findings[0][1])
+
+    def test_char_literal_does_not_change_import_scope(self) -> None:
+        lines = [
+            "fn local() {",
+            "    let brace = b'{';",
+            "}",
+            "use std::sync::Arc;",
+            "fn other() -> std::sync::Arc<u8> { todo!() }",
+        ]
+        in_raw, in_macro = CHECKER.line_masks(lines)
+        findings = CHECKER.check_nominal_imports(
+            "test.rs", lines, in_raw, in_macro
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("already imported", findings[0][1])
 
     def test_allows_associated_items_on_short_type_names(self) -> None:
         self.assertEqual(check(["let max = u64::MAX;", "let kind = Kind::ADD;"]), [])

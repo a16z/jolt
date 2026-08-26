@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the machine-checkable style invariants from CLAUDE.md (Style Invariants).
+"""Check the machine-checkable rules from CLAUDE.md (Code Style Invariants).
 
 Repo-wide rules (always checked, on every tracked `.rs` file):
 
@@ -13,21 +13,22 @@ Diff-scoped rules (checked on lines added relative to `--base`; without
 
   nominal-imports    Types, traits, enums, and constants use imported short
                      names. Enum variants remain qualified by the enum type;
-                     lowercase namespace function calls may stay qualified.
+                     lowercase namespace free functions may stay qualified.
                      An imported path is never also spelled qualified.
-  todo-issue-link    `TODO`/`FIXME` comments must carry an issue reference
-                     (`#123` or a URL).
 
 Diff-scoping exists because the rules are debt-tolerant by convention: style
 passes fix what a PR introduces and leave predating sites alone.
 
 CLAUDE.md rules that are NOT checked here, and why:
 
-  - derive-over-hand-rolled impls, single-caller helper inlining — need call
-    graphs and knowledge of what a derive can express.
-  - speculative lifecycle guards (`RwLock<Option<..>>`) — the same type shape
-    is legitimate for lazy-init globals and error slots; the violation is a
-    lifecycle transition that never happens, which is semantic.
+  - single ownership of formulas/state, type modeling, public-surface need,
+    derive choice, and helper placement — need call graphs and semantics.
+  - append-only ordinal enums — need a declared wire/ordinal contract and a
+    stable discriminant baseline; syntax alone cannot identify the set.
+  - release-boundary enforcement and error taxonomy — need dataflow and API
+    contract knowledge to distinguish redundant asserts from required checks.
+  - one-pass trace processing — needs a cost model and ownership/lifetime
+    analysis; another traversal is not inherently a violation.
   - docs-honesty (enforced vs honest-encoder properties) and
     names-track-semantics — prose meaning, not syntax.
 
@@ -54,11 +55,12 @@ PRIMITIVE_CONTAINER = re.compile(
     r":\s*(?:Vec|Box)\s*<\s*(?:\[\s*)?(?:(?:Vec|Option)\s*<\s*)?" + PRIMITIVE + r"\b"
 )
 CFG_ATTR_START = re.compile(r"^\s*#\[cfg_attr\(")
-TODO = re.compile(r"\b(?:TODO|FIXME)\b")
-ISSUE_REF = re.compile(r"#\d+|https?://\S+")
 USE_LINE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+(.+?);\s*(?://.*)?$", re.DOTALL)
 MACRO_BODY_OPEN = re.compile(r"\b(?:macro_rules!\s*\w+|quote!|quote_spanned!)\s*[({\[]")
 CFG_GATE = re.compile(r"^\s*#\[cfg(?:_attr)?\(")
+CHAR_LITERAL = re.compile(
+    r"(?:b)?'(?:[^'\\\n]|\\(?:[nrt0\\'\"]|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]{1,6}\}))'"
+)
 QUALIFIED_PATH = re.compile(
     r"(?<![\w:$])(?P<path>(?:::)?(?:[A-Za-z_]\w*::)+[A-Za-z_]\w*)"
 )
@@ -87,7 +89,11 @@ def strip_strings_and_line_comments(line: str) -> str:
     n = len(line)
     while i < n:
         c = line[i]
-        if c == '"':
+        char_literal = CHAR_LITERAL.match(line, i)
+        if char_literal:
+            out.append("''")
+            i = char_literal.end()
+        elif c == '"':
             out.append('"')
             i += 1
             while i < n:
@@ -99,11 +105,6 @@ def strip_strings_and_line_comments(line: str) -> str:
                 i += 1
             out.append('"')
             i += 1
-        elif c == "'" and i + 2 < n and line[i + 1] == "\\":
-            out.append("''")
-            i += 3
-            while i < n and line[i - 1] != "'":
-                i += 1
         elif c == "/" and i + 1 < n and line[i + 1] == "/":
             break
         else:
@@ -178,6 +179,38 @@ def inline_mod_mask(lines: list[str], in_raw: list[bool]) -> list[bool]:
     return mask
 
 
+def use_item_mask(
+    lines: list[str], in_raw: list[bool], in_macro: list[bool], in_mod: list[bool]
+) -> list[bool]:
+    mask = [False] * len(lines)
+    i = 0
+    while i < len(lines):
+        if in_raw[i] or in_macro[i] or in_mod[i] or not re.match(
+            r"^\s*(?:pub(?:\([^)]*\))?\s+)?use\b", lines[i]
+        ):
+            i += 1
+            continue
+        while i < len(lines):
+            mask[i] = True
+            if ";" in strip_strings_and_line_comments(lines[i]):
+                break
+            i += 1
+        i += 1
+    return mask
+
+
+def brace_depths(lines: list[str], in_raw: list[bool]) -> list[int]:
+    depths = [0] * len(lines)
+    depth = 0
+    for i, line in enumerate(lines):
+        depths[i] = depth
+        if in_raw[i]:
+            continue
+        clean = strip_strings_and_line_comments(line)
+        depth += clean.count("{") - clean.count("}")
+    return depths
+
+
 def cfg_attr_predicate(attr_text: str) -> str | None:
     """Extract the predicate of a cfg_attr attribute: text up to the first
     top-level comma inside the parens. Whitespace-normalized."""
@@ -212,7 +245,7 @@ def whole_line_attrs(lines: list[str]) -> list[tuple[int, int, str]]:
     i = 0
     while i < len(lines):
         stripped = lines[i].lstrip()
-        if not stripped.startswith("#["):
+        if not stripped.startswith(("#[", "#![")):
             i += 1
             continue
         depth = 0
@@ -276,7 +309,12 @@ def check_native_visit(rel: str, lines: list[str]) -> list[tuple[int, str]]:
     return findings
 
 
-def expand_use_tree(prefix: str, tree: str, out: set[str]) -> None:
+def expand_use_tree(
+    prefix: str,
+    tree: str,
+    out: set[str],
+    module_aliases: set[str] | None = None,
+) -> None:
     tree = tree.strip()
     if tree.startswith("{") and tree.endswith("}"):
         depth = 0
@@ -287,22 +325,26 @@ def expand_use_tree(prefix: str, tree: str, out: set[str]) -> None:
             elif c == "}":
                 depth -= 1
             if c == "," and depth == 0:
-                expand_use_tree(prefix, "".join(item), out)
+                expand_use_tree(prefix, "".join(item), out, module_aliases)
                 item = []
             else:
                 item.append(c)
         if item:
-            expand_use_tree(prefix, "".join(item), out)
-        return
-    if " as " in tree:
-        return  # aliased: qualifying the original path elsewhere may be deliberate
-    if tree.endswith("*") or tree == "self":
-        if tree == "self" and prefix:
-            out.add(prefix.rstrip(":"))
+            expand_use_tree(prefix, "".join(item), out, module_aliases)
         return
     if "{" in tree:
         head, rest = tree.split("{", 1)
-        expand_use_tree(prefix + head, "{" + rest, out)
+        expand_use_tree(prefix + head, "{" + rest, out, module_aliases)
+        return
+    if " as " in tree:
+        source, alias = tree.rsplit(" as ", 1)
+        source_name = source.rsplit("::", 1)[-1].strip()
+        if module_aliases is not None and re.fullmatch(r"[a-z_]\w*", source_name):
+            module_aliases.add(alias.strip())
+        return
+    if tree.endswith("*") or tree == "self":
+        if tree == "self" and prefix:
+            out.add(prefix.rstrip(":"))
         return
     full = (prefix + tree).strip()
     if "::" in full:
@@ -310,11 +352,16 @@ def expand_use_tree(prefix: str, tree: str, out: set[str]) -> None:
 
 
 def collect_imports(
-    lines: list[str], in_raw: list[bool], in_macro: list[bool], in_mod: list[bool]
+    lines: list[str],
+    in_raw: list[bool],
+    in_macro: list[bool],
+    in_mod: list[bool],
+    module_aliases: set[str] | None = None,
 ) -> set[str]:
     """Exact paths imported by top-level plain (non-cfg-gated, non-aliased)
     use items. Imports inside inline modules are separate scopes and skipped."""
     imports: set[str] = set()
+    depths = brace_depths(lines, in_raw)
     i = 0
     while i < len(lines):
         if in_raw[i] or in_macro[i] or in_mod[i]:
@@ -337,8 +384,12 @@ def collect_imports(
             j += 1
         stmt = " ".join(stmt_lines)
         m = USE_LINE.match(stmt.strip())
-        if m and not CFG_GATE.match(prev):
-            expand_use_tree("", m.group(1).strip(), imports)
+        if m:
+            tree = m.group(1).strip()
+            if module_aliases is not None:
+                expand_use_tree("", tree, set(), module_aliases)
+            if depths[i] == 0 and not CFG_GATE.match(prev):
+                expand_use_tree("", tree, imports)
         i = j + 1
     return imports
 
@@ -347,6 +398,7 @@ def check_qualified_dup(
     rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
 ) -> list[tuple[int, str]]:
     in_mod = inline_mod_mask(lines, in_raw)
+    in_use = use_item_mask(lines, in_raw, in_macro, in_mod)
     imports = collect_imports(lines, in_raw, in_macro, in_mod)
     if not imports:
         return []
@@ -360,10 +412,10 @@ def check_qualified_dup(
     }
     findings = []
     for i, ln in enumerate(lines):
-        if in_raw[i] or in_macro[i] or in_attr[i] or in_mod[i]:
+        if in_raw[i] or in_macro[i] or in_attr[i] or in_mod[i] or in_use[i]:
             continue
         s = ln.strip()
-        if s.startswith(("//", "///", "//!", "*")) or re.search(r"\buse\b", s):
+        if s.startswith(("//", "///", "//!", "*")):
             continue
         clean = strip_strings_and_line_comments(ln)
         clean = re.sub(r"#!?\[[^\]]*\]", "", clean)  # attribute args are exempt
@@ -384,6 +436,9 @@ def check_nominal_paths(
     rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
 ) -> list[tuple[int, str]]:
     in_mod = inline_mod_mask(lines, in_raw)
+    in_use = use_item_mask(lines, in_raw, in_macro, in_mod)
+    module_aliases: set[str] = set()
+    collect_imports(lines, in_raw, in_macro, in_mod, module_aliases)
     in_attr = [False] * len(lines)
     for start, end, _text in whole_line_attrs(lines):
         for k in range(start, end + 1):
@@ -391,12 +446,10 @@ def check_nominal_paths(
 
     findings = []
     for i, ln in enumerate(lines):
-        if in_raw[i] or in_macro[i] or in_attr[i] or in_mod[i]:
+        if in_raw[i] or in_macro[i] or in_attr[i] or in_mod[i] or in_use[i]:
             continue
         stripped = ln.strip()
-        if stripped.startswith(("//", "///", "//!", "*")) or re.search(
-            r"\buse\b", stripped
-        ):
+        if stripped.startswith(("//", "///", "//!", "*")):
             continue
         clean = strip_strings_and_line_comments(ln)
         clean = re.sub(r"#!?\[[^\]]*\]", "", clean)
@@ -404,7 +457,8 @@ def check_nominal_paths(
         for match in QUALIFIED_PATH.finditer(clean):
             path = match.group("path").removeprefix("::")
             parts = path.split("::")
-            suffix = clean[match.end():].lstrip()
+            if parts[0] in module_aliases:
+                continue
             nominal = next(
                 (j for j, part in enumerate(parts) if NOMINAL_SEGMENT.match(part)),
                 None,
@@ -427,15 +481,6 @@ def check_nominal_paths(
                 )
                 break
             if nominal is None and CONSTANT_SEGMENT.match(parts[-1]):
-                findings.append(
-                    (
-                        i + 1,
-                        f"[nominal-imports] import `{path}` and use "
-                        f"`{parts[-1]}`",
-                    )
-                )
-                break
-            if nominal is None and not suffix.startswith(("(", "::<", "!")):
                 findings.append(
                     (
                         i + 1,
@@ -469,21 +514,17 @@ def check_enum_variant_imports(
     return findings
 
 
-def check_todo_issue(rel: str, lines: list[str]) -> list[tuple[int, str]]:
-    findings = []
-    for i, ln in enumerate(lines):
-        if not TODO.search(ln):
-            continue
-        comment = None
-        if "//" in ln:
-            comment = ln[ln.index("//"):]
-        elif "/*" in ln:
-            comment = ln[ln.index("/*"):]
-        if comment and TODO.search(comment) and not ISSUE_REF.search(comment):
-            findings.append(
-                (i + 1, "[todo-issue-link] TODO/FIXME without an issue link; "
-                        "use `TODO(#123):` or a full issue URL")
-            )
+def check_nominal_imports(
+    rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
+) -> list[tuple[int, str]]:
+    findings = check_qualified_dup(rel, lines, in_raw, in_macro)
+    reported_lines = {line for line, _message in findings}
+    findings.extend(
+        finding
+        for finding in check_nominal_paths(rel, lines, in_raw, in_macro)
+        if finding[0] not in reported_lines
+    )
+    findings.extend(check_enum_variant_imports(rel, lines, in_raw, in_macro))
     return findings
 
 
@@ -537,12 +578,7 @@ def main() -> int:
 
         if added is not None and rel in added:
             in_raw, in_macro = line_masks(lines)
-            scoped = (
-                check_qualified_dup(rel, lines, in_raw, in_macro)
-                + check_nominal_paths(rel, lines, in_raw, in_macro)
-                + check_enum_variant_imports(rel, lines, in_raw, in_macro)
-                + check_todo_issue(rel, lines)
-            )
+            scoped = check_nominal_imports(rel, lines, in_raw, in_macro)
             for line_no, msg in scoped:
                 if line_no in added[rel]:
                     findings.append((rel, line_no, msg))
@@ -551,7 +587,7 @@ def main() -> int:
         print(f"{rel}:{line_no}: {msg}")
     if findings:
         print(f"\n{len(findings)} style invariant violation(s); "
-              f"see CLAUDE.md (Style Invariants)", file=sys.stderr)
+              f"see CLAUDE.md (Code Style Invariants)", file=sys.stderr)
         return 1
     return 0
 
