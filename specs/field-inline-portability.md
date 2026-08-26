@@ -117,3 +117,29 @@ slice (Axis 2) lands with or after the field switch itself.
    bridge fixture updates; the eq-MLE guest re-fixtured under the new
    encoding.
    Review gate: encoding-mismatch proofs reject fail-closed; e2e both modes.
+
+## Status (2026-08-26): Axis 1 is fixture-blocked on Axis 2's field switch
+
+Step 1's ordering assumed a packed FR fixture was creatable independently of
+Axis 2. #1718/#1732 falsified that: the merged akita axis proves exclusively
+over fp128 (`jolt-akita::adapters::AkitaField`; no BN254 akita configuration
+exists), while FR trace execution is pinned to BN254 by the tracer's
+`ProofField` alias and `FieldValueEncoding::ACTIVE`. A nontrivial packed FR
+fixture therefore requires FR execution over fp128 — the field switch itself.
+The FR-profile muldiv (`FieldRdInc` identically zero, every limb column empty)
+is the only accept fixture constructible before the switch; it never exercises
+the recomposition identity nontrivially, so it does not meet step 1's review
+gate and the `field-inline x akita` compile error stays.
+
+Landed under this constraint: the claims-layer slice of step 1 (shared
+`jolt-claims/src/lattice.rs` digit algebra, `protocols/field_inline/lattice/`
+limb geometry + recomposition identity + packing plan, the norm-budget check —
+2 limbs over fp128, planner-admitted with headroom) and all of step 2 except
+the switch (tracer generic over `Field + CanonicalEncoding`,
+`TWO_LIMB_128_CANONICAL` declared, mismatch rejection fail-closed). Remaining,
+as one unit gated on the fp128 switch decision: repoint `ProofField` and
+`ACTIVE` under the akita configuration, re-fixture the eq-MLE guest at the
+16-byte encoding, then the withheld Axis 1 wiring (stage-8 reconstruction
+member mirroring `UntrustedAdviceReconstruction`, stage-0 packed FR commit,
+`FieldIncLimbPackingPlan` prover kernel), packed accept/tamper fixtures, and
+compile-error removal last.
