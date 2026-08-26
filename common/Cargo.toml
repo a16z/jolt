@@ -3,6 +3,9 @@ name = "common"
 version = "0.2.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [features]
 default = ["std"]
 allocative = ["dep:allocative"]
@@ -19,3 +22,6 @@ allocative = { workspace = true, optional = true }
 ark-serialize = { workspace = true, default-features = false, optional = true }
 serde = { workspace = true, default-features = false, features = ["alloc"] }
 syn = { workspace = true, optional = true }
+
+[dev-dependencies]
+bincode = { workspace = true }

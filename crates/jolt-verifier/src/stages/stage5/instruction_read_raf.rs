@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::{
     InstructionReadRafPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
     try_eq_mle, IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
@@ -34,7 +34,7 @@ use crate::VerifierError;
 /// `expected_final_claim`) enforces their equality before this wiring reads it.
 /// Takes the ZK-agnostic stage-2 output-claims aggregate (both the clear and ZK
 /// stage-2 outputs expose it).
-pub fn instruction_read_raf_input_values_from_upstream<F: Field>(
+pub fn instruction_read_raf_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> InstructionReadRafInputClaims<F> {
     let reduction = &stage2.instruction_claim_reduction;
@@ -47,7 +47,7 @@ pub fn instruction_read_raf_input_values_from_upstream<F: Field>(
 
 /// Wire the consumed opening *points* from the upstream instruction claim-reduction
 /// (stage 2). All three share the claim-reduction opening point.
-pub fn instruction_read_raf_input_points_from_upstream<F: Field>(
+pub fn instruction_read_raf_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
 ) -> InstructionReadRafInputClaims<Vec<F>> {
     let point = stage2.instruction_claim_reduction_point().to_vec();
@@ -59,13 +59,13 @@ pub fn instruction_read_raf_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct InstructionReadRaf<F: Field> {
+pub struct InstructionReadRaf<F: JoltField> {
     symbolic: relations::instruction::ReadRaf,
     dimensions: InstructionReadRafDimensions,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> InstructionReadRaf<F> {
+impl<F: JoltField> InstructionReadRaf<F> {
     pub fn new(dimensions: InstructionReadRafDimensions) -> Self {
         Self {
             symbolic: relations::instruction::ReadRaf::new(dimensions),
@@ -85,24 +85,29 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 /// Reconstruct the instruction address point from the virtual-RA opening points:
 /// each RA opening point is `chunk ++ r_cycle`, and the chunks tile the address
 /// in order, so stripping the trailing cycle and concatenating recovers it.
-pub(crate) fn reconstruct_r_address<F: Field>(
+pub(crate) fn reconstruct_r_address<F: JoltField>(
     output_points: &InstructionReadRafOutputClaims<Vec<F>>,
     cycle_len: usize,
 ) -> Vec<F> {
     output_points
         .instruction_ra()
         .iter()
-        .flat_map(|point| point[..point.len() - cycle_len].iter().copied())
+        .flat_map(|point| {
+            // Each point is `chunk ++ r_cycle` by construction
+            // (`derive_opening_points`), so the saturation never engages.
+            let chunk_len = point.len().saturating_sub(cycle_len);
+            point.iter().take(chunk_len).copied()
+        })
         .collect()
 }
 
-impl<F: Field> InstructionReadRaf<F> {
+impl<F: JoltField> InstructionReadRaf<F> {
     pub fn dimensions(&self) -> InstructionReadRafDimensions {
         self.dimensions
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
     type Symbolic = relations::instruction::ReadRaf;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -123,7 +128,9 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
             .r_address
             .len()
             .checked_div(ra_count)
-            .filter(|chunk_size| chunk_size * ra_count == opening_point.r_address.len())
+            .filter(|chunk_size| {
+                chunk_size.checked_mul(ra_count) == Some(opening_point.r_address.len())
+            })
             .ok_or_else(|| {
                 public_input_failed(format!(
                     "instruction address point length {} is not divisible by virtual RA count {ra_count}",
@@ -214,7 +221,7 @@ mod tests {
     use crate::stages::relations::ConcreteSumcheck;
     use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
     use jolt_claims::SymbolicSumcheck;
-    use jolt_field::{Fr, FromPrimitiveInt as _};
+    use jolt_field::{Fr, Ring as _};
 
     /// Locks the `expected_output_openings` invariant for the one stage-5 relation
     /// with a size-parameter-dependent shape: the openings the read-RAF output `Expr`
@@ -251,7 +258,13 @@ mod tests {
     /// closed form (rather than just "nonzero") also pins the γ *power* and the
     /// leading-half slice, the two transposition traps.
     #[test]
-    #[expect(clippy::unwrap_used)]
+    #[expect(
+        clippy::unwrap_used,
+        clippy::as_conversions,
+        clippy::indexing_slicing,
+        clippy::integer_division,
+        reason = "test fixture arithmetic over compile-time dimensions"
+    )]
     fn eq_raf_flag_carries_the_canonical_address_term() {
         const LOG_T: usize = 5;
         const ADDRESS_BITS: usize = 128;

@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId, RamRaClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -24,7 +24,7 @@ use crate::VerifierError;
 /// Wire this relation's consumed opening *values* from the upstream outputs: the
 /// RAF-evaluation and read-write openings (stage 2) and the val-check opening
 /// (stage 4). Takes the ZK-agnostic output-claims aggregates.
-pub fn ram_ra_claim_reduction_input_values_from_upstream<F: Field>(
+pub fn ram_ra_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4OutputClaims<F>,
 ) -> RamRaClaimReductionInputClaims<F> {
@@ -37,7 +37,7 @@ pub fn ram_ra_claim_reduction_input_values_from_upstream<F: Field>(
 
 /// Wire this relation's consumed opening *points* from the upstream output-points
 /// aggregates.
-pub fn ram_ra_claim_reduction_input_points_from_upstream<F: Field>(
+pub fn ram_ra_claim_reduction_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
 ) -> RamRaClaimReductionInputClaims<Vec<F>> {
@@ -49,14 +49,14 @@ pub fn ram_ra_claim_reduction_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RamRaClaimReduction<F: Field> {
+pub struct RamRaClaimReduction<F: JoltField> {
     symbolic: relations::ram::RaClaimReduction,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> RamRaClaimReduction<F> {
+impl<F: JoltField> RamRaClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, ram_log_k: usize) -> Self {
         Self {
             symbolic: relations::ram::RaClaimReduction::new(trace_dimensions),
@@ -74,7 +74,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> RamRaClaimReduction<F> {
+impl<F: JoltField> RamRaClaimReduction<F> {
     pub fn trace_dimensions(&self) -> TraceDimensions {
         self.trace_dimensions
     }
@@ -84,7 +84,7 @@ impl<F: Field> RamRaClaimReduction<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
     type Symbolic = relations::ram::RaClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -97,6 +97,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         input_points: &RamRaClaimReductionInputClaims<Vec<F>>,
     ) -> Result<RamRaClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         let log_t = self.trace_dimensions.log_t();
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "ram_log_k and log_t are ilog2 results (< 64); the sum cannot overflow usize"
+        )]
         let expected_len = self.ram_log_k + log_t;
         for (label, point) in [
             ("RAF", input_points.raf()),
@@ -110,9 +114,14 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
                 )));
             }
         }
-        let address = &input_points.read_write()[..self.ram_log_k];
-        if &input_points.raf()[..self.ram_log_k] != address
-            || &input_points.val_check()[..self.ram_log_k] != address
+        let address = input_points
+            .read_write()
+            .get(..self.ram_log_k)
+            .ok_or_else(|| {
+                public_input_failed("RAM read-write opening point address prefix is out of range")
+            })?;
+        if input_points.raf().get(..self.ram_log_k) != Some(address)
+            || input_points.val_check().get(..self.ram_log_k) != Some(address)
         {
             return Err(public_input_failed(
                 "RAM input openings disagree on the address prefix",
@@ -138,16 +147,24 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         let JoltDerivedId::RamRaClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let output_cycle = &output_points.ram_ra()[self.ram_log_k..];
+        let output_cycle = output_points
+            .ram_ra()
+            .get(self.ram_log_k..)
+            .ok_or_else(|| {
+                public_input_failed("RAM RA opening point is shorter than the address width")
+            })?;
         let fixed_cycle = match public_id {
-            RamRaClaimReductionPublic::EqCycleRaf => &input_points.raf()[self.ram_log_k..],
+            RamRaClaimReductionPublic::EqCycleRaf => input_points.raf().get(self.ram_log_k..),
             RamRaClaimReductionPublic::EqCycleReadWrite => {
-                &input_points.read_write()[self.ram_log_k..]
+                input_points.read_write().get(self.ram_log_k..)
             }
             RamRaClaimReductionPublic::EqCycleValCheck => {
-                &input_points.val_check()[self.ram_log_k..]
+                input_points.val_check().get(self.ram_log_k..)
             }
-        };
+        }
+        .ok_or_else(|| {
+            public_input_failed("RAM input opening point is shorter than the address width")
+        })?;
         try_eq_mle(fixed_cycle, output_cycle).map_err(public_input_failed)
     }
 }

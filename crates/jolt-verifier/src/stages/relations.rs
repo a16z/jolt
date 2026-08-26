@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId};
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_transcript::Transcript;
 
 use crate::VerifierError;
@@ -36,7 +36,7 @@ use crate::VerifierError;
 /// `Transcript`; `jolt-claims` stays transcript-free. It is a blanket extension
 /// over every `OutputClaims` implementor, so the Fiat-Shamir order is
 /// single-sourced by [`OutputClaims::opening_values`] and cannot disagree with it.
-pub trait OutputAppend<F: Field>: OutputClaims<F> {
+pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
     /// Append every produced opening to the transcript in canonical
     /// ([`OutputClaims::opening_values`]) order, each under the `b"opening_claim"`
     /// label. This is the Fiat-Shamir order and MUST match the order in which the
@@ -48,7 +48,7 @@ pub trait OutputAppend<F: Field>: OutputClaims<F> {
     }
 }
 
-impl<F: Field, C: OutputClaims<F>> OutputAppend<F> for C {}
+impl<F: JoltField, C: OutputClaims<F>> OutputAppend<F> for C {}
 
 /// The drawn Fiat-Shamir challenges of a [`ConcreteSumcheck`] instance: a readable
 /// alias for the relation's `Challenges<F>` projection through its symbolic
@@ -84,7 +84,7 @@ pub type SumcheckOutputPoints<F, S> =
 /// in both modes; methods that read values ([`input_claim`](Self::input_claim),
 /// [`expected_output`](Self::expected_output)) take the Values forms. This makes
 /// "a ZK opening carries no value" a compile-time fact.
-pub trait ConcreteSumcheck<F: Field>: Clone + Send + Sync
+pub trait ConcreteSumcheck<F: JoltField>: Clone + Send + Sync
 where
     SumcheckInputClaims<F, Self>: InputClaims<F>,
     SumcheckOutputClaims<F, Self>: OutputClaims<F>,
@@ -332,7 +332,7 @@ where
 /// per member, in member declaration order.
 pub fn absorbed_opening_values<F, I>(claims: &SumcheckOutputClaims<F, I>) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F>,
 {
@@ -359,7 +359,7 @@ pub fn validate_member_presence<F, I>(
     claims: Option<&SumcheckOutputClaims<F, I>>,
 ) -> Result<(), VerifierError>
 where
-    F: Field,
+    F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F>,
 {
@@ -392,7 +392,7 @@ pub fn validate_member_aliases<F, I>(
     resolve_source: impl Fn(&JoltOpeningId) -> Option<F>,
 ) -> Result<(), VerifierError>
 where
-    F: Field,
+    F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F>,
 {
@@ -424,7 +424,7 @@ pub fn validate_member_output_shape<F, I>(
     claims: &SumcheckOutputClaims<F, I>,
 ) -> Result<(), VerifierError>
 where
-    F: Field,
+    F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F>,
 {
@@ -462,8 +462,12 @@ where
 /// scalar from each squeeze so a relation's stored challenge can be checked against
 /// the squeeze that produced it.
 #[cfg(test)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 pub(crate) mod draw_recording {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_transcript::Transcript;
 
     /// One observable transcript operation a `draw_challenges` performs.
@@ -528,7 +532,7 @@ pub(crate) mod draw_recording {
 /// locks: unlike the challenge recorder, it observes only byte appends.
 #[cfg(test)]
 pub(crate) mod append_recording {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_transcript::Transcript;
 
     /// A minimal `Transcript` double that records each appended byte chunk, so
@@ -561,6 +565,10 @@ pub(crate) mod append_recording {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
 
@@ -568,7 +576,7 @@ mod tests {
         JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_claims_derive::{InputClaims, OutputClaims};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_riscv::CircuitFlags;
 
     fn fr(value: u64) -> Fr {
@@ -1061,7 +1069,7 @@ mod sumcheck_batch_derive_tests {
     };
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-    use jolt_field::{Field, Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, JoltField, Ring};
 
     fn instruction_read_raf() -> InstructionReadRaf<Fr> {
         InstructionReadRaf::new(InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap())
@@ -1076,7 +1084,7 @@ mod sumcheck_batch_derive_tests {
     // The generated absorb resolves the alias skip-sets statically (no instance
     // state), so this alias-free fixture's members are never read.
     #[expect(dead_code)]
-    struct FixtureSumchecks<F: Field> {
+    struct FixtureSumchecks<F: JoltField> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: RegistersValEvaluation<F>,
     }
@@ -1108,7 +1116,7 @@ mod sumcheck_batch_derive_tests {
 
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
-    struct FixtureOptionSumchecks<F: Field> {
+    struct FixtureOptionSumchecks<F: JoltField> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: Option<RegistersValEvaluation<F>>,
     }
@@ -1204,7 +1212,7 @@ mod sumcheck_batch_derive_tests {
     #[sumcheck_batch(no_opening_values, crate = "crate")]
     // The custom absorb below never reads the members (no aliased sets to consult).
     #[expect(dead_code)]
-    struct FixtureCustomSumchecks<F: Field> {
+    struct FixtureCustomSumchecks<F: JoltField> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: RegistersValEvaluation<F>,
     }
@@ -1265,12 +1273,12 @@ mod sumcheck_batch_derive_tests {
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(no_draw_challenges, crate = "crate")]
     #[expect(dead_code)]
-    struct FixtureNoDrawSumchecks<F: Field> {
+    struct FixtureNoDrawSumchecks<F: JoltField> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: RegistersValEvaluation<F>,
     }
 
-    impl<F: Field> FixtureNoDrawSumchecks<F> {
+    impl<F: JoltField> FixtureNoDrawSumchecks<F> {
         #[expect(dead_code, clippy::unused_self)]
         fn draw_challenges(&self) {}
     }
@@ -1286,13 +1294,13 @@ mod begin_batch_tests {
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
-    use jolt_field::{Field, Fr, FromPrimitiveInt, MulPow2};
+    use jolt_field::{Fr, JoltField, Ring};
     use jolt_sumcheck::{append_sumcheck_claim, BatchMember, ClearSumcheckRecorder};
     use jolt_transcript::Transcript;
 
     #[derive(super::SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
-    struct HeadFixtureSumchecks<F: Field> {
+    struct HeadFixtureSumchecks<F: JoltField> {
         instruction_read_raf: InstructionReadRaf<F>,
         registers_val_evaluation: Option<RegistersValEvaluation<F>>,
     }

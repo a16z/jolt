@@ -13,7 +13,7 @@
 
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
@@ -39,7 +39,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 
 /// Stage 5's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
-pub struct Stage5ProverOutput<F: Field, C> {
+pub struct Stage5ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage5OutputClaims<F>,
     pub clear_output: Stage5ClearOutput<F>,
@@ -63,7 +63,7 @@ pub fn prove_stage5<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage5ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -90,9 +90,11 @@ where
     let input_points =
         stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
 
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,

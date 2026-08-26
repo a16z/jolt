@@ -14,7 +14,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
@@ -42,7 +42,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
-pub struct Stage4ProverOutput<F: Field, C> {
+pub struct Stage4ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage4OutputClaims<F>,
     pub clear_output: Stage4ClearOutput<F>,
@@ -66,7 +66,7 @@ pub fn prove_stage4<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage4ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -117,11 +117,10 @@ where
                     reason: "program-image init contribution without a committed layout",
                 },
             )?;
-            let program = preprocessing
-                .program()
-                .ok_or(ProverError::InvariantViolation {
-                    reason: "full program preprocessing is unavailable",
-                })?;
+            // The full program rides the witness plane (witness generation
+            // requires it in every mode, including committed-program runs
+            // whose PREPROCESSING retains only commitments).
+            let program = witness.program_preprocessing();
             let value = sparse_segments_mle_msb(
                 std::iter::once((
                     layout.start_index() as u128,
@@ -192,9 +191,11 @@ where
     // at prepare), and the stage's `no_opening_values` absorb order is the
     // batch's hand-written `opening_values` replacement (staged openings
     // first, then registers, then RAM) — the driver's default curation.
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,

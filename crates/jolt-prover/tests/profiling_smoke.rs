@@ -5,7 +5,9 @@
 //! rather than drifting.
 //!
 //! Scale 2^13 — fibonacci's minimum guest scale. Label coverage is
-//! scale-independent.
+//! scale-independent. Compiled with the `akita` feature the same run drives
+//! the packed prover and asserts its presence set (and the `_akita`-suffixed
+//! artifact names).
 //!
 //! NOT wired into CI yet: the reference backend's naive RAM kernels retain
 //! ~18 GiB regardless of trace length (`ram_K` is priced off the guest's
@@ -36,16 +38,22 @@ fn profile_run_emits_conformant_artifacts() {
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");
     // Artifacts are grouped into a per-run directory
-    // (benchmark-runs/{timestamp}_modular_fibonacci_13/), with the
-    // `latest_` link pointing at this run; the directory name carries the
-    // run identity, so the files inside use fixed names.
+    // (benchmark-runs/{timestamp}_modular_fibonacci_13/, suffixed `_akita`
+    // on the packed build), with the `latest_` link pointing at this run;
+    // the directory name carries the run identity, so the files inside use
+    // fixed names.
+    let stem = if cfg!(feature = "akita") {
+        "modular_fibonacci_akita_13"
+    } else {
+        "modular_fibonacci_13"
+    };
     assert_eq!(trace_path.file_name().unwrap(), "trace.json");
     assert_eq!(summary_path.file_name().unwrap(), "summary.json");
     assert_eq!(summary_path.parent(), trace_path.parent());
     let run_dir = trace_path.parent().unwrap();
     let dir_name = run_dir.file_name().unwrap().to_str().unwrap();
     let (timestamp, rest) = dir_name.split_at(15);
-    assert_eq!(rest, "_modular_fibonacci_13", "run dir: {dir_name}");
+    assert_eq!(rest, format!("_{stem}"), "run dir: {dir_name}");
     assert!(
         timestamp.chars().enumerate().all(|(i, c)| if i == 8 {
             c == '-'
@@ -55,7 +63,7 @@ fn profile_run_emits_conformant_artifacts() {
         "timestamp prefix: {timestamp}"
     );
     assert_eq!(
-        std::fs::canonicalize("benchmark-runs/latest_modular_fibonacci_13").unwrap(),
+        std::fs::canonicalize(format!("benchmark-runs/latest_{stem}")).unwrap(),
         std::fs::canonicalize(run_dir).unwrap(),
         "latest link resolves to this run"
     );
@@ -71,10 +79,12 @@ fn profile_run_emits_conformant_artifacts() {
 
     // Every always-present taxonomy-v1 label fired, for the mode this
     // prover was compiled in — the `zk` feature swaps the uni-skip and
-    // stage-8 opening seams for their committed siblings. (`commit_advice`
-    // and `AdviceOpeningEvaluation::evaluate` are exempt: fibonacci
-    // exercises no advice.)
-    let mode = if cfg!(feature = "zk") {
+    // stage-8 opening seams for their committed siblings, and the `akita`
+    // feature swaps the commitment seams for the packed set. (The advice
+    // seams are exempt: fibonacci exercises no advice.)
+    let mode = if cfg!(feature = "akita") {
+        taxonomy::ProverMode::Akita
+    } else if cfg!(feature = "zk") {
         taxonomy::ProverMode::Zk
     } else {
         taxonomy::ProverMode::Clear

@@ -1,9 +1,7 @@
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
 
-use super::Instruction;
-
-use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
+use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SUBW,
@@ -27,12 +25,4 @@ impl SUBW {
     }
 }
 
-impl RISCVTrace for SUBW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
-        let mut trace = trace;
-        for instr in inline_sequence {
-            instr.trace(cpu, trace.as_deref_mut());
-        }
-    }
-}
+impl RISCVTrace for SUBW {}

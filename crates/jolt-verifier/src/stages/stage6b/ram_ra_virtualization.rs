@@ -16,7 +16,7 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltRelationId, RamRaVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -25,7 +25,7 @@ use crate::VerifierError;
 
 /// Wire the single reduced `RamRa` opening *value* from the stage-5 RAM RA claim
 /// reduction. Clear-only (the values aggregate exists only in clear mode).
-pub fn ram_ra_virtualization_input_values_from_upstream<F: Field>(
+pub fn ram_ra_virtualization_input_values_from_upstream<F: JoltField>(
     stage5: &Stage5OutputClaims<F>,
 ) -> RamRaVirtualizationInputClaims<F> {
     RamRaVirtualizationInputClaims {
@@ -35,7 +35,7 @@ pub fn ram_ra_virtualization_input_values_from_upstream<F: Field>(
 
 /// Wire the single reduced `RamRa` opening *point* from the stage-5 RAM RA claim
 /// reduction. ZK-agnostic: both proving modes expose the stage-5 output points.
-pub fn ram_ra_virtualization_input_points_from_upstream<F: Field>(
+pub fn ram_ra_virtualization_input_points_from_upstream<F: JoltField>(
     stage5: &Stage5OutputPoints<F>,
 ) -> RamRaVirtualizationInputClaims<Vec<F>> {
     RamRaVirtualizationInputClaims {
@@ -44,7 +44,7 @@ pub fn ram_ra_virtualization_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RamRaVirtualization<F: Field> {
+pub struct RamRaVirtualization<F: JoltField> {
     symbolic: relations::ram::RaVirtualization,
     dimensions: RamRaVirtualizationDimensions,
     /// The stage-5 reduced address prefix, chunked into the per-chunk committed
@@ -56,7 +56,7 @@ pub struct RamRaVirtualization<F: Field> {
     committed_chunk_bits: usize,
 }
 
-impl<F: Field> RamRaVirtualization<F> {
+impl<F: JoltField> RamRaVirtualization<F> {
     pub fn new(
         dimensions: RamRaVirtualizationDimensions,
         ram_reduced_address: Vec<F>,
@@ -96,7 +96,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamRaVirtualization<F> {
     type Symbolic = relations::ram::RaVirtualization;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -132,7 +132,9 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
             .first()
             .ok_or_else(|| public_input_failed("RAM RA virtualization produced no openings"))?;
         let r_cycle = point
-            .get(point.len() - log_t..)
+            .len()
+            .checked_sub(log_t)
+            .and_then(|start| point.get(start..))
             .ok_or_else(|| public_input_failed("RAM RA opening point shorter than log_t"))?;
         try_eq_mle(&self.ram_reduced_cycle, r_cycle).map_err(public_input_failed)
     }

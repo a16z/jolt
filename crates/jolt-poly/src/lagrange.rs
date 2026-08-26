@@ -6,7 +6,7 @@
 
 use std::{fmt, marker::PhantomData};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 /// Evaluates all Lagrange basis polynomials $L_0(r), \ldots, L_{N-1}(r)$ over
 /// the domain $\{s, s+1, \ldots, s+N-1\}$ where $s$ = `domain_start`.
@@ -17,7 +17,7 @@ use jolt_field::Field;
 /// # Panics
 /// Panics if `domain_size` is zero.
 #[expect(clippy::expect_used)]
-pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> Vec<F> {
+pub fn lagrange_evals<F: JoltField>(domain_start: i64, domain_size: usize, r: F) -> Vec<F> {
     assert!(domain_size > 0, "domain_size must be positive");
 
     // Check if r coincides with a grid point (early exit)
@@ -65,7 +65,7 @@ pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> 
 
 /// Evaluates all Lagrange basis polynomials over the centered consecutive
 /// integer domain used by univariate-skip protocols.
-pub fn centered_lagrange_evals<F: Field>(
+pub fn centered_lagrange_evals<F: JoltField>(
     domain_size: usize,
     r: F,
 ) -> Result<Vec<F>, CenteredIntegerDomainError> {
@@ -76,7 +76,7 @@ pub fn centered_lagrange_evals<F: Field>(
     ))
 }
 
-pub fn centered_lagrange_evals_array<F: Field, const N: usize>(
+pub fn centered_lagrange_evals_array<F: JoltField, const N: usize>(
     r: F,
 ) -> Result<[F; N], CenteredIntegerDomainError> {
     let evals = centered_lagrange_evals(N, r)?;
@@ -89,7 +89,7 @@ pub fn centered_lagrange_evals_array<F: Field, const N: usize>(
 
 /// Computes `sum_i L_i(x) * L_i(y)` over the centered consecutive integer
 /// domain used by univariate-skip protocols.
-pub fn centered_lagrange_kernel<F: Field>(
+pub fn centered_lagrange_kernel<F: JoltField>(
     domain_size: usize,
     x: F,
     y: F,
@@ -175,6 +175,12 @@ impl LagrangeHelper {
 
     #[inline]
     pub const fn den_row_i64<const N: usize>() -> [i64; N] {
+        const {
+            assert!(
+                N <= 21,
+                "den_row_i64 requires N <= 21 (factorial table bound)"
+            );
+        }
         let mut out = [0i64; N];
         let mut i = 0usize;
         while i < N {
@@ -191,9 +197,9 @@ impl LagrangeHelper {
     }
 }
 
-pub struct LagrangePolynomial<F: Field>(PhantomData<F>);
+pub struct LagrangePolynomial<F: JoltField>(PhantomData<F>);
 
-impl<F: Field> LagrangePolynomial<F> {
+impl<F: JoltField> LagrangePolynomial<F> {
     #[inline]
     fn start_i64<const N: usize>() -> i64 {
         -(((N - 1) / 2) as i64)
@@ -271,8 +277,10 @@ impl<F: Field> LagrangePolynomial<F> {
     #[inline]
     #[expect(clippy::expect_used)]
     pub fn evaluate<const N: usize>(values: &[F; N], r: F) -> F {
-        debug_assert!(N > 0, "N must be positive");
-        debug_assert!(N <= 20, "evaluate is intended for small N");
+        const {
+            assert!(N > 0, "N must be positive");
+            assert!(N <= 20, "evaluate is intended for small N");
+        }
         let (dists, hit) = Self::distances::<N>(r);
         if let Some(i) = hit {
             return values[i];
@@ -292,8 +300,10 @@ impl<F: Field> LagrangePolynomial<F> {
     #[inline]
     #[expect(clippy::expect_used)]
     pub fn evals<const N: usize>(r: F) -> [F; N] {
-        debug_assert!(N > 0, "N must be positive");
-        debug_assert!(N <= 20, "evals is intended for small N");
+        const {
+            assert!(N > 0, "N must be positive");
+            assert!(N <= 20, "evals is intended for small N");
+        }
         let (dists, hit) = Self::distances::<N>(r);
         if let Some(i) = hit {
             let mut out = [F::zero(); N];
@@ -315,8 +325,10 @@ impl<F: Field> LagrangePolynomial<F> {
     #[inline]
     #[expect(clippy::expect_used)]
     pub fn lagrange_kernel<const N: usize>(x: F, y: F) -> F {
-        debug_assert!(N > 0, "N must be positive");
-        debug_assert!(N <= 20, "lagrange_kernel is intended for small N");
+        const {
+            assert!(N > 0, "N must be positive");
+            assert!(N <= 20, "lagrange_kernel is intended for small N");
+        }
         let (dists_x, hit_x) = Self::distances::<N>(x);
         let (dists_y, hit_y) = Self::distances::<N>(y);
 
@@ -380,7 +392,9 @@ impl<F: Field> LagrangePolynomial<F> {
     #[inline]
     #[expect(clippy::expect_used)]
     pub fn interpolate_coeffs<const N: usize>(values: &[F; N]) -> [F; N] {
-        debug_assert!(N > 0, "N must be positive");
+        const {
+            assert!(N > 0, "N must be positive");
+        }
         let degree = N - 1;
         let start = Self::start_i64::<N>();
 
@@ -439,7 +453,7 @@ impl<F: Field> LagrangePolynomial<F> {
     }
 }
 
-pub fn centered_lagrange_evaluate<F: Field, const N: usize>(
+pub fn centered_lagrange_evaluate<F: JoltField, const N: usize>(
     values: &[F; N],
     r: F,
 ) -> Result<F, CenteredIntegerDomainError> {
@@ -447,7 +461,7 @@ pub fn centered_lagrange_evaluate<F: Field, const N: usize>(
     Ok(LagrangePolynomial::<F>::evaluate::<N>(values, r))
 }
 
-pub fn centered_lagrange_evaluate_many<F: Field, const N: usize>(
+pub fn centered_lagrange_evaluate_many<F: JoltField, const N: usize>(
     values: &[F; N],
     points: &[F],
 ) -> Result<Vec<F>, CenteredIntegerDomainError> {
@@ -455,7 +469,7 @@ pub fn centered_lagrange_evaluate_many<F: Field, const N: usize>(
     Ok(LagrangePolynomial::<F>::evaluate_many::<N>(values, points))
 }
 
-pub fn centered_interpolate_coeffs_array<F: Field, const N: usize>(
+pub fn centered_interpolate_coeffs_array<F: JoltField, const N: usize>(
     values: &[F; N],
 ) -> Result<[F; N], CenteredIntegerDomainError> {
     let _ = centered_domain_start(N)?;
@@ -525,7 +539,7 @@ pub fn centered_power_sums(
 /// coefficients of $p \cdot q$ of length `a.len() + b.len() - 1`.
 ///
 /// Returns empty if either input is empty.
-pub fn poly_mul<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
+pub fn poly_mul<F: JoltField>(a: &[F], b: &[F]) -> Vec<F> {
     if a.is_empty() || b.is_empty() {
         return Vec::new();
     }
@@ -550,7 +564,7 @@ pub fn poly_mul<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
 /// # Panics
 /// Panics if `values` is empty.
 #[expect(clippy::expect_used)]
-pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F> {
+pub fn interpolate_to_coeffs<F: JoltField>(domain_start: i64, values: &[F]) -> Vec<F> {
     let n = values.len();
     assert!(n > 0, "cannot interpolate zero values");
 
@@ -597,7 +611,7 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
 #[expect(clippy::unwrap_used, reason = "tests should fail loudly")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use num_traits::{One, Zero};
 
     #[test]

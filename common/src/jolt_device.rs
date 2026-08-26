@@ -36,23 +36,74 @@ impl core::fmt::Display for MemoryLayoutError {
     }
 }
 
-#[allow(clippy::too_long_first_doc_paragraph)]
+#[expect(
+    clippy::too_long_first_doc_paragraph,
+    reason = "pre-existing doc paragraph exceeds the pedantic limit"
+)]
 /// Represented as a "peripheral device" in the RISC-V emulator, this captures
 /// all reads from the reserved memory address space for program inputs and all writes
 /// to the reserved memory address space for program outputs.
 /// The inputs and outputs are part of the public inputs to the proof.
+///
+/// The advice fields are *not* public: they hold the prover's private inputs,
+/// populated so the emulator can service loads from the advice memory regions.
+/// The verifier never reads them (advice is bound through polynomial
+/// commitments), so both serialization impls emit them as empty to keep
+/// private bytes out of any serialized device (e.g. a host publishing
+/// `program_io` alongside a proof). Deserialization still accepts populated
+/// advice fields, so pre-existing blobs decode unchanged.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "std",
-    derive(Allocative, CanonicalSerialize, CanonicalDeserialize)
-)]
+#[cfg_attr(feature = "std", derive(Allocative, CanonicalDeserialize))]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
+    /// Private prover input; serialized as empty (see struct docs).
+    #[serde(serialize_with = "serialize_advice_stripped")]
     pub trusted_advice: Vec<u8>,
+    /// Private prover input; serialized as empty (see struct docs).
+    #[serde(serialize_with = "serialize_advice_stripped")]
     pub untrusted_advice: Vec<u8>,
     pub outputs: Vec<u8>,
     pub panic: bool,
     pub memory_layout: MemoryLayout,
+}
+
+/// Serializes an advice field as an empty byte vector, byte-compatible with
+/// the derived impl for a device whose advice is empty.
+fn serialize_advice_stripped<S: serde::Serializer>(
+    _advice: &[u8],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    Vec::<u8>::new().serialize(serializer)
+}
+
+/// Mirrors the derived impl except that the advice fields are written as
+/// empty vectors — advice bytes are private inputs and must not leave the
+/// host in a serialized device.
+#[cfg(feature = "std")]
+impl CanonicalSerialize for JoltDevice {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        let empty_advice = Vec::<u8>::new();
+        self.inputs.serialize_with_mode(&mut writer, compress)?;
+        empty_advice.serialize_with_mode(&mut writer, compress)?;
+        empty_advice.serialize_with_mode(&mut writer, compress)?;
+        self.outputs.serialize_with_mode(&mut writer, compress)?;
+        self.panic.serialize_with_mode(&mut writer, compress)?;
+        self.memory_layout
+            .serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        let empty_advice = Vec::<u8>::new();
+        self.inputs.serialized_size(compress)
+            + 2 * empty_advice.serialized_size(compress)
+            + self.outputs.serialized_size(compress)
+            + self.panic.serialized_size(compress)
+            + self.memory_layout.serialized_size(compress)
+    }
 }
 
 impl JoltDevice {
@@ -74,32 +125,22 @@ impl JoltDevice {
             0 // Termination bit should never be loaded after it is set
         } else if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
-            if self.inputs.len() <= internal_address {
-                0
-            } else {
-                self.inputs[internal_address]
-            }
+            self.inputs.get(internal_address).copied().unwrap_or(0)
         } else if self.is_trusted_advice(address) {
             let internal_address = self.convert_trusted_advice_read_address(address);
-            if self.trusted_advice.len() <= internal_address {
-                0
-            } else {
-                self.trusted_advice[internal_address]
-            }
+            self.trusted_advice
+                .get(internal_address)
+                .copied()
+                .unwrap_or(0)
         } else if self.is_untrusted_advice(address) {
             let internal_address = self.convert_untrusted_advice_read_address(address);
-            if self.untrusted_advice.len() <= internal_address {
-                0
-            } else {
-                self.untrusted_advice[internal_address]
-            }
+            self.untrusted_advice
+                .get(internal_address)
+                .copied()
+                .unwrap_or(0)
         } else if self.is_output(address) {
             let internal_address = self.convert_write_address(address);
-            if self.outputs.len() <= internal_address {
-                0
-            } else {
-                self.outputs[internal_address]
-            }
+            self.outputs.get(internal_address).copied().unwrap_or(0)
         } else {
             assert!(address <= RAM_START_ADDRESS - 8);
             0 // zero-padding
@@ -126,7 +167,13 @@ impl JoltDevice {
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
         }
-        self.outputs[internal_address] = value;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "the resize above guarantees internal_address < outputs.len()"
+        )]
+        {
+            self.outputs[internal_address] = value;
+        }
     }
 
     pub fn size(&self) -> usize {
@@ -293,6 +340,11 @@ impl core::fmt::Debug for MemoryLayout {
 }
 
 impl MemoryLayout {
+    #[expect(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        reason = "layout construction panics on pathological config sizes; fallible construction is tracked as a follow-up in specs/verifier-closure-lints.md"
+    )]
     pub fn new(config: &MemoryConfig) -> Self {
         assert!(
             config.program_size.is_some(),
@@ -415,13 +467,13 @@ impl MemoryLayout {
         Self {
             program_size,
             max_trusted_advice_size,
-            max_untrusted_advice_size,
-            max_input_size,
-            max_output_size,
             trusted_advice_start,
             trusted_advice_end,
+            max_untrusted_advice_size,
             untrusted_advice_start,
             untrusted_advice_end,
+            max_input_size,
+            max_output_size,
             input_start,
             input_end,
             output_start,
@@ -469,6 +521,7 @@ impl MemoryLayout {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -498,6 +551,60 @@ mod tests {
 
         assert_eq!(device.input_words_le(), vec![0x0807_0605_0403_0201, 9]);
         assert_eq!(device.output_words_le(), vec![0xbbaa]);
+    }
+
+    fn device_with_advice() -> JoltDevice {
+        let mut device = JoltDevice::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        device.inputs = vec![1, 2, 3];
+        device.trusted_advice = vec![0xde, 0xad];
+        device.untrusted_advice = vec![0xbe, 0xef, 0x42];
+        device.outputs = vec![7, 8];
+        device.panic = true;
+        device
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn canonical_serialization_strips_advice() {
+        use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
+        let device = device_with_advice();
+        let mut public_device = device.clone();
+        public_device.trusted_advice.clear();
+        public_device.untrusted_advice.clear();
+
+        let mut bytes = Vec::new();
+        device.serialize_compressed(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), device.compressed_size());
+
+        let mut public_bytes = Vec::new();
+        public_device
+            .serialize_compressed(&mut public_bytes)
+            .unwrap();
+        assert_eq!(bytes, public_bytes);
+
+        let roundtrip = JoltDevice::deserialize_compressed(bytes.as_slice()).unwrap();
+        assert_eq!(roundtrip, public_device);
+    }
+
+    #[test]
+    fn serde_serialization_strips_advice() {
+        let device = device_with_advice();
+        let mut public_device = device.clone();
+        public_device.trusted_advice.clear();
+        public_device.untrusted_advice.clear();
+
+        let bytes = bincode::serde::encode_to_vec(&device, bincode::config::standard()).unwrap();
+        let public_bytes =
+            bincode::serde::encode_to_vec(&public_device, bincode::config::standard()).unwrap();
+        assert_eq!(bytes, public_bytes);
+
+        let (roundtrip, _): (JoltDevice, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(roundtrip, public_device);
     }
 
     #[test]

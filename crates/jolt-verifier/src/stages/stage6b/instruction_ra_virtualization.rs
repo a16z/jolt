@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{
     InstructionRaVirtualizationPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -28,7 +28,7 @@ use crate::VerifierError;
 
 /// Wire the per-virtual reduced `InstructionRa` opening *values* from the stage-5
 /// instruction read-RAF. Clear-only.
-pub fn instruction_ra_virtualization_input_values_from_upstream<F: Field>(
+pub fn instruction_ra_virtualization_input_values_from_upstream<F: JoltField>(
     stage5: &Stage5OutputClaims<F>,
 ) -> InstructionRaVirtualizationInputClaims<F> {
     InstructionRaVirtualizationInputClaims {
@@ -38,7 +38,7 @@ pub fn instruction_ra_virtualization_input_values_from_upstream<F: Field>(
 
 /// Wire the per-virtual reduced `InstructionRa` opening *points* from the stage-5
 /// instruction read-RAF. ZK-agnostic.
-pub fn instruction_ra_virtualization_input_points_from_upstream<F: Field>(
+pub fn instruction_ra_virtualization_input_points_from_upstream<F: JoltField>(
     stage5: &Stage5OutputPoints<F>,
 ) -> InstructionRaVirtualizationInputClaims<Vec<F>> {
     InstructionRaVirtualizationInputClaims {
@@ -47,7 +47,7 @@ pub fn instruction_ra_virtualization_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct InstructionRaVirtualization<F: Field> {
+pub struct InstructionRaVirtualization<F: JoltField> {
     symbolic: relations::instruction::RaVirtualization,
     dimensions: InstructionRaVirtualizationDimensions,
     /// The stage-5 instruction address point, chunked into the per-chunk committed
@@ -58,7 +58,7 @@ pub struct InstructionRaVirtualization<F: Field> {
     committed_chunk_bits: usize,
 }
 
-impl<F: Field> InstructionRaVirtualization<F> {
+impl<F: JoltField> InstructionRaVirtualization<F> {
     pub fn new(
         dimensions: InstructionRaVirtualizationDimensions,
         instruction_address: Vec<F>,
@@ -82,7 +82,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> InstructionRaVirtualization<F> {
+impl<F: JoltField> InstructionRaVirtualization<F> {
     pub fn dimensions(&self) -> InstructionRaVirtualizationDimensions {
         self.dimensions
     }
@@ -100,7 +100,7 @@ impl<F: Field> InstructionRaVirtualization<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
     type Symbolic = relations::instruction::RaVirtualization;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -142,9 +142,13 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
             .ok_or_else(|| {
                 public_input_failed("instruction RA virtualization produced no openings")
             })?;
-        let r_cycle = point.get(point.len() - log_t..).ok_or_else(|| {
-            public_input_failed("instruction RA opening point shorter than log_t")
-        })?;
+        let r_cycle = point
+            .len()
+            .checked_sub(log_t)
+            .and_then(|start| point.get(start..))
+            .ok_or_else(|| {
+                public_input_failed("instruction RA opening point shorter than log_t")
+            })?;
         try_eq_mle(&self.instruction_read_raf_cycle, r_cycle).map_err(public_input_failed)
     }
 }

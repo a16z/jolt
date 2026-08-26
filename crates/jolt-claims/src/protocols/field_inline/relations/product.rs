@@ -1,6 +1,6 @@
 //! field_inline native product symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::opening;
 use crate::protocols::field_inline::geometry::product::{
@@ -44,11 +44,11 @@ impl SymbolicSumcheck for FieldProduct {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
+    fn input_expression<F: Ring>(&self) -> FieldInlineExpr<F> {
         opening(field_product_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
+    fn output_expression<F: Ring>(&self) -> FieldInlineExpr<F> {
         opening(field_rs1_value_product()) * opening(field_rs2_value_product())
     }
 }
@@ -61,7 +61,7 @@ mod tests {
         selected_product_remainder_output_openings, selected_product_uniskip_input_openings,
         FieldRegistersProductLane,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> FieldRegistersTraceDimensions {
         FieldRegistersTraceDimensions::new(5)

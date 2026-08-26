@@ -7,7 +7,7 @@
 
 use std::marker::PhantomData;
 
-use jolt_field::{CanonicalBytes, Field, FromPrimitiveInt, TranscriptChallenge};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, JoltField, Ring};
 use spongefish::{DuplexSpongeInterface, Encoding};
 
 use crate::codec::BytesMsg;
@@ -30,7 +30,7 @@ pub const MAX_LABEL_LEN: usize = 32;
 /// barriers.
 pub trait Transcript: Default + Sync + Send + 'static {
     /// The challenge type produced by this transcript.
-    type Challenge: TranscriptChallenge;
+    type Challenge: CanonicalEncoding;
 
     /// Creates a new transcript with the given domain separation label.
     ///
@@ -81,14 +81,13 @@ pub trait Transcript: Default + Sync + Send + 'static {
     #[must_use]
     fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge>
     where
-        Self::Challenge: Field,
+        Self::Challenge: JoltField,
     {
         let gamma = self.challenge_scalar();
-        let mut powers = vec![Self::Challenge::from_u64(1); len];
-        for index in 1..len {
-            powers[index] = powers[index - 1] * gamma;
-        }
-        powers
+        let one = Self::Challenge::from_u64(1);
+        std::iter::successors(Some(one), |power| Some(*power * gamma))
+            .take(len)
+            .collect()
     }
 
     /// Current 256-bit transcript state. Peeked non-destructively by
@@ -157,7 +156,8 @@ impl AppendToTranscript for Label {
             core::str::from_utf8(self.0)
         );
         let mut padded = [0u8; 32];
-        padded[..self.0.len()].copy_from_slice(self.0);
+        let (head, _) = padded.split_at_mut(self.0.len());
+        head.copy_from_slice(self.0);
         transcript.append_bytes(&padded);
     }
 }
@@ -174,7 +174,8 @@ impl AppendToTranscript for LabelWithCount {
             core::str::from_utf8(self.0)
         );
         let mut packed = [0u8; 32];
-        packed[..self.0.len()].copy_from_slice(self.0);
+        let (head, _) = packed.split_at_mut(self.0.len());
+        head.copy_from_slice(self.0);
         packed[24..32].copy_from_slice(&self.1.to_be_bytes());
         transcript.append_bytes(&packed);
     }
@@ -204,7 +205,7 @@ impl AppendToTranscript for U64Word {
 pub struct SpongeTranscript<H, F = jolt_field::Fr>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: TranscriptChallenge,
+    F: CanonicalEncoding,
 {
     sponge: H,
     _field: PhantomData<F>,
@@ -213,7 +214,7 @@ where
 impl<H, F> Default for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: TranscriptChallenge,
+    F: CanonicalEncoding,
 {
     fn default() -> Self {
         Self::new(b"")
@@ -239,7 +240,7 @@ fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] 
 impl<H, F> Transcript for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: TranscriptChallenge,
+    F: CanonicalEncoding,
 {
     type Challenge = F;
 

@@ -2,7 +2,7 @@
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// access are deliberately left as inherent methods because the two representations
 /// require different calling conventions (compressed evaluation needs an external
 /// hint value).
-pub trait UnivariatePolynomial<F: Field>: Send + Sync {
+pub trait UnivariatePolynomial<F: JoltField>: Send + Sync {
     /// Degree of the polynomial, or 0 for the zero polynomial.
     fn degree(&self) -> usize;
 }
@@ -24,11 +24,11 @@ pub trait UnivariatePolynomial<F: Field>: Send + Sync {
 /// coefficient of $x^i$. An empty coefficient vector represents the zero polynomial.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
-pub struct UnivariatePoly<F: Field> {
+pub struct UnivariatePoly<F: JoltField> {
     coefficients: Vec<F>,
 }
 
-impl<F: Field> UnivariatePolynomial<F> for UnivariatePoly<F> {
+impl<F: JoltField> UnivariatePolynomial<F> for UnivariatePoly<F> {
     fn degree(&self) -> usize {
         if self.coefficients.is_empty() {
             0
@@ -38,7 +38,7 @@ impl<F: Field> UnivariatePolynomial<F> for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> UnivariatePoly<F> {
+impl<F: JoltField> UnivariatePoly<F> {
     /// Creates a polynomial from coefficients in ascending degree order.
     pub fn new(coefficients: Vec<F>) -> Self {
         Self { coefficients }
@@ -204,7 +204,11 @@ impl<F: Field> UnivariatePoly<F> {
     /// Interpolates from evaluations at `[0, 2, 3, ..., n-1]` with the hint `p(0) + p(1)`.
     ///
     /// Recovers `p(1) = hint - p(0)` and then interpolates over the full set `{0, 1, ..., n-1}`.
+    ///
+    /// # Panics
+    /// Panics if `evals` is empty.
     pub fn from_evals_and_hint(hint: F, evals: &[F]) -> Self {
+        assert!(!evals.is_empty(), "cannot interpolate zero evaluations");
         let mut full = evals.to_vec();
         let eval_at_1 = hint - full[0];
         full.insert(1, eval_at_1);
@@ -216,8 +220,12 @@ impl<F: Field> UnivariatePoly<F> {
     /// The last entry is interpreted as the evaluation at infinity, i.e., the leading
     /// coefficient of the polynomial. Uses Gaussian elimination on the augmented
     /// Vandermonde-plus-infinity system.
+    ///
+    /// # Panics
+    /// Panics if `evals` is empty.
     pub fn from_evals_toom(evals: &[F]) -> Self {
         let n = evals.len();
+        assert!(n > 0, "cannot interpolate zero evaluations");
         let mut matrix: Vec<Vec<F>> = Vec::with_capacity(n);
 
         // Rows for finite x values: x = 0, 1, ..., n-2
@@ -253,6 +261,10 @@ impl<F: Field> UnivariatePoly<F> {
     /// - `hint = s(0) + s(1)`
     ///
     /// Used by the split-eq evaluator to construct round polynomials.
+    ///
+    /// # Panics
+    /// Panics if `l(1) = linear_coeffs[0] + linear_coeffs[1]` is zero, since the
+    /// hint equation cannot then be solved for the missing quadratic coefficient.
     #[expect(clippy::expect_used)]
     pub fn from_linear_times_quadratic_with_hint(
         linear_coeffs: [F; 2],
@@ -306,29 +318,28 @@ impl<F: Field> UnivariatePoly<F> {
         if self.is_zero() {
             return Some((Self::zero(), Self::zero()));
         }
-        if divisor.is_zero() {
-            return None;
-        }
-        if self.coefficients.len() < divisor.coefficients.len() {
+        // Divide by the effective (mathematical) degree: trailing zero
+        // coefficients would otherwise make the stored leading coefficient
+        // zero and non-invertible. `None` here means the zero divisor.
+        let divisor_len = divisor.coefficients.iter().rposition(|c| *c != F::zero())? + 1;
+        if self.coefficients.len() < divisor_len {
             return Some((Self::zero(), self.clone()));
         }
 
-        let divisor_leading_inv = divisor
-            .leading_coefficient()
-            .unwrap()
+        let divisor_coeffs = &divisor.coefficients[..divisor_len];
+        let divisor_leading_inv = divisor_coeffs[divisor_len - 1]
             .inverse()
             .expect("leading coefficient must be invertible");
 
         let mut remainder = self.clone();
-        let mut quotient =
-            vec![F::zero(); self.coefficients.len() - divisor.coefficients.len() + 1];
+        let mut quotient = vec![F::zero(); self.coefficients.len() - divisor_len + 1];
 
-        while !remainder.is_zero() && remainder.coefficients.len() >= divisor.coefficients.len() {
+        while !remainder.is_zero() && remainder.coefficients.len() >= divisor_len {
             let cur_q_coeff = *remainder.leading_coefficient().unwrap() * divisor_leading_inv;
-            let cur_q_degree = remainder.coefficients.len() - divisor.coefficients.len();
+            let cur_q_degree = remainder.coefficients.len() - divisor_len;
             quotient[cur_q_degree] = cur_q_coeff;
 
-            for (i, div_coeff) in divisor.coefficients.iter().enumerate() {
+            for (i, div_coeff) in divisor_coeffs.iter().enumerate() {
                 remainder.coefficients[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
             }
 
@@ -346,7 +357,7 @@ impl<F: Field> UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> Neg for UnivariatePoly<F> {
+impl<F: JoltField> Neg for UnivariatePoly<F> {
     type Output = Self;
 
     fn neg(mut self) -> Self {
@@ -357,7 +368,7 @@ impl<F: Field> Neg for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> Add for UnivariatePoly<F> {
+impl<F: JoltField> Add for UnivariatePoly<F> {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self {
@@ -366,7 +377,7 @@ impl<F: Field> Add for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> Add for &UnivariatePoly<F> {
+impl<F: JoltField> Add for &UnivariatePoly<F> {
     type Output = UnivariatePoly<F>;
 
     fn add(self, rhs: Self) -> UnivariatePoly<F> {
@@ -383,7 +394,7 @@ impl<F: Field> Add for &UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> AddAssign<&Self> for UnivariatePoly<F> {
+impl<F: JoltField> AddAssign<&Self> for UnivariatePoly<F> {
     fn add_assign(&mut self, rhs: &Self) {
         if rhs.coefficients.len() > self.coefficients.len() {
             self.coefficients.resize(rhs.coefficients.len(), F::zero());
@@ -394,7 +405,7 @@ impl<F: Field> AddAssign<&Self> for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> Sub for UnivariatePoly<F> {
+impl<F: JoltField> Sub for UnivariatePoly<F> {
     type Output = Self;
 
     fn sub(mut self, rhs: Self) -> Self {
@@ -403,7 +414,7 @@ impl<F: Field> Sub for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> Sub for &UnivariatePoly<F> {
+impl<F: JoltField> Sub for &UnivariatePoly<F> {
     type Output = UnivariatePoly<F>;
 
     fn sub(self, rhs: Self) -> UnivariatePoly<F> {
@@ -419,7 +430,7 @@ impl<F: Field> Sub for &UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> SubAssign<&Self> for UnivariatePoly<F> {
+impl<F: JoltField> SubAssign<&Self> for UnivariatePoly<F> {
     fn sub_assign(&mut self, rhs: &Self) {
         if rhs.coefficients.len() > self.coefficients.len() {
             self.coefficients.resize(rhs.coefficients.len(), F::zero());
@@ -430,7 +441,7 @@ impl<F: Field> SubAssign<&Self> for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> Mul<F> for UnivariatePoly<F> {
+impl<F: JoltField> Mul<F> for UnivariatePoly<F> {
     type Output = Self;
 
     fn mul(mut self, rhs: F) -> Self {
@@ -439,7 +450,7 @@ impl<F: Field> Mul<F> for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> Mul<F> for &UnivariatePoly<F> {
+impl<F: JoltField> Mul<F> for &UnivariatePoly<F> {
     type Output = UnivariatePoly<F>;
 
     fn mul(self, rhs: F) -> UnivariatePoly<F> {
@@ -447,7 +458,7 @@ impl<F: Field> Mul<F> for &UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> MulAssign<F> for UnivariatePoly<F> {
+impl<F: JoltField> MulAssign<F> for UnivariatePoly<F> {
     fn mul_assign(&mut self, rhs: F) {
         for c in &mut self.coefficients {
             *c *= rhs;
@@ -456,7 +467,7 @@ impl<F: Field> MulAssign<F> for UnivariatePoly<F> {
 }
 
 /// Gaussian elimination on a Vandermonde system for evaluations at `0, 1, ..., n-1`.
-fn gaussian_elimination_vandermonde<F: Field>(evals: &[F]) -> Vec<F> {
+fn gaussian_elimination_vandermonde<F: JoltField>(evals: &[F]) -> Vec<F> {
     let n = evals.len();
     let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
 
@@ -485,7 +496,7 @@ fn gaussian_elimination_vandermonde<F: Field>(evals: &[F]) -> Vec<F> {
 ///
 /// Panics if the matrix is singular (no nonzero pivot in some column).
 #[expect(clippy::expect_used)]
-fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
+fn gaussian_elimination_augmented<F: JoltField>(matrix: &mut [Vec<F>]) -> Vec<F> {
     let size = matrix.len();
     debug_assert_eq!(size, matrix[0].len() - 1);
 
@@ -545,7 +556,7 @@ fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
 mod tests {
     use super::*;
     use jolt_field::Fr;
-    use jolt_field::FromPrimitiveInt;
+    use jolt_field::Ring;
     use num_traits::{One, Zero};
 
     #[test]
@@ -807,6 +818,24 @@ mod tests {
     }
 
     #[test]
+    fn divide_by_all_zero_divisor_returns_none() {
+        // Non-canonical zero divisor: nonempty vector of zero coefficients.
+        let p = UnivariatePoly::new(vec![Fr::one(), Fr::one()]);
+        let divisor = UnivariatePoly::new(vec![Fr::zero(), Fr::zero()]);
+        assert!(p.divide_with_remainder(&divisor).is_none());
+    }
+
+    #[test]
+    fn divide_by_divisor_with_trailing_zeros() {
+        // (x^2 + 3x + 2) / (x + 2), divisor stored non-canonically as [2, 1, 0].
+        let dividend = UnivariatePoly::new(vec![Fr::from_u64(2), Fr::from_u64(3), Fr::one()]);
+        let divisor = UnivariatePoly::new(vec![Fr::from_u64(2), Fr::one(), Fr::zero()]);
+        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
+        assert_eq!(q, UnivariatePoly::new(vec![Fr::one(), Fr::one()]));
+        assert!(r.is_zero());
+    }
+
+    #[test]
     fn divide_lower_degree_returns_self_as_remainder() {
         let dividend = UnivariatePoly::new(vec![Fr::from_u64(3)]);
         let divisor = UnivariatePoly::new(vec![Fr::one(), Fr::one()]);
@@ -874,6 +903,18 @@ mod tests {
         assert_eq!(poly.evaluate(Fr::from_u64(0)), Fr::from_u64(1));
         assert_eq!(poly.evaluate(Fr::from_u64(1)), Fr::from_u64(6));
         assert_eq!(poly.evaluate(Fr::from_u64(2)), Fr::from_u64(15));
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot interpolate zero evaluations")]
+    fn from_evals_and_hint_rejects_empty() {
+        let _ = UnivariatePoly::<Fr>::from_evals_and_hint(Fr::one(), &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot interpolate zero evaluations")]
+    fn from_evals_toom_rejects_empty() {
+        let _ = UnivariatePoly::<Fr>::from_evals_toom(&[]);
     }
 
     #[test]

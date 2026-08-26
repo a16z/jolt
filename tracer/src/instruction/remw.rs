@@ -2,10 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{
-    fill_virtual_advice, format::format_r::FormatR, Cycle, Instruction, RISCVInstruction,
-    RISCVTrace,
-};
+use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = REMW,
@@ -41,22 +38,19 @@ impl RISCVTrace for REMW {
         let x = cpu.x[self.operands.rs1 as usize] as i32;
         let y = cpu.x[self.operands.rs2 as usize] as i32;
 
-        let (quotient, remainder) = if y == 0 {
-            (-1i32, x.unsigned_abs())
+        let quotient_magnitude = if y == 0 {
+            0
         } else if y == -1 && x == i32::MIN {
-            (i32::MIN, 0) //overflow
+            1 << 31
         } else {
-            let quotient = x / y;
-            let remainder = x % y;
-            (quotient, remainder.unsigned_abs())
+            (x / y).unsigned_abs() as u64
         };
 
-        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
-        fill_virtual_advice(&mut inline_sequence, &[quotient as u64, remainder as u64]);
-
-        let mut trace = trace;
-        for instr in inline_sequence {
-            instr.trace(cpu, trace.as_deref_mut());
-        }
+        super::trace_inline_sequence_with_advice(
+            &Instruction::from(*self),
+            cpu,
+            &[quotient_magnitude],
+            trace,
+        );
     }
 }

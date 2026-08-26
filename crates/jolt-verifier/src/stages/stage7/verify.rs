@@ -3,14 +3,14 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::{
             advice,
             bytecode::{self as bytecode_reduction},
-            hamming_weight, program_image,
+            program_image,
         },
         dimensions::JoltFormulaDimensions,
     },
     JoltAdviceKind, JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
@@ -23,8 +23,9 @@ use super::committed_reduction_address_phase::{
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseInputClaims,
 };
 use super::hamming_weight_claim_reduction::{
-    hamming_weight_input_values_from_upstream, stage7_hamming_virtualization_address_points,
-    HammingDimensions, HammingWeightClaimReduction,
+    hamming_weight_claim_reduction_dimensions, hamming_weight_input_values_from_upstream,
+    stage7_hamming_virtualization_address_points, HammingWeightClaimReduction,
+    HammingWeightClaimReductionDimensions,
 };
 use super::outputs::{
     Stage7ClearOutput, Stage7InputClaims, Stage7Output, Stage7Sumchecks, Stage7ZkOutput,
@@ -44,6 +45,7 @@ use crate::{
     VerifierError,
 };
 
+#[jolt_verifier_derive::fs_scope(Stage7)]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -57,22 +59,10 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let base_hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
+    let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
         proof.one_hot_config.committed_chunk_bits(),
-    );
-    #[cfg(not(feature = "akita"))]
-    let hamming_dimensions = base_hamming_dimensions;
-    #[cfg(feature = "akita")]
-    let hamming_dimensions =
-        jolt_claims::protocols::jolt::lattice::relations::hamming_weight::LatticeHammingWeightClaimReductionDimensions::new(
-            base_hamming_dimensions.layout,
-            base_hamming_dimensions.log_k_chunk,
-        )
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: error.to_string(),
-        })?;
+    )?;
 
     // The clear-only reference geometry each address phase's expected-output term
     // reads (advice / program-image RAM address points, bytecode cycle-phase
@@ -166,8 +156,8 @@ where
 /// `derive_output_term` never runs). An address phase is present exactly when its
 /// precommitted layout is committed and its dimensions carry active address rounds
 /// — the presence flag the input / challenge aggregates track in lockstep.
-pub fn build_stage7_sumchecks<F: Field>(
-    hamming_dimensions: HammingDimensions,
+pub fn build_stage7_sumchecks<F: JoltField>(
+    hamming_dimensions: HammingWeightClaimReductionDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
     clear: Option<(&Stage4ClearOutput<F>, &Stage6bClearOutput<F>)>,
@@ -267,7 +257,7 @@ pub fn build_stage7_sumchecks<F: Field>(
 /// with active address rounds first (an absent layout yields `Ok(None)`, matching
 /// the member's presence flag), then lift missing stage-6b cycle-phase variables
 /// to `MissingOpeningClaim` before building the instance.
-fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
+fn address_phase_member<F: JoltField, L: PrecommittedReductionLayout, M>(
     layout: Option<&L>,
     cycle_phase_variables: Option<Vec<F>>,
     missing_cycle_opening: JoltOpeningId,
@@ -289,7 +279,7 @@ fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
 /// phase runs (tracking each `Stage7Sumchecks` member's presence), so a present
 /// member always has its input cell populated. Public because the prover's
 /// stage-7 recipe builds its batch inputs through the same wiring.
-pub fn stage7_input_values_from_upstream<F: Field>(
+pub fn stage7_input_values_from_upstream<F: JoltField>(
     sumchecks: &Stage7Sumchecks<F>,
     stage6: &Stage6bClearOutput<F>,
 ) -> Result<Stage7InputClaims<F>, VerifierError> {

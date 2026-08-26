@@ -1,27 +1,23 @@
-//! Typed per-cycle register rows and the one-pass sparse-entry collection.
+//! Typed per-cycle register rows and sparse-entry collection.
 
-#[cfg(feature = "parallel")]
-use crate::optimized::rows::RandomAccessRows;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use jolt_utils::FirstErrorLatch;
 use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
+#[cfg(feature = "parallel")]
+use jolt_witness::RandomAccessRows;
 use jolt_witness::{
     stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::sparse::{LutIndex, SparseEntry};
+use super::sparse::IndexedSparseEntry;
 use crate::KernelError;
 
-/// Per-cycle register activity: operand indices plus the raw values the
-/// sparse entries and direct one-hot claims are built from. Hand-implemented
-/// bundle — the fields carry no protocol ids, and no atomic witness newtype
-/// exposes the operand *indices*.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RegisterCycleRow {
     /// `(register, read value)`.
@@ -42,17 +38,12 @@ impl WitnessBundle for RegisterCycleRow {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let cycle = Self {
-            rs1: row.registers.rs1.map(|read| (read.register, read.value)),
-            rs2: row.registers.rs2.map(|read| (read.register, read.value)),
+            rs1: row.rs1_index().map(|register| (register, row.rs1_value())),
+            rs2: row.rs2_index().map(|register| (register, row.rs2_value())),
             rd: row
-                .registers
-                .rd
-                .map(|write| (write.register, write.pre_value, write.post_value)),
+                .rd_index()
+                .map(|register| (register, row.rd_pre_value(), row.rd_write_value())),
         };
-        // Reject out-of-domain operand indices exactly like the trace
-        // oracle's grid materializers (the reference tier's path): a raw
-        // index at or beyond `2^REGISTER_ADDRESS_BITS` would otherwise
-        // scatter out of bounds deep inside the kernel.
         for register in [
             cycle.rs1.map(|(register, _)| register),
             cycle.rs2.map(|(register, _)| register),
@@ -81,12 +72,8 @@ impl WitnessBundle for RegisterCycleRow {
 /// Cross-member carry: the per-cycle `rd` hot indices, parked by this kernel's
 /// `prepare` for the stage-5 val-evaluation kernel (which otherwise re-walks
 /// the trace to collect them).
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_allocative!(SharedRdIndices, |indices| {
-    crate::backend::vec_heap_bytes(&indices.0)
-});
 
 /// The row-window size of the streaming entry-collection pass (matches
 /// `support::collect_rows`: wide enough to amortize the per-chunk rayon
@@ -95,20 +82,21 @@ const COLLECT_CHUNK: usize = 1 << 16;
 
 /// Streaming consumer building the sparse entries and the operand index
 /// columns in one trace pass, no whole-trace row materialization.
-pub(super) struct CollectRegisterEntries<F: Field> {
-    pub(super) entries: Vec<SparseEntry<F, LutIndex>>,
+pub(super) struct CollectRegisterEntries<F: JoltField> {
+    pub(super) entries: Vec<IndexedSparseEntry<F>>,
     pub(super) rs1_indices: Vec<Option<u8>>,
     pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) rd_indices: Vec<Option<u8>>,
 }
 
-impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
+impl<F: JoltField> StreamConsumer for CollectRegisterEntries<F> {
     type Witness = RegisterCycleRow;
 
     fn consume(&mut self, chunk: &[RegisterCycleRow]) {
         for cycle in chunk {
             let row = self.rs1_indices.len();
-            let (cells, len) = cycle.entries(row);
+            debug_assert!(u32::try_from(row).is_ok());
+            let (cells, len) = cycle.entries(row as u32);
             self.entries.extend_from_slice(&cells[..len]);
             self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
             self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
@@ -117,21 +105,23 @@ impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
     }
 }
 
-impl<F: Field> CollectRegisterEntries<F> {
+impl<F: JoltField> CollectRegisterEntries<F> {
     /// Builds the sparse entries and the operand index columns in one trace
     /// pass. Slice-backed sources build index-parallel; re-emulating sources
     /// stream sequentially. Entry values and order are identical either way —
-    /// [`RegisterCycleRow::entries`] is pure per cycle, and runs concatenate
-    /// in cycle order.
+    /// [`RegisterCycleRow::entries`] is pure per cycle, and runs concatenate in
+    /// cycle order.
     pub(super) fn collect(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         #[cfg(feature = "parallel")]
-        if let Some(access) = RandomAccessRows::new(witness, cycles)? {
-            return Self::collect_par(&access, cycles);
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, cycles);
+            }
         }
-        let mut consumers = (CollectRegisterEntries::<F> {
+        let mut consumers = (Self {
             entries: Vec::with_capacity(cycles * 3),
             rs1_indices: Vec::with_capacity(cycles),
             rs2_indices: Vec::with_capacity(cycles),
@@ -149,7 +139,7 @@ impl<F: Field> CollectRegisterEntries<F> {
     /// columns fill on the counting pass. Entry values and order are identical
     /// to the streaming pass: [`RegisterCycleRow::entries`] is pure per cycle.
     #[cfg(feature = "parallel")]
-    fn collect_par(access: &RandomAccessRows<'_>, cycles: usize) -> Result<Self, KernelError<F>> {
+    fn collect_par(access: &RandomAccessRows, cycles: usize) -> Result<Self, KernelError<F>> {
         use core::mem::MaybeUninit;
         /// The scatter grain (matches the whole-range collectors' load-balance
         /// tradeoff at ~3 entries per cycle).
@@ -191,8 +181,8 @@ impl<F: Field> CollectRegisterEntries<F> {
         if let Some(failure) = error.take() {
             return Err(failure.into());
         }
-        // SAFETY: the error latch is empty, so every chunk ran to completion
-        // and initialized its whole span of all three index columns.
+        // SAFETY: the error latch is empty, so every chunk ran to completion and
+        // initialized its whole span of all three index columns.
         unsafe {
             rs1_indices.set_len(cycles);
             rs2_indices.set_len(cycles);
@@ -207,11 +197,11 @@ impl<F: Field> CollectRegisterEntries<F> {
             offsets.push(total);
             total += count;
         }
-        let mut entries: Vec<SparseEntry<F, LutIndex>> = Vec::with_capacity(total);
+        let mut entries: Vec<IndexedSparseEntry<F>> = Vec::with_capacity(total);
         {
-            let mut rest: &mut [MaybeUninit<SparseEntry<F, LutIndex>>] =
+            let mut rest: &mut [MaybeUninit<IndexedSparseEntry<F>>] =
                 &mut entries.spare_capacity_mut()[..total];
-            let mut windows: Vec<&mut [MaybeUninit<SparseEntry<F, LutIndex>>]> =
+            let mut windows: Vec<&mut [MaybeUninit<IndexedSparseEntry<F>>]> =
                 Vec::with_capacity(chunk_count);
             for &count in &counts {
                 let (head, tail) = rest.split_at_mut(count);
@@ -232,7 +222,7 @@ impl<F: Field> CollectRegisterEntries<F> {
                         // but stay conservative and latch again.
                         match access.window::<RegisterCycleRow>(row) {
                             Ok(cycle) => {
-                                let (cells, len) = cycle.entries(row);
+                                let (cells, len) = cycle.entries(row as u32);
                                 for cell in &cells[..len] {
                                     let _ = window[written].write(*cell);
                                     written += 1;
@@ -254,11 +244,112 @@ impl<F: Field> CollectRegisterEntries<F> {
         // scan of the same counts pass 2 reproduces), and every window was
         // fully written above.
         unsafe { entries.set_len(total) };
-        Ok(CollectRegisterEntries {
+        Ok(Self {
             entries,
             rs1_indices,
             rs2_indices,
             rd_indices,
         })
+    }
+}
+
+#[cfg(feature = "parallel")]
+impl RegisterCycleRow {
+    /// The entry count [`Self::entries`] will produce for one cycle — the
+    /// counting pass's cheap twin (kept adjacent so the merge rules stay in
+    /// sync: rs2 folds into rs1's entry, rd into either read's).
+    fn entry_count(&self) -> usize {
+        let mut count = 0usize;
+        let mut cols = [None; 2];
+        if let Some((rs1, _)) = self.rs1 {
+            cols[0] = Some(rs1);
+            count += 1;
+        }
+        if let Some((rs2, _)) = self.rs2 {
+            if cols[0] != Some(rs2) {
+                cols[1] = Some(rs2);
+                count += 1;
+            }
+        }
+        if let Some((rd, ..)) = self.rd {
+            if cols[0] != Some(rd) && cols[1] != Some(rd) {
+                count += 1;
+            }
+        }
+        count
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use common::jolt_device::MemoryLayout;
+    use jolt_program::preprocess::{
+        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
+    };
+    use jolt_riscv::{
+        CapturedState, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NonMemoryState,
+        NormalizedOperands,
+    };
+
+    use super::*;
+
+    /// The counting pass and the write pass must agree on every operand
+    /// pattern — including raw index 255, which the old `u8::MAX` sentinel
+    /// collided with (count 0, write 1 → pass-2 window overrun).
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn cycle_entry_count_matches_cycle_entries() {
+        use jolt_field::Fr;
+        let candidates: [Option<u8>; 5] = [None, Some(0), Some(5), Some(127), Some(255)];
+        for rs1 in candidates {
+            for rs2 in candidates {
+                for rd in candidates {
+                    let cycle = RegisterCycleRow {
+                        rs1: rs1.map(|register| (register, 11)),
+                        rs2: rs2.map(|register| (register, 22)),
+                        rd: rd.map(|register| (register, 33, 44)),
+                    };
+                    let (_, len) = cycle.entries::<Fr>(0);
+                    assert_eq!(
+                        cycle.entry_count(),
+                        len,
+                        "count/write divergence for {cycle:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_register_outside_protocol_domain() {
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            operands: NormalizedOperands {
+                rs1: Some(200),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let row = JoltTraceRow::from_components(
+            CapturedState::NonMemory(NonMemoryState::default()),
+            &instruction,
+            0,
+        )
+        .unwrap();
+        let preprocessing = JoltProgramPreprocessing {
+            bytecode: BytecodePreprocessing::default(),
+            ram: RAMPreprocessing::default(),
+            memory_layout: MemoryLayout::default(),
+            max_padded_trace_length: 1,
+        };
+        let env = WitnessEnv::new(&preprocessing);
+
+        let error = RegisterCycleRow::from_row(&row, None, &env).unwrap_err();
+        assert!(matches!(
+            error,
+            WitnessError::InvalidWitnessData { reason, .. }
+                if reason.contains("register index 200")
+        ));
     }
 }
