@@ -8,9 +8,10 @@
 //!
 //! Every logical claim must use the same suffix point `x`. The claims and
 //! their semantic layout digest are absorbed before `s` is sampled. Unused
-//! slots are fixed to zero. This is the prefix-packing protocol used by the
-//! Akita trace commitment; arbitrary-point claim reduction is not part of
-//! this API.
+//! slots are outside the logical statement; this API does not constrain their
+//! coefficients directly. The reduced opening requires their aggregate
+//! contribution at `s` to vanish. Arbitrary-point claim reduction is not part
+//! of this API.
 
 use std::collections::BTreeMap;
 
@@ -99,7 +100,7 @@ where
         self.logical_num_vars + self.selector_num_vars
     }
 
-    /// Number of physical prefix slots, including zero padding.
+    /// Number of physical prefix slots, including unused slots.
     pub const fn slot_capacity(&self) -> usize {
         self.slot_capacity
     }
@@ -255,7 +256,7 @@ impl<F> PrefixPackedClaims<F> {
         self.point.as_slice()
     }
 
-    /// Evaluations in physical slot order, excluding zero padding.
+    /// Evaluations in physical slot order, excluding unused slots.
     pub fn evaluations(&self) -> &[F] {
         &self.evaluations
     }
