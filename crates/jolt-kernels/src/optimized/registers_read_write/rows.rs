@@ -1,7 +1,5 @@
 //! Typed per-cycle register rows and the one-pass sparse-entry collection.
 
-#[cfg(feature = "parallel")]
-use crate::optimized::rows::RandomAccessRows;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::JoltField;
@@ -9,6 +7,8 @@ use jolt_field::JoltField;
 use jolt_utils::FirstErrorLatch;
 use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
+#[cfg(feature = "parallel")]
+use jolt_witness::RandomAccessRows;
 use jolt_witness::{
     stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
 };
@@ -42,11 +42,11 @@ impl WitnessBundle for RegisterCycleRow {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let cycle = Self {
-            rs1: row.rs1_read().map(|read| (read.register, read.value)),
-            rs2: row.rs2_read().map(|read| (read.register, read.value)),
+            rs1: row.rs1_index().map(|register| (register, row.rs1_value())),
+            rs2: row.rs2_index().map(|register| (register, row.rs2_value())),
             rd: row
-                .rd_write()
-                .map(|write| (write.register, write.pre_value, write.post_value)),
+                .rd_index()
+                .map(|register| (register, row.rd_pre_value(), row.rd_write_value())),
         };
         // Reject out-of-domain operand indices exactly like the trace
         // oracle's grid materializers (the reference tier's path): a raw
@@ -80,12 +80,8 @@ impl WitnessBundle for RegisterCycleRow {
 /// Cross-member carry: the per-cycle `rd` hot indices, parked by this kernel's
 /// `prepare` for the stage-5 val-evaluation kernel (which otherwise re-walks
 /// the trace to collect them).
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_allocative!(SharedRdIndices, |indices| {
-    crate::backend::vec_heap_bytes(&indices.0)
-});
 
 /// The row-window size of the streaming entry-collection pass (matches
 /// `support::collect_rows`: wide enough to amortize the per-chunk rayon
@@ -147,8 +143,10 @@ impl CollectRegisterEntries {
             });
         }
         #[cfg(feature = "parallel")]
-        if let Some(access) = RandomAccessRows::new(witness, cycles)? {
-            return Self::collect_par(&access, cycles);
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, cycles);
+            }
         }
         let mut consumers = (CollectRegisterEntries {
             entries: Vec::with_capacity(cycles * 3),
@@ -171,7 +169,7 @@ impl CollectRegisterEntries {
     /// [`RegisterCycleRow::entries`] is pure per cycle.
     #[cfg(feature = "parallel")]
     fn collect_par<F: JoltField>(
-        access: &RandomAccessRows<'_>,
+        access: &RandomAccessRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         use core::mem::MaybeUninit;

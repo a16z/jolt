@@ -8,6 +8,7 @@ use jolt_openings::{
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
@@ -20,6 +21,7 @@ use crate::adapters::{
     AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
+use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
@@ -28,6 +30,19 @@ fn split_commit_output(
     output: akita_prover::CommitOutput<AkitaField>,
 ) -> (AkitaBackendCommitment, AkitaBackendHint) {
     (output.committed_group, output.hint)
+}
+
+/// Prover seam for committing the packed trace directly from selected one-hot rows.
+pub trait TraceOneHotCommitment: CommitmentScheme {
+    fn commit_trace_one_hot(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        column_capacity: usize,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
+
+    /// Releases backend state that can be rebuilt before the opening proof.
+    fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError>;
 }
 
 impl AkitaScheme {
@@ -284,6 +299,55 @@ impl AkitaScheme {
     }
 }
 
+impl TraceOneHotCommitment for AkitaScheme {
+    fn commit_trace_one_hot(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        column_capacity: usize,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        let source = TracePackedOneHot::new(
+            setup.one_hot_k(),
+            AKITA_SOURCE_RING_DIMENSION,
+            column_capacity,
+            rows,
+        )
+        .map_err(commit_failed)?;
+        let num_vars = akita_prover::RootPolyMeta::num_vars(&source);
+        Self::validate_commit_shape(setup, num_vars, 1)?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::TraceOneHot(source),
+        )
+    }
+
+    fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError> {
+        setup.release_post_commit_ntt_residency()
+    }
+}
+
 struct CommittedOneHotShape {
     num_vars: usize,
 }
@@ -347,8 +411,8 @@ impl CommitmentScheme for AkitaScheme {
                     with_backend_pool(|| AkitaBackendScheme::setup_verifier(&backend_prover_setup))
                         .map_err(|err| invalid_setup(&err))?;
                 (
-                    Some(std::sync::Arc::new(backend_prover_setup)),
-                    Some(std::sync::Arc::new(prepared_backend_setup)),
+                    Some(Arc::new(backend_prover_setup)),
+                    Some(Arc::new(prepared_backend_setup)),
                     Some(backend_verifier_setup),
                 )
             };
@@ -369,8 +433,8 @@ impl CommitmentScheme for AkitaScheme {
             let backend_verifier_setup =
                 crate::adapters::one_hot_setup_verifier(params.one_hot_k, &backend_prover_setup)?;
             (
-                Some(std::sync::Arc::new(backend_prover_setup)),
-                Some(std::sync::Arc::new(prepared_backend_setup)),
+                Some(Arc::new(backend_prover_setup)),
+                Some(Arc::new(prepared_backend_setup)),
                 Some(backend_verifier_setup),
             )
         } else {
@@ -523,7 +587,8 @@ impl CommitmentScheme for AkitaScheme {
                         polynomial.num_vars()
                     )));
                 }
-                one_hot_polynomial(*polynomial, setup.one_hot_k())?.ok_or_else(|| {
+                one_hot_polynomial(*polynomial, setup.one_hot_k())?
+                .ok_or_else(|| {
                     invalid_batch(format!(
                         "Akita one-hot commitment group requires row-major K={} one-hot polynomials",
                         setup.one_hot_k()
@@ -579,9 +644,8 @@ impl CommitmentScheme for AkitaScheme {
 impl TransparentObjectSetup for AkitaScheme {
     /// The singleton commitment-object setup convention (advice byte columns,
     /// `ProgramOneHot`): one polynomial at `num_vars`, seeded by the object
-    /// plan's layout digest. Every auxiliary packed object commits through
-    /// the sparse-unit/dense flavor, so the one-hot backend setup — which
-    /// dominates the setup cost at these shapes — is never built.
+    /// plan's layout digest. Auxiliary packed objects use the sparse-unit/dense
+    /// flavor, so their setup omits the costly one-hot backend.
     fn transparent_object_setup(
         num_vars: usize,
         layout_digest: [u8; 32],

@@ -228,6 +228,10 @@ fn fp64_offsets_match() {
     check_prime!(two::Prime64Offset59, (1 << 64) - 59, 8, &mut rng);
     // Mersenne61: sub-word u64 prime exercising C = 1.
     check_prime!(two::Fp64<{ (1 << 61) - 1 }>, (1 << 61) - 1, 8, &mut rng);
+    // Test-only 63-bit primes exercise the carry-preserving wide sub-word
+    // reducer with two distinct offsets.
+    check_prime!(two::Fp64<{ (1 << 63) - 259 }>, (1 << 63) - 259, 8, &mut rng);
+    check_prime!(two::Fp64<{ (1 << 63) - 25 }>, (1 << 63) - 25, 8, &mut rng);
 }
 
 /// The registered prime-offset table, pinned as data. Generated from
@@ -318,4 +322,13 @@ fn fp32_exposes_canonical_storage_slice_only_for_u32_fields() {
     let values = [F32::from_u64(1), F32::from_u64(7), F32::from_u64(42)];
     assert_eq!(F32::canonical_u32_slice(&values), Some(&[1, 7, 42][..]));
     assert!(F64::canonical_u32_slice(&[F64::from_u64(1)]).is_none());
+}
+
+#[test]
+fn fp64_exposes_canonical_storage_slice_only_for_u64_fields() {
+    type F32 = two::Prime32Offset99;
+    type F64 = two::Prime64Offset59;
+    let values = [F64::from_u64(1), F64::from_u64(7), F64::from_u64(42)];
+    assert_eq!(F64::canonical_u64_slice(&values), Some(&[1, 7, 42][..]));
+    assert!(F32::canonical_u64_slice(&[F32::from_u64(1)]).is_none());
 }

@@ -639,7 +639,6 @@ impl Default for AstBundle {
 ///
 /// The number of chunks depends on the PCS commitment type:
 /// - **Dory**: 384 bytes → 12 chunks (G1Affine on BN254)
-/// - **HyperKZG**: Variable size depending on configuration
 /// - **Other PCS**: Determined at symbolization time from `serialized_size()`
 ///
 /// This type is PCS-agnostic: chunk count is derived from the concrete commitment's

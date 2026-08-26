@@ -68,7 +68,7 @@ struct IncRow {
 impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduction {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
@@ -113,7 +113,7 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
                 rd: Polynomial::new(dense(rd_inc_reduced())?),
             }
         } else {
-            IncState::Rows(BundleStore::resolve(session, witness, cycles)?)
+            IncState::Rows(BundleStore::resolve(witness, cycles)?)
         };
 
         Ok(Box::new(IncKernel {
@@ -134,30 +134,23 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
 /// dense combined table bound identically (the [`super::support::SplitLt`]
 /// argument, applied per term). Once the lo variables are exhausted the lo
 /// scalars fold into one dense hi-sized table.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 enum PairedEq<F> {
     Split {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lo1: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         hi1: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lo2: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         hi2: Vec<F>,
     },
-    Dense(Vec<F>),
-}
-
-#[cfg(feature = "allocative")]
-impl<F> PairedEq<F> {
-    fn heap_bytes(&self) -> usize {
-        use crate::backend::vec_heap_bytes;
-        match self {
-            Self::Split { lo1, hi1, lo2, hi2 } => {
-                vec_heap_bytes(lo1)
-                    + vec_heap_bytes(hi1)
-                    + vec_heap_bytes(lo2)
-                    + vec_heap_bytes(hi2)
-            }
-            Self::Dense(table) => vec_heap_bytes(table),
-        }
-    }
+    Dense(#[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<F>),
 }
 
 impl<F: JoltField> PairedEq<F> {
@@ -241,30 +234,30 @@ impl<F: JoltField> PairedEq<F> {
 /// The increment columns' lifecycle: typed trace rows until the first bind
 /// (the full-length dense field tables never exist), dense bound tables
 /// afterwards.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum IncState<F: JoltField> {
-    Rows(BundleStore<F, IncRow>),
+    Rows(BundleStore<IncRow>),
     Dense {
         ram: Polynomial<F>,
         rd: Polynomial<F>,
     },
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct IncKernel<F: JoltField> {
     progress: RoundProgress,
     incs: IncState<F>,
     ram_weights: PairedEq<F>,
     rd_weights: PairedEq<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(IncKernel, |kernel| {
-    use crate::backend::poly_heap_bytes;
-    let incs = match &kernel.incs {
-        IncState::Rows(store) => store.heap_bytes(),
-        IncState::Dense { ram, rd } => poly_heap_bytes(ram) + poly_heap_bytes(rd),
-    };
-    incs + kernel.ram_weights.heap_bytes() + kernel.rd_weights.heap_bytes()
-});
 
 fn row_unavailable<F: JoltField>() -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
@@ -298,7 +291,7 @@ impl<F: JoltField> IncKernel<F> {
         };
         debug_assert_eq!(self.progress.bound(), 0);
         let half = (1usize << self.progress.total()) / 2;
-        let access = store.access().map_err(|_| row_unavailable())?;
+        let access = store.access();
         let bound = |y: usize| -> Result<(F, F), SumcheckError<F>> {
             let even: IncRow = access.row(2 * y).map_err(|_| row_unavailable())?;
             let odd: IncRow = access.row(2 * y + 1).map_err(|_| row_unavailable())?;
@@ -360,7 +353,7 @@ impl<F: JoltField> ProveRounds<F> for IncKernel<F> {
             IncState::Rows(store) => {
                 debug_assert_eq!(self.progress.bound(), 0);
                 let half = (1usize << self.progress.total()) / 2;
-                let access = store.access().map_err(|_| row_unavailable())?;
+                let access = store.access();
                 let group = |y: usize| -> Result<[F; 2], SumcheckError<F>> {
                     let even: IncRow = access.row(2 * y).map_err(|_| row_unavailable())?;
                     let odd: IncRow = access.row(2 * y + 1).map_err(|_| row_unavailable())?;

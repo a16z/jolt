@@ -36,7 +36,9 @@ use jolt_openings::{
 };
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
-use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
+use jolt_verifier::config::{
+    CommitmentConfig, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
+};
 use jolt_verifier::preprocessing::{
     CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
     JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
@@ -1649,6 +1651,7 @@ impl AkitaPackedProver<'_> {
             protocol: JoltProtocolConfig {
                 zk: ZkConfig::Transparent,
                 commitment: CommitmentConfig::Packed,
+                scalar_challenge_endianness: ScalarChallengeEndianness::Little,
             },
             commitments: commitment,
             stages,
@@ -1813,7 +1816,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let setup_params = prover.one_hot_trace_setup_params();
         assert_eq!(setup_params.one_hot_k(), 16);
@@ -1905,7 +1909,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let forced = crate::zkvm::config::OneHotConfig {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: 32,
@@ -1990,7 +1995,8 @@ mod advice_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2095,7 +2101,8 @@ mod advice_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2158,7 +2165,8 @@ mod committed_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
 
         let (object_setup, verifier_setup) =
@@ -2280,7 +2288,8 @@ mod committed_tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         eprintln!("trace length: {}", prover.trace.len());
         let setup_params = prover.one_hot_trace_setup_params();

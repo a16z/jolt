@@ -110,7 +110,6 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
         };
 
         Ok(Box::new(RaReductionKernel {
-            rounds: log_t,
             progress: RoundProgress::new(log_t),
             prefix_bits,
             gamma_powers,
@@ -233,65 +232,55 @@ fn gather_h_prime<F: JoltField>(
     clippy::large_enum_variant,
     reason = "one kernel object per proof; boxing buys nothing"
 )]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum Phase<F: JoltField> {
     /// Rounds over the low (prefix) cycle variables: six `O(√T)` tables. The
     /// suffix eq tables and the transition inputs (columns, address eq,
     /// low-half cycle points, collected challenges) ride along.
     Prefix {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         p: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         q: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         eq_hi: [Vec<F>; TERMS],
         addresses: Arc<Vec<u64>>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         r_cycle_lo: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         challenges: Vec<F>,
     },
     /// Rounds over the high (suffix) cycle variables after the regather.
     /// `scales[x] = eq(r_x_lo, r_prefix)` — the bound prefix eq factors.
     Suffix {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         h: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         eq_hi: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(skip))]
         scales: [F; TERMS],
     },
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RaReductionKernel<F: JoltField> {
-    rounds: usize,
     progress: RoundProgress,
     prefix_bits: usize,
     /// `[1, γ, γ²]` — the consumed-claim batching coefficients.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; TERMS],
     phase: Phase<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RaReductionKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    match &kernel.phase {
-        Phase::Prefix {
-            p,
-            q,
-            eq_hi,
-            addresses,
-            eq_address,
-            r_cycle_lo,
-            challenges,
-        } => {
-            p.iter()
-                .chain(q)
-                .chain(eq_hi)
-                .chain(r_cycle_lo)
-                .map(vec_heap_bytes)
-                .sum::<usize>()
-                + crate::backend::arc_vec_heap_bytes(addresses)
-                + vec_heap_bytes(eq_address)
-                + vec_heap_bytes(challenges)
-        }
-        Phase::Suffix { h, eq_hi, .. } => {
-            vec_heap_bytes(h) + eq_hi.iter().map(vec_heap_bytes).sum::<usize>()
-        }
-    }
-});
 
 impl<F: JoltField> RaReductionKernel<F> {
     fn bind(&mut self, r: F) {
@@ -346,7 +335,7 @@ impl<F: JoltField> RaReductionKernel<F> {
             &eq_address,
             &eq_prefix,
             self.prefix_bits,
-            self.rounds - self.prefix_bits,
+            self.progress.total() - self.prefix_bits,
         );
         let scales = core::array::from_fn(|x| EqPolynomial::<F>::mle(&r_cycle_lo[x], &r_prefix));
         self.phase = Phase::Suffix { h, eq_hi, scales };
@@ -395,7 +384,7 @@ impl<F: JoltField> RaReductionKernel<F> {
 
 impl<F: JoltField> ProveRounds<F> for RaReductionKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(

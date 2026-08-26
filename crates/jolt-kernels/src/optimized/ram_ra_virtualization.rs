@@ -107,6 +107,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 
 /// Lazy-RA index source: chunk `i` of the per-cycle remapped RAM address,
 /// cold on no-access cycles, off the session-shared address column.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
     addresses: Arc<Vec<u64>>,
     num_committed: usize,
@@ -134,6 +135,11 @@ impl ChunkIndexSource for RamAddressChunks {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
@@ -143,14 +149,6 @@ struct RamRaVirtualizationKernel<F: JoltField> {
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RamRaVirtualizationKernel, |kernel| {
-    kernel
-        .folded_ra
-        .heap_bytes(|source| crate::backend::arc_vec_heap_bytes(&source.addresses))
-        + kernel.gruen.heap_bytes()
-});
 
 impl<F: JoltField> RamRaVirtualizationKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with

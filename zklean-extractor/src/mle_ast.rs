@@ -1410,6 +1410,10 @@ impl JoltField for MleAst {
         panic!("MleAst::from_bytes called without a pending challenge — PoseidonAstTranscript must call set_pending_challenge() before from_bytes()")
     }
 
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self::from_bytes(bytes)
+    }
+
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             None

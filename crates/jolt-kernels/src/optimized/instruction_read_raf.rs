@@ -3,7 +3,7 @@
 //! Same math and phase structure as the reference kernel (see
 //! `reference/instruction_read_raf.rs`): 8-variable prefix–suffix phases over
 //! the 128 address rounds, then a plain multilinear product over the `log_T`
-//! cycle rounds. JoltField arithmetic is exact, so every reorganization below
+//! cycle rounds. Field arithmetic is exact, so every reorganization below
 //! emits byte-identical round polynomials and output claims. The ported
 //! legacy optimizations:
 //!
@@ -27,20 +27,15 @@
 //! - **Split-eq flag claims**: the output lookup-table/RAF flag sums use the
 //!   `E_hi ⊗ E_lo` factorization of `eq(r_cycle, ·)` instead of a `T`-sized
 //!   eq table.
-//! - **Shared lookup-index column**: the stage-6a/6b consumers (instruction
-//!   RA virtualization, booleanity) need only the per-cycle lookup index, so
-//!   the cross-stage carry is the bare 16 B/cycle column (keyed by
-//!   [`SharedLookupIndices`]) — their bytecode and RAM chunk sources live in
-//!   the shared PC rows and RAM address column already.
-//! - **Column-split staging**: the kernel's own stage-5 facts are the same
-//!   16 B/cycle index column (shared with the parked carry on re-emulating
-//!   sources) plus a 1 B/cycle packed claim byte — a wide per-cycle row
-//!   vector never exists, and the index column frees at the first cycle
-//!   bind.
+//! - **Shared witness rows**: re-emulating sources keep a strong
+//!   [`SharedInstructionRows`] carry in the [`ProofSession`]; slice-backed
+//!   sources keep only [`SharedInstructionRowsWeak`], sharing inside one stage
+//!   and rebuilding index-parallel later so `40 B × T` rows do not survive
+//!   through the prover's peak window.
 
 #[cfg(feature = "parallel")]
 use std::mem::MaybeUninit;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
@@ -54,17 +49,19 @@ use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable,
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
+#[cfg(feature = "akita")]
+use jolt_witness::witnesses::{BalancedIncColumn, FusedInc};
+use jolt_witness::witnesses::{
+    BytecodePc, InstructionRafFlag, LookupIndex, RemappedRamAddress, TableIndex,
+};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::rows::RandomAccessRows;
 use super::support::{
-    accumulate_product_grid, for_each_index_mut, map_indices, map_reduce_chunks, scan_chunk_size,
-    RoundProgress,
+    accumulate_product_grid, collect_par_map, for_each_index_mut, map_indices, map_reduce_chunks,
+    scan_chunk_size, RoundProgress,
 };
-use crate::mem::purge_staging;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -75,285 +72,247 @@ use crate::{
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
-/// Cycle binds completed before the late-tail purge that returns the
-/// halving cycle tables' freed generations (large enough to sit in the
-/// allocator's large-block cache until then).
-const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
-
 const _: () = assert!(
-    LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
-    "the packed claim byte holds table_index + 1 in bits 0..=6"
+    LookupTableKind::<RISCV_XLEN>::COUNT < u8::MAX as usize,
+    "InstructionCycleRow packs lookup table indices as u8"
 );
 
-/// Packs one cycle's non-index stage-5 facts into a byte: bits 0..=6 hold
-/// `table_index + 1` (0 for none), bit 7 the RAF flag. The const guard above
-/// makes overflow impossible for genuine table indices.
-#[inline]
-pub(crate) fn pack_claim_byte(table_index: Option<usize>, raf_flag: bool) -> u8 {
-    debug_assert!(table_index.is_none_or(|index| index < 0x7f));
-    table_index.map_or(0, |index| index as u8 + 1) | (u8::from(raf_flag) << 7)
+/// One packed per-cycle row: the stage-5 facts plus the bytecode/RAM and
+/// packed fused-inc sources used by later one-hot kernels. The lookup index
+/// is split into native limbs and the PC/table/flags share one word, keeping
+/// the retained row at 40 bytes in Akita mode.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct InstructionCycleRow {
+    lookup_index_lo: u64,
+    lookup_index_hi: u64,
+    ram_address_plus_one: u64,
+    #[cfg(feature = "akita")]
+    fused_inc_magnitude: u64,
+    packed_pc_and_flags: u64,
 }
 
-/// Buckets cycle indices by lookup table from the packed claim bytes
-/// ([`pack_claim_byte`]), preserving trace order within each bucket.
-fn bucket_instruction_cycles<F: JoltField>(
-    claim_columns: &[u8],
-) -> Result<Vec<Vec<u32>>, KernelError<F>> {
-    let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
+const PACKED_PC_BITS: u32 = 56;
+const PACKED_TABLE_BITS: u32 = 6;
+const PACKED_PC_MASK: u64 = (1 << PACKED_PC_BITS) - 1;
+const PACKED_TABLE_MASK: u64 = (1 << PACKED_TABLE_BITS) - 1;
+const PACKED_TABLE_SHIFT: u32 = PACKED_PC_BITS;
+const PACKED_RAF_SHIFT: u32 = PACKED_TABLE_SHIFT + PACKED_TABLE_BITS;
+#[cfg(feature = "akita")]
+const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
 
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut buckets = vec![Vec::new(); num_tables];
-        for (cycle_index, &packed) in claim_columns.iter().enumerate() {
-            if packed & 0x7f != 0 {
-                buckets
-                    .get_mut(usize::from(packed & 0x7f) - 1)
-                    .ok_or(KernelError::InvariantViolation {
-                        reason: "stage-5 row selects an unknown lookup table",
-                    })?
-                    .push(cycle_index as u32);
-            }
+const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
+
+impl InstructionCycleRow {
+    pub(crate) fn new(
+        lookup_index: u128,
+        table_index: Option<usize>,
+        raf_flag: bool,
+        bytecode_pc: usize,
+        remapped_ram_address: Option<u64>,
+        #[cfg(feature = "akita")] fused_inc: FusedInc,
+    ) -> Self {
+        debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
+        #[cfg(feature = "akita")]
+        debug_assert!(fused_inc.0.unsigned_abs() <= u64::MAX as u128);
+        let pc = bytecode_pc as u64;
+        assert!(pc <= PACKED_PC_MASK, "bytecode PC exceeds packed row");
+        let table_plus_one = table_index.map_or(0, |index| index as u64 + 1);
+        let packed_pc_and_flags =
+            pc | (table_plus_one << PACKED_TABLE_SHIFT) | (u64::from(raf_flag) << PACKED_RAF_SHIFT);
+        #[cfg(feature = "akita")]
+        let packed_pc_and_flags =
+            packed_pc_and_flags | (u64::from(fused_inc.0 < 0) << PACKED_INC_SIGN_SHIFT);
+        Self {
+            lookup_index_lo: lookup_index as u64,
+            lookup_index_hi: (lookup_index >> 64) as u64,
+            ram_address_plus_one: remapped_ram_address.map_or(0, |address| address + 1),
+            #[cfg(feature = "akita")]
+            fused_inc_magnitude: fused_inc.0.unsigned_abs() as u64,
+            packed_pc_and_flags,
         }
-        Ok(buckets)
     }
 
-    #[cfg(feature = "parallel")]
-    {
-        const CHUNKS_PER_THREAD: usize = 16;
-        let chunk_count = rayon::current_num_threads().saturating_mul(CHUNKS_PER_THREAD);
-        let chunk_size = claim_columns.len().div_ceil(chunk_count).max(1);
-        let counts_by_chunk: Vec<Vec<usize>> = claim_columns
-            .par_chunks(chunk_size)
-            .map(|chunk| -> Result<Vec<usize>, KernelError<F>> {
-                let mut counts = vec![0; num_tables];
-                for &packed in chunk {
-                    if packed & 0x7f != 0 {
-                        *counts.get_mut(usize::from(packed & 0x7f) - 1).ok_or(
-                            KernelError::InvariantViolation {
-                                reason: "stage-5 row selects an unknown lookup table",
-                            },
-                        )? += 1;
-                    }
-                }
-                Ok(counts)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut totals = vec![0; num_tables];
-        for counts in &counts_by_chunk {
-            for (total, count) in totals.iter_mut().zip(counts) {
-                *total += count;
-            }
+    #[inline(always)]
+    pub(crate) fn lookup_index(&self) -> u128 {
+        u128::from(self.lookup_index_lo) | (u128::from(self.lookup_index_hi) << 64)
+    }
+
+    #[inline]
+    pub(crate) fn table_index(&self) -> Option<usize> {
+        let table_plus_one =
+            ((self.packed_pc_and_flags >> PACKED_TABLE_SHIFT) & PACKED_TABLE_MASK) as usize;
+        table_plus_one.checked_sub(1)
+    }
+
+    #[inline]
+    pub(crate) fn bytecode_pc(&self) -> usize {
+        (self.packed_pc_and_flags & PACKED_PC_MASK) as usize
+    }
+
+    #[inline]
+    pub(crate) fn remapped_ram_address(&self) -> Option<u64> {
+        self.ram_address_plus_one.checked_sub(1)
+    }
+
+    #[inline]
+    pub(crate) fn raf_flag(&self) -> bool {
+        self.packed_pc_and_flags & (1 << PACKED_RAF_SHIFT) != 0
+    }
+
+    #[cfg(feature = "akita")]
+    #[inline]
+    pub(crate) fn fused_inc_row(&self, column: BalancedIncColumn) -> usize {
+        let magnitude = i128::from(self.fused_inc_magnitude);
+        let value = if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
+            -magnitude
+        } else {
+            magnitude
+        };
+        FusedInc(value).selected_row(column)
+    }
+
+    #[cfg(feature = "akita")]
+    #[inline]
+    pub(crate) fn fused_inc<F: JoltField>(&self) -> F {
+        let magnitude = F::from_u64(self.fused_inc_magnitude);
+        if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
+            -magnitude
+        } else {
+            magnitude
         }
-        let mut uninit_buckets: Vec<Vec<MaybeUninit<u32>>> = totals
-            .into_iter()
-            .map(|len| {
-                let mut bucket = Vec::with_capacity(len);
-                bucket.resize_with(len, MaybeUninit::uninit);
-                bucket
-            })
-            .collect();
-        let mut outputs_by_chunk: Vec<Vec<&mut [MaybeUninit<u32>]>> = (0..counts_by_chunk.len())
-            .map(|_| Vec::with_capacity(num_tables))
-            .collect();
-        for (table_index, bucket) in uninit_buckets.iter_mut().enumerate() {
-            let mut remaining = bucket.as_mut_slice();
-            for (chunk_index, counts) in counts_by_chunk.iter().enumerate() {
-                let (output, rest) = remaining.split_at_mut(counts[table_index]);
-                outputs_by_chunk[chunk_index].push(output);
-                remaining = rest;
-            }
-            debug_assert!(remaining.is_empty());
-        }
-        claim_columns
-            .par_chunks(chunk_size)
-            .enumerate()
-            .zip(outputs_by_chunk.into_par_iter())
-            .for_each(|((chunk_index, chunk), mut outputs)| {
-                let mut positions = vec![0; num_tables];
-                let cycle_index_start = chunk_index * chunk_size;
-                for (offset, &packed) in chunk.iter().enumerate() {
-                    if packed & 0x7f != 0 {
-                        let table_index = usize::from(packed & 0x7f) - 1;
-                        let _ = outputs[table_index][positions[table_index]]
-                            .write((cycle_index_start + offset) as u32);
-                        positions[table_index] += 1;
-                    }
-                }
-                debug_assert!(positions
-                    .iter()
-                    .zip(&outputs)
-                    .all(|(position, output)| *position == output.len()));
-            });
-        Ok(uninit_buckets
-            .into_iter()
-            .map(|bucket| {
-                // SAFETY: each chunk writes exactly the per-table count used to
-                // partition every bucket, checked above in debug builds.
-                unsafe { bucket.into_boxed_slice().assume_init().into_vec() }
-            })
-            .collect())
     }
 }
 
-/// The bundle row of the column-split packing pass; never materialized
-/// beyond one streaming chunk.
+#[cfg(feature = "akita")]
+const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 40);
+#[cfg(not(feature = "akita"))]
+const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 32);
+
+/// The bundle row the packing pass extracts; never materialized beyond one
+/// streaming chunk.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct WideInstructionRow {
     lookup_index: LookupIndex,
     table_index: TableIndex,
     raf_flag: InstructionRafFlag,
+    bytecode_pc: BytecodePc,
+    remapped_ram_address: RemappedRamAddress,
+    #[cfg(feature = "akita")]
+    fused_inc: FusedInc,
 }
 
-/// The bundle row of the claim-byte-only pass; never materialized beyond one
-/// streaming chunk.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-struct ClaimByteRow {
-    table_index: TableIndex,
-    raf_flag: InstructionRafFlag,
+struct PackRows {
+    rows: Vec<InstructionCycleRow>,
 }
 
-struct PackColumns {
-    indices: Vec<u128>,
-    claim_columns: Vec<u8>,
-}
-
-impl StreamConsumer for PackColumns {
+impl StreamConsumer for PackRows {
     type Witness = WideInstructionRow;
 
     fn consume(&mut self, chunk: &[WideInstructionRow]) {
-        self.indices
-            .extend(chunk.iter().map(|row| row.lookup_index.0));
-        self.claim_columns.extend(
-            chunk
-                .iter()
-                .map(|row| pack_claim_byte(row.table_index.0, row.raf_flag.0)),
-        );
+        self.rows.extend(chunk.iter().map(|row| {
+            InstructionCycleRow::new(
+                row.lookup_index.0,
+                row.table_index.0,
+                row.raf_flag.0,
+                row.bytecode_pc.0,
+                row.remapped_ram_address.0,
+                #[cfg(feature = "akita")]
+                row.fused_inc,
+            )
+        }));
     }
 }
 
-/// The stage-5 staging columns over the cycle domain: the 16 B lookup-index
-/// column plus the 1 B packed claim byte — a wide 32 B row vector never
-/// exists. Slice-backed sources pack index-parallel (two thin bundle
-/// passes); re-emulating sources pack both columns in one streaming walk.
-pub(crate) fn collect_instruction_columns<F: JoltField>(
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<(Vec<u128>, Vec<u8>), KernelError<F>> {
-    if let Some(access) = RandomAccessRows::new(witness, cycles)? {
-        let indices = collect_lookup_indices(witness, cycles)?;
-        let claim_columns = super::rows::collect_par_map(&access, cycles, |row: ClaimByteRow| {
-            pack_claim_byte(row.table_index.0, row.raf_flag.0)
-        })?;
-        return Ok((indices, claim_columns));
-    }
-    let mut consumers = (PackColumns {
-        indices: Vec::with_capacity(cycles),
-        claim_columns: Vec::with_capacity(cycles),
-    },);
-    stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
-    Ok((consumers.0.indices, consumers.0.claim_columns))
-}
-
-/// The bundle row of the lookup-index-only pass; never materialized beyond
-/// one streaming chunk.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-struct LookupIndexRow {
-    lookup_index: LookupIndex,
-}
-
-struct PackIndices {
-    indices: Vec<u128>,
-}
-
-impl StreamConsumer for PackIndices {
-    type Witness = LookupIndexRow;
-
-    fn consume(&mut self, chunk: &[LookupIndexRow]) {
-        self.indices
-            .extend(chunk.iter().map(|row| row.lookup_index.0));
+impl InstructionCycleRow {
+    /// One streaming bundle pass over the cycle domain, packed row by row (the
+    /// wide bundle row exists only per chunk).
+    pub(crate) fn collect<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Vec<Self>, KernelError<F>> {
+        // Slice-backed sources pack index-parallel (the wide bundle row still
+        // never exists beyond a register); re-emulating sources stream.
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
+                    Self::new(
+                        row.lookup_index.0,
+                        row.table_index.0,
+                        row.raf_flag.0,
+                        row.bytecode_pc.0,
+                        row.remapped_ram_address.0,
+                        #[cfg(feature = "akita")]
+                        row.fused_inc,
+                    )
+                })?;
+                return Ok(rows);
+            }
+        }
+        let mut consumers = (PackRows {
+            rows: Vec::with_capacity(cycles),
+        },);
+        stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
+        Ok(consumers.0.rows)
     }
 }
 
-/// One streaming bundle pass over the cycle domain, packed index by index.
-pub(crate) fn collect_lookup_indices<F: JoltField>(
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Vec<u128>, KernelError<F>> {
-    if let Some(access) = RandomAccessRows::new(witness, cycles)? {
-        let indices = super::rows::collect_par_map(&access, cycles, |row: LookupIndexRow| {
-            row.lookup_index.0
-        })?;
-        return Ok(indices);
-    }
-    let mut consumers = (PackIndices {
-        indices: Vec::with_capacity(cycles),
-    },);
-    stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
-    Ok(consumers.0.indices)
-}
-
-/// The per-cycle lookup-index column, parked in the [`ProofSession`] for the
+/// The collected stage-5 rows, parked in the [`ProofSession`] for the
 /// stage-6b instruction RA virtualization kernel (its committed one-hot
 /// chunks are chunks of the same per-cycle lookup index) and the
-/// stage-6a/6b booleanity kernels (whose bytecode and RAM chunk families
-/// come off the shared PC rows and RAM address column instead) — the bare
-/// 16 B/cycle column.
+/// stage-6a/6b booleanity kernels (all three one-hot chunk families).
 ///
 /// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
-/// carry back; the last stage-6b consumer takes without re-parking.
-pub(crate) struct SharedLookupIndices(pub(crate) Arc<Vec<u128>>);
+/// carry back for the later stages.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_allocative!(SharedLookupIndices, |indices| {
-    crate::backend::arc_vec_heap_bytes(&indices.0)
-});
+/// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
+/// so same-stage co-consumers share one collection but the 40 B × T rows
+/// never outlive their stage — later stages re-derive them index-parallel
+/// instead of carrying them across the prover's peak window.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
 
-/// The slice-backed counterpart of [`SharedLookupIndices`]: a weak handle,
-/// so same-stage co-consumers share one collection but the column never
-/// outlives its stage — later stages re-derive it index-parallel instead of
-/// carrying it across the prover's peak window.
-pub(crate) struct SharedLookupIndicesWeak(pub(crate) Weak<Vec<u128>>);
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_allocative!(SharedLookupIndicesWeak, |_indices| { 0 });
-
-/// Reclaim the parked lookup-index column (the length guard makes a stale
-/// carry impossible to consume) or collect it fresh, and park the carry
-/// back for later consumers.
-pub(crate) fn shared_lookup_indices<F: JoltField>(
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Arc<Vec<u128>>, KernelError<F>> {
-    // A parked strong carry is always honored (re-emulating sources, and
-    // tests that inject indices a witness would not produce).
-    let carried = match session.take::<SharedLookupIndices>() {
-        Some(SharedLookupIndices(indices)) if indices.len() == cycles => Some(indices),
-        _ => None,
-    };
-    if witness.rows().is_some() {
-        // Slice-backed: consumers share within a stage through a weak
-        // handle; once the stage's kernels drop, the column frees, and later
-        // stages re-derive it index-parallel.
-        let upgraded = || {
-            session
-                .state::<SharedLookupIndicesWeak>()
-                .and_then(|weak| weak.0.upgrade())
-                .filter(|indices| indices.len() == cycles)
+impl InstructionCycleRow {
+    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
+    /// impossible to consume) or collect them fresh, and park the carry back
+    /// for later consumers.
+    pub(crate) fn shared<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Arc<Vec<Self>>, KernelError<F>> {
+        // A parked strong carry is always honored (re-emulating sources, and
+        // tests that inject rows a witness would not produce).
+        let carried = match session.take::<SharedInstructionRows>() {
+            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
+            _ => None,
         };
-        let indices = match carried.or_else(upgraded) {
-            Some(indices) => indices,
-            None => Arc::new(collect_lookup_indices(witness, cycles)?),
+        if witness.random_access().is_some() {
+            // Slice-backed: consumers share within a stage through a weak
+            // handle; once the stage's kernels drop, the rows free, and later
+            // stages re-derive them index-parallel.
+            let upgraded = || {
+                session
+                    .state::<SharedInstructionRowsWeak>()
+                    .and_then(|weak| weak.0.upgrade())
+                    .filter(|rows| rows.len() == cycles)
+            };
+            let rows = match carried.or_else(upgraded) {
+                Some(rows) => rows,
+                None => Arc::new(Self::collect(witness, cycles)?),
+            };
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+            return Ok(rows);
+        }
+        let rows = match carried {
+            Some(rows) => rows,
+            None => Arc::new(Self::collect(witness, cycles)?),
         };
-        session.park(SharedLookupIndicesWeak(Arc::downgrade(&indices)));
-        return Ok(indices);
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        Ok(rows)
     }
-    let indices = match carried {
-        Some(indices) => indices,
-        None => Arc::new(collect_lookup_indices(witness, cycles)?),
-    };
-    session.park(SharedLookupIndices(Arc::clone(&indices)));
-    Ok(indices)
 }
 
 /// Optimized [`PrepareKernel`] implementor for the `instruction_read_raf`
@@ -368,48 +327,37 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
-        let (indices, claim_columns) =
-            collect_instruction_columns(witness, 1 << dimensions.log_t())?;
-        let indices = Arc::new(indices);
-        // Slice-backed witnesses park nothing: the stage-6a/6b consumers
-        // re-derive the 16 B/cycle lookup-index column index-parallel, and a
-        // strong session carry would ride through the stage-5 staging peak.
-        // Re-emulating sources park the strong column carry (re-deriving
-        // means a full re-emulation walk) — a clone of the kernel's own Arc,
-        // so the column is not duplicated; the last stage-6b consumer takes
-        // it without re-parking, so it no longer survives to end of prove.
-        if witness.rows().is_none() {
-            session.park(SharedLookupIndices(Arc::clone(&indices)));
+        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(InstructionCycleRow::collect(
+            witness,
+            1 << dimensions.log_t(),
+        )?);
+        if witness.random_access().is_some() {
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+        } else {
+            session.park(SharedInstructionRows(Arc::clone(&rows)));
         }
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,
-            indices,
-            claim_columns,
+            rows,
             inputs.challenges.gamma,
         )?))
     }
 }
 
-// --- kernel ---------------------------------------------------------------
-
 /// One RAF prefix–suffix decomposition — same shape and binding as the
 /// reference kernel's.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RafDecomposition<F: JoltField> {
     prefix: Polynomial<F>,
     q_shift: Polynomial<F>,
     q_value: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     checkpoint: F,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> RafDecomposition<F> {
-    fn heap_bytes(&self) -> usize {
-        use crate::backend::poly_heap_bytes;
-        poly_heap_bytes(&self.prefix)
-            + poly_heap_bytes(&self.q_shift)
-            + poly_heap_bytes(&self.q_value)
-    }
 }
 
 impl<F: JoltField> RafDecomposition<F> {
@@ -462,23 +410,17 @@ fn extension_pair<F: JoltField>(evals: &[F], b: usize, half: usize) -> (F, F) {
 }
 
 /// Cycle-round state: the Gruen-split eq factor plus the cycle tables.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct CycleState<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     tables: CycleTables<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> CycleState<F> {
-    fn heap_bytes(&self) -> usize {
-        use crate::backend::{poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
-        let tables = match &self.tables {
-            CycleTables::Pending(pending) => vec_heap_bytes(&pending.table_values),
-            CycleTables::Dense { combined_val, ra } => {
-                poly_heap_bytes(combined_val) + polys_heap_bytes(ra)
-            }
-        };
-        self.gruen.heap_bytes() + tables
-    }
+    /// Reused low-to-high binding buffer (swapped through every bind).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    bind_scratch: Vec<F>,
 }
 
 /// The cycle tables' lifecycle. The address/cycle handoff leaves them
@@ -489,6 +431,11 @@ impl<F: JoltField> CycleState<F> {
 /// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
 /// exist. Values are identical to materialize-then-bind: the bases are the
 /// same, and `lo + r·(hi − lo)` is the binding formula either way.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum CycleTables<F: JoltField> {
     Pending(PendingCycleTables<F>),
     Dense {
@@ -499,10 +446,18 @@ enum CycleTables<F: JoltField> {
 
 /// Everything the pending-base evaluations need beyond the kernel's own
 /// rows / claim columns / phase eq tables.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct PendingCycleTables<F: JoltField> {
     /// Per-table combined value at the bound address point.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     table_values: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     raf_interleaved: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     raf_identity: F,
 }
 
@@ -587,19 +542,26 @@ impl<F: JoltField> RafSums<F> {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: InstructionReadRafDimensions,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_reduction: Vec<F>,
-    /// The per-cycle lookup-index column (16 B/cycle; freed at the first
-    /// cycle bind). Re-emulating sources share the same allocation with the
-    /// parked [`SharedLookupIndices`] carry.
-    indices: Arc<Vec<u128>>,
+    rows: Arc<Vec<InstructionCycleRow>>,
     /// Per-table cycle buckets (`u32` cycle indices), by
     /// `LookupTableKind::index()`.
     buckets: Vec<Vec<u32>>,
     /// Condensed per-cycle eq weights (see the reference kernel).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     u_evals: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
     /// `ALL_PREFIXES` indices referenced by tables with non-empty buckets.
     prefix_indices: Vec<usize>,
@@ -608,59 +570,130 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     prefix_tables: Vec<Polynomial<F>>,
     /// Per present table: enum value + suffix `Q` polynomials in
     /// `table.suffixes()` order.
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_keyed_polys))]
     suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
     raf_left: RafDecomposition<F>,
     raf_right: RafDecomposition<F>,
     raf_identity: RafDecomposition<F>,
     raf_upper_all_ones: RafDecomposition<F>,
     /// Completed phases' bound-challenge eq tables.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     v_tables: Vec<Vec<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     phase_challenges: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
-    /// Packed per-cycle output-claim facts ([`pack_claim_byte`]), built at
-    /// collection — the RAF scans, pending bases, and final flag walk read
-    /// this byte, so a wide row never exists.
+    /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
+    /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
+    /// handoff so the full 40 B rows can free — the final flag walk needs
+    /// only this byte per cycle.
     claim_columns: Vec<u8>,
     progress: RoundProgress,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedInstructionReadRafKernel, |kernel| {
-    use crate::backend::{
-        arc_vec_heap_bytes, nested_vec_heap_bytes, polys_heap_bytes, vec_heap_bytes,
-    };
-    vec_heap_bytes(&kernel.r_reduction)
-        + arc_vec_heap_bytes(&kernel.indices)
-        + nested_vec_heap_bytes(&kernel.buckets)
-        + vec_heap_bytes(&kernel.u_evals)
-        + vec_heap_bytes(&kernel.prefix_checkpoints)
-        + vec_heap_bytes(&kernel.prefix_indices)
-        + polys_heap_bytes(&kernel.prefix_tables)
-        + kernel.suffix_tables.capacity()
-            * std::mem::size_of::<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>()
-        + kernel
-            .suffix_tables
-            .iter()
-            .map(|(_, polys)| polys_heap_bytes(polys))
-            .sum::<usize>()
-        + kernel.raf_left.heap_bytes()
-        + kernel.raf_right.heap_bytes()
-        + kernel.raf_identity.heap_bytes()
-        + kernel.raf_upper_all_ones.heap_bytes()
-        + nested_vec_heap_bytes(&kernel.v_tables)
-        + vec_heap_bytes(&kernel.phase_challenges)
-        + vec_heap_bytes(&kernel.cycle_challenges)
-        + kernel.cycle.as_ref().map_or(0, CycleState::heap_bytes)
-        + vec_heap_bytes(&kernel.claim_columns)
-});
+fn build_cycle_buckets<F: JoltField>(
+    rows: &[InstructionCycleRow],
+) -> Result<Vec<Vec<u32>>, KernelError<F>> {
+    let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut buckets = vec![Vec::new(); num_tables];
+        for (cycle_index, row) in rows.iter().enumerate() {
+            if let Some(table_index) = row.table_index() {
+                buckets
+                    .get_mut(table_index)
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "stage-5 row selects an unknown lookup table",
+                    })?
+                    .push(cycle_index as u32);
+            }
+        }
+        Ok(buckets)
+    }
+
+    #[cfg(feature = "parallel")]
+    {
+        const CHUNKS_PER_THREAD: usize = 16;
+        let chunk_count = rayon::current_num_threads().saturating_mul(CHUNKS_PER_THREAD);
+        let chunk_size = rows.len().div_ceil(chunk_count).max(1);
+        let counts_by_chunk: Vec<Vec<usize>> = rows
+            .par_chunks(chunk_size)
+            .map(|chunk| -> Result<Vec<usize>, KernelError<F>> {
+                let mut counts = vec![0; num_tables];
+                for row in chunk {
+                    if let Some(table_index) = row.table_index() {
+                        *counts
+                            .get_mut(table_index)
+                            .ok_or(KernelError::InvariantViolation {
+                                reason: "stage-5 row selects an unknown lookup table",
+                            })? += 1;
+                    }
+                }
+                Ok(counts)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut totals = vec![0; num_tables];
+        for counts in &counts_by_chunk {
+            for (total, count) in totals.iter_mut().zip(counts) {
+                *total += count;
+            }
+        }
+        let mut uninit_buckets: Vec<Vec<MaybeUninit<u32>>> = totals
+            .into_iter()
+            .map(|len| {
+                let mut bucket = Vec::with_capacity(len);
+                bucket.resize_with(len, MaybeUninit::uninit);
+                bucket
+            })
+            .collect();
+        let mut outputs_by_chunk: Vec<Vec<&mut [MaybeUninit<u32>]>> = (0..counts_by_chunk.len())
+            .map(|_| Vec::with_capacity(num_tables))
+            .collect();
+        for (table_index, bucket) in uninit_buckets.iter_mut().enumerate() {
+            let mut remaining = bucket.as_mut_slice();
+            for (chunk_index, counts) in counts_by_chunk.iter().enumerate() {
+                let (output, rest) = remaining.split_at_mut(counts[table_index]);
+                outputs_by_chunk[chunk_index].push(output);
+                remaining = rest;
+            }
+            debug_assert!(remaining.is_empty());
+        }
+        rows.par_chunks(chunk_size)
+            .enumerate()
+            .zip(outputs_by_chunk.into_par_iter())
+            .for_each(|((chunk_index, chunk), mut outputs)| {
+                let mut positions = vec![0; num_tables];
+                let cycle_index_start = chunk_index * chunk_size;
+                for (offset, row) in chunk.iter().enumerate() {
+                    if let Some(table_index) = row.table_index() {
+                        let _ = outputs[table_index][positions[table_index]]
+                            .write((cycle_index_start + offset) as u32);
+                        positions[table_index] += 1;
+                    }
+                }
+                debug_assert!(positions
+                    .iter()
+                    .zip(&outputs)
+                    .all(|(position, output)| *position == output.len()));
+            });
+        Ok(uninit_buckets
+            .into_iter()
+            .map(|bucket| {
+                // SAFETY: each chunk writes exactly the per-table count used to
+                // partition every bucket, checked above in debug builds.
+                unsafe { bucket.into_boxed_slice().assume_init().into_vec() }
+            })
+            .collect())
+    }
+}
 
 impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        indices: Arc<Vec<u128>>,
-        claim_columns: Vec<u8>,
+        rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
@@ -684,18 +717,11 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 reason: "cycle bucket indices are u32",
             });
         }
-        if indices.len() != 1 << log_t {
+        if rows.len() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {
-                table: "stage-5 instruction lookup indices".to_owned(),
+                table: "stage-5 instruction rows".to_owned(),
                 expected: 1 << log_t,
-                got: indices.len(),
-            });
-        }
-        if claim_columns.len() != indices.len() {
-            return Err(KernelError::TableSizeMismatch {
-                table: "stage-5 instruction claim bytes".to_owned(),
-                expected: indices.len(),
-                got: claim_columns.len(),
+                got: rows.len(),
             });
         }
         if r_reduction.len() != log_t {
@@ -706,7 +732,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
-        let buckets = bucket_instruction_cycles::<F>(&claim_columns)?;
+        let buckets = build_cycle_buckets(&rows)?;
         let mut present_prefixes = vec![false; ALL_PREFIXES.len()];
         for table in
             LookupTableKind::<RISCV_XLEN>::iter().filter(|table| !buckets[table.index()].is_empty())
@@ -725,7 +751,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
-            indices,
+            rows,
             buckets,
             u_evals: eq_table(r_reduction),
             prefix_checkpoints: ALL_PREFIXES
@@ -743,7 +769,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             phase_challenges: Vec::new(),
             cycle_challenges: Vec::new(),
             cycle: None,
-            claim_columns,
+            claim_columns: Vec::new(),
             progress: RoundProgress::new(dimensions.sumcheck_rounds()),
         };
         kernel.init_phase(0);
@@ -768,10 +794,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         // into the per-cycle mass.
         if phase != 0 {
             let shift = self.suffix_len(phase - 1);
-            let indices = Arc::clone(&self.indices);
+            let rows = Arc::clone(&self.rows);
             let v_prev = std::mem::take(&mut self.v_tables[phase - 1]);
             for_each_index_mut(&mut self.u_evals, |j, u| {
-                *u *= v_prev[((indices[j] >> shift) as usize) & (CHUNK_SIZE - 1)];
+                *u *= v_prev[((rows[j].lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
             });
             self.v_tables[phase - 1] = v_prev;
         }
@@ -786,31 +812,26 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
 
         // Fused RAF scan over the whole trace (deferred-reduction sums,
         // primitive-scalar multiplies).
-        let indices = self.indices.as_slice();
-        let claim_columns = self.claim_columns.as_slice();
+        let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
         let raf = map_reduce_chunks(
-            indices.len(),
-            scan_chunk_size(indices.len()),
+            rows.len(),
+            scan_chunk_size(rows.len()),
             |range| {
                 let mut scan = RafScan::<F>::new();
-                for ((&index, &packed), &u) in indices[range.clone()]
-                    .iter()
-                    .zip(&claim_columns[range.clone()])
-                    .zip(&u_evals[range])
-                {
-                    let raf_flag = packed & 0x80 != 0;
-                    let chunk = ((index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
-                    let suffix_bits = index & suffix_mask;
+                for (row, &u) in rows[range.clone()].iter().zip(&u_evals[range]) {
+                    let lookup_index = row.lookup_index();
+                    let chunk = ((lookup_index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
+                    let suffix_bits = lookup_index & suffix_mask;
                     if CANONICAL_INSTRUCTION_ADDRESS
-                        && raf_flag
+                        && row.raf_flag()
                         && (upper_suffix_bits == 0
                             || (suffix_bits >> (suffix_len - upper_suffix_bits))
                                 == (1u128 << upper_suffix_bits) - 1)
                     {
                         scan.upper_all_ones[chunk].add(u);
                     }
-                    if !raf_flag {
+                    if !row.raf_flag() {
                         scan.shift_half[chunk].add(u);
                         let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
                         let left = u64::from(left);
@@ -924,7 +945,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     /// classified once (`One` adds, {0,1}-valued adds conditionally, general
     /// ones use the primitive-scalar multiply).
     fn init_suffix_tables(&mut self, suffix_len: usize, suffix_mask: u128) {
-        let indices = self.indices.as_slice();
+        let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
         let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
             .filter(|table| !self.buckets[table.index()].is_empty())
@@ -947,10 +968,11 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     let mut accumulators =
                         vec![F::Accumulator::default(); num_suffixes * CHUNK_SIZE];
                     for &j in &bucket[range] {
-                        let index = indices[j as usize];
+                        let row = &rows[j as usize];
                         let u = u_evals[j as usize];
-                        let chunk = ((index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
-                        let suffix_bits = LookupBits::new(index & suffix_mask, suffix_len);
+                        let lookup_index = row.lookup_index();
+                        let chunk = ((lookup_index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
+                        let suffix_bits = LookupBits::new(lookup_index & suffix_mask, suffix_len);
                         for (s_index, suffix) in suffixes.iter().enumerate() {
                             let slot = &mut accumulators[s_index * CHUNK_SIZE + chunk];
                             if one_position == Some(s_index) {
@@ -1183,10 +1205,25 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
         }
 
+        // Snap the packed output-claim facts first: past this handoff the
+        // final flag walk reads one byte per cycle, not the 40 B row.
+        let rows = self.rows.as_slice();
+        const {
+            assert!(
+                LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
+                "table indices must fit the packed claim byte"
+            );
+        }
+        self.claim_columns = map_indices(rows.len(), |j| {
+            let row = &rows[j];
+            let table = row.table_index().map_or(0, |index| index as u8 + 1);
+            table | (u8::from(row.raf_flag()) << 7)
+        });
+
         // The tables stay pending: the first cycle message evaluates these
         // bases per row, and the first cycle bind materializes half-domain
-        // tables directly (the index column and the phase eq tables stay
-        // alive until then).
+        // tables directly (rows and the phase eq tables stay alive until
+        // then).
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
             tables: CycleTables::Pending(PendingCycleTables {
@@ -1194,6 +1231,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 raf_interleaved,
                 raf_identity,
             }),
+            bind_scratch: Vec::new(),
         });
 
         // The address-phase state is dead past this point — except the
@@ -1203,10 +1241,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
         self.buckets = Vec::new();
-        // Return the address-phase pages before the dense cycle tables (and
-        // the tail-aligned co-members' bound tables) stack on top — this is
-        // the stage's resident high-water moment.
-        purge_staging(self.dimensions.log_t());
     }
 
     /// The pending combined-value base at cycle `j` (packed-byte lookup).
@@ -1231,7 +1265,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         let ra_count = self.dimensions.num_virtual_ra_polys();
         let phases_per_ra = self.phases() / ra_count;
         let address_bits = self.address_bits();
-        let index = self.indices[j];
+        let index = self.rows[j].lookup_index();
         let mut phase = i * phases_per_ra;
         let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
         let mut product = self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
@@ -1308,13 +1342,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         },
                     )),
                     CycleTables::Dense { combined_val, ra } => {
-                        // Plain low-to-high binds (fresh half-size buffer,
-                        // old one freed): the tables' resident set decays
-                        // geometrically instead of pinning peak-size
-                        // capacity through the whole cycle phase.
-                        combined_val.bind_with_order(challenge, BindingOrder::LowToHigh);
+                        combined_val
+                            .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
                         for ra in ra {
-                            ra.bind_with_order(challenge, BindingOrder::LowToHigh);
+                            ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
                         }
                         None
                     }
@@ -1341,10 +1372,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         }))
                     })
                     .collect();
-                // The index column's and phase eq tables' last read is
-                // behind us (a parked re-emulation carry keeps the shared
-                // allocation alive for stage 6b).
-                self.indices = Arc::new(Vec::new());
+                // The rows' and phase eq tables' last read is behind us.
+                self.rows = Arc::new(Vec::new());
                 self.v_tables = Vec::new();
                 if let Some(cycle) = self.cycle.as_mut() {
                     cycle.tables = CycleTables::Dense {
@@ -1354,17 +1383,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 }
             }
             self.cycle_challenges.push(challenge);
-            // The halving cycle tables' freed generations are all
-            // large-block cache entries. The first halving strands the
-            // full materialized generation (combined_val plus the ra
-            // family — the stage-5 resident high-water), so purge right
-            // there, again two rounds on, and once late-tail for the
-            // remainder (plus the index column) once the live tables are
-            // small.
-            let cycle_round = self.progress.bound() - self.address_bits();
-            if matches!(cycle_round, 1 | 3 | LATE_PURGE_CYCLE_ROUNDS) {
-                purge_staging(self.dimensions.log_t());
-            }
         }
         self.progress.advance();
         Ok(())
@@ -1473,6 +1491,8 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
+    #[cfg(feature = "akita")]
+    use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
 
     use crate::reference::instruction_read_raf::{
@@ -1481,19 +1501,24 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{bucket_instruction_cycles, pack_claim_byte, OptimizedInstructionReadRafKernel};
+    use super::{build_cycle_buckets, InstructionCycleRow, OptimizedInstructionReadRafKernel};
 
-    /// Packs reference-typed fixture rows into the optimized kernel's
-    /// staging columns (the stage-5 kernel reads no PC/RAM columns).
-    fn pack(rows: &[InstructionReadRafWitness]) -> (Vec<u128>, Vec<u8>) {
+    /// Packs reference-typed fixture rows into the optimized kernel's shared
+    /// row form (the stage-5 kernel reads no PC/RAM columns).
+    fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
             .map(|row| {
-                (
+                InstructionCycleRow::new(
                     row.lookup_index.0,
-                    pack_claim_byte(row.table_index.0, row.raf_flag.0),
+                    row.table_index.0,
+                    row.raf_flag.0,
+                    0,
+                    None,
+                    #[cfg(feature = "akita")]
+                    FusedInc::default(),
                 )
             })
-            .unzip()
+            .collect()
     }
 
     fn fr(value: u64) -> Fr {
@@ -1517,8 +1542,13 @@ mod tests {
     /// no-table rows, both RAF branches, and edge indices (0, all-ones,
     /// all-ones upper half — the canonical-address path).
     fn fixture_rows(log_t: usize, seed: u64) -> Vec<InstructionReadRafWitness> {
-        let count = LookupTableKind::<RISCV_XLEN>::COUNT;
-        let tables = [0, 3 % count, 7 % count, 11 % count, count - 1];
+        let tables = [
+            LookupTableKind::<RISCV_XLEN>::And(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::Andn(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::Or(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::Xor(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::VirtualXORROTW7(Default::default()).index(),
+        ];
         let mut state = seed;
         (0..1usize << log_t)
             .map(|j| {
@@ -1543,21 +1573,38 @@ mod tests {
     }
 
     #[test]
-    fn instruction_cycle_buckets_preserve_trace_order() {
-        let rows = fixture_rows(10, 0x4255_434B_4554);
-        let (_, claim_columns) = pack(&rows);
-        let buckets = bucket_instruction_cycles::<Fr>(&claim_columns).unwrap();
-
-        for (table_index, bucket) in buckets.iter().enumerate() {
-            let expected: Vec<u32> = rows
-                .iter()
-                .enumerate()
-                .filter_map(|(cycle_index, row)| {
-                    (row.table_index.0 == Some(table_index)).then_some(cycle_index as u32)
-                })
-                .collect();
-            assert_eq!(bucket, &expected);
+    fn cycle_buckets_preserve_cycle_order() {
+        let rows = pack(&fixture_rows(9, 0xB0C7));
+        let actual = build_cycle_buckets::<Fr>(&rows).unwrap();
+        let mut expected = vec![Vec::new(); LookupTableKind::<RISCV_XLEN>::COUNT];
+        for (cycle, row) in rows.iter().enumerate() {
+            if let Some(table) = row.table_index() {
+                expected[table].push(cycle as u32);
+            }
         }
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn packed_instruction_row_roundtrips() {
+        let lookup_index = u128::MAX - 17;
+        let table = LookupTableKind::<RISCV_XLEN>::COUNT - 1;
+        let row = InstructionCycleRow::new(
+            lookup_index,
+            Some(table),
+            true,
+            u32::MAX as usize,
+            Some(u64::MAX - 1),
+            #[cfg(feature = "akita")]
+            FusedInc(-123),
+        );
+        assert_eq!(row.lookup_index(), lookup_index);
+        assert_eq!(row.table_index(), Some(table));
+        assert_eq!(row.bytecode_pc(), u32::MAX as usize);
+        assert_eq!(row.remapped_ram_address(), Some(u64::MAX - 1));
+        assert!(row.raf_flag());
+        #[cfg(feature = "akita")]
+        assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
     }
 
     /// The sumcheck input claim from first principles:
@@ -1611,12 +1658,10 @@ mod tests {
 
         let mut reference =
             InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
-        let (indices, claim_columns) = pack(&rows);
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(indices),
-            claim_columns,
+            Arc::new(pack(&rows)),
             gamma,
         )
         .unwrap();
@@ -1688,12 +1733,10 @@ mod tests {
 
         let mut reference =
             InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
-        let (indices, claim_columns) = pack(&rows);
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(indices),
-            claim_columns,
+            Arc::new(pack(&rows)),
             gamma,
         )
         .unwrap();

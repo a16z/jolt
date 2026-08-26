@@ -49,6 +49,8 @@
 //! - `solinas` — the pseudo-Mersenne backend (scalar, extension, unreduced,
 //!   packed, and the conditional-parallelism helpers in
 //!   `solinas::parallel`).
+//! - `asm` — opts into architecture-specific Fp128 assembly kernels on
+//!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
 //! - `parallel` — activates rayon behind the `cfg_*!` helper macros.
 //! - `allocative` — `Allocative` derives on the concrete field types for
 //!   memory profiling.
@@ -89,6 +91,8 @@
 
 #[cfg(feature = "akita")]
 mod akita;
+#[cfg(feature = "akita")]
+mod akita_accumulators;
 mod algebra;
 #[cfg(feature = "bn254")]
 mod bn254;
@@ -102,13 +106,15 @@ pub mod signed;
 pub mod solinas;
 mod unreduced;
 
+#[cfg(feature = "akita")]
+pub use akita_accumulators::{AkitaAccumulator, AkitaSignedAccumulator};
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
-pub use extension::{Ext2Config, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
+pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};
@@ -120,10 +126,10 @@ pub use solinas::{
     Fp128MulU64Accum, Fp128Packing, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32Packing,
     Fp32ProductAccum, Fp32x2i32, Fp64, Fp64Packing, Fp64ProductAccum, Fp64x4i32, FpExt2,
     FpExt2Fp64ProductAccum, FpExt4, FpExt4Fp32ProductAccum, FpExt8, PackedFpExt2, PackedFpExt4,
-    PackedFpExt8, Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
-    Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195,
-    Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
-    PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    PackedFpExt8, Prime128Offset275, Prime128OffsetA7F7, Prime24Offset3, Prime30Offset35,
+    Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59, Prime56Offset27,
+    Prime64Offset59, PrimeOffsetSpec, PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX,
+    PRIME_OFFSET_SPECS,
 };
 pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 

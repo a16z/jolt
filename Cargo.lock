@@ -1754,6 +1754,7 @@ version = "0.2.0"
 dependencies = [
  "allocative",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "bincode 2.0.1",
  "serde",
  "syn 2.0.119",
 ]
@@ -3247,8 +3248,10 @@ dependencies = [
 name = "jolt-akita"
 version = "0.1.0"
 dependencies = [
+ "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-field",
  "akita-pcs",
  "akita-planner",
  "akita-prover",
@@ -3425,6 +3428,8 @@ dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "bincode 2.0.1",
+ "cc",
+ "criterion",
  "num-bigint",
  "num-traits",
  "rand 0.8.7",
@@ -3433,26 +3438,6 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "jolt-hyperkzg"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "jolt-crypto",
- "jolt-field",
- "jolt-openings",
- "jolt-poly",
- "jolt-transcript",
- "num-traits",
- "rand 0.8.7",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -3651,7 +3636,6 @@ dependencies = [
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
- "jolt-hyperkzg",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.7",
@@ -3693,6 +3677,7 @@ dependencies = [
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
@@ -3750,6 +3735,7 @@ dependencies = [
  "chrono",
  "clap",
  "common",
+ "jolt-akita",
  "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",

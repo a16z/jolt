@@ -104,12 +104,12 @@ pub struct OptimizedInstructionInput;
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
-        let rows = BundleStore::resolve(session, witness, 1usize << r_product.len())?;
+        let rows = BundleStore::resolve(witness, 1usize << r_product.len())?;
         Ok(Box::new(OptimizedInstructionInputKernel::new(
             r_product,
             rows,
@@ -120,27 +120,28 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
 
 /// The column state: native rows through round 0, eight dense `T/2` tables
 /// after the first bind.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum InputState<F: JoltField> {
-    Native(BundleStore<F, InstructionInputRow>),
+    Native(BundleStore<InstructionInputRow>),
     Dense(Vec<Polynomial<F>>),
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct OptimizedInstructionInputKernel<F: JoltField> {
     progress: RoundProgress,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     state: InputState<F>,
     gruen: GruenSplitEqPolynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedInstructionInputKernel, |kernel| {
-    use crate::backend::polys_heap_bytes;
-    let state = match &kernel.state {
-        InputState::Native(rows) => rows.heap_bytes(),
-        InputState::Dense(polys) => polys_heap_bytes(polys),
-    };
-    state + kernel.gruen.heap_bytes()
-});
 
 fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
@@ -163,7 +164,7 @@ fn ext_flag(even: bool, odd: bool) -> (i64, i64) {
 impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     pub(crate) fn new(
         r_product: &[F],
-        rows: BundleStore<F, InstructionInputRow>,
+        rows: BundleStore<InstructionInputRow>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let log_t = r_product.len();
@@ -192,11 +193,11 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     /// par_fold_out_in` with row-extraction fallibility.
     fn native_q_evals(
         &self,
-        rows: &BundleStore<F, InstructionInputRow>,
+        rows: &BundleStore<InstructionInputRow>,
     ) -> Result<[F; 4], WitnessError> {
         const POINTS: usize = 4;
         type Accumulator<F> = <F as WithAccumulator>::SignedProductAccumulator;
-        let access = rows.access()?;
+        let access = rows.access();
         let e_out = self.gruen.e_out_current();
         let e_in = self.gruen.e_in_current();
         let in_len = e_in.len();
@@ -232,8 +233,8 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                     // even for full-range `i128` immediates.
                     let mut right =
                         S256::from_i128(i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m));
-                    right += S64::from_i64(f_imm * (1 - t)).mul_trunc::<3, 4>(&imm_even);
-                    right += S64::from_i64(f_imm * t).mul_trunc::<3, 4>(&imm_odd);
+                    S64::from_i64(f_imm * (1 - t)).fmadd_trunc::<3, 4>(&imm_even, &mut right);
+                    S64::from_i64(f_imm * t).fmadd_trunc::<3, 4>(&imm_odd, &mut right);
                     right_acc[t as usize].fmadd_s256(e_in, &right);
                     left_acc[t as usize].fmadd_s256(e_in, &S256::from_i128(left));
                 }
@@ -333,11 +334,11 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     /// recombined from the rows — exactly the low-to-high bind of the
     /// (never materialized) full tables.
     fn materialize_half(
-        rows: &BundleStore<F, InstructionInputRow>,
+        rows: &BundleStore<InstructionInputRow>,
         challenge: F,
         half: usize,
     ) -> Result<Vec<Polynomial<F>>, WitnessError> {
-        let access = rows.access()?;
+        let access = rows.access();
         let cell = |y: usize| -> Result<[F; NUM_TABLES], WitnessError> {
             let even = access.row(2 * y)?.field_values::<F>();
             let odd = access.row(2 * y + 1)?.field_values::<F>();
@@ -431,7 +432,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     fn final_values(&self) -> Result<[F; NUM_TABLES], WitnessError> {
         match &self.state {
             // Bindless extraction happens only for `log_t = 0` geometries.
-            InputState::Native(rows) => Ok(rows.access()?.row(0)?.field_values()),
+            InputState::Native(rows) => Ok(rows.access().row(0)?.field_values()),
             InputState::Dense(tables) => Ok(core::array::from_fn(|i| tables[i].evals()[0])),
         }
     }
@@ -495,9 +496,10 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(InstructionInputPublic::EqProduct);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(InstructionInputPublic::EqProduct),
+            id,
             input_points,
             output_points,
             challenges,

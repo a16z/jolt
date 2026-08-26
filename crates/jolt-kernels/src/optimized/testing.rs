@@ -13,8 +13,6 @@
     reason = "test support module: fail loudly"
 )]
 
-use core::fmt::Debug;
-
 use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
@@ -30,7 +28,6 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessPlane, TraceBackend};
-use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 use crate::{ProverInputs, SumcheckKernel};
@@ -46,24 +43,6 @@ const BASE_ADDRESS: u64 = 0x1000;
 /// relation's `lowest_address` expects it.
 pub(crate) fn fixture_lowest_address() -> u64 {
     BASE_ADDRESS
-}
-
-/// A final LD/SD instruction row for scripted RAM traffic (the 64-byte
-/// `TraceRow` only represents RAM values on load/store-class rows).
-fn memory_instruction(kind: JoltInstructionKind) -> JoltInstructionRow {
-    JoltInstructionRow {
-        instruction_kind: kind,
-        address: 0x8000_0100,
-        operands: NormalizedOperands {
-            rd: (kind == JoltInstructionKind::LD).then_some(1),
-            rs1: Some(2),
-            rs2: (kind == JoltInstructionKind::SD).then_some(3),
-            imm: 0,
-        },
-        virtual_sequence_remaining: None,
-        is_first_in_sequence: false,
-        is_compressed: false,
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -128,8 +107,8 @@ pub(crate) fn with_ram_fixture_init<R>(
         ..Default::default()
     };
 
-    let instruction = JoltInstructionRow {
-        instruction_kind: JoltInstructionKind::ADDI,
+    let load = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::LD,
         address: 0x8000_0000,
         operands: NormalizedOperands {
             rd: Some(1),
@@ -141,11 +120,22 @@ pub(crate) fn with_ram_fixture_init<R>(
         is_first_in_sequence: false,
         is_compressed: false,
     };
+    let store = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::SD,
+        address: 0x8000_0004,
+        operands: NormalizedOperands {
+            rd: None,
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        },
+        ..load
+    };
     use std::sync::Arc;
     let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
-            vec![instruction],
-            instruction.address as u64,
+            vec![load, store],
+            load.address as u64,
             RV64IMAC_JOLT,
         )
         .unwrap(),
@@ -169,9 +159,6 @@ pub(crate) fn with_ram_fixture_init<R>(
         bytes
     };
     let mut script = ops;
-    // The trailing termination write keeps `RamValFinal` consistent; a
-    // `ram_k = 1` domain (the zero-committed-RA geometry) has no termination
-    // word to write into, so such scripts stay termination-free.
     if shape.ram_k > TERMINATION_WORD as usize {
         script.push(RamOp::Write {
             word: TERMINATION_WORD,
@@ -180,54 +167,60 @@ pub(crate) fn with_ram_fixture_init<R>(
     }
     // RAM traffic rides on contract-valid final LD/SD rows: a read's rd
     // receives the loaded value, a write's rs2 carries the stored value.
+    let mut rd_value = 0;
     let rows: Vec<TraceRow> = script
         .into_iter()
-        .map(|op| match op {
-            RamOp::Read { word } => {
-                let address = BASE_ADDRESS + 8 * word;
-                let value = state[word as usize];
-                TraceRow::new(
-                    memory_instruction(JoltInstructionKind::LD),
-                    RegisterState {
+        .map(|op| {
+            let (instruction, registers, ram_access) = match op {
+                RamOp::Read { word } => {
+                    let address = BASE_ADDRESS + 8 * word;
+                    let value = state[word as usize];
+                    let registers = RegisterState {
                         rs1: Some(RegisterRead {
                             register: 2,
                             value: address,
                         }),
-                        rs2: None,
                         rd: Some(RegisterWrite {
                             register: 1,
-                            pre_value: 0,
+                            pre_value: rd_value,
                             post_value: value,
                         }),
-                    },
-                    RamAccess::Read(RamRead { address, value }),
-                )
-            }
-            RamOp::Write { word, post } => {
-                let address = BASE_ADDRESS + 8 * word;
-                let pre_value = state[word as usize];
-                state[word as usize] = post;
-                TraceRow::new(
-                    memory_instruction(JoltInstructionKind::SD),
-                    RegisterState {
-                        rs1: Some(RegisterRead {
-                            register: 2,
-                            value: address,
+                        ..Default::default()
+                    };
+                    rd_value = value;
+                    (load, registers, RamAccess::Read(RamRead { address, value }))
+                }
+                RamOp::Write { word, post } => {
+                    let address = BASE_ADDRESS + 8 * word;
+                    let pre_value = state[word as usize];
+                    state[word as usize] = post;
+                    (
+                        store,
+                        RegisterState {
+                            rs1: Some(RegisterRead {
+                                register: 2,
+                                value: address,
+                            }),
+                            rs2: Some(RegisterRead {
+                                register: 3,
+                                value: post,
+                            }),
+                            ..Default::default()
+                        },
+                        RamAccess::Write(RamWrite {
+                            address,
+                            pre_value,
+                            post_value: post,
                         }),
-                        rs2: Some(RegisterRead {
-                            register: 3,
-                            value: post,
-                        }),
-                        rd: None,
-                    },
-                    RamAccess::Write(RamWrite {
-                        address,
-                        pre_value,
-                        post_value: post,
-                    }),
-                )
-            }
-            RamOp::None => TraceRow::default(),
+                    )
+                }
+                RamOp::None => (
+                    JoltInstructionRow::default(),
+                    RegisterState::default(),
+                    RamAccess::NoOp,
+                ),
+            };
+            TraceRow::new(instruction, registers, ram_access)
         })
         .collect();
 
@@ -255,7 +248,7 @@ pub(crate) fn with_ram_fixture_init<R>(
 
 /// Deterministic scalars for fixture points and challenges.
 pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
-    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed);
     (0..count).map(|_| Fr::random(&mut rng)).collect()
 }
 
@@ -272,9 +265,8 @@ fn trimmed(poly: &UnivariatePoly<Fr>) -> Vec<Fr> {
 
 /// Drive both kernels through the fused round loop in lockstep with the
 /// same deterministic challenges, asserting per-round polynomial equality
-/// (up to trailing zeros) and output-claim equality; returns both kernels
-/// (fully bound) and the drawn challenges for the caller's post-loop
-/// checks.
+/// (up to trailing zeros) and output-claim equality; returns the drawn
+/// challenges for the caller's post-loop checks.
 pub(crate) fn drive_parity_rounds<R>(
     reference: &mut dyn SumcheckKernel<Fr, Relation = R>,
     optimized: &mut dyn SumcheckKernel<Fr, Relation = R>,
@@ -285,14 +277,14 @@ pub(crate) fn drive_parity_rounds<R>(
 where
     R: ConcreteSumcheck<Fr>,
     SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + Debug,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
     ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
 {
     let rounds = reference.num_rounds();
     assert_eq!(optimized.num_rounds(), rounds, "round count diverged");
     assert_eq!(inputs.relation.rounds(), rounds, "relation rounds diverged");
 
-    let mut rng = ChaCha20Rng::seed_from_u64(challenge_seed);
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(challenge_seed);
     let mut reference_claim = input_claim;
     let mut optimized_claim = input_claim;
     let mut challenges = Vec::with_capacity(rounds);
@@ -331,8 +323,7 @@ where
     challenges
 }
 
-/// [`drive_parity_rounds`] plus both kernels' derived-table self-checks —
-/// the same post-loop sequence the generated stage drivers run.
+/// [`drive_parity_rounds`] plus both kernels' derived-table self-checks.
 pub(crate) fn assert_parity<R>(
     mut reference: Box<dyn SumcheckKernel<Fr, Relation = R>>,
     mut optimized: Box<dyn SumcheckKernel<Fr, Relation = R>>,
@@ -342,7 +333,7 @@ pub(crate) fn assert_parity<R>(
 ) where
     R: ConcreteSumcheck<Fr>,
     SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + Debug,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
     ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
 {
     let challenges = drive_parity_rounds(
@@ -352,7 +343,6 @@ pub(crate) fn assert_parity<R>(
         inputs,
         challenge_seed,
     );
-
     let output_points = inputs
         .relation
         .derive_opening_points(&challenges, inputs.points)

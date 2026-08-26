@@ -388,7 +388,7 @@ mod zk {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("modular ZK prove");
@@ -552,7 +552,7 @@ mod zk {
                 &prover_preprocessing,
                 &config,
                 Some(&trusted),
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("modular ZK advice prove");
@@ -675,7 +675,7 @@ mod zk {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("modular committed ZK prove");

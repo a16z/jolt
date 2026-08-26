@@ -59,12 +59,17 @@ struct RamAddressBundle {
 /// The session-parked per-cycle remapped-address column (stage 2 → 6b).
 /// [`NO_ACCESS`] when the cycle makes no remappable RAM access (no-ops and
 /// address 0).
-pub(crate) struct SharedRamAddresses(pub(crate) Arc<Vec<u64>>);
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct SharedRamAddresses(
+    #[cfg_attr(feature = "allocative", allocative(visit = visit_shared_addresses))]
+    pub(crate)  Arc<Vec<u64>>,
+);
 
+/// Bytes of the shared address column, attributed once at the session park.
 #[cfg(feature = "allocative")]
-crate::optimized::impl_allocative!(SharedRamAddresses, |addresses| {
-    crate::backend::arc_vec_heap_bytes(&addresses.0)
-});
+fn visit_shared_addresses(addresses: &Arc<Vec<u64>>, visitor: &mut allocative::Visitor<'_>) {
+    jolt_poly::visit_scalars(addresses.as_ref(), visitor);
+}
 
 impl SharedRamAddresses {
     /// The session-shared address column: collected on first request
@@ -120,8 +125,10 @@ where
     B: WitnessBundle + Copy + Send + Sync,
 {
     #[cfg(feature = "parallel")]
-    if let Some(access) = super::rows::RandomAccessRows::new(witness, cycles)? {
-        return collect_split_columns_par(&access, cycles, &split);
+    if let Some(access) = witness.random_access() {
+        if cycles <= access.cycles() {
+            return collect_split_columns_par(&access, cycles, &split);
+        }
     }
     struct ColumnSplitter<B, S, const N: usize> {
         columns: [Vec<u64>; N],
@@ -156,7 +163,7 @@ where
 /// every column's spare capacity (chunked so extraction load-balances).
 #[cfg(feature = "parallel")]
 fn collect_split_columns_par<F: JoltField, B, const N: usize>(
-    access: &super::rows::RandomAccessRows<'_>,
+    access: &jolt_witness::RandomAccessRows,
     cycles: usize,
     split: &(impl Fn(&B) -> [u64; N] + Sync),
 ) -> Result<[Vec<u64>; N], KernelError<F>>
@@ -221,12 +228,18 @@ where
 /// The stage-2 full access view: the shared address column plus the pre-
 /// and post-access value columns, owned by (and freed with) the stage-2
 /// read-write `prepare` — their only consumer.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamAccessColumns {
+    /// The session-shared address column, attributed to the session park
+    /// (not here).
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     pub addresses: Arc<Vec<u64>>,
     /// Pre-access word value per cycle (a read's value, a write's pre-value);
     /// 0 on no-access cycles.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub post_values: Vec<u64>,
 }
 

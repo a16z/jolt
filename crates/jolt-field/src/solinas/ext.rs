@@ -65,7 +65,7 @@ impl<F: Field, C: Ext2Config<F>> FpExt2<F, C> {
     }
 
     /// Multiplies a base-field element by the non-residue (a free negation
-    /// when `C::IS_NEG_ONE`).
+    /// when `C` declares a non-residue of `-1`).
     #[inline(always)]
     fn mul_nr(x: F) -> F {
         C::mul_non_residue(x, |base| base)

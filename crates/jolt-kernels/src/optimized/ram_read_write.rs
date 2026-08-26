@@ -59,6 +59,11 @@ use crate::{
 /// ⌈N/2⌉ + spill entries — by the first bind), remaining cycle rounds on the
 /// cycle-major matrix, address rounds on the address-major matrix, then the
 /// fully bound values. `None` only transiently inside a transition.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum Phase<F: JoltField> {
     Round0 {
         columns: RamAccessColumns,
@@ -75,11 +80,18 @@ enum Phase<F: JoltField> {
     },
     Done {
         merged_eq: Polynomial<F>,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
         final_ra: F,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
         final_val: F,
     },
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
     /// The committed per-cycle increment column, bound alongside phase 1;
@@ -87,30 +99,11 @@ pub(crate) struct RamReadWriteKernel<F: JoltField> {
     inc: Polynomial<F>,
     /// The initial-RAM column over addresses, bound alongside phase 2.
     val_init: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     log_t: usize,
     log_k: usize,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RamReadWriteKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    let phase = kernel.phase.as_ref().map_or(0, |phase| match phase {
-        // The shared address column is attributed to the session park, not
-        // here — only the stage-2-local value columns count.
-        Phase::Round0 { columns, gruen } => {
-            vec_heap_bytes(&columns.pre_values)
-                + vec_heap_bytes(&columns.post_values)
-                + gruen.heap_bytes()
-        }
-        Phase::Cycle { matrix, gruen } => vec_heap_bytes(&matrix.entries) + gruen.heap_bytes(),
-        Phase::Address { matrix, merged_eq } => {
-            vec_heap_bytes(&matrix.entries) + poly_heap_bytes(merged_eq)
-        }
-        Phase::Done { merged_eq, .. } => poly_heap_bytes(merged_eq),
-    });
-    phase + poly_heap_bytes(&kernel.inc) + poly_heap_bytes(&kernel.val_init)
-});
 
 impl<F: JoltField> Phase<F> {
     /// The error for a bind or round message arriving outside its phase.
@@ -327,9 +320,10 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
                 remaining: self.num_rounds(),
             });
         };
+        let id = JoltDerivedId::from(RamReadWritePublic::EqCycle);
         pin_derived_term_if_derived(
             relation,
-            JoltDerivedId::from(RamReadWritePublic::EqCycle),
+            id,
             input_points,
             output_points,
             challenges,

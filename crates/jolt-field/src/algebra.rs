@@ -328,6 +328,16 @@ pub trait CanonicalEncoding:
         None
     }
 
+    /// Borrows canonical `u64` representatives without per-element conversion.
+    ///
+    /// Fields whose in-memory representation is exactly one canonical `u64`
+    /// may override this capability. Narrower or encoded fields return `None`.
+    #[inline]
+    fn canonical_u64_slice(values: &[Self]) -> Option<&[u64]> {
+        let _ = values;
+        None
+    }
+
     /// Number of significant bits in this element's canonical representative.
     ///
     /// Zero is considered to have zero significant bits.
@@ -340,10 +350,9 @@ pub trait CanonicalEncoding:
     }
 
     /// Constructs a non-optimized scalar challenge from transcript bytes.
-    #[inline]
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_challenge_bytes(bytes)
-    }
+    ///
+    /// Implementations must choose the protocol's byte order explicitly.
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self;
 }
 
 /// Accumulates sums and products with potentially deferred modular reduction.
@@ -391,6 +400,16 @@ pub trait Accumulator: Default + Copy + Send + Sync {
     #[inline]
     fn fmadd_i64(&mut self, a: Self::Element, b: i64) {
         self.fmadd(a, Self::Element::from_i64(b));
+    }
+
+    /// Fused multiply-add with a sign-and-magnitude `u64` scalar.
+    #[inline]
+    fn fmadd_signed_u64(&mut self, value: Self::Element, magnitude: u64, is_positive: bool) {
+        if is_positive {
+            self.fmadd_u64(value, magnitude);
+        } else {
+            self.fmadd_s256(value, &S256::new([magnitude, 0, 0, 0], false));
+        }
     }
 
     /// Fused multiply-add with a signed 256-bit scalar.

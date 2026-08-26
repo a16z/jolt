@@ -527,6 +527,16 @@ impl Accumulator for FrSignedProductAccumulator {
     }
 
     #[inline(always)]
+    fn fmadd_signed_u64(&mut self, value: Fr, magnitude: u64, is_positive: bool) {
+        let magnitude = Limbs::from_u64(magnitude);
+        if is_positive {
+            Self::fmadd_magnitude(&mut self.pos, value, magnitude);
+        } else {
+            Self::fmadd_magnitude(&mut self.neg, value, magnitude);
+        }
+    }
+
+    #[inline(always)]
     fn fmadd_s256(&mut self, value: Fr, scalar: &S256) {
         if scalar.magnitude.is_zero() {
             return;

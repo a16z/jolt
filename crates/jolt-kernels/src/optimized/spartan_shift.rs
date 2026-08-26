@@ -74,7 +74,7 @@ pub struct OptimizedSpartanShift;
 impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, SpartanShift<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = SpartanShift<F>>>, KernelError<F>> {
@@ -95,8 +95,8 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
         let cycles = 1usize << log_t;
         // A slice-backed witness serves an owning handle — the row vector
         // never exists; every pass re-extracts its windows on the fly.
-        let rows = BundleStore::<F, SpartanShiftRow>::resolve(session, witness, cycles)?;
-        let access = rows.access()?;
+        let rows = BundleStore::<SpartanShiftRow>::resolve(witness, cycles)?;
+        let access = rows.access();
 
         let gamma_powers: [F; 5] = gamma_powers_array(inputs.challenges.gamma);
 
@@ -191,71 +191,57 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 enum Phase<F> {
     /// First half of the rounds: the four `(P, Q)` pairs over the prefix
     /// variables (outer 0/1, product 0/1 — product Qs carry the γ⁴ scale).
-    PrefixSuffix { pairs: [(Vec<F>, Vec<F>); 4] },
+    PrefixSuffix {
+        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_scalar_pairs))]
+        pairs: [(Vec<F>, Vec<F>); 4],
+    },
     /// Remaining rounds: the two `eq+1` tables and the five columns, dense.
     Dense {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_plus_one_outer: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_plus_one_product: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         unexpanded_pc: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         pc: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_virtual: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_first_in_sequence: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_noop: Vec<F>,
     },
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct ShiftKernel<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; 5],
     /// The two `eq+1` points (big-endian) the summand factors fix.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_outer: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_product: Vec<F>,
     /// Raw per-cycle values (window-served when slice-backed), kept for the
     /// phase-2 regeneration.
-    rows: BundleStore<F, SpartanShiftRow>,
+    rows: BundleStore<SpartanShiftRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ShiftKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    let phase = match &kernel.phase {
-        Phase::PrefixSuffix { pairs } => pairs
-            .iter()
-            .flat_map(|(p, q)| [p, q])
-            .map(vec_heap_bytes)
-            .sum::<usize>(),
-        Phase::Dense {
-            eq_plus_one_outer,
-            eq_plus_one_product,
-            unexpanded_pc,
-            pc,
-            is_virtual,
-            is_first_in_sequence,
-            is_noop,
-        } => [
-            eq_plus_one_outer,
-            eq_plus_one_product,
-            unexpanded_pc,
-            pc,
-            is_virtual,
-            is_first_in_sequence,
-            is_noop,
-        ]
-        .into_iter()
-        .map(vec_heap_bytes)
-        .sum::<usize>(),
-    };
-    vec_heap_bytes(&kernel.r_outer)
-        + vec_heap_bytes(&kernel.r_product)
-        + kernel.rows.heap_bytes()
-        + phase
-        + kernel.challenges.heap_bytes()
-});
 
 fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
@@ -274,7 +260,7 @@ impl<F: JoltField> ShiftKernel<F> {
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
         let chunk = eq_prefix.len();
         let remaining = 1usize << (self.log_t - bound);
-        let access = self.rows.access()?;
+        let access = self.rows.access();
 
         let fold_chunk = |chunk_index: usize| -> Result<[F; 5], WitnessError> {
             let base = chunk_index * chunk;

@@ -1,13 +1,12 @@
 use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
-use jolt_program::execution::TraceRow;
 use jolt_riscv::{
     CircuitFlags, InstructionFlags as InstructionFlagKind, InterleavedBitsMarker, JoltInstruction,
+    JoltTraceRow as TraceRow,
 };
 
 use super::{
-    decode_instruction, lookup_query, row_circuit_flags, row_is_noop, Extract, ExtractIndexed,
-    ToField, WitnessEnv,
+    decode_instruction, lookup_query, row_is_noop, Extract, ExtractIndexed, ToField, WitnessEnv,
 };
 use crate::WitnessError;
 use crate::RV64_XLEN;
@@ -99,7 +98,7 @@ impl Extract for NextIsVirtual {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(next.is_some_and(|row| {
-            row_circuit_flags(row).is_ok_and(|flags| flags[CircuitFlags::VirtualInstruction])
+            row.circuit_flags()[CircuitFlags::VirtualInstruction]
         })))
     }
 }
@@ -111,7 +110,7 @@ impl Extract for NextIsFirstInSequence {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(next.is_some_and(|row| {
-            row_circuit_flags(row).is_ok_and(|flags| flags[CircuitFlags::IsFirstInSequence])
+            row.circuit_flags()[CircuitFlags::IsFirstInSequence]
         })))
     }
 }
@@ -122,7 +121,7 @@ impl Extract for ShouldJump {
         next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let circuit_flags = row_circuit_flags(row)?;
+        let circuit_flags = row.circuit_flags();
         let next_is_noop = next.is_some_and(row_is_noop);
         Ok(Self(circuit_flags[CircuitFlags::Jump] && !next_is_noop))
     }
@@ -148,7 +147,7 @@ impl Extract for InstructionRafFlag {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let circuit_flags = row_circuit_flags(row)?;
+        let circuit_flags = row.circuit_flags();
         Ok(Self(!circuit_flags.is_interleaved_operands()))
     }
 }
@@ -160,7 +159,7 @@ impl ExtractIndexed<CircuitFlags> for OpFlag {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row_circuit_flags(row)?[flag]))
+        Ok(Self(row.circuit_flags()[flag]))
     }
 }
 

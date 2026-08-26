@@ -9,8 +9,8 @@ use akita_config::proof_optimized::fp128::Field as AkitaField;
 use rand_core::RngCore;
 
 use crate::{
-    AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring,
-    WithAccumulator,
+    AdditiveGroup, AkitaAccumulator, AkitaSignedAccumulator, CanonicalBytes, CanonicalEncoding,
+    Field, Ring, WithAccumulator,
 };
 
 impl AdditiveGroup for AkitaField {}
@@ -100,18 +100,38 @@ impl CanonicalEncoding for AkitaField {
         <Self as akita_field::CanonicalBitLength>::num_bits(self)
     }
 
-    /// Legacy convention: digest bytes are interpreted as a big-endian
-    /// integer before reduction.
+    /// Akita transcripts interpret digest bytes directly as little-endian.
     #[inline]
     fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        let mut buf = bytes.to_vec();
-        buf.reverse();
-        Self::from_bytes_le_reduced(&buf)
+        Self::from_bytes_le_reduced(bytes)
     }
 }
 
 impl WithAccumulator for AkitaField {
-    type Accumulator = NaiveAccumulator<Self>;
-    type SmallScalarAccumulator = NaiveAccumulator<Self>;
-    type SignedProductAccumulator = NaiveAccumulator<Self>;
+    type Accumulator = AkitaAccumulator;
+    type SmallScalarAccumulator = AkitaSignedAccumulator;
+    type SignedProductAccumulator = AkitaSignedAccumulator;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scalar_challenge_uses_akita_little_endian_convention() {
+        let bytes = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ];
+        let challenge = <AkitaField as CanonicalEncoding>::from_scalar_challenge_bytes(&bytes);
+        let direct = <AkitaField as CanonicalEncoding>::from_bytes_le_reduced(&bytes);
+        let mut reversed = bytes;
+        reversed.reverse();
+
+        assert_eq!(challenge, direct);
+        assert_ne!(
+            challenge,
+            <AkitaField as CanonicalEncoding>::from_bytes_le_reduced(&reversed)
+        );
+    }
 }

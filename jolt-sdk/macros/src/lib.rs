@@ -939,7 +939,7 @@ impl MacroBuilder {
                     &trusted_advice_bytes,
                     #commitment_arg,
                     advice_tape,
-                );
+                ).expect("execution trace exceeds the max_trace_length configured in #[jolt::provable]");
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove()
                     .expect("prover should produce verifier-native proof");

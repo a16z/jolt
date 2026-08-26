@@ -81,7 +81,7 @@ use crate::{
 mod rows;
 mod sparse;
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::panic, reason = "test support module")]
+#[expect(clippy::unwrap_used, reason = "test support module")]
 pub(crate) mod test_support;
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
@@ -169,6 +169,11 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct ReadWriteKernel<F: JoltField> {
     log_t: usize,
     log_k: usize,
@@ -178,73 +183,24 @@ struct ReadWriteKernel<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     inc: IncColumn<F>,
     // Address-phase dense state (K-sized), materialized at the transition.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     ra: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     wa: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     val: Vec<F>,
     /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     eq_scalar: F,
     /// Fully bound `rd_inc` — constant across the address rounds.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     inc_scalar: F,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rs1_indices: Vec<Option<u8>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rs2_indices: Vec<Option<u8>>,
     challenges: RoundChallenges<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ReadWriteKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    let entries = match &kernel.entries {
-        SparseEntries::Seed {
-            entries,
-            ra_lut,
-            wa_lut,
-        } => {
-            vec_heap_bytes(entries)
-                + vec_heap_bytes(&ra_lut.values)
-                + vec_heap_bytes(&wa_lut.values)
-        }
-        SparseEntries::SeedBound {
-            entries,
-            seed_ra_lut,
-            seed_wa_lut,
-            ra_lut,
-            wa_lut,
-            ..
-        } => {
-            vec_heap_bytes(entries)
-                + vec_heap_bytes(&seed_ra_lut.values)
-                + vec_heap_bytes(&seed_wa_lut.values)
-                + vec_heap_bytes(&ra_lut.values)
-                + vec_heap_bytes(&wa_lut.values)
-        }
-        SparseEntries::Indexed {
-            vals,
-            metas,
-            ra_lut,
-            wa_lut,
-        } => {
-            vec_heap_bytes(vals)
-                + vec_heap_bytes(metas)
-                + vec_heap_bytes(&ra_lut.values)
-                + vec_heap_bytes(&wa_lut.values)
-        }
-        SparseEntries::Direct(entries) => vec_heap_bytes(entries),
-    };
-    let inc = match &kernel.inc {
-        IncColumn::Raw(raw) => vec_heap_bytes(raw),
-        IncColumn::RawBound { raw, .. } => vec_heap_bytes(raw),
-        IncColumn::Bound(inc) => poly_heap_bytes(inc),
-    };
-    entries
-        + inc
-        + kernel.gruen.heap_bytes()
-        + vec_heap_bytes(&kernel.ra)
-        + vec_heap_bytes(&kernel.wa)
-        + vec_heap_bytes(&kernel.val)
-        + vec_heap_bytes(&kernel.rs1_indices)
-        + vec_heap_bytes(&kernel.rs2_indices)
-        + kernel.challenges.heap_bytes()
-});
 
 impl<F: JoltField> ReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's

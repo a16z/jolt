@@ -58,9 +58,15 @@ use crate::{
 /// The write-address column: hot indices plus the address eq table until the
 /// first bind, a dense bound table afterwards. The `K × T` grid never exists,
 /// and the low-to-high dense binds shed capacity as the table halves.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum WaState<F: JoltField> {
     Indices {
         rd: Vec<Option<u8>>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,
     },
     Dense(Polynomial<F>),
@@ -146,13 +152,13 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
                 got: rows,
             });
         }
-        let inc = IncState::Rows(BundleStore::resolve(session, witness, cycles)?);
+        let inc = IncState::Rows(BundleStore::resolve(witness, cycles)?);
 
         // Reclaim the rd hot indices the stage-4 kernel parked; collect them
         // from the row source otherwise (reference-only stage 4, tests).
         let rd = match session.take::<SharedRdIndices>() {
             Some(SharedRdIndices(rd)) if rd.len() == cycles => rd,
-            _ => collect_rows::<F, RegisterCycleRow>(witness, cycles)?
+            _ => collect_rows::<RegisterCycleRow>(witness, cycles)?
                 .iter()
                 .map(|row| row.rd.map(|(k, ..)| k))
                 .collect(),
@@ -173,8 +179,13 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
 /// The increment column's lifecycle: typed trace rows until the first bind
 /// (the full-length dense field table never exists), a dense bound table
 /// afterwards.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum IncState<F: JoltField> {
-    Rows(BundleStore<F, RdIncRow>),
+    Rows(BundleStore<RdIncRow>),
     Dense(Polynomial<F>),
 }
 
@@ -184,26 +195,17 @@ struct RdIncRow {
     rd_inc: RdInc,
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct ValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncState<F>,
     wa: WaState<F>,
     lt: SplitLt<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ValEvaluationKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    let inc = match &kernel.inc {
-        IncState::Rows(store) => store.heap_bytes(),
-        IncState::Dense(table) => poly_heap_bytes(table),
-    };
-    let wa = match &kernel.wa {
-        WaState::Indices { rd, eq_address } => vec_heap_bytes(rd) + vec_heap_bytes(eq_address),
-        WaState::Dense(table) => poly_heap_bytes(table),
-    };
-    inc + wa + kernel.lt.heap_bytes()
-});
 
 fn row_unavailable<F: JoltField>() -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
@@ -222,7 +224,7 @@ impl<F: JoltField> ValEvaluationKernel<F> {
                 // full-length table.
                 debug_assert_eq!(self.progress.bound(), 0);
                 let half = (1usize << self.progress.total()) / 2;
-                let access = store.access().map_err(|_| row_unavailable())?;
+                let access = store.access();
                 let bound = |y: usize| -> Result<F, SumcheckError<F>> {
                     let even: RdIncRow = access.row(2 * y).map_err(|_| row_unavailable())?;
                     let odd: RdIncRow = access.row(2 * y + 1).map_err(|_| row_unavailable())?;
@@ -270,7 +272,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
             IncState::Rows(store) => {
                 debug_assert_eq!(self.progress.bound(), 0);
                 let half = (1usize << self.progress.total()) / 2;
-                let access = store.access().map_err(|_| row_unavailable())?;
+                let access = store.access();
                 let group = |y: usize,
                              acc: &mut [F::Accumulator; 3]|
                  -> Result<(), SumcheckError<F>> {
@@ -359,9 +361,10 @@ impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle),
+            id,
             input_points,
             output_points,
             challenges,

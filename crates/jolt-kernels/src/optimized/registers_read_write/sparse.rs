@@ -17,10 +17,16 @@ use super::rows::RegisterCycleRow;
 /// `(a ≪ bits) | b` holds `b + r·(a − b)` — so a `u16` per matrix entry keeps
 /// addressing its bound coefficient until one more squaring would overflow
 /// the index domain.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 pub(super) struct CoeffLut<F> {
     /// Power-of-two length; index 0 is always zero (zero seeds stay zero
     /// under `b + r·(a − b)`), which is what lets an absent merge partner
     /// keep index arithmetic pure.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) values: Vec<F>,
 }
 
@@ -804,8 +810,14 @@ fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
 /// seed layout with implicit `Val` at round 0 (the peak-memory window), then
 /// SoA-split `u16` LUT indices while the tables can still square (through
 /// the fourth cycle round), direct field values after.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub(super) enum SparseEntries<F: JoltField> {
     Seed {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         entries: Vec<SeedEntry>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
@@ -818,6 +830,7 @@ pub(super) enum SparseEntries<F: JoltField> {
     /// the full-size intermediate generation the two sequential binds would
     /// materialize between them never exists.
     SeedBound {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         entries: Vec<SeedEntry>,
         /// Pre-square tables: the level-1 combine bits.
         seed_ra_lut: CoeffLut<F>,
@@ -825,15 +838,21 @@ pub(super) enum SparseEntries<F: JoltField> {
         /// Squared-once tables: the intermediates' value domain.
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
         r1: F,
     },
     Indexed {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         vals: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         metas: Vec<IndexedMeta>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
     },
-    Direct(Vec<SparseEntry<F, F>>),
+    Direct(
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        Vec<SparseEntry<F, F>>,
+    ),
 }
 
 /// The `rd_inc` column in its round-dependent representation (the RAM
@@ -844,9 +863,21 @@ pub(super) enum SparseEntries<F: JoltField> {
 /// materializes at `T/4` on the second bind. Neither the `T`- nor the
 /// `T/2`-sized field table ever exists; the raw column (16 B/cycle, exactly
 /// a `T/2` field table's footprint) covers both early rounds.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub(super) enum IncColumn<F: JoltField> {
-    Raw(Vec<i128>),
-    RawBound { raw: Vec<i128>, r1: F },
+    Raw(
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<i128>,
+    ),
+    RawBound {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        raw: Vec<i128>,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
+        r1: F,
+    },
     Bound(Polynomial<F>),
 }
 

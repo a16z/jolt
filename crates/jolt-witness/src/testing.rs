@@ -15,11 +15,10 @@ use std::sync::Arc;
 use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
 
-/// Runs `f` against a small canned backend: two real cycles (an ADDI with
-/// register activity, then an SD with RAM traffic) padded to `2^2`.
+/// Runs `f` against a small canned backend: an ADDI and a store, padded to `2^2`.
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
 pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
-    let addi = JoltInstructionRow {
+    let instruction = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::ADDI,
         address: 0x8000_0000,
         operands: NormalizedOperands {
@@ -32,23 +31,21 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
         is_first_in_sequence: false,
         is_compressed: false,
     };
-    let sd = JoltInstructionRow {
+    let store = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::SD,
-        address: 0x8000_0004,
+        address: instruction.address + 4,
         operands: NormalizedOperands {
             rd: None,
             rs1: Some(2),
             rs2: Some(3),
-            imm: 8,
+            imm: 0,
         },
-        virtual_sequence_remaining: None,
-        is_first_in_sequence: false,
-        is_compressed: false,
+        ..Default::default()
     };
     let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
-            vec![addi, sd],
-            addi.address as u64,
+            vec![instruction, store],
+            instruction.address as u64,
             RV64IMAC_JOLT,
         )
         .unwrap(),
@@ -59,7 +56,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
     let program = Arc::new(JoltProgram::default());
     let rows = vec![
         TraceRow::new(
-            addi,
+            instruction,
             RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
@@ -75,11 +72,11 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
             RamAccess::NoOp,
         ),
         TraceRow::new(
-            sd,
+            store,
             RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
-                    value: 0x8000_1000,
+                    value: 0x8000_1008,
                 }),
                 rs2: Some(RegisterRead {
                     register: 3,
@@ -118,7 +115,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
 #[expect(clippy::unwrap_used, reason = "test assertion helper")]
 pub fn assert_bundle_column_matches<B>(id: JoltPolynomialId, value: impl Fn(&B) -> Fr)
 where
-    B: WitnessBundle + Copy + Send + Sync,
+    B: WitnessBundle + Clone + Send + Sync,
 {
     with_sample_backend(|backend| {
         assert!(

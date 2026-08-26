@@ -112,6 +112,9 @@ impl CanonicalEncoding for M61 {
     fn num_bits(&self) -> u32 {
         64 - self.0.leading_zeros()
     }
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self::from_bytes_le_reduced(bytes)
+    }
 }
 
 impl_serde_bytes!(impl[] M61, 8);

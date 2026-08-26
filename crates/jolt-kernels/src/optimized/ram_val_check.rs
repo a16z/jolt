@@ -49,6 +49,7 @@ use crate::{
 
 /// Lazy-RA index source over the full remapped RAM address (a single
 /// `K`-ary selector), cold on no-access cycles.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
     addresses: Arc<Vec<u64>>,
 }
@@ -112,9 +113,18 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
 /// is `F::from_i128(post − pre)` for writes and `F::from_i128(0)` otherwise,
 /// and the columns carry `post == pre` on reads and zeros on no-ops, so
 /// [`raw_inc`] reproduces the oracle's field values bit-for-bit.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 enum IncColumn<F: JoltField> {
     Raw(RamAccessColumns),
-    RawBound { columns: RamAccessColumns, r1: F },
+    RawBound {
+        columns: RamAccessColumns,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
+        r1: F,
+    },
     Bound(Polynomial<F>),
 }
 
@@ -143,29 +153,17 @@ fn raw_bound_inc<F: JoltField>(columns: &RamAccessColumns, r1: F, y: usize) -> F
     lo + mul_0_optimized(r1, hi - lo)
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncColumn<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,
     lt: SplitLt<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RamValCheckKernel, |kernel| {
-    // Raw inc owns the kernel-local pre/post value columns; the shared
-    // address column is attributed once, through the ra source below.
-    let inc = match &kernel.inc {
-        IncColumn::Raw(columns) | IncColumn::RawBound { columns, .. } => {
-            crate::backend::vec_heap_bytes(&columns.pre_values)
-                + crate::backend::vec_heap_bytes(&columns.post_values)
-        }
-        IncColumn::Bound(inc) => crate::backend::poly_heap_bytes(inc),
-    };
-    inc + kernel
-        .ra
-        .heap_bytes(|source| crate::backend::arc_vec_heap_bytes(&source.addresses))
-        + kernel.lt.heap_bytes()
-});
 
 impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
@@ -306,9 +304,10 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
+            id,
             input_points,
             output_points,
             challenges,
