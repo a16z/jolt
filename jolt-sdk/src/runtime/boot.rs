@@ -35,12 +35,10 @@ pub extern "C" fn __platform_bootstrap() {
     zeroos::initialize();
 
     // no_std guests: swap ZeroOS's first-fit linked-list allocator for the O(1)
-    // size-class allocator BEFORE kinit (the registered ops receive the heap).
-    // First-fit free-list walks measured at 85.7% of ALL executed instructions
-    // on an allocation-heavy guest (stateless Ethereum block validation); the
-    // size-class allocator cut total trace length ~6×. See
-    // `jolt_platform::size_class_alloc`. std/musl guests keep the ZeroOS
-    // allocator (musl's malloc manages its own arenas over mmap/brk).
+    // size-class allocator BEFORE kinit (the registered ops receive the heap);
+    // motivation and measurements in `jolt_platform::size_class_alloc`.
+    // std/musl guests keep the ZeroOS allocator (musl's malloc manages its own
+    // arenas over mmap/brk).
     #[cfg(target_os = "none")]
     zeroos::foundation::register_memory(zeroos::foundation::ops::MemoryOps {
         init: jolt_platform::size_class_alloc::init,

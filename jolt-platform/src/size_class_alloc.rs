@@ -14,11 +14,13 @@
 //!   pointer in their first word. Alloc pops the head, dealloc pushes.
 //! - Class miss → bump the arena cursor (blocks are class-size aligned, so any
 //!   `align <= size` request is satisfied; larger `align` rounds the class up).
-//! - `realloc` grows the most recent bump allocation in place (Vec doubling
-//!   hits this constantly); otherwise allocate-copy-free. Same-class or
-//!   shrinking reallocs return the block unchanged.
+//! - `realloc` resizes the most recent bump allocation in place (Vec doubling
+//!   hits this constantly) and returns same-class blocks unchanged; everything
+//!   else is allocate-copy-free, so a block's class always equals its physical
+//!   footprint and dealloc files it under the right free list.
 //! - No splitting or coalescing. The cost is bounded internal fragmentation
-//!   (< 2× per live block) and per-class high-water free lists — a deliberate
+//!   (< 2× per live block when align ≤ size; over-aligned requests round up to
+//!   the alignment) and per-class high-water free lists — a deliberate
 //!   memory-for-cycles trade appropriate for single-run guest heaps.
 //!
 //! Single-hart guests only: state is plain statics, no locking.
@@ -114,8 +116,9 @@ pub fn dealloc(ptr_in: *mut u8, layout: Layout) {
     }
 }
 
-/// Same-class and shrinking reallocs are free; growth extends the newest bump
-/// block in place when possible, else allocate-copy-free.
+/// Same-class reallocs are free and the newest bump block resizes in place
+/// (a shrink retreats the cursor); everything else is allocate-copy-free so
+/// the block's class always matches its physical footprint.
 ///
 /// `ptr_in` must be null or a live block previously returned by this allocator
 /// for `old_layout` — the standard `GlobalAlloc::realloc` contract.
@@ -144,24 +147,24 @@ pub fn realloc(ptr_in: *mut u8, old_layout: Layout, new_size: usize) -> *mut u8 
         return ptr::null_mut();
     }
 
-    // Same class (or shrink) → the existing block already fits. Shrinks keep
-    // the larger footprint; the tail is orphaned when the block is later freed
-    // into the smaller class (rare — `shrink_to_fit` — and bounded).
-    if new_class <= old_class {
+    // Cross-class shrinks must NOT return the block unchanged: the caller's
+    // next dealloc uses the new layout, and a block filed under a smaller
+    // class would orphan its tail forever (no splitting or coalescing).
+    if new_class == old_class {
         return ptr_in;
     }
 
     unsafe {
         let a = &mut *ptr::addr_of_mut!(ARENA);
-        // In-place growth: this block is the most recent bump allocation.
+        // In-place resize: this block is the most recent bump allocation, so
+        // the cursor can move to match the new class (a shrink returns the
+        // tail to the arena). Alignment holds: `new_layout.align()` equals
+        // `old_layout.align()`, which the block already satisfies.
         let old_size = 1usize << (old_class + MIN_SHIFT);
-        let grown_size = 1usize << (new_class + MIN_SHIFT);
+        let new_class_size = 1usize << (new_class + MIN_SHIFT);
         let addr = ptr_in as usize;
-        if addr + old_size == a.cursor
-            && addr & (new_layout.align() - 1) == 0
-            && addr + grown_size <= a.end
-        {
-            a.cursor = addr + grown_size;
+        if addr + old_size == a.cursor && addr + new_class_size <= a.end {
+            a.cursor = addr + new_class_size;
             return ptr_in;
         }
     }
@@ -235,9 +238,23 @@ mod tests {
             assert_eq!(unsafe { *f2.add(i) }, 0xCD);
         }
 
-        // Shrink keeps the pointer.
+        // Newest bump block shrinks in place: pointer stable, tail reclaimed.
         let h = alloc(layout(256, 8));
         assert_eq!(realloc(h, layout(256, 8), 16), h);
+        let h_tail = alloc(layout(64, 8));
+        assert!((h_tail as usize) < h as usize + 256);
+
+        // Non-newest cross-class shrink moves, preserves contents, and files
+        // the old block under its true (large) class for reuse.
+        let s = alloc(layout(256, 8));
+        let _t = alloc(layout(8, 8)); // s is no longer newest
+        unsafe { ptr::write_bytes(s, 0x5A, 16) };
+        let s2 = realloc(s, layout(256, 8), 16);
+        assert_ne!(s, s2);
+        for i in 0..16 {
+            assert_eq!(unsafe { *s2.add(i) }, 0x5A);
+        }
+        assert_eq!(alloc(layout(256, 8)), s);
 
         // Oversize and exhaustion return null.
         assert!(alloc(layout(1 << 40, 8)).is_null());
