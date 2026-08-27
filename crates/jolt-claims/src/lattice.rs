@@ -85,11 +85,26 @@ pub fn balanced_inc_value<F: Ring>(address_point: &[F]) -> F {
 
 /// Bias whose radix-`2^width` digits recenter every digit of
 /// `value + bias` into the balanced alphabet: `(K/2) · Σ_j K^j` over the
-/// window's digit places (`K = 2^width`).
+/// window's digit places (`K = 2^width`), per digit width dividing
+/// [`BALANCED_INC_BITS`] (0 elsewhere). Precomputed because the closed
+/// form's i128 division lowers to a `__udivti3` libcall, and the encoders
+/// read the bias per cycle per balanced column.
+const BALANCED_BIASES: [i128; BALANCED_INC_BITS + 1] = {
+    let mut table = [0i128; BALANCED_INC_BITS + 1];
+    let mut width = 1;
+    while width <= BALANCED_INC_BITS {
+        if BALANCED_INC_BITS.is_multiple_of(width) {
+            let radix = 1i128 << width;
+            table[width] = (radix / 2) * (((1i128 << BALANCED_INC_BITS) - 1) / (radix - 1));
+        }
+        width += 1;
+    }
+    table
+};
+
 fn balanced_bias(width: usize) -> i128 {
     debug_assert!(width > 0 && BALANCED_INC_BITS.is_multiple_of(width));
-    let radix = 1i128 << width;
-    (radix / 2) * (((1i128 << BALANCED_INC_BITS) - 1) / (radix - 1))
+    BALANCED_BIASES[width]
 }
 
 fn biased_for_balanced_digits(value: i128, width: usize) -> i128 {

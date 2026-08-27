@@ -21,9 +21,8 @@ pub use geometry::dimensions::{
     FieldRegistersTraceDimensions,
 };
 pub use ids::{
-    FieldIncLimbReconstructionChallenge, FieldIncLimbReconstructionPublic, FieldInlineChallengeId,
-    FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpFlag,
-    FieldInlineOpeningId, FieldInlinePolynomialId, FieldInlineRelationId,
+    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlineExpr,
+    FieldInlineOpFlag, FieldInlineOpeningId, FieldInlinePolynomialId, FieldInlineRelationId,
     FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
     FieldRegistersClaimReductionPublic, FieldRegistersIncClaimReductionChallenge,
     FieldRegistersIncClaimReductionPublic, FieldRegistersReadWriteChallenge,

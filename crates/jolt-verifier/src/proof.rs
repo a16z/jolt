@@ -33,32 +33,17 @@ pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 #[cfg(feature = "akita")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaJointOpeningProof<P> {
-    pub one_hot_trace: P,
+    pub main_batch: P,
     pub auxiliary: Vec<P>,
-    /// The packed FR limb object's opening. Present exactly when the stage-6b
-    /// reduced `FieldRdInc` claim is nonzero (the stage-8 opening enforces the
-    /// gate both ways fail-closed); the legacy packed converter never sets it.
-    #[cfg(feature = "field-inline")]
-    pub field_inc_limbs: Option<P>,
 }
 
 #[cfg(feature = "akita")]
 impl<P> AkitaJointOpeningProof<P> {
-    pub fn new(one_hot_trace: P, auxiliary: Vec<P>) -> Self {
+    pub fn new(main_batch: P, auxiliary: Vec<P>) -> Self {
         Self {
-            one_hot_trace,
+            main_batch,
             auxiliary,
-            #[cfg(feature = "field-inline")]
-            field_inc_limbs: None,
         }
-    }
-
-    /// Attach the packed FR limb opening (the modular prover's stage 8 sets
-    /// this on every FR-on packed proof).
-    #[cfg(feature = "field-inline")]
-    pub fn with_field_inc_limbs(mut self, field_inc_limbs: P) -> Self {
-        self.field_inc_limbs = Some(field_inc_limbs);
-        self
     }
 }
 
@@ -84,13 +69,6 @@ pub struct JoltProof<
 {
     pub protocol: JoltProtocolConfig,
     pub commitments: ProofCommitments<PCS>,
-    /// The packed FR limb object's commitment. Present exactly when the
-    /// stage-6b reduced `FieldRdInc` claim is nonzero — a zero claim means an
-    /// identically-zero `FieldRdInc` (Schwartz-Zippel), whose empty one-hot
-    /// object the Akita fold schedules cannot open; the stage-8 opening
-    /// enforces the gate both ways fail-closed.
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
-    pub field_inc_limbs_commitment: Option<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
@@ -128,8 +106,6 @@ where
         JoltProof {
             protocol: self.protocol,
             commitments: self.commitments,
-            #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_limbs_commitment: self.field_inc_limbs_commitment,
             stages: self.stages,
             joint_opening_proof: self.joint_opening_proof,
             untrusted_advice_commitment: self.untrusted_advice_commitment,

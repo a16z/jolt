@@ -30,7 +30,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true }
-jolt-claims = { workspace = true }
 jolt-dory = { workspace = true }
 # Subscriber stack only (bench tracing setup); no summary pipeline.
 jolt-profiling = { path = "../jolt-profiling", default-features = false }

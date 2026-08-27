@@ -70,8 +70,6 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
-#[cfg(all(feature = "akita", feature = "field-inline"))]
-pub use verifier::absorb_field_inc_limbs_commitment;
 #[cfg(feature = "akita")]
 pub use verifier::absorb_packed_commitments;
 #[cfg(not(feature = "akita"))]

@@ -366,11 +366,6 @@ where
     for entry in committed {
         match entry.id {
             FieldInlineCommittedPolynomial::FieldRdInc => rd_inc = Some(entry.commitment),
-            FieldInlineCommittedPolynomial::FieldIncLimbColumn(_) => {
-                return Err(ProverError::InvariantViolation {
-                    reason: "field-inc limb columns exist only on the packed commitment axis",
-                });
-            }
         }
         hints.push((entry.id, entry.hint));
     }

@@ -53,6 +53,14 @@ macro_rules! __jolt_asm_stmt {
         use $crate::expand::asm_support::Kind;
         $asm.emit_r(Kind::MULHU, $rd, $rs1, $rs2)
     }};
+    ($asm:expr, pext $rd:expr, $rs1:expr, $rs2:expr) => {{
+        use $crate::expand::asm_support::SourceKind;
+        $asm.emit_r(SourceKind::VirtualPext, $rd, $rs1, $rs2)
+    }};
+    ($asm:expr, pext_signed $rd:expr, $rs1:expr, $rs2:expr) => {{
+        use $crate::expand::asm_support::SourceKind;
+        $asm.emit_r(SourceKind::VirtualPextSigned, $rd, $rs1, $rs2)
+    }};
     ($asm:expr, sltu $rd:expr, $rs1:expr, $rs2:expr) => {{
         use $crate::expand::asm_support::Kind;
         $asm.emit_r(Kind::SLTU, $rd, $rs1, $rs2)
@@ -141,6 +149,22 @@ macro_rules! __jolt_asm_stmt {
         use $crate::expand::asm_support::Kind;
         $asm.emit_i(Kind::VIRTUAL_SIGN_EXTEND_WORD, $rd, $rs1, 0)
     }};
+    ($asm:expr, align_addr $rd:expr, $rs1:expr, $imm:expr) => {{
+        use $crate::expand::asm_support::SourceKind;
+        $asm.emit_i(SourceKind::VirtualAlignAddr, $rd, $rs1, $imm)
+    }};
+    ($asm:expr, window_mask_b $rd:expr, $rs1:expr, $imm:expr) => {{
+        use $crate::expand::asm_support::SourceKind;
+        $asm.emit_i(SourceKind::VirtualWindowMaskB, $rd, $rs1, $imm)
+    }};
+    ($asm:expr, window_mask_h $rd:expr, $rs1:expr, $imm:expr) => {{
+        use $crate::expand::asm_support::SourceKind;
+        $asm.emit_i(SourceKind::VirtualWindowMaskH, $rd, $rs1, $imm)
+    }};
+    ($asm:expr, window_mask_w $rd:expr, $rs1:expr, $imm:expr) => {{
+        use $crate::expand::asm_support::SourceKind;
+        $asm.emit_i(SourceKind::VirtualWindowMaskW, $rd, $rs1, $imm)
+    }};
     ($asm:expr, ld $rd:expr, $rs1:expr, $imm:expr) => {{
         use $crate::expand::asm_support::Kind;
         $asm.emit_ld(Kind::LD, $rd, $rs1, $imm)
@@ -168,6 +192,14 @@ macro_rules! __jolt_asm_stmt {
     ($asm:expr, assert_lte $rs1:expr, $rs2:expr) => {{
         use $crate::expand::asm_support::Kind;
         $asm.emit_b(Kind::VirtualAssertLTE, $rs1, $rs2, 0)
+    }};
+    ($asm:expr, assert_halfword_alignment $rs1:expr, $imm:expr) => {{
+        use $crate::expand::asm_support::SourceKind;
+        $asm.emit_address(SourceKind::VirtualAssertHalfwordAlignment, $rs1, $imm)
+    }};
+    ($asm:expr, assert_word_alignment $rs1:expr, $imm:expr) => {{
+        use $crate::expand::asm_support::SourceKind;
+        $asm.emit_address(SourceKind::VirtualAssertWordAlignment, $rs1, $imm)
     }};
     ($asm:expr, assert_valid_div0 $divisor:expr, $quotient:expr) => {{
         use $crate::expand::asm_support::Kind;

@@ -57,6 +57,7 @@ pub use prefix::{PrefixPackedClaims, PrefixPackedLayout};
 
 pub use schemes::{
     AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, GroupCommitmentMetadata,
-    GroupSetupMetadata, HomomorphicBatch, StreamingCommitment, TransparentObjectSetup,
+    GroupOpeningClaim, GroupSetupMetadata, HomomorphicBatch, PrecommittedClaim,
+    PrecommittedOpening, PrecommittedRole, StreamingCommitment, TransparentObjectSetup,
     ZkBatchOpening, ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
 };

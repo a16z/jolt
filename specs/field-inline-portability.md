@@ -154,3 +154,15 @@ eq-MLE re-fixtured at the 16-byte encoding via host-side fp128 evaluation,
 the FR-inactive muldiv with the object absent, and five rejected tampers).
 The packed reconstruction kernel is the naive reference tier on both
 backends; a sparse optimized kernel is the noted follow-up.
+
+## Status (2026-08-27): packed axis being reworked onto dense-group batching
+
+Upstream #1798 replaced the byte one-hot advice objects with dense u64-word
+commitments opened through one heterogeneous batch, which is the shape the
+packed `FieldRdInc` treatment is being reworked onto: the one-hot limb
+columns, the `FieldIncLimbReconstruction` member, and the claim-gated limb
+object above are removed, and the `field-inline x akita` compile error is
+restored in `jolt-verifier/src/config.rs` until the dense-group FR design
+lands. The fp128 ruling, the limb decomposition facts
+(`canonical_limbs`/`limb_place_value`), and the Axis 2 encoding gates are
+unaffected.

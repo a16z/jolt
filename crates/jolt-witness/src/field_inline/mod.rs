@@ -447,12 +447,6 @@ impl TraceBackedFieldInlineWitness {
             FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 Ok(Shape::new(self.trace_log_rows(), PolynomialEncoding::Dense))
             }
-            FieldInlinePolynomialId::Committed(
-                FieldInlineCommittedPolynomial::FieldIncLimbColumn(_),
-            ) => Err(WitnessError::NotServed {
-                oracle: format!("{id:?}"),
-                reason: "field-inc limb columns exist only on the packed commitment axis",
-            }),
             FieldInlinePolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::FieldRs1Value
                 | V::FieldRs2Value
@@ -479,14 +473,6 @@ impl TraceBackedFieldInlineWitness {
             FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 self.materialize_cycle::<F, FieldRdInc<F>>()
             }
-            // Unreachable past `shape` (which rejects the packed-axis limb
-            // columns), restated so the id map stays exhaustive.
-            FieldInlinePolynomialId::Committed(
-                FieldInlineCommittedPolynomial::FieldIncLimbColumn(_),
-            ) => Err(WitnessError::NotServed {
-                oracle: format!("{id:?}"),
-                reason: "field-inc limb columns exist only on the packed commitment axis",
-            }),
             FieldInlinePolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::FieldRs1Value => self.materialize_cycle::<F, FieldRs1Value<F>>(),
                 V::FieldRs2Value => self.materialize_cycle::<F, FieldRs2Value<F>>(),

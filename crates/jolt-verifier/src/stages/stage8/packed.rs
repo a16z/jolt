@@ -1,16 +1,17 @@
 //! The Akita final opening.
 //!
-//! `OneHotTrace` prefix-packs its uniform semantic columns into one physical
-//! polynomial. Optional advice and committed-program objects use the same
-//! fixed-prefix reduction and are opened independently at their own points.
+//! `OneHotTrace` prefix-packs its semantic columns into one physical
+//! polynomial. Both advice objects join it as precommitted Akita groups in the
+//! canonical order `[UntrustedAdvice, TrustedAdvice, OneHotTrace]`, discharged by
+//! one joint opening; committed-program objects remain independent.
 
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::lattice::geometry::word_byte_num_vars;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_bytes_packing_plan, precommitted_packing_plan, OneHotTraceShape,
-    PrecommittedPackingShape, PrefixPackedObjectPlan,
+    advice_packing_plan, precommitted_packing_plan, OneHotTraceShape, PrecommittedPackingShape,
+    PrefixPackedObjectPlan,
 };
 use jolt_claims::protocols::jolt::lattice::strategy::{
     OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
@@ -19,13 +20,16 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltPolynomialId,
 };
 use jolt_field::{CanonicalBytes, JoltField};
-use jolt_openings::{CommitmentScheme, EvaluationClaim};
+use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
+use super::precommitted::precommitted_final_openings;
 use super::reconstruction::ReconstructionClearOutput;
+use crate::stages::stage6b::outputs::Stage6bClearOutput;
 use crate::stages::stage7::outputs::Stage7ClearOutput;
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
+use crate::stages::PrecommittedSchedule;
 use crate::VerifierError;
 
 fn batch_failed(reason: impl ToString) -> VerifierError {
@@ -142,30 +146,64 @@ struct ResolvedObject<'a, PCS: CommitmentScheme> {
     setup: &'a PCS::VerifierSetup,
 }
 
+fn reduce_object<PCS, T>(
+    object: &ResolvedObject<'_, PCS>,
+    leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<PCS::Field>>,
+    transcript: &mut T,
+) -> Result<EvaluationClaim<PCS::Field>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let claims = object
+        .plan
+        .packing()
+        .ids()
+        .iter()
+        .map(|id| {
+            leaves
+                .get(id)
+                .cloned()
+                .map(|claim| (*id, claim))
+                .ok_or_else(|| {
+                    batch_failed(format!(
+                        "missing final auxiliary claim for packed leaf {id:?}"
+                    ))
+                })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let semantic = object.plan.packed_claims(&claims).map_err(batch_failed)?;
+    object
+        .plan
+        .packing()
+        .reduce_claims(&semantic, transcript)
+        .map_err(batch_failed)
+}
+
 /// Resolve one advice object's packing/commitment/setup triple, or `None`
-/// when the kind is absent; a commitment without a reconstruction leaf, or a
-/// present object missing its commitment or setup, is rejected fail-closed.
+/// when the reduction schedule says the kind is absent. A setup may exist for
+/// an absent per-proof object because preprocessing is capacity-derived.
 fn advice_object<'a, PCS: CommitmentScheme>(
-    present: Option<&Vec<PCS::Field>>,
+    present: bool,
+    leaf: Option<&EvaluationClaim<PCS::Field>>,
     commitment: Option<&'a PCS::Output>,
     setup: Option<&'a PCS::VerifierSetup>,
     kind: JoltAdviceKind,
 ) -> Result<Option<ResolvedObject<'a, PCS>>, VerifierError> {
-    let Some(leaf_point) = present else {
-        if commitment.is_some() {
+    if !present {
+        if commitment.is_some() || leaf.is_some() {
             return Err(batch_failed(format!(
-                "{kind:?} advice commitment supplied without a reconstruction leaf"
+                "{kind:?} advice commitment or final claim supplied without a scheduled reduction"
             )));
         }
         return Ok(None);
-    };
-    let (Some(commitment), Some(setup)) = (commitment, setup) else {
+    }
+    let (Some(leaf), Some(commitment), Some(setup)) = (leaf, commitment, setup) else {
         return Err(batch_failed(format!(
-            "{kind:?} advice object without a commitment or setup"
+            "{kind:?} advice object without a final claim, commitment, or setup"
         )));
     };
-    let plan =
-        advice_bytes_packing_plan(kind, leaf_word_vars(leaf_point.len())?).map_err(batch_failed)?;
+    let plan = advice_packing_plan(kind, leaf.point.len()).map_err(batch_failed)?;
     Ok(Some(ResolvedObject {
         plan,
         commitment,
@@ -186,6 +224,8 @@ pub fn verify<PCS, VC, T>(
     trusted_advice_commitment: Option<&PCS::Output>,
     proof: &crate::proof::AkitaJointOpeningProof<PCS::Proof>,
     transcript: &mut T,
+    schedule: &PrecommittedSchedule,
+    stage6b: &Stage6bClearOutput<PCS::Field>,
     stage7: &Stage7ClearOutput<PCS::Field>,
     reconstruction: &ReconstructionClearOutput<PCS::Field>,
 ) -> Result<(), VerifierError>
@@ -200,7 +240,7 @@ where
     // `OneHotTrace` is one prefix-packed polynomial, followed
     // by the optional auxiliary commitment objects. The shared layout is the
     // same one the prover committed under.
-    // Optional objects join exactly when their reconstruction outputs exist;
+    // Optional objects join exactly when their direct final reductions exist;
     // presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
     let one_hot_trace_shape = OneHotTraceShape {
@@ -219,48 +259,81 @@ where
         1,
         1 << chunk_width,
     )?;
-    let leaves = leaf_claims(stage7, reconstruction);
+    let leaves = leaf_claims(schedule, stage6b, stage7, reconstruction)?;
     let packed_claims = one_hot_trace_packed_claims(&plan, chunk_width, &leaves)?;
     let packed_claim = plan
         .packing()
         .reduce_claims(&packed_claims, transcript)
         .map_err(batch_failed)?;
+    let untrusted = advice_object::<PCS>(
+        schedule.untrusted_advice.is_some(),
+        leaves.get(&JoltCommittedPolynomial::UntrustedAdvice),
+        untrusted_advice_commitment,
+        preprocessing.untrusted_advice_setup.as_ref(),
+        JoltAdviceKind::Untrusted,
+    )?;
+    let trusted = advice_object::<PCS>(
+        schedule.trusted_advice.is_some(),
+        leaves.get(&JoltCommittedPolynomial::TrustedAdvice),
+        trusted_advice_commitment,
+        preprocessing.trusted_advice_setup.as_ref(),
+        JoltAdviceKind::Trusted,
+    )?;
+
+    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
+        validate_auxiliary_metadata(object.commitment, object.setup, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+    let trusted_claim = if let Some(object) = trusted.as_ref() {
+        validate_auxiliary_metadata(object.commitment, object.setup, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+
+    // Canonical public batch order: [UntrustedAdvice, TrustedAdvice, OneHotTrace].
+    let mut precommitted = Vec::with_capacity(2);
+    for (role, object, claim) in [
+        (
+            JoltAdviceKind::Untrusted.precommitted_role(),
+            untrusted.as_ref(),
+            untrusted_claim.as_ref(),
+        ),
+        (
+            JoltAdviceKind::Trusted.precommitted_role(),
+            trusted.as_ref(),
+            trusted_claim.as_ref(),
+        ),
+    ] {
+        if let (Some(object), Some(claim)) = (object, claim) {
+            precommitted.push(PrecommittedClaim::new(
+                role,
+                GroupOpeningClaim::new(
+                    object.commitment.clone(),
+                    claim.point.as_slice().to_vec(),
+                    vec![claim.value],
+                ),
+            ));
+        }
+    }
+
+    let main_group = GroupOpeningClaim::new(
+        one_hot_trace_commitment.clone(),
+        packed_claim.point.as_slice().to_vec(),
+        vec![packed_claim.value],
+    );
     PCS::verify_batch(
-        one_hot_trace_commitment,
-        packed_claim.point.as_slice(),
-        std::slice::from_ref(&packed_claim.value),
-        &proof.one_hot_trace,
         &preprocessing.pcs_setup,
+        &precommitted,
+        &main_group,
+        &proof.main_batch,
         transcript,
     )
     .map_err(opening_failed)?;
 
-    let mut objects = Vec::new();
-
-    if let Some(object) = advice_object::<PCS>(
-        reconstruction
-            .output_points
-            .untrusted_advice
-            .as_ref()
-            .map(|points| &points.bytes),
-        untrusted_advice_commitment,
-        preprocessing.untrusted_advice_setup.as_ref(),
-        JoltAdviceKind::Untrusted,
-    )? {
-        objects.push(object);
-    }
-    if let Some(object) = advice_object::<PCS>(
-        reconstruction
-            .output_points
-            .trusted_advice
-            .as_ref()
-            .map(|points| &points.bytes),
-        trusted_advice_commitment,
-        preprocessing.trusted_advice_setup.as_ref(),
-        JoltAdviceKind::Trusted,
-    )? {
-        objects.push(object);
-    }
+    let mut program_objects: Vec<ResolvedObject<'_, PCS>> = Vec::new();
     match (
         reconstruction.output_points.bytecode.as_ref(),
         preprocessing.program.committed(),
@@ -297,7 +370,7 @@ where
                     plans.len()
                 )));
             }
-            objects.extend(
+            program_objects.extend(
                 plans
                     .into_iter()
                     .zip(&committed.program_one_hot_commitments)
@@ -322,33 +395,35 @@ where
         }
     }
 
-    if proof.auxiliary.len() != objects.len() {
+    // Both advice objects are discharged by the joint batch above, so only the
+    // committed-program objects remain auxiliary.
+    let expected_auxiliary = program_objects.len();
+    if proof.auxiliary.len() != expected_auxiliary {
         return Err(batch_failed(format!(
             "expected {} auxiliary prefix-packed opening proofs, got {}",
-            objects.len(),
+            expected_auxiliary,
             proof.auxiliary.len()
         )));
     }
 
-    for (object, auxiliary_proof) in objects.into_iter().zip(&proof.auxiliary) {
+    let mut auxiliary = proof.auxiliary.iter();
+    for object in program_objects {
+        let auxiliary_proof = auxiliary
+            .next()
+            .ok_or_else(|| batch_failed("missing committed-program auxiliary proof"))?;
         validate_auxiliary_metadata(object.commitment, object.setup, &object.plan)?;
-        let claims = object_leaf_claims(&object.plan, &leaves)?;
-        let semantic_claims = object.plan.packed_claims(&claims).map_err(batch_failed)?;
-        let physical_claim = object
-            .plan
-            .packing()
-            .reduce_claims(&semantic_claims, transcript)
-            .map_err(batch_failed)?;
-        PCS::verify_batch(
+        let physical_claim = reduce_object(&object, &leaves, transcript)?;
+        PCS::verify(
             object.commitment,
             physical_claim.point.as_slice(),
-            std::slice::from_ref(&physical_claim.value),
+            physical_claim.value,
             auxiliary_proof,
             object.setup,
             transcript,
         )
         .map_err(opening_failed)?;
     }
+    debug_assert!(auxiliary.next().is_none());
     Ok(())
 }
 
@@ -411,14 +486,16 @@ pub fn object_leaf_claims<F: JoltField>(
         .collect()
 }
 
-/// Every packed column's single leaf claim, resolved from the stage-7 and
-/// reconstruction outputs and keyed by committed polynomial. The canonical
+/// Every packed column's single leaf claim, resolved from the precommitted
+/// reductions, stage 7, and reconstruction outputs and keyed by committed polynomial. The canonical
 /// object plans check coverage, point arity, and suffix compatibility.
 /// Shared verbatim by the packed prover's stage 8.
 pub fn leaf_claims<F: JoltField>(
+    schedule: &PrecommittedSchedule,
+    stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
-) -> BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>> {
+) -> Result<BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>, VerifierError> {
     use JoltCommittedPolynomial as Poly;
 
     fn leaf<F: JoltField>(value: F, point: &[F]) -> EvaluationClaim<F> {
@@ -428,19 +505,24 @@ pub fn leaf_claims<F: JoltField>(
         leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
         polynomial: JoltCommittedPolynomial,
         claim: EvaluationClaim<F>,
-    ) {
-        // Keys are distinct by construction, so no entry is ever displaced.
-        let _previous = BTreeMap::insert(leaves, polynomial, claim);
+    ) -> Result<(), VerifierError> {
+        if leaves.insert(polynomial, claim).is_some() {
+            return Err(batch_failed(format!(
+                "duplicate packed final claim for {polynomial:?}"
+            )));
+        }
+        Ok(())
     }
     fn insert_indexed<F: JoltField>(
         leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
         values: &[F],
         points: &[Vec<F>],
         polynomial: impl Fn(usize) -> JoltCommittedPolynomial,
-    ) {
+    ) -> Result<(), VerifierError> {
         for (index, (value, point)) in values.iter().zip(points).enumerate() {
-            insert(leaves, polynomial(index), leaf(*value, point));
+            insert(leaves, polynomial(index), leaf(*value, point))?;
         }
+        Ok(())
     }
     let mut leaves = BTreeMap::new();
 
@@ -451,26 +533,26 @@ pub fn leaf_claims<F: JoltField>(
         &hamming_values.instruction_ra,
         &hamming_points.instruction_ra,
         Poly::InstructionRa,
-    );
+    )?;
     insert_indexed(
         &mut leaves,
         &hamming_values.bytecode_ra,
         &hamming_points.bytecode_ra,
         Poly::BytecodeRa,
-    );
+    )?;
     insert_indexed(
         &mut leaves,
         &hamming_values.ram_ra,
         &hamming_points.ram_ra,
         Poly::RamRa,
-    );
+    )?;
 
     insert_indexed(
         &mut leaves,
         &hamming_values.balanced_inc_digits,
         &hamming_points.balanced_inc_digits,
         Poly::BalancedIncDigit,
-    );
+    )?;
     insert(
         &mut leaves,
         Poly::BalancedIncCarry,
@@ -478,31 +560,26 @@ pub fn leaf_claims<F: JoltField>(
             hamming_values.balanced_inc_carry,
             &hamming_points.balanced_inc_carry,
         ),
-    );
+    )?;
 
-    if let Some((values, points)) = reconstruction
-        .output_values
-        .untrusted_advice
-        .as_ref()
-        .zip(reconstruction.output_points.untrusted_advice.as_ref())
-    {
-        insert(
-            &mut leaves,
-            Poly::UntrustedAdviceBytes,
-            leaf(values.bytes, &points.bytes),
-        );
-    }
-    if let Some((values, points)) = reconstruction
-        .output_values
-        .trusted_advice
-        .as_ref()
-        .zip(reconstruction.output_points.trusted_advice.as_ref())
-    {
-        insert(
-            &mut leaves,
-            Poly::TrustedAdviceBytes,
-            leaf(values.bytes, &points.bytes),
-        );
+    for opening in precommitted_final_openings(
+        schedule,
+        &stage7.output_points,
+        &stage6b.output_points,
+        Some((&stage7.output_values, &stage6b.output_values)),
+    )? {
+        if matches!(
+            opening.polynomial,
+            Poly::TrustedAdvice | Poly::UntrustedAdvice
+        ) {
+            let value = opening.opening_claim.ok_or_else(|| {
+                batch_failed(format!(
+                    "missing clear final value for {:?}",
+                    opening.polynomial
+                ))
+            })?;
+            insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
+        }
     }
     if let Some((values, points)) = reconstruction
         .output_values
@@ -514,7 +591,7 @@ pub fn leaf_claims<F: JoltField>(
             &mut leaves,
             Poly::ProgramImageBytes,
             leaf(values.bytes, &points.bytes),
-        );
+        )?;
     }
 
     // The bytecode leaf keys are read off the canonical cell order jolt-claims
@@ -534,11 +611,11 @@ pub fn leaf_claims<F: JoltField>(
             else {
                 continue;
             };
-            insert(&mut leaves, polynomial, leaf(*value, point));
+            insert(&mut leaves, polynomial, leaf(*value, point))?;
         }
     }
 
-    leaves
+    Ok(leaves)
 }
 
 #[cfg(test)]
@@ -554,10 +631,6 @@ mod tests {
         committed_lane_vars, BYTECODE_LANE_LAYOUT,
     };
     use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
-    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_claims::protocols::jolt::lattice::relations::advice_reconstruction::{
-        TrustedAdviceReconstructionOutputClaims, UntrustedAdviceReconstructionOutputClaims,
-    };
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::BytecodeChunkReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::ProgramImageReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::BytecodeRegisterLane;
@@ -566,12 +639,6 @@ mod tests {
     use jolt_utils::Math;
 
     use super::super::reconstruction::{ReconstructionOutputClaims, ReconstructionOutputPoints};
-    use crate::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;
-    use crate::stages::stage7::outputs::{Stage7OutputClaims, Stage7OutputPoints};
-
-    const LOG_T: usize = 4;
-    const LOG_K_CHUNK: usize = 8;
-    const INC_CHUNKS: usize = 8;
     const BYTECODE_CHUNKS: usize = 2;
     const LOG_BYTECODE_ROWS: usize = 6;
     const LOG_IMAGE_WORDS: usize = 5;
@@ -706,7 +773,7 @@ mod tests {
 
     #[test]
     fn auxiliary_metadata_is_enforced_before_pcs_verification() {
-        let plan = advice_bytes_packing_plan(JoltAdviceKind::Untrusted, 3).unwrap();
+        let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 3).unwrap();
         let digest = plan.layout_digest();
         let num_vars = plan.packing().packed_num_vars();
         let commitment = CommitmentMetadata {
@@ -766,44 +833,7 @@ mod tests {
         vec![fr(1); arity]
     }
 
-    fn stage7(layout: JoltRaPolynomialLayout) -> Stage7ClearOutput<Fr> {
-        let one_hot_arity = LOG_K_CHUNK + LOG_T;
-        let hamming_values = HammingWeightClaimReductionOutputClaims {
-            instruction_ra: (0..layout.instruction())
-                .map(|i| fr(100 + i as u64))
-                .collect(),
-            bytecode_ra: (0..layout.bytecode()).map(|i| fr(200 + i as u64)).collect(),
-            ram_ra: (0..layout.ram()).map(|i| fr(300 + i as u64)).collect(),
-            balanced_inc_digits: (0..INC_CHUNKS).map(|i| fr(400 + i as u64)).collect(),
-            balanced_inc_carry: fr(500),
-        };
-        let hamming_points = HammingWeightClaimReductionOutputClaims {
-            instruction_ra: vec![point(one_hot_arity); layout.instruction()],
-            bytecode_ra: vec![point(one_hot_arity); layout.bytecode()],
-            ram_ra: vec![point(one_hot_arity); layout.ram()],
-            balanced_inc_digits: vec![point(one_hot_arity); INC_CHUNKS],
-            balanced_inc_carry: point(one_hot_arity),
-        };
-        Stage7ClearOutput {
-            output_values: Stage7OutputClaims {
-                hamming_weight_claim_reduction: hamming_values,
-                trusted_advice: None,
-                untrusted_advice: None,
-                bytecode_address_phase: None,
-                program_image_address_phase: None,
-            },
-            output_points: Stage7OutputPoints {
-                hamming_weight_claim_reduction: hamming_points,
-                trusted_advice: None,
-                untrusted_advice: None,
-                bytecode_address_phase: None,
-                program_image_address_phase: None,
-            },
-        }
-    }
-
     fn reconstruction() -> ReconstructionClearOutput<Fr> {
-        let advice_arity = word_byte_num_vars(ADVICE_WORD_VARS);
         let selectors = BYTECODE_CHUNKS * BytecodeRegisterLane::ALL.len();
         let bytecode_values = BytecodeChunkReconstructionOutputClaims {
             register_selectors: (0..selectors).map(|i| fr(600 + i as u64)).collect(),
@@ -844,26 +874,14 @@ mod tests {
         };
         ReconstructionClearOutput {
             output_values: ReconstructionOutputClaims {
-                untrusted_advice: Some(UntrustedAdviceReconstructionOutputClaims { bytes: fr(41) }),
-                trusted_advice: Some(TrustedAdviceReconstructionOutputClaims { bytes: fr(43) }),
                 bytecode: Some(bytecode_values),
                 program_image: Some(ProgramImageReconstructionOutputClaims { bytes: fr(47) }),
-                #[cfg(feature = "field-inline")]
-                field_inc_limbs: None,
             },
             output_points: ReconstructionOutputPoints {
-                untrusted_advice: Some(UntrustedAdviceReconstructionOutputClaims {
-                    bytes: point(advice_arity),
-                }),
-                trusted_advice: Some(TrustedAdviceReconstructionOutputClaims {
-                    bytes: point(advice_arity),
-                }),
                 bytecode: Some(bytecode_points),
                 program_image: Some(ProgramImageReconstructionOutputClaims {
                     bytes: point(word_byte_num_vars(LOG_IMAGE_WORDS)),
                 }),
-                #[cfg(feature = "field-inline")]
-                field_inc_limbs: None,
             },
         }
     }
@@ -872,8 +890,43 @@ mod tests {
     /// shorter bytecode claims are zero-prefix embedded at the common point.
     #[test]
     fn auxiliary_prefix_objects_cover_every_column_at_logical_arity() {
-        let layout = JoltRaPolynomialLayout::new(2, 1, 1).unwrap();
-        let leaves = leaf_claims(&stage7(layout), &reconstruction());
+        let reconstruction = reconstruction();
+        let mut leaves = BTreeMap::new();
+        let values = reconstruction.output_values.bytecode.as_ref().unwrap();
+        let points = reconstruction.output_points.bytecode.as_ref().unwrap();
+        for ((id, value), (_, point)) in values.leaves().zip(points.leaves()) {
+            if let JoltOpeningId::Polynomial {
+                polynomial: JoltPolynomialId::Committed(polynomial),
+                ..
+            } = id
+            {
+                let _ = leaves.insert(
+                    polynomial,
+                    EvaluationClaim::new(Point::high_to_low(point.clone()), *value),
+                );
+            }
+        }
+        let _ = leaves.insert(
+            JoltCommittedPolynomial::ProgramImageBytes,
+            EvaluationClaim::new(
+                Point::high_to_low(point(word_byte_num_vars(LOG_IMAGE_WORDS))),
+                reconstruction
+                    .output_values
+                    .program_image
+                    .as_ref()
+                    .unwrap()
+                    .bytes,
+            ),
+        );
+        for (polynomial, value) in [
+            (JoltCommittedPolynomial::UntrustedAdvice, fr(41)),
+            (JoltCommittedPolynomial::TrustedAdvice, fr(43)),
+        ] {
+            let _ = leaves.insert(
+                polynomial,
+                EvaluationClaim::new(Point::high_to_low(point(ADVICE_WORD_VARS)), value),
+            );
+        }
 
         let program = precommitted_packing_plan(&PrecommittedPackingShape {
             bytecode_chunks: BYTECODE_CHUNKS,
@@ -883,8 +936,8 @@ mod tests {
         })
         .unwrap();
         let advice = [
-            advice_bytes_packing_plan(JoltAdviceKind::Untrusted, ADVICE_WORD_VARS).unwrap(),
-            advice_bytes_packing_plan(JoltAdviceKind::Trusted, ADVICE_WORD_VARS).unwrap(),
+            advice_packing_plan(JoltAdviceKind::Untrusted, ADVICE_WORD_VARS).unwrap(),
+            advice_packing_plan(JoltAdviceKind::Trusted, ADVICE_WORD_VARS).unwrap(),
         ];
         for object in advice.iter().chain(program.objects()) {
             let claims = object

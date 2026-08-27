@@ -519,8 +519,6 @@ mod field_inline_zk {
             zk: true,
             trace_length: 1 << LOG_T,
             ram_K: 1 << 4,
-            one_hot_config: crate::stages::field_inline_fixtures::test_prover_config()
-                .one_hot_config,
             entry_address: crate::stages::field_inline_fixtures::ENTRY,
             preprocessing_digest: [0u8; 32],
             trusted_advice_commitment_present: false,

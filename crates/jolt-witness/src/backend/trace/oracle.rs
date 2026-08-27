@@ -95,32 +95,6 @@ impl<T: TraceSource> TraceBackend<T> {
                     Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
                 }
                 C::BalancedIncCarry => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
-                C::TrustedAdviceBytes => {
-                    if !self.config.include_trusted_advice {
-                        return Err(WitnessError::UnknownOracle {
-                            label: JOLT_VM_LABEL,
-                        });
-                    }
-                    Ok(Shape::new(
-                        advice_bytes_cell_vars(
-                            self.preprocessing.memory_layout.max_trusted_advice_size as usize,
-                        ),
-                        Dense,
-                    ))
-                }
-                C::UntrustedAdviceBytes => {
-                    if !self.config.include_untrusted_advice {
-                        return Err(WitnessError::UnknownOracle {
-                            label: JOLT_VM_LABEL,
-                        });
-                    }
-                    Ok(Shape::new(
-                        advice_bytes_cell_vars(
-                            self.preprocessing.memory_layout.max_untrusted_advice_size as usize,
-                        ),
-                        Dense,
-                    ))
-                }
                 C::BytecodeRegisterSelector { .. }
                 | C::BytecodeCircuitFlag { .. }
                 | C::BytecodeInstructionFlag { .. }
@@ -196,15 +170,6 @@ impl<T: TraceSource> TraceBackend<T> {
     }
 }
 
-/// An advice byte one-hot column's cell variable count, from the configured
-/// maximum advice size — the `(byte ‖ place ‖ word)` domain over the
-/// power-of-two padded word count.
-fn advice_bytes_cell_vars(max_bytes: usize) -> usize {
-    jolt_claims::protocols::jolt::lattice::geometry::word_byte_num_vars(
-        advice::advice_words(max_bytes).ilog2() as usize,
-    )
-}
-
 impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         self.shape_of(id)
@@ -252,8 +217,6 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
                         width: self.config.one_hot.committed_chunk_bits(),
                     },
                 ),
-                C::TrustedAdviceBytes => self.materialize_trusted_advice_bytes(),
-                C::UntrustedAdviceBytes => self.materialize_untrusted_advice_bytes(),
                 C::BytecodeRegisterSelector { .. }
                 | C::BytecodeCircuitFlag { .. }
                 | C::BytecodeInstructionFlag { .. }

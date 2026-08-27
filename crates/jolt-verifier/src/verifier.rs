@@ -322,7 +322,6 @@ pub struct CheckedInputs {
     pub zk: bool,
     pub trace_length: usize,
     pub ram_K: usize,
-    pub one_hot_config: JoltOneHotConfig,
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
     pub trusted_advice_commitment_present: bool,
@@ -468,7 +467,6 @@ where
         zk,
         trace_length,
         ram_K: ram_k,
-        one_hot_config,
         entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
@@ -710,10 +708,6 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
             .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
         transcript,
     );
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
-    if let Some(commitment) = proof.field_inc_limbs_commitment.as_ref() {
-        absorb_field_inc_limbs_commitment(commitment, transcript);
-    }
 }
 
 /// Absorbs the packed commitment objects in canonical object order:
@@ -739,17 +733,6 @@ pub fn absorb_packed_commitments<C, T>(
         append_length_prefixed(transcript, b"trusted_advice", commitment);
     }
     absorb_packed_program_commitments(program_one_hot_commitments, transcript);
-}
-
-/// Absorbs the packed FR limb object's commitment, immediately after the
-/// packed commitment objects. Shared verbatim by the packed prover's stage 0.
-#[cfg(all(feature = "akita", feature = "field-inline"))]
-pub fn absorb_field_inc_limbs_commitment<C, T>(commitment: &C, transcript: &mut T)
-where
-    C: AppendToTranscript,
-    T: Transcript,
-{
-    append_length_prefixed(transcript, b"field_inc_limbs", commitment);
 }
 
 #[cfg(feature = "akita")]
@@ -1110,7 +1093,6 @@ where
         zk,
         trace_length,
         ram_K: ram_k,
-        one_hot_config,
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
@@ -1500,8 +1482,6 @@ mod tests {
             joint_opening_proof: (),
             #[cfg(feature = "akita")]
             joint_opening_proof: crate::proof::AkitaJointOpeningProof::new((), Vec::new()),
-            #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_limbs_commitment: None,
             untrusted_advice_commitment: None,
             claims,
             trace_length: 1,
@@ -1554,12 +1534,8 @@ mod tests {
             stage1: stage1::outputs::Stage1OutputClaims::new(zero, empty_spartan_outer_claims()),
             #[cfg(feature = "akita")]
             reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims {
-                untrusted_advice: None,
-                trusted_advice: None,
                 bytecode: None,
                 program_image: None,
-                #[cfg(feature = "field-inline")]
-                field_inc_limbs: None,
             },
             stage2: stage2::outputs::Stage2OutputClaims::new(
                 zero,

@@ -16,7 +16,6 @@ pub enum FieldInlineRelationId {
     FieldRegistersReadWriteChecking,
     FieldRegistersValEvaluation,
     FieldRegistersIncClaimReduction,
-    FieldIncLimbReconstruction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -49,11 +48,6 @@ pub enum FieldRegistersIncClaimReductionChallenge {
     Gamma,
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FieldIncLimbReconstructionChallenge {
-    Gamma,
-}
-
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
@@ -61,21 +55,11 @@ pub enum FieldInlineChallengeId {
     FieldRegistersClaimReduction(FieldRegistersClaimReductionChallenge),
     FieldRegistersReadWrite(FieldRegistersReadWriteChallenge),
     FieldRegistersIncClaimReduction(FieldRegistersIncClaimReductionChallenge),
-    FieldIncLimbReconstruction(FieldIncLimbReconstructionChallenge),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineCommittedPolynomial {
     FieldRdInc,
-    // The packed-mode committed columns (slots of the FR packed limb
-    // object): flat column `index` of the canonical limb-major layout —
-    // per u64 limb of `FieldRdInc`'s canonical representative, its balanced
-    // digits little-endian and its signed carry last
-    // (`specs/field-inline-portability.md`, Axis 1; the (limb, digit/carry)
-    // split is `lattice::geometry`'s job). The homomorphic mode never
-    // constructs these. Appended for codec stability; usize-indexed so the
-    // claim structs' indexed-family derives apply.
-    FieldIncLimbColumn(usize),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -152,17 +136,6 @@ pub enum FieldRegistersIncClaimReductionPublic {
     EqValEvaluation,
 }
 
-/// Publics of the packed limb reconstruction: the reference-point eq over the
-/// full `(digit-value ‖ cycle)` domain (booleanity legs), the consumed
-/// claim's cycle eq (decode leg), and the centered digit-value MLE
-/// ([`crate::lattice::balanced_inc_value`] at the bound digit block).
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FieldIncLimbReconstructionPublic {
-    EqReference,
-    EqCycle,
-    DigitValue,
-}
-
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
@@ -171,5 +144,4 @@ pub enum FieldInlineDerivedId {
     FieldRegistersReadWrite(FieldRegistersReadWritePublic),
     FieldRegistersValEvaluation(FieldRegistersValEvaluationPublic),
     FieldRegistersIncClaimReduction(FieldRegistersIncClaimReductionPublic),
-    FieldIncLimbReconstruction(FieldIncLimbReconstructionPublic),
 }

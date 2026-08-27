@@ -375,7 +375,6 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         zk: cfg!(feature = "zk"),
         trace_length: 1 << LOG_T,
         ram_K: 1 << RAM_LOG_K,
-        one_hot_config: test_prover_config().one_hot_config,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
         trusted_advice_commitment_present: false,

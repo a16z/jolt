@@ -1139,22 +1139,6 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         "the hamming-weight reduction final-claim fold covers the increment carry",
     ),
     checked_standard(
-        "reconstruction.claims.untrusted_advice",
-        "claims.reconstruction.untrusted_advice",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the untrusted advice leaf",
-    ),
-    checked_standard(
-        "reconstruction.claims.trusted_advice",
-        "claims.reconstruction.trusted_advice",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the trusted advice leaf",
-    ),
-    checked_standard(
         "reconstruction.claims.bytecode",
         "claims.reconstruction.bytecode",
         VerifierPhase::Stage8Openings,
@@ -1169,15 +1153,6 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "the reconstruction final-claim fold covers the program image leaf",
-    ),
-    #[cfg(feature = "field-inline")]
-    checked_standard(
-        "reconstruction.claims.field_inc_limbs",
-        "claims.reconstruction.field_inc_limbs",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers every FR limb column leaf",
     ),
 ];
 
@@ -1443,12 +1418,8 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
     ClearProofClaims {
         #[cfg(feature = "akita")]
         reconstruction: jolt_verifier::stages::stage8::reconstruction::ReconstructionOutputClaims {
-            untrusted_advice: None,
-            trusted_advice: None,
             bytecode: None,
             program_image: None,
-            #[cfg(feature = "field-inline")]
-            field_inc_limbs: None,
         },
         stage1: stage1::outputs::Stage1OutputClaims::new(
             zero,

@@ -428,8 +428,6 @@ where
                 )?,
                 JoltCommittedPolynomial::BalancedIncDigit(_)
                 | JoltCommittedPolynomial::BalancedIncCarry
-                | JoltCommittedPolynomial::TrustedAdviceBytes
-                | JoltCommittedPolynomial::UntrustedAdviceBytes
                 | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
                 | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
                 | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
@@ -685,8 +683,7 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    // The reconstruction phase settles auxiliary word/chunk claims against
-    // their committed one-hot decompositions.
+    // Settle committed-program word/chunk claims against their one-hot decompositions.
     let reconstruction = super::reconstruction::verify(
         checked,
         proof.stages.reconstruction_sumcheck_proof.as_ref(),
@@ -707,27 +704,10 @@ where
         trusted_advice_commitment,
         &proof.joint_opening_proof,
         transcript,
+        &checked.precommitted,
+        stage6.clear()?,
         stage7.clear()?,
         &reconstruction,
-    )?;
-
-    // The packed FR limb object opens last, from the reconstruction member's
-    // per-column leaves. Presence is gated fail-closed on the stage-6b
-    // reduced FieldRdInc claim (see the seam module).
-    #[cfg(feature = "field-inline")]
-    super::field_inline_packed::verify_proof_opening::<PCS, _>(
-        formula_dimensions.trace.log_t(),
-        proof.one_hot_config,
-        stage6
-            .clear()?
-            .output_values
-            .field_registers_inc_claim_reduction
-            .rd_inc,
-        &preprocessing.pcs_setup,
-        proof.field_inc_limbs_commitment.as_ref(),
-        proof.joint_opening_proof.field_inc_limbs.as_ref(),
-        &reconstruction,
-        transcript,
     )?;
 
     Ok(Stage8Output::Clear)
