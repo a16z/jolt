@@ -172,7 +172,15 @@ fn claim_mut_from_spartan_outer<F: Field>(
             CircuitFlags::IsCompressed => Some(&mut claims.is_compressed),
             CircuitFlags::IsFirstInSequence => Some(&mut claims.is_first_in_sequence),
             CircuitFlags::IsLastInSequence => Some(&mut claims.is_last_in_sequence),
+            #[cfg(feature = "implicit-carry")]
+            CircuitFlags::UsesCarry => Some(&mut claims.uses_carry),
+            #[cfg(feature = "implicit-carry")]
+            CircuitFlags::ProducesCarry => Some(&mut claims.produces_carry),
         },
+        #[cfg(feature = "implicit-carry")]
+        JoltVirtualPolynomial::CarryUsed => Some(&mut claims.carry_used),
+        #[cfg(feature = "implicit-carry")]
+        JoltVirtualPolynomial::NextCarry => Some(&mut claims.next_carry),
         _ => None,
     }
 }
@@ -234,6 +242,10 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
         id if id == product_virtual_instruction => {
             Some(&mut claims.product_remainder.virtual_instruction)
         }
+        #[cfg(feature = "implicit-carry")]
+        id if id == spartan::uses_carry_product() => Some(&mut claims.product_remainder.uses_carry),
+        #[cfg(feature = "implicit-carry")]
+        id if id == spartan::carry_product() => Some(&mut claims.product_remainder.carry),
         id if id == instruction_lookup_output => {
             Some(&mut claims.instruction_claim_reduction.lookup_output)
         }
@@ -288,6 +300,8 @@ fn claim_mut_from_stage3_outputs<F: Field>(
         id if id == is_virtual_shift => Some(&mut claims.shift.is_virtual),
         id if id == is_first_in_sequence_shift => Some(&mut claims.shift.is_first_in_sequence),
         id if id == is_noop_shift => Some(&mut claims.shift.is_noop),
+        #[cfg(feature = "implicit-carry")]
+        id if id == spartan::carry_shift() => Some(&mut claims.shift.carry),
         id if id == left_operand_is_rs1 => Some(&mut claims.instruction_input.left_operand_is_rs1),
         id if id == rs1_value_input => Some(&mut claims.instruction_input.rs1_value),
         id if id == left_operand_is_pc => Some(&mut claims.instruction_input.left_operand_is_pc),
@@ -456,6 +470,8 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
         id if id == ram_inc => Some(&mut stage6b.inc_claim_reduction.ram_inc),
         #[cfg(not(feature = "akita"))]
         id if id == rd_inc => Some(&mut stage6b.inc_claim_reduction.rd_inc),
+        #[cfg(feature = "implicit-carry")]
+        id if id == spartan::carry_reduced() => Some(&mut stage6b.carry_claim_reduction.carry),
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {

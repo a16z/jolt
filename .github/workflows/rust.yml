@@ -402,6 +402,14 @@ jobs:
           -p jolt-witness
           -p jolt-verifier
           --features implicit-carry
+      # Feature-on fixture prover: the tamper manifest's carry targets and the
+      # jolt-verifier soundness suite only execute against carry-lane proofs
+      # when prover-fixtures and implicit-carry are enabled together.
+      - name: Run jolt-verifier fixture tests with implicit-carry feature
+        run: >
+          cargo nextest run --cargo-profile ci
+          -p jolt-verifier
+          --features implicit-carry,jolt-verifier/prover-fixtures
 
   test-prover-akita:
     runs-on: ubuntu-latest
