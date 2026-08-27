@@ -17,10 +17,15 @@
 
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaTranscript;
+use std::sync::Arc;
+
 use akita_prover::{
-    CpuBackend, PreparedGroupProveOps, PreparedProverGroup, SelectedProverOpeningData,
+    CpuBackend, PreparedGroupProveOps, PreparedProverGroup, ReleaseRootNttAfterFold,
+    SelectedProverOpeningData,
 };
-use akita_types::{BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_types::{
+    BasisMode, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
+};
 use jolt_openings::{
     BatchOpeningScheme, GroupOpeningClaim, OpeningsError, PrecommittedClaim, PrecommittedOpening,
     VerifierOpeningClaim,
@@ -150,7 +155,7 @@ fn validate_trace_batch_statement(
 fn bind_grouped_statement_transcripts<T>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup,
-    selection: akita_types::OpeningScheduleSelection,
+    selection: OpeningScheduleSelection,
     precommitted: &[PrecommittedClaim<AkitaField, AkitaCommitment>],
     main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
 ) -> Result<(AkitaTranscript<AkitaField>, Vec<u8>), OpeningsError>
@@ -214,9 +219,7 @@ impl AkitaNativeBatching {
         let mut precommitted_backend = Vec::with_capacity(precommitted.len());
         for (entry, hint) in &precommitted {
             let polys = match &hint.polynomials {
-                AkitaHintPolynomials::Dense(polys) if polys.len() == 1 => {
-                    std::sync::Arc::clone(polys)
-                }
+                AkitaHintPolynomials::Dense(polys) if polys.len() == 1 => Arc::clone(polys),
                 AkitaHintPolynomials::Dense(_)
                 | AkitaHintPolynomials::OneHot(_)
                 | AkitaHintPolynomials::TraceOneHot(_)
@@ -241,7 +244,7 @@ impl AkitaNativeBatching {
                 GroupedRootSource::Trace(vec![poly.clone()].into())
             }
             AkitaHintPolynomials::OneHot(polys) if polys.len() == 1 => {
-                GroupedRootSource::OneHot(std::sync::Arc::clone(polys))
+                GroupedRootSource::OneHot(Arc::clone(polys))
             }
             AkitaHintPolynomials::Dense(_)
             | AkitaHintPolynomials::OneHot(_)
@@ -314,7 +317,7 @@ impl AkitaNativeBatching {
         )?;
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
+        let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
         let backend_proof = with_backend_pool(|| match setup.one_hot_k() {
             AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_prove(
                 backend_prover_setup,
@@ -606,7 +609,7 @@ macro_rules! prove_dense_backend {
         let selection = opening.selection();
         let (backend_prover_setup, prepared_backend_setup) = $setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
+        let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
         let transcript = $transcript;
         let proof = with_backend_pool(|| {
@@ -633,7 +636,7 @@ fn prove_one_hot<'a, P>(
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
     akita_transcript: &mut AkitaTranscript<AkitaField>,
-) -> Result<(akita_types::OpeningScheduleSelection, AkitaBackendProof), OpeningsError>
+) -> Result<(OpeningScheduleSelection, AkitaBackendProof), OpeningsError>
 where
     P: akita_prover::RootPolyMeta<AkitaField>,
     PreparedProverGroup<'a, P>:
@@ -662,7 +665,7 @@ where
     };
     let selection = opening.selection();
     let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-    let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
+    let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     let proof = with_backend_pool(|| match setup.one_hot_k() {
         AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_prove(

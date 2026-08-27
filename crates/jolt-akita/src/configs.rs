@@ -3,18 +3,21 @@
 //! Configs delegate policy to Akita's proof-optimized presets while supplying
 //! Jolt's generated schedule catalogs and setup sizing.
 
-use akita_config::proof_optimized::fp128;
+use akita_config::proof_optimized::fp128::{DenseBounded, OneHot};
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaError;
 use akita_planner::GeneratedScheduleTable;
+use akita_types::sis::CommittedSourceClass;
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    SetupMatrixCapacity,
+    FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
 };
+
+use crate::AKITA_ONE_HOT_K16;
 
 fn dp_planned_schedule<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
-) -> Result<akita_types::FoldSchedule, AkitaError> {
+) -> Result<FoldSchedule, AkitaError> {
     let planned = akita_planner::find_schedule(
         key,
         akita_config::honest_fold_policy_of::<Cfg>(),
@@ -30,7 +33,7 @@ fn dp_planned_schedule<Cfg: CommitmentConfig>(
 fn fold_row_capacity(
     capacity: &mut SetupMatrixCapacity,
     key: &AkitaScheduleLookupKey,
-    schedule: impl FnOnce() -> Result<akita_types::FoldSchedule, AkitaError>,
+    schedule: impl FnOnce() -> Result<FoldSchedule, AkitaError>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError> {
@@ -65,8 +68,7 @@ fn catalog_setup_capacity<Cfg: CommitmentConfig + 'static>(
     max_num_batched_polys: usize,
 ) -> Result<SetupMatrixCapacity, AkitaError> {
     let fallback_key = AkitaScheduleLookupKey::single(
-        akita_types::OpeningClaimsLayout::new(max_num_vars, max_num_batched_polys)?
-            .root_final_group_layout()?,
+        OpeningClaimsLayout::new(max_num_vars, max_num_batched_polys)?.root_final_group_layout()?,
     );
     let mut capacity =
         setup_matrix_capacity_for_schedule(&dp_planned_schedule::<Cfg>(&fallback_key)?)?;
@@ -248,9 +250,9 @@ macro_rules! delegate_preset {
 delegate_preset!(
     /// Adaptive one-hot config with the Jolt-generated K=16 schedule catalog.
     JoltOneHotK16,
-    fp128::OneHot,
-    akita_types::sis::CommittedSourceClass::UnitOneHot {
-        source_chunk_size: crate::AKITA_ONE_HOT_K16,
+    OneHot,
+    CommittedSourceClass::UnitOneHot {
+        source_chunk_size: AKITA_ONE_HOT_K16,
     },
     crate::schedules::jolt_fp128_onehot_k16_table()
 );
@@ -258,16 +260,16 @@ delegate_preset!(
 delegate_preset!(
     /// Adaptive one-hot config with the Jolt-generated K=256 schedule catalog.
     JoltOneHotK256,
-    fp128::OneHot,
-    <fp128::OneHot as CommitmentConfig>::committed_source_class(),
+    OneHot,
+    <OneHot as CommitmentConfig>::committed_source_class(),
     crate::schedules::jolt_fp128_onehot_k256_table()
 );
 
 delegate_preset!(
     /// Dense config for `u64`-bounded advice and committed-program objects.
     JoltDenseBounded,
-    fp128::DenseBounded,
-    <fp128::DenseBounded as CommitmentConfig>::committed_source_class(),
+    DenseBounded,
+    <DenseBounded as CommitmentConfig>::committed_source_class(),
     crate::schedules::jolt_fp128_dense_bounded_table()
 );
 

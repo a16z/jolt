@@ -145,11 +145,9 @@ pub(crate) fn deserialize_checked_grouped_backend_payload(
             &layout,
             main_backend_point,
         ),
-        AKITA_ONE_HOT_K16 => resolve_grouped_schedule::<crate::adapters::AkitaOneHotK16Config>(
-            selection,
-            &layout,
-            main_backend_point,
-        ),
+        AKITA_ONE_HOT_K16 => {
+            resolve_grouped_schedule::<AkitaOneHotK16Config>(selection, &layout, main_backend_point)
+        }
         _ => return Err(invalid_batch("unsupported grouped one-hot configuration")),
     }
     .map_err(|err| invalid_batch(format!("Akita grouped schedule resolution failed: {err}")))?;

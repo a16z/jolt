@@ -78,6 +78,8 @@ pub fn jolt_fp128_dense_bounded_table() -> Option<GeneratedScheduleTable> {
 /// drift test: one family per config, scalar single-group keys over the
 /// reachable `OneHotTrace` grid.
 pub mod emit {
+    use std::path::PathBuf;
+
     use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
     use akita_pcs::AkitaError;
     use akita_planner::emit::GroupedGenerationRequest;
@@ -164,7 +166,7 @@ pub mod emit {
         family_name: &'static str,
         num_polys: &[usize],
         num_vars: (usize, usize),
-        output_dir: std::path::PathBuf,
+        output_dir: PathBuf,
     ) -> Result<EmitSpec, AkitaError> {
         Ok(EmitSpec {
             module_name,
@@ -197,7 +199,7 @@ pub mod emit {
     /// that carries no grouped rows to find.
     /// Fallible because each spec carries its config's declared producer
     /// contract, and constructing one validates the declaration.
-    pub fn family_specs(output_dir: std::path::PathBuf) -> Result<[EmitSpec; 3], AkitaError> {
+    pub fn family_specs(output_dir: PathBuf) -> Result<[EmitSpec; 3], AkitaError> {
         Ok([
             spec::<JoltOneHotK16>(
                 "jolt_fp128_onehot_k16",

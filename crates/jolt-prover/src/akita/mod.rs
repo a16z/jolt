@@ -18,6 +18,7 @@ use jolt_verifier::stages::stage8::reconstruction::{
 use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use witness::AdviceObject;
 
 mod prover;
 mod setup;
@@ -187,7 +188,7 @@ pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    trusted_advice: Option<&witness::AdviceObject<PCS>>,
+    trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>

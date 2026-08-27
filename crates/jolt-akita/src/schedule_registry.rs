@@ -19,6 +19,10 @@ use akita_types::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
+use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+
 /// Upper bound on preprocessing-provisioned rows per config (currently at most 3 × 32).
 pub const MAX_REGISTERED_ROWS: usize = 128;
 
@@ -293,7 +297,7 @@ fn publish<Cfg: CommitmentConfig + 'static>(
 pub fn dense_precommit_profile(
     layout: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
-    crate::configs::JoltDenseBounded::profile_without_precommitted_groups(layout)
+    JoltDenseBounded::profile_without_precommitted_groups(layout)
 }
 
 /// Advice layouts fixed by the program's preprocessing capacities.
@@ -339,7 +343,7 @@ pub fn provision_advice<Cfg: CommitmentConfig + 'static>(
     }
     provision::<Cfg>(
         &combinations,
-        honest_fold_policy_of::<crate::configs::JoltDenseBounded>(),
+        honest_fold_policy_of::<JoltDenseBounded>(),
         final_num_vars,
     )
 }
@@ -362,8 +366,8 @@ pub fn provision_advice_for_k(
         trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
     };
     let (min, declared_max) = match one_hot_k {
-        crate::AKITA_ONE_HOT_K256 => crate::schedules::emit::K256_NUM_VARS,
-        crate::AKITA_ONE_HOT_K16 => crate::schedules::emit::K16_NUM_VARS,
+        AKITA_ONE_HOT_K256 => K256_NUM_VARS,
+        AKITA_ONE_HOT_K16 => K16_NUM_VARS,
         other => {
             return Err(AkitaError::InvalidSetup(format!(
                 "unsupported one-hot K {other} for grouped advice provisioning"
@@ -375,12 +379,8 @@ pub fn provision_advice_for_k(
         return Ok(RegisteredRows::default());
     }
     match one_hot_k {
-        crate::AKITA_ONE_HOT_K256 => {
-            provision_advice::<crate::configs::JoltOneHotK256>(layouts, min..=max)
-        }
-        crate::AKITA_ONE_HOT_K16 => {
-            provision_advice::<crate::configs::JoltOneHotK16>(layouts, min..=max)
-        }
+        AKITA_ONE_HOT_K256 => provision_advice::<JoltOneHotK256>(layouts, min..=max),
+        AKITA_ONE_HOT_K16 => provision_advice::<JoltOneHotK16>(layouts, min..=max),
         _ => unreachable!("one-hot K was validated above"),
     }
 }

@@ -23,6 +23,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+use jolt_akita::{AdviceScheduleParams, AkitaSetupParams};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::{
     advice_packing_plan, precommitted_packing_plan, OneHotTraceLayoutPlan, OneHotTraceShape,
@@ -33,6 +34,7 @@ use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, GroupOpeningClaim,
     PrecommittedClaim, PrefixPackedClaims, TransparentObjectSetup,
 };
+use jolt_poly::Polynomial;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{
@@ -42,7 +44,9 @@ use jolt_verifier::preprocessing::{
     CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
     JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
 };
-use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
+use jolt_verifier::proof::{
+    AkitaJointOpeningProof, JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder,
+};
 use jolt_verifier::VerifierError;
 
 use crate::curve::{JoltCurve, JoltGroupElement};
@@ -64,10 +68,11 @@ use crate::zkvm::bytecode::read_raf_checking::{
     BytecodeReadRafSumcheckParams,
 };
 use crate::zkvm::claim_reductions::{
-    AdviceClaimReductionParams, AdviceClaimReductionProver, BytecodeReconstructionSumcheckParams,
-    BytecodeReconstructionSumcheckProver, HammingWeightClaimReductionParams,
-    HammingWeightClaimReductionProver, PrecommittedClaimReduction,
-    ProgramImageReconstructionSumcheckParams, ProgramImageReconstructionSumcheckProver,
+    AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
+    BytecodeReconstructionSumcheckParams, BytecodeReconstructionSumcheckProver,
+    HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
+    PrecommittedClaimReduction, ProgramImageReconstructionSumcheckParams,
+    ProgramImageReconstructionSumcheckProver,
 };
 use crate::zkvm::fiat_shamir_preamble;
 use crate::zkvm::instruction_lookups::ra_virtual::{
@@ -465,7 +470,7 @@ fn advice_schedule_params(
     max_untrusted_advice_bytes: usize,
     max_trusted_advice_bytes: usize,
     max_final_num_vars: usize,
-) -> Result<Option<jolt_akita::AdviceScheduleParams>, VerifierError> {
+) -> Result<Option<AdviceScheduleParams>, VerifierError> {
     let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
         .then(|| advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes))
         .transpose()?;
@@ -474,7 +479,7 @@ fn advice_schedule_params(
         .transpose()?;
     Ok(
         (untrusted_physical_vars.is_some() || trusted_physical_vars.is_some()).then(|| {
-            jolt_akita::AdviceScheduleParams::new(
+            AdviceScheduleParams::new(
                 untrusted_physical_vars,
                 trusted_physical_vars,
                 max_final_num_vars,
@@ -488,7 +493,7 @@ fn advice_schedule_params(
 pub struct AdviceObject {
     pub words: Vec<u64>,
     pub plan: PrefixPackedObjectPlan,
-    pub polynomial: jolt_poly::Polynomial<AkitaField>,
+    pub polynomial: Polynomial<AkitaField>,
     pub commitment: <AkitaScheme as jolt_crypto::Commitment>::Output,
     pub hint: <AkitaScheme as VerifierCommitmentScheme>::OpeningHint,
     pub setup: <AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
@@ -519,7 +524,7 @@ pub fn commit_advice(
     for (evaluation, word) in evaluations.iter_mut().zip(&words) {
         *evaluation = AkitaField::from_u64(*word);
     }
-    let polynomial = jolt_poly::Polynomial::new(evaluations);
+    let polynomial = Polynomial::new(evaluations);
 
     let (commitment, hint) = <AkitaScheme as VerifierCommitmentScheme>::commit(&polynomial, setup)
         .map_err(|error| commit_failed(error.to_string()))?;
@@ -710,7 +715,7 @@ impl AkitaPackedProver<'_> {
         reason = "consistent with the canonical-layout expects below; a program whose \
                   advice capacity cannot be scheduled is a preprocessing-time invariant break"
     )]
-    pub fn one_hot_trace_setup_params(&self) -> jolt_akita::AkitaSetupParams {
+    pub fn one_hot_trace_setup_params(&self) -> AkitaSetupParams {
         let one_hot_trace_shape = self.one_hot_trace_shape();
         let shape = ONE_HOT_TRACE_LAYOUT
             .setup_shape(&one_hot_trace_shape)
@@ -743,7 +748,7 @@ impl AkitaPackedProver<'_> {
         } else {
             None
         };
-        jolt_akita::AkitaSetupParams::one_hot_only_grouped(
+        AkitaSetupParams::one_hot_only_grouped(
             shape.num_vars,
             shape.num_polys,
             1 + usize::from(max_untrusted_advice_bytes > 0)
@@ -1424,8 +1429,8 @@ impl AkitaPackedProver<'_> {
     ) -> Result<PrefixPackedClaims<AkitaField>, VerifierError> {
         let batch_failed = |reason: String| VerifierError::FinalOpeningBatchFailed { reason };
         let advice_kind = match kind {
-            JoltAdviceKind::Untrusted => crate::zkvm::claim_reductions::AdviceKind::Untrusted,
-            JoltAdviceKind::Trusted => crate::zkvm::claim_reductions::AdviceKind::Trusted,
+            JoltAdviceKind::Untrusted => AdviceKind::Untrusted,
+            JoltAdviceKind::Trusted => AdviceKind::Trusted,
         };
         let (point, value) = self
             .opening_accumulator
@@ -1719,8 +1724,7 @@ impl AkitaPackedProver<'_> {
                 )?);
             }
         }
-        let joint_opening_proof =
-            jolt_verifier::proof::AkitaJointOpeningProof::new(main_batch, auxiliary);
+        let joint_opening_proof = AkitaJointOpeningProof::new(main_batch, auxiliary);
 
         let claims = crate::zkvm::clear_claims::build_packed_clear_claims(
             self.opening_accumulator

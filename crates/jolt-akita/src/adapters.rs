@@ -17,13 +17,14 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
+use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
 use crate::schedule_registry::AdviceScheduleParams;
 use crate::trace_onehot::TracePackedOneHot;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub(crate) type AkitaConfig = crate::configs::JoltDenseBounded;
-pub(crate) type AkitaOneHotK16Config = crate::configs::JoltOneHotK16;
-pub(crate) type AkitaOneHotK256Config = crate::configs::JoltOneHotK256;
+pub(crate) type AkitaConfig = JoltDenseBounded;
+pub(crate) type AkitaOneHotK16Config = JoltOneHotK16;
+pub(crate) type AkitaOneHotK256Config = JoltOneHotK256;
 /// Smallest A dimension accepted by the delegated adaptive policy. Source
 /// objects use this only for dimension-independent flat storage metadata;
 /// each generated schedule still selects its exact per-role dimensions.

@@ -5,9 +5,12 @@
 
 //! The Jolt-owned schedule catalogs: coverage and drift guards.
 
+use std::path::PathBuf;
+
 use akita_config::{honest_fold_policy_of, CommitmentConfig};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
+    PolynomialGroupLayout,
 };
 use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
 use jolt_akita::schedule_registry::{FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP};
@@ -56,10 +59,8 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
 /// Production trusted-advice precommit layout (`2^20` u64 words) and the
 /// SHA2-chain packed-trace layout at `log_T = 26`, K=256. No grouped row is
 /// checked in for either — this test is what asserts that.
-const TRUSTED_ADVICE_GROUP: akita_types::PolynomialGroupLayout =
-    akita_types::PolynomialGroupLayout::new(20, 1);
-const TRUSTED_ADVICE_K256_FINAL_GROUP: akita_types::PolynomialGroupLayout =
-    akita_types::PolynomialGroupLayout::new(39, 1);
+const TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(20, 1);
+const TRUSTED_ADVICE_K256_FINAL_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(39, 1);
 
 fn trusted_advice_grouped_key() -> AkitaScheduleLookupKey {
     let trusted_profile =
@@ -199,7 +200,7 @@ fn no_family_catalogs_a_grouped_advice_row() {
         let batch_polys = precommitteds.len() + 1;
         for num_vars in FIXTURE_K16_FINAL_NUM_VARS.0..=FIXTURE_K16_FINAL_NUM_VARS.1 {
             let key = AkitaScheduleLookupKey {
-                final_group: akita_types::PolynomialGroupLayout::new(num_vars, 1),
+                final_group: PolynomialGroupLayout::new(num_vars, 1),
                 precommitteds: precommitteds.clone(),
             };
             assert!(JoltOneHotK16::resolve_catalog_row_for_key(&key).is_err());
@@ -258,9 +259,7 @@ fn source_tokens(source: &str) -> Vec<String> {
 #[test]
 #[ignore = "regenerates every schedule through the planner DP (minutes)"]
 fn catalogs_match_planner_regeneration() {
-    for spec in
-        family_specs(std::path::PathBuf::new()).expect("every family must declare a valid contract")
-    {
+    for spec in family_specs(PathBuf::new()).expect("every family must declare a valid contract") {
         let regenerated =
             akita_planner::emit::emit_family_module(&spec).expect("regeneration must succeed");
         let checked_in = std::fs::read_to_string(

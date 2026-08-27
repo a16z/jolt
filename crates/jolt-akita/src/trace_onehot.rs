@@ -28,10 +28,11 @@ use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
+use akita_prover::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_prover::{
-    BatchDecomposeFoldOutcome, CommitInnerWitness, ComputeBackendSetup, CpuBackend, DensePoly,
-    OneHotPoly, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootTensorProjectionPoly, RootTensorSource,
+    BatchDecomposeFoldOutcome, CommitInnerWitness, ComputeBackendSetup, CpuBackend,
+    DecomposeFoldWitness, DensePoly, OneHotPoly, RootCommitSource, RootOpeningSource, RootPolyMeta,
+    RootPolyShape, RootTensorProjectionPoly, RootTensorSource,
 };
 use akita_types::FpExtEncoding;
 use rayon::prelude::*;
@@ -2108,7 +2109,7 @@ fn decompose_fold_packed_with_mode<const D: usize>(
     num_positions: usize,
     num_digits: usize,
     rotation_mode: DecomposeRotationMode,
-) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
+) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
     let _span = tracing::info_span!(
         "TracePackedOneHot::decompose_fold",
         ring_dimension = D,
@@ -2387,7 +2388,7 @@ fn decompose_fold_packed<const D: usize>(
     challenges: &[SparseChallenge],
     num_positions: usize,
     num_digits: usize,
-) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
+) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
     decompose_fold_packed_with_mode::<D>(
         source,
         challenges,
@@ -2426,7 +2427,7 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         _prepared: Option<&Self::PreparedSetup>,
         source: TracePackedOneHotView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
         decompose_fold_packed::<D>(
             source.source(),
             plan.challenges,
@@ -2532,12 +2533,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         _source: TracePackedOneHotBatchView<'_, D>,
         _coeffs: &[E],
-    ) -> Result<
-        Option<
-            akita_prover::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>,
-        >,
-        AkitaError,
-    > {
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         Err(AkitaError::UnsupportedSchedule(
             "Jolt trace one-hot sources require flat root challenges".to_string(),
         ))
@@ -2654,7 +2650,7 @@ impl<const D: usize> OpeningFoldKernel<GroupedRootView<'_, D>, AkitaField, D> fo
         prepared: Option<&Self::PreparedSetup>,
         source: GroupedRootView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
         match source.source {
             GroupedRootSource::Dense(polys) => {
                 OpeningFoldKernel::<DenseView<'_, AkitaField, D>, AkitaField, D>::decompose_fold(

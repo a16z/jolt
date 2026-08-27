@@ -1,4 +1,6 @@
 use derive_more::From;
+#[cfg(feature = "akita")]
+use jolt_openings::PrecommittedRole;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -178,14 +180,10 @@ pub enum JoltAdviceKind {
 #[cfg(feature = "akita")]
 impl JoltAdviceKind {
     /// Role descriptor for the final heterogeneous Akita opening.
-    pub const fn precommitted_role(self) -> jolt_openings::PrecommittedRole {
+    pub const fn precommitted_role(self) -> PrecommittedRole {
         match self {
-            Self::Untrusted => {
-                jolt_openings::PrecommittedRole::new(0, b"untrusted_advice", "untrusted-advice")
-            }
-            Self::Trusted => {
-                jolt_openings::PrecommittedRole::new(1, b"trusted_advice", "trusted-advice")
-            }
+            Self::Untrusted => PrecommittedRole::new(0, b"untrusted_advice", "untrusted-advice"),
+            Self::Trusted => PrecommittedRole::new(1, b"trusted_advice", "trusted-advice"),
         }
     }
 }

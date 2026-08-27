@@ -2,9 +2,9 @@
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
-use core::fmt;
+use core::fmt::{Display, Formatter, Result as FmtResult};
 #[cfg(feature = "std")]
-use std::vec::Vec;
+use std::{error::Error, vec::Vec};
 
 use crate::jolt_device::bytes_to_words_le;
 
@@ -13,8 +13,8 @@ pub enum AdviceWordsError {
     AdviceTooLong { actual: usize, max: usize },
 }
 
-impl fmt::Display for AdviceWordsError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for AdviceWordsError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::AdviceTooLong { actual, max } => {
                 write!(
@@ -27,7 +27,7 @@ impl fmt::Display for AdviceWordsError {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for AdviceWordsError {}
+impl Error for AdviceWordsError {}
 
 /// Packs bytes into the canonical zero-padded little-endian advice word table.
 pub fn canonical_advice_words(
