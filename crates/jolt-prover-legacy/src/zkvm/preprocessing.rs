@@ -110,13 +110,6 @@ where
         self.program.check()?;
         self.program_meta.check()?;
         self.memory_layout.check()?;
-        // Deserialization bypasses FullProgramPreprocessing::preprocess, so the
-        // implicit-carry rejection must be repeated here or ADDC/MULC bytecode
-        // smuggled in via a serialized preprocessing would reach the prover.
-        if let ProgramPreprocessing::Full(full) = &self.program {
-            crate::zkvm::program::reject_implicit_carry_instructions(&full.bytecode.bytecode)
-                .map_err(|_| ark_serialize::SerializationError::InvalidData)?;
-        }
         if self.program.is_committed()
             && !is_valid_committed_bytecode_chunking_for_len(
                 self.program.bytecode_len(),
