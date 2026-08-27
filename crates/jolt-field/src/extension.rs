@@ -28,6 +28,9 @@ pub trait ExtField<F: Field>: Field {
     fn mul_base(self, x: F) -> Self;
 
     /// Constructs from a base-coefficient generator.
+    ///
+    /// Calls `f` exactly once for each index in `0..Self::DEGREE`, in ascending
+    /// order, and uses the result as that canonical-basis coefficient.
     fn from_base_fn<G>(f: G) -> Self
     where
         G: FnMut(usize) -> F;

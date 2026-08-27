@@ -630,19 +630,25 @@ fn degree_one_reflexive_ext_matches() {
 }
 
 #[test]
-fn ext_field_coefficient_primitives_round_trip() {
+fn ext_field_coefficient_primitives_obey_contract() {
     type F = two::Prime32Offset99;
 
     fn check<E: ExtField<F>>() {
-        let value = E::from_base_fn(|index| F::from_u64((index + 3) as u64));
+        let mut calls = Vec::new();
+        let value = E::from_base_fn(|index| {
+            calls.push(index);
+            F::from_u64((index + 3) as u64)
+        });
         let expected = (0..E::DEGREE)
             .map(|index| F::from_u64((index + 3) as u64))
             .collect::<Vec<_>>();
 
+        assert_eq!(calls, (0..E::DEGREE).collect::<Vec<_>>());
         assert_eq!(value.to_base_vec(), expected);
-        for (index, expected) in expected.into_iter().enumerate() {
-            assert_eq!(value.base_coefficient(index), expected);
-        }
+        let out_of_range = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            value.base_coefficient(E::DEGREE)
+        }));
+        assert!(out_of_range.is_err());
     }
 
     check::<F>();
