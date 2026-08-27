@@ -12,10 +12,7 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
-field-inline = [
-  "jolt-riscv/field-inline",
-  "tracer/field-inline",
-]
+field-inline = ["jolt-riscv/field-inline", "tracer/field-inline"]
 
 [dependencies]
 jolt-field = { workspace = true }

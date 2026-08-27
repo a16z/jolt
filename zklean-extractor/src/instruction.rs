@@ -1,5 +1,6 @@
+use common::constants::XLEN;
 use jolt_lookup_tables::InstructionLookupTable;
-use jolt_riscv::{Flags as _, InterleavedBitsMarker as _, JoltInstruction};
+use jolt_riscv::{Flags as _, InterleavedBitsMarker as _, JoltInstruction, CIRCUIT_FLAGS};
 use strum::IntoEnumIterator as _;
 use tracer::instruction::{Instruction, JoltInstructionRow};
 
@@ -98,14 +99,13 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         let interleaving = self.interleaving;
         let instruction = JoltInstruction::try_from(self.row)
             .expect("final Jolt instruction rows have exhaustive typed dispatch");
-        let lookup_table =
-            match InstructionLookupTable::<{ common::constants::XLEN }>::lookup_table(&instruction)
-                .map(|table| ZkLeanLookupTable::from(table).name())
-            {
-                None => String::from("sorry /-No lookup table for this instruction-/"),
-                Some(t) => format!("{t} : Vector f {num_variables} -> f"),
-            };
-        let circuit_flags = jolt_riscv::CIRCUIT_FLAGS
+        let lookup_table = match InstructionLookupTable::<XLEN>::lookup_table(&instruction)
+            .map(|table| ZkLeanLookupTable::from(table).name())
+        {
+            None => String::from("sorry /-No lookup table for this instruction-/"),
+            Some(t) => format!("{t} : Vector f {num_variables} -> f"),
+        };
+        let circuit_flags = CIRCUIT_FLAGS
             .iter()
             .copied()
             .filter_map(|f| {

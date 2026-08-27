@@ -1,8 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::{Display, Formatter, Result as FmtResult},
+};
 
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
 };
+#[cfg(test)]
+use jolt_field::Ring;
 use jolt_lookup_tables::LookupTableKind;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use regex::{NoExpand, Regex};
@@ -50,7 +55,7 @@ impl ClaimExpr {
     }
 
     #[cfg(test)]
-    fn evaluate<F: jolt_field::Ring>(&self, resolve: &mut impl FnMut(JoltPolynomialId) -> F) -> F {
+    fn evaluate<F: Ring>(&self, resolve: &mut impl FnMut(JoltPolynomialId) -> F) -> F {
         match self {
             Self::Constant(value) => F::from_i64(*value),
             Self::Var(polynomial) => resolve(*polynomial),
@@ -210,8 +215,8 @@ pub struct ZkLeanVarRef {
     polynomial: JoltPolynomialId,
 }
 
-impl std::fmt::Display for ZkLeanVarRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ZkLeanVarRef {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(
             f,
             "{}.{}",

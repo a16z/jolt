@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
 use ark_serialize::CanonicalSerialize;
+#[cfg(feature = "zk")]
+use common::constants::MAX_BLINDFOLD_GENERATORS;
+use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::geometry::{
     claim_reductions::{bytecode, program_image},
@@ -159,7 +162,7 @@ fn committed_program_digest(
     let program_image_columns = 1usize
         << CommitmentMatrixShape::balanced(program_image_words.ilog2() as usize).column_vars();
     let max_log_t = program.max_padded_trace_length.next_power_of_two().ilog2() as usize;
-    let max_log_k_chunk = if max_log_t >= common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T {
+    let max_log_k_chunk = if max_log_t >= ONEHOT_CHUNK_THRESHOLD_LOG_T {
         8u8
     } else {
         4u8
@@ -232,10 +235,7 @@ fn blindfold_setup(
 ) -> Option<PedersenSetup<Bn254G1>> {
     #[cfg(feature = "zk")]
     {
-        Some(PedersenSetup::derive(
-            setup,
-            common::constants::MAX_BLINDFOLD_GENERATORS,
-        ))
+        Some(PedersenSetup::derive(setup, MAX_BLINDFOLD_GENERATORS))
     }
     #[cfg(not(feature = "zk"))]
     {
@@ -259,7 +259,7 @@ fn setup_total_vars(
     max_padded_trace_length: usize,
 ) -> usize {
     let max_log_t = max_padded_trace_length.next_power_of_two().ilog2() as usize;
-    let max_log_k_chunk = if max_log_t >= common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T {
+    let max_log_k_chunk = if max_log_t >= ONEHOT_CHUNK_THRESHOLD_LOG_T {
         8
     } else {
         4

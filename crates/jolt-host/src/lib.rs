@@ -5,7 +5,10 @@ mod program;
 
 use std::path::PathBuf;
 
+use common::constants::RAM_START_ADDRESS;
+use jolt_program::{JoltProgram, ProgramError};
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
+use tracer::TracerInlineExpansionProvider;
 
 pub const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
 
@@ -41,9 +44,9 @@ pub trait JoltProgramSource {
         clippy::expect_used,
         reason = "the source trait preserves the infallible missing-ELF contract"
     )]
-    fn build_jolt_program(&self) -> Result<jolt_program::JoltProgram, jolt_program::ProgramError> {
+    fn build_jolt_program(&self) -> Result<JoltProgram, ProgramError> {
         let elf = self.get_elf_contents().expect("ELF contents not available");
-        let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
+        let mut inline_provider = TracerInlineExpansionProvider::new();
         jolt_program::build_jolt_program_with_inline_provider(
             &elf,
             &mut inline_provider,
@@ -62,7 +65,7 @@ pub trait JoltProgramSource {
         (
             program.expanded_bytecode,
             program.memory_init,
-            program.program_end - common::constants::RAM_START_ADDRESS,
+            program.program_end - RAM_START_ADDRESS,
             program.entry_address,
         )
     }

@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use common::jolt_device::MemoryConfig;
 use jolt_host::{JoltProgramSource, Program};
 use jolt_program::execution::{JoltProgram, TraceInputs, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -36,7 +37,7 @@ pub fn prepare_guest(
         source.instruction_profile(),
     )
     .expect("program preprocessing");
-    let memory_config = common::jolt_device::MemoryConfig {
+    let memory_config = MemoryConfig {
         max_untrusted_advice_size: layout.max_untrusted_advice_size,
         max_trusted_advice_size: layout.max_trusted_advice_size,
         max_input_size: layout.max_input_size,

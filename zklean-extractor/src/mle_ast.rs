@@ -11,6 +11,8 @@ use std::sync::{OnceLock, RwLock};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
 use ark_std::{One, Zero};
+use num_bigint::BigUint;
+use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -25,7 +27,7 @@ use crate::util::Environment;
 use crate::util::LetBinderIndex;
 
 // Import scalar constants for internal use (pub use handles function re-exports)
-use crate::scalar_ops::{SCALAR_ONE, SCALAR_ZERO};
+use crate::scalar_ops::{BN254_MODULUS, SCALAR_ONE, SCALAR_ZERO};
 
 // Re-export scalar_ops for external use
 pub use crate::scalar_ops::{
@@ -1383,7 +1385,7 @@ impl Ring for MleAst {
 }
 
 impl Field for MleAst {
-    fn random<R: rand_core::RngCore>(_rng: &mut R) -> Self {
+    fn random<R: RngCore>(_rng: &mut R) -> Self {
         unimplemented!("Not needed for constructing ASTs");
     }
 
@@ -1416,12 +1418,8 @@ impl CanonicalEncoding for MleAst {
             return challenge;
         }
 
-        let value = num_bigint::BigUint::from_bytes_le(bytes)
-            % num_bigint::BigUint::from_bytes_le(
-                &crate::scalar_ops::BN254_MODULUS
-                    .map(u64::to_le_bytes)
-                    .concat(),
-            );
+        let value = BigUint::from_bytes_le(bytes)
+            % BigUint::from_bytes_le(&BN254_MODULUS.map(u64::to_le_bytes).concat());
         let digits = value.to_u64_digits();
         let mut limbs = [0u64; 4];
         for (dst, src) in limbs.iter_mut().zip(digits) {
@@ -1438,12 +1436,8 @@ impl CanonicalEncoding for MleAst {
             return None;
         }
 
-        let value = num_bigint::BigUint::from_bytes_le(bytes);
-        let modulus = num_bigint::BigUint::from_bytes_le(
-            &crate::scalar_ops::BN254_MODULUS
-                .map(u64::to_le_bytes)
-                .concat(),
-        );
+        let value = BigUint::from_bytes_le(bytes);
+        let modulus = BigUint::from_bytes_le(&BN254_MODULUS.map(u64::to_le_bytes).concat());
         if value >= modulus {
             return None;
         }

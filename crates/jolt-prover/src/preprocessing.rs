@@ -1,3 +1,5 @@
+use ark_serialize::{CanonicalSerialize, SerializationError};
+use common::jolt_device::MemoryLayout;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
@@ -30,8 +32,6 @@ impl JoltSharedPreprocessing {
 pub(crate) fn full_preprocessing_digest(
     program: &JoltProgramPreprocessing,
 ) -> Result<[u8; 32], PreprocessingError> {
-    use ark_serialize::CanonicalSerialize;
-
     const DEFAULT_BYTECODE_CHUNK_COUNT: usize = 1;
 
     let metadata =
@@ -58,7 +58,7 @@ pub(crate) const FULL_PROGRAM_TAG: u8 = 0;
 pub(crate) const COMMITTED_PROGRAM_TAG: u8 = 1;
 
 pub(crate) fn canonical_preprocessing_digest(
-    encode: impl FnOnce(&mut Vec<u8>) -> Result<(), ark_serialize::SerializationError>,
+    encode: impl FnOnce(&mut Vec<u8>) -> Result<(), SerializationError>,
 ) -> Result<[u8; 32], PreprocessingError> {
     let mut encoded = Vec::new();
     encode(&mut encoded).map_err(|error| PreprocessingError::Encoding {
@@ -70,9 +70,7 @@ pub(crate) fn canonical_preprocessing_digest(
 pub(crate) fn encode_program_metadata(
     metadata: &ProgramMetadata,
     encoded: &mut Vec<u8>,
-) -> Result<(), ark_serialize::SerializationError> {
-    use ark_serialize::CanonicalSerialize;
-
+) -> Result<(), SerializationError> {
     metadata.entry_address.serialize_compressed(&mut *encoded)?;
     metadata
         .min_bytecode_address
@@ -88,13 +86,11 @@ pub(crate) fn encode_program_metadata(
 
 pub(crate) fn encode_shared_preprocessing_tail(
     metadata: &ProgramMetadata,
-    memory_layout: &common::jolt_device::MemoryLayout,
+    memory_layout: &MemoryLayout,
     max_padded_trace_length: usize,
     bytecode_chunk_count: usize,
     encoded: &mut Vec<u8>,
-) -> Result<(), ark_serialize::SerializationError> {
-    use ark_serialize::CanonicalSerialize;
-
+) -> Result<(), SerializationError> {
     encode_program_metadata(metadata, encoded)?;
     memory_layout.serialize_compressed(&mut *encoded)?;
     max_padded_trace_length.serialize_compressed(&mut *encoded)?;

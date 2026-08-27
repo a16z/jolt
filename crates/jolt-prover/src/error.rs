@@ -1,5 +1,7 @@
 use jolt_field::JoltField;
 use jolt_kernels::{KernelError, SumcheckKernelError};
+use jolt_openings::OpeningsError;
+use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
 use thiserror::Error;
@@ -7,10 +9,10 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum PreprocessingError {
     #[error(transparent)]
-    Program(#[from] jolt_program::preprocess::PreprocessingError),
+    Program(#[from] ProgramPreprocessingError),
 
     #[error(transparent)]
-    Openings(#[from] jolt_openings::OpeningsError),
+    Openings(#[from] OpeningsError),
 
     #[error("invalid committed program: {reason}")]
     InvalidCommittedProgram { reason: String },

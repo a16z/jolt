@@ -1,5 +1,8 @@
 use jolt_field::{Fr, Ring};
-use jolt_r1cs::{constraints::rv64, SparseRow};
+use jolt_r1cs::{
+    constraints::rv64::{self, NUM_CONSTRAINTS_PER_CYCLE, NUM_VARS_PER_CYCLE, V_CONST},
+    ConstraintMatrices, SparseRow,
+};
 use jolt_riscv::CircuitFlags;
 
 use crate::{
@@ -8,7 +11,7 @@ use crate::{
     util::indent,
 };
 
-const VARIABLE_NAMES: [&str; rv64::NUM_VARS_PER_CYCLE] = [
+const VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = [
     "One",
     "LeftInstructionInput",
     "RightInstructionInput",
@@ -49,7 +52,7 @@ const VARIABLE_NAMES: [&str; rv64::NUM_VARS_PER_CYCLE] = [
     "NextIsNoop",
 ];
 
-const CONSTRAINT_NAMES: [&str; rv64::NUM_CONSTRAINTS_PER_CYCLE] = [
+const CONSTRAINT_NAMES: [&str; NUM_CONSTRAINTS_PER_CYCLE] = [
     "RamAddrEqRs1PlusImmIfLoadStore",
     "RamAddrEqZeroIfNotLoadStore",
     "RamReadEqRamWriteIfLoad",
@@ -75,7 +78,7 @@ const CONSTRAINT_NAMES: [&str; rv64::NUM_CONSTRAINTS_PER_CYCLE] = [
 ];
 
 pub struct ZkLeanR1CSConstraints<J> {
-    matrices: jolt_r1cs::ConstraintMatrices<Fr>,
+    matrices: ConstraintMatrices<Fr>,
     phantom: std::marker::PhantomData<J>,
 }
 
@@ -205,7 +208,7 @@ fn signed_coefficient(value: Fr) -> i128 {
 
 fn pretty_print_term(inputs_struct: &str, variable: usize, coefficient: Fr) -> String {
     let coefficient = signed_coefficient(coefficient);
-    if variable == rv64::V_CONST {
+    if variable == V_CONST {
         return coefficient.to_string();
     }
 

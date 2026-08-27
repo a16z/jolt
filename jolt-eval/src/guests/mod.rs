@@ -10,6 +10,7 @@ pub use jolt_verifier::VerifierError;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
+use jolt_prover::dory::DoryProverPreprocessing;
 
 pub use btreemap::BTreeMapOps;
 pub use fibonacci::Fibonacci;
@@ -27,7 +28,7 @@ pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
 pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
 
 pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
-pub type ProverPreprocessing = jolt_prover::dory::DoryProverPreprocessing;
+pub type ProverPreprocessing = DoryProverPreprocessing;
 pub type VerifierPreprocessing = jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 
 pub fn prover_preprocessing(

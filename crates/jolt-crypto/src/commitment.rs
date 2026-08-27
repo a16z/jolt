@@ -1,6 +1,7 @@
 use std::{
     error::Error,
-    fmt::{self, Debug},
+    fmt::{self, Debug, Formatter, Result as FmtResult},
+    marker::PhantomData,
 };
 
 use jolt_field::{Accumulator, CanonicalBytes, JoltField, WithAccumulator};
@@ -24,16 +25,16 @@ pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
 }
 
 /// Type-level placeholder for protocols that do not use vector commitments.
-pub struct NoVectorCommitment<F>(std::marker::PhantomData<fn() -> F>);
+pub struct NoVectorCommitment<F>(PhantomData<fn() -> F>);
 
 impl<F> Clone for NoVectorCommitment<F> {
     fn clone(&self) -> Self {
-        Self(std::marker::PhantomData)
+        Self(PhantomData)
     }
 }
 
 impl<F> Debug for NoVectorCommitment<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.write_str("NoVectorCommitment")
     }
 }

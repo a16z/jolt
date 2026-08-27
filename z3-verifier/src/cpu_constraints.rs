@@ -4,7 +4,9 @@
 use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
 use jolt_field::{Fr, Ring};
 use jolt_r1cs::{
-    constraints::rv64::{self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE},
+    constraints::rv64::{
+        self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE, V_BRANCH, V_CONST, V_NEXT_IS_NOOP,
+    },
     SparseRow,
 };
 use jolt_riscv::{
@@ -193,9 +195,9 @@ impl JoltState {
     fn r1cs_vars(&self) -> [Int; NUM_VARS_PER_CYCLE] {
         let inputs = self.r1cs_inputs();
         array::from_fn(|index| match index {
-            rv64::V_CONST => Int::from(1),
-            rv64::V_BRANCH => self.instruction_flags[InstructionFlags::Branch as usize].clone(),
-            rv64::V_NEXT_IS_NOOP => self.next_is_noop.clone(),
+            V_CONST => Int::from(1),
+            V_BRANCH => self.instruction_flags[InstructionFlags::Branch as usize].clone(),
+            V_NEXT_IS_NOOP => self.next_is_noop.clone(),
             _ => inputs[index - 1].clone(),
         })
     }
