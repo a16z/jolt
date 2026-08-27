@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787777588749,
+  "lastUpdate": 1787809437930,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -146038,6 +146038,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865456,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9750a9c5f3401826f32cd7d5ae8e25281bf2e176",
+          "message": "perf(sdk): O(1) size-class guest allocator replacing first-fit linked list (#1746)\n\n* perf(sdk): O(1) size-class guest allocator replacing first-fit linked list\n\nEvery executed RISC-V instruction is a proving-cost cycle, and the no_std\nguest allocator (linked_list_allocator via ZeroOS, first-fit) walks its free\nlist on every alloc AND dealloc. On an allocation-heavy guest — full stateless\nEthereum mainnet block validation (revm + MPT, ~1.5 GiB heap) — PC-sampling\nattributed 85.7% of ALL executed instructions to the allocator\n(58.6% allocate_first_fit + 27.1% deallocate); total trace length dropped\n~6x (29.8B -> 4.9B cycles) after this swap. In-repo btreemap example:\n-8.9% rows at n=6000, -21% at n=20000 (the walk cost scales with live blocks).\n\njolt_platform::size_class_alloc: power-of-two size-class free lists over a\nbump arena. Alloc pops the class head or bumps; dealloc pushes; realloc grows\nthe newest bump block in place (Vec doubling) and treats same-class/shrinking\nrequests as no-ops. No searching, splitting, or coalescing - bounded internal\nfragmentation (<2x per live block) traded for O(1) everything. Single-hart\nby design, like the rest of the guest runtime.\n\nRegistered in __platform_bootstrap for target_os = \"none\" guests only\n(std/musl guests keep ZeroOS's allocator; musl malloc manages its own arenas).\nHost-runnable unit tests cover class rounding, alignment-guarded reuse,\nin-place growth, copy-growth, shrink, exhaustion, and churn recycling.\n\n* perf(platform): delegate C realloc to the global allocator\n\nmalloc_shim::realloc unconditionally did malloc + copy + free, so C growth\nloops never reached the resize fast paths of the underlying allocator. With\nsize_class_alloc that means missing both the same-class no-op and the\nin-place bump growth — the paths its doc comment calls out as what \"Vec\ndoubling hits constantly\" — and unlike the linked-list allocator it replaces,\nsize_class_alloc does not coalesce, so every superseded block is stranded in\nits class for the rest of the run.\n\nRoute through alloc::alloc::realloc instead and rewrite the header at the\nreturned block. The allocator carries the header along with the payload when\nit has to move, and returns the block unchanged when it can resize in place.\nThe shim stays allocator-agnostic.\n\nMeasured with a C growth chain (malloc(16) doubling to 4 KiB, contents\nverified after every resize) on riscv64imac guest, execute-only rows:\n\n  8 chains:   1,052,881 -> 1,030,041   (-22,840)\n  16 chains:  2,104,857 -> 2,059,249   (-45,608)\n\nMarginal cost per chain 131,497 -> 128,651 rows, i.e. ~356 rows saved per\nrealloc call. Guest output is byte-identical across the ZeroOS linked-list\nallocator, size_class_alloc with the old shim, and size_class_alloc with\nthis shim.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* fix(platform): expect not_unsafe_ptr_arg_deref on size-class realloc\n\nrealloc must remain a safe fn — it is installed as a safe fn pointer in\nzeroos MemoryOps — so scope an expect with the GlobalAlloc contract as\nthe documented safety condition.\n\n* fix(platform): close size-class allocator review findings\n\n- realloc: cross-class shrinks no longer orphan the block tail — the\n  newest bump block resizes in place (cursor retreats), everything else\n  moves via allocate-copy-free so a block's class always equals its\n  physical footprint\n- drop the vacuous alignment re-check in the in-place resize path\n  (realloc cannot change alignment)\n- gate size_class_alloc to riscv/test builds; the safe fns over a\n  static mut arena are not a host API\n- expect clippy::not_unsafe_ptr_arg_deref on realloc (signature pinned\n  by zeroos MemoryOps safe fn pointers)\n- shrink read_header to its two used fields\n- dedup benchmark numbers out of boot.rs\n\n* fix(platform): checked cursor arithmetic; drop linked-list allocator from no_std guests\n\n- alloc bump path: check the rounding add — a wrapped intermediate\n  stored a below-heap cursor for later calls even though the wrapping\n  call itself returned null\n- realloc in-place resize: check addr + new_class_size — on a 32-bit\n  target a wrap passed the arena-bound check and retreated the cursor\n  below the heap\n- free-list comment now states that an under-aligned head strands\n  aligned blocks deeper in the list for over-aligned requests\n- dealloc documents its pointer contract\n- move zeroos alloc-linked-list to the riscv64+linux target block and\n  give plain riscv64 the standalone memory feature: no_std guests\n  register only the size-class allocator and no longer link\n  linked_list_allocator; the musl feature union is unchanged\n\n* style: import MemoryOps in boot.rs\n\n---------\n\nCo-authored-by: Michael Zhu <mzhu@a16z.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-27T00:36:50-04:00",
+          "tree_id": "9f276f4bd78330ae68e2c476a7edd397cc7a8c6b",
+          "url": "https://github.com/a16z/jolt/commit/9750a9c5f3401826f32cd7d5ae8e25281bf2e176"
+        },
+        "date": 1787809432504,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.8132,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 874764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3783,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 507144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 502924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 502480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7338,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498852,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5885,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 502588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.8039,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 511132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.7408,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3047,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 863460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.589,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500636,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4818,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 509340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.1155,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 508996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.6554,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 511100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.1418,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1092380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.3966,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 644920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 84.4732,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2128920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.3488,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5331,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500780,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5187,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 867988,
             "unit": "KB",
             "extra": ""
           }
