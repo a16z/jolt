@@ -364,7 +364,7 @@ pprof = { version = "0.15", features = [
 prost = "0.14"
 
 # Parsing
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0.79"
 
