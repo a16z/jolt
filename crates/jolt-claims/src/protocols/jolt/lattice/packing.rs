@@ -25,16 +25,7 @@ pub const ONE_HOT_TRACE_K16_CAPACITY: usize = 64;
 /// Fixed selector capacity of the packed trace polynomial at K=256.
 pub const ONE_HOT_TRACE_K256_CAPACITY: usize = 32;
 
-/// Minimum physical arity of an auxiliary commitment object (advice words,
-/// program bytecode/image). Akita's dense DP planner admits no fold
-/// schedule below 2^13 coefficients for these single-polynomial groups; one
-/// variable of headroom over the current floor absorbs upstream repricing.
-/// [`PrefixPackedObjectPlan::new`] pads slot capacity — never column arity —
-/// up to this bound, so claim reduction is unchanged. Like any unused slot,
-/// the padding is unconstrained committed data whose contribution to the
-/// single reduced opening is zero w.h.p. under the sampled selector; nothing
-/// may assume the padded region is identically zero.
-pub const MIN_AUXILIARY_PACKED_NUM_VARS: usize = 14;
+pub use crate::lattice::MIN_AUXILIARY_PACKED_NUM_VARS;
 
 /// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
 /// `Ra` families, balanced increment chunks, and signed carry as semantic
@@ -248,9 +239,10 @@ impl PrefixPackedObjectPlan {
                     "prefix-packed object requires at least one column".to_string(),
                 )
             })?;
-        let slot_capacity = slot_capacity
-            .max(columns.len().next_power_of_two())
-            .max(1usize << MIN_AUXILIARY_PACKED_NUM_VARS.saturating_sub(packed_logical_num_vars));
+        let slot_capacity = slot_capacity.max(crate::lattice::min_dense_slot_capacity(
+            columns.len(),
+            packed_logical_num_vars,
+        ));
         let ids = columns.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         let packing = PrefixPackedLayout::new(packed_logical_num_vars, slot_capacity, ids)?;
         let logical_num_vars = columns.iter().copied().collect::<BTreeMap<_, _>>();

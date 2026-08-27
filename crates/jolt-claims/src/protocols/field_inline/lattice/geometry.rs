@@ -40,6 +40,18 @@ pub fn limb_place_value<F: Ring>(limb: usize) -> F {
     F::pow2(FIELD_INC_LIMB_BITS * limb)
 }
 
+/// Evaluates the recomposition identity `Σ_i 2^(64·i) · limb_i` over `F`.
+/// The identity holds pointwise on the boolean cube for the honest limb
+/// columns, so it holds for their multilinear extensions at any point — the
+/// stage-8 linear check the reduced `FieldRdInc` claim binds through.
+pub fn recompose_limbs<F: Ring>(limbs: &[F]) -> F {
+    limbs
+        .iter()
+        .enumerate()
+        .map(|(limb, value)| limb_place_value::<F>(limb) * *value)
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

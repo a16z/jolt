@@ -8,6 +8,7 @@
 use std::any::TypeId;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::ops::RangeInclusive;
 use std::sync::{OnceLock, RwLock};
 
 use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, ResolvedScheduleRow};
@@ -33,6 +34,10 @@ pub struct AdviceScheduleParams {
     untrusted_physical_arity: Option<usize>,
     trusted_physical_arity: Option<usize>,
     final_arity_ceiling: usize,
+    /// The always-present FR limb group's arity line (field-inline proofs
+    /// only). `None` keeps provisioning identical to the base protocol.
+    #[cfg(feature = "field-inline")]
+    field_inc_limbs: Option<FieldIncLimbScheduleParams>,
 }
 
 impl AdviceScheduleParams {
@@ -45,15 +50,79 @@ impl AdviceScheduleParams {
             untrusted_physical_arity: untrusted_physical_num_vars,
             trusted_physical_arity: trusted_physical_num_vars,
             final_arity_ceiling: max_final_num_vars,
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs: None,
         }
     }
 
+    /// Attach the FR limb-group arity line: every provisioned row then
+    /// carries the per-arity FR profile as its last precommitted group (an
+    /// FR-on prover commits the group on every proof, so no FR-absent row is
+    /// reachable).
+    #[cfg(feature = "field-inline")]
+    pub fn with_field_inc_limbs(mut self, field_inc_limbs: FieldIncLimbScheduleParams) -> Self {
+        self.field_inc_limbs = Some(field_inc_limbs);
+        self
+    }
+
     pub(crate) fn provision(self, one_hot_k: usize) -> Result<RegisteredRows, AkitaError> {
+        #[cfg(feature = "field-inline")]
+        if let Some(field_inc_limbs) = self.field_inc_limbs {
+            return provision_field_inc_limbs_for_k(
+                self.untrusted_physical_arity,
+                self.trusted_physical_arity,
+                field_inc_limbs,
+                one_hot_k,
+                self.final_arity_ceiling,
+            );
+        }
         provision_advice_for_k(
             self.untrusted_physical_arity,
             self.trusted_physical_arity,
             one_hot_k,
             self.final_arity_ceiling,
+        )
+    }
+}
+
+/// The FR limb group's physical-arity line over the swept final arities:
+/// `physical = max(log_T + selector_num_vars, min_physical_arity)` with
+/// `log_T = final_num_vars - trace_arity_overhead`. All three terms are
+/// caller-derived from the jolt-claims packing laws and carried here as
+/// serialized data (this crate is claims-free); the FR provisioning pin test
+/// holds the line to `FieldIncLimbPackingPlan` across the whole sweep.
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldIncLimbScheduleParams {
+    trace_arity_overhead: usize,
+    min_physical_arity: usize,
+    selector_num_vars: usize,
+}
+
+#[cfg(feature = "field-inline")]
+impl FieldIncLimbScheduleParams {
+    pub fn new(
+        trace_arity_overhead: usize,
+        min_physical_arity: usize,
+        selector_num_vars: usize,
+    ) -> Self {
+        Self {
+            trace_arity_overhead,
+            min_physical_arity,
+            selector_num_vars,
+        }
+    }
+
+    /// The FR limb group's physical arity at final arity `final_num_vars`,
+    /// or `None` below the packed trace's own overhead (no trace exists
+    /// there, so no FR pairing either).
+    pub fn physical_num_vars(self, final_num_vars: usize) -> Option<usize> {
+        let log_t = final_num_vars.checked_sub(self.trace_arity_overhead)?;
+        Some(
+            log_t
+                .checked_add(self.selector_num_vars)?
+                .max(self.min_physical_arity),
         )
     }
 }
@@ -230,6 +299,15 @@ pub fn provision<Cfg: CommitmentConfig + 'static>(
                 .collect::<Vec<_>>()
         })
         .collect();
+    provision_keys::<Cfg>(keys, precommitted_honest_fold_policy)
+}
+
+/// Plan and install the exact grouped keys (shared by the cartesian advice
+/// sweep and the per-arity FR sweep).
+fn provision_keys<Cfg: CommitmentConfig + 'static>(
+    keys: Vec<AkitaScheduleLookupKey>,
+    precommitted_honest_fold_policy: HonestFoldPolicySpec,
+) -> Result<RegisteredRows, AkitaError> {
     if keys.len() > MAX_REGISTERED_ROWS {
         return Err(AkitaError::InvalidSetup(format!(
             "provisioning {} rows exceeds the {MAX_REGISTERED_ROWS}-row cap",
@@ -370,6 +448,25 @@ pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupL
 /// K=16 fixture final arities for canonical `log_T = 12..=16` traces.
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
+/// The grouped final-arity sweep for `one_hot_k`: the K catalog's declared
+/// range clamped to the caller's ceiling, or `None` when the clamp empties it.
+fn grouped_final_arity_range(
+    one_hot_k: usize,
+    max_final_num_vars: usize,
+) -> Result<Option<RangeInclusive<usize>>, AkitaError> {
+    let (min, declared_max) = match one_hot_k {
+        AKITA_ONE_HOT_K256 => K256_NUM_VARS,
+        AKITA_ONE_HOT_K16 => K16_NUM_VARS,
+        other => {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported one-hot K {other} for grouped advice provisioning"
+            )))
+        }
+    };
+    let max = declared_max.min(max_final_num_vars);
+    Ok((max >= min).then_some(min..=max))
+}
+
 /// Provision advice rows before building the packed setup that must cover them.
 pub fn provision_advice_for_k(
     untrusted_physical_vars: Option<usize>,
@@ -381,23 +478,82 @@ pub fn provision_advice_for_k(
         untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
         trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
     };
-    let (min, declared_max) = match one_hot_k {
-        AKITA_ONE_HOT_K256 => K256_NUM_VARS,
-        AKITA_ONE_HOT_K16 => K16_NUM_VARS,
-        other => {
-            return Err(AkitaError::InvalidSetup(format!(
-                "unsupported one-hot K {other} for grouped advice provisioning"
-            )))
+    let Some(range) = grouped_final_arity_range(one_hot_k, max_final_num_vars)? else {
+        return Ok(RegisteredRows::default());
+    };
+    match one_hot_k {
+        AKITA_ONE_HOT_K256 => provision_advice::<JoltOneHotK256>(layouts, range),
+        AKITA_ONE_HOT_K16 => provision_advice::<JoltOneHotK16>(layouts, range),
+        _ => unreachable!("one-hot K was validated by grouped_final_arity_range"),
+    }
+}
+
+/// Every FR-composed presence combination at one final arity, in canonical
+/// role order: each advice subset (including advice-absent) with the
+/// per-arity FR limb profile appended last. FR-absent combinations are
+/// deliberately not enumerated — an FR-on prover commits the limb group on
+/// every proof, so no packed FR proof without it is constructible.
+#[cfg(feature = "field-inline")]
+fn field_inc_limb_combinations(
+    layouts: AdvicePrecommitLayouts,
+    field_inc_limbs: &CommittedGroupProfile,
+) -> Result<Vec<Vec<CommittedGroupProfile>>, AkitaError> {
+    let untrusted = layouts.untrusted.map(dense_precommit_profile).transpose()?;
+    let trusted = layouts.trusted.map(dense_precommit_profile).transpose()?;
+    let mut combinations: Vec<Vec<CommittedGroupProfile>> = Vec::with_capacity(4);
+    let mut push_unique = |combination: Vec<CommittedGroupProfile>| {
+        if !combinations.contains(&combination) {
+            combinations.push(combination);
         }
     };
-    let max = declared_max.min(max_final_num_vars);
-    if max < min {
-        return Ok(RegisteredRows::default());
+    push_unique(vec![*field_inc_limbs]);
+    if let Some(untrusted) = untrusted {
+        push_unique(vec![untrusted, *field_inc_limbs]);
     }
+    if let Some(trusted) = trusted {
+        push_unique(vec![trusted, *field_inc_limbs]);
+    }
+    if let (Some(untrusted), Some(trusted)) = (untrusted, trusted) {
+        push_unique(vec![untrusted, trusted, *field_inc_limbs]);
+    }
+    Ok(combinations)
+}
+
+/// Provision FR-composed grouped rows: for every reachable final arity, the
+/// arity's FR limb profile joins every advice presence combination.
+#[cfg(feature = "field-inline")]
+fn provision_field_inc_limbs_for_k(
+    untrusted_physical_vars: Option<usize>,
+    trusted_physical_vars: Option<usize>,
+    field_inc_limbs: FieldIncLimbScheduleParams,
+    one_hot_k: usize,
+    max_final_num_vars: usize,
+) -> Result<RegisteredRows, AkitaError> {
+    let layouts = AdvicePrecommitLayouts {
+        untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
+        trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
+    };
+    let Some(range) = grouped_final_arity_range(one_hot_k, max_final_num_vars)? else {
+        return Ok(RegisteredRows::default());
+    };
+    let mut keys = Vec::new();
+    for final_num_vars in range {
+        let Some(limb_physical) = field_inc_limbs.physical_num_vars(final_num_vars) else {
+            continue;
+        };
+        let limb_profile = dense_precommit_profile(PolynomialGroupLayout::new(limb_physical, 1))?;
+        for precommitteds in field_inc_limb_combinations(layouts, &limb_profile)? {
+            keys.push(AkitaScheduleLookupKey {
+                final_group: PolynomialGroupLayout::new(final_num_vars, 1),
+                precommitteds,
+            });
+        }
+    }
+    let policy = honest_fold_policy_of::<JoltDenseBounded>();
     match one_hot_k {
-        AKITA_ONE_HOT_K256 => provision_advice::<JoltOneHotK256>(layouts, min..=max),
-        AKITA_ONE_HOT_K16 => provision_advice::<JoltOneHotK16>(layouts, min..=max),
-        _ => unreachable!("one-hot K was validated above"),
+        AKITA_ONE_HOT_K256 => provision_keys::<JoltOneHotK256>(keys, policy),
+        AKITA_ONE_HOT_K16 => provision_keys::<JoltOneHotK16>(keys, policy),
+        _ => unreachable!("one-hot K was validated by grouped_final_arity_range"),
     }
 }
 
@@ -694,6 +850,155 @@ mod tests {
                 "unexpected error: {error}"
             );
             reset_for_tests();
+        }
+
+        #[cfg(feature = "field-inline")]
+        mod field_inc_limbs {
+            use jolt_claims::protocols::field_inline::lattice::{
+                field_inc_limb_count, FieldIncLimbPackingPlan, FieldIncLimbShape,
+            };
+            use jolt_claims::protocols::jolt::lattice::packing::one_hot_trace_column_capacity;
+            use jolt_field::AkitaField;
+
+            use super::*;
+            use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+
+            /// The production caller's derivation of the FR arity line, from
+            /// the jolt-claims laws: the packed trace's arity overhead over
+            /// `log_T` and the limb plan's floor/selector geometry.
+            fn law_derived_params(one_hot_k: usize) -> FieldIncLimbScheduleParams {
+                let log_k_chunk = one_hot_k.ilog2() as usize;
+                let capacity = one_hot_trace_column_capacity(log_k_chunk).unwrap();
+                let limbs = field_inc_limb_count::<AkitaField>();
+                FieldIncLimbScheduleParams::new(
+                    log_k_chunk + capacity.ilog2() as usize,
+                    jolt_claims::lattice::MIN_AUXILIARY_PACKED_NUM_VARS,
+                    limbs.next_power_of_two().ilog2() as usize,
+                )
+            }
+
+            /// The registry's carried arity line must equal the jolt-claims
+            /// packing law at every swept final arity, in both K regimes.
+            #[test]
+            fn carried_arity_line_matches_the_packing_law() {
+                let limbs = field_inc_limb_count::<AkitaField>();
+                assert_eq!(limbs, 2, "fp128 decomposes into two u64 limbs");
+                for (one_hot_k, (min, max)) in [
+                    (AKITA_ONE_HOT_K16, K16_NUM_VARS),
+                    (AKITA_ONE_HOT_K256, K256_NUM_VARS),
+                ] {
+                    let params = law_derived_params(one_hot_k);
+                    for final_num_vars in min..=max {
+                        let carried = params.physical_num_vars(final_num_vars);
+                        let log_t = final_num_vars
+                            .checked_sub(one_hot_k.ilog2() as usize)
+                            .and_then(|vars| {
+                                vars.checked_sub(
+                                    one_hot_trace_column_capacity(one_hot_k.ilog2() as usize)
+                                        .unwrap()
+                                        .ilog2() as usize,
+                                )
+                            });
+                        let expected = log_t.map(|log_t| {
+                            FieldIncLimbPackingPlan::new(&FieldIncLimbShape { limbs, log_t })
+                                .unwrap()
+                                .packing()
+                                .packed_num_vars()
+                        });
+                        assert_eq!(
+                            carried, expected,
+                            "K={one_hot_k} final arity {final_num_vars}: carried arity diverges \
+                             from the packing law"
+                        );
+                    }
+                }
+            }
+
+            /// The prover pads packed traces to `MIN_PADDED_TRACE_LENGTH`
+            /// (jolt-prover, `1 << 12` on akita builds), so the smallest
+            /// reachable FR final arity is `overhead + 12`.
+            const PROVER_MIN_LOG_T: usize = 12;
+
+            /// The planner must admit the FR limb profile beside the packed
+            /// trace across the reachable range up to the registry's own
+            /// arity ceiling (K16: 34, K256: 43 — the trace-scale shapes).
+            /// Doubles as the norm-budget check: the rows plan under the same
+            /// u64-bounded dense fold policy advice uses, so a planned row
+            /// means the limb words fit that budget. Sub-floor arities whose
+            /// limb profile is wider than the final group are planner-skipped
+            /// (all below the prover's trace floor, so unreachable).
+            fn fr_rows_plan_and_resolve_at_the_ceiling<Cfg: CommitmentConfig + 'static>(
+                one_hot_k: usize,
+                (declared_min, ceiling): (usize, usize),
+            ) {
+                reset_for_tests();
+                let params = law_derived_params(one_hot_k);
+                let rows = AdviceScheduleParams::new(None, None, ceiling)
+                    .with_field_inc_limbs(params)
+                    .provision(one_hot_k)
+                    .expect("FR provisioning must plan the reachable range");
+                let plannable = (declared_min..=ceiling)
+                    .filter(|fa| {
+                        params
+                            .physical_num_vars(*fa)
+                            .is_some_and(|limb| limb <= *fa)
+                    })
+                    .count();
+                assert_eq!(rows.rows().count(), plannable);
+
+                let overhead = one_hot_k.ilog2() as usize
+                    + one_hot_trace_column_capacity(one_hot_k.ilog2() as usize)
+                        .unwrap()
+                        .ilog2() as usize;
+                for final_num_vars in (overhead + PROVER_MIN_LOG_T)..=ceiling {
+                    let limb_physical = params.physical_num_vars(final_num_vars).unwrap();
+                    let key = AkitaScheduleLookupKey {
+                        final_group: PolynomialGroupLayout::new(final_num_vars, 1),
+                        precommitteds: vec![dense_precommit_profile(PolynomialGroupLayout::new(
+                            limb_physical,
+                            1,
+                        ))
+                        .unwrap()],
+                    };
+                    let resolved = Cfg::resolve_catalog_row_for_key(&key).unwrap_or_else(|error| {
+                        panic!(
+                            "K={one_hot_k} final arity {final_num_vars} must resolve its FR row: \
+                             {error}"
+                        )
+                    });
+                    assert_eq!(resolved.profiles().precommitteds, key.precommitteds);
+                }
+                reset_for_tests();
+            }
+
+            #[test]
+            fn fr_rows_plan_and_resolve_at_the_k16_ceiling() {
+                fr_rows_plan_and_resolve_at_the_ceiling::<JoltOneHotK16>(
+                    AKITA_ONE_HOT_K16,
+                    K16_NUM_VARS,
+                );
+            }
+
+            #[test]
+            fn fr_rows_plan_and_resolve_at_the_k256_ceiling() {
+                fr_rows_plan_and_resolve_at_the_ceiling::<JoltOneHotK256>(
+                    AKITA_ONE_HOT_K256,
+                    K256_NUM_VARS,
+                );
+            }
+
+            /// The full FR-composed combination sweep stays within the row
+            /// cap: both advice kinds declared, every final arity, FR always
+            /// appended — the widest reachable key set (K256: 4 x 31 = 124).
+            #[test]
+            fn fr_combination_sweep_fits_the_row_cap() {
+                let params = law_derived_params(AKITA_ONE_HOT_K256);
+                let arities = (K256_NUM_VARS.0..=K256_NUM_VARS.1)
+                    .filter(|fa| params.physical_num_vars(*fa).is_some())
+                    .count();
+                assert_eq!(arities, 31);
+                assert!(4 * arities <= MAX_REGISTERED_ROWS);
+            }
         }
 
         #[test]
