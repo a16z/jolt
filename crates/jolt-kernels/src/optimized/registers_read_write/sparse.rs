@@ -127,7 +127,7 @@ impl<F: JoltField> OneHotCoeff<F> for F {
 
 /// A `u16` index into a [`CoeffLut`] (newtype: a bare `u16` would collide
 /// with the blanket field-value impl under coherence).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct LutIndex(u16);
 
 impl<F: JoltField> OneHotCoeff<F> for LutIndex {
@@ -169,7 +169,7 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
 
 /// A `u8` index for the write-coefficient table. That table reaches at most
 /// 256 entries before the read table forces both columns into field form.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SmallLutIndex(u8);
 
 impl<F: JoltField> OneHotCoeff<F> for SmallLutIndex {
@@ -220,7 +220,7 @@ type SparseEntrySlot<F, R, W> = core::mem::MaybeUninit<SparseEntry<F, R, W>>;
 /// touches, and a constant slice's bound coefficient is the constant itself,
 /// so the values neighboring this entry's slice never need field form until
 /// they participate in a merge.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SparseEntry<F, R, W> {
     /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     pub(super) val: F,
@@ -543,7 +543,7 @@ impl<F: JoltField> SparseEntries<F> {
     derive(allocative::Allocative),
     allocative(bound = "F: JoltField")
 )]
-pub(super) struct ReadWriteKernel<F: JoltField> {
+pub(crate) struct ReadWriteKernel<F: JoltField> {
     pub(super) log_t: usize,
     pub(super) log_k: usize,
     /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
@@ -567,6 +567,134 @@ pub(super) struct ReadWriteKernel<F: JoltField> {
     pub(super) rs1_indices: Vec<Option<u8>>,
     pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) challenges: RoundChallenges<F>,
+}
+
+/// One fully cycle-bound sparse entry handed back by the Metal slot at the
+/// cycle→address transition: the K-sized dense state's non-zero column.
+#[cfg(feature = "metal")]
+pub(crate) struct BoundRegistersRwEntry<F: JoltField> {
+    pub col: u8,
+    pub val: F,
+    pub ra: F,
+    pub wa: F,
+}
+
+/// One mid-flight sparse entry handed back by the Metal slot when a device
+/// round fails: the direct-coefficient form of [`SparseEntry`], with the
+/// device's `u16` LUT indices already dereferenced.
+#[cfg(feature = "metal")]
+pub(crate) struct RegistersRwCycleEntry<F: JoltField> {
+    pub row: usize,
+    pub col: u8,
+    pub prev_val: u64,
+    pub next_val: u64,
+    pub val: F,
+    pub ra: F,
+    pub wa: F,
+}
+
+#[cfg(feature = "metal")]
+impl<F: JoltField> ReadWriteKernel<F> {
+    /// Resume the optimized kernel from a partially cycle-bound device state.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the complete mid-flight state maps directly onto kernel fields"
+    )]
+    pub(crate) fn from_partial_cycle_state(
+        log_t: usize,
+        log_k: usize,
+        entries: Vec<RegistersRwCycleEntry<F>>,
+        gruen: GruenSplitEqPolynomial<F>,
+        inc: Polynomial<F>,
+        rs1_indices: Vec<Option<u8>>,
+        rs2_indices: Vec<Option<u8>>,
+        bound_challenges: Vec<F>,
+        rounds_bound: usize,
+    ) -> Self {
+        debug_assert_eq!(bound_challenges.len(), rounds_bound);
+        let mut challenges = RoundChallenges::new(log_t + log_k);
+        for challenge in bound_challenges {
+            challenges.push(challenge);
+        }
+        Self {
+            log_t,
+            log_k,
+            entries: SparseEntries::Direct(
+                entries
+                    .into_iter()
+                    .map(|entry| {
+                        debug_assert!(u32::try_from(entry.row).is_ok());
+                        SparseEntry {
+                            val: entry.val,
+                            prev_val: entry.prev_val,
+                            next_val: entry.next_val,
+                            row: entry.row as u32,
+                            ra: entry.ra,
+                            wa: entry.wa,
+                            col: entry.col,
+                        }
+                    })
+                    .collect(),
+            ),
+            gruen,
+            inc,
+            ra: Vec::new(),
+            wa: Vec::new(),
+            val: Vec::new(),
+            eq_scalar: F::zero(),
+            inc_scalar: F::zero(),
+            rs1_indices,
+            rs2_indices,
+            challenges,
+        }
+    }
+
+    /// Resume the optimized kernel from an exactly cycle-bound device state.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the complete cycle-bound state maps directly onto kernel fields"
+    )]
+    pub(crate) fn from_cycle_state(
+        log_t: usize,
+        log_k: usize,
+        entries: Vec<BoundRegistersRwEntry<F>>,
+        gruen: GruenSplitEqPolynomial<F>,
+        inc_scalar: F,
+        rs1_indices: Vec<Option<u8>>,
+        rs2_indices: Vec<Option<u8>>,
+        bound_challenges: Vec<F>,
+    ) -> Self {
+        debug_assert_eq!(bound_challenges.len(), log_t);
+        let mut challenges = RoundChallenges::new(log_t + log_k);
+        for challenge in bound_challenges {
+            challenges.push(challenge);
+        }
+        let k = 1usize << log_k;
+        let mut ra = vec![F::zero(); k];
+        let mut wa = vec![F::zero(); k];
+        let mut val = vec![F::zero(); k];
+        for entry in entries {
+            ra[entry.col as usize] = entry.ra;
+            wa[entry.col as usize] = entry.wa;
+            val[entry.col as usize] = entry.val;
+        }
+        let eq_scalar = gruen.current_scalar();
+        Self {
+            log_t,
+            log_k,
+            entries: SparseEntries::Direct(Vec::new()),
+            gruen,
+            inc: Polynomial::new(vec![inc_scalar]),
+            ra,
+            wa,
+            val,
+            eq_scalar,
+            inc_scalar,
+            rs1_indices,
+            rs2_indices,
+            challenges,
+        }
+    }
 }
 
 /// Bind one cycle variable of the sparse matrix in place: merge every

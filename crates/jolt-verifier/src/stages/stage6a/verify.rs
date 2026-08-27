@@ -57,6 +57,7 @@ where
         committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
         committed_program: checked.precommitted.bytecode.is_some(),
         entry_bytecode_index,
+        booleanity_anchor: proof.protocol.booleanity_anchor,
         stage1_cycle_binding: &stage1_cycle_binding,
         stage2_points: stage2.batch_output_points(),
         stage3_points: stage3.output_points(),

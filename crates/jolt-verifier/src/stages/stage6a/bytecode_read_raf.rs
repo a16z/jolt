@@ -72,6 +72,31 @@ impl<F: JoltField> BytecodeStagePoints<F> {
 /// paths. The BlindFold ZK input derivation (`crate::stages::zk::blindfold`)
 /// assembles its own legs from the committed consistency points and does not
 /// route through this helper.
+/// The first four stage cycle points — everything the address-phase
+/// pushforwards need that exists before stage 5 finishes. Single-sourced with
+/// [`bytecode_stage_points`] so the prover's early background walk and the
+/// relation can never disagree on a point.
+pub fn bytecode_early_stage_points<F: JoltField>(
+    stage1_cycle_binding: &[F],
+    stage2: &Stage2BatchOutputPoints<F>,
+    stage3: &Stage3OutputPoints<F>,
+    stage4: &Stage4OutputPoints<F>,
+) -> Result<[Vec<F>; 4], VerifierError> {
+    let register_read_write_point = stage4.registers_read_write_point();
+    let (_, register_read_write_cycle) = stage6_checked_split(
+        "Stage 6 stage4 register read-write opening",
+        register_read_write_point,
+        REGISTER_ADDRESS_BITS,
+        JoltRelationId::BytecodeReadRaf,
+    )?;
+    Ok([
+        stage1_cycle_binding.iter().rev().copied().collect(),
+        stage2.product_remainder_point().to_vec(),
+        stage3.shift_opening_point().to_vec(),
+        register_read_write_cycle.to_vec(),
+    ])
+}
+
 pub fn bytecode_stage_points<F: JoltField>(
     stage1_cycle_binding: &[F],
     stage2: &Stage2BatchOutputPoints<F>,
@@ -81,23 +106,21 @@ pub fn bytecode_stage_points<F: JoltField>(
 ) -> Result<BytecodeStagePoints<F>, VerifierError> {
     let register_read_write_point = stage4.registers_read_write_point().to_vec();
     let register_val_evaluation_point = stage5.registers_opening_point().to_vec();
-    let (_, register_read_write_cycle) = stage6_checked_split(
-        "Stage 6 stage4 register read-write opening",
-        &register_read_write_point,
-        REGISTER_ADDRESS_BITS,
-        JoltRelationId::BytecodeReadRaf,
-    )?;
     let (_, register_val_evaluation_cycle) = stage6_checked_split(
         "Stage 6 stage5 register value-evaluation opening",
         &register_val_evaluation_point,
         REGISTER_ADDRESS_BITS,
         JoltRelationId::BytecodeReadRaf,
     )?;
+    let [point1, point2, point3, point4] =
+        bytecode_early_stage_points(stage1_cycle_binding, stage2, stage3, stage4)?;
+    #[cfg(feature = "akita")]
+    let register_read_write_cycle = point4.clone();
     let stage_cycle_points = [
-        stage1_cycle_binding.iter().rev().copied().collect(),
-        stage2.product_remainder_point().to_vec(),
-        stage3.shift_opening_point().to_vec(),
-        register_read_write_cycle.to_vec(),
+        point1,
+        point2,
+        point3,
+        point4,
         register_val_evaluation_cycle.to_vec(),
     ];
     #[cfg(not(feature = "akita"))]
@@ -131,7 +154,7 @@ pub fn bytecode_stage_points<F: JoltField>(
                 "Stage 6 RAM value-check inc opening",
                 stage4.ram_val_check.ram_inc(),
             )?,
-            register_read_write_cycle.to_vec(),
+            register_read_write_cycle,
             register_val_evaluation_cycle.to_vec(),
         ]
     };

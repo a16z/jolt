@@ -1758,6 +1758,7 @@ impl AkitaPackedProver<'_> {
             protocol: JoltProtocolConfig {
                 zk: ZkConfig::Transparent,
                 commitment: CommitmentConfig::Packed,
+                booleanity_anchor: jolt_verifier::config::BooleanityAnchor::Stage5Instruction,
                 scalar_challenge_endianness: ScalarChallengeEndianness::Little,
             },
             commitments: commitment,

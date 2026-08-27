@@ -112,6 +112,73 @@ pub fn peak_rss_bytes() -> Option<u64> {
     None
 }
 
+/// The kernel's memory-ledger view of the process, from
+/// `proc_pid_rusage(RUSAGE_INFO_V4)`.
+///
+/// `phys_footprint` is what macOS actually bills the process (anonymous
+/// dirty + compressed + IOKit/Metal wired mappings) and what the jetsam
+/// limit acts on; RSS over-counts resident-but-clean file pages and
+/// under-counts compressed ones, so the two diverge exactly in the
+/// GPU-heavy runs where memory matters. Both fields are kernel-maintained:
+/// `lifetime_peak` cannot miss short spikes.
+#[derive(Clone, Copy, Debug)]
+pub struct PhysFootprint {
+    pub current_bytes: u64,
+    pub lifetime_peak_bytes: u64,
+}
+
+/// Sample the process's physical footprint (current + lifetime peak).
+/// Returns `None` off macOS or if the syscall fails.
+#[cfg(target_os = "macos")]
+pub fn phys_footprint() -> Option<PhysFootprint> {
+    // `struct rusage_info_v4` from <sys/resource.h>: 16 UUID bytes then 35
+    // u64 ledger fields. Declared locally (libSystem exports the symbol;
+    // the layout is ABI-stable — flavors are versioned by definition).
+    #[repr(C)]
+    struct RusageInfoV4 {
+        ri_uuid: [u8; 16],
+        ri_fields: [u64; 35],
+    }
+    /// `ri_phys_footprint` / `ri_lifetime_max_phys_footprint` zero-based
+    /// positions in the post-UUID u64 ledger, pinned by the
+    /// `footprint_tracks_dirty_memory` test against a known allocation.
+    const PHYS_FOOTPRINT: usize = 7;
+    const LIFETIME_MAX_PHYS_FOOTPRINT: usize = 28;
+    const RUSAGE_INFO_V4: libc::c_int = 4;
+    extern "C" {
+        fn proc_pid_rusage(
+            pid: libc::c_int,
+            flavor: libc::c_int,
+            buffer: *mut libc::c_void,
+        ) -> libc::c_int;
+    }
+    let mut info = std::mem::MaybeUninit::<RusageInfoV4>::zeroed();
+    // SAFETY: RUSAGE_INFO_V4 fills exactly a `rusage_info_v4`, and the
+    // buffer is sized as one; the call writes nothing on failure.
+    let ok = unsafe {
+        proc_pid_rusage(
+            std::process::id() as libc::c_int,
+            RUSAGE_INFO_V4,
+            info.as_mut_ptr().cast(),
+        )
+    } == 0;
+    if !ok {
+        return None;
+    }
+    // SAFETY: zeroed + fully written by the successful call above.
+    let info = unsafe { info.assume_init() };
+    Some(PhysFootprint {
+        current_bytes: info.ri_fields[PHYS_FOOTPRINT],
+        lifetime_peak_bytes: info.ri_fields[LIFETIME_MAX_PHYS_FOOTPRINT],
+    })
+}
+
+/// Physical footprint is a macOS ledger; `None` elsewhere.
+#[cfg(not(target_os = "macos"))]
+pub fn phys_footprint() -> Option<PhysFootprint> {
+    None
+}
+
 /// Logs the current physical memory usage at the point of call.
 pub fn print_current_memory_usage(label: &str) {
     if tracing::enabled!(tracing::Level::DEBUG) {
@@ -132,6 +199,26 @@ pub fn print_current_memory_usage(label: &str) {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// Pins the `rusage_info_v4` ledger offsets: dirtying 256 MiB must move
+    /// `phys_footprint` by roughly that much (and never move it by garbage),
+    /// and the lifetime peak must dominate the current value.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn footprint_tracks_dirty_memory() {
+        const DIRTY: usize = 256 << 20;
+        let before = phys_footprint().unwrap();
+        let block = vec![1u8; DIRTY];
+        let after = phys_footprint().unwrap();
+        assert!(after.lifetime_peak_bytes >= after.current_bytes);
+        let grown = after.current_bytes.saturating_sub(before.current_bytes);
+        assert!(
+            grown > (DIRTY / 2) as u64 && grown < (4 * DIRTY) as u64,
+            "footprint delta {grown} not in range for a {DIRTY}-byte dirty block \
+             (ledger offsets wrong?)"
+        );
+        drop(block);
+    }
 
     #[test]
     fn memory_span_start_end_records_delta() {

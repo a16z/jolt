@@ -41,6 +41,53 @@ use crate::{
 /// Slot front for the stage-6b RAM Hamming-weight booleanity member.
 pub struct OptimizedRamHammingBooleanity;
 
+/// The dense Hamming indicator and split-eq point of the booleanity summand,
+/// as built by [`build_hamming_booleanity_inputs`] — shared between the
+/// optimized kernel and its Metal twin.
+pub(crate) struct HammingBooleanityInputs<F> {
+    pub(crate) rounds: usize,
+    pub(crate) hamming: Vec<F>,
+    /// Big-endian eq point (the stage-1 binding reversed).
+    pub(crate) eq_point: Vec<F>,
+}
+
+pub(crate) fn build_hamming_booleanity_inputs<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: &ProverInputs<'_, F, RamHammingBooleanity<F>>,
+) -> Result<HammingBooleanityInputs<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let trace_dimensions = relation.trace_dimensions();
+    let stage1_cycle_binding = relation.stage1_cycle_binding();
+    if stage1_cycle_binding.len() != trace_dimensions.log_t() {
+        return Err(KernelError::InvariantViolation {
+            reason: "stage-1 cycle binding has the wrong variable count",
+        });
+    }
+    // The Hamming indicator is cycle-indexed and dense — `oracle_table`
+    // is the right access here (no one-hot grid behind it).
+    let opening = ram_hamming_weight();
+    let hamming = witness.oracle_table(opening.polynomial_id())?;
+    let cycles = 1usize << trace_dimensions.log_t();
+    if hamming.len() != cycles {
+        return Err(KernelError::TableSizeMismatch {
+            table: format!("{opening:?}"),
+            expected: cycles,
+            got: hamming.len(),
+        });
+    }
+    // The verifier's `derive_output_term` pairs the raw sumcheck point
+    // against the stage-1 binding positionally, so the eq table's
+    // big-endian point is the binding reversed — same orientation as the
+    // reference's derived table.
+    let eq_point: Vec<F> = stage1_cycle_binding.iter().rev().copied().collect();
+
+    Ok(HammingBooleanityInputs {
+        rounds: relation.rounds(),
+        hamming,
+        eq_point,
+    })
+}
+
 impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHammingBooleanity {
     fn prepare(
         &self,
@@ -49,36 +96,11 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
         inputs: ProverInputs<'_, F, RamHammingBooleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>>
     {
-        let relation = inputs.relation;
-        let trace_dimensions = relation.trace_dimensions();
-        let stage1_cycle_binding = relation.stage1_cycle_binding();
-        if stage1_cycle_binding.len() != trace_dimensions.log_t() {
-            return Err(KernelError::InvariantViolation {
-                reason: "stage-1 cycle binding has the wrong variable count",
-            });
-        }
-        // The Hamming indicator is cycle-indexed and dense — `oracle_table`
-        // is the right access here (no one-hot grid behind it).
-        let opening = ram_hamming_weight();
-        let hamming = witness.oracle_table(opening.polynomial_id())?;
-        let cycles = 1usize << trace_dimensions.log_t();
-        if hamming.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{opening:?}"),
-                expected: cycles,
-                got: hamming.len(),
-            });
-        }
-        // The verifier's `derive_output_term` pairs the raw sumcheck point
-        // against the stage-1 binding positionally, so the eq table's
-        // big-endian point is the binding reversed — same orientation as the
-        // reference's derived table.
-        let eq_point: Vec<F> = stage1_cycle_binding.iter().rev().copied().collect();
-
+        let built = build_hamming_booleanity_inputs(witness, &inputs)?;
         Ok(Box::new(OptimizedRamHammingBooleanityKernel {
-            progress: RoundProgress::new(relation.rounds()),
-            eq: GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh),
-            hamming: Polynomial::new(hamming),
+            progress: RoundProgress::new(built.rounds),
+            eq: GruenSplitEqPolynomial::new(&built.eq_point, BindingOrder::LowToHigh),
+            hamming: Polynomial::new(built.hamming),
         }))
     }
 }

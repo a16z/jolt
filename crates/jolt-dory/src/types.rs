@@ -104,8 +104,22 @@ impl<'de> Deserialize<'de> for DoryProof {
     }
 }
 
+/// Affine view of the full setup `g1_vec`, shared by every proof over one
+/// setup. Empty when `JOLT_DORY_SETUP_PREP=0`.
+pub(crate) type AffineG1Table = std::sync::Arc<Vec<ark_bn254::G1Affine>>;
+
+/// The prover SRS plus its prove-path tables — the Miller-prepared G2 table
+/// and the affine G1 bases — built eagerly by `DoryScheme::setup_prover`
+/// (both empty under `JOLT_DORY_SETUP_PREP=0`). Owning the tables on the
+/// setup object — one setup = one URS — makes prefix-borrowing sound by
+/// construction, unlike dory-pcs's global prepared-point cache (see
+/// `DoryScheme::setup_prover`).
 #[derive(Clone)]
-pub struct DoryProverSetup(pub ArkworksProverSetup);
+pub struct DoryProverSetup(
+    pub ArkworksProverSetup,
+    pub(crate) crate::tier2::PreparedG2Table,
+    pub(crate) AffineG1Table,
+);
 
 #[derive(Clone)]
 pub struct DoryVerifierSetup(pub ArkworksVerifierSetup);
@@ -126,14 +140,18 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
     }
 }
 
+/// Commit-time auxiliary data reused when opening: the tier-1 row
+/// commitments and the tier-2 blind. Fields are public for the
+/// `combine_hints` device hook (`hint_hook`), which recombines rows outside
+/// this crate.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DoryHint {
-    pub(crate) row_commitments: Vec<Bn254G1>,
-    pub(crate) commit_blind: Fr,
+    pub row_commitments: Vec<Bn254G1>,
+    pub commit_blind: Fr,
 }
 
 impl DoryHint {
-    pub(crate) fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
+    pub fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
         Self {
             row_commitments,
             commit_blind,

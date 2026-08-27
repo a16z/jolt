@@ -34,7 +34,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
@@ -50,58 +50,99 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let log_t = dimensions.log_t();
-        let ram_reduced_address = relation.ram_reduced_address();
-        let committed_chunk_bits = relation.committed_chunk_bits();
-        let chunks = committed_address_chunks(ram_reduced_address, committed_chunk_bits);
-        let num_committed = dimensions.num_committed_ra_polys();
-        if chunks.len() != num_committed {
-            return Err(KernelError::InvariantViolation {
-                reason: "RAM address chunk count disagrees with the committed RA count",
-            });
-        }
-        if committed_chunk_bits == 0 || committed_chunk_bits > 32 {
-            return Err(KernelError::Unsupported {
-                reason: "committed RAM RA chunk width outside the supported one-hot range",
-            });
-        }
-        let ram_reduced_cycle = relation.ram_reduced_cycle();
-        if ram_reduced_cycle.len() != log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: "RAM RA reduced cycle point".to_owned(),
-                expected: log_t,
-                got: ram_reduced_cycle.len(),
-            });
-        }
-
-        let columns = RamAccessColumns::shared(session, witness, log_t)?;
-        // This is the RAM family's last consumer: remove the session's copy
-        // so the columns free at the lazy fold's materialization instead of
-        // living to the end of the proof.
-        let _ = session.take::<Arc<RamAccessColumns>>();
-        columns.validate_addresses(1usize << ram_reduced_address.len())?;
-
-        // One eq table per committed chunk point (each `2^w` entries); the
-        // point-mass fold stays lazy — one table lookup per accessed cycle —
-        // instead of materializing `N × T` dense selectors up front.
-        let chunk_tables: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
-        let folded_ra = LazyFoldedRa::new(
-            chunk_tables,
-            RamAddressChunks {
-                columns,
-                num_committed,
-                committed_chunk_bits,
-            },
-        );
-
-        Ok(Box::new(RamRaVirtualizationKernel {
-            progress: RoundProgress::new(log_t),
-            folded_ra,
-            gruen: GruenSplitEqPolynomial::new(ram_reduced_cycle, BindingOrder::LowToHigh),
-        }))
+        prepare_ram_ra_virtualization(session, witness, inputs, |_| None)
     }
+}
+
+/// What a device-driver factory sees at prepare time: enough geometry to
+/// gate, plus the session/witness to fetch its own row source (the CPU
+/// kernel's [`RamAccessColumns`] stay host-side either way).
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal driver factory")
+)]
+pub(crate) struct RamRaVirtualizationDeviceInputs<'a, F: JoltField> {
+    pub(crate) session: &'a mut ProofSession,
+    pub(crate) witness: &'a dyn JoltWitnessPlane<F>,
+    pub(crate) log_t: usize,
+    pub(crate) num_committed: usize,
+    pub(crate) committed_chunk_bits: usize,
+}
+
+/// The optimized RAM RA virtualization prepare with a device-driver seam:
+/// the driver (when the factory yields one) substitutes the round-message
+/// mass through [`LazyFoldedRa`]; binds, the CPU gather paths, and claim
+/// assembly stay in this kernel. Lane contract as the instruction twin:
+/// `[q(1), …, q(N−1), q(∞)]` over the single `N = num_committed` product
+/// group — factories must decline `num_committed < 2` (the grid recovery
+/// needs it).
+pub(crate) fn prepare_ram_ra_virtualization<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
+    driver: impl FnOnce(RamRaVirtualizationDeviceInputs<'_, F>) -> Option<Box<dyn LazyRaDevice<F>>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let log_t = dimensions.log_t();
+    let ram_reduced_address = relation.ram_reduced_address();
+    let committed_chunk_bits = relation.committed_chunk_bits();
+    let chunks = committed_address_chunks(ram_reduced_address, committed_chunk_bits);
+    let num_committed = dimensions.num_committed_ra_polys();
+    if chunks.len() != num_committed {
+        return Err(KernelError::InvariantViolation {
+            reason: "RAM address chunk count disagrees with the committed RA count",
+        });
+    }
+    if committed_chunk_bits == 0 || committed_chunk_bits > 32 {
+        return Err(KernelError::Unsupported {
+            reason: "committed RAM RA chunk width outside the supported one-hot range",
+        });
+    }
+    let ram_reduced_cycle = relation.ram_reduced_cycle();
+    if ram_reduced_cycle.len() != log_t {
+        return Err(KernelError::TableSizeMismatch {
+            table: "RAM RA reduced cycle point".to_owned(),
+            expected: log_t,
+            got: ram_reduced_cycle.len(),
+        });
+    }
+
+    let driver = driver(RamRaVirtualizationDeviceInputs {
+        session,
+        witness,
+        log_t,
+        num_committed,
+        committed_chunk_bits,
+    });
+
+    let columns = RamAccessColumns::shared(session, witness, log_t)?;
+    // This is the RAM family's last consumer: remove the session's copy
+    // so the columns free at the lazy fold's materialization instead of
+    // living to the end of the proof.
+    let _ = session.take::<Arc<RamAccessColumns>>();
+    columns.validate_addresses(1usize << ram_reduced_address.len())?;
+
+    // One eq table per committed chunk point (each `2^w` entries); the
+    // point-mass fold stays lazy — one table lookup per accessed cycle —
+    // instead of materializing `N × T` dense selectors up front.
+    let chunk_tables: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
+    let folded_ra = LazyFoldedRa::new_with_driver(
+        chunk_tables,
+        RamAddressChunks {
+            columns,
+            num_committed,
+            committed_chunk_bits,
+        },
+        driver,
+    );
+
+    Ok(Box::new(RamRaVirtualizationKernel {
+        progress: RoundProgress::new(log_t),
+        folded_ra,
+        gruen: GruenSplitEqPolynomial::new(ram_reduced_cycle, BindingOrder::LowToHigh),
+        launched: false,
+    }))
 }
 
 /// Lazy-RA index source: chunk `i` of the per-cycle remapped RAM address,
@@ -147,13 +188,16 @@ struct RamRaVirtualizationKernel<F: JoltField> {
     /// binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
+    /// A `begin_round` device launch is in flight (its `collect_round`
+    /// pending).
+    launched: bool,
 }
 
 impl<F: JoltField> RamRaVirtualizationKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
     /// `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`.
     fn message(
-        &self,
+        &mut self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
@@ -161,6 +205,22 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
 
+        // Device tier first (lazy scan or fused dense round); a decline has
+        // already normalized the state for the CPU path below. The device
+        // emits the `[q(1), …, q(N−1), q(∞)]` grid, whose recomposition is
+        // the same unique coefficient vector `from_evals` interpolates —
+        // installers keep `N ≥ 2` (the grid recovery needs it).
+        if num_committed >= 2 {
+            if let Some(lanes) = self
+                .folded_ra
+                .device_lanes(self.gruen.e_in_current(), self.gruen.e_out_current())
+            {
+                debug_assert_eq!(lanes.len(), num_committed);
+                return Ok(self.gruen.gruen_poly_from_evals(&lanes, previous_claim));
+            }
+        }
+
+        let folded_ra = &self.folded_ra;
         let mut q_evals = self.gruen.par_fold_out_in(
             || {
                 (
@@ -177,7 +237,7 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                     return;
                 }
                 for position in 0..num_committed {
-                    let (lo, hi) = self.folded_ra.lo_hi(position, row);
+                    let (lo, hi) = folded_ra.lo_hi(position, row);
                     evals[position] = lo;
                     steps[position] = hi - lo;
                 }
@@ -238,6 +298,49 @@ impl<F: JoltField> ProveRounds<F> for RamRaVirtualizationKernel<F> {
         self.bind(bind);
         Ok(())
     }
+
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        // A prepare-time prelaunched round 0 (only round 0 arrives bindless)
+        // is already in flight: report launched without re-launching.
+        if bind.is_none() && self.launched {
+            return Ok(true);
+        }
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
+        // The grid recovery needs `N ≥ 2`, exactly as in `message`.
+        if self.folded_ra.num_polys() < 2 {
+            return Ok(false);
+        }
+        self.launched = self
+            .folded_ra
+            .launch_device_lanes(self.gruen.e_in_current(), self.gruen.e_out_current());
+        Ok(self.launched)
+    }
+
+    fn collect_round(
+        &mut self,
+        _bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if std::mem::take(&mut self.launched) {
+            if let Some(lanes) = self.folded_ra.collect_device_lanes() {
+                debug_assert_eq!(lanes.len(), self.folded_ra.num_polys());
+                return Ok(self.gruen.gruen_poly_from_evals(&lanes, previous_claim));
+            }
+            // Wait failure: the driver latched off and normalized state —
+            // fall through to the synchronous recompute of the SAME round.
+        }
+        // `begin_round` already bound, so recompute with no bind. The
+        // device tier inside declines (latched off or already reclaimed).
+        self.message(round, previous_claim)
+    }
 }
 
 impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
@@ -248,6 +351,9 @@ impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        // Device-resident tables (and any pending fold) come home before
+        // the direct value reads.
+        self.folded_ra.ensure_host();
         Ok(RamRaVirtualizationOutputClaims {
             ram_ra: self.folded_ra.final_values(),
         })

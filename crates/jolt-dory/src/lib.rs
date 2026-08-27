@@ -41,15 +41,30 @@
     clippy::wildcard_enum_match_arm
 )]
 
+mod hint_hook;
+mod host_tail;
 mod routines;
+mod routines_hook;
 mod scheme;
 mod streaming;
+mod tier2;
 mod transcript;
 mod types;
 #[cfg(not(target_arch = "wasm32"))]
 mod urs_lock;
 
+pub use hint_hook::{install_combine_hints_hook, CombineHintsFn, CombineHintsHookGuard};
+pub use host_tail::FastTail;
+pub use routines::{JoltG1Routines, JoltG2Routines};
+pub use routines_hook::{
+    install_routine_hooks, G1ScalarMulAddFn, G2FixedBaseMulFn, G2ScalarMulAddFn, RoutineHooks,
+    RoutineHooksGuard,
+};
 pub use scheme::DoryScheme;
+pub use tier2::{
+    multi_miller_affine, multi_miller_prepared_pairs, one_hot_output_from_rows, DoryTier2Prep,
+    Tier2Accumulator,
+};
 pub use types::{
     DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
 };

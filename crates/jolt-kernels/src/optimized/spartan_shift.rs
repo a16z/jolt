@@ -46,9 +46,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::support::{
-    bind_pairs, collect_rows, fmadd_u64_split, gamma_powers_array, pin_derived_term,
-    RoundChallenges,
+    bind_pairs, fmadd_u64_split, gamma_powers_array, pin_derived_term, RoundChallenges,
 };
+use super::trace_record::{RecordRows, RecordView, TraceRecord};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -70,12 +70,29 @@ struct SpartanShiftRow {
     is_noop: InstructionFlag,
 }
 
+impl RecordView for SpartanShiftRow {
+    #[inline]
+    fn from_record(record: &TraceRecord, t: usize) -> Self {
+        Self {
+            unexpanded_pc: UnexpandedPc(record.unexpanded_pc[t]),
+            pc: Pc(record.pc[t]),
+            is_virtual: OpFlag(record.circuit_flag(t, CircuitFlags::VirtualInstruction)),
+            is_first_in_sequence: OpFlag(record.circuit_flag(t, CircuitFlags::IsFirstInSequence)),
+            is_noop: InstructionFlag(record.instruction_flag(t, InstructionFlags::IsNoop)),
+        }
+    }
+}
+
+/// Row access for the shift kernel: the record's lanes in production, an
+/// empty collected vector after the dense transition frees them.
+type ShiftRows = RecordRows<SpartanShiftRow>;
+
 pub struct OptimizedSpartanShift;
 
 impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, SpartanShift<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = SpartanShift<F>>>, KernelError<F>> {
@@ -94,7 +111,12 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
             });
         }
         let cycles = 1usize << log_t;
-        let rows: Vec<SpartanShiftRow> = collect_rows(witness, cycles)?;
+        let rows = ShiftRows::Record(TraceRecord::shared(session, witness, log_t)?);
+        if rows.len() != cycles {
+            return Err(KernelError::InvariantViolation {
+                reason: "Spartan shift row count disagrees with log_t",
+            });
+        }
 
         let gamma_powers = gamma_powers_array(inputs.challenges.gamma);
 
@@ -127,7 +149,7 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
                     .enumerate()
                 {
                     let x_lo = block_index * BLOCK + i;
-                    let row = &rows[base + x_lo];
+                    let row = rows.row(base + x_lo);
                     let mut v =
                         F::from_u64(row.unexpanded_pc.0) + gamma_powers[1] * F::from_u64(row.pc.0);
                     if row.is_virtual.0 {
@@ -230,8 +252,8 @@ struct ShiftKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_product: Vec<F>,
     /// Raw per-cycle values, kept for the phase-2 regeneration.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-    rows: Vec<SpartanShiftRow>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: ShiftRows,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
@@ -247,13 +269,13 @@ impl<F: JoltField> ShiftKernel<F> {
         let chunk = eq_prefix.len();
         let remaining = 1usize << (self.log_t - bound);
 
-        let fold_chunk = |rows: &[SpartanShiftRow]| -> [F; 5] {
+        let fold_chunk = |chunk_index: usize| -> [F; 5] {
             let mut pc_folds = [F::SmallScalarAccumulator::default(); 2];
             let mut flag_folds = [F::zero(); 3];
-            for (row, (&eq, &eq_shifted)) in rows
-                .iter()
-                .zip(eq_prefix.iter().zip(eq_prefix_shifted.iter()))
+            for (offset, (&eq, &eq_shifted)) in
+                eq_prefix.iter().zip(eq_prefix_shifted.iter()).enumerate()
             {
+                let row = self.rows.row(chunk_index * chunk + offset);
                 fmadd_u64_split(&mut pc_folds[0], eq, eq_shifted, row.unexpanded_pc.0);
                 fmadd_u64_split(&mut pc_folds[1], eq, eq_shifted, row.pc.0);
                 if row.is_virtual.0 {
@@ -275,13 +297,13 @@ impl<F: JoltField> ShiftKernel<F> {
             ]
         };
         #[cfg(feature = "parallel")]
-        let folds: Vec<[F; 5]> = self.rows.par_chunks(chunk).map(fold_chunk).collect();
+        let folds: Vec<[F; 5]> = (0..remaining).into_par_iter().map(fold_chunk).collect();
         #[cfg(not(feature = "parallel"))]
-        let folds: Vec<[F; 5]> = self.rows.chunks(chunk).map(fold_chunk).collect();
+        let folds: Vec<[F; 5]> = (0..remaining).map(fold_chunk).collect();
         debug_assert_eq!(folds.len(), remaining);
 
         // The raw values only feed this regeneration; free them now.
-        self.rows = Vec::new();
+        self.rows = ShiftRows::Collected(Vec::new());
 
         let recombine = |point: &[F]| -> Vec<F> {
             let split = EqPlusOnePrefixSuffix::new(point);

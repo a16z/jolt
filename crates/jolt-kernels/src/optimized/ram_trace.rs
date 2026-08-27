@@ -32,7 +32,7 @@ struct RamAccessBundle {
 }
 
 #[derive(Clone, Copy)]
-enum AddressEncodingError {
+pub(crate) enum AddressEncodingError {
     TooLarge,
     SentinelCollision,
 }
@@ -49,7 +49,7 @@ impl AddressEncodingError {
     }
 }
 
-fn encode_address(address: Option<u64>) -> Result<u32, AddressEncodingError> {
+pub(crate) fn encode_address(address: Option<u64>) -> Result<u32, AddressEncodingError> {
     let Some(address) = address else {
         return Ok(NO_ACCESS);
     };
@@ -106,6 +106,30 @@ pub(crate) struct RamAccessValues {
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
     pub post_values: Vec<u64>,
+}
+
+impl RamAccessValues {
+    /// The per-cycle increment column `post - pre` (RamInc semantics): the
+    /// pre/post values are remap-independent, matching the oracle walk on
+    /// every cycle including unremappable-address writes.
+    pub fn inc_column<F: JoltField>(&self) -> Vec<F> {
+        let inc = |(&post, &pre): (&u64, &u64)| F::from_i128(i128::from(post) - i128::from(pre));
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            self.post_values
+                .par_iter()
+                .zip(&self.pre_values[..])
+                .map(inc)
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        self.post_values
+            .iter()
+            .zip(&self.pre_values[..])
+            .map(inc)
+            .collect()
+    }
 }
 
 impl RamAccessColumns {
@@ -222,7 +246,7 @@ impl RamAccessColumns {
             let (columns, values) = Self::collect(witness, log_t)?;
             let columns = Arc::new(columns);
             session.park(columns);
-            session.park(values);
+            session.park(Arc::new(values));
         }
         let columns = Arc::clone(
             session
@@ -245,13 +269,14 @@ impl RamAccessColumns {
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
-    ) -> Result<(Arc<Self>, RamAccessValues), KernelError<F>> {
+    ) -> Result<(Arc<Self>, Arc<RamAccessValues>), KernelError<F>> {
         let columns = Self::shared(session, witness, log_t)?;
-        let values = session
-            .take::<RamAccessValues>()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "RAM access value columns were already consumed",
-            })?;
+        let values =
+            session
+                .take::<Arc<RamAccessValues>>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "RAM access value columns were already consumed",
+                })?;
         Ok((columns, values))
     }
 

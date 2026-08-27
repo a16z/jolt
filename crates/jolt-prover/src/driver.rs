@@ -164,6 +164,30 @@ where
         let _guard = (self.finish_span)().entered();
         self.inner.finish_rounds(bind)
     }
+
+    // The two-phase round methods must forward — falling back to their
+    // defaults here would silently pin every wrapped kernel to the
+    // synchronous path (and the default `collect_round` would redo a
+    // begun round). Both phases share the member's `prove_round` span.
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        let _guard = (self.round_span)().entered();
+        self.inner.begin_round(bind, round, previous_claim)
+    }
+
+    fn collect_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let _guard = (self.round_span)().entered();
+        self.inner.collect_round(bind, round, previous_claim)
+    }
 }
 
 /// One heap snapshot per driver batch, taken right after `prepare_members`

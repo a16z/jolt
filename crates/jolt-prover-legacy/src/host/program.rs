@@ -23,6 +23,30 @@ use tracer::instruction::Cycle;
 use tracer::LazyTraceIterator;
 use tracing::info;
 
+/// Takes an exclusive advisory lock on `<guest_target_dir>.lock`, serializing
+/// the guest build-and-read critical section across processes. Even a fully
+/// warm `jolt build` re-uplifts the final artifact (unlink + hardlink from the
+/// deps copy), so a parallel test process reading the shared
+/// `/tmp/jolt-guest-targets` path can catch the file mid-replacement.
+/// The lock releases when the returned handle drops (or the process dies).
+///
+/// Best-effort: if the lock file cannot be created, the build proceeds
+/// unlocked (same as before the lock existed).
+fn lock_guest_target(guest_target_dir: &str) -> Option<File> {
+    let lock_path = PathBuf::from(format!("{guest_target_dir}.lock"));
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent).ok()?;
+    }
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(lock_path)
+        .ok()?;
+    lock_file.lock().ok()?;
+    Some(lock_file)
+}
+
 impl Program {
     pub fn new(guest: &str) -> Self {
         Self {
@@ -41,6 +65,8 @@ impl Program {
             backtrace: Some("off".to_string()), // Default to off for minimal size
             elf: None,
             elf_compute_advice: None,
+            elf_contents: None,
+            elf_compute_advice_contents: None,
         }
     }
 
@@ -180,6 +206,11 @@ impl Program {
                 )
             };
 
+            // Held through the cargo build, the exists check, and the ELF
+            // read below: a sibling process building the same guest unlinks
+            // and re-links the artifact even when nothing changed.
+            let _target_lock = lock_guest_target(&guest_target_dir);
+
             // Add separator for cargo passthrough args
             args.push("--".to_string());
 
@@ -259,6 +290,9 @@ impl Program {
                 );
             }
 
+            let elf_contents = std::fs::read(&elf_path)
+                .unwrap_or_else(|e| panic!("could not read elf file {elf_path:?}: {e}"));
+
             // If extra_features contains "compute_advice", store in elf_compute_advice
             // Otherwise store in elf
             if cargo_features
@@ -266,15 +300,23 @@ impl Program {
                 .any(|feature| feature == "compute_advice")
             {
                 self.elf_compute_advice = Some(elf_path.clone());
+                self.elf_compute_advice_contents = Some(elf_contents);
                 info!("Built compute_advice guest binary: {}", elf_path.display());
             } else {
                 self.elf = Some(elf_path.clone());
+                self.elf_contents = Some(elf_contents);
                 info!("Built guest binary with jolt: {}", elf_path.display());
             }
         }
     }
 
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
+        // The build-time copy, not the shared on-disk artifact: sibling
+        // processes replace the file at any time. The path fallback serves
+        // externally assigned `elf` paths only.
+        if let Some(contents) = &self.elf_contents {
+            return Some(contents.clone());
+        }
         if let Some(elf) = &self.elf {
             let mut elf_file =
                 File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
@@ -287,6 +329,9 @@ impl Program {
     }
 
     pub fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
+        if let Some(contents) = &self.elf_compute_advice_contents {
+            return Some(contents.clone());
+        }
         if let Some(elf) = &self.elf_compute_advice {
             let mut elf_file =
                 File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
@@ -351,11 +396,9 @@ impl Program {
         trusted_advice: &[u8],
     ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
-        let elf = self.elf.as_ref().unwrap();
-        let mut elf_file =
-            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
-        let mut elf_contents = Vec::new();
-        elf_file.read_to_end(&mut elf_contents).unwrap();
+        let elf_contents = self
+            .get_elf_contents()
+            .expect("ELF contents should be available after building the guest");
         let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
             .expect("program ELF decoding failed");
         let memory_config =
@@ -415,11 +458,9 @@ impl Program {
         trace_file: &PathBuf,
     ) -> (Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
-        let elf = self.elf.as_ref().unwrap();
-        let mut elf_file =
-            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
-        let mut elf_contents = Vec::new();
-        elf_file.read_to_end(&mut elf_contents).unwrap();
+        let elf_contents = self
+            .get_elf_contents()
+            .expect("ELF contents should be available after building the guest");
         let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
             .expect("program ELF decoding failed");
         let memory_config =

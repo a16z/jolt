@@ -26,6 +26,48 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
 };
 
+/// The two `K`-sized round tables of the RAF summand
+/// `unmap(k) · ra_folded(k)`, as built by [`build_raf_tables`] — shared
+/// between the optimized kernel and its Metal twin. (Rounds = the relation's
+/// `ram_log_k`, validated here.)
+pub(crate) struct RafTables<F> {
+    pub(crate) ra_folded: Vec<F>,
+    pub(crate) unmap: Vec<F>,
+}
+
+pub(crate) fn build_raf_tables<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: &ProverInputs<'_, F, RamRafEvaluation<F>>,
+) -> Result<RafTables<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.read_write_dimensions();
+    let ram_log_k = relation.ram_log_k();
+    let lowest_address = relation.lowest_address();
+    let tau_low = relation.tau_low();
+    if dimensions.raf_evaluation_rounds() != ram_log_k {
+        return Err(KernelError::Unsupported {
+            reason: "optimized RAM RAF evaluation supports only the default read-write config \
+                     (phase 1 = all cycle rounds)",
+        });
+    }
+    if tau_low.len() != dimensions.log_t() {
+        return Err(KernelError::InvariantViolation {
+            reason: "RAM RAF evaluation tau_low disagrees with the trace geometry",
+        });
+    }
+
+    let addresses = 1usize << ram_log_k;
+    let columns = RamAccessColumns::shared(session, witness, dimensions.log_t())?;
+    columns.validate_addresses(addresses)?;
+    let ra_folded = columns.fold_cycles(&eq_table(tau_low), addresses);
+    let unmap: Vec<F> = (0..addresses as u64)
+        .map(|k| F::from_u64(8 * k + lowest_address))
+        .collect();
+
+    Ok(RafTables { ra_folded, unmap })
+}
+
 impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
     fn prepare(
         &self,
@@ -33,36 +75,12 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let dimensions = relation.read_write_dimensions();
-        let ram_log_k = relation.ram_log_k();
-        let lowest_address = relation.lowest_address();
-        let tau_low = relation.tau_low();
-        if dimensions.raf_evaluation_rounds() != ram_log_k {
-            return Err(KernelError::Unsupported {
-                reason: "optimized RAM RAF evaluation supports only the default read-write config \
-                         (phase 1 = all cycle rounds)",
-            });
-        }
-        if tau_low.len() != dimensions.log_t() {
-            return Err(KernelError::InvariantViolation {
-                reason: "RAM RAF evaluation tau_low disagrees with the trace geometry",
-            });
-        }
-
-        let addresses = 1usize << ram_log_k;
-        let columns = RamAccessColumns::shared(session, witness, dimensions.log_t())?;
-        columns.validate_addresses(addresses)?;
-        let ra_folded = columns.fold_cycles(&eq_table(tau_low), addresses);
-        let unmap: Vec<F> = (0..addresses as u64)
-            .map(|k| F::from_u64(8 * k + lowest_address))
-            .collect();
-
+        let tables = build_raf_tables(session, witness, &inputs)?;
         let opening_tables =
-            BTreeMap::from([(ram_ra_raf_evaluation(), Polynomial::new(ra_folded))]);
+            BTreeMap::from([(ram_ra_raf_evaluation(), Polynomial::new(tables.ra_folded))]);
         let derived_tables = BTreeMap::from([(
             JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress),
-            Polynomial::new(unmap),
+            Polynomial::new(tables.unmap),
         )]);
 
         Ok(Box::new(NaiveSumcheckProver::new(

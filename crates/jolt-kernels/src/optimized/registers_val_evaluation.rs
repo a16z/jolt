@@ -55,7 +55,7 @@ use crate::{
     derive(allocative::Allocative),
     allocative(bound = "F")
 )]
-enum WaState<F> {
+pub(crate) enum WaState<F> {
     Indices {
         rd: Vec<Option<u8>>,
         #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
@@ -116,6 +116,28 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
         inputs: ProverInputs<'_, F, RegistersValEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
     {
+        let parts = ValEvaluationParts::collect(session, witness, &inputs)?;
+        Ok(Box::new(ValEvaluationKernel::from_parts(parts)))
+    }
+}
+
+/// The kernel's prepared tables, shared with the Metal slot (which owns its
+/// device buffers but reuses this collection and falls back to
+/// [`ValEvaluationKernel`] on any device failure).
+pub(crate) struct ValEvaluationParts<F: JoltField> {
+    pub(crate) log_t: usize,
+    pub(crate) inc: IncSource<F>,
+    pub(crate) rd: Vec<Option<u8>>,
+    pub(crate) eq_address: Vec<F>,
+    pub(crate) lt: SplitLt<F>,
+}
+
+impl<F: JoltField> ValEvaluationParts<F> {
+    pub(crate) fn collect(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: &ProverInputs<'_, F, RegistersValEvaluation<F>>,
+    ) -> Result<Self, KernelError<F>> {
         let log_t = inputs.relation.trace_dimensions().log_t();
         if log_t == 0 {
             return Err(KernelError::Unsupported {
@@ -131,27 +153,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
         let (r_address, r_cycle) = registers_val_point.split_at(REGISTER_ADDRESS_BITS);
         let cycles = 1usize << log_t;
 
-        // Slice-backed sources defer the dense increment table to the
-        // member's first active round: the member is tail-aligned in the
-        // stage-5 batch, so a prepare-time table would co-inhabit the
-        // prover's peak moment (the instruction kernel's address/cycle
-        // handoff) doing nothing. Values are identical either way — the
-        // same extractor over the same rows.
-        let inc = match witness.random_access() {
-            Some(rows) if rows.cycles() == cycles => IncSource::Deferred(rows),
-            _ => {
-                let inc_table: Vec<F> =
-                    witness.oracle_table(rd_inc_val_evaluation().polynomial_id())?;
-                if inc_table.len() != cycles {
-                    return Err(KernelError::TableSizeMismatch {
-                        table: format!("{:?}", rd_inc_val_evaluation()),
-                        expected: cycles,
-                        got: inc_table.len(),
-                    });
-                }
-                IncSource::Ready(Polynomial::new(inc_table))
-            }
-        };
+        let inc = IncSource::collect(witness, cycles)?;
 
         // Reclaim the rd hot indices the stage-4 kernel parked; collect them
         // from the row source otherwise (reference-only stage 4, tests).
@@ -163,15 +165,13 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
                 .collect(),
         };
 
-        Ok(Box::new(ValEvaluationKernel {
-            progress: RoundProgress::new(log_t),
+        Ok(Self {
+            log_t,
             inc,
-            wa: WaState::Indices {
-                rd,
-                eq_address: EqPolynomial::<F>::evals(r_address, None),
-            },
+            rd,
+            eq_address: EqPolynomial::<F>::evals(r_address, None),
             lt: SplitLt::new(r_cycle),
-        }))
+        })
     }
 }
 
@@ -182,11 +182,76 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
     derive(allocative::Allocative),
     allocative(bound = "F: JoltField")
 )]
-enum IncSource<F: JoltField> {
+pub(crate) enum IncSource<F: JoltField> {
     /// The witness plane owns these rows; it reports them itself.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     Deferred(RandomAccessRows),
     Ready(Polynomial<F>),
+}
+
+impl<F: JoltField> IncSource<F> {
+    /// Slice-backed sources defer the dense increment table to the member's
+    /// first active round: the member is tail-aligned in the stage-5 batch,
+    /// so a prepare-time table would co-inhabit the prover's peak moment (the
+    /// instruction kernel's address/cycle handoff) doing nothing. Values are
+    /// identical either way — the same extractor over the same rows.
+    pub(crate) fn collect(
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Self, KernelError<F>> {
+        Ok(match witness.random_access() {
+            Some(rows) if rows.cycles() == cycles => Self::Deferred(rows),
+            _ => {
+                let inc_table: Vec<F> =
+                    witness.oracle_table(rd_inc_val_evaluation().polynomial_id())?;
+                if inc_table.len() != cycles {
+                    return Err(KernelError::TableSizeMismatch {
+                        table: format!("{:?}", rd_inc_val_evaluation()),
+                        expected: cycles,
+                        got: inc_table.len(),
+                    });
+                }
+                Self::Ready(Polynomial::new(inc_table))
+            }
+        })
+    }
+
+    /// Materialize the deferred increment table; a no-op once ready.
+    fn ensure(&mut self) -> Result<(), SumcheckError<F>> {
+        if let Self::Deferred(owned) = &*self {
+            let table: Vec<F> =
+                collect_par_map(owned, owned.cycles(), |row: RdIncRow| row.rd_inc.to_field())
+                    .map_err(|_| SumcheckError::MissingEvaluationSource {
+                        kind: "deferred registers increment table",
+                    })?;
+            *self = Self::Ready(Polynomial::new(table));
+        }
+        Ok(())
+    }
+
+    /// The dense table for device upload, materializing a deferred source and
+    /// leaving an empty slot behind (the Metal build re-collects on failure).
+    #[cfg(feature = "metal")]
+    pub(crate) fn take_table(&mut self) -> Result<Vec<F>, SumcheckError<F>> {
+        self.ensure()?;
+        match self {
+            Self::Ready(poly) => {
+                Ok(std::mem::replace(poly, Polynomial::new(Vec::new())).into_evals())
+            }
+            Self::Deferred(_) => Err(SumcheckError::MissingEvaluationSource {
+                kind: "deferred registers increment table",
+            }),
+        }
+    }
+
+    /// True once [`Self::take_table`] consumed the table.
+    #[cfg(feature = "metal")]
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            Self::Ready(poly) => poly.len() == 0,
+            Self::Deferred(_) => false,
+        }
+    }
 }
 
 /// The single-column bundle behind the deferred increment table.
@@ -200,24 +265,47 @@ struct RdIncRow {
     derive(allocative::Allocative),
     allocative(bound = "F: JoltField")
 )]
-struct ValEvaluationKernel<F: JoltField> {
+pub(crate) struct ValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncSource<F>,
     wa: WaState<F>,
     lt: SplitLt<F>,
 }
+
 impl<F: JoltField> ValEvaluationKernel<F> {
-    /// Materialize the deferred increment table; a no-op once ready.
-    fn ensure_inc(&mut self) -> Result<(), SumcheckError<F>> {
-        if let IncSource::Deferred(owned) = &self.inc {
-            let table: Vec<F> =
-                collect_par_map(owned, owned.cycles(), |row: RdIncRow| row.rd_inc.to_field())
-                    .map_err(|_| SumcheckError::MissingEvaluationSource {
-                        kind: "deferred registers increment table",
-                    })?;
-            self.inc = IncSource::Ready(Polynomial::new(table));
+    pub(crate) fn from_parts(parts: ValEvaluationParts<F>) -> Self {
+        Self {
+            progress: RoundProgress::new(parts.log_t),
+            inc: parts.inc,
+            wa: WaState::Indices {
+                rd: parts.rd,
+                eq_address: parts.eq_address,
+            },
+            lt: parts.lt,
         }
-        Ok(())
+    }
+
+    /// Resume mid-sumcheck from a device kernel's live state (unified-memory
+    /// slices copied out): `rounds_bound` challenges already folded into
+    /// every table.
+    #[cfg(feature = "metal")]
+    pub(crate) fn from_bound_state(
+        rounds: usize,
+        inc: Vec<F>,
+        wa: WaState<F>,
+        lt: SplitLt<F>,
+        rounds_bound: usize,
+    ) -> Self {
+        let mut progress = RoundProgress::new(rounds);
+        for _ in 0..rounds_bound {
+            progress.advance();
+        }
+        Self {
+            progress,
+            inc: IncSource::Ready(Polynomial::new(inc)),
+            wa,
+            lt,
+        }
     }
 }
 
@@ -232,7 +320,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
         _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        self.ensure_inc()?;
+        self.inc.ensure()?;
         if let Some(challenge) = bind {
             if let IncSource::Ready(inc) = &mut self.inc {
                 inc.bind_with_order(challenge, BindingOrder::LowToHigh);
@@ -260,7 +348,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.ensure_inc()?;
+        self.inc.ensure()?;
         if let IncSource::Ready(inc) = &mut self.inc {
             inc.bind_with_order(bind, BindingOrder::LowToHigh);
         }

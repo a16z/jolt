@@ -49,6 +49,12 @@ impl RaChunkSelector {
     pub const fn chunk_u128(self, value: u128) -> usize {
         ((value >> self.shift) & self.mask) as usize
     }
+
+    /// The chunk's bit offset within the address — for consumers that
+    /// re-express the selection outside this type (e.g. device kernels).
+    pub const fn shift(self) -> usize {
+        self.shift
+    }
 }
 
 /// Hot address of one committed `InstructionRa` chunk: the selected chunk of

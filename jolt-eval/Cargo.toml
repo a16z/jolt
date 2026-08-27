@@ -3,15 +3,32 @@ name = "jolt-eval"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+# Metal isolated objectives (macOS): device kernels plus the modular-prover
+# plumbing the st0-contention objective drives (commit slot + record walk).
+metal = [
+  "dep:jolt-kernels",
+  "jolt-kernels/metal",
+  "dep:jolt-prover",
+  "jolt-prover/metal",
+  "dep:jolt-witness",
+  "dep:jolt-claims",
+  "dep:libc",
+]
+
 [dependencies]
 jolt-prover-legacy = { workspace = true, features = ["host"] }
 jolt-verifier = { workspace = true }
 jolt-dory = { workspace = true }
+dory = { workspace = true }
 jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-tracer-x86 = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
+jolt-poly = { workspace = true }
+jolt-kernels = { workspace = true, features = ["bench-utils"] }
 jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
   "transcript-keccak",
@@ -29,6 +46,7 @@ eyre = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 rand = { workspace = true }
+rayon = { workspace = true }
 tracing-subscriber = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
@@ -45,6 +63,13 @@ jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 
 jolt-eval-macros = { path = "macros" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+jolt-kernels = { workspace = true, optional = true }
+jolt-prover = { workspace = true, optional = true }
+jolt-witness = { workspace = true, optional = true }
+jolt-claims = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 
 # Peak RSS via getrusage; linux reads /proc/self/status instead.
 [target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
@@ -81,6 +106,10 @@ name = "field_mul_u64"
 harness = false
 
 [[bench]]
+name = "hamming_weight_pushforward"
+harness = false
+
+[[bench]]
 name = "naive_sort_time"
 harness = false
 
@@ -97,6 +126,24 @@ name = "prover_time_sha2_chain"
 harness = false
 
 [[bench]]
+name = "irr_roof"
+path = "benches/metal/irr_roof.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
+name = "metal_fr_bind"
+path = "benches/metal/metal_fr_bind.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
+name = "miller_multipair"
+path = "benches/metal/miller_multipair.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
 name = "eq_evals"
 path = "benches/callgrind/eq_evals.rs"
 harness = false
@@ -108,6 +155,11 @@ harness = false
 [[bench]]
 name = "trace_gen_sha2_chain"
 harness = false
+
+[[bin]]
+name = "st0-contention"
+path = "bin/st0_contention.rs"
+required-features = ["metal"]
 
 [[bin]]
 name = "measure-objectives"

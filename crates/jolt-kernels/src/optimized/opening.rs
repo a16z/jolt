@@ -48,10 +48,16 @@ use jolt_field::JoltField;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamConsumer};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::instruction_read_raf::{
+    shared_instruction_rows, InstructionCycleRow, SharedInstructionRows,
+};
+use super::lifetime_trace::LifetimeTag;
+use super::ram_trace::RamAccessValues;
+use super::trace_record::RegisterLanes;
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
 use crate::opening::JointOpeningPolynomials;
 use crate::reference::commitment::{column_kinds, ColumnKind};
@@ -60,7 +66,7 @@ use crate::{KernelError, OptimizedBackend, ProofSession};
 
 /// Column sentinel for cycles with no hot address (no bytecode row, no
 /// remappable RAM access).
-const COLD: u64 = u64::MAX;
+pub(crate) const COLD: u64 = u64::MAX;
 
 /// The row-window size of the column-collection pass.
 const COLLECT_CHUNK: usize = 1 << 12;
@@ -71,6 +77,12 @@ const COLLECT_CHUNK: usize = 1 << 12;
 const MIN_RANGE: usize = 1 << 12;
 
 impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
+    fn prefetch_session(&self, session: &mut ProofSession) -> ProofSession {
+        let mut fork = session.fork_with::<SharedInstructionRows>();
+        session.move_to::<SharedOpeningIncrements>(&mut fork);
+        fork
+    }
+
     #[tracing::instrument(
         skip_all,
         name = "OptimizedJointOpening::prepare",
@@ -78,78 +90,112 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
     )]
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
-        if grid.total_vars < grid.log_t + grid.log_k_chunk {
-            return Err(KernelError::InvalidGeometry {
-                reason: format!(
-                    "grid of {} variables cannot hold a (2^{} × 2^{}) one-hot matrix",
-                    grid.total_vars, grid.log_k_chunk, grid.log_t
-                ),
-            });
-        }
-
-        // Chunk selectors for the trace-derived subset — the same family-size
-        // counting and selector math as the commit kernel, so the opened
-        // values are the committed values by construction.
-        let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
-            .iter()
-            .copied()
-            .filter(|id| !is_block_embedded(*id))
-            .collect();
-        let kinds = column_kinds(&trace_ids, grid)?;
-        let kind_by_id: BTreeMap<JoltCommittedPolynomial, ColumnKind> =
-            trace_ids.into_iter().zip(kinds).collect();
-
-        // One typed trace pass shared by every trace polynomial.
-        let columns = if kind_by_id.is_empty() {
-            None
-        } else {
-            Some(Arc::new(OpeningColumns::collect(witness, grid.log_t)?))
-        };
-        let placement = TracePlacement::new(grid);
-
-        polynomials
-            .iter()
-            .map(|&polynomial| {
-                if is_block_embedded(polynomial) {
-                    let table = match precommitted_tables.get(&polynomial) {
-                        Some(table) => table.clone(),
-                        None => dense_view(witness, final_opening_id(polynomial))?,
-                    };
-                    let poly = BlockOpeningPoly::new(table, grid, polynomial)?;
-                    Ok(Box::new(poly) as Box<dyn MultilinearPoly<F>>)
-                } else {
-                    let kind =
-                        *kind_by_id
-                            .get(&polynomial)
-                            .ok_or(KernelError::InvariantViolation {
-                                reason: "trace polynomial missing from the resolved column kinds",
-                            })?;
-                    let columns =
-                        Arc::clone(columns.as_ref().ok_or(KernelError::InvariantViolation {
-                            reason: "trace columns not collected despite trace polynomials",
-                        })?);
-                    Ok(Box::new(TraceOpeningPoly::<F> {
-                        columns,
-                        kind,
-                        placement,
-                        _field: PhantomData,
-                    }) as Box<dyn MultilinearPoly<F>>)
-                }
-            })
-            .collect()
+        let views = build_opening_views(session, witness, polynomials, precommitted_tables, grid)?;
+        Ok(views.into_iter().map(OpeningView::into_boxed).collect())
     }
+}
+
+/// One opened polynomial's lazy view — the optimized slot boxes these
+/// directly; the metal slot wraps the trace views (which share one
+/// [`OpeningColumns`] pass through their `Arc`) around its fused device
+/// fold and keeps the blocks as-is.
+pub(crate) enum OpeningView<F: JoltField> {
+    Trace(TraceOpeningPoly<F>),
+    Block(BlockOpeningPoly<F>),
+}
+
+impl<F: JoltField> OpeningView<F> {
+    pub(crate) fn into_boxed(self) -> Box<dyn MultilinearPoly<F>> {
+        match self {
+            Self::Trace(poly) => Box::new(poly),
+            Self::Block(poly) => Box::new(poly),
+        }
+    }
+}
+
+/// Build every opened polynomial's lazy view over `grid` — the whole
+/// optimized `prepare` minus the boxing, shared with the metal twin so both
+/// tiers serve the same placement math and column pass.
+pub(crate) fn build_opening_views<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    polynomials: &[JoltCommittedPolynomial],
+    precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+    grid: CommitmentGrid,
+) -> Result<Vec<OpeningView<F>>, KernelError<F>> {
+    if grid.total_vars < grid.log_t + grid.log_k_chunk {
+        return Err(KernelError::InvalidGeometry {
+            reason: format!(
+                "grid of {} variables cannot hold a (2^{} × 2^{}) one-hot matrix",
+                grid.total_vars, grid.log_k_chunk, grid.log_t
+            ),
+        });
+    }
+
+    // Chunk selectors for the trace-derived subset — the same family-size
+    // counting and selector math as the commit kernel, so the opened
+    // values are the committed values by construction.
+    let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
+        .iter()
+        .copied()
+        .filter(|id| !is_block_embedded(*id))
+        .collect();
+    let kinds = column_kinds(&trace_ids, grid)?;
+    let kind_by_id: BTreeMap<JoltCommittedPolynomial, ColumnKind> =
+        trace_ids.into_iter().zip(kinds).collect();
+
+    // One typed trace pass shared by every trace polynomial.
+    let columns = if kind_by_id.is_empty() {
+        None
+    } else {
+        Some(Arc::new(OpeningColumns::collect(
+            session, witness, grid.log_t,
+        )?))
+    };
+    let placement = TracePlacement::new(grid);
+
+    polynomials
+        .iter()
+        .map(|&polynomial| {
+            if is_block_embedded(polynomial) {
+                let table = match precommitted_tables.get(&polynomial) {
+                    Some(table) => table.clone(),
+                    None => dense_view(witness, final_opening_id(polynomial))?,
+                };
+                Ok(OpeningView::Block(BlockOpeningPoly::new(
+                    table, grid, polynomial,
+                )?))
+            } else {
+                let kind = *kind_by_id
+                    .get(&polynomial)
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "trace polynomial missing from the resolved column kinds",
+                    })?;
+                let columns =
+                    Arc::clone(columns.as_ref().ok_or(KernelError::InvariantViolation {
+                        reason: "trace columns not collected despite trace polynomials",
+                    })?);
+                Ok(OpeningView::Trace(TraceOpeningPoly::<F> {
+                    columns,
+                    kind,
+                    placement,
+                    _field: PhantomData,
+                }))
+            }
+        })
+        .collect()
 }
 
 /// Whether `polynomial` embeds as its own balanced matrix in the grid's
 /// top-left block (advice and committed-program polynomials) rather than by
 /// the trace placement.
-const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
+pub(crate) const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
     matches!(
         polynomial,
         JoltCommittedPolynomial::TrustedAdvice
@@ -168,41 +214,117 @@ const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
 /// packed as [`COLD`] sentinels: 64 bytes per cycle, shared by every trace
 /// polynomial view.
 pub(crate) struct OpeningColumns {
+    pub(crate) rd_inc: Vec<i128>,
+    pub(crate) ram_inc: Vec<i128>,
+    pub(crate) lookup_index: Vec<u128>,
+    /// Bytecode slot per cycle — total (`BytecodePc` semantics: no-ops and
+    /// padding sit on the reserved slot 0), so no sentinel.
+    pub(crate) bytecode_pc: Vec<u64>,
+    /// Remapped RAM word address per cycle; [`COLD`] on no-access cycles.
+    pub(crate) ram_address: Vec<u64>,
+}
+
+/// Raw committed increment columns retained after stage 4 releases the
+/// larger trace record, then moved into stage 8's prefetch session.
+pub(crate) struct SharedOpeningIncrements {
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
-    lookup_index: Vec<u128>,
-    /// Bytecode slot per cycle; total, so no
-    /// bytecode row.
-    bytecode_pc: Vec<u64>,
-    /// Remapped RAM word address per cycle; [`COLD`] on no-access cycles.
-    ram_address: Vec<u64>,
+    _lifetime: LifetimeTag,
+}
+
+pub(crate) fn park_opening_increments(
+    session: &mut ProofSession,
+    registers: &RegisterLanes,
+    ram: &RamAccessValues,
+) {
+    if session.state::<SharedOpeningIncrements>().is_some() {
+        return;
+    }
+    let rd = || {
+        registers
+            .rd_post_value
+            .iter()
+            .zip(&registers.rd_pre_value[..])
+            .map(|(&post, &pre)| i128::from(post) - i128::from(pre))
+            .collect()
+    };
+    let ram_inc = || {
+        ram.post_values
+            .iter()
+            .zip(&ram.pre_values[..])
+            .map(|(&post, &pre)| i128::from(post) - i128::from(pre))
+            .collect()
+    };
+    #[cfg(feature = "parallel")]
+    let (rd_inc, ram_inc): (Vec<i128>, Vec<i128>) = rayon::join(rd, ram_inc);
+    #[cfg(not(feature = "parallel"))]
+    let (rd_inc, ram_inc): (Vec<i128>, Vec<i128>) = (rd(), ram_inc());
+    let bytes = (rd_inc.len() + ram_inc.len()) * 16;
+    session.park(SharedOpeningIncrements {
+        rd_inc,
+        ram_inc,
+        _lifetime: LifetimeTag::new("SharedOpeningIncrements", bytes),
+    });
 }
 
 impl OpeningColumns {
     fn collect<F: JoltField>(
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
-        // Slice-backed sources fill the five columns index-parallel — the
-        // chunked walk serializes on staging buffers and the consume copy.
-        #[cfg(feature = "parallel")]
-        if let Some(access) = witness.random_access() {
-            if cycles <= access.cycles() {
-                return Self::collect_par(&access, cycles);
+        // Three of the five columns are projections of the shared stage-5
+        // rows (parked at stage 1) — reclaim them; the sentinel collisions
+        // the old walk debug-asserted are structurally impossible in the
+        // rows' `+ 1` packing. Only the increment lanes walk the trace, as
+        // a two-extractor bundle with no lookup/decode work.
+        let rows = shared_instruction_rows(session, witness, cycles)?;
+        let map_rows = |view: fn(&InstructionCycleRow) -> u64| -> Vec<u64> {
+            #[cfg(feature = "parallel")]
+            {
+                rows.par_iter().map(view).collect()
             }
-        }
-        let mut consumers = (CollectOpeningColumns {
-            columns: Self {
+            #[cfg(not(feature = "parallel"))]
+            {
+                rows.iter().map(view).collect()
+            }
+        };
+        let lookup_index = {
+            #[cfg(feature = "parallel")]
+            {
+                rows.par_iter().map(|row| row.lookup_index).collect()
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                rows.iter().map(|row| row.lookup_index).collect()
+            }
+        };
+        // Total bytecode PC: an unset lane is the reserved noop slot 0 (hot),
+        // never a cold sentinel.
+        let bytecode_pc = map_rows(|row| row.mapped_pc().unwrap_or_default() as u64);
+        let ram_address = map_rows(|row| row.remapped_ram_address().unwrap_or(COLD));
+
+        let increments = session
+            .take::<SharedOpeningIncrements>()
+            .filter(|columns| columns.rd_inc.len() == cycles && columns.ram_inc.len() == cycles);
+        let (rd_inc, ram_inc) = if let Some(columns) = increments {
+            (columns.rd_inc, columns.ram_inc)
+        } else {
+            let mut consumers = (CollectIncColumns {
                 rd_inc: Vec::with_capacity(cycles),
                 ram_inc: Vec::with_capacity(cycles),
-                lookup_index: Vec::with_capacity(cycles),
-                bytecode_pc: Vec::with_capacity(cycles),
-                ram_address: Vec::with_capacity(cycles),
-            },
-        },);
-        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-        let columns = consumers.0.columns;
+            },);
+            stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+            (consumers.0.rd_inc, consumers.0.ram_inc)
+        };
+        let columns = Self {
+            rd_inc,
+            ram_inc,
+            lookup_index,
+            bytecode_pc,
+            ram_address,
+        };
         debug_assert_eq!(
             columns.cycles(),
             cycles,
@@ -211,72 +333,7 @@ impl OpeningColumns {
         Ok(columns)
     }
 
-    /// Index-parallel column collection over a slice-backed source: workers
-    /// extract straight into the five pre-zeroed columns (values identical
-    /// to the streaming pass — extraction is pure per cycle window, and
-    /// every slot is written).
-    #[cfg(feature = "parallel")]
-    fn collect_par<F: JoltField>(
-        access: &RandomAccessRows,
-        cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
-        /// The scatter grain: big enough to amortize rayon dispatch, small
-        /// enough to load-balance skewed extraction.
-        const CHUNK: usize = 1 << 12;
-        let mut rd_inc: Vec<i128> = unsafe_allocate_zero_vec(cycles);
-        let mut ram_inc: Vec<i128> = unsafe_allocate_zero_vec(cycles);
-        let mut lookup_index: Vec<u128> = unsafe_allocate_zero_vec(cycles);
-        let mut bytecode_pc: Vec<u64> = unsafe_allocate_zero_vec(cycles);
-        let mut ram_address: Vec<u64> = unsafe_allocate_zero_vec(cycles);
-        let error = std::sync::Mutex::new(None);
-        (
-            rd_inc.par_chunks_mut(CHUNK),
-            ram_inc.par_chunks_mut(CHUNK),
-            lookup_index.par_chunks_mut(CHUNK),
-            bytecode_pc.par_chunks_mut(CHUNK),
-            ram_address.par_chunks_mut(CHUNK),
-        )
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(chunk_index, (rd, ram, lookup, pc, address))| {
-                let base = chunk_index * CHUNK;
-                for offset in 0..rd.len() {
-                    match access.window::<CommittedColumnsWitness>(base + offset) {
-                        Ok(row) => {
-                            debug_assert_ne!(
-                                row.ram_address.0,
-                                Some(COLD),
-                                "a live remapped RAM address collides with the COLD sentinel"
-                            );
-                            rd[offset] = row.rd_inc.0;
-                            ram[offset] = row.ram_inc.0;
-                            lookup[offset] = row.lookup_index.0;
-                            pc[offset] = row.bytecode_pc.0 as u64;
-                            address[offset] = row.ram_address.0.unwrap_or(COLD);
-                        }
-                        Err(failure) => {
-                            if let Ok(mut guard) = error.try_lock() {
-                                let _ = guard.get_or_insert(failure);
-                            }
-                            return;
-                        }
-                    }
-                }
-            });
-        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
-        if let Some(failure) = error.into_inner().unwrap() {
-            return Err(failure.into());
-        }
-        Ok(Self {
-            rd_inc,
-            ram_inc,
-            lookup_index,
-            bytecode_pc,
-            ram_address,
-        })
-    }
-
-    fn cycles(&self) -> usize {
+    pub(crate) fn cycles(&self) -> usize {
         self.rd_inc.len()
     }
 
@@ -295,26 +352,26 @@ impl OpeningColumns {
     }
 }
 
-struct CollectOpeningColumns {
-    columns: OpeningColumns,
+/// The two increment lanes of [`OpeningColumns`] — the only columns the
+/// shared stage-5 rows don't carry.
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct IncColumnsWitness {
+    rd_inc: RdInc,
+    ram_inc: RamInc,
 }
 
-impl StreamConsumer for CollectOpeningColumns {
-    type Witness = CommittedColumnsWitness;
+struct CollectIncColumns {
+    rd_inc: Vec<i128>,
+    ram_inc: Vec<i128>,
+}
 
-    fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
-        let columns = &mut self.columns;
+impl StreamConsumer for CollectIncColumns {
+    type Witness = IncColumnsWitness;
+
+    fn consume(&mut self, chunk: &[IncColumnsWitness]) {
         for row in chunk {
-            debug_assert_ne!(
-                row.ram_address.0,
-                Some(COLD),
-                "a live remapped RAM address collides with the COLD sentinel"
-            );
-            columns.rd_inc.push(row.rd_inc.0);
-            columns.ram_inc.push(row.ram_inc.0);
-            columns.lookup_index.push(row.lookup_index.0);
-            columns.bytecode_pc.push(row.bytecode_pc.0 as u64);
-            columns.ram_address.push(row.ram_address.0.unwrap_or(COLD));
+            self.rd_inc.push(row.rd_inc.0);
+            self.ram_inc.push(row.ram_inc.0);
         }
     }
 }
@@ -330,14 +387,14 @@ impl StreamConsumer for CollectOpeningColumns {
 /// cycle-block-strided (`t_stride = cycle_stride`, `k_stride =
 /// one_hot_stride`) — the reference embeddings' index maps verbatim.
 #[derive(Clone, Copy, Debug)]
-struct TracePlacement {
+pub(crate) struct TracePlacement {
     total_vars: usize,
     t_stride: usize,
     k_stride: usize,
 }
 
 impl TracePlacement {
-    fn new(grid: CommitmentGrid) -> Self {
+    pub(crate) fn new(grid: CommitmentGrid) -> Self {
         match grid.order {
             TracePolynomialOrder::CycleMajor => Self {
                 total_vars: grid.total_vars,
@@ -422,11 +479,11 @@ fn split_ranges(total: usize) -> Vec<Range<usize>> {
 /// One committed trace polynomial as a lazy view over the shared columns:
 /// per cycle one hot grid index (one-hot kinds) or one increment value at
 /// address slot zero (dense kinds).
-struct TraceOpeningPoly<F: JoltField> {
-    columns: Arc<OpeningColumns>,
-    kind: ColumnKind,
-    placement: TracePlacement,
-    _field: PhantomData<F>,
+pub(crate) struct TraceOpeningPoly<F: JoltField> {
+    pub(crate) columns: Arc<OpeningColumns>,
+    pub(crate) kind: ColumnKind,
+    pub(crate) placement: TracePlacement,
+    pub(crate) _field: PhantomData<F>,
 }
 
 impl<F: JoltField> TraceOpeningPoly<F> {
@@ -504,7 +561,7 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
 /// its own balanced `(2^{ν_p} × 2^{σ_p})` matrix lands row-aligned in the
 /// grid matrix — coefficient `r · 2^{σ_p} + c` at grid index
 /// `r · 2^{σ_grid} + c`.
-struct BlockOpeningPoly<F: JoltField> {
+pub(crate) struct BlockOpeningPoly<F: JoltField> {
     table: Vec<F>,
     sigma_table: usize,
     sigma_grid: usize,
@@ -512,7 +569,7 @@ struct BlockOpeningPoly<F: JoltField> {
 }
 
 impl<F: JoltField> BlockOpeningPoly<F> {
-    fn new(
+    pub(crate) fn new(
         table: Vec<F>,
         grid: CommitmentGrid,
         polynomial: JoltCommittedPolynomial,

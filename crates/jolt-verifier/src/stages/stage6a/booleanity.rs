@@ -22,27 +22,28 @@ use crate::VerifierError;
 pub struct BooleanityAddressPhase<F: JoltField> {
     symbolic: relations::booleanity::BooleanityAddressPhase,
     dimensions: BooleanityDimensions,
-    /// The stage-5 instruction read-RAF opening points (big-endian) the
-    /// reference points derive from: `draw_challenges` reverses the address
-    /// into the little-endian reference address,
-    /// [`reference_cycle`](Self::reference_cycle) the cycle (the same
-    /// construction-geometry idiom as `BytecodeReadRafAddressPhase`'s
-    /// `BytecodeStagePoints`).
+    /// The big-endian source points the reference points derive from:
+    /// `draw_challenges` reverses the stage-5 instruction address into the
+    /// little-endian reference address (its pad-draw schedule is
+    /// transcript-load-bearing, so the address source never moves), and
+    /// [`reference_cycle`](Self::reference_cycle) reverses the anchor-selected
+    /// cycle source (the same construction-geometry idiom as
+    /// `BytecodeReadRafAddressPhase`'s `BytecodeStagePoints`).
     instruction_r_address: Vec<F>,
-    instruction_r_cycle: Vec<F>,
+    reference_cycle_source: Vec<F>,
 }
 
 impl<F: JoltField> BooleanityAddressPhase<F> {
     pub fn new(
         dimensions: BooleanityDimensions,
         instruction_r_address: Vec<F>,
-        instruction_r_cycle: Vec<F>,
+        reference_cycle_source: Vec<F>,
     ) -> Self {
         Self {
             symbolic: relations::booleanity::BooleanityAddressPhase::new(dimensions),
             dimensions,
             instruction_r_address,
-            instruction_r_cycle,
+            reference_cycle_source,
         }
     }
 
@@ -51,12 +52,14 @@ impl<F: JoltField> BooleanityAddressPhase<F> {
     }
 
     /// The little-endian reference cycle the booleanity legs compare against:
-    /// the reversed stage-5 instruction cycle. Pure construction geometry (no
+    /// the reversed anchor source — the stage-5 instruction cycle
+    /// (`BooleanityAnchor::Stage5Instruction`) or the stage-1 cycle binding
+    /// (`BooleanityAnchor::Stage1CycleV1`). Pure construction geometry (no
     /// draw of its own), so it lives on the instance rather than in the
     /// challenges struct; the address-phase kernel and the stage-6b monolith
     /// consume it.
     pub fn reference_cycle(&self) -> Vec<F> {
-        self.instruction_r_cycle.iter().rev().copied().collect()
+        self.reference_cycle_source.iter().rev().copied().collect()
     }
 }
 

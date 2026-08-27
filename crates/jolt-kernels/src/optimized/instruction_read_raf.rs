@@ -27,14 +27,16 @@
 //! - **Split-eq flag claims**: the output lookup-table/RAF flag sums use the
 //!   `E_hi ⊗ E_lo` factorization of `eq(r_cycle, ·)` instead of a `T`-sized
 //!   eq table.
-//! - **Shared witness rows**: re-emulating sources keep a strong
-//!   [`SharedInstructionRows`] carry in the [`ProofSession`]; slice-backed
-//!   sources keep only [`SharedInstructionRowsWeak`], sharing inside one stage
-//!   and rebuilding index-parallel later so `40 B × T` rows do not survive
-//!   through the prover's peak window.
+//! - **Shared witness rows**: the collected per-cycle rows are parked in the
+//!   [`ProofSession`] (keyed by [`SharedInstructionRows`]) so the stage-6b
+//!   instruction RA virtualization kernel and the stage-6a/6b booleanity
+//!   kernels reuse them instead of re-scanning the trace — the mmap-backed
+//!   packed row carries the mapped PC and remapped RAM address alongside the
+//!   stage-5 facts at no size cost.
 
 #[cfg(feature = "parallel")]
 use std::mem::MaybeUninit;
+use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
@@ -58,10 +60,12 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::lifetime_trace::LifetimeTag;
 use super::support::{
     accumulate_product_grid, collect_par_map, for_each_index_mut, map_indices, map_reduce_chunks,
     scan_chunk_size, RoundProgress,
 };
+use crate::mmap_vec::MmapVec;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -77,77 +81,76 @@ const _: () = assert!(
     "InstructionCycleRow packs lookup table indices as u8"
 );
 
-/// One packed per-cycle row: the stage-5 facts plus the bytecode/RAM and
-/// packed fused-inc sources used by later one-hot kernels. The lookup index
-/// is split into native limbs and the PC/table/flags share one word, keeping
-/// the retained row at 40 bytes in Akita mode.
+/// One packed per-cycle row: the stage-5 facts (lookup index, lookup table,
+/// RAF flag) plus the bytecode/RAM one-hot chunk sources the stage-6a/6b
+/// consumers gather from (and, in Akita mode, the sign-magnitude fused-inc
+/// source). Sentinel packing (`0` = cold) keeps the row at 48 bytes — the
+/// same as a stage-5-only bundle row — so sharing the extra columns across
+/// stages costs no memory. `repr(C)` so the Metal tier can view a row slice
+/// as flat `u32` words (12 per row, layout pinned below).
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[repr(C)]
 pub(crate) struct InstructionCycleRow {
-    lookup_index_lo: u64,
-    lookup_index_hi: u64,
+    pub(crate) lookup_index: u128,
+    pc_plus_one: u64,
     ram_address_plus_one: u64,
     #[cfg(feature = "akita")]
     fused_inc_magnitude: u64,
-    packed_pc_and_flags: u64,
+    /// `0` = no lookup table (the `COUNT < u8::MAX` assert keeps `+ 1` in
+    /// range).
+    table_index_plus_one: u8,
+    pub(crate) raf_flag: bool,
+    #[cfg(feature = "akita")]
+    fused_inc_negative: bool,
 }
 
-const PACKED_PC_BITS: u32 = 56;
-const PACKED_TABLE_BITS: u32 = 6;
-const PACKED_PC_MASK: u64 = (1 << PACKED_PC_BITS) - 1;
-const PACKED_TABLE_MASK: u64 = (1 << PACKED_TABLE_BITS) - 1;
-const PACKED_TABLE_SHIFT: u32 = PACKED_PC_BITS;
-const PACKED_RAF_SHIFT: u32 = PACKED_TABLE_SHIFT + PACKED_TABLE_BITS;
-#[cfg(feature = "akita")]
-const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
-
-const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
+// The device-view contract: 48 bytes per row, lookup index limbs first, the
+// table/flag bytes at fixed offsets behind the PC/RAM columns. The Akita row
+// interleaves the fused-inc magnitude before the flag bytes; the Metal tier
+// is BN254/Dory-only, so the shaders parse the non-akita offsets.
+const _: () = assert!(size_of::<InstructionCycleRow>() == 48);
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, lookup_index) == 0);
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, pc_plus_one) == 16);
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, ram_address_plus_one) == 24);
+#[cfg(not(feature = "akita"))]
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, table_index_plus_one) == 32);
+#[cfg(not(feature = "akita"))]
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, raf_flag) == 33);
 
 impl InstructionCycleRow {
     pub(crate) fn new(
         lookup_index: u128,
         table_index: Option<usize>,
         raf_flag: bool,
-        bytecode_pc: usize,
+        mapped_pc: Option<usize>,
         remapped_ram_address: Option<u64>,
         #[cfg(feature = "akita")] fused_inc: FusedInc,
     ) -> Self {
         debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
         #[cfg(feature = "akita")]
         debug_assert!(fused_inc.0.unsigned_abs() <= u64::MAX as u128);
-        let pc = bytecode_pc as u64;
-        assert!(pc <= PACKED_PC_MASK, "bytecode PC exceeds packed row");
-        let table_plus_one = table_index.map_or(0, |index| index as u64 + 1);
-        let packed_pc_and_flags =
-            pc | (table_plus_one << PACKED_TABLE_SHIFT) | (u64::from(raf_flag) << PACKED_RAF_SHIFT);
-        #[cfg(feature = "akita")]
-        let packed_pc_and_flags =
-            packed_pc_and_flags | (u64::from(fused_inc.0 < 0) << PACKED_INC_SIGN_SHIFT);
         Self {
-            lookup_index_lo: lookup_index as u64,
-            lookup_index_hi: (lookup_index >> 64) as u64,
+            lookup_index,
+            pc_plus_one: mapped_pc.map_or(0, |pc| pc as u64 + 1),
             ram_address_plus_one: remapped_ram_address.map_or(0, |address| address + 1),
             #[cfg(feature = "akita")]
             fused_inc_magnitude: fused_inc.0.unsigned_abs() as u64,
-            packed_pc_and_flags,
+            table_index_plus_one: table_index.map_or(0, |index| index as u8 + 1),
+            raf_flag,
+            #[cfg(feature = "akita")]
+            fused_inc_negative: fused_inc.0 < 0,
         }
-    }
-
-    #[inline(always)]
-    pub(crate) fn lookup_index(&self) -> u128 {
-        u128::from(self.lookup_index_lo) | (u128::from(self.lookup_index_hi) << 64)
     }
 
     #[inline]
     pub(crate) fn table_index(&self) -> Option<usize> {
-        let table_plus_one =
-            ((self.packed_pc_and_flags >> PACKED_TABLE_SHIFT) & PACKED_TABLE_MASK) as usize;
-        table_plus_one.checked_sub(1)
+        (self.table_index_plus_one as usize).checked_sub(1)
     }
 
     #[inline]
-    pub(crate) fn bytecode_pc(&self) -> usize {
-        (self.packed_pc_and_flags & PACKED_PC_MASK) as usize
+    pub(crate) fn mapped_pc(&self) -> Option<usize> {
+        self.pc_plus_one.checked_sub(1).map(|pc| pc as usize)
     }
 
     #[inline]
@@ -155,16 +158,11 @@ impl InstructionCycleRow {
         self.ram_address_plus_one.checked_sub(1)
     }
 
-    #[inline]
-    pub(crate) fn raf_flag(&self) -> bool {
-        self.packed_pc_and_flags & (1 << PACKED_RAF_SHIFT) != 0
-    }
-
     #[cfg(feature = "akita")]
     #[inline]
     pub(crate) fn fused_inc_row(&self, column: BalancedIncColumn) -> usize {
         let magnitude = i128::from(self.fused_inc_magnitude);
-        let value = if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
+        let value = if self.fused_inc_negative {
             -magnitude
         } else {
             magnitude
@@ -176,18 +174,13 @@ impl InstructionCycleRow {
     #[inline]
     pub(crate) fn fused_inc<F: JoltField>(&self) -> F {
         let magnitude = F::from_u64(self.fused_inc_magnitude);
-        if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
+        if self.fused_inc_negative {
             -magnitude
         } else {
             magnitude
         }
     }
 }
-
-#[cfg(feature = "akita")]
-const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 40);
-#[cfg(not(feature = "akita"))]
-const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 32);
 
 /// The bundle row the packing pass extracts; never materialized beyond one
 /// streaming chunk.
@@ -202,59 +195,52 @@ struct WideInstructionRow {
     fused_inc: FusedInc,
 }
 
+impl WideInstructionRow {
+    fn pack(self) -> InstructionCycleRow {
+        InstructionCycleRow::new(
+            self.lookup_index.0,
+            self.table_index.0,
+            self.raf_flag.0,
+            Some(self.bytecode_pc.0),
+            self.remapped_ram_address.0,
+            #[cfg(feature = "akita")]
+            self.fused_inc,
+        )
+    }
+}
+
 struct PackRows {
-    rows: Vec<InstructionCycleRow>,
+    rows: MmapVec<InstructionCycleRow>,
 }
 
 impl StreamConsumer for PackRows {
     type Witness = WideInstructionRow;
 
     fn consume(&mut self, chunk: &[WideInstructionRow]) {
-        self.rows.extend(chunk.iter().map(|row| {
-            InstructionCycleRow::new(
-                row.lookup_index.0,
-                row.table_index.0,
-                row.raf_flag.0,
-                row.bytecode_pc.0,
-                row.remapped_ram_address.0,
-                #[cfg(feature = "akita")]
-                row.fused_inc,
-            )
-        }));
+        self.rows.extend(chunk.iter().map(|row| row.pack()));
     }
 }
 
-impl InstructionCycleRow {
-    /// One streaming bundle pass over the cycle domain, packed row by row (the
-    /// wide bundle row exists only per chunk).
-    pub(crate) fn collect<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Vec<Self>, KernelError<F>> {
-        // Slice-backed sources pack index-parallel (the wide bundle row still
-        // never exists beyond a register); re-emulating sources stream.
-        if let Some(access) = witness.random_access() {
-            if cycles <= access.cycles() {
-                let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
-                    Self::new(
-                        row.lookup_index.0,
-                        row.table_index.0,
-                        row.raf_flag.0,
-                        row.bytecode_pc.0,
-                        row.remapped_ram_address.0,
-                        #[cfg(feature = "akita")]
-                        row.fused_inc,
-                    )
-                })?;
-                return Ok(rows);
-            }
+/// One bundle pass over the cycle domain, packed row by row (the wide bundle
+/// row exists only per chunk). Slice-backed sources pack index-parallel;
+/// re-emulating sources stream.
+pub(crate) fn collect_instruction_cycle_rows<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<MmapVec<InstructionCycleRow>, KernelError<F>> {
+    if let Some(access) = witness.random_access() {
+        if cycles <= access.cycles() {
+            let packed = collect_par_map(&access, cycles, WideInstructionRow::pack)?;
+            let mut rows = MmapVec::with_capacity(cycles);
+            rows.extend(packed);
+            return Ok(rows);
         }
-        let mut consumers = (PackRows {
-            rows: Vec::with_capacity(cycles),
-        },);
-        stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
-        Ok(consumers.0.rows)
     }
+    let mut consumers = (PackRows {
+        rows: MmapVec::with_capacity(cycles),
+    },);
+    stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
+    Ok(consumers.0.rows)
 }
 
 /// The collected stage-5 rows, parked in the [`ProofSession`] for the
@@ -264,55 +250,60 @@ impl InstructionCycleRow {
 ///
 /// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
 /// carry back for the later stages.
+#[derive(Clone)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
+pub(crate) struct SharedInstructionRows(pub(crate) Arc<InstructionRows>);
 
-/// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
-/// so same-stage co-consumers share one collection but the 40 B × T rows
-/// never outlive their stage — later stages re-derive them index-parallel
-/// instead of carrying them across the prover's peak window.
+/// The rows behind [`SharedInstructionRows`] — an mmap-backed vector plus
+/// the lifetime tag that logs the last-`Arc`-drop site under
+/// `JOLT_LIFETIME_TRACE=1`. The backing is file-backed, so the shared rows
+/// surviving the prover's peak window cost page cache, not heap.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
+pub(crate) struct InstructionRows {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: MmapVec<InstructionCycleRow>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    _lifetime: LifetimeTag,
+}
 
-impl InstructionCycleRow {
-    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
-    /// impossible to consume) or collect them fresh, and park the carry back
-    /// for later consumers.
-    pub(crate) fn shared<F: JoltField>(
-        session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Arc<Vec<Self>>, KernelError<F>> {
-        // A parked strong carry is always honored (re-emulating sources, and
-        // tests that inject rows a witness would not produce).
-        let carried = match session.take::<SharedInstructionRows>() {
-            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
-            _ => None,
-        };
-        if witness.random_access().is_some() {
-            // Slice-backed: consumers share within a stage through a weak
-            // handle; once the stage's kernels drop, the rows free, and later
-            // stages re-derive them index-parallel.
-            let upgraded = || {
-                session
-                    .state::<SharedInstructionRowsWeak>()
-                    .and_then(|weak| weak.0.upgrade())
-                    .filter(|rows| rows.len() == cycles)
-            };
-            let rows = match carried.or_else(upgraded) {
-                Some(rows) => rows,
-                None => Arc::new(Self::collect(witness, cycles)?),
-            };
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-            return Ok(rows);
-        }
-        let rows = match carried {
-            Some(rows) => rows,
-            None => Arc::new(Self::collect(witness, cycles)?),
-        };
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
-        Ok(rows)
+impl InstructionRows {
+    pub(crate) fn as_slice(&self) -> &[InstructionCycleRow] {
+        &self.rows
     }
+
+    pub(crate) fn new(rows: MmapVec<InstructionCycleRow>) -> Self {
+        let bytes = rows.len() * size_of::<InstructionCycleRow>();
+        Self {
+            rows,
+            _lifetime: LifetimeTag::new("SharedInstructionRows", bytes),
+        }
+    }
+}
+
+impl std::ops::Deref for InstructionRows {
+    type Target = [InstructionCycleRow];
+
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
+
+/// Reclaim the parked stage-5 rows (the length guard makes a stale carry
+/// impossible to consume) or collect them fresh, and park the carry back
+/// for later consumers.
+pub(crate) fn shared_instruction_rows<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Arc<InstructionRows>, KernelError<F>> {
+    let rows = match session.take::<SharedInstructionRows>() {
+        Some(SharedInstructionRows(rows)) if rows.len() == cycles => rows,
+        _ => Arc::new(InstructionRows::new(collect_instruction_cycle_rows(
+            witness, cycles,
+        )?)),
+    };
+    session.park(SharedInstructionRows(Arc::clone(&rows)));
+    Ok(rows)
 }
 
 /// Optimized [`PrepareKernel`] implementor for the `instruction_read_raf`
@@ -327,15 +318,9 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(InstructionCycleRow::collect(
-            witness,
-            1 << dimensions.log_t(),
-        )?);
-        if witness.random_access().is_some() {
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-        } else {
-            session.park(SharedInstructionRows(Arc::clone(&rows)));
-        }
+        // Reclaims the rows the trace record's walk co-produced (parked at
+        // stage 1); collects fresh only when no record was built.
+        let rows = shared_instruction_rows(session, witness, 1 << dimensions.log_t())?;
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,
@@ -417,26 +402,47 @@ fn extension_pair<F: JoltField>(evals: &[F], b: usize, half: usize) -> (F, F) {
 )]
 struct CycleState<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
-    tables: CycleTables<F>,
-    /// Reused low-to-high binding buffer (swapped through every bind).
+    tables: CycleTablesDriver<F>,
+    /// Reused low-to-high binding buffer (swapped through every dense bind).
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
 }
 
-/// The cycle tables' lifecycle. The address/cycle handoff leaves them
-/// *pending*: the first cycle round's message evaluates the bases on the
-/// fly (a packed-byte lookup for the combined value, `v_table` products
-/// for the ra decomposition), and the first cycle bind materializes the
-/// half-domain tables directly under that challenge — the full-T dense
-/// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
-/// exist. Values are identical to materialize-then-bind: the bases are the
-/// same, and `lo + r·(hi − lo)` is the binding formula either way.
+/// Where the cycle tables live. `Host` is the ordinary CPU state — pending
+/// until the first cycle bind, dense after (see [`HostCycleTables`]);
+/// `Device` means a [`PhaseScanner`] adopted them at the address→cycle
+/// boundary and folds/evaluates them itself ([`PhaseScanner::cycle_round`]).
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
     allocative(bound = "F: JoltField")
 )]
-enum CycleTables<F: JoltField> {
+enum CycleTablesDriver<F: JoltField> {
+    Host(HostCycleTables<F>),
+    /// `pending_bind` is a challenge already bound into `gruen` but not yet
+    /// folded into the tables — the device folds it fused with the next
+    /// round's evaluation, or the handoff path applies it on the CPU.
+    Device {
+        #[cfg_attr(feature = "allocative", allocative(skip))]
+        pending_bind: Option<F>,
+    },
+}
+
+/// The host cycle tables' lifecycle. The address/cycle handoff leaves them
+/// *pending*: the first cycle round's message evaluates the bases on the
+/// fly (a packed-byte lookup for the combined value, `v_table` products
+/// for the ra decomposition), and the first cycle bind materializes the
+/// half-domain tables directly under that challenge — the full-T dense
+/// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
+/// exist on the host. Values are identical to materialize-then-bind: the
+/// bases are the same, and `lo + r·(hi − lo)` is the binding formula either
+/// way.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+enum HostCycleTables<F: JoltField> {
     Pending(PendingCycleTables<F>),
     Dense {
         combined_val: Polynomial<F>,
@@ -461,6 +467,52 @@ struct PendingCycleTables<F: JoltField> {
     raf_identity: F,
 }
 
+// The pending-base evaluators take their inputs as plain slices so the
+// parallel closures never capture `&self` (the kernel's scanner slot is not
+// `Sync`).
+
+/// The pending combined-value base at cycle `j` (packed-byte lookup).
+#[inline]
+fn pending_combined_base<F: JoltField>(
+    claim_columns: &[u8],
+    pending: &PendingCycleTables<F>,
+    j: usize,
+) -> F {
+    let packed = claim_columns[j];
+    let table_value = match packed & 0x7f {
+        0 => F::zero(),
+        table => pending.table_values[usize::from(table) - 1],
+    };
+    let raf_value = if packed & 0x80 == 0 {
+        pending.raf_interleaved
+    } else {
+        pending.raf_identity
+    };
+    table_value + raf_value
+}
+
+/// The pending `ra_i` base at cycle `j` (the phase eq-table product).
+#[inline]
+fn pending_ra_base<F: JoltField>(
+    rows: &[InstructionCycleRow],
+    v_tables: &[Vec<F>],
+    phases_per_ra: usize,
+    address_bits: usize,
+    i: usize,
+    j: usize,
+) -> F {
+    let index = rows[j].lookup_index;
+    let mut phase = i * phases_per_ra;
+    let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
+    let mut product = v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+    for _ in 1..phases_per_ra {
+        phase += 1;
+        shift -= CHUNK_LEN;
+        product *= v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+    }
+    product
+}
+
 /// Per-thread RAF scan accumulators over one phase's chunk domain, in
 /// deferred-reduction form.
 struct RafScan<F: JoltField> {
@@ -472,14 +524,15 @@ struct RafScan<F: JoltField> {
     upper_all_ones: Vec<F::Accumulator>,
 }
 
-/// The reduced (field-element) form of one thread's [`RafScan`].
-struct RafSums<F> {
-    shift_half: Vec<F>,
-    left: Vec<F>,
-    right: Vec<F>,
-    shift_full: Vec<F>,
-    identity: Vec<F>,
-    upper_all_ones: Vec<F>,
+/// The reduced (field-element) form of one thread's [`RafScan`] — and the
+/// RAF half of a [`PhaseScanSums`], whichever tier produced it.
+pub(crate) struct RafSums<F> {
+    pub(crate) shift_half: Vec<F>,
+    pub(crate) left: Vec<F>,
+    pub(crate) right: Vec<F>,
+    pub(crate) shift_full: Vec<F>,
+    pub(crate) identity: Vec<F>,
+    pub(crate) upper_all_ones: Vec<F>,
 }
 
 impl<F: JoltField> RafScan<F> {
@@ -542,6 +595,185 @@ impl<F: JoltField> RafSums<F> {
     }
 }
 
+// --- phase-scan seam --------------------------------------------------------
+//
+// The three big per-phase trace passes (condensation, the fused RAF scan,
+// the per-table suffix scan) are the only `O(T)` work in the address
+// rounds; everything downstream operates on 256-sized chunk tables. The
+// seam below lets a device tier substitute those passes: field sums are
+// exact, so ANY scan regrouping produces the same field elements the CPU
+// scan does, and the shared assembly ([`assemble_phase`]
+// (OptimizedInstructionReadRafKernel::assemble_phase)) keeps the round
+// polynomials byte-identical by construction.
+
+/// One lookup table present in the trace: its kind and its contiguous slice
+/// of the flat bucket array (ascending cycle indices).
+pub(crate) struct PresentTable {
+    pub(crate) table: LookupTableKind<RISCV_XLEN>,
+    pub(crate) range: Range<usize>,
+}
+
+/// The static scan inputs a scanner captures at construction (all shared —
+/// the kernel keeps using them for its CPU paths).
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal scanner")
+)]
+pub(crate) struct ScannerInputs<'a> {
+    pub(crate) rows: &'a Arc<InstructionRows>,
+    pub(crate) bucket_flat: &'a Arc<Vec<u32>>,
+    pub(crate) present: &'a [PresentTable],
+    /// Virtual-RA polynomial count — lets the scanner size (and pre-wire)
+    /// the cycle ping-pong before the address→cycle handoff.
+    pub(crate) ra_count: usize,
+}
+
+/// One phase's scan request. When `condense` is `Some((v_prev, shift))` the
+/// scanner must first fold `v_prev[(lookup_index >> shift) & 255]` into
+/// `u_evals` in place (phase-boundary condensation), exactly as the CPU
+/// path does, before accumulating the phase sums against the updated
+/// weights.
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal scanner")
+)]
+pub(crate) struct PhaseScanRequest<'a, F> {
+    pub(crate) suffix_len: usize,
+    pub(crate) condense: Option<(&'a [F], usize)>,
+    pub(crate) u_evals: &'a mut [F],
+}
+
+/// Raw per-phase scan sums, CPU- and device-produced alike: the fused RAF
+/// buckets plus, per [`PresentTable`] in order, the flat suffix-major
+/// read-checking buckets (`[s * CHUNK_SIZE + chunk]`, `s` indexing
+/// `table.suffixes()`).
+pub(crate) struct PhaseScanSums<F> {
+    pub(crate) raf: RafSums<F>,
+    pub(crate) suffix: Vec<Vec<F>>,
+}
+
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "constructed only by the Metal scanner")
+)]
+pub(crate) enum ScanOutcome<F> {
+    /// Scan complete; `u_evals` holds the post-condensation weights.
+    Scanned(PhaseScanSums<F>),
+    /// Gate declined or buffers ineligible; `u_evals` untouched — the CPU
+    /// path runs this phase (the scanner stays live for later ones).
+    Declined,
+    /// A dispatch failed after device work may have started: `u_evals` is
+    /// unreliable (condensation writes in place) and must be rebuilt; the
+    /// scanner is dead.
+    Corrupt,
+}
+
+/// Inputs for the cycle-table materialization at the address→cycle
+/// boundary: the collapsed per-table values and RAF constants (host-derived
+/// from the bound checkpoints) plus the per-phase bound-challenge tables the
+/// `ra` products gather from.
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal scanner")
+)]
+pub(crate) struct CycleInitRequest<'a, F> {
+    pub(crate) table_values: &'a [F],
+    pub(crate) raf_interleaved: F,
+    pub(crate) raf_identity: F,
+    pub(crate) v_tables: &'a [Vec<F>],
+    pub(crate) ra_count: usize,
+    pub(crate) phases_per_ra: usize,
+    pub(crate) address_bits: usize,
+}
+
+/// Materialized cycle tables: `combined_val` then the `ra_count` virtual RA
+/// products, each one entry per cycle.
+pub(crate) struct CycleTables<F> {
+    pub(crate) combined_val: Vec<F>,
+    pub(crate) ra: Vec<Vec<F>>,
+}
+
+/// Device seam for the per-phase trace scans, the cycle-table
+/// materialization, and the cycle product rounds.
+pub(crate) trait PhaseScanner<F: JoltField> {
+    fn scan_phase(&mut self, request: PhaseScanRequest<'_, F>) -> ScanOutcome<F>;
+
+    /// Launch phase 0 without blocking, building `u_evals = eq(r_reduction, ·)`
+    /// on the device as the same command buffer's first dispatch (w17
+    /// prepare fold: the sibling slots' prepares run under the scan).
+    /// `Some` hands back the device-filled backing — the caller must not
+    /// read it before [`collect_phase0`](Self::collect_phase0) resolves.
+    /// `None` = not launched, no effect: the caller fills eq on the host
+    /// and scans phase 0 synchronously.
+    fn launch_phase0(&mut self, r_reduction: &[F], suffix_len: usize) -> Option<Vec<F>> {
+        let _ = (r_reduction, suffix_len);
+        None
+    }
+
+    /// Collect a launched phase 0: `Scanned` with the sums, or `Corrupt`
+    /// (the launch already committed, so `Declined` cannot happen; a
+    /// failed wait leaves `u_evals` unreliable exactly like a synchronous
+    /// mid-flight failure).
+    fn collect_phase0(&mut self) -> ScanOutcome<F> {
+        ScanOutcome::Corrupt
+    }
+
+    /// Materialize the cycle tables on the device, or `None` for the CPU
+    /// path (materialization is pure — a failed attempt discards its
+    /// buffers, so unlike condensation there is no corrupt state).
+    fn materialize_cycle(&mut self, request: CycleInitRequest<'_, F>) -> Option<CycleTables<F>> {
+        let _ = request;
+        None
+    }
+
+    /// Materialize AND keep the cycle tables for device rounds. `true` moves
+    /// the kernel's table driver to [`CycleTablesDriver::Device`]: rounds go
+    /// through [`cycle_round`](Self::cycle_round) until the scanner steps
+    /// aside, and the kernel keeps the scanner alive past the address
+    /// phases. `false` (with no side effects) keeps the ordinary
+    /// [`materialize_cycle`](Self::materialize_cycle)/CPU path.
+    fn adopt_cycle(&mut self, request: &CycleInitRequest<'_, F>) -> bool {
+        let _ = request;
+        false
+    }
+
+    /// One fused cycle round over the adopted tables: fold `bind` (when
+    /// present) low-to-high, then return the product-grid evaluations
+    /// `[q(1), …, q(F−1), q(∞)]` against the CURRENT (post-`bind`) gruen
+    /// levels. `None` steps aside with NO effect — the live tables are
+    /// still the pre-`bind` state and the caller reclaims them through
+    /// [`take_cycle_tables`](Self::take_cycle_tables).
+    fn cycle_round(&mut self, bind: Option<F>, e_in: &[F], e_out: &[F]) -> Option<Vec<F>> {
+        let _ = (bind, e_in, e_out);
+        None
+    }
+
+    /// Hand the adopted tables back at their current (post-last-successful-
+    /// round) length. `None` only if nothing was adopted — an invariant
+    /// violation when the driver is [`CycleTablesDriver::Device`].
+    fn take_cycle_tables(&mut self) -> Option<CycleTables<F>> {
+        None
+    }
+
+    /// Launch a fused cycle round without blocking, leaving the dispatch in
+    /// flight for [`collect_cycle_round`](Self::collect_cycle_round).
+    /// `false` = nothing launched (gate declined, unhealthy device) with NO
+    /// effect — the caller uses the synchronous paths. A flight owns copies
+    /// of its per-round eq uploads, so the caller's backings stay free.
+    fn launch_cycle_round(&mut self, bind: Option<F>, e_in: &[F], e_out: &[F]) -> bool {
+        let _ = (bind, e_in, e_out);
+        false
+    }
+
+    /// Collect a launched cycle round's product-grid lanes: `Some` advances
+    /// the ping-pong (the fold happened in flight); `None` = the wait
+    /// surfaced a device failure — the scanner latched off with the
+    /// pre-bind tables intact, exactly like a synchronous failure.
+    fn collect_cycle_round(&mut self) -> Option<Vec<F>> {
+        None
+    }
+}
+
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -554,10 +786,15 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     gamma: F,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_reduction: Vec<F>,
-    rows: Arc<Vec<InstructionCycleRow>>,
-    /// Per-table cycle buckets (`u32` cycle indices), by
-    /// `LookupTableKind::index()`.
-    buckets: Vec<Vec<u32>>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: Arc<InstructionRows>,
+    /// All present tables' cycle buckets, concatenated in
+    /// `LookupTableKind::iter()` order; per-table slices in `present`.
+    bucket_flat: Arc<Vec<u32>>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    present: Vec<PresentTable>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    scanner: Option<Box<dyn PhaseScanner<F>>>,
     /// Condensed per-cycle eq weights (see the reference kernel).
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     u_evals: Vec<F>,
@@ -586,10 +823,17 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     cycle: Option<CycleState<F>>,
     /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
     /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
-    /// handoff so the full 40 B rows can free — the final flag walk needs
-    /// only this byte per cycle.
+    /// handoff so the final flag walk (and the pending combined-value bases)
+    /// read one byte per cycle, not the 48 B row.
     claim_columns: Vec<u8>,
     progress: RoundProgress,
+    /// A `begin_round` device launch is in flight (its `collect_round`
+    /// pending).
+    launched: bool,
+    /// Phase 0 launched at prepare, its collect + assembly pending: the
+    /// first round entry settles it ([`settle_phase0`](Self::settle_phase0)),
+    /// and `u_evals` is device-owned (do not touch) until then.
+    phase0_pending: bool,
 }
 
 fn build_cycle_buckets<F: JoltField>(
@@ -693,8 +937,21 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<InstructionRows>,
         gamma: F,
+    ) -> Result<Self, KernelError<F>> {
+        Self::new_with_scanner(dimensions, r_reduction, rows, gamma, |_| None)
+    }
+
+    /// As [`new`](Self::new), with a [`PhaseScanner`] factory invoked once
+    /// the static scan inputs (rows, buckets) exist; `None` keeps every
+    /// phase on the CPU.
+    pub(crate) fn new_with_scanner(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[F],
+        rows: Arc<InstructionRows>,
+        gamma: F,
+        scanner: impl FnOnce(ScannerInputs<'_>) -> Option<Box<dyn PhaseScanner<F>>>,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
         let log_t = dimensions.log_t();
@@ -747,13 +1004,37 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .filter_map(|(index, present)| present.then_some(index))
             .collect();
 
+        let mut bucket_flat = Vec::with_capacity(buckets.iter().map(Vec::len).sum());
+        let mut present = Vec::new();
+        for table in LookupTableKind::<RISCV_XLEN>::iter() {
+            let bucket = &buckets[table.index()];
+            if bucket.is_empty() {
+                continue;
+            }
+            let start = bucket_flat.len();
+            bucket_flat.extend_from_slice(bucket);
+            present.push(PresentTable {
+                table,
+                range: start..bucket_flat.len(),
+            });
+        }
+        let bucket_flat = Arc::new(bucket_flat);
+        let scanner = scanner(ScannerInputs {
+            rows: &rows,
+            bucket_flat: &bucket_flat,
+            present: &present,
+            ra_count,
+        });
+
         let mut kernel = Self {
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
             rows,
-            buckets,
-            u_evals: eq_table(r_reduction),
+            bucket_flat,
+            present,
+            scanner,
+            u_evals: Vec::new(),
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
                 .map(|prefix| prefix.default_checkpoint::<F>())
@@ -771,8 +1052,24 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             cycle: None,
             claim_columns: Vec::new(),
             progress: RoundProgress::new(dimensions.sumcheck_rounds()),
+            launched: false,
+            phase0_pending: false,
         };
-        kernel.init_phase(0);
+        // Launch phase 0 detached when the scanner can (the eq fill + scan
+        // run while the stage's remaining prepares execute); otherwise fill
+        // eq on the host and scan synchronously — exactly the pre-fold path.
+        let suffix_len_0 = kernel.suffix_len(0);
+        if let Some(u_evals) = kernel
+            .scanner
+            .as_mut()
+            .and_then(|scanner| scanner.launch_phase0(r_reduction, suffix_len_0))
+        {
+            kernel.u_evals = u_evals;
+            kernel.phase0_pending = true;
+        } else {
+            kernel.u_evals = eq_table(r_reduction);
+            kernel.init_phase(0);
+        }
         Ok(kernel)
     }
 
@@ -790,48 +1087,143 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     }
 
     fn init_phase(&mut self, phase: usize) {
-        // Condensation: fold the previous phase's bound-challenge eq weights
-        // into the per-cycle mass.
-        if phase != 0 {
-            let shift = self.suffix_len(phase - 1);
-            let rows = Arc::clone(&self.rows);
-            let v_prev = std::mem::take(&mut self.v_tables[phase - 1]);
-            for_each_index_mut(&mut self.u_evals, |j, u| {
-                *u *= v_prev[((rows[j].lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
-            });
-            self.v_tables[phase - 1] = v_prev;
-        }
-
         let suffix_len = self.suffix_len(phase);
-        let suffix_mask = if suffix_len == 128 {
+        let sums = self.phase_sums(phase, suffix_len);
+        self.assemble_phase(phase, suffix_len, sums);
+        self.phase_challenges.clear();
+    }
+
+    /// Resolve a prepare-time phase-0 launch: collect the device sums (or
+    /// rebuild `u_evals` and rescan on the CPU after a device failure) and
+    /// assemble phase 0. Idempotent; called at every round entry.
+    fn settle_phase0(&mut self) {
+        if !self.phase0_pending {
+            return;
+        }
+        self.phase0_pending = false;
+        let suffix_len = self.suffix_len(0);
+        let outcome = match self.scanner.as_mut() {
+            Some(scanner) => tracing::info_span!("IrrKernel::phase0_collect")
+                .in_scope(|| scanner.collect_phase0()),
+            None => ScanOutcome::Corrupt,
+        };
+        let sums = match outcome {
+            ScanOutcome::Scanned(sums) => sums,
+            ScanOutcome::Declined | ScanOutcome::Corrupt => {
+                self.scanner = None;
+                let _span =
+                    tracing::info_span!("IrrKernel::phase_scan_cpu", phase = 0_usize).entered();
+                self.rebuild_u_evals(0);
+                self.cpu_phase_sums(suffix_len)
+            }
+        };
+        self.assemble_phase(0, suffix_len, sums);
+        self.phase_challenges.clear();
+    }
+
+    /// The phase's scan sums: device scanner when installed and willing,
+    /// CPU otherwise. Either way `u_evals` ends up condensed and the sums
+    /// are the same field elements (exact arithmetic — see the seam docs).
+    fn phase_sums(&mut self, phase: usize, suffix_len: usize) -> PhaseScanSums<F> {
+        let prev_shift = phase.checked_sub(1).map(|prev| self.suffix_len(prev));
+        if let Some(scanner) = self.scanner.as_mut() {
+            let request = PhaseScanRequest {
+                suffix_len,
+                condense: prev_shift.map(|shift| (self.v_tables[phase - 1].as_slice(), shift)),
+                u_evals: &mut self.u_evals,
+            };
+            let outcome = tracing::info_span!("IrrKernel::phase_scan_device", phase)
+                .in_scope(|| scanner.scan_phase(request));
+            match outcome {
+                ScanOutcome::Scanned(sums) => return sums,
+                ScanOutcome::Declined => {}
+                ScanOutcome::Corrupt => {
+                    self.scanner = None;
+                    let _span = tracing::info_span!("IrrKernel::phase_scan_cpu", phase).entered();
+                    self.rebuild_u_evals(phase);
+                    return self.cpu_phase_sums(suffix_len);
+                }
+            }
+        }
+        let _span = tracing::info_span!("IrrKernel::phase_scan_cpu", phase).entered();
+        self.condense_cpu(phase);
+        self.cpu_phase_sums(suffix_len)
+    }
+
+    /// Condensation: fold the previous phase's bound-challenge eq weights
+    /// into the per-cycle mass.
+    fn condense_cpu(&mut self, phase: usize) {
+        if phase == 0 {
+            return;
+        }
+        let shift = self.suffix_len(phase - 1);
+        let rows = Arc::clone(&self.rows);
+        let v_prev = std::mem::take(&mut self.v_tables[phase - 1]);
+        for_each_index_mut(&mut self.u_evals, |j, u| {
+            *u *= v_prev[((rows[j].lookup_index >> shift) as usize) & (CHUNK_SIZE - 1)];
+        });
+        self.v_tables[phase - 1] = v_prev;
+    }
+
+    /// Recompute the per-cycle weights from scratch: `eq(r_reduction, ·)`
+    /// with every completed phase's bound-challenge table folded back in.
+    /// Device condensation updates `u_evals` in place, so a failed dispatch
+    /// may leave it partially updated; the inputs (rows, `v_tables`) are
+    /// intact, so this rebuild is exact.
+    fn rebuild_u_evals(&mut self, phase: usize) {
+        self.u_evals = eq_table(&self.r_reduction);
+        for prev in 0..phase {
+            let shift = self.suffix_len(prev);
+            let rows = Arc::clone(&self.rows);
+            let v_prev = std::mem::take(&mut self.v_tables[prev]);
+            for_each_index_mut(&mut self.u_evals, |j, u| {
+                *u *= v_prev[((rows[j].lookup_index >> shift) as usize) & (CHUNK_SIZE - 1)];
+            });
+            self.v_tables[prev] = v_prev;
+        }
+    }
+
+    fn suffix_mask(suffix_len: usize) -> u128 {
+        if suffix_len == 128 {
             u128::MAX
         } else {
             (1u128 << suffix_len) - 1
-        };
-        let upper_suffix_bits = suffix_len.saturating_sub(self.address_bits() / 2);
+        }
+    }
 
-        // Fused RAF scan over the whole trace (deferred-reduction sums,
-        // primitive-scalar multiplies).
+    /// CPU scan of one phase (post-condensation): the fused RAF pass plus
+    /// the per-table suffix passes.
+    fn cpu_phase_sums(&self, suffix_len: usize) -> PhaseScanSums<F> {
+        PhaseScanSums {
+            raf: self.cpu_raf_sums(suffix_len),
+            suffix: self.cpu_suffix_sums(suffix_len),
+        }
+    }
+
+    /// Fused RAF scan over the whole trace (deferred-reduction sums,
+    /// primitive-scalar multiplies).
+    fn cpu_raf_sums(&self, suffix_len: usize) -> RafSums<F> {
+        let suffix_mask = Self::suffix_mask(suffix_len);
+        let upper_suffix_bits = suffix_len.saturating_sub(self.address_bits() / 2);
         let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
-        let raf = map_reduce_chunks(
+        map_reduce_chunks(
             rows.len(),
             scan_chunk_size(rows.len()),
             |range| {
                 let mut scan = RafScan::<F>::new();
                 for (row, &u) in rows[range.clone()].iter().zip(&u_evals[range]) {
-                    let lookup_index = row.lookup_index();
-                    let chunk = ((lookup_index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
-                    let suffix_bits = lookup_index & suffix_mask;
+                    let chunk = ((row.lookup_index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
+                    let suffix_bits = row.lookup_index & suffix_mask;
                     if CANONICAL_INSTRUCTION_ADDRESS
-                        && row.raf_flag()
+                        && row.raf_flag
                         && (upper_suffix_bits == 0
                             || (suffix_bits >> (suffix_len - upper_suffix_bits))
                                 == (1u128 << upper_suffix_bits) - 1)
                     {
                         scan.upper_all_ones[chunk].add(u);
                     }
-                    if !row.raf_flag() {
+                    if !row.raf_flag {
                         scan.shift_half[chunk].add(u);
                         let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
                         let left = u64::from(left);
@@ -853,8 +1245,14 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             },
             RafSums::merge,
             RafSums::zero,
-        );
+        )
+    }
 
+    /// Build the phase's chunk tables from its scan sums — the shared
+    /// assembly both scan tiers feed, so round polynomials downstream are
+    /// byte-identical whichever tier scanned.
+    fn assemble_phase(&mut self, phase: usize, suffix_len: usize, sums: PhaseScanSums<F>) {
+        let PhaseScanSums { raf, suffix } = sums;
         let q_shift_half: Vec<F> = raf
             .shift_half
             .iter()
@@ -913,7 +1311,18 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             self.raf_upper_all_ones.q_value = Polynomial::new(vec![F::zero(); CHUNK_SIZE]);
         }
 
-        self.init_suffix_tables(suffix_len, suffix_mask);
+        self.suffix_tables = self
+            .present
+            .iter()
+            .zip(suffix)
+            .map(|(present, flat)| {
+                let polynomials = flat
+                    .chunks_exact(CHUNK_SIZE)
+                    .map(|coefficients| Polynomial::new(coefficients.to_vec()))
+                    .collect();
+                (present.table, polynomials)
+            })
+            .collect();
 
         // Table-prefix chunk polynomials from the checkpoints, one prefix per
         // parallel task.
@@ -936,32 +1345,29 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     .collect(),
             )
         });
-
-        self.phase_challenges.clear();
     }
 
     /// Read-checking suffix accumulators for the phase, per present table:
     /// tables in parallel, each over parallel bucket chunks, suffixes
     /// classified once (`One` adds, {0,1}-valued adds conditionally, general
     /// ones use the primitive-scalar multiply).
-    fn init_suffix_tables(&mut self, suffix_len: usize, suffix_mask: u128) {
+    fn cpu_suffix_sums(&self, suffix_len: usize) -> Vec<Vec<F>> {
+        let suffix_mask = Self::suffix_mask(suffix_len);
         let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
-        let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
-            .filter(|table| !self.buckets[table.index()].is_empty())
-            .collect();
-        let buckets = self.buckets.as_slice();
+        let bucket_flat = self.bucket_flat.as_slice();
+        let present = self.present.as_slice();
         let suffix_shift = suffix_len;
-        let new_tables = map_indices(present.len(), |table_position| {
-            let table = present[table_position];
+        map_indices(present.len(), |table_position| {
+            let table = present[table_position].table;
             let suffixes = table.suffixes();
             let num_suffixes = suffixes.len();
             let one_position = suffixes
                 .iter()
                 .position(|suffix| matches!(suffix, Suffixes::One));
-            let bucket = &buckets[table.index()];
+            let bucket = &bucket_flat[present[table_position].range.clone()];
 
-            let flat = map_reduce_chunks(
+            map_reduce_chunks(
                 bucket.len(),
                 scan_chunk_size(bucket.len()),
                 |range| {
@@ -970,9 +1376,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     for &j in &bucket[range] {
                         let row = &rows[j as usize];
                         let u = u_evals[j as usize];
-                        let lookup_index = row.lookup_index();
-                        let chunk = ((lookup_index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
-                        let suffix_bits = LookupBits::new(lookup_index & suffix_mask, suffix_len);
+                        let chunk =
+                            ((row.lookup_index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
+                        let suffix_bits =
+                            LookupBits::new(row.lookup_index & suffix_mask, suffix_len);
                         for (s_index, suffix) in suffixes.iter().enumerate() {
                             let slot = &mut accumulators[s_index * CHUNK_SIZE + chunk];
                             if one_position == Some(s_index) {
@@ -1001,22 +1408,26 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     a
                 },
                 || vec![F::zero(); num_suffixes * CHUNK_SIZE],
-            );
-
-            let polynomials = flat
-                .chunks_exact(CHUNK_SIZE)
-                .map(|coefficients| Polynomial::new(coefficients.to_vec()))
-                .collect();
-            (table, polynomials)
-        });
-        self.suffix_tables = new_tables;
+            )
+        })
     }
 
     /// The address-round quadratic, evaluated at `c ∈ {0, 2}` with
     /// `s(1) = previous_claim − s(0)` (the engine-checked hint), emitted
     /// through the same `from_evals` constructor as the reference.
     fn address_message(&self, previous_claim: F) -> UnivariatePoly<F> {
+        let _span = tracing::info_span!("IrrKernel::address_message").entered();
         let half = self.raf_left.prefix.evals().len() / 2;
+        // Field-only borrows: the parallel closure must not capture `&self`
+        // (the scanner slot is not `Sync`).
+        let prefix_indices = self.prefix_indices.as_slice();
+        let prefix_tables = self.prefix_tables.as_slice();
+        let num_prefixes = self.prefix_checkpoints.len();
+        let suffix_tables = self.suffix_tables.as_slice();
+        let raf_left = &self.raf_left;
+        let raf_right = &self.raf_right;
+        let raf_identity = &self.raf_identity;
+        let raf_upper_all_ones = &self.raf_upper_all_ones;
         // Partial sums: [read, left, right, identity, upper] × {c=0, c=2}.
         let sums = map_reduce_chunks(
             half,
@@ -1026,17 +1437,17 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 // Per-thread scratch: full prefix eval rows (indexed by the
                 // `Prefixes` discriminant, as `combine` expects) plus suffix
                 // eval rows reused across tables.
-                let mut p0 = vec![PrefixEval::from(F::zero()); self.prefix_checkpoints.len()];
-                let mut p2 = vec![PrefixEval::from(F::zero()); self.prefix_checkpoints.len()];
+                let mut p0 = vec![PrefixEval::from(F::zero()); num_prefixes];
+                let mut p2 = vec![PrefixEval::from(F::zero()); num_prefixes];
                 let mut s0: Vec<SuffixEval<F>> = Vec::new();
                 let mut s2: Vec<SuffixEval<F>> = Vec::new();
                 for b in range {
-                    for (&index, table) in self.prefix_indices.iter().zip(&self.prefix_tables) {
+                    for (&index, table) in prefix_indices.iter().zip(prefix_tables) {
                         let (lo, ext) = extension_pair(table.evals(), b, half);
                         p0[index] = PrefixEval::from(lo);
                         p2[index] = PrefixEval::from(ext);
                     }
-                    for (table, suffixes) in &self.suffix_tables {
+                    for (table, suffixes) in suffix_tables {
                         s0.clear();
                         s2.clear();
                         for q in suffixes {
@@ -1047,9 +1458,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         sums[0] += table.combine(&p0, &s0);
                         sums[1] += table.combine(&p2, &s2);
                     }
-                    let (left0, left2) = self.raf_left.message_evals(b, half);
-                    let (right0, right2) = self.raf_right.message_evals(b, half);
-                    let (id0, id2) = self.raf_identity.message_evals(b, half);
+                    let (left0, left2) = raf_left.message_evals(b, half);
+                    let (right0, right2) = raf_right.message_evals(b, half);
+                    let (id0, id2) = raf_identity.message_evals(b, half);
                     sums[2] += left0;
                     sums[3] += left2;
                     sums[4] += right0;
@@ -1057,7 +1468,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     sums[6] += id0;
                     sums[7] += id2;
                     if CANONICAL_INSTRUCTION_ADDRESS {
-                        let (upper0, upper2) = self.raf_upper_all_ones.message_evals(b, half);
+                        let (upper0, upper2) = raf_upper_all_ones.message_evals(b, half);
                         sums[8] += upper0;
                         sums[9] += upper2;
                     }
@@ -1095,15 +1506,50 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     /// unique degree-`(F+1)` coefficient vector recomposed — byte-identical
     /// to explicit-point interpolation.
     fn cycle_message(
-        &self,
+        &mut self,
         _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        {
+            let cycle = self
+                .cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+            if let CycleTablesDriver::Device { pending_bind } = &cycle.tables {
+                let bind = *pending_bind;
+                let gruen = &cycle.gruen;
+                let lanes =
+                    tracing::info_span!("IrrKernel::cycle_round_device_sync").in_scope(|| {
+                        self.scanner.as_mut().and_then(|scanner| {
+                            scanner.cycle_round(bind, gruen.e_in_current(), gruen.e_out_current())
+                        })
+                    });
+                match lanes {
+                    Some(lanes) => {
+                        cycle.tables = CycleTablesDriver::Device { pending_bind: None };
+                        return Ok(cycle.gruen.gruen_poly_from_evals(&lanes, previous_claim));
+                    }
+                    // The device stepped aside pre-round: reclaim the tables
+                    // (and any pending fold) and finish on the CPU.
+                    None => self.ensure_host_cycle_tables()?,
+                }
+            }
+        }
+        let _span = tracing::info_span!("IrrKernel::cycle_message_host").entered();
         let cycle = self
             .cycle
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
-        let factors = 1 + self.dimensions.num_virtual_ra_polys();
+        let CycleTablesDriver::Host(tables) = &cycle.tables else {
+            return Err(SumcheckError::MissingEvaluationSource { kind: "opening" });
+        };
+        let ra_count = self.dimensions.num_virtual_ra_polys();
+        let factors = 1 + ra_count;
+        let claim_columns = self.claim_columns.as_slice();
+        let rows = self.rows.as_slice();
+        let v_tables = self.v_tables.as_slice();
+        let phases_per_ra = self.phases() / ra_count;
+        let address_bits = self.address_bits();
 
         struct Scratch<F: JoltField> {
             /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
@@ -1120,8 +1566,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 steps: vec![F::zero(); factors],
             },
             |scratch, row, _x_in, e_in| {
-                match &cycle.tables {
-                    CycleTables::Dense { combined_val, ra } => {
+                match tables {
+                    HostCycleTables::Dense { combined_val, ra } => {
                         {
                             let val = combined_val.evals();
                             let lo = e_in * val[2 * row];
@@ -1141,19 +1587,33 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                             *step = hi - lo;
                         }
                     }
-                    CycleTables::Pending(pending) => {
+                    HostCycleTables::Pending(pending) => {
                         // First cycle round: same pair math over the bases —
                         // the values a dense materialization would hold.
                         {
-                            let lo = e_in * self.pending_combined_base(pending, 2 * row);
-                            let hi = e_in * self.pending_combined_base(pending, 2 * row + 1);
+                            let lo = e_in * pending_combined_base(claim_columns, pending, 2 * row);
+                            let hi =
+                                e_in * pending_combined_base(claim_columns, pending, 2 * row + 1);
                             scratch.evals[0] = hi;
                             scratch.steps[0] = hi - lo;
                         }
-                        let ra_count = scratch.evals.len() - 1;
                         for i in 0..ra_count {
-                            let lo = self.pending_ra_base(i, 2 * row);
-                            let hi = self.pending_ra_base(i, 2 * row + 1);
+                            let lo = pending_ra_base(
+                                rows,
+                                v_tables,
+                                phases_per_ra,
+                                address_bits,
+                                i,
+                                2 * row,
+                            );
+                            let hi = pending_ra_base(
+                                rows,
+                                v_tables,
+                                phases_per_ra,
+                                address_bits,
+                                i,
+                                2 * row + 1,
+                            );
                             scratch.evals[1 + i] = hi;
                             scratch.steps[1 + i] = hi - lo;
                         }
@@ -1180,8 +1640,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     }
 
     /// Handoff at the address/cycle boundary — same collapse as the
-    /// reference, with parallel materialization and a Gruen-split eq factor
-    /// instead of a dense `T`-sized eq table.
+    /// reference, with a Gruen-split eq factor instead of a dense `T`-sized
+    /// eq table. The dense cycle tables come from the device (adopted or
+    /// materialized) when a scanner cooperates; the CPU path leaves them
+    /// pending until the first cycle bind.
     fn init_cycle_rounds(&mut self) {
         let gamma_sqr = self.gamma * self.gamma;
         let empty_bits = LookupBits::new(0, 0);
@@ -1206,7 +1668,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         }
 
         // Snap the packed output-claim facts first: past this handoff the
-        // final flag walk reads one byte per cycle, not the 40 B row.
+        // final flag walk (and the pending combined-value bases) read one
+        // byte per cycle, not the 48 B row.
         let rows = self.rows.as_slice();
         const {
             assert!(
@@ -1217,68 +1680,117 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.claim_columns = map_indices(rows.len(), |j| {
             let row = &rows[j];
             let table = row.table_index().map_or(0, |index| index as u8 + 1);
-            table | (u8::from(row.raf_flag()) << 7)
+            table | (u8::from(row.raf_flag) << 7)
         });
 
-        // The tables stay pending: the first cycle message evaluates these
-        // bases per row, and the first cycle bind materializes half-domain
-        // tables directly (rows and the phase eq tables stay alive until
-        // then).
+        let ra_count = self.dimensions.num_virtual_ra_polys();
+        let phases_per_ra = self.phases() / ra_count;
+        let address_bits = self.address_bits();
+
+        let request = CycleInitRequest {
+            table_values: &table_values,
+            raf_interleaved,
+            raf_identity,
+            v_tables: &self.v_tables,
+            ra_count,
+            phases_per_ra,
+            address_bits,
+        };
+        let adopted = tracing::info_span!("IrrKernel::cycle_adopt").in_scope(|| {
+            self.scanner
+                .as_mut()
+                .is_some_and(|scanner| scanner.adopt_cycle(&request))
+        });
+        let tables = if adopted {
+            CycleTablesDriver::Device { pending_bind: None }
+        } else {
+            let device_tables = tracing::info_span!("IrrKernel::cycle_materialize_device")
+                .in_scope(|| {
+                    self.scanner
+                        .as_mut()
+                        .and_then(|scanner| scanner.materialize_cycle(request))
+                });
+            match device_tables {
+                Some(tables) => CycleTablesDriver::Host(HostCycleTables::Dense {
+                    combined_val: Polynomial::new(tables.combined_val),
+                    ra: tables.ra.into_iter().map(Polynomial::new).collect(),
+                }),
+                // CPU path: the tables stay pending — the first cycle
+                // message evaluates the bases per row, and the first cycle
+                // bind materializes half-domain tables directly (the rows
+                // and phase eq tables stay alive until then), so the full-T
+                // dense tables never exist on the host.
+                None => CycleTablesDriver::Host(HostCycleTables::Pending(PendingCycleTables {
+                    table_values,
+                    raf_interleaved,
+                    raf_identity,
+                })),
+            }
+        };
+        let host_pending = matches!(tables, CycleTablesDriver::Host(HostCycleTables::Pending(_)));
+
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
-            tables: CycleTables::Pending(PendingCycleTables {
-                table_values,
-                raf_interleaved,
-                raf_identity,
-            }),
+            tables,
             bind_scratch: Vec::new(),
         });
 
         // The address-phase state is dead past this point — except the
         // bound-challenge eq tables, which the pending ra bases read until
-        // the first cycle bind materializes the dense tables.
+        // the first cycle bind materializes the dense tables. (The rows stay
+        // on the kernel either way: the session's parked carry keeps the
+        // mmap backing alive for the stage-6 consumers regardless.)
         self.u_evals = Vec::new();
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
-        self.buckets = Vec::new();
-    }
-
-    /// The pending combined-value base at cycle `j` (packed-byte lookup).
-    #[inline]
-    fn pending_combined_base(&self, pending: &PendingCycleTables<F>, j: usize) -> F {
-        let packed = self.claim_columns[j];
-        let table_value = match packed & 0x7f {
-            0 => F::zero(),
-            table => pending.table_values[usize::from(table) - 1],
-        };
-        let raf_value = if packed & 0x80 == 0 {
-            pending.raf_interleaved
-        } else {
-            pending.raf_identity
-        };
-        table_value + raf_value
-    }
-
-    /// The pending `ra_i` base at cycle `j` (the phase eq-table product).
-    #[inline]
-    fn pending_ra_base(&self, i: usize, j: usize) -> F {
-        let ra_count = self.dimensions.num_virtual_ra_polys();
-        let phases_per_ra = self.phases() / ra_count;
-        let address_bits = self.address_bits();
-        let index = self.rows[j].lookup_index();
-        let mut phase = i * phases_per_ra;
-        let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
-        let mut product = self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-        for _ in 1..phases_per_ra {
-            phase += 1;
-            shift -= CHUNK_LEN;
-            product *= self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+        self.bucket_flat = Arc::new(Vec::new());
+        self.present = Vec::new();
+        if !host_pending {
+            self.v_tables = Vec::new();
         }
-        product
+        // Without adopted tables the scanner is dead too — dropping it
+        // releases the device buffers (it holds `Arc` clones of the rows and
+        // buckets) with the address-phase state. An adopting scanner stays
+        // for the cycle rounds and is dropped at the CPU handoff.
+        if !adopted {
+            self.scanner = None;
+        }
+    }
+
+    /// Reclaim device-adopted cycle tables into ordinary host state,
+    /// applying any pending fold. No-op when the tables are already
+    /// host-side.
+    fn ensure_host_cycle_tables(&mut self) -> Result<(), SumcheckError<F>> {
+        let cycle = self
+            .cycle
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let CycleTablesDriver::Device { pending_bind } = &cycle.tables else {
+            return Ok(());
+        };
+        let pending = *pending_bind;
+        let tables = self
+            .scanner
+            .as_mut()
+            .and_then(|scanner| scanner.take_cycle_tables())
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let mut combined_val = Polynomial::new(tables.combined_val);
+        let mut ra: Vec<Polynomial<F>> = tables.ra.into_iter().map(Polynomial::new).collect();
+        if let Some(challenge) = pending {
+            combined_val.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+            for ra in &mut ra {
+                ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+            }
+        }
+        cycle.tables = CycleTablesDriver::Host(HostCycleTables::Dense { combined_val, ra });
+        self.scanner = None;
+        Ok(())
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        self.settle_phase0();
         if self.progress.bound() < self.address_bits() {
+            let _span = tracing::info_span!("IrrKernel::bind_address").entered();
             let bind_dense = |table: &mut Polynomial<F>| {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);
             };
@@ -1333,20 +1845,31 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
                 cycle.gruen.bind(challenge);
                 match &mut cycle.tables {
-                    CycleTables::Pending(pending) => Some(core::mem::replace(
-                        pending,
-                        PendingCycleTables {
-                            table_values: Vec::new(),
-                            raf_interleaved: F::zero(),
-                            raf_identity: F::zero(),
-                        },
-                    )),
-                    CycleTables::Dense { combined_val, ra } => {
+                    CycleTablesDriver::Host(HostCycleTables::Pending(pending)) => {
+                        Some(core::mem::replace(
+                            pending,
+                            PendingCycleTables {
+                                table_values: Vec::new(),
+                                raf_interleaved: F::zero(),
+                                raf_identity: F::zero(),
+                            },
+                        ))
+                    }
+                    CycleTablesDriver::Host(HostCycleTables::Dense { combined_val, ra }) => {
+                        let _span = tracing::info_span!("IrrKernel::bind_cycle_host").entered();
                         combined_val
                             .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
                         for ra in ra {
                             ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
                         }
+                        None
+                    }
+                    // The device folds fused with the next round's evaluation
+                    // (or the handoff applies it) — never two challenges deep,
+                    // since every bind is followed by a message or the handoff.
+                    CycleTablesDriver::Device { pending_bind } => {
+                        debug_assert!(pending_bind.is_none());
+                        *pending_bind = Some(challenge);
                         None
                     }
                 }
@@ -1357,29 +1880,47 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 // values a full-T materialization would bind to, without
                 // the full-T tables ever existing.
                 let half = self.claim_columns.len() / 2;
+                let claim_columns = self.claim_columns.as_slice();
+                let rows = self.rows.as_slice();
+                let v_tables = self.v_tables.as_slice();
+                let ra_count = self.dimensions.num_virtual_ra_polys();
+                let phases_per_ra = self.phases() / ra_count;
+                let address_bits = self.address_bits();
                 let combined_val: Vec<F> = map_indices(half, |position| {
-                    let lo = self.pending_combined_base(&pending, 2 * position);
-                    let hi = self.pending_combined_base(&pending, 2 * position + 1);
+                    let lo = pending_combined_base(claim_columns, &pending, 2 * position);
+                    let hi = pending_combined_base(claim_columns, &pending, 2 * position + 1);
                     lo + challenge * (hi - lo)
                 });
-                let ra_count = self.dimensions.num_virtual_ra_polys();
                 let ra: Vec<Polynomial<F>> = (0..ra_count)
                     .map(|i| {
                         Polynomial::new(map_indices(half, |position| {
-                            let lo = self.pending_ra_base(i, 2 * position);
-                            let hi = self.pending_ra_base(i, 2 * position + 1);
+                            let lo = pending_ra_base(
+                                rows,
+                                v_tables,
+                                phases_per_ra,
+                                address_bits,
+                                i,
+                                2 * position,
+                            );
+                            let hi = pending_ra_base(
+                                rows,
+                                v_tables,
+                                phases_per_ra,
+                                address_bits,
+                                i,
+                                2 * position + 1,
+                            );
                             lo + challenge * (hi - lo)
                         }))
                     })
                     .collect();
-                // The rows' and phase eq tables' last read is behind us.
-                self.rows = Arc::new(Vec::new());
+                // The phase eq tables' last read is behind us.
                 self.v_tables = Vec::new();
                 if let Some(cycle) = self.cycle.as_mut() {
-                    cycle.tables = CycleTables::Dense {
+                    cycle.tables = CycleTablesDriver::Host(HostCycleTables::Dense {
                         combined_val: Polynomial::new(combined_val),
                         ra,
-                    };
+                    });
                 }
             }
             self.cycle_challenges.push(challenge);
@@ -1400,6 +1941,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.settle_phase0();
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
@@ -1413,6 +1955,70 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
         self.bind(bind)
     }
+
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        self.settle_phase0();
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        // Only device-resident cycle rounds launch; address rounds are host
+        // assembly (their phase scans dispatch synchronously inside `bind`).
+        if self.progress.bound() < self.address_bits() {
+            return Ok(false);
+        }
+        let Some(cycle) = self.cycle.as_ref() else {
+            return Ok(false);
+        };
+        let CycleTablesDriver::Device { pending_bind } = &cycle.tables else {
+            return Ok(false);
+        };
+        let pending = *pending_bind;
+        let gruen = &cycle.gruen;
+        self.launched = self.scanner.as_mut().is_some_and(|scanner| {
+            scanner.launch_cycle_round(pending, gruen.e_in_current(), gruen.e_out_current())
+        });
+        Ok(self.launched)
+    }
+
+    fn collect_round(
+        &mut self,
+        _bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if std::mem::take(&mut self.launched) {
+            let lanes = self
+                .scanner
+                .as_mut()
+                .and_then(|scanner| scanner.collect_cycle_round());
+            let cycle = self
+                .cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+            match lanes {
+                Some(lanes) => {
+                    cycle.tables = CycleTablesDriver::Device { pending_bind: None };
+                    return Ok(cycle.gruen.gruen_poly_from_evals(&lanes, previous_claim));
+                }
+                // Wait failure: the scanner latched off with the pre-bind
+                // tables intact — reclaim them (applying the pending fold)
+                // and recompute the SAME round on the CPU below.
+                None => self.ensure_host_cycle_tables()?,
+            }
+        }
+        // `begin_round` already bound, so recompute with no bind. The
+        // device tier inside declines (latched off or already reclaimed).
+        if self.progress.bound() < self.address_bits() {
+            Ok(self.address_message(previous_claim))
+        } else {
+            self.cycle_message(round, previous_claim)
+        }
+    }
 }
 
 impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
@@ -1422,13 +2028,24 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
+        let _span = tracing::info_span!("IrrKernel::output_claims").entered();
         self.progress.require_complete()?;
+        // finish_rounds' final challenge may still be pending device-side.
+        self.ensure_host_cycle_tables()
+            .map_err(|_| SumcheckKernelError::InvariantViolation {
+                reason: "device-adopted cycle tables unavailable after full binding",
+            })?;
         let cycle = self
             .cycle
             .as_ref()
             .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "cycle tables absent after full binding",
             })?;
+        let CycleTablesDriver::Host(HostCycleTables::Dense { ra, .. }) = &cycle.tables else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "cycle tables still pending after full binding",
+            });
+        };
 
         // Flag claims at the normalized (big-endian) cycle point via the
         // split-eq factorization `eq(r_cycle, j) = E_hi[j_hi] · E_lo[j_lo]`:
@@ -1465,11 +2082,6 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
             },
         );
 
-        let CycleTables::Dense { ra, .. } = &cycle.tables else {
-            return Err(SumcheckKernelError::InvariantViolation {
-                reason: "cycle tables still pending after full binding",
-            });
-        };
         Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
             instruction_ra: ra.iter().map(|ra| ra.evals()[0]).collect(),
@@ -1501,7 +2113,10 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{build_cycle_buckets, InstructionCycleRow, OptimizedInstructionReadRafKernel};
+    use super::{
+        build_cycle_buckets, InstructionCycleRow, InstructionRows,
+        OptimizedInstructionReadRafKernel,
+    };
 
     /// Packs reference-typed fixture rows into the optimized kernel's shared
     /// row form (the stage-5 kernel reads no PC/RAM columns).
@@ -1512,13 +2127,17 @@ mod tests {
                     row.lookup_index.0,
                     row.table_index.0,
                     row.raf_flag.0,
-                    0,
+                    None,
                     None,
                     #[cfg(feature = "akita")]
                     FusedInc::default(),
                 )
             })
             .collect()
+    }
+
+    fn shared(rows: &[InstructionReadRafWitness]) -> Arc<InstructionRows> {
+        Arc::new(InstructionRows::new(pack(rows).into_iter().collect()))
     }
 
     fn fr(value: u64) -> Fr {
@@ -1593,16 +2212,16 @@ mod tests {
             lookup_index,
             Some(table),
             true,
-            u32::MAX as usize,
+            Some(u32::MAX as usize),
             Some(u64::MAX - 1),
             #[cfg(feature = "akita")]
             FusedInc(-123),
         );
-        assert_eq!(row.lookup_index(), lookup_index);
+        assert_eq!(row.lookup_index, lookup_index);
         assert_eq!(row.table_index(), Some(table));
-        assert_eq!(row.bytecode_pc(), u32::MAX as usize);
+        assert_eq!(row.mapped_pc(), Some(u32::MAX as usize));
         assert_eq!(row.remapped_ram_address(), Some(u64::MAX - 1));
-        assert!(row.raf_flag());
+        assert!(row.raf_flag);
         #[cfg(feature = "akita")]
         assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
     }
@@ -1658,13 +2277,9 @@ mod tests {
 
         let mut reference =
             InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
-        let mut optimized = OptimizedInstructionReadRafKernel::new(
-            dimensions,
-            &r_reduction,
-            Arc::new(pack(&rows)),
-            gamma,
-        )
-        .unwrap();
+        let mut optimized =
+            OptimizedInstructionReadRafKernel::new(dimensions, &r_reduction, shared(&rows), gamma)
+                .unwrap();
 
         let rounds = reference.num_rounds();
         assert_eq!(rounds, optimized.num_rounds());
@@ -1733,13 +2348,9 @@ mod tests {
 
         let mut reference =
             InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
-        let mut optimized = OptimizedInstructionReadRafKernel::new(
-            dimensions,
-            &r_reduction,
-            Arc::new(pack(&rows)),
-            gamma,
-        )
-        .unwrap();
+        let mut optimized =
+            OptimizedInstructionReadRafKernel::new(dimensions, &r_reduction, shared(&rows), gamma)
+                .unwrap();
         let mut claim = input_claim(&rows, &r_reduction, gamma);
         for round in 0..reference.num_rounds() {
             let bind = round.checked_sub(1).map(challenge);

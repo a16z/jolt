@@ -39,6 +39,9 @@ mod commitment;
 pub mod committed_program;
 mod error;
 mod kernel;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub mod metal;
+pub(crate) mod mmap_vec;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;
@@ -50,6 +53,7 @@ pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, Wit
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;
 pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};
+pub use mmap_vec::reclaim_dead_pages;
 pub use optimized::OptimizedBackend;
 pub use reference::naive::NaiveSumcheckProver;
 pub use reference::ReferenceBackend;

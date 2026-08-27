@@ -39,7 +39,13 @@ use crate::{KernelError, ProofSession};
 /// Receives the full witness plane (not just the oracle surface) so
 /// implementations can rebuild the committed columns from typed trace
 /// bundles instead of materialized `K × T` oracle grids.
-pub trait JointOpeningPolynomials<F: JoltField> {
+pub trait JointOpeningPolynomials<F: JoltField>: Sync {
+    /// Build an isolated proof session for challenge-independent prefetch.
+    /// Backends override this when preparation can reuse a cloneable carry.
+    fn prefetch_session(&self, _session: &mut ProofSession) -> ProofSession {
+        ProofSession::default()
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,

@@ -38,8 +38,8 @@
 
 use std::sync::Arc;
 
-use super::instruction_read_raf::InstructionCycleRow;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::instruction_read_raf::InstructionRows;
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
 use super::support::{
     accumulate_product_grid, map_indices, pin_derived_term, GruenRoundMessage, RoundProgress,
 };
@@ -75,7 +75,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
     {
         let relation = inputs.relation;
         let cycles = 1usize << relation.dimensions().log_t();
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+        let rows = super::instruction_read_raf::shared_instruction_rows(session, witness, cycles)?;
         Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
             relation.dimensions().log_t(),
             relation.dimensions().num_virtual_ra_polys(),
@@ -93,7 +93,8 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
 /// hot), off the stage-5 shared rows.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct LookupIndexChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: Arc<InstructionRows>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
@@ -111,7 +112,7 @@ impl ChunkIndexSource for LookupIndexChunks {
     fn index(&self, i: usize, j: usize) -> Option<usize> {
         let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
         let mask = (1u128 << self.committed_chunk_bits) - 1;
-        Some(((self.rows[j].lookup_index() >> shift) & mask) as usize)
+        Some(((self.rows[j].lookup_index >> shift) & mask) as usize)
     }
 }
 
@@ -135,6 +136,9 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// first four binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
+    /// A `begin_round` device launch is in flight (its `collect_round`
+    /// pending).
+    launched: bool,
 }
 
 impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
@@ -146,9 +150,45 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<InstructionRows>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
+        Self::new_with_driver(
+            log_t,
+            num_virtual,
+            num_committed_per_virtual,
+            instruction_address,
+            instruction_read_raf_cycle,
+            committed_chunk_bits,
+            rows,
+            gamma,
+            None,
+        )
+    }
+
+    /// As [`new`](Self::new) with a [`LazyRaDevice`] tier installed on the
+    /// folded tables. Lane contract: the driver emits the product grid
+    /// `[q(1), …, q(n−1), q(∞)]` this kernel's
+    /// [`gruen_poly_from_evals`](GruenSplitEqPolynomial::gruen_poly_from_evals)
+    /// recipe consumes — installers must keep `n ≥ 2` (the single-factor
+    /// geometry samples a different grid).
+    #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
+    pub(crate) fn new_with_driver(
+        log_t: usize,
+        num_virtual: usize,
+        num_committed_per_virtual: usize,
+        instruction_address: &[F],
+        instruction_read_raf_cycle: &[F],
+        committed_chunk_bits: usize,
+        rows: Arc<InstructionRows>,
+        gamma: F,
+        driver: Option<Box<dyn LazyRaDevice<F>>>,
+    ) -> Result<Self, KernelError<F>> {
+        if driver.is_some() && num_committed_per_virtual < 2 {
+            return Err(KernelError::Unsupported {
+                reason: "device RA virtualization requires the product-grid geometry",
+            });
+        }
         let num_committed = num_virtual * num_committed_per_virtual;
         let chunks = committed_address_chunks(instruction_address, committed_chunk_bits);
         if chunks.len() != num_committed
@@ -208,13 +248,14 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             }
             table
         });
-        let folded_ra = LazyFoldedRa::new(
+        let folded_ra = LazyFoldedRa::new_with_driver(
             chunk_tables,
             LookupIndexChunks {
                 rows,
                 num_committed,
                 committed_chunk_bits,
             },
+            driver,
         );
 
         Ok(Self {
@@ -223,6 +264,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             gamma_powers_inv,
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
+            launched: false,
         })
     }
 
@@ -235,13 +277,22 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
     /// [`GruenSplitEqPolynomial::gruen_poly_from_evals`] recomposes the
     /// unique degree-`(N+1)` coefficient vector.
     fn message(
-        &self,
+        &mut self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let n = self.num_committed_per_virtual;
         if n < 2 {
             return self.message_single_factor(round, previous_claim);
+        }
+        // Device tier first (lazy scan or fused dense round); a decline has
+        // already normalized the state for the CPU paths below.
+        if let Some(lanes) = self
+            .folded_ra
+            .device_lanes(self.gruen.e_in_current(), self.gruen.e_out_current())
+        {
+            debug_assert_eq!(lanes.len(), n);
+            return Ok(self.gruen.gruen_poly_from_evals(&lanes, previous_claim));
         }
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
@@ -379,6 +430,49 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel
         self.bind(bind);
         Ok(())
     }
+
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        // A prepare-time prelaunched round 0 (only round 0 arrives bindless)
+        // is already in flight: report launched without re-launching.
+        if bind.is_none() && self.launched {
+            return Ok(true);
+        }
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
+        // The single-factor recipe has no device tier (as in `message`).
+        if self.num_committed_per_virtual < 2 {
+            return Ok(false);
+        }
+        self.launched = self
+            .folded_ra
+            .launch_device_lanes(self.gruen.e_in_current(), self.gruen.e_out_current());
+        Ok(self.launched)
+    }
+
+    fn collect_round(
+        &mut self,
+        _bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if std::mem::take(&mut self.launched) {
+            if let Some(lanes) = self.folded_ra.collect_device_lanes() {
+                debug_assert_eq!(lanes.len(), self.num_committed_per_virtual);
+                return Ok(self.gruen.gruen_poly_from_evals(&lanes, previous_claim));
+            }
+            // Wait failure: the driver latched off and normalized state —
+            // fall through to the synchronous recompute of the SAME round.
+        }
+        // `begin_round` already bound, so recompute with no bind. The
+        // device tier inside declines (latched off or already reclaimed).
+        self.message(round, previous_claim)
+    }
 }
 
 impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<F> {
@@ -391,6 +485,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         self.progress.require_complete()?;
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
+        self.folded_ra.ensure_host();
         let mut committed_instruction_ra = self.folded_ra.final_values();
         for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
             if index % self.num_committed_per_virtual == 0 {
@@ -456,7 +551,7 @@ mod tests {
     use crate::{NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
     use super::super::instruction_read_raf::{
-        InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
+        InstructionCycleRow, InstructionRows, SharedInstructionRows,
     };
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
@@ -470,7 +565,7 @@ mod tests {
                     row.lookup_index.0,
                     row.table_index.0,
                     row.raf_flag.0,
-                    0,
+                    None,
                     None,
                     #[cfg(feature = "akita")]
                     FusedInc::default(),
@@ -625,7 +720,9 @@ mod tests {
                 let shape = FixtureShape { log_t, ram_k: 16 };
                 with_ram_fixture(shape, Vec::new(), |witness| {
                     let mut session = ProofSession::default();
-                    session.park(SharedInstructionRows(Arc::new(pack(&rows))));
+                    session.park(SharedInstructionRows(Arc::new(InstructionRows::new(
+                        pack(&rows).into_iter().collect(),
+                    ))));
                     let kernel = OptimizedInstructionRaVirtualization
                         .prepare(
                             &mut session,
@@ -639,8 +736,7 @@ mod tests {
                         )
                         .unwrap();
                     assert!(
-                        session.state::<SharedInstructionRows>().is_some()
-                            || session.state::<SharedInstructionRowsWeak>().is_some(),
+                        session.state::<SharedInstructionRows>().is_some(),
                         "prepare must park a shared-rows carry back for later consumers"
                     );
                     kernel
@@ -654,7 +750,7 @@ mod tests {
                         &instruction_address,
                         &r_cycle,
                         chunk_bits,
-                        Arc::new(pack(&rows)),
+                        Arc::new(InstructionRows::new(pack(&rows).into_iter().collect())),
                         gamma,
                     )
                     .unwrap(),

@@ -29,7 +29,7 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use crate::commitment::{
-    finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
+    finish_streamed_one_hot_prepared, finish_streamed_prepared, CommitWitness, CommitmentGrid,
     CommittedColumnsWitness, ModeStreamingCommitment, WitnessCommitment,
 };
 use crate::reference::commitment::{column_kinds, ColumnKind};
@@ -271,6 +271,9 @@ struct BatchedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeS
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     row_width: usize,
+    /// Row windows delivered so far — the increment columns' tier-2 row
+    /// count (one-hot columns aggregate `one_hot_k` rows per window).
+    windows_fed: usize,
     setup: &'a PCS::ProverSetup,
 }
 
@@ -304,17 +307,35 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitmen
             columns,
             one_hot_k: 1usize << grid.log_k_chunk,
             row_width,
+            windows_fed: 0,
             setup,
         }
     }
 
     fn finish(self, setup: &PCS::ProverSetup) -> Vec<(PCS::Output, PCS::OpeningHint)> {
         let one_hot_k = self.one_hot_k;
+        // Every column's tier-2 pairs against the same setup generator
+        // prefix; prepare it once for the whole pass. One-hot columns
+        // aggregate `windows · one_hot_k` rows, increment columns `windows`.
+        let max_rows = self
+            .columns
+            .iter()
+            .map(|column| match column {
+                ColumnCommitState::Increment { .. } => self.windows_fed,
+                ColumnCommitState::OneHot { .. } => self.windows_fed * one_hot_k,
+            })
+            .max()
+            .unwrap_or(0);
+        let prep = PCS::prepare_tier2(setup, max_rows);
         let finish_column = |column: ColumnCommitState<PCS>| match column {
-            ColumnCommitState::Increment { partial, .. } => finish_streamed::<PCS>(partial, setup),
+            ColumnCommitState::Increment { partial, .. } => {
+                finish_streamed_prepared::<PCS>(partial, setup, &prep)
+            }
             ColumnCommitState::OneHot {
                 chunk_commitments, ..
-            } => finish_streamed_one_hot::<PCS>(setup, one_hot_k, &chunk_commitments),
+            } => {
+                finish_streamed_one_hot_prepared::<PCS>(setup, one_hot_k, &chunk_commitments, &prep)
+            }
         };
         #[cfg(feature = "parallel")]
         {
@@ -337,6 +358,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> S
             chunk.len().is_multiple_of(self.row_width),
             "superchunk must be whole rows"
         );
+        self.windows_fed += chunk.len() / self.row_width;
         let row_width = self.row_width;
         let one_hot_k = self.one_hot_k;
         let setup = self.setup;

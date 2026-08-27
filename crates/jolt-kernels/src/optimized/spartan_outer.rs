@@ -75,10 +75,8 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{
-    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
-    RoundChallenges,
-};
+use super::support::{pin_derived_term_if_derived, GruenRoundMessage, RoundChallenges};
+use super::trace_record::{RecordRows, TraceRecord};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -91,43 +89,45 @@ const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 
-#[derive(Clone, Copy, Debug)]
-struct SpartanOuterRow {
-    left_instruction_input: LeftInstructionInput,
-    right_instruction_input: RightInstructionInput,
-    product: Product,
-    should_branch: ShouldBranch,
-    pc: Pc,
-    unexpanded_pc: UnexpandedPc,
-    imm: Imm,
-    ram_address: RamAddress,
-    rs1_value: Rs1Value,
-    rs2_value: Rs2Value,
-    rd_write_value: RdWriteValue,
-    ram_read_value: RamReadValue,
-    ram_write_value: RamWriteValue,
-    left_lookup_operand: LeftLookupOperand,
-    right_lookup_operand: RightLookupOperand,
-    next_unexpanded_pc: NextUnexpandedPc,
-    next_pc: NextPc,
-    next_is_virtual: NextIsVirtual,
-    next_is_first_in_sequence: NextIsFirstInSequence,
-    lookup_output: LookupOutput,
-    should_jump: ShouldJump,
-    add_operands: OpFlag,
-    subtract_operands: OpFlag,
-    multiply_operands: OpFlag,
-    load: OpFlag,
-    store: OpFlag,
-    jump: OpFlag,
-    write_lookup_output_to_rd: OpFlag,
-    virtual_instruction: OpFlag,
-    assert_flag: OpFlag,
-    do_not_update_unexpanded_pc: OpFlag,
-    advice: OpFlag,
-    is_compressed: OpFlag,
-    is_first_in_sequence: OpFlag,
-    is_last_in_sequence: OpFlag,
+/// The per-cycle Spartan outer witness: all 35 R1CS inputs as their native
+/// small scalars, extracted in one typed trace-row walk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpartanOuterRow {
+    pub left_instruction_input: LeftInstructionInput,
+    pub right_instruction_input: RightInstructionInput,
+    pub product: Product,
+    pub should_branch: ShouldBranch,
+    pub pc: Pc,
+    pub unexpanded_pc: UnexpandedPc,
+    pub imm: Imm,
+    pub ram_address: RamAddress,
+    pub rs1_value: Rs1Value,
+    pub rs2_value: Rs2Value,
+    pub rd_write_value: RdWriteValue,
+    pub ram_read_value: RamReadValue,
+    pub ram_write_value: RamWriteValue,
+    pub left_lookup_operand: LeftLookupOperand,
+    pub right_lookup_operand: RightLookupOperand,
+    pub next_unexpanded_pc: NextUnexpandedPc,
+    pub next_pc: NextPc,
+    pub next_is_virtual: NextIsVirtual,
+    pub next_is_first_in_sequence: NextIsFirstInSequence,
+    pub lookup_output: LookupOutput,
+    pub should_jump: ShouldJump,
+    pub add_operands: OpFlag,
+    pub subtract_operands: OpFlag,
+    pub multiply_operands: OpFlag,
+    pub load: OpFlag,
+    pub store: OpFlag,
+    pub jump: OpFlag,
+    pub write_lookup_output_to_rd: OpFlag,
+    pub virtual_instruction: OpFlag,
+    pub assert_flag: OpFlag,
+    pub do_not_update_unexpanded_pc: OpFlag,
+    pub advice: OpFlag,
+    pub is_compressed: OpFlag,
+    pub is_first_in_sequence: OpFlag,
+    pub is_last_in_sequence: OpFlag,
 }
 
 impl WitnessBundle for SpartanOuterRow {
@@ -314,7 +314,7 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
 /// Consecutive-integer domains make these integers (legacy's `COEFFS_PER_J`);
 /// their field images equal `centered_lagrange_evals` at the node, which is
 /// what ties the integer pipeline to the reference's field pipeline.
-fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
+pub(crate) fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
     let mut out = [(0usize, [0i64; DOMAIN]); EXTENDED_NODE_COUNT];
     let mut slot = 0;
     for position in 0..EXTENDED_SIZE {
@@ -410,6 +410,12 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) 
     (az.reduce(), bz.reduce())
 }
 
+/// Row access for the outer kernels: `RecordRows<SpartanOuterRow>` — either
+/// directly collected bundles (tests) or the session-shared trace record's
+/// lanes (production); both yield the same row values, so every downstream
+/// computation is byte-identical.
+type OuterRows = RecordRows<SpartanOuterRow>;
+
 /// The uni-skip carry: everything the uni-skip front computes that the
 /// remainder slot reclaims — the typed-row store (reused for
 /// materialization and the final opening walk), the stage challenge vector,
@@ -423,7 +429,8 @@ struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
-    rows: BundleStore<SpartanOuterRow>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: OuterRows,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
@@ -434,10 +441,7 @@ struct SpartanOuterCarry<F: JoltField> {
 /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
 /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
 /// integer extension pipeline.
-fn extended_t1_values<F: JoltField>(
-    rows: &BundleAccess<'_, SpartanOuterRow>,
-    tau_low: &[F],
-) -> Result<Vec<F>, WitnessError> {
+fn extended_t1_values<F: JoltField>(rows: &OuterRows, tau_low: &[F]) -> Vec<F> {
     let split = tau_low.len() / 2;
     let (out_point, in_point) = tau_low.split_at(split);
     let e_out = EqPolynomial::<F>::evals(out_point, None);
@@ -447,31 +451,45 @@ fn extended_t1_values<F: JoltField>(
     let pairs_per_block = e_in.len() / 2;
     let coefficients = extension_coefficients();
 
-    let block = |x_out: usize| -> Result<Vec<F>, WitnessError> {
+    let block = |x_out: usize| -> Vec<F> {
         let mut accumulators: Vec<<F as WithAccumulator>::SignedProductAccumulator> =
             vec![Default::default(); EXTENDED_NODE_COUNT];
         for pair in 0..pairs_per_block {
             let t = x_out * pairs_per_block + pair;
-            let row = rows.row(t)?;
-            let values = row_group_values(&row);
+            let values = row_group_values(&rows.row(t));
             let products = extended_products(&values, &coefficients);
             for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
                 accumulator.fmadd_s256(e_in[2 * pair], first);
                 accumulator.fmadd_s256(e_in[2 * pair + 1], second);
             }
         }
-        Ok(accumulators
+        accumulators
             .into_iter()
             .map(|accumulator| e_out[x_out] * accumulator.reduce())
-            .collect())
+            .collect()
     };
-    let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, block)?;
+    let merge = |mut left: Vec<F>, right: Vec<F>| {
+        for (left, right) in left.iter_mut().zip(right) {
+            *left += right;
+        }
+        left
+    };
+
+    #[cfg(feature = "parallel")]
+    let extended = (0..e_out.len())
+        .into_par_iter()
+        .map(block)
+        .reduce(|| vec![F::zero(); EXTENDED_NODE_COUNT], merge);
+    #[cfg(not(feature = "parallel"))]
+    let extended = (0..e_out.len())
+        .map(block)
+        .fold(vec![F::zero(); EXTENDED_NODE_COUNT], merge);
 
     let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
     for ((position, _), value) in extension_coefficients().iter().zip(extended) {
         t1_values[*position] = value;
     }
-    Ok(t1_values)
+    t1_values
 }
 
 /// The stage-1 uni-skip front: typed-row collection, the extended-node
@@ -479,8 +497,8 @@ fn extended_t1_values<F: JoltField>(
 pub struct OptimizedOuterUniskip;
 
 impl OptimizedOuterUniskip {
-    /// The post-collection half of [`UniskipKernel::prepare`], for the
-    /// in-module parity tests (which construct rows directly).
+    /// [`Self::prepare_from_source`] over directly constructed rows — the
+    /// in-module parity tests' entry.
     #[cfg(test)]
     fn prepare_from_rows<F: JoltField>(
         session: &mut ProofSession,
@@ -488,28 +506,27 @@ impl OptimizedOuterUniskip {
         tau: &[F],
         rows: Vec<SpartanOuterRow>,
     ) -> Result<(), KernelError<F>> {
+        Self::prepare_from_source(session, log_t, tau, OuterRows::Collected(rows))
+    }
+
+    fn prepare_from_source<F: JoltField>(
+        session: &mut ProofSession,
+        log_t: usize,
+        tau: &[F],
+        rows: OuterRows,
+    ) -> Result<(), KernelError<F>> {
         if rows.len() != 1usize << log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "Spartan outer row count disagrees with log_t",
             });
         }
-        Self::prepare_from_store(session, log_t, tau, BundleStore::Retained(rows))
-    }
-
-    /// The store-generic half of `prepare`.
-    fn prepare_from_store<F: JoltField>(
-        session: &mut ProofSession,
-        log_t: usize,
-        tau: &[F],
-        rows: BundleStore<SpartanOuterRow>,
-    ) -> Result<(), KernelError<F>> {
         if tau.len() != log_t + 2 {
             return Err(KernelError::InvariantViolation {
                 reason: "Spartan outer tau must carry log_t + 2 challenges",
             });
         }
         let (tau_low, _) = tau.split_at(log_t + 1);
-        let t1_values = extended_t1_values(&rows.access(), tau_low)?;
+        let t1_values = extended_t1_values(&rows, tau_low);
         session.park(SpartanOuterCarry {
             log_t,
             tau: tau.to_vec(),
@@ -517,6 +534,16 @@ impl OptimizedOuterUniskip {
             t1_values,
         });
         Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn prepare_from_record<F: JoltField>(
+        session: &mut ProofSession,
+        log_t: usize,
+        tau: &[F],
+        record: std::sync::Arc<TraceRecord>,
+    ) -> Result<(), KernelError<F>> {
+        Self::prepare_from_source(session, log_t, tau, OuterRows::Record(record))
     }
 }
 
@@ -529,8 +556,8 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
         tau: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
-        Self::prepare_from_store(session, log_t, tau, rows)
+        let record = TraceRecord::shared(session, witness, log_t)?;
+        Self::prepare_from_source(session, log_t, tau, OuterRows::Record(record))
     }
 
     #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::first_round_poly")]
@@ -615,7 +642,8 @@ struct OuterRemainderKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
-    rows: BundleStore<SpartanOuterRow>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: OuterRows,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
@@ -663,18 +691,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
         let width = 2 * in_len;
-        let access = rows.access();
+        let rows_ref = &rows;
         let lagrange = &lagrange_r0;
-        let block = |x_out: usize,
-                     az_chunk: &mut [F],
-                     bz_chunk: &mut [F]|
-         -> Result<(F, F), WitnessError> {
+        let block = |x_out: usize, az_chunk: &mut [F], bz_chunk: &mut [F]| -> (F, F) {
             let mut inner_zero = F::zero();
             let mut inner_infinity = F::zero();
             for x_in in 0..in_len {
                 let t = x_out * in_len + x_in;
-                let row = access.row(t)?;
-                let values = row_group_values(&row);
+                let values = row_group_values(&rows_ref.row(t));
                 let (az_zero, bz_zero) = fold_group(lagrange, &values.a_first, &values.b_first);
                 let (az_one, bz_one) = fold_group(
                     &lagrange[..SECOND_GROUP_LEN],
@@ -689,7 +713,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 inner_zero += e * (az_zero * bz_zero);
                 inner_infinity += e * ((az_one - az_zero) * (bz_one - bz_zero));
             }
-            Ok((e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity))
+            (e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity)
         };
         let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
 
@@ -699,20 +723,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .zip(bz.par_chunks_mut(width))
             .enumerate()
             .map(|(x_out, (az_chunk, bz_chunk))| block(x_out, az_chunk, bz_chunk))
-            .try_reduce(
-                || (F::zero(), F::zero()),
-                |left, right| Ok(add(left, right)),
-            )?;
+            .reduce(|| (F::zero(), F::zero()), add);
         #[cfg(not(feature = "parallel"))]
-        let endpoints = {
-            let mut folded = (F::zero(), F::zero());
-            for (x_out, (az_chunk, bz_chunk)) in
-                az.chunks_mut(width).zip(bz.chunks_mut(width)).enumerate()
-            {
-                folded = add(folded, block(x_out, az_chunk, bz_chunk)?);
-            }
-            folded
-        };
+        let endpoints = az
+            .chunks_mut(width)
+            .zip(bz.chunks_mut(width))
+            .enumerate()
+            .map(|(x_out, (az_chunk, bz_chunk))| block(x_out, az_chunk, bz_chunk))
+            .fold((F::zero(), F::zero()), add);
         Ok(Self {
             az: Polynomial::new(az),
             bz: Polynomial::new(bz),
@@ -769,36 +787,84 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     /// eq-weighted walk over the typed rows (`compute_claimed_inputs`),
     /// mixed-width accumulators per input.
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
-    fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
-        let reversed: Vec<F> = self.challenges.as_slice()[1..]
-            .iter()
-            .rev()
-            .copied()
-            .collect();
-        let weights = {
-            let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
-            EqPolynomial::<F>::evals(&reversed, None)
-        };
-        let cycles = weights.len();
-        let access = self.rows.access();
+    fn claimed_inputs(&self) -> Vec<F> {
+        claimed_inputs(&self.rows, self.challenges.as_slice())
+    }
+}
 
-        let block_size = 1usize << 12;
-        let blocks = cycles.div_ceil(block_size);
-        let block = |index: usize| -> Result<Vec<F>, WitnessError> {
-            let start = index * block_size;
-            let end = (start + block_size).min(cycles);
+#[cfg(feature = "metal")]
+pub(crate) fn claimed_inputs_from_record<F: JoltField>(
+    record: std::sync::Arc<TraceRecord>,
+    challenges: &[F],
+) -> Vec<F> {
+    claimed_inputs(&OuterRows::Record(record), challenges)
+}
+
+fn claimed_inputs<F: JoltField>(rows: &OuterRows, challenges: &[F]) -> Vec<F> {
+    let reversed: Vec<F> = challenges[1..].iter().rev().copied().collect();
+    // `eq(reversed, t) = e_hi[t >> lo_bits] · e_lo[t & mask]` computed on the
+    // fly — the exact field value of the full T-sized eq table
+    // (multiplication regrouping only), without its T-sized materialization
+    // (4.3 GiB @2^27).
+    let hi_bits = reversed.len() / 2;
+    let lo_bits = reversed.len() - hi_bits;
+    let (e_hi, e_lo) = {
+        let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
+        (
+            EqPolynomial::<F>::evals(&reversed[..hi_bits], None),
+            EqPolynomial::<F>::evals(&reversed[hi_bits..], None),
+        )
+    };
+    let lo_mask = (1usize << lo_bits) - 1;
+    debug_assert_eq!(e_hi.len() * e_lo.len(), rows.len());
+
+    let block_size = 1usize << 12;
+    let blocks = rows.len().div_ceil(block_size);
+    let block = |index: usize| -> Vec<F> {
+        let start = index * block_size;
+        let end = (start + block_size).min(rows.len());
+        let mut out = vec![F::zero(); VARIABLE_COUNT];
+        // Per `e_hi`-run factoring: rows sharing `t >> lo_bits` accumulate
+        // under their `e_lo` weight alone; one `e_hi` scale per run
+        // (`e_hi·Σ e_lo·v = Σ (e_hi·e_lo)·v` exactly). Blocks and runs are
+        // both power-of-two aligned, so a production block sits inside one
+        // run.
+        let mut t = start;
+        while t < end {
+            let hi = t >> lo_bits;
+            let run_end = end.min((hi + 1) << lo_bits);
             let mut accumulator = ClaimAccumulator::<F>::default();
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
-                let row = access.row(t)?;
-                accumulator.add_row(weight, &row);
+            for t in t..run_end {
+                accumulator.add_row(e_lo[t & lo_mask], &rows.row(t));
             }
-            Ok(accumulator.finish())
-        };
-        let claimed = {
-            let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
-            try_par_sum_vecs(blocks, VARIABLE_COUNT, block)
-        };
-        claimed
+            let e_hi_eval = e_hi[hi];
+            for (out, run) in out.iter_mut().zip(accumulator.finish()) {
+                *out += e_hi_eval * run;
+            }
+            t = run_end;
+        }
+        out
+    };
+    let merge = |mut left: Vec<F>, right: Vec<F>| {
+        for (left, right) in left.iter_mut().zip(right) {
+            *left += right;
+        }
+        left
+    };
+
+    let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
+    #[cfg(feature = "parallel")]
+    {
+        (0..blocks)
+            .into_par_iter()
+            .map(block)
+            .reduce(|| vec![F::zero(); VARIABLE_COUNT], merge)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        (0..blocks)
+            .map(block)
+            .fold(vec![F::zero(); VARIABLE_COUNT], merge)
     }
 }
 
@@ -959,11 +1025,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        let claimed =
-            self.claimed_inputs()
-                .map_err(|_| SumcheckKernelError::InvariantViolation {
-                    reason: "outer opening walk re-extraction failed after the rounds",
-                })?;
+        let claimed = self.claimed_inputs();
         let claims: BTreeMap<JoltOpeningId, F> =
             self.opening_ids.iter().copied().zip(claimed).collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| {
@@ -1454,6 +1516,17 @@ mod tests {
                     expected[i],
                     "node {node}, basis {i}"
                 );
+            }
+        }
+    }
+
+    /// The device `jk_i192_mul_i32` fast path requires every extension
+    /// coefficient magnitude below 2^31.
+    #[test]
+    fn extension_coefficients_fit_i32() {
+        for (_, coefficients) in extension_coefficients() {
+            for &coefficient in &coefficients {
+                assert!(coefficient.unsigned_abs() < 1 << 31);
             }
         }
     }

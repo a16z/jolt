@@ -25,6 +25,23 @@ parallel = [
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
+bench-utils = []
+# Apple Metal device kernels. Off by default; all metal modules are
+# additionally gated on `target_os = "macos"`, so enabling this feature on
+# other platforms is a no-op. The commit slot's device tier is
+# Dory/BN254-specific, hence the arkworks + jolt-dory/jolt-crypto deps.
+metal = [
+  "dep:objc2",
+  "dep:objc2-foundation",
+  "dep:objc2-metal",
+  "dep:ark-bn254",
+  "dep:ark-ec",
+  "dep:ark-ff",
+  "dep:dory",
+  "dep:jolt-crypto",
+  "dep:jolt-dory",
+  "dep:jolt-optimizations",
+]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
@@ -45,11 +62,42 @@ rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ark-bn254 = { workspace = true, optional = true }
+ark-ec = { workspace = true, optional = true }
+ark-ff = { workspace = true, optional = true }
+# The device multi-pair hook is typed over dory's arkworks backend wrappers.
+dory = { workspace = true, optional = true }
+jolt-crypto = { workspace = true, optional = true }
+jolt-dory = { workspace = true, optional = true }
+jolt-optimizations = { workspace = true, optional = true }
+objc2 = { workspace = true, optional = true }
+objc2-foundation = { workspace = true, optional = true }
+objc2-metal = { workspace = true, optional = true }
+
 [dev-dependencies]
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
+dory.workspace = true
 jolt-dory.workspace = true
+jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true
+rayon.workspace = true
+
+# The Metal microbenchmark harness; see its module docs for the measurement
+# protocol (min over warm passes, sync-bracketed, idle GPU).
+[[example]]
+name = "metal_microbench"
+required-features = ["metal"]
+
+# W3-st8 dispatch-geometry probe: pairing pipeline occupancy limits.
+[[example]]
+name = "pairing_pipeline_stats"
+required-features = ["metal"]
+

@@ -43,6 +43,8 @@
 //! Like the reference kernel, only the default read-write config (phase 1 =
 //! all cycle rounds, phase 2 = 0) is supported.
 
+use std::sync::Arc;
+
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_read_write;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
 use jolt_field::{Accumulator, JoltField};
@@ -59,6 +61,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::support::{bind_pairs, pin_derived_term, RoundChallenges};
+use super::trace_record::TraceRecord;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -72,12 +75,16 @@ pub(crate) mod test_support;
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests;
 
+#[cfg(all(feature = "metal", feature = "parallel"))]
+pub(crate) use rows::register_build_chunk_size;
+#[cfg(feature = "parallel")]
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
+pub(crate) use sparse::ReadWriteKernel;
+#[cfg(feature = "metal")]
+pub(crate) use sparse::{BoundRegistersRwEntry, RegistersRwCycleEntry};
 
-use rows::CollectRegisterEntries;
-use sparse::{
-    bind_sparse_entries, sparse_quadratic, CoeffLut, OneHotCoeff, ReadWriteKernel, SparseEntries,
-};
+use rows::build_register_tables;
+use sparse::{bind_sparse_entries, sparse_quadratic, CoeffLut, OneHotCoeff, SparseEntries};
 
 pub struct OptimizedRegistersReadWrite;
 
@@ -121,49 +128,53 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         }
         let cycles = 1usize << log_t;
 
-        let inc_table: Vec<F> = witness.oracle_table(rd_inc_read_write().polynomial_id())?;
-        if inc_table.len() != cycles {
+        let record = TraceRecord::shared(session, witness, log_t)?;
+        if record.len() != cycles {
             return Err(KernelError::TableSizeMismatch {
                 table: format!("{:?}", rd_inc_read_write()),
                 expected: cycles,
-                got: inc_table.len(),
+                got: record.len(),
             });
         }
+        // This kernel reads only the register lanes: keep those (their own
+        // Arc) and release everything else BEFORE the sparse-entry
+        // reservation below — the record + entries coexistence window is
+        // otherwise the proof's RSS high-water mark.
+        let registers = Arc::clone(&record.registers);
+        let ram = Arc::clone(&record.ram_values);
+        drop(record);
+        TraceRecord::release(session);
+        super::opening::park_opening_increments(session, &registers, &ram);
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // Sparse entry construction: one trace pass — the typed rows are
-        // never materialized whole (80 bytes per cycle saved at the stage's
-        // peak moment).
-        let CollectRegisterEntries {
-            entries,
-            rs1_indices,
-            rs2_indices,
-            rd_indices,
-        } = CollectRegisterEntries::collect(witness, cycles)?;
+        // Count per chunk, scan exact chunk offsets, then scatter the legacy
+        // row-major sparse entries and every companion lane in parallel.
+        let tables = build_register_tables(&registers);
+        drop(registers);
         let entries = SparseEntries::Indexed {
-            entries,
+            entries: tables.entries,
             ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
             wa_lut: CoeffLut::new(vec![F::zero(), F::one()]),
         };
 
         // Park the rd hot indices for the stage-5 val-evaluation kernel.
-        session.park(SharedRdIndices(rd_indices));
+        session.park(SharedRdIndices(tables.rd_indices));
 
         Ok(Box::new(ReadWriteKernel {
             log_t,
             log_k,
             entries,
             gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            inc: Polynomial::new(inc_table),
+            inc: Polynomial::new(tables.inc),
             ra: Vec::new(),
             wa: Vec::new(),
             val: Vec::new(),
             eq_scalar: F::zero(),
             inc_scalar: F::zero(),
-            rs1_indices,
-            rs2_indices,
+            rs1_indices: tables.rs1_indices,
+            rs2_indices: tables.rs2_indices,
             challenges: RoundChallenges::new(log_t + log_k),
         }))
     }

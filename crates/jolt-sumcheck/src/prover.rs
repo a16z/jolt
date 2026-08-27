@@ -69,6 +69,46 @@ pub trait ProveRounds<F: JoltField> {
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
+
+    /// Start this member's round, optionally launching asynchronous work
+    /// (a device dispatch left in flight). Returns `true` when the member
+    /// launched and will produce the round polynomial in
+    /// [`collect_round`](Self::collect_round); `false` for a synchronous
+    /// member, whose compute then runs inside its `collect_round` call.
+    ///
+    /// [`OverlappedRounds`] calls `begin_round` on every active member
+    /// (declaration order) before any member's `collect_round`, then collects
+    /// the synchronous members first — so their CPU work overlaps the
+    /// launched members' device execution — and the launched members last.
+    /// Both calls receive the same `(bind, round, previous_claim)` arguments.
+    ///
+    /// The default never launches, keeping the member's whole round inside
+    /// the default `collect_round` (= [`prove_round`](Self::prove_round)).
+    /// **An override must pair with a `collect_round` override** that skips
+    /// whatever `begin_round` already did (typically the bind) — the default
+    /// `collect_round` would redo the full round.
+    fn begin_round(
+        &mut self,
+        _bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        Ok(false)
+    }
+
+    /// Produce the round polynomial for the round most recently begun. For
+    /// a member whose `begin_round` returned `false` this IS the round's
+    /// compute; a launched member waits for its in-flight work and
+    /// assembles the polynomial (falling back to a CPU recompute on device
+    /// failure, exactly like its synchronous path).
+    fn collect_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.prove_round(bind, round, previous_claim)
+    }
 }
 
 /// One active member for a single batch round.
@@ -130,6 +170,57 @@ impl<F: JoltField> RoundScheduler<F> for SequentialRounds {
     ) -> Result<(), SumcheckError<F>> {
         for item in work.iter_mut() {
             item.run()?;
+        }
+        Ok(())
+    }
+
+    fn batch_finish_rounds(
+        &mut self,
+        finishes: &mut [MemberFinish<'_, F>],
+    ) -> Result<(), SumcheckError<F>> {
+        for item in finishes.iter_mut() {
+            item.run()?;
+        }
+        Ok(())
+    }
+}
+
+/// Launch-then-collect traversal: every active member may launch
+/// asynchronous (device) work via
+/// [`begin_round`](ProveRounds::begin_round) before any member's
+/// synchronous compute runs. Synchronous members collect first — their CPU
+/// work overlaps the launched members' device execution — then the launched
+/// members collect, declaration order within each phase. The engine
+/// assembles the batched polynomial as a field sum in declaration order
+/// afterwards, so the wire bytes cannot depend on this scheduling.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OverlappedRounds;
+
+impl<F: JoltField> RoundScheduler<F> for OverlappedRounds {
+    fn batch_prove_round(
+        &mut self,
+        work: &mut [MemberRound<'_, F>],
+    ) -> Result<(), SumcheckError<F>> {
+        let mut launched = vec![false; work.len()];
+        for (item, launched) in work.iter_mut().zip(launched.iter_mut()) {
+            *launched = tracing::info_span!("m_begin", m = item.index).in_scope(|| {
+                item.member
+                    .begin_round(item.bind, item.local_round, item.claim)
+            })?;
+        }
+        for collect_launched in [false, true] {
+            for (item, launched) in work.iter_mut().zip(&launched) {
+                if *launched != collect_launched {
+                    continue;
+                }
+                item.message = Some(
+                    tracing::info_span!("m_collect", m = item.index, launched = collect_launched)
+                        .in_scope(|| {
+                        item.member
+                            .collect_round(item.bind, item.local_round, item.claim)
+                    })?,
+                );
+            }
         }
         Ok(())
     }

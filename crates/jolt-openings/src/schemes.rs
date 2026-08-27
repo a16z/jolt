@@ -167,6 +167,11 @@ pub trait StreamingCommitment: CommitmentScheme {
     type PartialCommitment: Clone + Send + Sync;
     type OneHotChunkCommitment: Clone + Send + Sync;
     type OneHotStreamContext: Send + Sync;
+    /// Shared finish-aggregation state prepared once per commit pass and
+    /// reused read-only across every column finish (e.g. Dory's Miller-loop
+    /// preparation of the fixed G2 setup generators, identical for every
+    /// column). Schemes with no shareable finish work use `()`.
+    type Tier2Prep: Send + Sync;
 
     fn begin(setup: &Self::ProverSetup) -> Self::PartialCommitment;
 
@@ -284,6 +289,32 @@ pub trait StreamingCommitment: CommitmentScheme {
         one_hot_k: usize,
         chunks: &[Self::OneHotChunkCommitment],
     ) -> (Self::Output, Self::OpeningHint);
+
+    /// Prepare shared finish state for a pass whose finishes aggregate at
+    /// most `max_rows` rows each.
+    fn prepare_tier2(setup: &Self::ProverSetup, max_rows: usize) -> Self::Tier2Prep;
+
+    /// [`finish_with_hint`](Self::finish_with_hint) reusing shared per-pass
+    /// finish state. Must produce the identical commitment and hint.
+    fn finish_with_hint_prepared(
+        partial: Self::PartialCommitment,
+        setup: &Self::ProverSetup,
+        _prep: &Self::Tier2Prep,
+    ) -> (Self::Output, Self::OpeningHint) {
+        Self::finish_with_hint(partial, setup)
+    }
+
+    /// [`finish_one_hot_column_major_chunks`](Self::finish_one_hot_column_major_chunks)
+    /// reusing shared per-pass finish state. Must produce the identical
+    /// commitment and hint.
+    fn finish_one_hot_column_major_chunks_prepared(
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Self::OneHotChunkCommitment],
+        _prep: &Self::Tier2Prep,
+    ) -> (Self::Output, Self::OpeningHint) {
+        Self::finish_one_hot_column_major_chunks(setup, one_hot_k, chunks)
+    }
 }
 
 /// Opening proofs that hide the evaluation behind a commitment.

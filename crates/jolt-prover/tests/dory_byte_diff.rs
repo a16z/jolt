@@ -231,7 +231,15 @@ mod support {
         if let Some(one_hot_config) = one_hot_override {
             config.one_hot_config = one_hot_config;
         }
+        // Legacy anchors booleanity at the stage-5 instruction point; pin the
+        // modular side to it so the twins stay wire-equal (the V1 anchor is
+        // covered by the modular-only e2e tests).
+        config.booleanity_anchor = jolt_verifier::config::BooleanityAnchor::Stage5Instruction;
         assert_eq!(config.trace_length, legacy_proof.trace_length);
+        assert_eq!(
+            config.booleanity_anchor,
+            legacy_proof.protocol.booleanity_anchor
+        );
         assert_eq!(config.ram_K, legacy_proof.ram_K);
         assert_eq!(config.rw_config, legacy_proof.rw_config);
         assert_eq!(config.one_hot_config, legacy_proof.one_hot_config);
@@ -926,9 +934,28 @@ mod muldiv {
 
             // The stage-8 ratchet: the joint batched opening, then the final
             // end-of-proof transcript state — the whole clear proof.
+            let stage8_plan =
+                jolt_prover::dory::stages::stage8::stage8_materialization_plan::<
+                    Fr,
+                    DoryScheme,
+                    Pedersen<Bn254G1>,
+                >(&legacy_pre_stage1.checked, &config, &prover_preprocessing)
+                .expect("stage 8 materialization plan");
+            let stage8_polynomials = backend
+                .joint_opening
+                .prepare(
+                    &mut session,
+                    witness.as_ref(),
+                    &stage8_plan.order,
+                    &stage8_plan.precommitted_tables,
+                    stage8_plan.grid,
+                )
+                .expect("stage 8 polynomials materialize");
+            let stage8_prepared = jolt_prover::dory::stages::stage8::Stage8Prepared::new(
+                stage8_plan,
+                stage8_polynomials,
+            );
             let stage8 = prove_stage8::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                backend,
-                &mut session,
                 &legacy_pre_stage1.checked,
                 &config,
                 &prover_preprocessing,
@@ -938,7 +965,7 @@ mod muldiv {
                 &stage0.hints,
                 &stage6b.clear_output,
                 &stage7.clear_output,
-                witness.as_ref(),
+                stage8_prepared,
                 &mut new_transcript,
             )
             .expect("stage 8 proves");
@@ -979,6 +1006,48 @@ mod muldiv {
             chaos_traversal::rounds_driven() > 0,
             "the rounds slot never reached prove_batch, so invariance was not exercised",
         );
+
+        // The metal backend must reproduce the same bytes with its device
+        // slots FORCED onto the GPU (threshold zeroed), stage by stage — the
+        // probe counter proves the device path really ran instead of
+        // silently gating back to the CPU.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            let _gpu = jolt_kernels::metal::testing::gpu_lock();
+            // nextest runs one process per test, so env mutation is safe;
+            // the gates read the environment on every consult.
+            std::env::remove_var("JOLT_METAL_DISABLE");
+            std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
+            std::env::set_var("JOLT_METAL_DORY_LOOP_MIN_TERMS", "0");
+            std::env::set_var("JOLT_METAL_DORY_HANDOFF_TERMS", "0");
+            let device_rounds = jolt_kernels::metal::testing::device_probe_count();
+            let backend = JoltBackend::<Fr, DoryScheme>::metal().expect("metal backend");
+            assert_backend_matches_legacy(&backend);
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                witness.as_ref(),
+                &public_io,
+            )
+            .expect("metal-backend prove");
+            assert_eq!(
+                proof, legacy_proof,
+                "metal-backend proof diverged from legacy"
+            );
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+            assert!(
+                jolt_kernels::metal::testing::device_probe_count() > device_rounds,
+                "the metal arm never dispatched a device round"
+            );
+        }
 
         // The full-proof ratchet: the top-level prove() runs the same stage
         // sequence on a fresh session and assembles the complete JoltProof —
@@ -1271,6 +1340,45 @@ mod advice_consumer {
             proof, legacy_proof,
             "optimized-backend proof diverged from legacy"
         );
+
+        // The metal backend, device slots forced onto the GPU and
+        // probe-verified, must assemble the identical proof too — advice
+        // mode reruns the stage-6b/7 claim-reduction slots this wave
+        // converted under a different claim wiring.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            let _gpu = jolt_kernels::metal::testing::gpu_lock();
+            // nextest runs one process per test, so env mutation is safe.
+            std::env::remove_var("JOLT_METAL_DISABLE");
+            std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
+            std::env::set_var("JOLT_METAL_DORY_LOOP_MIN_TERMS", "0");
+            std::env::set_var("JOLT_METAL_DORY_HANDOFF_TERMS", "0");
+            let device_rounds = jolt_kernels::metal::testing::device_probe_count();
+            let backend = JoltBackend::<Fr, DoryScheme>::metal().expect("metal backend");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&trusted_advice_commitment),
+                witness.as_ref(),
+                &public_io,
+            )
+            .expect("metal-backend prove");
+            assert_eq!(
+                proof, legacy_proof,
+                "metal-backend proof diverged from legacy"
+            );
+            assert!(
+                jolt_kernels::metal::testing::device_probe_count() > device_rounds,
+                "the metal arm never dispatched a device round"
+            );
+        }
     }
 }
 

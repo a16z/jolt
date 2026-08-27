@@ -58,6 +58,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanProductUniskip::first_round_poly")]
     fn first_round_poly(
         &self,
         session: &mut ProofSession,

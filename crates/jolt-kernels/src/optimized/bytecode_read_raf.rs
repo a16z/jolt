@@ -39,8 +39,21 @@
 //! second per-cycle PC cache. Both phases read the same total `BytecodePc`
 //! column: the pushforward slot and the committed one-hot hot index are the
 //! same value on every row.
+//!
+//! Two prover-side offloads layer on top:
+//!
+//! - [`spawn_bytecode_stage_pushforwards`] builds the stage-1..4 base
+//!   pushforward tables on a capped background pool during stage 5 (their
+//!   points exist by the end of stage 4); the 6a prepare reclaims them and
+//!   walks only the stage-5 point (plus any fused stages) inline — the same
+//!   per-stage lanes either way, so the values are identical.
+//! - The cycle phase's Metal member drives the rounds through
+//!   [`prepare_bytecode_read_raf_cycle`]'s driver factory; the device reads
+//!   the packed 8-byte [`PcRow`] lanes (the trace record's co-produced scan)
+//!   and publishes the live combined table through a recovery cell on any
+//!   decline, so the optimized kernel resumes on the CPU mid-sumcheck.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     self, read_raf_stage_values, BytecodeReadRafStageValueInputs,
@@ -68,18 +81,176 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::InstructionCycleRow;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow, InstructionRows};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
+use super::lifetime_trace::LifetimeTag;
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, par_sum_pair_groups_reusing,
     round_poly_from_skipped_evals, scaled_eq_table, RoundProgress,
 };
+use crate::mmap_vec::MmapVec;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// Sentinel for a cold cycle (no bytecode mapping) in [`PcRow::mapped_pc`].
+/// With the total `BytecodePc` column no current producer emits it; the
+/// device shader still treats it as a zero row.
+const COLD: u32 = u32::MAX;
+
+/// One cycle's packed bytecode PC lanes for the Metal cycle driver — 2×u32
+/// per row, the shader ABI. The device gathers committed one-hot chunk
+/// indices from `mapped_pc`; with the total `BytecodePc` column both lanes
+/// carry the same PC on every mapped row (`push_pc` survives as the record
+/// walk's pack slot, zeroed on no-ops).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PcRow {
+    pub(crate) push_pc: u32,
+    pub(crate) mapped_pc: u32,
+}
+
+impl PcRow {
+    /// The row from the trace record's lanes. On any trace the record builds
+    /// from, `Pc` extraction succeeded for every row, so `mapped_pc` is the
+    /// total per-cycle PC (with the u32-range guards applied).
+    pub(crate) fn from_lanes<F: JoltField>(pc: u64, is_noop: bool) -> Result<Self, KernelError<F>> {
+        let mapped = match pc {
+            pc if pc as u32 as u64 == pc && pc as u32 != COLD => pc as u32,
+            _ => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "bytecode PC exceeds the packed u32 range",
+                })
+            }
+        };
+        let push_pc = if is_noop { 0 } else { pc };
+        if push_pc as u32 as u64 != push_pc {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode PC exceeds the packed u32 range",
+            });
+        }
+        Ok(Self {
+            push_pc: push_pc as u32,
+            mapped_pc: mapped,
+        })
+    }
+}
+
+/// The session key of the shared per-cycle PC scan.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct PcRowsKey(
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    #[cfg_attr(
+        all(not(all(feature = "metal", target_os = "macos")), not(test)),
+        expect(dead_code, reason = "read by the metal bytecode slot and tests")
+    )]
+    Arc<PcRows>,
+);
+
+/// The scan behind [`PcRowsKey`] — the packed rows plus the lifetime tag that
+/// logs the last-`Arc`-drop site under `JOLT_LIFETIME_TRACE=1`.
+pub(crate) struct PcRows {
+    rows: MmapVec<PcRow>,
+    _lifetime: LifetimeTag,
+}
+
+impl PcRows {
+    #[cfg_attr(
+        not(all(feature = "metal", target_os = "macos")),
+        expect(dead_code, reason = "used by the metal bytecode slot")
+    )]
+    pub(crate) fn as_slice(&self) -> &[PcRow] {
+        &self.rows
+    }
+
+    fn new(rows: MmapVec<PcRow>) -> Self {
+        let bytes = rows.len() * size_of::<PcRow>();
+        Self {
+            rows,
+            _lifetime: LifetimeTag::new("PcRows", bytes),
+        }
+    }
+}
+
+impl std::ops::Deref for PcRows {
+    type Target = [PcRow];
+
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
+
+/// Park a lane-packed PC scan (the trace record's walk co-produces it), so
+/// the Metal cycle driver is served without a second trace pass.
+pub(crate) fn park_pc_rows(session: &mut ProofSession, rows: MmapVec<PcRow>) {
+    session.park(PcRowsKey(Arc::new(PcRows::new(rows))));
+}
+
+/// The parked PC scan, if a record walk co-produced one in this session.
+#[cfg(test)]
+pub(crate) fn parked_pc_rows(session: &ProofSession) -> Option<Arc<PcRows>> {
+    session.state::<PcRowsKey>().map(|key| Arc::clone(&key.0))
+}
+
+/// The Metal driver's packed row lane: reclaim the record walk's parked scan,
+/// or pack one from the shared stage-5 rows (both lanes carry the total
+/// bytecode PC).
+#[cfg(all(feature = "metal", target_os = "macos", not(feature = "akita")))]
+fn device_pc_rows<F: JoltField>(
+    session: &mut ProofSession,
+    rows: &[InstructionCycleRow],
+) -> Result<Arc<PcRows>, KernelError<F>> {
+    if let Some(key) = session.state::<PcRowsKey>() {
+        if key.0.len() != rows.len() {
+            return Err(KernelError::TableSizeMismatch {
+                table: "bytecode cycle PC rows".to_owned(),
+                expected: rows.len(),
+                got: key.0.len(),
+            });
+        }
+        return Ok(Arc::clone(&key.0));
+    }
+    let pack = |slot: &mut PcRow, row: &InstructionCycleRow| {
+        let pc = row_pc(row);
+        if pc as u32 as usize != pc || pc as u32 == COLD {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode PC exceeds the packed u32 range",
+            });
+        }
+        *slot = PcRow {
+            push_pc: pc as u32,
+            mapped_pc: pc as u32,
+        };
+        Ok::<(), KernelError<F>>(())
+    };
+    let mut packed: MmapVec<PcRow> = MmapVec::zeroed(rows.len());
+    #[cfg(feature = "parallel")]
+    packed
+        .par_iter_mut()
+        .zip(rows.par_iter())
+        .try_for_each(|(slot, row)| pack(slot, row))?;
+    #[cfg(not(feature = "parallel"))]
+    packed
+        .iter_mut()
+        .zip(rows.iter())
+        .try_for_each(|(slot, row)| pack(slot, row))?;
+    Ok(Arc::new(PcRows::new(packed)))
+}
+
+/// Total bytecode PC of a packed stage-5 row. The row's `Option` lane is
+/// sentinel ABI; the packing pass writes the total `BytecodePc` on every
+/// cycle, and an unset lane decodes to the reserved noop row 0.
+#[inline]
+fn row_pc(row: &InstructionCycleRow) -> usize {
+    row.mapped_pc().unwrap_or_default()
+}
+
 /// Per-stage cycle-eq pushforwards onto the bytecode address domain. Base and
 /// row-weighted stages share one trace walk over the split-eq decomposition.
+/// Each stage's table accumulates in its own lanes, so a subset walk produces
+/// the same field values as the full walk —
+/// [`spawn_bytecode_stage_pushforwards`] builds the stage-1..4 base tables in
+/// the background and the 6a prepare completes the rest inline.
 fn stage_pushforwards<F: JoltField, R: Sync>(
     base_cycle_points: &[Vec<F>],
     weighted_cycle_points: &[Vec<F>],
@@ -194,6 +365,70 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     }
 }
 
+/// Session carry: the stage-1..4 base pushforward tables, built ahead of
+/// stage 6a on a dedicated thread. The points are stored for validation — any
+/// mismatch (or a panicked worker, e.g. an out-of-domain PC that the
+/// prepare's own validation would reject anyway) falls back to the inline
+/// full walk, which produces bit-identical values.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct PrebuiltBytecodePushforwards<F> {
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
+    points: [Vec<F>; 4],
+    addresses: usize,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    handle: std::thread::JoinHandle<Vec<Vec<F>>>,
+}
+
+/// The background pool width for [`spawn_bytecode_stage_pushforwards`].
+const BYTECODE_BACKGROUND_THREADS: usize = 4;
+
+/// Spawn the stage-1..4 bytecode pushforward walk on a dedicated capped
+/// thread pool and park the join handle in the session. Call once the
+/// stage-4 output points exist (the stage-5 point does not yet); the 6a
+/// address-phase prepare reclaims the four tables and walks only the
+/// stage-5 point (plus any fused stages) inline.
+pub fn spawn_bytecode_stage_pushforwards<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+    addresses: usize,
+    early_points: [Vec<F>; 4],
+) -> Result<(), KernelError<F>> {
+    if early_points.iter().any(|point| point.len() != log_t) {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode early stage point has the wrong variable count",
+        });
+    }
+    let rows = shared_instruction_rows(session, witness, 1usize << log_t)?;
+    let points = early_points.clone();
+    let handle = std::thread::spawn(move || {
+        let _token = super::BACKGROUND_BUILD_TOKEN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let build = || {
+            stage_pushforwards::<F, _>(&early_points, &[], &rows, addresses, row_pc, |_| F::one())
+        };
+        #[cfg(feature = "parallel")]
+        if let Ok(pool) = rayon::ThreadPoolBuilder::new()
+            .num_threads(BYTECODE_BACKGROUND_THREADS)
+            .build()
+        {
+            return pool.install(build);
+        }
+        build()
+    });
+    session.park(PrebuiltBytecodePushforwards {
+        points,
+        addresses,
+        handle,
+    });
+    Ok(())
+}
+
 /// Stage-6a address phase: `PrepareKernel` front of the optimized kernel.
 pub struct OptimizedBytecodeReadRafAddress;
 
@@ -243,8 +478,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 });
             }
         }
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        let push_pc = InstructionCycleRow::bytecode_pc;
+        let rows = shared_instruction_rows(session, witness, cycles)?;
+        let push_pc = row_pc;
         let entry_bytecode_index = relation.entry_bytecode_index();
         if entry_bytecode_index >= addresses || rows.iter().any(|row| push_pc(row) >= addresses) {
             return Err(KernelError::InvariantViolation {
@@ -260,14 +495,42 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let row_weight = |_: &InstructionCycleRow| F::one();
         #[cfg(feature = "akita")]
         let row_weight = InstructionCycleRow::fused_inc::<F>;
-        let pushforwards = stage_pushforwards::<F, _>(
-            stage_cycle_points,
-            fused_cycle_points,
-            &rows,
-            addresses,
-            push_pc,
-            row_weight,
-        );
+        // Reclaim the background-built stage-1..4 base tables when they match
+        // this relation's points; walk only the remaining stages inline.
+        // Otherwise (no spawn, stale points, panicked worker) run the full
+        // walk — the same per-stage lanes either way, so the values are
+        // identical.
+        let prebuilt = session
+            .take::<PrebuiltBytecodePushforwards<F>>()
+            .filter(|carry| {
+                carry.addresses == addresses && carry.points[..] == stage_cycle_points[..4]
+            })
+            .and_then(|carry| carry.handle.join().ok());
+        let pushforwards = if let Some(mut early) = prebuilt {
+            early.extend(stage_pushforwards::<F, _>(
+                &stage_cycle_points[4..],
+                fused_cycle_points,
+                &rows,
+                addresses,
+                push_pc,
+                row_weight,
+            ));
+            early
+        } else {
+            stage_pushforwards::<F, _>(
+                stage_cycle_points,
+                fused_cycle_points,
+                &rows,
+                addresses,
+                push_pc,
+                row_weight,
+            )
+        };
+        if pushforwards.len() != num_stages {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode pushforward table count drifted",
+            });
+        }
         let pushforwards = pushforwards
             .into_iter()
             .map(Polynomial::new)
@@ -479,14 +742,15 @@ enum LazyFusedInc<F: JoltField> {
     Lazy {
         #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         branch_weights: Vec<F>,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        #[cfg_attr(feature = "allocative", allocative(skip))]
+        rows: Arc<InstructionRows>,
     },
     Dense(Polynomial<F>),
 }
 
 #[cfg(feature = "akita")]
 impl<F: JoltField> LazyFusedInc<F> {
-    fn new(rows: Arc<Vec<InstructionCycleRow>>) -> Self {
+    fn new(rows: Arc<InstructionRows>) -> Self {
         Self::Lazy {
             branch_weights: vec![F::one()],
             rows,
@@ -564,59 +828,132 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
     {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let r_address = relation.r_address();
-        let stage_cycle_points = relation.stage_cycle_points();
-        let cycles = 1usize << dimensions.log_t();
-        let num_ra = dimensions.num_committed_ra_polys();
+        prepare_bytecode_read_raf_cycle(session, witness, inputs, |_| None)
+    }
+}
 
-        let chunks = committed_address_chunks(r_address, relation.committed_chunk_bits());
-        if chunks.len() != num_ra {
+/// Device factory inputs for the stage-6b cycle member. The factory copies
+/// what it retains; every borrow is prepare-scoped.
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal driver factory")
+)]
+pub(crate) struct BytecodeCycleDeviceInputs<'a, F> {
+    pub(crate) rows: &'a Arc<PcRows>,
+    pub(crate) stage_cycle_points: &'a [Vec<F>],
+    pub(crate) stage_weights: &'a [F],
+    pub(crate) entry_term: F,
+    pub(crate) selector_shifts: Vec<u32>,
+    pub(crate) committed_chunk_bits: usize,
+    pub(crate) degree: usize,
+}
+
+/// A device driver plus its fail-closed combined-table recovery channel.
+pub(crate) struct BytecodeCycleDevice<F: JoltField> {
+    pub(crate) driver: Box<dyn LazyRaDevice<F>>,
+    pub(crate) combined_recovery: Arc<Mutex<Option<Vec<F>>>>,
+    /// Two-phase rounds: launch the device round in `begin_round`, collect
+    /// after the batch's synchronous members. The driver decides at build
+    /// (kill switch `JOLT_ST6B_DETACH=0` restores synchronous rounds).
+    pub(crate) launch: bool,
+}
+
+pub(crate) fn prepare_bytecode_read_raf_cycle<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
+    driver_factory: impl FnOnce(BytecodeCycleDeviceInputs<'_, F>) -> Option<BytecodeCycleDevice<F>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let r_address = relation.r_address();
+    let stage_cycle_points = relation.stage_cycle_points();
+    let cycles = 1usize << dimensions.log_t();
+    let num_ra = dimensions.num_committed_ra_polys();
+
+    let chunks = committed_address_chunks(r_address, relation.committed_chunk_bits());
+    if chunks.len() != num_ra {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode address chunk count disagrees with the committed RA count",
+        });
+    }
+    let rows = shared_instruction_rows(session, witness, cycles)?;
+
+    // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
+    // one-hot grid, served lazily off the sparse per-cycle indices for
+    // the first four binds instead of `d × T` dense.
+    let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
+    let selectors = (0..num_ra)
+        .map(|index| {
+            RaChunkSelector::new(index, num_ra, relation.committed_chunk_bits())
+                .map_err(KernelError::from)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    #[cfg(feature = "akita")]
+    let fused_inc = LazyFusedInc::new(Arc::clone(&rows));
+
+    // The combined coefficient table: every non-RA factor of the summand
+    // is linear in one cycle table, so
+    //   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) + γ⁷·entry·[j = 0]
+    // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
+    // stage-1 cycle point, SpartanShiftRaf the stage-3 one).
+    let stage_values = relation.stage_values_at_r_address()?;
+    let num_stages = stage_cycle_points.len();
+    let base_stages = bytecode::BYTECODE_STAGE_GAMMA_COUNTS.len();
+    let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
+    let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
+    let mut stage_weights = (0..base_stages)
+        .map(|stage| gamma_powers[stage] * stage_values[stage])
+        .collect::<Vec<_>>();
+    stage_weights[0] += gamma_powers[num_stages] * int_at_r_address;
+    stage_weights[2] += gamma_powers[num_stages + 1] * int_at_r_address;
+
+    for point in stage_cycle_points {
+        if point.len() != dimensions.log_t() {
             return Err(KernelError::InvariantViolation {
-                reason: "bytecode address chunk count disagrees with the committed RA count",
+                reason: "bytecode stage cycle point has the wrong variable count",
             });
         }
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+    }
+    let entry_scalar = eq_table(r_address)[relation.entry_bytecode_index()];
+    let entry_term = gamma_powers[num_stages + 2] * entry_scalar;
 
-        // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
-        // one-hot grid, served lazily off the sparse per-cycle indices for
-        // the first four binds instead of `d × T` dense.
-        let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
-        let selectors = (0..num_ra)
-            .map(|index| {
-                RaChunkSelector::new(index, num_ra, relation.committed_chunk_bits())
-                    .map_err(KernelError::from)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        #[cfg(feature = "akita")]
-        let fused_inc = LazyFusedInc::new(Arc::clone(&rows));
-        let ra = LazyFoldedRa::new(chunk_eqs, BytecodePcChunks { rows, selectors });
+    // The Metal member builds the combined table on-device from the same
+    // stage weights. The packed protocol's fused stages stay on the CPU, so
+    // the device tier is not offered under `akita`.
+    #[cfg(all(feature = "metal", target_os = "macos", not(feature = "akita")))]
+    let device = {
+        let device_rows = device_pc_rows::<F>(session, &rows)?;
+        driver_factory(BytecodeCycleDeviceInputs {
+            rows: &device_rows,
+            stage_cycle_points: &stage_cycle_points[..base_stages],
+            stage_weights: &stage_weights,
+            entry_term,
+            selector_shifts: selectors
+                .iter()
+                .map(|selector| selector.shift() as u32)
+                .collect(),
+            committed_chunk_bits: relation.committed_chunk_bits(),
+            degree: relation.degree(),
+        })
+    };
+    #[cfg(not(all(feature = "metal", target_os = "macos", not(feature = "akita"))))]
+    let device: Option<BytecodeCycleDevice<F>> = {
+        let _ = driver_factory;
+        None
+    };
+    // The PC scan's last consumer: remove the session's copy so the rows
+    // free with the driver instead of living to the end of the proof.
+    let _ = session.take::<PcRowsKey>();
 
-        // The combined coefficient table: every non-RA factor of the summand
-        // is linear in one cycle table, so
-        //   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) + γ⁷·entry·[j = 0]
-        // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
-        // stage-1 cycle point, SpartanShiftRaf the stage-3 one).
-        let stage_values = relation.stage_values_at_r_address()?;
-        let num_stages = stage_cycle_points.len();
-        let base_stages = bytecode::BYTECODE_STAGE_GAMMA_COUNTS.len();
-        let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
-        let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
-        let mut stage_weights = (0..base_stages)
-            .map(|stage| gamma_powers[stage] * stage_values[stage])
-            .collect::<Vec<_>>();
-        stage_weights[0] += gamma_powers[num_stages] * int_at_r_address;
-        stage_weights[2] += gamma_powers[num_stages + 1] * int_at_r_address;
-
-        for point in stage_cycle_points {
-            if point.len() != dimensions.log_t() {
-                return Err(KernelError::InvariantViolation {
-                    reason: "bytecode stage cycle point has the wrong variable count",
-                });
-            }
-        }
-
+    let (driver, combined_recovery, combined, launch) = if let Some(device) = device {
+        (
+            Some(device.driver),
+            Some(device.combined_recovery),
+            None,
+            device.launch,
+        )
+    } else {
         let mut combined = vec![F::zero(); cycles];
         for (point, weight) in stage_cycle_points[..base_stages].iter().zip(stage_weights) {
             let scaled = scaled_eq_table(point, weight);
@@ -631,61 +968,67 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                 .zip(scaled.iter())
                 .for_each(|(acc, term)| *acc += *term);
         }
-        let entry_scalar = eq_table(r_address)[relation.entry_bytecode_index()];
-        combined[0] += gamma_powers[num_stages + 2] * entry_scalar;
+        combined[0] += entry_term;
+        (None, None, Some(Polynomial::new(combined)), false)
+    };
 
-        #[cfg(feature = "akita")]
-        let fused_combined = {
-            let store = stage_values[base_stages];
-            let mut combined = vec![F::zero(); cycles];
-            for stage in base_stages..num_stages {
-                let value = if stage < base_stages + 2 {
-                    store
-                } else {
-                    F::one() - store
-                };
-                let scaled =
-                    scaled_eq_table(&stage_cycle_points[stage], gamma_powers[stage] * value);
-                #[cfg(feature = "parallel")]
-                combined
-                    .par_iter_mut()
-                    .zip(scaled.par_iter())
-                    .for_each(|(acc, term)| *acc += *term);
-                #[cfg(not(feature = "parallel"))]
-                combined
-                    .iter_mut()
-                    .zip(scaled.iter())
-                    .for_each(|(acc, term)| *acc += *term);
-            }
-            Polynomial::new(combined)
-        };
-
-        let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
-        if output_openings.len() != num_ra {
-            return Err(KernelError::InvariantViolation {
-                reason: "bytecode RA output opening count disagrees with the committed RA count",
-            });
+    #[cfg(feature = "akita")]
+    let fused_combined = {
+        let store = stage_values[base_stages];
+        let mut combined = vec![F::zero(); cycles];
+        for stage in base_stages..num_stages {
+            let value = if stage < base_stages + 2 {
+                store
+            } else {
+                F::one() - store
+            };
+            let scaled = scaled_eq_table(&stage_cycle_points[stage], gamma_powers[stage] * value);
+            #[cfg(feature = "parallel")]
+            combined
+                .par_iter_mut()
+                .zip(scaled.par_iter())
+                .for_each(|(acc, term)| *acc += *term);
+            #[cfg(not(feature = "parallel"))]
+            combined
+                .iter_mut()
+                .zip(scaled.iter())
+                .for_each(|(acc, term)| *acc += *term);
         }
+        Polynomial::new(combined)
+    };
 
-        Ok(Box::new(CycleKernel {
-            progress: RoundProgress::new(relation.rounds()),
-            degree: relation.degree(),
-            ra,
-            combined: Polynomial::new(combined),
-            #[cfg(feature = "akita")]
-            fused_inc,
-            #[cfg(feature = "akita")]
-            fused_combined,
-            output_openings,
-        }))
+    let ra = LazyFoldedRa::new_with_driver(chunk_eqs, BytecodePcChunks { rows, selectors }, driver);
+
+    let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
+    if output_openings.len() != num_ra {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode RA output opening count disagrees with the committed RA count",
+        });
     }
+
+    Ok(Box::new(CycleKernel {
+        progress: RoundProgress::new(relation.rounds()),
+        degree: relation.degree(),
+        ra,
+        combined,
+        combined_recovery,
+        #[cfg(feature = "akita")]
+        fused_inc,
+        #[cfg(feature = "akita")]
+        fused_combined,
+        output_openings,
+        launch,
+        launched: false,
+    }))
 }
 
-/// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
-/// cold on unmapped cycles, off the shared stage-5 rows.
+/// Lazy-RA index source: chunk `i` of the per-cycle total bytecode PC, off
+/// the shared stage-5 rows (every cycle is hot — the committed one-hot has a
+/// row for no-ops too).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BytecodePcChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: Arc<InstructionRows>,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     selectors: Vec<RaChunkSelector>,
 }
@@ -701,7 +1044,7 @@ impl ChunkIndexSource for BytecodePcChunks {
 
     #[inline]
     fn index(&self, i: usize, j: usize) -> Option<usize> {
-        Some(self.selectors[i].chunk_usize(self.rows[j].bytecode_pc()))
+        Some(self.selectors[i].chunk_usize(row_pc(&self.rows[j])))
     }
 }
 
@@ -714,7 +1057,11 @@ struct CycleKernel<F: JoltField> {
     progress: RoundProgress,
     degree: usize,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
-    combined: Polynomial<F>,
+    /// `None` while the device owns the combined table; recovered through
+    /// `combined_recovery` on any device decline or failure.
+    combined: Option<Polynomial<F>>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    combined_recovery: Option<Arc<Mutex<Option<Vec<F>>>>>,
     #[cfg(feature = "akita")]
     fused_inc: LazyFusedInc<F>,
     #[cfg(feature = "akita")]
@@ -723,16 +1070,39 @@ struct CycleKernel<F: JoltField> {
     /// order (index-aligned with `ra`).
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     output_openings: Vec<JoltOpeningId>,
+    /// Two-phase device rounds enabled (see [`BytecodeCycleDevice::launch`]).
+    launch: bool,
+    /// A device round is in flight for the current batch round.
+    launched: bool,
 }
 impl<F: JoltField> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {
-        bind_all([&mut self.combined], challenge);
+        if let Some(combined) = &mut self.combined {
+            bind_all([combined], challenge);
+        }
         #[cfg(feature = "akita")]
         bind_all([&mut self.fused_combined], challenge);
         self.ra.bind(challenge);
         #[cfg(feature = "akita")]
         self.fused_inc.bind(challenge);
+        self.recover_combined();
         self.progress.advance();
+    }
+
+    fn recover_combined(&mut self) {
+        if self.combined.is_some() {
+            return;
+        }
+        let Some(recovery) = &self.combined_recovery else {
+            return;
+        };
+        let mut recovery = recovery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(table) = recovery.take() {
+            self.combined = Some(Polynomial::new(table));
+            self.ra.disable_device();
+        }
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
@@ -740,8 +1110,17 @@ impl<F: JoltField> CycleKernel<F> {
     /// caller's per-group `(lo, hi)` scratch (each RA pair is gathered once
     /// per group, not once per sample point).
     #[inline]
+    #[expect(
+        clippy::expect_used,
+        reason = "device decline must publish the combined recovery table"
+    )]
     fn accumulate_group(&self, y: usize, acc: &mut [F], ra_pairs: &mut [(F, F)]) {
-        let (c_lo, c_hi) = pair(&self.combined, y);
+        let (c_lo, c_hi) = pair(
+            self.combined
+                .as_ref()
+                .expect("combined table unavailable after device recovery"),
+            y,
+        );
         let c_delta = c_hi - c_lo;
         #[cfg(feature = "akita")]
         let (fused_coefficient_lo, fused_coefficient_hi) = pair(&self.fused_combined, y);
@@ -789,7 +1168,83 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        let half = self.combined.len() / 2;
+        self.message(previous_claim)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind);
+        Ok(())
+    }
+
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        if !self.launch {
+            return Ok(false);
+        }
+        // A prepare-time prelaunched round 0 (only round 0 arrives bindless)
+        // is already in flight: report launched without re-launching.
+        if bind.is_none() && self.launched {
+            return Ok(true);
+        }
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
+        if self.combined.is_none() {
+            self.launched = self.ra.launch_device_lanes(&[], &[]);
+            if !self.launched {
+                // A decline may have normalized the device tier away
+                // (published recovery / reclaimed tables) — pick it up so
+                // the collect-side CPU compute finds the combined table.
+                self.recover_combined();
+            }
+        }
+        Ok(self.launched)
+    }
+
+    fn collect_round(
+        &mut self,
+        _bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if std::mem::take(&mut self.launched) {
+            if let Some(evals) = self.ra.collect_device_lanes() {
+                debug_assert_eq!(evals.len(), self.degree);
+                return Ok(round_poly_from_skipped_evals(&evals, previous_claim));
+            }
+            // Wait failure: the driver published the recovery and latched
+            // off — recompute the SAME round on the CPU below.
+            self.recover_combined();
+        }
+        if self.launch {
+            // `begin_round` already bound.
+            return self.message(previous_claim);
+        }
+        self.prove_round(_bind, _round, previous_claim)
+    }
+}
+
+impl<F: JoltField> CycleKernel<F> {
+    /// The round message from current (post-bind) state; the device tier's
+    /// synchronous shot first, the CPU loop otherwise.
+    fn message(&mut self, previous_claim: F) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if self.combined.is_none() {
+            if let Some(evals) = self.ra.device_lanes(&[], &[]) {
+                debug_assert_eq!(evals.len(), self.degree);
+                return Ok(round_poly_from_skipped_evals(&evals, previous_claim));
+            }
+            self.recover_combined();
+        }
+        let half = self
+            .combined
+            .as_ref()
+            .map(|combined| combined.len())
+            .unwrap_or_default()
+            / 2;
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
@@ -802,11 +1257,6 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
     }
-
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
-    }
 }
 
 impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
@@ -817,6 +1267,7 @@ impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        self.ra.ensure_host();
         let ra = &self.ra;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {
@@ -946,7 +1397,7 @@ mod tests {
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::{JoltWitnessOracle, ProgramSource};
 
-    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
+    use super::super::instruction_read_raf::SharedInstructionRows;
     use super::*;
     use crate::optimized::parity::{
         probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
@@ -1030,8 +1481,7 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                session.state::<SharedInstructionRows>().is_some()
-                    || session.state::<SharedInstructionRowsWeak>().is_some(),
+                session.state::<SharedInstructionRows>().is_some(),
                 "the address phase must park the shared cycle rows"
             );
 
@@ -1114,6 +1564,122 @@ mod tests {
                 reference.output_claims(&cycle_claims).unwrap(),
                 optimized.output_claims(&cycle_claims).unwrap()
             );
+        });
+    }
+
+    /// The background stage-1..4 walk plus the inline stage-5 walk equals
+    /// the five-stage walk (matching carry consumed, same round polys and
+    /// claims), and a stale carry (wrong points) falls back to the identical
+    /// inline build.
+    #[test]
+    fn background_pushforwards_match_inline_build() {
+        with_sample_backend(|backend| {
+            let log_t = JoltWitnessOracle::<Fr>::shape(
+                backend,
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
+            )
+            .unwrap()
+            .rows()
+            .ilog2() as usize;
+            let (bytecode_d, _) =
+                probe_one_hot_family(backend, JoltCommittedPolynomial::BytecodeRa, log_t);
+            assert!(bytecode_d > 0, "fixture serves no BytecodeRa polynomials");
+            let program = backend.program_preprocessing();
+            let bytecode_len = program.bytecode.bytecode.len();
+            let log_k = bytecode_len.ilog2() as usize;
+            let dimensions = BytecodeReadRafDimensions::new(log_t, log_k, bytecode_d);
+            let stage_cycle_points: [Vec<Fr>; 5] =
+                std::array::from_fn(|s| synthetic_point(log_t, 11 + s as u64));
+            let stage_points = BytecodeStagePoints {
+                stage_cycle_points: stage_cycle_points.clone(),
+                register_read_write_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 31),
+                register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 37),
+                fused_inc_cycle_points: Vec::new(),
+            };
+            let relation = BytecodeReadRafAddressPhase::new(
+                dimensions,
+                false,
+                stage_points,
+                1.min(bytecode_len - 1),
+            );
+            let challenges = BytecodeReadRafAddressPhaseChallenges {
+                gamma: fr(3),
+                stage1_gamma: fr(5),
+                stage2_gamma: fr(7),
+                stage3_gamma: fr(11),
+                stage4_gamma: fr(13),
+                stage5_gamma: fr(17),
+            };
+            let claims = BytecodeReadRafAddressPhaseInputClaims::<Fr>::default();
+            let input_points = BytecodeReadRafAddressPhaseInputClaims::<Vec<Fr>>::default();
+            let prepare = |session: &mut ProofSession| {
+                OptimizedBytecodeReadRafAddress
+                    .prepare(
+                        session,
+                        backend,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &input_points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .unwrap()
+            };
+
+            let mut spawned_session = ProofSession::default();
+            spawn_bytecode_stage_pushforwards(
+                &mut spawned_session,
+                backend,
+                log_t,
+                bytecode_len,
+                std::array::from_fn(|s| stage_cycle_points[s].clone()),
+            )
+            .unwrap();
+            let mut spawned = prepare(&mut spawned_session);
+            assert!(
+                spawned_session
+                    .state::<PrebuiltBytecodePushforwards<Fr>>()
+                    .is_none(),
+                "the prepare must consume the background carry"
+            );
+
+            let mut stale_session = ProofSession::default();
+            spawn_bytecode_stage_pushforwards(
+                &mut stale_session,
+                backend,
+                log_t,
+                bytecode_len,
+                std::array::from_fn(|s| synthetic_point(log_t, 900 + s as u64)),
+            )
+            .unwrap();
+            let mut stale = prepare(&mut stale_session);
+
+            let mut inline_a = prepare(&mut ProofSession::default());
+            let mut inline_b = prepare(&mut ProofSession::default());
+
+            // The optimized kernel recovers eval-at-1 from the claim instead
+            // of checking it, so the honest input claim probes off a
+            // reference twin (the run_pair idiom).
+            let mut reference =
+                <ReferenceBackend as PrepareKernel<Fr, BytecodeReadRafAddressPhase<Fr>>>::prepare(
+                    &ReferenceBackend,
+                    &mut ProofSession::default(),
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &input_points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            let input_claim = probe_input_claim(reference.as_mut());
+            let drive: Vec<Fr> = (0..relation.rounds())
+                .map(|round| fr(1000 + round as u64))
+                .collect();
+            run_lockstep(&mut *inline_a, &mut *spawned, input_claim, &drive);
+            run_lockstep(&mut *inline_b, &mut *stale, input_claim, &drive);
         });
     }
 

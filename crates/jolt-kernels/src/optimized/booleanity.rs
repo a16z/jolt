@@ -25,13 +25,19 @@
 //!   polynomial: per `E_out` block, the `E_in` weights accumulate
 //!   *unreduced* into the hot buckets (no per-cycle multiply at all), and
 //!   each block reduces and folds by its `e_out` once (legacy
-//!   `compute_all_G`).
+//!   `compute_all_G`). [`spawn_booleanity_address_masses`] runs the same
+//!   build on a capped background pool once the anchor point exists; the
+//!   6a prepare reclaims the tables (or rebuilds inline on any mismatch —
+//!   identical values either way).
 //! - **Shared expanded-eq gather (cycle phase).** The address-folded row
 //!   `x_i(j) = eq(r_address)[hot_i(j)]` is a lookup into a `K`-sized table
 //!   pre-scaled by `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no
 //!   batching multiply in the round loop (legacy `SharedRaPolynomials`
 //!   pre-scaling), served by the shared [`LazyFoldedRa`] state machine —
-//!   index-encoded for the first four binds, dense at `T/16` after.
+//!   index-encoded for the first four binds, dense at `T/16` after. The
+//!   Metal member drives the same state machine through the
+//!   [`prepare_booleanity_cycle`] driver factory (two-phase
+//!   `begin_round`/`collect_round` launches, CPU recompute on decline).
 //! - **Split-eq / Gruen round messages (cycle phase).** Only the constant
 //!   and leading coefficients of the inner quadratic are accumulated, in
 //!   deferred-reduction lanes at every level (per-row products, per-block
@@ -57,6 +63,7 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
+#[cfg(all(feature = "metal", target_os = "macos"))]
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::relations::booleanity::{
     lattice_booleanity_output_openings, LatticeBooleanityDimensions,
@@ -87,13 +94,29 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::InstructionCycleRow;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow, InstructionRows};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
 use super::support::{gamma_power_pairs, pin_derived_term_if_derived, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+/// What a booleanity-cycle device driver captures at prepare (borrowed —
+/// the factory clones what it keeps).
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal driver factory")
+)]
+pub(crate) struct BooleanityDeviceInputs<'a, F> {
+    pub(crate) rows: &'a Arc<InstructionRows>,
+    /// Per polynomial (layout order): [`ColumnSelector::device_meta`].
+    pub(crate) poly_meta: Vec<(u32, u32)>,
+    pub(crate) log_k_chunk: usize,
+    /// γ^i per polynomial — the summand's `H(H − γ^i)` needs the unscaled
+    /// power next to the pre-scaled tables.
+    pub(crate) gamma_powers: &'a [F],
+}
 
 /// One checked polynomial's chunk selector over the packed per-cycle rows
 /// (canonical layout order: instruction, bytecode, ram).
@@ -113,13 +136,27 @@ impl ColumnSelector {
     #[inline]
     fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
         match self {
-            Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index())),
-            Self::Bytecode(selector) => Some(selector.chunk_usize(row.bytecode_pc())),
+            Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index)),
+            Self::Bytecode(selector) => {
+                Some(selector.chunk_usize(row.mapped_pc().unwrap_or_default()))
+            }
             Self::Ram(selector) => row
                 .remapped_ram_address()
                 .map(|address| selector.chunk_usize(address as usize)),
             #[cfg(feature = "akita")]
             Self::UnsignedInc(column) => Some(row.fused_inc_row(*column)),
+        }
+    }
+
+    /// The device shader's `(family, shift)` selector encoding. The packed
+    /// protocol's extra columns have no device encoding, so the driver
+    /// factory is not offered under `akita`.
+    #[cfg(not(feature = "akita"))]
+    fn device_meta(&self) -> (u32, u32) {
+        match self {
+            Self::Instruction(selector) => (0, selector.shift() as u32),
+            Self::Bytecode(selector) => (1, selector.shift() as u32),
+            Self::Ram(selector) => (2, selector.shift() as u32),
         }
     }
 }
@@ -152,26 +189,12 @@ impl BooleanityColumns {
         }
     }
 
-    /// The layout's chunk selectors, in canonical polynomial order, with the
-    /// witness shapes validated up front.
-    fn new<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        dimensions: BooleanityDimensions,
-    ) -> Result<Self, KernelError<F>> {
-        let log_t = dimensions.log_t;
+    /// The layout's chunk selectors in canonical polynomial order, without
+    /// witness-shape validation (the bench seam's raw-parts path).
+    fn build<F: JoltField>(dimensions: BooleanityDimensions) -> Result<Self, KernelError<F>> {
         let log_k_chunk = dimensions.log_k_chunk;
         let layout = dimensions.layout;
         let openings = Self::openings(dimensions)?;
-        for opening in &openings {
-            let shape = witness.shape(opening.polynomial_id())?;
-            if shape.log_rows != log_k_chunk + log_t {
-                return Err(KernelError::TableSizeMismatch {
-                    table: format!("{opening:?}"),
-                    expected: 1usize << (log_k_chunk + log_t),
-                    got: shape.rows(),
-                });
-            }
-        }
         let selectors = layout
             .polynomials()
             .map(|polynomial| {
@@ -212,6 +235,27 @@ impl BooleanityColumns {
             openings,
             selectors,
         })
+    }
+
+    /// [`Self::build`] with the witness shapes validated up front.
+    fn new<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        dimensions: BooleanityDimensions,
+    ) -> Result<Self, KernelError<F>> {
+        let log_t = dimensions.log_t;
+        let log_k_chunk = dimensions.log_k_chunk;
+        let columns = Self::build(dimensions)?;
+        for opening in &columns.openings {
+            let shape = witness.shape(opening.polynomial_id())?;
+            if shape.log_rows != log_k_chunk + log_t {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("{opening:?}"),
+                    expected: 1usize << (log_k_chunk + log_t),
+                    got: shape.rows(),
+                });
+            }
+        }
+        Ok(columns)
     }
 }
 
@@ -302,6 +346,70 @@ fn cycle_pushforward<F: JoltField>(
 // Stage 6a: address phase
 // ---------------------------------------------------------------------------
 
+/// Session carry: the address-phase pushforward masses, built ahead of stage
+/// 6a on a dedicated thread (the prover spawns the build before stage 5 when
+/// the booleanity anchor is transcript-prior to it). The reference cycle is
+/// stored for validation — a point mismatch (or a panicked worker) falls back
+/// to the inline build, which produces bit-identical values.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct PrebuiltBooleanityMasses<F> {
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    reference_cycle: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    handle: std::thread::JoinHandle<Vec<Vec<F>>>,
+}
+
+/// The background pool width for [`spawn_booleanity_address_masses`]: wide
+/// enough to finish well inside stage 5's window at every scale, narrow
+/// enough not to contend with the stage's own host work.
+const BOOLEANITY_BACKGROUND_THREADS: usize = 4;
+
+/// Spawn the stage-6a booleanity pushforward build (`cycle_pushforward` at
+/// the little-endian `reference_cycle`) on a dedicated capped thread pool and
+/// park the join handle in the session. Call after the anchor point exists;
+/// the address-phase prepare reclaims the result (or rebuilds inline on any
+/// mismatch). Row collection cost is unchanged: this reuses (or first parks)
+/// the shared stage rows the later prepares would collect anyway.
+pub fn spawn_booleanity_address_masses<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    dimensions: BooleanityDimensions,
+    reference_cycle: Vec<F>,
+) -> Result<(), KernelError<F>> {
+    if reference_cycle.len() != dimensions.log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "booleanity anchor point length disagrees with the dimensions",
+        });
+    }
+    let selectors = BooleanityColumns::new(witness, dimensions)?.selectors;
+    let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+    let k_chunk = 1usize << dimensions.log_k_chunk;
+    let point = reference_cycle.clone();
+    let handle = std::thread::spawn(move || {
+        let _token = super::BACKGROUND_BUILD_TOKEN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let build = || cycle_pushforward::<F>(&rows, &selectors, k_chunk, &point);
+        #[cfg(feature = "parallel")]
+        if let Ok(pool) = rayon::ThreadPoolBuilder::new()
+            .num_threads(BOOLEANITY_BACKGROUND_THREADS)
+            .build()
+        {
+            return pool.install(build);
+        }
+        build()
+    });
+    session.park(PrebuiltBooleanityMasses {
+        reference_cycle,
+        handle,
+    });
+    Ok(())
+}
+
 /// Slot front for the stage-6a booleanity address phase.
 pub struct OptimizedBooleanityAddress;
 
@@ -328,14 +436,25 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
             });
         }
 
-        let columns = BooleanityColumns::new(witness, dimensions)?;
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
-        let masses = cycle_pushforward(
-            &rows,
-            &columns.selectors,
-            1usize << dimensions.log_k_chunk,
-            &reference_cycle,
-        );
+        // Reclaim the background-built masses when they match this relation's
+        // point; otherwise (no spawn, stale anchor, panicked worker) build
+        // inline — the same sums in either case, so the values are identical.
+        let prebuilt = session
+            .take::<PrebuiltBooleanityMasses<F>>()
+            .filter(|carry| carry.reference_cycle == reference_cycle)
+            .and_then(|carry| carry.handle.join().ok());
+        let masses = if let Some(masses) = prebuilt {
+            masses
+        } else {
+            let columns = BooleanityColumns::new(witness, dimensions)?;
+            let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+            cycle_pushforward(
+                &rows,
+                &columns.selectors,
+                1usize << dimensions.log_k_chunk,
+                &reference_cycle,
+            )
+        };
 
         Ok(Box::new(OptimizedBooleanityAddressKernel::new(
             relation.rounds(),
@@ -506,64 +625,98 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let r_address = relation.r_address();
-        let reference_address = relation.reference_address();
-        let reference_cycle = relation.reference_cycle();
-        if r_address.len() != dimensions.log_k_chunk || reference_cycle.len() != dimensions.log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "booleanity cycle-phase point lengths disagree with the dimensions",
-            });
-        }
-        let columns = BooleanityColumns::new(witness, dimensions)?;
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
-
-        // The fixed address eq factor of the `EqAddressCycle` public; rides
-        // in the split-eq scaling so round messages and the bound scalar
-        // carry it exactly like the reference's derived table.
-        let address_scalar = try_eq_mle(r_address, reference_address).map_err(|_| {
-            KernelError::InvariantViolation {
-                reason: "booleanity address point and reference length mismatch",
-            }
-        })?;
-        let eq_address = eq_table(r_address);
-        let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(
-            inputs.challenges.gamma,
-            columns.selectors.len(),
-            "booleanity batching gamma must be invertible",
-        )?;
-        let tables: Vec<Vec<F>> = gamma_powers
-            .iter()
-            .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
-            .collect();
-
-        Ok(Box::new(OptimizedBooleanityCycleKernel {
-            progress: RoundProgress::new(relation.rounds()),
-            eq: GruenSplitEqPolynomial::new_with_scaling(
-                reference_cycle,
-                BindingOrder::LowToHigh,
-                Some(address_scalar),
-            ),
-            tables: LazyFoldedRa::new(
-                tables,
-                BooleanityChunks {
-                    rows,
-                    selectors: columns.selectors,
-                },
-            ),
-            gamma_powers,
-            gamma_powers_inv,
-            openings: columns.openings,
-        }))
+        prepare_booleanity_cycle(session, witness, inputs, |_| None)
     }
+}
+
+/// The cycle-phase prepare with a [`LazyRaDevice`] factory (the optimized
+/// slot passes `|_| None`; the Metal slot builds its driver from the
+/// [`BooleanityDeviceInputs`]). Lane contract for installed drivers:
+/// `[q_constant, q_leading]` — the two inner-quadratic coefficients
+/// [`GruenSplitEqPolynomial::gruen_poly_deg_3`] consumes.
+pub(crate) fn prepare_booleanity_cycle<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, Booleanity<F>>,
+    driver: impl FnOnce(BooleanityDeviceInputs<'_, F>) -> Option<Box<dyn LazyRaDevice<F>>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let r_address = relation.r_address();
+    let reference_address = relation.reference_address();
+    let reference_cycle = relation.reference_cycle();
+    if r_address.len() != dimensions.log_k_chunk || reference_cycle.len() != dimensions.log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "booleanity cycle-phase point lengths disagree with the dimensions",
+        });
+    }
+    let columns = BooleanityColumns::new(witness, dimensions)?;
+    let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+
+    // The fixed address eq factor of the `EqAddressCycle` public; rides
+    // in the split-eq scaling so round messages and the bound scalar
+    // carry it exactly like the reference's derived table.
+    let address_scalar =
+        try_eq_mle(r_address, reference_address).map_err(|_| KernelError::InvariantViolation {
+            reason: "booleanity address point and reference length mismatch",
+        })?;
+    let eq_address = eq_table(r_address);
+    let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(
+        inputs.challenges.gamma,
+        columns.selectors.len(),
+        "booleanity batching gamma must be invertible",
+    )?;
+    let tables: Vec<Vec<F>> = gamma_powers
+        .iter()
+        .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
+        .collect();
+
+    // The packed protocol's extra columns have no device selector encoding,
+    // so the device tier is not offered under `akita`.
+    #[cfg(not(feature = "akita"))]
+    let driver = driver(BooleanityDeviceInputs {
+        rows: &rows,
+        poly_meta: columns
+            .selectors
+            .iter()
+            .map(ColumnSelector::device_meta)
+            .collect(),
+        log_k_chunk: dimensions.log_k_chunk,
+        gamma_powers: &gamma_powers,
+    });
+    #[cfg(feature = "akita")]
+    let driver: Option<Box<dyn LazyRaDevice<F>>> = {
+        let _ = driver;
+        None
+    };
+    Ok(Box::new(OptimizedBooleanityCycleKernel {
+        progress: RoundProgress::new(relation.rounds()),
+        eq: GruenSplitEqPolynomial::new_with_scaling(
+            reference_cycle,
+            BindingOrder::LowToHigh,
+            Some(address_scalar),
+        ),
+        tables: LazyFoldedRa::new_with_driver(
+            tables,
+            BooleanityChunks {
+                rows,
+                selectors: columns.selectors,
+            },
+            driver,
+        ),
+        gamma_powers,
+        gamma_powers_inv,
+        openings: columns.openings,
+        launched: false,
+    }))
 }
 
 /// Lazy-RA index source over the packed stage-5 rows: polynomial `i`'s hot
 /// chunk at cycle `j`, through the layout's selectors.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BooleanityChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: Arc<InstructionRows>,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     selectors: Vec<ColumnSelector>,
 }
@@ -603,6 +756,9 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     gamma_powers_inv: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     openings: Vec<JoltOpeningId>,
+    /// A `begin_round` device launch is in flight (its `collect_round`
+    /// pending).
+    launched: bool,
 }
 
 impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
@@ -626,6 +782,15 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
             self.bind(challenge);
+        }
+        // Device tier first (lazy scan or fused dense round); a decline has
+        // already normalized the state for the CPU fold below.
+        if let Some(lanes) = self
+            .tables
+            .device_lanes(self.eq.e_in_current(), self.eq.e_out_current())
+        {
+            debug_assert_eq!(lanes.len(), 2);
+            return Ok(self.eq.gruen_poly_deg_3(lanes[0], lanes[1], previous_claim));
         }
         let tables = &self.tables;
         let gamma_powers = &self.gamma_powers;
@@ -683,6 +848,45 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         self.bind(bind);
         Ok(())
     }
+
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        // A prepare-time prelaunched round 0 (only round 0 arrives bindless)
+        // is already in flight: report launched without re-launching.
+        if bind.is_none() && self.launched {
+            return Ok(true);
+        }
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
+        self.launched = self
+            .tables
+            .launch_device_lanes(self.eq.e_in_current(), self.eq.e_out_current());
+        Ok(self.launched)
+    }
+
+    fn collect_round(
+        &mut self,
+        _bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if std::mem::take(&mut self.launched) {
+            if let Some(lanes) = self.tables.collect_device_lanes() {
+                debug_assert_eq!(lanes.len(), 2);
+                return Ok(self.eq.gruen_poly_deg_3(lanes[0], lanes[1], previous_claim));
+            }
+            // Wait failure: the driver latched off and normalized state —
+            // fall through to the synchronous recompute of the SAME round.
+        }
+        // `begin_round` already bound, so recompute with no bind. The
+        // device tier inside declines (latched off or already reclaimed).
+        self.prove_round(None, round, previous_claim)
+    }
 }
 
 impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
@@ -696,6 +900,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         // Unscale the pre-scaled tables back to the committed polynomials'
         // claims; resolve by id so the output struct shape stays the
         // relation's business.
+        self.tables.ensure_host();
         let values: BTreeMap<JoltOpeningId, F> = self
             .openings
             .iter()
@@ -942,7 +1147,9 @@ mod tests {
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
     use jolt_witness::JoltWitnessOracle;
 
-    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
+    use super::super::instruction_read_raf::{
+        collect_instruction_cycle_rows, SharedInstructionRows,
+    };
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
     use crate::ReferenceBackend;
@@ -1084,10 +1291,7 @@ mod tests {
                 optimized.output_claims(&claims).unwrap(),
             );
             // The 6a prepare parks a shared-rows carry for the 6b consumers.
-            assert!(
-                session.state::<SharedInstructionRows>().is_some()
-                    || session.state::<SharedInstructionRowsWeak>().is_some()
-            );
+            assert!(session.state::<SharedInstructionRows>().is_some());
         });
     }
 
@@ -1104,6 +1308,127 @@ mod tests {
     #[test]
     fn address_kernel_matches_reference_wide_chunk() {
         address_parity(2, 8);
+    }
+
+    /// The background spawn and the inline build feed byte-identical kernels:
+    /// same round polynomials, same output claims. Also pins the carry
+    /// contract — the prepare consumes a matching carry and leaves a
+    /// shared-rows carry parked (the spawn parks it) for the 6b consumers.
+    #[test]
+    fn background_masses_match_inline_build() {
+        with_booleanity_backend(3, 4, |backend, dimensions| {
+            let relation = BooleanityAddressPhase::<Fr>::new(
+                dimensions,
+                point(900, dimensions.log_k_chunk),
+                point(300, 3),
+            );
+            let claims = Default::default();
+            let points = Default::default();
+            let challenges = BooleanityAddressPhaseChallenges {
+                reference_address: point(700, dimensions.log_k_chunk),
+                gamma: Fr::from_u64(31),
+            };
+            let mut spawned_session = ProofSession::default();
+            spawn_booleanity_address_masses(
+                &mut spawned_session,
+                backend,
+                dimensions,
+                relation.reference_cycle(),
+            )
+            .unwrap();
+            let spawned = OptimizedBooleanityAddress
+                .prepare(
+                    &mut spawned_session,
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            assert!(
+                spawned_session
+                    .state::<PrebuiltBooleanityMasses<Fr>>()
+                    .is_none(),
+                "the prepare must consume the background carry"
+            );
+            assert!(spawned_session.state::<SharedInstructionRows>().is_some());
+            let inline = OptimizedBooleanityAddress
+                .prepare(
+                    &mut ProofSession::default(),
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            let (mut spawned, mut inline, _) = drive_lockstep(spawned, inline, Fr::from_u64(0));
+            assert_eq!(
+                spawned.output_claims(&claims).unwrap(),
+                inline.output_claims(&claims).unwrap(),
+            );
+        });
+    }
+
+    /// A carry built at a different anchor point is discarded and the prepare
+    /// rebuilds inline — the kernel still matches the clean inline build.
+    #[test]
+    fn stale_background_carry_falls_back_inline() {
+        with_booleanity_backend(3, 4, |backend, dimensions| {
+            let relation = BooleanityAddressPhase::<Fr>::new(
+                dimensions,
+                point(900, dimensions.log_k_chunk),
+                point(300, 3),
+            );
+            let claims = Default::default();
+            let points = Default::default();
+            let challenges = BooleanityAddressPhaseChallenges {
+                reference_address: point(700, dimensions.log_k_chunk),
+                gamma: Fr::from_u64(31),
+            };
+            let mut stale_session = ProofSession::default();
+            spawn_booleanity_address_masses(
+                &mut stale_session,
+                backend,
+                dimensions,
+                point(555, 3), // not the relation's reference cycle
+            )
+            .unwrap();
+            let stale = OptimizedBooleanityAddress
+                .prepare(
+                    &mut stale_session,
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            let inline = OptimizedBooleanityAddress
+                .prepare(
+                    &mut ProofSession::default(),
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            let (mut stale, mut inline, _) = drive_lockstep(stale, inline, Fr::from_u64(0));
+            assert_eq!(
+                stale.output_claims(&claims).unwrap(),
+                inline.output_claims(&claims).unwrap(),
+            );
+        });
     }
 
     fn cycle_parity(log_t: usize, log_k_chunk: u8, carried_indices: bool) {
@@ -1148,8 +1473,8 @@ mod tests {
                 .unwrap();
             let mut session = ProofSession::default();
             if carried_indices {
-                let rows = InstructionCycleRow::collect::<Fr>(backend, 1usize << log_t).unwrap();
-                session.park(SharedInstructionRows(Arc::new(rows)));
+                let rows = collect_instruction_cycle_rows::<Fr>(backend, 1usize << log_t).unwrap();
+                session.park(SharedInstructionRows(Arc::new(InstructionRows::new(rows))));
             }
             let optimized = OptimizedBooleanityCycle
                 .prepare(
@@ -1165,8 +1490,7 @@ mod tests {
                 .unwrap();
             if carried_indices {
                 assert!(
-                    session.state::<SharedInstructionRows>().is_some()
-                        || session.state::<SharedInstructionRowsWeak>().is_some(),
+                    session.state::<SharedInstructionRows>().is_some(),
                     "cycle prepare must park a shared-rows carry back for later consumers"
                 );
             }
@@ -1337,8 +1661,7 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                session.state::<SharedInstructionRows>().is_some()
-                    || session.state::<SharedInstructionRowsWeak>().is_some(),
+                session.state::<SharedInstructionRows>().is_some(),
                 "cycle prepare must park a shared-rows carry back"
             );
             let (mut reference, mut optimized, cycle_challenges_drawn) =
