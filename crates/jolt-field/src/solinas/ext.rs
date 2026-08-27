@@ -552,14 +552,17 @@ impl<F: PseudoMersenne> ExtField<F> for F {
     }
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 1);
-        coeffs[0]
+    fn from_base_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        f(0)
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        vec![*self]
+    fn base_coefficient(&self, index: usize) -> F {
+        assert_eq!(index, 0);
+        *self
     }
 
     /// Frobenius is the identity on the prime field.
@@ -583,14 +586,16 @@ impl<F: PseudoMersenne, C: Ext2Config<F>> ExtField<F> for FpExt2<F, C> {
     }
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 2);
-        Self::new(coeffs[0], coeffs[1])
+    fn from_base_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(f(0), f(1))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 
     #[inline]
@@ -613,14 +618,16 @@ impl<F: PseudoMersenne> ExtField<F> for FpExt4<F> {
     }
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 4);
-        Self::new([coeffs[0], coeffs[1], coeffs[2], coeffs[3]])
+    fn from_base_fn<G>(f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(std::array::from_fn(f))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 
     #[inline]
@@ -643,14 +650,16 @@ impl<F: PseudoMersenne> ExtField<F> for FpExt8<F> {
     }
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 8);
-        Self::new(std::array::from_fn(|i| coeffs[i]))
+    fn from_base_fn<G>(f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(std::array::from_fn(f))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 
     #[inline]
