@@ -363,6 +363,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         }
     }
 
+    #[cfg_attr(feature = "implicit-carry", expect(clippy::expect_used))]
     fn cache_openings(
         &self,
         accumulator: &mut ProverOpeningAccumulator<F>,
@@ -377,8 +378,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         let is_virtual_eval = state.is_virtual_poly.final_sumcheck_claim();
         let is_first_in_sequence_eval = state.is_first_in_sequence_poly.final_sumcheck_claim();
         let is_noop_eval = state.is_noop_poly.final_sumcheck_claim();
+        // Unscale the gamma^5 pre-scaling applied in `Phase2State::gen`: the
+        // accumulator must hold the true `Carry` opening. gamma is a
+        // Fiat-Shamir challenge, zero only with negligible probability.
         #[cfg(feature = "implicit-carry")]
-        let carry_eval = state.carry_poly.final_sumcheck_claim();
+        let carry_eval = state.carry_poly.final_sumcheck_claim()
+            * self.params.gamma_powers[5]
+                .inverse()
+                .expect("Fiat-Shamir challenge is nonzero");
 
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
@@ -746,8 +753,11 @@ impl<F: JoltField> Phase1State<F> {
                             if is_first_in_sequence {
                                 v += params.gamma_powers[3];
                             }
+                            // Branch-guarded like the flag terms above: carry
+                            // is 0 on almost every row, even in carry-heavy
+                            // guests.
                             #[cfg(feature = "implicit-carry")]
-                            {
+                            if carry != 0 {
                                 v += params.gamma_powers[5].mul_u64(carry);
                             }
                             Q_0_for_r_outer_unreduced[i] +=
@@ -851,7 +861,6 @@ impl<F: JoltField> Phase2State<F> {
         sumcheck_challenges: &[F::Challenge],
         params: &ShiftSumcheckParams<F>,
     ) -> Self {
-        let n_remaining_rounds = params.r_outer.len() - sumcheck_challenges.len();
         let r_prefix: OpeningPoint<BIG_ENDIAN, F> =
             OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness();
 
@@ -883,95 +892,100 @@ impl<F: JoltField> Phase2State<F> {
             .collect::<Vec<F>>()
             .into();
 
-        // Gen MLEs: UnexpandedPc(r_prefix, j), Pc(r_prefix, j), ...
+        // Gen MLEs: UnexpandedPc(r_prefix, j), Pc(r_prefix, j), ... — one pass
+        // over the trace produces every column, carry included.
+        struct ChunkEvals<F> {
+            unexpanded_pc: F,
+            pc: F,
+            is_virtual: F,
+            is_first_in_sequence: F,
+            is_noop: F,
+            #[cfg(feature = "implicit-carry")]
+            carry: F,
+        }
         let eq_evals = EqPolynomial::evals(&r_prefix.r);
-        let mut unexpanded_pc_poly = vec![F::zero(); 1 << n_remaining_rounds];
-        let mut pc_poly = vec![F::zero(); 1 << n_remaining_rounds];
-        let mut is_virtual_poly = vec![F::zero(); 1 << n_remaining_rounds];
-        let mut is_first_in_sequence_poly = vec![F::zero(); 1 << n_remaining_rounds];
-        let mut is_noop_poly = vec![F::zero(); 1 << n_remaining_rounds];
-        (
-            &mut unexpanded_pc_poly,
-            &mut pc_poly,
-            &mut is_virtual_poly,
-            &mut is_first_in_sequence_poly,
-            &mut is_noop_poly,
-            trace.par_chunks(eq_evals.len()),
-        )
-            .into_par_iter()
-            .for_each(
-                |(
-                    unexpanded_pc_eval,
-                    pc_eval,
-                    is_virtual_eval,
-                    is_first_in_sequence_eval,
-                    is_noop_eval,
-                    trace_chunk,
-                )| {
-                    let mut unexpanded_pc_eval_unreduced = F::UnreducedMulU64::zero();
-                    let mut pc_eval_unreduced = F::UnreducedMulU128::zero();
-                    let mut is_virtual_eval_unreduced = F::UnreducedMulU64::zero();
-                    let mut is_first_in_sequence_eval_unreduced = F::UnreducedMulU64::zero();
-                    let mut is_noop_eval_unreduced = F::UnreducedMulU64::zero();
+        let chunk_evals: Vec<ChunkEvals<F>> = trace
+            .par_chunks(eq_evals.len())
+            .map(|trace_chunk| {
+                let mut unexpanded_pc_eval_unreduced = F::UnreducedMulU64::zero();
+                let mut pc_eval_unreduced = F::UnreducedMulU128::zero();
+                let mut is_virtual_eval_unreduced = F::UnreducedMulU64::zero();
+                let mut is_first_in_sequence_eval_unreduced = F::UnreducedMulU64::zero();
+                let mut is_noop_eval_unreduced = F::UnreducedMulU64::zero();
+                #[cfg(feature = "implicit-carry")]
+                let mut carry_eval_unreduced = F::UnreducedMulU64::zero();
 
-                    for (i, cycle) in trace_chunk.iter().enumerate() {
-                        let ShiftSumcheckCycleState {
-                            unexpanded_pc,
-                            pc,
-                            is_virtual,
-                            is_first_in_sequence,
-                            is_noop,
-                            #[cfg(feature = "implicit-carry")]
-                                carry: _,
-                        } = ShiftSumcheckCycleState::new(cycle, bytecode_preprocessing);
-                        let eq_eval = eq_evals[i];
-                        unexpanded_pc_eval_unreduced += eq_eval.mul_u64_unreduced(unexpanded_pc);
-                        pc_eval_unreduced += eq_eval.mul_u64_unreduced(pc);
-                        if is_virtual {
-                            is_virtual_eval_unreduced += eq_eval.to_unreduced();
-                        }
-                        if is_first_in_sequence {
-                            is_first_in_sequence_eval_unreduced += eq_eval.to_unreduced();
-                        }
-                        if is_noop {
-                            is_noop_eval_unreduced += eq_eval.to_unreduced();
-                        }
+                for (i, cycle) in trace_chunk.iter().enumerate() {
+                    let ShiftSumcheckCycleState {
+                        unexpanded_pc,
+                        pc,
+                        is_virtual,
+                        is_first_in_sequence,
+                        is_noop,
+                        #[cfg(feature = "implicit-carry")]
+                        carry,
+                    } = ShiftSumcheckCycleState::new(cycle, bytecode_preprocessing);
+                    let eq_eval = eq_evals[i];
+                    unexpanded_pc_eval_unreduced += eq_eval.mul_u64_unreduced(unexpanded_pc);
+                    pc_eval_unreduced += eq_eval.mul_u64_unreduced(pc);
+                    if is_virtual {
+                        is_virtual_eval_unreduced += eq_eval.to_unreduced();
                     }
-
-                    *unexpanded_pc_eval = F::reduce_mul_u64(unexpanded_pc_eval_unreduced);
-                    *pc_eval = F::reduce_mul_u128(pc_eval_unreduced);
-                    *is_virtual_eval = F::reduce_mul_u64(is_virtual_eval_unreduced);
-                    *is_first_in_sequence_eval =
-                        F::reduce_mul_u64(is_first_in_sequence_eval_unreduced);
-                    *is_noop_eval = F::reduce_mul_u64(is_noop_eval_unreduced);
-                },
-            );
-
-        // Carry(r_prefix, j): separate pass to keep the base 6-tuple zip intact.
-        #[cfg(feature = "implicit-carry")]
-        let carry_poly: MultilinearPolynomial<F> = {
-            let mut carry_vals = vec![F::zero(); 1 << n_remaining_rounds];
-            carry_vals
-                .par_iter_mut()
-                .zip(trace.par_chunks(eq_evals.len()))
-                .for_each(|(out, trace_chunk)| {
-                    let mut unreduced = F::UnreducedMulU64::zero();
-                    for (i, cycle) in trace_chunk.iter().enumerate() {
-                        unreduced += eq_evals[i].mul_u64_unreduced(cycle.carry());
+                    if is_first_in_sequence {
+                        is_first_in_sequence_eval_unreduced += eq_eval.to_unreduced();
                     }
-                    *out = F::reduce_mul_u64(unreduced);
-                });
-            carry_vals.into()
-        };
+                    if is_noop {
+                        is_noop_eval_unreduced += eq_eval.to_unreduced();
+                    }
+                    #[cfg(feature = "implicit-carry")]
+                    if carry != 0 {
+                        carry_eval_unreduced += eq_eval.mul_u64_unreduced(carry);
+                    }
+                }
+
+                ChunkEvals {
+                    unexpanded_pc: F::reduce_mul_u64(unexpanded_pc_eval_unreduced),
+                    pc: F::reduce_mul_u128(pc_eval_unreduced),
+                    is_virtual: F::reduce_mul_u64(is_virtual_eval_unreduced),
+                    is_first_in_sequence: F::reduce_mul_u64(is_first_in_sequence_eval_unreduced),
+                    is_noop: F::reduce_mul_u64(is_noop_eval_unreduced),
+                    // Pre-scaled by gamma^5 so `compute_message` folds the
+                    // carry term into the eq+1(r_outer) bracket for free;
+                    // `cache_openings` unscales the final claim.
+                    #[cfg(feature = "implicit-carry")]
+                    carry: params.gamma_powers[5] * F::reduce_mul_u64(carry_eval_unreduced),
+                }
+            })
+            .collect();
 
         Self {
-            unexpanded_pc_poly: unexpanded_pc_poly.into(),
-            pc_poly: pc_poly.into(),
-            is_virtual_poly: is_virtual_poly.into(),
-            is_first_in_sequence_poly: is_first_in_sequence_poly.into(),
-            is_noop_poly: is_noop_poly.into(),
+            unexpanded_pc_poly: chunk_evals
+                .iter()
+                .map(|c| c.unexpanded_pc)
+                .collect::<Vec<F>>()
+                .into(),
+            pc_poly: chunk_evals.iter().map(|c| c.pc).collect::<Vec<F>>().into(),
+            is_virtual_poly: chunk_evals
+                .iter()
+                .map(|c| c.is_virtual)
+                .collect::<Vec<F>>()
+                .into(),
+            is_first_in_sequence_poly: chunk_evals
+                .iter()
+                .map(|c| c.is_first_in_sequence)
+                .collect::<Vec<F>>()
+                .into(),
+            is_noop_poly: chunk_evals
+                .iter()
+                .map(|c| c.is_noop)
+                .collect::<Vec<F>>()
+                .into(),
             #[cfg(feature = "implicit-carry")]
-            carry_poly,
+            carry_poly: chunk_evals
+                .iter()
+                .map(|c| c.carry)
+                .collect::<Vec<F>>()
+                .into(),
             eq_plus_one_r_outer,
             eq_plus_one_r_product,
         }
@@ -1007,9 +1021,10 @@ impl<F: JoltField> Phase2State<F> {
                 .carry_poly
                 .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             evals = array::from_fn(|i| {
+                // `carry_poly` is pre-scaled by gamma^5 at construction, so
+                // the carry term joins the eq+1(r_outer) bracket as an add.
                 #[cfg(feature = "implicit-carry")]
-                let carry_term =
-                    params.gamma_powers[5] * eq_plus_one_r_outer_evals[i] * carry_evals[i];
+                let carry_term = carry_evals[i];
                 #[cfg(not(feature = "implicit-carry"))]
                 let carry_term = F::zero();
                 evals[i]
@@ -1017,11 +1032,11 @@ impl<F: JoltField> Phase2State<F> {
                         * (unexpanded_pc_evals[i]
                             + params.gamma_powers[1] * pc_evals[i]
                             + params.gamma_powers[2] * is_virtual_evals[i]
-                            + params.gamma_powers[3] * is_first_in_sequence_evals[i])
+                            + params.gamma_powers[3] * is_first_in_sequence_evals[i]
+                            + carry_term)
                     + params.gamma_powers[4]
                         * eq_plus_one_r_product_evals[i]
                         * (F::one() - is_noop_evals[i])
-                    + carry_term
             });
         }
 

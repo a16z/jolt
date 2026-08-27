@@ -32,7 +32,7 @@ use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::witness::CommittedPolynomial;
+use crate::zkvm::witness::{carry_witness_coeffs, CommittedPolynomial};
 use tracer::instruction::Cycle;
 
 const DEGREE_BOUND: usize = 2;
@@ -153,23 +153,19 @@ impl<F: JoltField> CarryClaimReductionSumcheckProver<F> {
         trace: Arc<Vec<Cycle>>,
     ) -> Self {
         let [gamma, gamma_sqr] = params.gamma_powers;
-        let t = 1 << params.n_cycle_vars;
+        // The prover pads the trace to the power-of-two length with NoOps
+        // before any stage runs.
+        debug_assert_eq!(trace.len(), 1 << params.n_cycle_vars);
+        let carry_coeffs = carry_witness_coeffs(&trace);
 
-        let carry_coeffs: Vec<u64> = trace
-            .par_iter()
-            .map(|cycle| cycle.carry())
-            .chain(rayon::iter::repeat_n(0u64, t - trace.len()))
-            .collect();
-
-        let (eq_product, eq_shift) = rayon::join(
+        let (mut eq_combined, eq_shift) = rayon::join(
             || EqPolynomial::evals(&params.r_product.r),
             || EqPolynomial::evals(&params.r_shift.r),
         );
-        let mut eq_combined: Vec<F> = eq_product
-            .into_par_iter()
+        eq_combined
+            .par_iter_mut()
             .zip(eq_shift.into_par_iter())
-            .map(|(p, s)| p + gamma * s)
-            .collect();
+            .for_each(|(p, s)| *p += gamma * s);
         // eq(0, t) is 1 only at t = 0.
         eq_combined[0] += gamma_sqr;
 
@@ -191,18 +187,32 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     #[tracing::instrument(skip_all, name = "CarryClaimReductionSumcheckProver::compute_message")]
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
         let half_n = self.carry_poly.len() / 2;
-        let mut evals = [F::zero(); DEGREE_BOUND];
-        for j in 0..half_n {
-            let carry_evals = self
-                .carry_poly
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            let eq_evals = self
-                .eq_poly
-                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-            for i in 0..DEGREE_BOUND {
-                evals[i] += eq_evals[i] * carry_evals[i];
-            }
-        }
+        let evals = (0..half_n)
+            .into_par_iter()
+            .fold(
+                || [F::zero(); DEGREE_BOUND],
+                |mut evals, j| {
+                    let carry_evals = self
+                        .carry_poly
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let eq_evals = self
+                        .eq_poly
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    for i in 0..DEGREE_BOUND {
+                        evals[i] += eq_evals[i] * carry_evals[i];
+                    }
+                    evals
+                },
+            )
+            .reduce(
+                || [F::zero(); DEGREE_BOUND],
+                |mut acc, item| {
+                    for i in 0..DEGREE_BOUND {
+                        acc[i] += item[i];
+                    }
+                    acc
+                },
+            );
         UniPoly::from_evals_and_hint(previous_claim, &evals)
     }
 

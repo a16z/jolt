@@ -96,13 +96,21 @@ pub fn all_committed_polynomials(one_hot_params: &OneHotParams) -> Vec<Committed
     for i in 0..one_hot_params.bytecode_d {
         polynomials.push(CommittedPolynomial::BytecodeRa(i));
     }
-    // WARNING: appended last; `commitments_from_proof_payload_order` and the
-    // verifier's `proof_commitment_order` split this list positionally and
-    // must pull `Carry` explicitly (the trailing `BytecodeRa` collect would
-    // otherwise swallow it silently).
+    // WARNING: this list must stay entry-for-entry identical to jolt-claims'
+    // `proof_commitment_order`, the payload layout's single source of truth
+    // (`commitments_from_proof_payload_order` dispatches by that table).
     #[cfg(feature = "implicit-carry")]
     polynomials.push(CommittedPolynomial::Carry);
     polynomials
+}
+
+/// Coefficients of the committed `Carry` column: each row's incoming implicit
+/// carry. Single source of truth — the streaming tier-1 commit, full witness
+/// generation, and the stage-6b claim-reduction prover must all produce this
+/// exact polynomial, or stage 6b opens a column that was never committed.
+#[cfg(feature = "implicit-carry")]
+pub fn carry_witness_coeffs(trace: &[Cycle]) -> Vec<u64> {
+    trace.par_iter().map(|cycle| cycle.carry()).collect()
 }
 
 impl CommittedPolynomial {
@@ -144,11 +152,9 @@ impl CommittedPolynomial {
             }
             #[cfg(feature = "implicit-carry")]
             CommittedPolynomial::Carry => {
-                let row: Vec<i128> = row_cycles
-                    .iter()
-                    .map(|cycle| cycle.carry() as i128)
-                    .collect();
-                PCS::process_chunk(&preprocessing.generators, &row)
+                // u64 keeps the commit on the narrow SmallScalar MSM path;
+                // carries are non-negative, unlike the Inc diffs.
+                PCS::process_chunk(&preprocessing.generators, &carry_witness_coeffs(row_cycles))
             }
             CommittedPolynomial::InstructionRa(idx) => {
                 let row: Vec<Option<usize>> = row_cycles
@@ -256,10 +262,7 @@ impl CommittedPolynomial {
                 coeffs.into()
             }
             #[cfg(feature = "implicit-carry")]
-            CommittedPolynomial::Carry => {
-                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.carry()).collect();
-                coeffs.into()
-            }
+            CommittedPolynomial::Carry => carry_witness_coeffs(trace).into(),
             CommittedPolynomial::RamInc => {
                 let coeffs: Vec<i128> = trace
                     .par_iter()
