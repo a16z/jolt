@@ -454,16 +454,6 @@ impl Emitter {
             Some(r) => dynasm!(self.ops ; .arch x64 ; mov Rd(gpr), DWORD [r12 + reg_offset(r)]),
         }
     }
-
-    /// Load the low 32 bits of a guest register, sign-extended to 64.
-    fn load_reg32_sext(&mut self, gpr: Rq, reg: Option<u8>) {
-        match reg {
-            None | Some(0) => dynasm!(self.ops ; .arch x64 ; xor Rq(gpr), Rq(gpr)),
-            Some(r) => {
-                dynasm!(self.ops ; .arch x64 ; movsxd Rq(gpr), DWORD [r12 + reg_offset(r)]);
-            }
-        }
-    }
 }
 
 impl DynasmEmitter {
@@ -762,16 +752,66 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::WindowMaskW(_) => {
-                // rd = 0xFFFFFFFF << (32 * bit2(x[rs1])): byte mask of the
-                // addressed word's lane within its containing doubleword.
+                // rd = 0xFFFFFFFF << (32 * bit2(x[rs1] + imm)): byte mask of
+                // the addressed word's lane within its containing doubleword.
                 e.load_reg(RCX, row.operands.rs1);
+                e.load_imm(RAX, row.operands.imm as i64);
                 dynasm!(e.ops
                     ; .arch x64
+                    ; add rcx, rax
                     ; and ecx, 4
                     ; shl ecx, 3
                     ; mov eax, -1
                     ; shl rax, cl
                 );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::WindowMaskB(_) => {
+                // rd = 0xFF << (8 * ((x[rs1] + imm) & 7)): byte mask of the
+                // addressed byte's lane within its containing doubleword.
+                e.load_reg(RCX, row.operands.rs1);
+                e.load_imm(RAX, row.operands.imm as i64);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; add rcx, rax
+                    ; and ecx, 7
+                    ; shl ecx, 3
+                    ; mov eax, 0xFF
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::WindowMaskH(_) => {
+                // rd = 0xFFFF << (8 * ((x[rs1] + imm) & 6)): byte mask of the
+                // addressed halfword's lane within its containing doubleword.
+                // Bit 0 is ignored; the surrounding sequence asserts halfword
+                // alignment.
+                e.load_reg(RCX, row.operands.rs1);
+                e.load_imm(RAX, row.operands.imm as i64);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; add rcx, rax
+                    ; and ecx, 6
+                    ; shl ecx, 3
+                    ; mov eax, 0xFFFF
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::AlignAddr(_) => {
+                // rd = (x[rs1] + imm) & !7: the fused ADDI + ANDI(-8) of the
+                // sub-word memory sequences.
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_imm(RCX, row.operands.imm as i64);
+                dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -8);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::Pext(_) => {
+                // rd = pext(x[rs1], x[rs2]), zero-extended. Requires BMI2
+                // (checked once).
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_reg(RCX, row.operands.rs2);
+                dynasm!(e.ops ; .arch x64 ; pext rax, rax, rcx);
                 e.store_rd(RAX, row.operands.rd);
             }
             K::PextSigned(_) => {
@@ -999,35 +1039,16 @@ impl DynasmEmitter {
                 e.call_helper(helpers::assert_failed as *const () as usize);
                 dynasm!(e.ops ; .arch x64 ; ok:);
             }
-            K::VirtualChangeDivisor(_) => {
-                // rd = 1 if (dividend, divisor) == (i64::MIN, -1) else divisor.
+            K::VirtualNegateIf(_) => {
+                // rd = -x[rs2] (wrapping) if x[rs1] < 0 (signed), else x[rs2].
                 e.load_reg(RCX, row.operands.rs1);
                 e.load_reg(RAX, row.operands.rs2);
                 dynasm!(e.ops
                     ; .arch x64
-                    ; mov rdx, QWORD i64::MIN
-                    ; cmp rcx, rdx
-                    ; jne >done
-                    ; cmp rax, -1
-                    ; jne >done
-                    ; mov eax, 1
-                    ; done:
-                );
-                e.store_rd(RAX, row.operands.rd);
-            }
-            K::VirtualChangeDivisorW(_) => {
-                // 32-bit variant; the else branch sign-extends the low 32 bits of
-                // x[rs2] (upper bits discarded).
-                e.load_reg32_sext(RCX, row.operands.rs1);
-                e.load_reg32_sext(RAX, row.operands.rs2);
-                dynasm!(e.ops
-                    ; .arch x64
-                    ; cmp ecx, 0x8000_0000u32 as i32
-                    ; jne >done
-                    ; cmp eax, -1
-                    ; jne >done
-                    ; mov eax, 1
-                    ; done:
+                    ; mov rdx, rax
+                    ; neg rdx
+                    ; test rcx, rcx
+                    ; cmovs rax, rdx
                 );
                 e.store_rd(RAX, row.operands.rd);
             }

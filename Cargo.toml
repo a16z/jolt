@@ -41,7 +41,6 @@ members = [
   "crates/jolt-witness",
   "crates/jolt-witness-derive",
   "crates/jolt-dory",
-  "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
   "crates/jolt-tracer-x86",
   "crates/jolt-transcript",
@@ -295,16 +294,17 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-algebra = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-config = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-error = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-pcs = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-prover = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-planner = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-schedules = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-challenges = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-transcript = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
-akita-types = { git = "https://github.com/quangvdao/akita.git", rev = "06514771b1a640f769a2d5709d4495bd352c0488", default-features = false }
+# Until Akita PR #443 lands, the closing Jolt cutover consumes its exact fork head.
+akita-algebra = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-config = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-error = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-pcs = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-prover = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-planner = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-schedules = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-challenges = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-transcript = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
+akita-types = { git = "https://github.com/quangvdao/akita.git", rev = "a9802916d926cf7b24770c6c8998ff63a5a64638", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -374,7 +374,7 @@ pprof = { version = "0.15", features = [
 prost = "0.14"
 
 # Parsing
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0.79"
 
@@ -402,7 +402,7 @@ iai-callgrind = "0.16.1"
 # Runner summary structs only, as the schema oracle for the callgrind
 # objective's JSON parser (jolt-eval dev-dependency).
 iai-callgrind-runner = "0.16.1"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 
 # Logging
 log = { version = "0.4" }
@@ -435,7 +435,6 @@ jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
-jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }

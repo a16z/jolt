@@ -1,3 +1,4 @@
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
@@ -7,6 +8,7 @@ use movsign::MovsignTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
+use pext::PextTable;
 use pext_signed::PextSignedTable;
 use pow2::Pow2Table;
 use pow2_w::Pow2WTable;
@@ -29,8 +31,7 @@ use unsigned_less_than_equal::UnsignedLessThanEqualTable;
 use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
-use virtual_change_divisor::VirtualChangeDivisorTable;
-use virtual_change_divisor_w::VirtualChangeDivisorWTable;
+use virtual_negate_if::VirtualNegateIfTable;
 use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualRotrTable;
 use virtual_rotrw::VirtualRotrWTable;
@@ -40,6 +41,8 @@ use virtual_srl::VirtualSRLTable;
 use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
 use virtual_xor_rotw::VirtualXORROTWTable;
+use window_mask_b::WindowMaskBTable;
+use window_mask_h::WindowMaskHTable;
 use window_mask_w::WindowMaskWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
@@ -79,6 +82,7 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: JoltLookupTable + Defaul
 pub mod prefixes;
 pub mod suffixes;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
@@ -88,6 +92,7 @@ pub mod movsign;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
+pub mod pext;
 pub mod pext_signed;
 pub mod pow2;
 pub mod pow2_w;
@@ -105,8 +110,7 @@ pub mod unsigned_less_than_equal;
 pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_unsigned_remainder;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
+pub mod virtual_negate_if;
 pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
@@ -116,6 +120,8 @@ pub mod virtual_srl;
 pub mod virtual_srlw;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;
+pub mod window_mask_b;
+pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod word_alignment;
 pub mod xor;
@@ -159,8 +165,7 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualSRA(VirtualSRATable<XLEN>),
     VirtualROTR(VirtualRotrTable<XLEN>),
     VirtualROTRW(VirtualRotrWTable<XLEN>),
-    VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
-    VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
+    VirtualNegateIf(VirtualNegateIfTable<XLEN>),
     MulUNoOverflow(MulUNoOverflowTable<XLEN>),
     VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
@@ -178,6 +183,10 @@ pub enum LookupTables<const XLEN: usize> {
     ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
     VirtualSRLW(VirtualSRLWTable<XLEN>),
     VirtualSRAW(VirtualSRAWTable<XLEN>),
+    Pext(PextTable<XLEN>),
+    WindowMaskB(WindowMaskBTable<XLEN>),
+    WindowMaskH(WindowMaskHTable<XLEN>),
+    AlignAddr(AlignAddrTable<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -219,8 +228,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.materialize(),
             LookupTables::VirtualROTR(table) => table.materialize(),
             LookupTables::VirtualROTRW(table) => table.materialize(),
-            LookupTables::VirtualChangeDivisor(table) => table.materialize(),
-            LookupTables::VirtualChangeDivisorW(table) => table.materialize(),
+            LookupTables::VirtualNegateIf(table) => table.materialize(),
             LookupTables::MulUNoOverflow(table) => table.materialize(),
             LookupTables::VirtualXORROT32(table) => table.materialize(),
             LookupTables::VirtualXORROT24(table) => table.materialize(),
@@ -238,6 +246,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftRightBitmaskW(table) => table.materialize(),
             LookupTables::VirtualSRLW(table) => table.materialize(),
             LookupTables::VirtualSRAW(table) => table.materialize(),
+            LookupTables::Pext(table) => table.materialize(),
+            LookupTables::WindowMaskB(table) => table.materialize(),
+            LookupTables::WindowMaskH(table) => table.materialize(),
+            LookupTables::AlignAddr(table) => table.materialize(),
         }
     }
 
@@ -272,8 +284,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.materialize_entry(index),
             LookupTables::VirtualROTR(table) => table.materialize_entry(index),
             LookupTables::VirtualROTRW(table) => table.materialize_entry(index),
-            LookupTables::VirtualChangeDivisor(table) => table.materialize_entry(index),
-            LookupTables::VirtualChangeDivisorW(table) => table.materialize_entry(index),
+            LookupTables::VirtualNegateIf(table) => table.materialize_entry(index),
             LookupTables::MulUNoOverflow(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT32(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT24(table) => table.materialize_entry(index),
@@ -291,6 +302,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftRightBitmaskW(table) => table.materialize_entry(index),
             LookupTables::VirtualSRLW(table) => table.materialize_entry(index),
             LookupTables::VirtualSRAW(table) => table.materialize_entry(index),
+            LookupTables::Pext(table) => table.materialize_entry(index),
+            LookupTables::WindowMaskB(table) => table.materialize_entry(index),
+            LookupTables::WindowMaskH(table) => table.materialize_entry(index),
+            LookupTables::AlignAddr(table) => table.materialize_entry(index),
         }
     }
 
@@ -329,8 +344,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.evaluate_mle(r),
             LookupTables::VirtualROTR(table) => table.evaluate_mle(r),
             LookupTables::VirtualROTRW(table) => table.evaluate_mle(r),
-            LookupTables::VirtualChangeDivisor(table) => table.evaluate_mle(r),
-            LookupTables::VirtualChangeDivisorW(table) => table.evaluate_mle(r),
+            LookupTables::VirtualNegateIf(table) => table.evaluate_mle(r),
             LookupTables::MulUNoOverflow(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT32(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT24(table) => table.evaluate_mle(r),
@@ -348,6 +362,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftRightBitmaskW(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRLW(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRAW(table) => table.evaluate_mle(r),
+            LookupTables::Pext(table) => table.evaluate_mle(r),
+            LookupTables::WindowMaskB(table) => table.evaluate_mle(r),
+            LookupTables::WindowMaskH(table) => table.evaluate_mle(r),
+            LookupTables::AlignAddr(table) => table.evaluate_mle(r),
         }
     }
 
@@ -382,8 +400,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.suffixes(),
             LookupTables::VirtualROTR(table) => table.suffixes(),
             LookupTables::VirtualROTRW(table) => table.suffixes(),
-            LookupTables::VirtualChangeDivisor(table) => table.suffixes(),
-            LookupTables::VirtualChangeDivisorW(table) => table.suffixes(),
+            LookupTables::VirtualNegateIf(table) => table.suffixes(),
             LookupTables::MulUNoOverflow(table) => table.suffixes(),
             LookupTables::VirtualXORROT32(table) => table.suffixes(),
             LookupTables::VirtualXORROT24(table) => table.suffixes(),
@@ -401,6 +418,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftRightBitmaskW(table) => table.suffixes(),
             LookupTables::VirtualSRLW(table) => table.suffixes(),
             LookupTables::VirtualSRAW(table) => table.suffixes(),
+            LookupTables::Pext(table) => table.suffixes(),
+            LookupTables::WindowMaskB(table) => table.suffixes(),
+            LookupTables::WindowMaskH(table) => table.suffixes(),
+            LookupTables::AlignAddr(table) => table.suffixes(),
         }
     }
 
@@ -439,8 +460,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualSRA(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualROTR(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualROTRW(table) => table.combine(prefixes, suffixes),
-            LookupTables::VirtualChangeDivisor(table) => table.combine(prefixes, suffixes),
-            LookupTables::VirtualChangeDivisorW(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualNegateIf(table) => table.combine(prefixes, suffixes),
             LookupTables::MulUNoOverflow(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT32(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT24(table) => table.combine(prefixes, suffixes),
@@ -458,6 +478,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftRightBitmaskW(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRLW(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRAW(table) => table.combine(prefixes, suffixes),
+            LookupTables::Pext(table) => table.combine(prefixes, suffixes),
+            LookupTables::WindowMaskB(table) => table.combine(prefixes, suffixes),
+            LookupTables::WindowMaskH(table) => table.combine(prefixes, suffixes),
+            LookupTables::AlignAddr(table) => table.combine(prefixes, suffixes),
         }
     }
 }

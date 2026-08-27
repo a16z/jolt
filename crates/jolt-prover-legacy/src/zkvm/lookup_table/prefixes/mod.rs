@@ -4,14 +4,9 @@ use crate::{
 };
 use allocative::Allocative;
 use lsb::LsbPrefix;
-use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
-use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
-use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
 use num_derive::FromPrimitive;
-use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
-use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
 use pow2::Pow2Prefix;
-use pow2_offset_w::Pow2OffsetWPrefix;
+use pow2_offset::Pow2OffsetPrefix;
 use pow2_w::Pow2WPrefix;
 use rayon::prelude::*;
 use rev8w::Rev8WPrefix;
@@ -26,14 +21,15 @@ use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use align_addr::AlignAddrPrefix;
 use and::AndPrefix;
 use andn::AndnPrefix;
-use change_divisor::ChangeDivisorPrefix;
-use change_divisor_w::ChangeDivisorWPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
 use left_msb::LeftMsbPrefix;
+use left_msb_right_operand::LeftMsbRightOperandPrefix;
+use left_msb_right_operand_is_zero::LeftMsbRightOperandIsZeroPrefix;
 use left_shift::LeftShiftPrefix;
 use left_shift_helper::LeftShiftHelperPrefix;
 use left_shift_w::LeftShiftWPrefix;
@@ -57,14 +53,15 @@ use xor::XorPrefix;
 use xor_rot::XorRotPrefix;
 use xor_rotw::XorRotWPrefix;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
-pub mod change_divisor;
-pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
 pub mod left_msb;
+pub mod left_msb_right_operand;
+pub mod left_msb_right_operand_is_zero;
 pub mod left_shift;
 pub mod left_shift_helper;
 pub mod left_shift_w;
@@ -73,15 +70,10 @@ pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
-pub mod negative_divisor_equals_remainder;
-pub mod negative_divisor_greater_than_remainder;
-pub mod negative_divisor_zero_remainder;
 pub mod or;
 pub mod overflow_bits_zero;
-pub mod positive_remainder_equals_divisor;
-pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
-pub mod pow2_offset_w;
+pub mod pow2_offset;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -165,11 +157,6 @@ pub enum Prefixes {
     LeftOperandMsb,
     RightOperandMsb,
     DivByZero,
-    PositiveRemainderEqualsDivisor,
-    PositiveRemainderLessThanDivisor,
-    NegativeDivisorZeroRemainder,
-    NegativeDivisorEqualsRemainder,
-    NegativeDivisorGreaterThanRemainder,
     Lsb,
     Pow2,
     Pow2W,
@@ -180,9 +167,9 @@ pub enum Prefixes {
     LeftShiftHelper,
     TwoLsb,
     SignExtensionUpperHalf,
-    ChangeDivisor,
-    ChangeDivisorW,
     RightOperand,
+    LeftMsbRightOperand,
+    LeftMsbRightOperandIsZero,
     RightOperandW,
     SignExtensionRightOperand,
     RightShiftW,
@@ -206,6 +193,9 @@ pub enum Prefixes {
     WordMsb,
     SignExtensionW,
     SrlwSext,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -300,21 +290,6 @@ impl Prefixes {
             Prefixes::LeftOperandMsb => LeftMsbPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::RightOperandMsb => RightMsbPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::DivByZero => DivByZeroPrefix::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::PositiveRemainderEqualsDivisor => {
-                PositiveRemainderEqualsDivisorPrefix::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::PositiveRemainderLessThanDivisor => {
-                PositiveRemainderLessThanDivisorPrefix::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::NegativeDivisorZeroRemainder => {
-                NegativeDivisorZeroRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::NegativeDivisorEqualsRemainder => {
-                NegativeDivisorEqualsRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::NegativeDivisorGreaterThanRemainder => {
-                NegativeDivisorGreaterThanRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
-            }
             Prefixes::Lsb => LsbPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Pow2 => Pow2Prefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Pow2W => Pow2WPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
@@ -331,14 +306,14 @@ impl Prefixes {
             Prefixes::SignExtensionUpperHalf => {
                 SignExtensionUpperHalfPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::ChangeDivisor => {
-                ChangeDivisorPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
             Prefixes::RightOperand => {
                 RightOperandPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::ChangeDivisorW => {
-                ChangeDivisorWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            Prefixes::LeftMsbRightOperand => {
+                LeftMsbRightOperandPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftMsbRightOperandIsZero => {
+                LeftMsbRightOperandIsZeroPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::RightOperandW => {
                 RightOperandWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
@@ -357,7 +332,7 @@ impl Prefixes {
                 OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::Pow2OffsetW => {
-                Pow2OffsetWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+                Pow2OffsetPrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::WindowSign => WindowSignPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::WindowSignPow2 => WindowSignPow2Prefix::prefix_mle(checkpoints, r_x, c, b, j),
@@ -366,6 +341,13 @@ impl Prefixes {
                 SignExtensionWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::SrlwSext => SrlwSextPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2OffsetB => {
+                Pow2OffsetPrefix::<XLEN, 0>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::Pow2OffsetH => {
+                Pow2OffsetPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -560,51 +542,6 @@ impl Prefixes {
             Prefixes::DivByZero => {
                 DivByZeroPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
             }
-            Prefixes::PositiveRemainderEqualsDivisor => {
-                PositiveRemainderEqualsDivisorPrefix::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                    suffix_len,
-                )
-            }
-            Prefixes::PositiveRemainderLessThanDivisor => {
-                PositiveRemainderLessThanDivisorPrefix::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                    suffix_len,
-                )
-            }
-            Prefixes::NegativeDivisorZeroRemainder => {
-                NegativeDivisorZeroRemainderPrefix::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                    suffix_len,
-                )
-            }
-            Prefixes::NegativeDivisorEqualsRemainder => {
-                NegativeDivisorEqualsRemainderPrefix::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                    suffix_len,
-                )
-            }
-            Prefixes::NegativeDivisorGreaterThanRemainder => {
-                NegativeDivisorGreaterThanRemainderPrefix::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                    suffix_len,
-                )
-            }
             Prefixes::Lsb => {
                 LsbPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
             }
@@ -653,13 +590,6 @@ impl Prefixes {
                     suffix_len,
                 )
             }
-            Prefixes::ChangeDivisor => ChangeDivisorPrefix::<XLEN>::update_prefix_checkpoint(
-                checkpoints,
-                r_x,
-                r_y,
-                j,
-                suffix_len,
-            ),
             Prefixes::RightOperand => RightOperandPrefix::<XLEN>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
@@ -667,13 +597,24 @@ impl Prefixes {
                 j,
                 suffix_len,
             ),
-            Prefixes::ChangeDivisorW => ChangeDivisorWPrefix::<XLEN>::update_prefix_checkpoint(
-                checkpoints,
-                r_x,
-                r_y,
-                j,
-                suffix_len,
-            ),
+            Prefixes::LeftMsbRightOperand => {
+                LeftMsbRightOperandPrefix::<XLEN>::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                    suffix_len,
+                )
+            }
+            Prefixes::LeftMsbRightOperandIsZero => {
+                LeftMsbRightOperandIsZeroPrefix::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                    suffix_len,
+                )
+            }
             Prefixes::RightOperandW => RightOperandWPrefix::<XLEN>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
@@ -718,7 +659,7 @@ impl Prefixes {
                 j,
                 suffix_len,
             ),
-            Prefixes::Pow2OffsetW => Pow2OffsetWPrefix::<XLEN>::update_prefix_checkpoint(
+            Prefixes::Pow2OffsetW => Pow2OffsetPrefix::<XLEN, 2>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
                 r_y,
@@ -746,6 +687,27 @@ impl Prefixes {
                 suffix_len,
             ),
             Prefixes::SrlwSext => SrlwSextPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::Pow2OffsetB => Pow2OffsetPrefix::<XLEN, 0>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::Pow2OffsetH => Pow2OffsetPrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
                 r_y,

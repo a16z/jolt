@@ -73,11 +73,12 @@ where
     rounds_bound: usize,
 }
 
-// Size arithmetic rather than a derive: neither `F` nor the relation `R`
-// may pick up an `Allocative` bound (this kernel serves every reference
-// slot generically). BTreeMap totals ignore per-node overhead — the tables
-// dominate; `Polynomial` sizing is by `len()`, exact at the mid-stage
-// snapshot where nothing is bound yet.
+/// Hand-written because the id-keyed table maps cannot go through the derive:
+/// `JoltChallengeId`/`JoltOpeningId`/`JoltDerivedId` have no `Allocative`
+/// impl, and giving them one cascades through jolt-claims for types that own
+/// no heap. Sized arithmetically instead, like the scalar tables — table
+/// bytes by `len()`, exact at the mid-stage snapshot (see
+/// [`jolt_poly::visit_scalars`]).
 #[cfg(feature = "allocative")]
 impl<F, R> allocative::Allocative for NaiveSumcheckProver<F, R>
 where
@@ -88,25 +89,40 @@ where
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::poly_heap_bytes;
+        fn visit_tables<K, F>(
+            visitor: &mut allocative::Visitor<'_>,
+            key: allocative::Key,
+            tables: &BTreeMap<K, Polynomial<F>>,
+        ) {
+            let mut visitor = visitor.enter(key, size_of::<BTreeMap<K, Polynomial<F>>>());
+            visitor.visit_simple(
+                allocative::Key::new("nodes"),
+                tables.len() * size_of::<(K, Polynomial<F>)>(),
+            );
+            visitor.visit_simple(
+                allocative::Key::new("elements"),
+                tables
+                    .values()
+                    .map(|poly| poly.len() * size_of::<F>())
+                    .sum(),
+            );
+            visitor.exit();
+        }
+
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("challenge_values"),
             self.challenge_values.len() * size_of::<(JoltChallengeId, F)>(),
         );
-        visitor.visit_simple(
+        visit_tables(
+            &mut visitor,
             allocative::Key::new("opening_tables"),
-            self.opening_tables
-                .values()
-                .map(poly_heap_bytes)
-                .sum::<usize>(),
+            &self.opening_tables,
         );
-        visitor.visit_simple(
+        visit_tables(
+            &mut visitor,
             allocative::Key::new("derived_tables"),
-            self.derived_tables
-                .values()
-                .map(poly_heap_bytes)
-                .sum::<usize>(),
+            &self.derived_tables,
         );
         visitor.exit();
     }

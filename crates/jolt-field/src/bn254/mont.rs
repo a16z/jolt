@@ -527,6 +527,16 @@ impl Accumulator for FrSignedProductAccumulator {
     }
 
     #[inline(always)]
+    fn fmadd_signed_u64(&mut self, value: Fr, magnitude: u64, is_positive: bool) {
+        let magnitude = Limbs::from_u64(magnitude);
+        if is_positive {
+            Self::fmadd_magnitude(&mut self.pos, value, magnitude);
+        } else {
+            Self::fmadd_magnitude(&mut self.neg, value, magnitude);
+        }
+    }
+
+    #[inline(always)]
     fn fmadd_s256(&mut self, value: Fr, scalar: &S256) {
         if scalar.magnitude.is_zero() {
             return;
@@ -598,6 +608,18 @@ impl Accumulator for WideAccumulator {
                 self.slots[i + j + 1] += ((product >> 64) as u64) as u128;
             }
         }
+    }
+
+    /// One Barrett round beats the default's `from_u64` conversion plus a
+    /// full 4×4 limb product.
+    #[inline(always)]
+    fn fmadd_u64(&mut self, value: Fr, scalar: u64) {
+        self.add(Fr(mul_u64(value.0, scalar)));
+    }
+
+    #[inline(always)]
+    fn fmadd_u128(&mut self, value: Fr, scalar: u128) {
+        self.add(Fr(mul_u128(value.0, scalar)));
     }
 }
 

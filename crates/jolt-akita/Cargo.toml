@@ -11,7 +11,9 @@ workspace = true
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
+akita-algebra.workspace = true
 akita-config.workspace = true
+akita-error.workspace = true
 akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
 akita-prover = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true

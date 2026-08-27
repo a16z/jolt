@@ -244,7 +244,8 @@ fn prove_example(
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let program_io = prover.program_io.clone();
         let (jolt_proof, _) = prover
             .prove()
@@ -318,7 +319,8 @@ fn prove_example_with_trace(
         None,
         None,
         None,
-    );
+    )
+    .unwrap();
     let now = Instant::now();
     let (proof, _) = prover
         .prove()

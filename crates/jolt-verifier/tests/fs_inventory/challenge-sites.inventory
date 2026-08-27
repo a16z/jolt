@@ -37,8 +37,6 @@ jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge_scalar#
 jolt-verifier::stages/stage6b/outputs.rs::Stage6bSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage7/outputs.rs::Stage7Sumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage8/reconstruction.rs::ReconstructionSumchecks::<generated>::batching_coefficient[*]
-jolt-verifier::stages/stage8/reconstruction.rs::UntrustedAdviceReconstructionInstance<F>::draw_challenges::challenge_scalar#1
-jolt-verifier::stages/stage8/reconstruction.rs::UntrustedAdviceReconstructionInstance<F>::draw_challenges::challenge_vector#0
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_scalar_powers#0
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_scalar_powers#4
 jolt-verifier::stages/uniskip.rs::draw_spartan_outer_tau::challenge_vector#0

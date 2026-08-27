@@ -1,5 +1,3 @@
-use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
-use crate::zkvm::lookup_table::suffixes::change_divisor_w::ChangeDivisorWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift_w::LeftShiftWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift_w_helper::LeftShiftWHelperSuffix;
@@ -18,6 +16,8 @@ use or::OrSuffix;
 use pext::PextSuffix;
 use pext_helper::PextHelperSuffix;
 use pow2::Pow2Suffix;
+use pow2_offset_b::Pow2OffsetBSuffix;
+use pow2_offset_h::Pow2OffsetHSuffix;
 use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8W;
@@ -32,6 +32,7 @@ use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use sign_extension_w::SignExtensionWSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use align_addr::AlignAddrSuffix;
 use and::AndSuffix;
 use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
@@ -47,9 +48,8 @@ use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
 
+pub mod align_addr;
 pub mod and;
-pub mod change_divisor;
-pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
@@ -68,6 +68,8 @@ pub mod overflow_bits_zero;
 pub mod pext;
 pub mod pext_helper;
 pub mod pow2;
+pub mod pow2_offset_b;
+pub mod pow2_offset_h;
 pub mod pow2_offset_w;
 pub mod pow2_w;
 pub mod rev8w;
@@ -109,8 +111,6 @@ pub enum Suffixes {
     Or,
     RightOperand,
     RightOperandW,
-    ChangeDivisor,
-    ChangeDivisorW,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -155,6 +155,9 @@ pub enum Suffixes {
     XorRotW6,
     SignExtensionW,
     X31Y0,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -178,8 +181,6 @@ impl Suffixes {
                 | Suffixes::TwoLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
-                | Suffixes::ChangeDivisor
-                | Suffixes::ChangeDivisorW
                 | Suffixes::WindowSign
         )
     }
@@ -195,8 +196,6 @@ impl Suffixes {
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
             Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::<XLEN>::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::<XLEN>::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::<XLEN>::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::<XLEN>::suffix_mle(b),
@@ -243,6 +242,9 @@ impl Suffixes {
             Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
             Suffixes::SignExtensionW => SignExtensionWSuffix::<XLEN>::suffix_mle(b),
             Suffixes::X31Y0 => X31Y0Suffix::<XLEN>::suffix_mle(b),
+            Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
+            Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
+            Suffixes::AlignAddr => AlignAddrSuffix::<XLEN>::suffix_mle(b),
         }
     }
 }

@@ -17,9 +17,14 @@ use tracer::{
         divuw::DIVUW,
         divw::DIVW,
         format::{format_i::FormatI, format_load::FormatLoad, format_r::FormatR, normalize_imm},
+        lb::LB,
+        lbu::LBU,
         ld::LD,
+        lh::LH,
+        lhu::LHU,
         lui::LUI,
         lw::LW,
+        lwu::LWU,
         mul::MUL,
         mulh::MULH,
         mulhsu::MULHSU,
@@ -46,6 +51,7 @@ use tracer::{
         sub::SUB,
         subw::SUBW,
         virtual_advice::VirtualAdvice,
+        virtual_align_addr::VirtualAlignAddr,
         virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
         virtual_assert_lte::VirtualAssertLTE,
@@ -53,11 +59,11 @@ use tracer::{
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
         virtual_assert_word_alignment::VirtualAssertWordAlignment,
-        virtual_change_divisor::VirtualChangeDivisor,
-        virtual_change_divisor_w::VirtualChangeDivisorW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
         virtual_muliw::VirtualMULIW,
+        virtual_negate_if::VirtualNegateIf,
+        virtual_pext::VirtualPext,
         virtual_pext_signed::VirtualPextSigned,
         virtual_pow2::VirtualPow2,
         virtual_pow2_w::VirtualPow2W,
@@ -67,6 +73,8 @@ use tracer::{
         virtual_srai::VirtualSRAI,
         virtual_srl::VirtualSRL,
         virtual_srli::VirtualSRLI,
+        virtual_window_mask_b::VirtualWindowMaskB,
+        virtual_window_mask_h::VirtualWindowMaskH,
         virtual_window_mask_w::VirtualWindowMaskW,
         virtual_zero_extend_word::VirtualZeroExtendWord,
         xor::XOR,
@@ -375,27 +383,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
             cpu.asserts.push(addr.extract(1, 0).eq(0))
         }
-        Instruction::VirtualChangeDivisor(VirtualChangeDivisor { operands, .. }) => {
+        Instruction::VirtualNegateIf(VirtualNegateIf { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
-            let dividend = rs1;
-            let divisor = rs2;
-            let min = SymbolicCpu::signed_min(cpu.bv_bits);
-            let ones = cpu.bv_ones();
-            cpu.x[operands.rd as usize] =
-                (dividend.eq(&min) & divisor.eq(&ones)).ite(&BV::from_u64(1, cpu.bv_bits), &divisor)
-        }
-        Instruction::VirtualChangeDivisorW(VirtualChangeDivisorW { operands, .. }) => {
-            let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let rs2 = cpu.x[operands.rs2 as usize].clone();
-            let dividend = rs1.extract(cpu.word_bits - 1, 0);
-            let divisor = rs2.extract(cpu.word_bits - 1, 0);
-            let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-            let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
-            cpu.x[operands.rd as usize] = (dividend.eq(&word_min) & divisor.eq(&word_ones)).ite(
-                &BV::from_u64(1, cpu.bv_bits),
-                &divisor.sign_ext(cpu.bv_bits - cpu.word_bits),
-            )
+            let sign = rs1.extract(cpu.bv_bits - 1, cpu.bv_bits - 1);
+            cpu.x[operands.rd as usize] = sign.eq(1).ite(&rs2.bvneg(), &rs2)
         }
         Instruction::VirtualMovsign(VirtualMovsign { operands, .. }) => {
             let val = cpu.x[operands.rs1 as usize].clone();
@@ -445,12 +437,60 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                 .bvshl(shift.zero_ext(cpu.bv_bits))
                 .extract(cpu.bv_bits - 1, 0)
         }
+        Instruction::VirtualAlignAddr(VirtualAlignAddr { operands, .. }) => {
+            // (rs1 + imm) & !7: the containing doubleword address. The mask
+            // constant truncates to bv_bits, so reduced widths stay faithful.
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm);
+            cpu.x[operands.rd as usize] = (rs1 + imm) & cpu.bv_u64(-8i64 as u64);
+        }
         Instruction::VirtualWindowMaskW(VirtualWindowMaskW { operands, .. }) => {
-            let ea = cpu.x[operands.rs1 as usize].clone();
+            let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
             let bit2 = ea.extract(2, 2).zero_ext(cpu.bv_bits - 1);
             let shift = bit2 * cpu.bv_u64(cpu.word_bits as u64);
             let word_mask = cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
             cpu.x[operands.rd as usize] = word_mask.bvshl(shift);
+        }
+        Instruction::VirtualWindowMaskB(VirtualWindowMaskB { operands, .. }) => {
+            let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
+            let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
+            // One of 8 lanes of bv_bits/8 bits each; scales with the reduced
+            // solver widths.
+            let byte_bits = (cpu.bv_bits / 8) as u64;
+            let shift = offset * cpu.bv_u64(byte_bits);
+            let byte_mask = cpu.bv_u64((1u64 << byte_bits) - 1);
+            cpu.x[operands.rd as usize] = byte_mask.bvshl(shift);
+        }
+        Instruction::VirtualWindowMaskH(VirtualWindowMaskH { operands, .. }) => {
+            let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
+            let offset = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2);
+            // One of 4 lanes of bv_bits/4 bits each; scales with the reduced
+            // solver widths.
+            let half_bits = (cpu.bv_bits / 4) as u64;
+            let shift = offset * cpu.bv_u64(half_bits);
+            let half_mask = cpu.bv_u64((1u64 << half_bits) - 1);
+            cpu.x[operands.rd as usize] = half_mask.bvshl(shift);
+        }
+        Instruction::VirtualPext(VirtualPext { operands, .. }) => {
+            // Zero-extending extract via shift-left then logical shift-right:
+            // faithful for contiguous masks (including zero), the only shape
+            // the window-mask instructions produce. Any other mask havocs rd
+            // with a fresh unconstrained value, so a sequence relying on
+            // non-contiguous behavior fails verification instead of being
+            // certified against wrong semantics. (An assert would be wrong
+            // here: `cpu.asserts` are solver assumptions and would vacuously
+            // exclude exactly the misuse cases.)
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            let tz = trailing_zeros(&rs2, cpu.bv_bits);
+            let lz = leading_zeros(&rs2, cpu.bv_bits);
+            // Contiguous (or zero) mask: shifting out the trailing zeros
+            // leaves a value of the form 2^k − 1.
+            let normalized = rs2.bvlshr(&tz);
+            let extracted = rs1.bvshl(&lz).bvlshr(lz + tz);
+            let contiguous = (normalized.clone() & (normalized + cpu.bv_u64(1))).eq(cpu.bv_zero());
+            let havoc = BV::fresh_const(&format!("{}_pext_nc", cpu.var_prefix), cpu.bv_bits);
+            cpu.x[operands.rd as usize] = contiguous.ite(&extracted, &havoc);
         }
         Instruction::VirtualPextSigned(VirtualPextSigned { operands, .. }) => {
             // Sign-extending extract via shift-left then arithmetic
@@ -828,13 +868,61 @@ test_sequence!(
         cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
     }
 );
-// Memory operations below are not modeled yet (each needs an expected-model
-// closure over `SymbolicCpu::load_doubleword`, like LW's):
-// test_sequence!(LB, FormatLoad);
-// test_sequence!(LBU, FormatLoad);
-// test_sequence!(LH, FormatLoad);
-// test_sequence!(LHU, FormatLoad);
-// test_sequence!(LWU, FormatLoad);
+test_sequence!(LB, FormatLoad, |instr: &LB, cpu| {
+    // rd = sign-extended byte lane of the containing aligned doubleword:
+    // bits 2-0 of `ea` select one of 8 lanes of bv_bits/8 bits (the model
+    // width's byte).
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let byte_bits = cpu.bv_bits / 8;
+    let shift = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3) * cpu.bv_u64(byte_bits as u64);
+    let byte = dword.bvlshr(&shift).extract(byte_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = byte.sign_ext(cpu.bv_bits - byte_bits);
+});
+test_sequence!(LBU, FormatLoad, |instr: &LBU, cpu| {
+    // rd = zero-extended byte lane; same layout as LB.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let byte_bits = cpu.bv_bits / 8;
+    let shift = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3) * cpu.bv_u64(byte_bits as u64);
+    let byte = dword.bvlshr(&shift).extract(byte_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = byte.zero_ext(cpu.bv_bits - byte_bits);
+});
+test_sequence!(LH, FormatLoad, |instr: &LH, cpu| {
+    // rd = sign-extended halfword lane of the containing aligned doubleword:
+    // bits 2-1 of `ea` select one of 4 lanes of bv_bits/4 bits; the
+    // sequence's halfword-alignment assert covers bit 0.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let half_bits = cpu.bv_bits / 4;
+    let shift = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2) * cpu.bv_u64(half_bits as u64);
+    let half = dword.bvlshr(&shift).extract(half_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = half.sign_ext(cpu.bv_bits - half_bits);
+});
+test_sequence!(LHU, FormatLoad, |instr: &LHU, cpu| {
+    // rd = zero-extended halfword lane; same layout as LH.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let half_bits = cpu.bv_bits / 4;
+    let shift = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2) * cpu.bv_u64(half_bits as u64);
+    let half = dword.bvlshr(&shift).extract(half_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = half.zero_ext(cpu.bv_bits - half_bits);
+});
+test_sequence!(LWU, FormatLoad, |instr: &LWU, cpu| {
+    // rd = zero-extended word lane; same layout as LW, with the sequence's
+    // word-alignment assert covering bits 0-1.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let hi = dword.extract(cpu.bv_bits - 1, cpu.word_bits);
+    let lo = dword.extract(cpu.word_bits - 1, 0);
+    let lane = ea.extract(2, 2).eq(1).ite(&hi, &lo);
+    cpu.x[instr.operands.rd as usize] = lane.zero_ext(cpu.bv_bits - cpu.word_bits);
+});
 test_sequence!(LW, FormatLoad, |instr: &LW, cpu| {
     // rd = sign-extended word lane of the containing aligned doubleword. The
     // lane arithmetic mirrors the byte-addressed RV64 layout at any model

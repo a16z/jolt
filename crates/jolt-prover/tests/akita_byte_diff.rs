@@ -25,9 +25,7 @@ mod support {
     use std::sync::Arc;
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-    use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
-    };
+    use jolt_program::execution::{JoltProgram, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_prover::ProverConfig;
     use jolt_prover_legacy::host;
@@ -38,6 +36,7 @@ mod support {
         CommittedProgramProverData as LegacyCommittedProgramProverData,
         ProgramPreprocessing as LegacyProgramPreprocessing,
     };
+    use jolt_riscv::JoltTraceRow;
     use jolt_verifier::JoltVerifierPreprocessing;
     use jolt_witness::JoltVmWitnessConfig;
     use tracer::execution_backend::TracerBackend;
@@ -78,11 +77,12 @@ mod support {
     /// memory config mirrored off the legacy run's layout.
     pub fn trace_modular(
         program: &JoltProgram,
+        preprocessing: &JoltProgramPreprocessing,
         memory_layout: &MemoryLayout,
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> TraceOutput<OwnedTrace> {
+    ) -> TraceOutput<Arc<Vec<JoltTraceRow>>> {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
             max_trusted_advice_size: memory_layout.max_trusted_advice_size,
@@ -93,7 +93,7 @@ mod support {
             program_size: Some(memory_layout.program_size),
         };
         TracerBackend::new()
-            .trace(
+            .trace_compact(
                 program,
                 TraceInputs {
                     inputs: inputs.to_vec(),
@@ -102,6 +102,7 @@ mod support {
                     memory_config,
                     advice_tape: None,
                 },
+                &preprocessing.bytecode,
             )
             .expect("modular trace")
     }
@@ -110,13 +111,13 @@ mod support {
     /// config field against what legacy wrote on the proof. The packed
     /// pipeline is cycle-major only — derivation's default.
     pub fn derive_config_pinned(
-        trace_output: &TraceOutput<OwnedTrace>,
+        trace_output: &TraceOutput<Arc<Vec<JoltTraceRow>>>,
         memory_layout: &MemoryLayout,
         verifier_preprocessing: &JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
         legacy_proof: &AkitaJoltProof,
     ) -> ProverConfig {
-        let config = ProverConfig::derive::<AkitaField>(
-            trace_output.trace.rows(),
+        let config = ProverConfig::derive_compact::<AkitaField>(
+            trace_output.trace.as_slice(),
             memory_layout,
             verifier_preprocessing.program.min_bytecode_address(),
             verifier_preprocessing.program.program_image_len_words(),
@@ -132,21 +133,6 @@ mod support {
             legacy_proof.trace_polynomial_order
         );
         config
-    }
-
-    /// Pad to the padded trace length with no-op rows, as legacy does.
-    pub fn pad_trace(
-        trace_output: TraceOutput<OwnedTrace>,
-        trace_length: usize,
-    ) -> TraceOutput<OwnedTrace> {
-        let mut rows = trace_output.trace.rows().to_vec();
-        rows.resize(trace_length, TraceRow::default());
-        TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-            trace_output.advice_tape,
-        )
     }
 
     pub fn witness_config(config: &ProverConfig) -> JoltVmWitnessConfig {
@@ -226,11 +212,11 @@ mod support {
         assert_eq!(
             proof.stages.reconstruction_sumcheck_proof,
             legacy_proof.stages.reconstruction_sumcheck_proof,
-            "reconstruction bytes diverged (the auxiliary advice/bytecode/image settlement)",
+            "reconstruction bytes diverged (the bytecode/image settlement)",
         );
         assert_eq!(
-            proof.joint_opening_proof.one_hot_trace, legacy_proof.joint_opening_proof.one_hot_trace,
-            "the native same-point OneHotTrace opening diverged from legacy",
+            proof.joint_opening_proof.main_batch, legacy_proof.joint_opening_proof.main_batch,
+            "the heterogeneous advice/OneHotTrace opening diverged from legacy",
         );
         assert_eq!(
             proof.joint_opening_proof.auxiliary, legacy_proof.joint_opening_proof.auxiliary,
@@ -265,7 +251,7 @@ mod muldiv {
     use std::sync::Arc;
 
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita;
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
@@ -308,7 +294,8 @@ mod muldiv {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -323,11 +310,18 @@ mod muldiv {
         // --- Modular side: trace independently through the modular stack.
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
-        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
             .program
             .as_full_arc()
             .expect("full program preprocessing");
+        let trace_output = support::trace_modular(
+            &jolt_program,
+            &program_preprocessing,
+            memory_layout,
+            &inputs,
+            &[],
+            &[],
+        );
         // The derived proof shape must equal what legacy wrote on the wire
         // (asserted inside).
         let config = support::derive_config_pinned(
@@ -336,10 +330,9 @@ mod muldiv {
             &verifier_preprocessing,
             &legacy_proof,
         );
-        let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config),
-            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         );
         let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
             verifier: verifier_preprocessing,
@@ -347,19 +340,23 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("modular packed prove");
+        for backend in [
+            akita::JoltAkitaBackend::reference(),
+            akita::JoltAkitaBackend::optimized(),
+        ] {
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                &witness,
+                &public_io,
+            )
+            .expect("modular packed prove");
 
-        support::assert_proof_matches_legacy(&proof, &legacy_proof);
-        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+            support::assert_proof_matches_legacy(&proof, &legacy_proof);
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+        }
     }
 }
 
@@ -369,12 +366,12 @@ mod advice_consumer {
     use std::sync::Arc;
 
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita;
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::packed::{
-        akita_verifier_preprocessing, commit_trusted_advice_one_hot, AkitaField, AkitaPackedProver,
+        akita_verifier_preprocessing, commit_trusted_advice, AkitaField, AkitaPackedProver,
         AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
     };
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -387,7 +384,7 @@ mod advice_consumer {
 
     /// Prove the advice-consumer guest (trusted AND untrusted advice) over
     /// the packed stack with both provers — three commitment objects
-    /// (`OneHotTrace`, `UntrustedAdviceOneHot`, `TrustedAdviceOneHot`), the
+    /// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`), the
     /// trusted object committed once at preprocessing time and shared by
     /// both sides; assert wire-for-wire equality and verify the modular
     /// proof against the trusted commitment.
@@ -408,7 +405,7 @@ mod advice_consumer {
             support::MAX_PADDED_TRACE_LENGTH,
         );
         let legacy_preprocessing = LegacyProverPreprocessing::new(shared);
-        let trusted_object = commit_trusted_advice_one_hot(
+        let trusted_object = commit_trusted_advice(
             &trusted_advice,
             guest.io_device.memory_layout.max_trusted_advice_size as usize,
         )
@@ -424,7 +421,8 @@ mod advice_consumer {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -439,63 +437,68 @@ mod advice_consumer {
         // --- Modular side: trace independently with the advice inputs,
         // prove with an independently precommitted trusted object (its
         // commitment must land byte-identical to legacy's).
-        let modular_trusted = jolt_prover::akita::witness::commit_advice_one_hot::<AkitaScheme>(
-            jolt_claims::protocols::jolt::JoltAdviceKind::Trusted,
-            &trusted_advice,
-            guest.io_device.memory_layout.max_trusted_advice_size as usize,
-        )
-        .expect("modular trusted advice object must commit");
-        assert_eq!(modular_trusted.commitment, trusted_commitment);
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full_arc()
+            .expect("full program preprocessing");
         let trace_output = support::trace_modular(
             &jolt_program,
+            &program_preprocessing,
             memory_layout,
             &inputs,
             &untrusted_advice,
             &trusted_advice,
         );
-        let program_preprocessing = verifier_preprocessing
-            .program
-            .as_full_arc()
-            .expect("full program preprocessing");
         let config = support::derive_config_pinned(
             &trace_output,
             memory_layout,
             &verifier_preprocessing,
             &legacy_proof,
         );
-        let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config)
                 .include_trusted_advice(true)
                 .include_untrusted_advice(true),
-            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         );
         let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
             verifier: verifier_preprocessing,
             pcs_setup: object_setup,
             committed_program: None,
         };
+        let modular_trusted_object = akita::witness::AdviceObject {
+            plan: trusted_object.plan.clone(),
+            polynomial: trusted_object.polynomial.clone(),
+            commitment: trusted_object.commitment.clone(),
+            hint: trusted_object.hint.clone(),
+            setup: trusted_object.setup.clone(),
+            word_vars: trusted_object.words.len().ilog2() as usize,
+        };
 
-        let backend = akita::JoltAkitaBackend::reference();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            Some(&modular_trusted),
-            &witness,
-            &public_io,
-        )
-        .expect("modular packed prove");
+        for backend in [
+            akita::JoltAkitaBackend::reference(),
+            akita::JoltAkitaBackend::optimized(),
+        ] {
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&modular_trusted_object),
+                &witness,
+                &public_io,
+            )
+            .expect("modular packed prove");
 
-        support::assert_proof_matches_legacy(&proof, &legacy_proof);
-        support::verify_modular(
-            &prover_preprocessing.verifier,
-            &public_io,
-            &proof,
-            Some(&trusted_commitment),
-        );
+            support::assert_proof_matches_legacy(&proof, &legacy_proof);
+            support::verify_modular(
+                &prover_preprocessing.verifier,
+                &public_io,
+                &proof,
+                Some(&trusted_commitment),
+            );
+        }
     }
 }
 
@@ -505,7 +508,7 @@ mod committed_muldiv {
     use std::sync::Arc;
 
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita;
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
@@ -561,7 +564,8 @@ mod committed_muldiv {
             None,
             None,
             None,
-        );
+        )
+        .expect("legacy prover construction");
         let public_io = legacy_prover.program_io.clone();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
             legacy_prover.one_hot_trace_setup_params(),
@@ -589,17 +593,23 @@ mod committed_muldiv {
             memory_layout,
         );
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
-        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        let trace_output = support::trace_modular(
+            &jolt_program,
+            &full_program,
+            memory_layout,
+            &inputs,
+            &[],
+            &[],
+        );
         let config = support::derive_config_pinned(
             &trace_output,
             memory_layout,
             &verifier_preprocessing,
             &legacy_proof,
         );
-        let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config),
-            JoltVmWitnessInputs::new(&jolt_program, &full_program, padded_output),
+            JoltVmWitnessInputs::new(&jolt_program, &full_program, trace_output),
         );
         let modular_program_one_hot = jolt_prover::akita::witness::commit_program_one_hot::<
             AkitaScheme,
@@ -614,19 +624,23 @@ mod committed_muldiv {
             }),
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("modular packed prove");
+        for backend in [
+            akita::JoltAkitaBackend::reference(),
+            akita::JoltAkitaBackend::optimized(),
+        ] {
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                &witness,
+                &public_io,
+            )
+            .expect("modular packed prove");
 
-        support::assert_proof_matches_legacy(&proof, &legacy_proof);
-        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+            support::assert_proof_matches_legacy(&proof, &legacy_proof);
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+        }
     }
 }
 

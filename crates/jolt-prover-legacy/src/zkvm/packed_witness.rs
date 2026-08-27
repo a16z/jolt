@@ -1,6 +1,6 @@
 //! Prover-side Akita witness assembly. `OneHotTrace` contains the uniform
-//! row-major one-hot columns derived from the execution trace; auxiliary program/advice objects retain
-//! sparse prefix-packed representations.
+//! row-major one-hot columns derived from the execution trace; program objects
+//! retain sparse prefix-packed representations.
 
 use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
 use jolt_claims::protocols::jolt::lattice::PrefixPackedObjectPlan;

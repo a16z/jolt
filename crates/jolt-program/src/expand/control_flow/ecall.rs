@@ -33,7 +33,7 @@ pub(in crate::expand) fn expand_ecall(
     // 3 << 11 sets MPP=M-mode and leaves the interrupt-enable bits cleared.
     let three = asm.allocate()?;
     asm.emit_i(Kind::ADDI, three.operand(), reg(0), 3);
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::SLLI,
         reg(vr_mstatus),
         three.operand(),

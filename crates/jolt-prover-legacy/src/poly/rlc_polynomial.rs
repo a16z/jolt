@@ -106,63 +106,6 @@ impl<F: JoltField> RLCPolynomial<F> {
         }
     }
 
-    /// Constructs an `RLCPolynomial` as a linear combination of `polynomials` with the provided
-    /// `coefficients`.
-    ///
-    /// Eagerly combines dense polynomials into `dense_rlc` and stores one-hot polynomials lazily in
-    /// `one_hot_rlc`.
-    pub fn linear_combination(
-        poly_ids: Vec<CommittedPolynomial>,
-        polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
-        coefficients: &[F],
-        streaming_context: Option<Arc<StreamingRLCContext<F>>>,
-    ) -> Self {
-        debug_assert_eq!(polynomials.len(), coefficients.len());
-        debug_assert_eq!(polynomials.len(), poly_ids.len());
-
-        // Partition into dense and one-hot polynomials
-        let (dense, one_hot): (Vec<_>, Vec<_>) = polynomials
-            .iter()
-            .zip(coefficients.iter())
-            .partition(|(p, _)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)));
-
-        // Eagerly materialize the dense linear combination (if any).
-        let dense_rlc = if dense.is_empty() {
-            vec![]
-        } else {
-            let max_len = dense
-                .iter()
-                .map(|(p, _)| p.as_ref().original_len())
-                .max()
-                .unwrap();
-
-            (0..max_len)
-                .into_par_iter()
-                .map(|idx| {
-                    let mut acc = F::zero();
-                    for (poly, coeff) in &dense {
-                        if idx < poly.as_ref().original_len() {
-                            acc += poly.as_ref().get_scaled_coeff(idx, **coeff);
-                        }
-                    }
-                    acc
-                })
-                .collect()
-        };
-
-        // Store one-hot polynomials lazily.
-        let one_hot_rlc: Vec<_> = one_hot
-            .into_iter()
-            .map(|(poly, coeff)| (*coeff, poly.clone()))
-            .collect();
-
-        Self {
-            dense_rlc,
-            one_hot_rlc,
-            streaming_context,
-        }
-    }
-
     /// Creates a streaming RLC polynomial from polynomial IDs and coefficients.
     /// O(sqrt(T)) space - streams directly from trace without materializing polynomials.
     ///

@@ -4,8 +4,6 @@
 //! hold the summand math, this module holds the plumbing they all repeat.
 
 use std::ops::Range;
-use std::ptr;
-use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltDerivedId;
 use jolt_field::{Accumulator, JoltField};
@@ -13,21 +11,24 @@ use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
 use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
+    stream_witnesses, JoltWitnessPlane, RandomAccessRows, RowSource, StreamConsumer, WitnessBundle,
+    WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::rows::RandomAccessRows;
-use crate::{KernelError, ProofSession, SumcheckKernelError};
+use crate::{KernelError, SumcheckKernelError};
 
 /// A kernel's bound-round count against its total — the one home of the
 /// "claims only after every round is bound" invariant.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RoundProgress {
     bound: usize,
     total: usize,
@@ -71,20 +72,34 @@ impl RoundProgress {
 /// itself).
 const COLLECT_ROWS_CHUNK: usize = 1 << 16;
 
+pub(crate) fn collect_par_map<B: WitnessBundle, V: Copy + Send>(
+    access: &RandomAccessRows,
+    cycles: usize,
+    pack: impl Fn(B) -> V + Send + Sync,
+) -> Result<Vec<V>, WitnessError> {
+    let window = |index| access.window::<B>(index).map(&pack);
+    #[cfg(feature = "parallel")]
+    return par_collect_windows(cycles, window);
+    #[cfg(not(feature = "parallel"))]
+    (0..cycles).map(window).collect()
+}
+
 /// `jolt_witness::collect_bundles` with a wider streaming chunk and a
 /// pre-sized destination (the stock pass also grows its vector realloc by
 /// realloc). Chunk size never changes the collected bundles — the pass
 /// carries the lookahead row across chunk boundaries — so this is walk-shape
 /// only.
-pub(crate) fn collect_rows<F: JoltField, B: WitnessBundle + Copy + Send + Sync>(
-    source: &dyn JoltWitnessPlane<F>,
+pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
+    source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
     // Slice-backed sources collect index-parallel — no chunk staging, no
     // serial consume copy (out-of-range requests fall through for the
     // walk's validation).
-    if let Some(access) = RandomAccessRows::new(source, cycles)? {
-        return super::rows::collect_bundles_par(&access, cycles);
+    if let Some(access) = source.random_access() {
+        if cycles <= access.cycles() {
+            return collect_par_map(&access, cycles, |bundle: B| bundle);
+        }
     }
     struct Presized<B> {
         rows: Vec<B>,
@@ -245,7 +260,13 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
 /// round total — one authority for both the challenge history and the
 /// bound-rounds invariant. Kernels that never revisit their challenges use
 /// [`RoundProgress`] instead.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 pub(crate) struct RoundChallenges<F> {
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     challenges: Vec<F>,
     total: usize,
 }
@@ -287,13 +308,6 @@ impl<F: JoltField> RoundChallenges<F> {
                 remaining: self.total - self.challenges.len(),
             })
         }
-    }
-}
-
-#[cfg(feature = "allocative")]
-impl<F> RoundChallenges<F> {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        crate::backend::vec_heap_bytes(&self.challenges)
     }
 }
 
@@ -560,12 +574,6 @@ pub(crate) fn par_sum_pair_groups_reusing<F: JoltField, S: Send>(
     }
 }
 
-// --- parallel shims --------------------------------------------------------
-//
-// Kernels' custom scans need chunked map-reduce and indexed maps; the serial
-// fallbacks compute the same field values (sums and products of the same
-// terms), so parity is unaffected by the feature.
-
 /// `merge`-fold of `map` over index chunks of at most `chunk_size`.
 pub(crate) fn map_reduce_chunks<R: Send>(
     len: usize,
@@ -649,28 +657,21 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
 /// — binding acts linearly on the `j_lo` tensor factor. (jolt-poly's
 /// `LtPolynomial` binds high-to-low only, so the low-to-high variant lives
 /// here.)
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F")
+)]
 pub(crate) enum SplitLt<F> {
     Split {
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lt_lo: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lt_hi: Vec<F>,
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_hi: Vec<F>,
     },
-    Dense(Vec<F>),
-}
-
-#[cfg(feature = "allocative")]
-impl<F> SplitLt<F> {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        use crate::backend::vec_heap_bytes;
-        match self {
-            Self::Split {
-                lt_lo,
-                lt_hi,
-                eq_hi,
-            } => vec_heap_bytes(lt_lo) + vec_heap_bytes(lt_hi) + vec_heap_bytes(eq_hi),
-            Self::Dense(table) => vec_heap_bytes(table),
-        }
-    }
+    Dense(#[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<F>),
 }
 
 impl<F: JoltField> SplitLt<F> {
@@ -764,62 +765,45 @@ impl<F: JoltField> SplitLt<F> {
 /// materialized row vector never exists; re-emulating sources retain the
 /// collected rows. The generic twin of the spartan-outer kernel's store,
 /// for every carry-style typed-row consumer.
-pub(crate) enum BundleStore<F: JoltField, B> {
-    Owned {
-        witness: Arc<dyn JoltWitnessPlane<F>>,
-        cycles: usize,
-    },
-    Retained(Vec<B>),
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "B")
+)]
+pub(crate) enum BundleStore<B> {
+    /// The witness plane owns these rows; it reports them itself.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    Owned(RandomAccessRows),
+    Retained(
+        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<B>,
+    ),
 }
 
-#[cfg(feature = "allocative")]
-impl<F: JoltField, B> BundleStore<F, B> {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        match self {
-            Self::Owned { .. } => 0,
-            Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
-        }
-    }
-}
-
-impl<F: JoltField, B: WitnessBundle + Copy + Send + Sync> BundleStore<F, B> {
+impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
     /// Resolve for a witness plane: the owning handle when the source is
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.
-    pub(crate) fn resolve(
-        session: &ProofSession,
+    pub(crate) fn resolve<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
-        if RandomAccessRows::new(witness, cycles)?.is_some() {
-            if let Some(owned) = session
-                .witness::<F>()
-                .filter(|owned| ptr::eq(owned.as_ref(), witness))
-            {
-                return Ok(Self::Owned {
-                    witness: Arc::clone(owned),
-                    cycles,
-                });
-            }
+    ) -> Result<Self, crate::KernelError<F>> {
+        match witness.random_access() {
+            Some(rows) if cycles <= rows.cycles() => Ok(Self::Owned(rows)),
+            _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
         }
-        Ok(Self::Retained(collect_rows(witness, cycles)?))
     }
 
-    pub(crate) fn access(&self) -> Result<BundleAccess<'_, B>, WitnessError> {
+    pub(crate) fn access(&self) -> BundleAccess<'_, B> {
         match self {
-            Self::Owned { witness, cycles } => RandomAccessRows::new(witness.as_ref(), *cycles)?
-                .map(BundleAccess::View)
-                .ok_or(WitnessError::UnavailableView {
-                    label: "random-access rows",
-                }),
-            Self::Retained(rows) => Ok(BundleAccess::Retained(rows)),
+            Self::Owned(rows) => BundleAccess::View(rows),
+            Self::Retained(rows) => BundleAccess::Retained(rows),
         }
     }
 }
 
 /// One pass's borrowed row provider over a [`BundleStore`].
 pub(crate) enum BundleAccess<'a, B> {
-    View(RandomAccessRows<'a>),
+    View(&'a RandomAccessRows),
     Retained(&'a [B]),
 }
 

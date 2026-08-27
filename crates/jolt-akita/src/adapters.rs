@@ -17,10 +17,14 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
+use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::schedule_registry::AdviceScheduleParams;
+use crate::trace_onehot::TracePackedOneHot;
+
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub(crate) type AkitaConfig = crate::configs::JoltDense;
-pub(crate) type AkitaOneHotK16Config = crate::configs::JoltOneHotK16;
-pub(crate) type AkitaOneHotK256Config = crate::configs::JoltOneHotK256;
+pub(crate) type AkitaConfig = JoltDenseBounded;
+pub(crate) type AkitaOneHotK16Config = JoltOneHotK16;
+pub(crate) type AkitaOneHotK256Config = JoltOneHotK256;
 /// Smallest A dimension accepted by the delegated adaptive policy. Source
 /// objects use this only for dimension-independent flat storage metadata;
 /// each generated schedule still selects its exact per-role dimensions.
@@ -87,6 +91,10 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
 pub struct AkitaSetupParams {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
+    /// Capacity of the complete ordered group batch. This is passed to
+    /// Akita's setup constructor; commitment entry points still enforce the
+    /// separate group-local limit above.
+    pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
     /// When set, only the one-hot flavor's backend setup is built — the
@@ -97,6 +105,10 @@ pub struct AkitaSetupParams {
     /// flavor dominates the setup cost (~30x the dense flavor at advice
     /// shapes), and a sparse-unit or dense commitment object never touches it.
     pub(crate) dense_only: bool,
+    /// Recipe for the dynamic grouped rows accepted by this setup. Unlike the
+    /// process-local row cache, this metadata survives verifier serialization.
+    #[serde(default)]
+    pub(crate) advice_schedule: Option<AdviceScheduleParams>,
 }
 
 impl AkitaSetupParams {
@@ -108,10 +120,12 @@ impl AkitaSetupParams {
         Self {
             max_num_vars,
             max_num_polys_per_commitment_group,
+            max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
             dense_only: false,
+            advice_schedule: None,
         }
     }
 
@@ -127,10 +141,34 @@ impl AkitaSetupParams {
         Self {
             max_num_vars,
             max_num_polys_per_commitment_group,
+            max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k,
             one_hot_only: true,
             dense_only: false,
+            advice_schedule: None,
+        }
+    }
+
+    /// Shape-exact one-hot final setup that can discharge a heterogeneous
+    /// opening containing independently committed prefix groups.
+    pub fn one_hot_only_grouped(
+        max_num_vars: usize,
+        max_num_polys_per_commitment_group: usize,
+        max_total_batch_polys: usize,
+        default_layout_digest: AkitaLayoutDigest,
+        one_hot_k: usize,
+        advice_schedule: Option<AdviceScheduleParams>,
+    ) -> Self {
+        Self {
+            max_num_vars,
+            max_num_polys_per_commitment_group,
+            max_total_batch_polys,
+            default_layout_digest,
+            one_hot_k,
+            one_hot_only: true,
+            dense_only: false,
+            advice_schedule,
         }
     }
 
@@ -146,15 +184,21 @@ impl AkitaSetupParams {
         Self {
             max_num_vars,
             max_num_polys_per_commitment_group,
+            max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
             dense_only: true,
+            advice_schedule: None,
         }
     }
 
     pub fn one_hot_k(&self) -> usize {
         self.one_hot_k
+    }
+
+    pub fn max_total_batch_polys(&self) -> usize {
+        self.max_total_batch_polys
     }
 }
 
@@ -176,12 +220,33 @@ impl AkitaProverSetup {
         self.verifier.max_num_polys_per_commitment_group
     }
 
+    pub fn max_total_batch_polys(&self) -> usize {
+        self.verifier.max_total_batch_polys
+    }
+
     pub fn default_layout_digest(&self) -> [u8; 32] {
         self.verifier.default_layout_digest
     }
 
     pub fn one_hot_k(&self) -> usize {
         self.verifier.one_hot_k
+    }
+
+    /// Releases transformed setup slots after the trace commitment. Later
+    /// opening work rebuilds the slots on first use.
+    pub fn release_post_commit_ntt_residency(&self) -> Result<(), OpeningsError> {
+        for prepared in [
+            self.prepared_backend_setup.as_deref(),
+            self.prepared_one_hot_backend_setup.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = prepared
+                .drop_built_ntt_slots()
+                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+        }
+        Ok(())
     }
 
     pub(crate) fn dense_backend(
@@ -212,18 +277,18 @@ impl AkitaProverSetup {
     }
 }
 
-/// The verifier setup is pure shape: the backend keys are a deterministic
-/// function of `(max_num_vars, max_num_polys_per_commitment_group, one_hot_k)`
-/// over a fixed internal seed, so they are never serialized or
-/// transcript-absorbed — [`append_verifier_setup`] binds these parameters and
-/// both sides derive the same keys from them.
+/// Serializable public inputs for deriving the backend keys and any dynamic
+/// grouped schedules. The derived keys and schedule rows are not serialized.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
+    pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
+    #[serde(default)]
+    pub(crate) advice_schedule: Option<AdviceScheduleParams>,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
 }
@@ -235,6 +300,10 @@ impl AkitaVerifierSetup {
 
     pub fn max_num_polys_per_commitment_group(&self) -> usize {
         self.max_num_polys_per_commitment_group
+    }
+
+    pub fn max_total_batch_polys(&self) -> usize {
+        self.max_total_batch_polys
     }
 
     pub fn default_layout_digest(&self) -> [u8; 32] {
@@ -260,6 +329,21 @@ impl AkitaVerifierSetup {
         }
     }
 
+    /// Restores dynamic rows before schedule resolution or lazy key derivation.
+    pub(crate) fn ensure_schedule_rows(&self) -> Result<(), OpeningsError> {
+        let result = self.backend_cache.schedule_rows.get_or_init(|| {
+            self.advice_schedule
+                .map_or(Ok(()), |params| {
+                    params.provision(self.one_hot_k).map(|_| ())
+                })
+                .map_err(|error| error.to_string())
+        });
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OpeningsError::InvalidSetup(error.clone())),
+        }
+    }
+
     /// Backend verifier key for `flavor`, cached after the first use.
     /// [`AkitaScheme::setup`](crate::AkitaScheme) primes the cache with the
     /// freshly built keys; a serde-transported setup re-derives them from the
@@ -268,6 +352,9 @@ impl AkitaVerifierSetup {
         &self,
         flavor: AkitaBackendFlavor,
     ) -> Result<&AkitaBackendVerifier, OpeningsError> {
+        if flavor == AkitaBackendFlavor::OneHot {
+            self.ensure_schedule_rows()?;
+        }
         let cache = match flavor {
             AkitaBackendFlavor::Dense => &self.backend_cache.dense,
             AkitaBackendFlavor::OneHot => &self.backend_cache.one_hot,
@@ -288,10 +375,7 @@ impl AkitaVerifierSetup {
         match flavor {
             AkitaBackendFlavor::Dense => {
                 let prover_setup = with_backend_pool(|| {
-                    AkitaBackendScheme::setup_prover(
-                        self.max_num_vars,
-                        self.max_num_polys_per_commitment_group,
-                    )
+                    AkitaBackendScheme::setup_prover(self.max_num_vars, self.max_total_batch_polys)
                 })
                 .map_err(|err| invalid_setup(&err))?;
                 with_backend_pool(|| AkitaBackendScheme::setup_verifier(&prover_setup))
@@ -305,7 +389,7 @@ impl AkitaVerifierSetup {
                 let prover_setup = one_hot_setup_prover(
                     self.one_hot_k,
                     self.max_num_vars,
-                    self.max_num_polys_per_commitment_group,
+                    self.max_total_batch_polys,
                 )
                 .map_err(|err| invalid_setup(&err))?;
                 one_hot_setup_verifier(self.one_hot_k, &prover_setup)
@@ -320,6 +404,16 @@ impl AkitaVerifierSetup {
 pub(crate) struct BackendVerifierCache {
     dense: Arc<OnceLock<AkitaBackendVerifier>>,
     one_hot: Arc<OnceLock<AkitaBackendVerifier>>,
+    schedule_rows: Arc<OnceLock<Result<(), String>>>,
+}
+
+impl BackendVerifierCache {
+    pub(crate) fn with_schedule_rows() -> Self {
+        Self {
+            schedule_rows: Arc::new(OnceLock::from(Ok(()))),
+            ..Self::default()
+        }
+    }
 }
 
 impl fmt::Debug for BackendVerifierCache {
@@ -350,6 +444,7 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript.append_bytes(flavor.transcript_label());
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
+    transcript.append(&U64Word(setup.max_total_batch_polys as u64));
     transcript.append(&U64Word(setup.one_hot_k as u64));
     transcript.append_bytes(&setup.default_layout_digest);
 }
@@ -434,6 +529,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaVerifierSetup {
         self.max_num_polys_per_commitment_group()
     }
 
+    fn max_total_batch_polys(&self) -> usize {
+        self.max_total_batch_polys()
+    }
+
     fn default_layout_digest(&self) -> [u8; 32] {
         self.default_layout_digest()
     }
@@ -450,6 +549,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
 
     fn max_num_polys_per_commitment_group(&self) -> usize {
         self.max_num_polys_per_commitment_group()
+    }
+
+    fn max_total_batch_polys(&self) -> usize {
+        self.max_total_batch_polys()
     }
 
     fn default_layout_digest(&self) -> [u8; 32] {
@@ -504,6 +607,10 @@ impl AppendToTranscript for AkitaCommitment {
 #[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
     pub(crate) statement_bridge: Vec<u8>,
+    /// Fixed-width public identity of the exact generated row selected by the
+    /// prover. The verifier resolves this digest under its configured catalog;
+    /// the backend proof body does not encode the selection itself.
+    pub(crate) serialized_schedule_selection: Vec<u8>,
     pub(crate) serialized_akita_proof_shape: Vec<u8>,
     pub(crate) serialized_akita_proof: Vec<u8>,
 }
@@ -546,6 +653,7 @@ pub struct AkitaProverHint {
 pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
     OneHot(Arc<[AkitaBackendOneHotPoly]>),
+    TraceOneHot(TracePackedOneHot),
     SparseUnit(Arc<[AkitaBackendSparsePoly]>),
 }
 
@@ -559,7 +667,7 @@ impl AkitaHintPolynomials {
     pub(crate) const fn backend_flavor(&self) -> AkitaBackendFlavor {
         match self {
             Self::Dense(_) | Self::SparseUnit(_) => AkitaBackendFlavor::Dense,
-            Self::OneHot(_) => AkitaBackendFlavor::OneHot,
+            Self::OneHot(_) | Self::TraceOneHot(_) => AkitaBackendFlavor::OneHot,
         }
     }
 
@@ -567,6 +675,7 @@ impl AkitaHintPolynomials {
         match self {
             Self::Dense(_) => "dense",
             Self::OneHot(_) => "one_hot",
+            Self::TraceOneHot(_) => "trace_one_hot",
             Self::SparseUnit(_) => "sparse_unit",
         }
     }
@@ -575,6 +684,7 @@ impl AkitaHintPolynomials {
         match self {
             Self::Dense(polys) => polys.len(),
             Self::OneHot(polys) => polys.len(),
+            Self::TraceOneHot(_) => 1,
             Self::SparseUnit(polys) => polys.len(),
         }
     }
@@ -584,6 +694,9 @@ impl AkitaHintPolynomials {
             Self::OneHot(polys) => polys
                 .first()
                 .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
+            Self::TraceOneHot(polynomial) => {
+                akita_prover::RootPolyMeta::onehot_chunk_size(polynomial)
+            }
             Self::Dense(_) | Self::SparseUnit(_) => None,
         }
     }
@@ -868,6 +981,11 @@ impl AppendToTranscript for AkitaBatchProof {
             self.statement_bridge.len() as u64,
         ));
         transcript.append_bytes(&self.statement_bridge);
+        transcript.append(&LabelWithCount(
+            b"akita_schedule_selection",
+            self.serialized_schedule_selection.len() as u64,
+        ));
+        transcript.append_bytes(&self.serialized_schedule_selection);
         transcript.append(&LabelWithCount(
             b"akita_proof_shape",
             self.serialized_akita_proof_shape.len() as u64,

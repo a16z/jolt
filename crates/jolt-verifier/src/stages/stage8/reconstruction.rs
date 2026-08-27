@@ -1,10 +1,10 @@
 //! The packed reconstruction phase, strictly after stage 7: one batched
 //! sumcheck settling every virtualized word/chunk claim against its committed
-//! one-hot decomposition, producing the packed final claims for the advice
-//! byte columns and the `ProgramOneHot` lane columns. Members in canonical
-//! commitment-object order: untrusted advice, trusted advice, bytecode
-//! chunks, program image. The phase is entirely absent (zero transcript
-//! interaction) when no advice is present and the program is full.
+//! one-hot decomposition, producing the packed final claims for the
+//! `ProgramOneHot` lane columns. Members in canonical commitment-object order:
+//! bytecode chunks, then program image. Advice is opened directly and
+//! never enters this phase. The phase is entirely absent (zero transcript
+//! interaction) when the program is full.
 //!
 //! Each member consumes the *completed* claim of its base reduction — the
 //! stage-7 address-phase output, or the stage-6b cycle-phase output when the
@@ -15,13 +15,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::lattice::geometry::{
-    byte_decode_weight, selector_block_weight, word_byte_num_vars, BYTE_BITS,
-};
-use jolt_claims::protocols::jolt::lattice::relations::advice_reconstruction::{
-    AdviceReconstructionDimensions, TrustedAdviceReconstruction as TrustedSymbolic,
-    TrustedAdviceReconstructionInputClaims, TrustedAdviceReconstructionOutputClaims,
-    UntrustedAdviceReconstruction as UntrustedSymbolic, UntrustedAdviceReconstructionChallenges,
-    UntrustedAdviceReconstructionInputClaims, UntrustedAdviceReconstructionOutputClaims,
+    byte_decode_weight, selector_block_weight, BYTE_BITS,
 };
 use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
     BytecodeChunkReconstruction as BytecodeSymbolic, BytecodeChunkReconstructionChallenges,
@@ -33,13 +27,12 @@ use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstructi
     ProgramImageReconstructionOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    BytecodeChunkReconstructionPublic, BytecodeRegisterLane, JoltAdviceKind, JoltDerivedId,
-    JoltRelationId, ProgramImageReconstructionPublic, TrustedAdviceReconstructionPublic,
-    UntrustedAdviceReconstructionPublic,
+    BytecodeChunkReconstructionPublic, BytecodeRegisterLane, JoltDerivedId, JoltRelationId,
+    ProgramImageReconstructionPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::{CanonicalBytes, JoltField};
-use jolt_poly::{eq_index_msb, try_eq_mle};
+use jolt_poly::eq_index_msb;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use jolt_utils::Math;
@@ -55,14 +48,6 @@ fn public_input_failed(stage: JoltRelationId, reason: impl ToString) -> Verifier
         stage,
         reason: reason.to_string(),
     }
-}
-
-fn untrusted_public_failed(reason: impl ToString) -> VerifierError {
-    public_input_failed(JoltRelationId::UntrustedAdviceReconstruction, reason)
-}
-
-fn trusted_public_failed(reason: impl ToString) -> VerifierError {
-    public_input_failed(JoltRelationId::TrustedAdviceReconstruction, reason)
 }
 
 fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
@@ -88,142 +73,6 @@ fn byte_decode_leg<F: JoltField>(
         .split_at_checked(BYTE_BITS)
         .ok_or_else(|| fail("cell point prefix is shorter than the byte variables"))?;
     Ok(byte_decode_weight(r_byte, r_place))
-}
-
-/// The untrusted advice reconstruction: booleanity + hamming + decode legs
-/// over the full `(byte ‖ place ‖ word)` cell domain.
-#[derive(Clone)]
-pub struct UntrustedAdviceReconstructionInstance<F: JoltField> {
-    symbolic: UntrustedSymbolic,
-    _field: core::marker::PhantomData<F>,
-}
-
-impl<F: JoltField> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> {
-    type Symbolic = UntrustedSymbolic;
-
-    fn symbolic(&self) -> &Self::Symbolic {
-        &self.symbolic
-    }
-
-    /// The booleanity/hamming reference point is a full-cell-domain vector
-    /// whose width is runtime shape data, so the generic scalar-stream draw
-    /// cannot build it. This member is the batch's first, so the override's
-    /// draws (the reference vector, then the gamma) land exactly where the
-    /// pre-batch inline draw plus the generated gamma draw did.
-    fn draw_challenges<T: Transcript<Challenge = F>>(
-        &self,
-        transcript: &mut T,
-    ) -> Result<UntrustedAdviceReconstructionChallenges<F>, VerifierError> {
-        Ok(UntrustedAdviceReconstructionChallenges {
-            r_reference: transcript.challenge_vector(self.symbolic.rounds()),
-            gamma: transcript.challenge_scalar(),
-        })
-    }
-
-    fn derive_opening_points(
-        &self,
-        sumcheck_point: &[F],
-        _input_points: &UntrustedAdviceReconstructionInputClaims<Vec<F>>,
-    ) -> Result<UntrustedAdviceReconstructionOutputClaims<Vec<F>>, VerifierError> {
-        // Word variables bind first (low bits of the `(byte ‖ place ‖ word)`
-        // cell order), so the reversed sumcheck point is msb-first.
-        Ok(UntrustedAdviceReconstructionOutputClaims {
-            bytes: sumcheck_point.iter().rev().copied().collect(),
-        })
-    }
-
-    fn derive_output_term(
-        &self,
-        id: &JoltDerivedId,
-        input_points: &UntrustedAdviceReconstructionInputClaims<Vec<F>>,
-        output_points: &UntrustedAdviceReconstructionOutputClaims<Vec<F>>,
-        challenges: &UntrustedAdviceReconstructionChallenges<F>,
-    ) -> Result<F, VerifierError> {
-        let JoltDerivedId::UntrustedAdviceReconstruction(public) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
-        };
-        let r_reference = &challenges.r_reference;
-        let opening_point = output_points.bytes();
-        // The `(byte ‖ place)` prefix of the cell layout; the word variables
-        // follow it.
-        let byte_place_split = word_byte_num_vars(0);
-        if opening_point.len() < byte_place_split || r_reference.len() != opening_point.len() {
-            return Err(untrusted_public_failed(format!(
-                "cell point has {} variables, reference has {}",
-                opening_point.len(),
-                r_reference.len()
-            )));
-        }
-        let (byte_place, r_word) = opening_point.split_at(byte_place_split);
-        let (r_byte, r_place) = byte_place.split_at(BYTE_BITS);
-        match public {
-            UntrustedAdviceReconstructionPublic::EqBytePlaceWord => {
-                try_eq_mle(opening_point, r_reference).map_err(untrusted_public_failed)
-            }
-            UntrustedAdviceReconstructionPublic::EqPlaceWord => {
-                let place_word = opening_point.get(BYTE_BITS..).ok_or_else(|| {
-                    untrusted_public_failed("cell point is shorter than the byte variables")
-                })?;
-                let reference_place_word = r_reference.get(BYTE_BITS..).ok_or_else(|| {
-                    untrusted_public_failed("reference point is shorter than the byte variables")
-                })?;
-                try_eq_mle(place_word, reference_place_word).map_err(untrusted_public_failed)
-            }
-            UntrustedAdviceReconstructionPublic::ByteDecode => {
-                Ok(byte_decode_weight(r_byte, r_place))
-            }
-            UntrustedAdviceReconstructionPublic::EqWord => {
-                try_eq_mle(r_word, input_points.word()).map_err(untrusted_public_failed)
-            }
-        }
-    }
-}
-
-/// The trusted advice reconstruction: the decode leg alone over the
-/// `(byte ‖ place)` variables, the word point fixed by the incoming claim.
-#[derive(Clone)]
-pub struct TrustedAdviceReconstructionInstance<F: JoltField> {
-    symbolic: TrustedSymbolic,
-    _field: core::marker::PhantomData<F>,
-}
-
-impl<F: JoltField> ConcreteSumcheck<F> for TrustedAdviceReconstructionInstance<F> {
-    type Symbolic = TrustedSymbolic;
-
-    fn symbolic(&self) -> &Self::Symbolic {
-        &self.symbolic
-    }
-
-    fn derive_opening_points(
-        &self,
-        sumcheck_point: &[F],
-        input_points: &TrustedAdviceReconstructionInputClaims<Vec<F>>,
-    ) -> Result<TrustedAdviceReconstructionOutputClaims<Vec<F>>, VerifierError> {
-        let bound = sumcheck_point.iter().rev().copied();
-        Ok(TrustedAdviceReconstructionOutputClaims {
-            bytes: bound.chain(input_points.word().iter().copied()).collect(),
-        })
-    }
-
-    fn derive_output_term(
-        &self,
-        id: &JoltDerivedId,
-        _input_points: &TrustedAdviceReconstructionInputClaims<Vec<F>>,
-        output_points: &TrustedAdviceReconstructionOutputClaims<Vec<F>>,
-        _challenges: &NoChallenges<F>,
-    ) -> Result<F, VerifierError> {
-        let JoltDerivedId::TrustedAdviceReconstruction(
-            TrustedAdviceReconstructionPublic::ByteDecode,
-        ) = id
-        else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
-        };
-        byte_decode_leg(
-            output_points.bytes(),
-            ConcreteSumcheck::<F>::symbolic(self).rounds(),
-            trusted_public_failed,
-        )
-    }
 }
 
 /// The bytecode chunk reconstruction: rebuilds every chunk claim from the
@@ -467,8 +316,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReconstructionInstance<F>
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct ReconstructionSumchecks<F: JoltField> {
-    pub untrusted_advice: Option<UntrustedAdviceReconstructionInstance<F>>,
-    pub trusted_advice: Option<TrustedAdviceReconstructionInstance<F>>,
     pub bytecode: Option<BytecodeChunkReconstructionInstance<F>>,
     pub program_image: Option<ProgramImageReconstructionInstance<F>>,
 }
@@ -482,14 +329,10 @@ impl<F: JoltField> ReconstructionClearOutput<F> {
     fn empty() -> Self {
         Self {
             output_values: ReconstructionOutputClaims {
-                untrusted_advice: None,
-                trusted_advice: None,
                 bytecode: None,
                 program_image: None,
             },
             output_points: ReconstructionOutputPoints {
-                untrusted_advice: None,
-                trusted_advice: None,
                 bytecode: None,
                 program_image: None,
             },
@@ -517,41 +360,6 @@ fn completed<F: JoltField, V>(
         .or(cycle_phase)
         .map(|(value, point)| (value, point.to_vec()))
         .ok_or_else(error)
-}
-
-fn completed_advice_claim<F: JoltField>(
-    kind: JoltAdviceKind,
-    stage6b: &Stage6bClearOutput<F>,
-    stage7: &Stage7ClearOutput<F>,
-) -> Result<CompletedClaim<F>, VerifierError> {
-    let address_value = match kind {
-        JoltAdviceKind::Trusted => stage7
-            .output_values
-            .trusted_advice
-            .as_ref()
-            .map(|claims| claims.trusted),
-        JoltAdviceKind::Untrusted => stage7
-            .output_values
-            .untrusted_advice
-            .as_ref()
-            .map(|claims| claims.untrusted),
-    };
-    let (value, point) = completed(
-        address_value.zip(stage7.output_points.advice_point(kind)),
-        stage6b
-            .output_values
-            .advice_cycle_phase_claim(kind)
-            .zip(stage6b.output_points.advice_cycle_phase_opening_point(kind)),
-        || {
-            let message =
-                format!("no completed {kind:?} advice claim for the reconstruction phase");
-            match kind {
-                JoltAdviceKind::Trusted => trusted_public_failed(message),
-                JoltAdviceKind::Untrusted => untrusted_public_failed(message),
-            }
-        },
-    )?;
-    Ok(CompletedClaim { value, point })
 }
 
 fn completed_chunk_claims<F: JoltField>(
@@ -605,8 +413,8 @@ fn completed_program_image_claim<F: JoltField>(
 /// The reconstruction phase's assembled batch and its consumed claims — the
 /// shared construction both `verify` and the prover's reconstruction recipe
 /// run: same instances (from the public shape and the completed upstream
-/// claims), same input cells. `None` exactly when the phase is absent (no
-/// advice and a full program).
+/// claims), same input cells. `None` exactly when the committed-program
+/// reconstruction phase is absent.
 pub struct ReconstructionParts<F: JoltField> {
     pub sumchecks: ReconstructionSumchecks<F>,
     pub input_values: ReconstructionInputClaims<F>,
@@ -621,66 +429,14 @@ pub fn build_reconstruction_parts<F>(
 where
     F: JoltField,
 {
-    let untrusted_layout = checked.precommitted.untrusted_advice.as_ref();
-    let trusted_layout = checked.precommitted.trusted_advice.as_ref();
     let bytecode_layout = checked.precommitted.bytecode.as_ref();
     let image_layout = checked.precommitted.program_image.as_ref();
 
-    let phase_runs = untrusted_layout.is_some()
-        || trusted_layout.is_some()
-        || bytecode_layout.is_some()
-        || image_layout.is_some();
+    let phase_runs = bytecode_layout.is_some() || image_layout.is_some();
     if !phase_runs {
         return Ok(None);
     }
 
-    let advice_word_vars = |layout: &jolt_claims::protocols::jolt::AdviceClaimReductionLayout| {
-        layout.advice_shape().total_vars()
-    };
-
-    // The untrusted booleanity/hamming reference point is drawn by the
-    // member's `draw_challenges` override — the batch's first draws, so it
-    // still lands before every instance gamma.
-    let untrusted = untrusted_layout
-        .map(|layout| -> Result<_, VerifierError> {
-            let word_vars = advice_word_vars(layout);
-            let word = completed_advice_claim(JoltAdviceKind::Untrusted, stage6b, stage7)?;
-            if word.point.len() != word_vars {
-                return Err(public_input_failed(
-                    JoltRelationId::UntrustedAdviceReconstruction,
-                    format!(
-                        "completed untrusted advice claim has {} variables, expected {word_vars}",
-                        word.point.len()
-                    ),
-                ));
-            }
-            let instance = UntrustedAdviceReconstructionInstance {
-                symbolic: UntrustedSymbolic::new(AdviceReconstructionDimensions { word_vars }),
-                _field: core::marker::PhantomData,
-            };
-            Ok((instance, word))
-        })
-        .transpose()?;
-    let trusted = trusted_layout
-        .map(|layout| -> Result<_, VerifierError> {
-            let word_vars = advice_word_vars(layout);
-            let word = completed_advice_claim(JoltAdviceKind::Trusted, stage6b, stage7)?;
-            if word.point.len() != word_vars {
-                return Err(public_input_failed(
-                    JoltRelationId::TrustedAdviceReconstruction,
-                    format!(
-                        "completed trusted advice claim has {} variables, expected {word_vars}",
-                        word.point.len()
-                    ),
-                ));
-            }
-            let instance = TrustedAdviceReconstructionInstance {
-                symbolic: TrustedSymbolic::new(()),
-                _field: core::marker::PhantomData,
-            };
-            Ok((instance, word))
-        })
-        .transpose()?;
     let bytecode = bytecode_layout
         .map(|layout| -> Result<_, VerifierError> {
             let (chunk_values, shared_point) = completed_chunk_claims(stage6b, stage7)?;
@@ -730,12 +486,6 @@ where
         .transpose()?;
 
     let input_values = ReconstructionInputClaims {
-        untrusted_advice: untrusted
-            .as_ref()
-            .map(|(_, word)| UntrustedAdviceReconstructionInputClaims { word: word.value }),
-        trusted_advice: trusted
-            .as_ref()
-            .map(|(_, word)| TrustedAdviceReconstructionInputClaims { word: word.value }),
         bytecode: bytecode
             .as_ref()
             .map(|(_, chunks, _)| BytecodeChunkReconstructionInputClaims {
@@ -746,16 +496,6 @@ where
             .map(|(_, word)| ProgramImageReconstructionInputClaims { word: word.value }),
     };
     let input_points = ReconstructionInputPoints {
-        untrusted_advice: untrusted.as_ref().map(|(_, word)| {
-            UntrustedAdviceReconstructionInputClaims {
-                word: word.point.clone(),
-            }
-        }),
-        trusted_advice: trusted
-            .as_ref()
-            .map(|(_, word)| TrustedAdviceReconstructionInputClaims {
-                word: word.point.clone(),
-            }),
         bytecode: bytecode.as_ref().map(|(_, chunks, shared_point)| {
             BytecodeChunkReconstructionInputClaims {
                 chunks: vec![shared_point.clone(); chunks.len()],
@@ -769,8 +509,6 @@ where
     };
 
     let sumchecks = ReconstructionSumchecks {
-        untrusted_advice: untrusted.map(|(instance, _)| instance),
-        trusted_advice: trusted.map(|(instance, _)| instance),
         bytecode: bytecode.map(|(instance, _, _)| instance),
         program_image: program_image.map(|(instance, _)| instance),
     };
@@ -802,25 +540,18 @@ where
         input_points,
     }) = build_reconstruction_parts(checked, stage6b, stage7)?
     else {
-        // Fail-closed: no advice and a full program in the public shape means
-        // no reconstruction anywhere in the proof.
-        if sumcheck_proof.is_some()
-            || claims.untrusted_advice.is_some()
-            || claims.trusted_advice.is_some()
-            || claims.bytecode.is_some()
-            || claims.program_image.is_some()
-        {
+        if sumcheck_proof.is_some() || claims.bytecode.is_some() || claims.program_image.is_some() {
             return Err(public_input_failed(
-                JoltRelationId::UntrustedAdviceReconstruction,
-                "reconstruction phase present without advice or a committed program",
+                JoltRelationId::BytecodeChunkReconstruction,
+                "reconstruction phase present without a committed program",
             ));
         }
         return Ok(ReconstructionClearOutput::empty());
     };
     let Some(sumcheck_proof) = sumcheck_proof else {
         return Err(public_input_failed(
-            JoltRelationId::UntrustedAdviceReconstruction,
-            "advice or a committed program is present but the reconstruction phase is missing",
+            JoltRelationId::BytecodeChunkReconstruction,
+            "a committed program is present but the reconstruction phase is missing",
         ));
     };
 

@@ -4,11 +4,14 @@
 use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
+use jolt_riscv::JoltTraceRow as TraceRow;
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use std::ops::Range;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
 
-impl<T: TraceSource + Clone> TraceBackend<T> {
+impl<T: TraceSource> TraceBackend<T> {
     /// Materializes one cycle-domain witness column by walking the trace
     /// once; all per-witness logic lives on `W`.
     pub(crate) fn materialize_cycle<F: JoltField, W: Extract + ToField>(
@@ -75,27 +78,28 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
     /// Materializes one `BalancedIncDigit`/`BalancedIncCarry` column of the
     /// packed (lattice) witness as the flat address-major `(K x T)` grid,
     /// `K = 2^committed_chunk_bits`. Every cycle is hot: padding rows encode
-    /// the zero delta as lane 0 of every digit and of the carry.
+    /// the zero delta in row zero of every digit and the carry.
     pub(crate) fn materialize_balanced_inc_one_hot<F: JoltField>(
         &self,
-        lane: crate::witnesses::BalancedIncLane,
+        column: crate::witnesses::BalancedIncColumn,
     ) -> Result<Vec<F>, WitnessError> {
         let chunk_bits = self.config.one_hot.committed_chunk_bits();
         let cycles = checked_pow2(self.config.log_t)?;
-        let hot_addresses: Vec<usize> = self.walk_cycles(|row, next, env| {
-            crate::witnesses::BalancedIncHot::extract_indexed(lane, row, next, env).map(|hot| hot.0)
+        let selected_rows: Vec<usize> = self.walk_cycles(|row, next, env| {
+            crate::witnesses::BalancedIncRow::extract_indexed(column, row, next, env)
+                .map(|selected| selected.0)
         })?;
         let mut values = vec![F::zero(); checked_pow2(self.one_hot_log_rows()?)?];
-        for (cycle, address) in hot_addresses.into_iter().enumerate() {
-            if address >> chunk_bits != 0 {
+        for (cycle, selected_row) in selected_rows.into_iter().enumerate() {
+            if selected_row >> chunk_bits != 0 {
                 return Err(WitnessError::InvalidWitnessData {
                     label: JOLT_VM_LABEL,
                     reason: format!(
-                        "balanced-inc hot lane {address} outside the 2^{chunk_bits} lane domain"
+                        "balanced-inc row {selected_row} outside the 2^{chunk_bits} row domain"
                     ),
                 });
             }
-            values[address * cycles + cycle] = F::one();
+            values[selected_row * cycles + cycle] = F::one();
         }
         Ok(values)
     }
@@ -103,11 +107,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
     /// One pass over `2^log_t` cycles with the one-row lookahead window;
     /// rows beyond the trace are padding (default) rows.
     ///
-    /// A slice-backed trace ([`TraceSource::rows`]) takes an index-parallel
-    /// path — extraction is pure per cycle window, so the walk order is
-    /// unobservable. The sequential walk remains the fallback (and the only
-    /// public contract) for re-emulating sources. `V: Copy` keeps the
-    /// parallel collector's leak-free-on-error invariant compiler-checked.
+    /// Extraction is pure per cycle window and parallel when enabled.
     fn walk_cycles<V: Copy + Send>(
         &self,
         value: impl Fn(&TraceRow, Option<&TraceRow>, &WitnessEnv<'_>) -> Result<V, WitnessError>
@@ -115,38 +115,30 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
             + Sync,
     ) -> Result<Vec<V>, WitnessError> {
         let rows = checked_pow2(self.config.log_t)?;
-        let env = WitnessEnv {
-            preprocessing: &self.preprocessing,
+        let env = WitnessEnv::new(&self.preprocessing);
+        let physical = self.trace.trace.as_slice();
+        let padding = TraceRow::default();
+        let window = |index: usize| {
+            let current = physical.get(index).unwrap_or(&padding);
+            let next = (index + 1 < rows).then(|| physical.get(index + 1).unwrap_or(&padding));
+            value(current, next, &env)
         };
-        if let Some(physical) = self.trace.trace.rows() {
-            let padding = TraceRow::default();
-            let window = |index: usize| {
-                let current = physical.get(index).unwrap_or(&padding);
-                let next = (index + 1 < rows).then(|| physical.get(index + 1).unwrap_or(&padding));
-                value(current, next, &env)
-            };
-            #[cfg(feature = "parallel")]
-            return jolt_utils::par_collect_windows(rows, window);
-            #[cfg(not(feature = "parallel"))]
-            return (0..rows).map(window).collect();
-        }
-        let mut values = Vec::with_capacity(rows);
-        let mut trace = self.trace.trace.clone();
-        let mut current = trace.next_row().unwrap_or_default();
-        for index in 0..rows {
-            let next = (index + 1 < rows).then(|| trace.next_row().unwrap_or_default());
-            values.push(value(&current, next.as_ref(), &env)?);
-            if let Some(row) = next {
-                current = row;
-            }
-        }
-        Ok(values)
+        #[cfg(feature = "parallel")]
+        return par_collect_windows(rows, window);
+        #[cfg(not(feature = "parallel"))]
+        return (0..rows).map(window).collect();
     }
 }
 
-impl<T: TraceSource + Clone> RowSource for TraceBackend<T> {
-    fn rows(&self) -> Option<&[TraceRow]> {
-        self.trace.trace.rows()
+impl<T: TraceSource> RowSource for TraceBackend<T> {
+    fn random_access(&self) -> Option<crate::RandomAccessRows> {
+        let cycles = checked_pow2(self.config.log_t).ok()?;
+        crate::RandomAccessRows::new(
+            std::sync::Arc::clone(&self.trace.trace),
+            cycles,
+            std::sync::Arc::clone(&self.preprocessing),
+        )
+        .ok()
     }
 
     fn visit_chunks(
@@ -165,58 +157,29 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<T> {
                 ),
             });
         }
-        let env = WitnessEnv {
-            preprocessing: &self.preprocessing,
-        };
-        // Slice-backed traces visit borrowed subslices directly — no per-row
-        // copies; only a buffer overlapping the padding tail materializes.
-        if let Some(physical) = self.trace.trace.rows() {
-            let padding = TraceRow::default();
-            let mut position = range.start;
-            while position < range.end {
-                let chunk_end = (position + chunk_size).min(range.end);
-                let next_after: Option<&TraceRow> =
-                    (chunk_end < total).then(|| physical.get(chunk_end).unwrap_or(&padding));
-                if chunk_end <= physical.len() {
-                    visitor(&physical[position..chunk_end], next_after, &env)?;
-                } else {
-                    let mut rows = Vec::with_capacity(chunk_end - position);
-                    rows.extend_from_slice(&physical[position.min(physical.len())..]);
-                    rows.resize(chunk_end - position, TraceRow::default());
-                    visitor(&rows, next_after, &env)?;
-                }
-                position = chunk_end;
-            }
-            return Ok(());
-        }
-        let mut trace = self.trace.trace.clone();
-        for _ in 0..range.start {
-            let _ = trace.next_row();
-        }
-        // Rows beyond the physical trace are padding (default) rows; the
-        // lookahead row after each buffer doubles as the first row of the
-        // next one.
+        let env = WitnessEnv::new(&self.preprocessing);
+        let physical = self.trace.trace.as_slice();
+        let padding = TraceRow::default();
         let mut position = range.start;
-        let mut carried: Option<TraceRow> = None;
         while position < range.end {
             let chunk_end = (position + chunk_size).min(range.end);
-            let mut rows = Vec::with_capacity(chunk_end - position);
-            if let Some(row) = carried.take() {
-                rows.push(row);
-            }
-            while position + rows.len() < chunk_end {
-                rows.push(trace.next_row().unwrap_or_default());
+            let next_after =
+                (chunk_end < total).then(|| physical.get(chunk_end).unwrap_or(&padding));
+            if chunk_end <= physical.len() {
+                visitor(&physical[position..chunk_end], next_after, &env)?;
+            } else {
+                let mut rows = Vec::with_capacity(chunk_end - position);
+                rows.extend_from_slice(&physical[position.min(physical.len())..]);
+                rows.resize(chunk_end - position, TraceRow::default());
+                visitor(&rows, next_after, &env)?;
             }
             position = chunk_end;
-            // The lookahead row doubles as the first row of the next buffer.
-            carried = (position < total).then(|| trace.next_row().unwrap_or_default());
-            visitor(&rows, carried.as_ref(), &env)?;
         }
         Ok(())
     }
 }
 
-impl<T: TraceSource + Clone> BundleSource for TraceBackend<T> {
+impl<T: TraceSource> BundleSource for TraceBackend<T> {
     fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
         crate::collect_bundles(self, checked_pow2(self.config.log_t)?)
     }

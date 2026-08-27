@@ -92,6 +92,8 @@ mod algebra;
 #[cfg(feature = "bn254")]
 mod bn254;
 mod extension;
+#[cfg(feature = "solinas")]
+mod fp128_accumulators;
 mod limbs;
 mod ops;
 mod packed;
@@ -108,6 +110,8 @@ pub use algebra::{
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
+#[cfg(feature = "solinas")]
+pub use fp128_accumulators::{Fp128Accumulator, Fp128SignedAccumulator};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};

@@ -1638,8 +1638,7 @@ mod tests {
             Cycle::VirtualSignExtendWord(cycle) => cycle.random(rng).into(),
             Cycle::VirtualROTRI(cycle) => cycle.random(rng).into(),
             Cycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
-            Cycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
-            Cycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualNegateIf(cycle) => cycle.random(rng).into(),
             Cycle::VirtualAssertMulUNoOverflow(cycle) => cycle.random(rng).into(),
             _ => Cycle::NoOp,
         }
@@ -2055,13 +2054,8 @@ mod tests {
     }
 
     #[test]
-    fn test_virtualchangedivisor() {
-        test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisor(Default::default())));
-    }
-
-    #[test]
-    fn test_virtualchangedivisorw() {
-        test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisorW(Default::default())));
+    fn test_virtualnegateif() {
+        test_read_raf_sumcheck(Some(Cycle::VirtualNegateIf(Default::default())));
     }
 
     #[test]

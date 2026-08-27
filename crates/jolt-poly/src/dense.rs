@@ -37,6 +37,17 @@ pub struct Polynomial<T> {
     num_vars: usize,
 }
 
+/// Sized from the evaluation table's reservation, without a `T: Allocative`
+/// bound — see [`crate::visit_scalars`].
+#[cfg(feature = "allocative")]
+impl<T> allocative::Allocative for Polynomial<T> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        crate::visit_scalars(&self.evals, &mut visitor);
+        visitor.exit();
+    }
+}
+
 /// Wire-format helper for validated deserialization.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "T: for<'a> Deserialize<'a>"))]

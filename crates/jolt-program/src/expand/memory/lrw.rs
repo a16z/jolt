@@ -17,26 +17,26 @@ pub(in crate::expand) fn expand_lrw(
     let ram_start = asm.allocate()?;
 
     // LR/SC reservations are only modeled for ordinary RAM.
-    asm.expand_u(
+    asm.emit_u(
         SourceInstructionKind::LUI,
         ram_start.operand(),
         RAM_START_ADDRESS as i128,
     );
-    asm.expand_b(
+    asm.emit_b(
         SourceInstructionKind::VirtualAssertLTE,
         ram_start.operand(),
         reg(rs1(instruction)?),
         0,
     );
     asm.release(ram_start);
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::ADDI,
         reg(v_reservation_w),
         reg(rs1(instruction)?),
         0,
     );
-    asm.expand_i(SourceInstructionKind::ADDI, reg(v_reservation_d), reg(0), 0);
-    asm.expand_i(
+    asm.emit_i(SourceInstructionKind::ADDI, reg(v_reservation_d), reg(0), 0);
+    asm.emit_i(
         SourceInstructionKind::LW,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),

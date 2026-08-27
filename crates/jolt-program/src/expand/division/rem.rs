@@ -1,11 +1,34 @@
 use super::*;
+use crate::jolt_asm;
 
-/// Lowers signed 64-bit `REM` through the shared quotient/remainder verifier.
-///
-/// The same relation that proves `DIV` also proves the remainder; this wrapper
-/// selects the remainder path and copies that value to `rd`.
 pub(in crate::expand) fn expand_rem(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-    super::shared::expand_signed_div_rem(instruction, false, true)
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let dividend = reg(rs1(instruction)?);
+    let divisor = reg(rs2(instruction)?);
+    let quotient_magnitude = asm.allocate()?;
+    let dividend_magnitude = asm.allocate()?;
+    let divisor_magnitude = asm.allocate()?;
+    let remainder_magnitude = asm.allocate()?;
+
+    jolt_asm!(asm, {
+        advice quotient_magnitude;
+        negate_if dividend_magnitude, dividend, dividend;
+        negate_if divisor_magnitude, divisor, divisor;
+        assert_mul_u_no_overflow quotient_magnitude, divisor_magnitude;
+        mul remainder_magnitude, quotient_magnitude, divisor_magnitude;
+        assert_lte remainder_magnitude, dividend_magnitude;
+        sub remainder_magnitude, dividend_magnitude, remainder_magnitude;
+        assert_valid_unsigned_remainder remainder_magnitude, divisor_magnitude;
+        negate_if reg(rd(instruction)?), dividend, remainder_magnitude;
+    });
+
+    asm.release_many([
+        quotient_magnitude,
+        dividend_magnitude,
+        divisor_magnitude,
+        remainder_magnitude,
+    ]);
+    asm.finalize()
 }

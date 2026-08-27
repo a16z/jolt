@@ -1,6 +1,4 @@
-use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr, Ring};
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, Point, Polynomial, HIGH_TO_LOW};
 use rand_chacha::ChaCha20Rng;
@@ -56,18 +54,4 @@ pub fn clear_claims<PCS: CommitmentScheme<Field = Fr>>(
         hints.push(hint);
     }
     (claims, hints)
-}
-
-pub fn kzg_setup(
-    max_num_vars: usize,
-) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifierSetup<Bn254>) {
-    let mut rng = ChaCha20Rng::seed_from_u64(0xdead_beef);
-    let prover = HyperKZGScheme::<Bn254>::setup(
-        &mut rng,
-        1usize << max_num_vars,
-        Bn254::g1_generator(),
-        Bn254::g2_generator(),
-    );
-    let verifier = HyperKZGScheme::<Bn254>::verifier_setup(&prover);
-    (prover, verifier)
 }

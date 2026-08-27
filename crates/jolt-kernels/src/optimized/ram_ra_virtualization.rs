@@ -106,6 +106,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 
 /// Lazy-RA index source: chunk `i` of the per-cycle remapped RAM address,
 /// cold on no-access cycles, off the session-shared access columns.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
     columns: Arc<RamAccessColumns>,
     num_committed: usize,
@@ -133,6 +134,11 @@ impl ChunkIndexSource for RamAddressChunks {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
@@ -142,14 +148,6 @@ struct RamRaVirtualizationKernel<F: JoltField> {
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RamRaVirtualizationKernel, |kernel| {
-    kernel
-        .folded_ra
-        .heap_bytes(|source| source.columns.heap_bytes())
-        + kernel.gruen.heap_bytes()
-});
 
 impl<F: JoltField> RamRaVirtualizationKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
@@ -172,9 +170,6 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                 )
             },
             |(acc, evals, steps), row, _x_in, e_in| {
-                // `ram_k == 1` commits no RA polynomials; the empty committed
-                // product is 1 (the reference tier's fold over an empty chunk
-                // set), so q(t) degenerates to Σ_y E(y).
                 if num_committed == 0 {
                     for value in acc.iter_mut() {
                         *value += e_in;
@@ -269,9 +264,10 @@ impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle),
+            id,
             input_points,
             output_points,
             challenges,
@@ -440,15 +436,6 @@ mod tests {
         );
     }
 
-    /// `ram_k = 1` commits ZERO RA polynomials (`log_k = 0` → no committed
-    /// chunks): the summand's committed product is the empty product 1, so
-    /// the round messages degenerate to `ℓ(t) · Σ_y E(y)`. The round loop
-    /// used to index out of bounds here (`evals[0]` of an empty vector); it
-    /// now stays in lockstep with the reference kernel through every round
-    /// and the output claims — and the geometry then fails CLOSED at the
-    /// driver's derived-table validation on BOTH kernels, because the
-    /// verifier relation recovers `r_cycle` for `EqCycle` from the first RA
-    /// opening point and there is none.
     #[test]
     fn zero_committed_chunks_prove_in_parity_and_fail_closed() {
         let seed = 443;
@@ -477,15 +464,12 @@ mod tests {
                             inputs.challenges,
                         )
                         .unwrap_err();
-                    assert!(
-                        matches!(
-                            &error,
-                            SumcheckKernelError::Verifier(
-                                VerifierError::StageClaimPublicInputFailed { .. }
-                            )
-                        ),
-                        "expected the fail-closed public-input error, got {error:?}"
-                    );
+                    assert!(matches!(
+                        error,
+                        SumcheckKernelError::Verifier(
+                            VerifierError::StageClaimPublicInputFailed { .. }
+                        )
+                    ));
                 }
             },
         );

@@ -23,11 +23,15 @@
 mod adapters;
 pub mod configs;
 mod native_batching;
+pub mod schedule_registry;
 pub mod schedules;
-
-pub(crate) use akita_schedules::RecursiveSplitSearchPolicy;
 mod scheme;
 mod shape_guard;
+mod trace_onehot;
+
+pub(crate) use akita_schedules::RecursiveSplitSearchPolicy;
+
+pub use akita_pcs::AkitaError;
 
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
@@ -37,7 +41,9 @@ pub use adapters::{
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
-pub use scheme::AkitaScheme;
+pub use schedule_registry::AdviceScheduleParams;
+pub use scheme::{AkitaScheme, TraceOneHotCommitment};
+pub use trace_onehot::{no_selected_row, TraceOneHotRows, TracePackedOneHot};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.

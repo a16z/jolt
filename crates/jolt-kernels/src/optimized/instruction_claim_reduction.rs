@@ -101,6 +101,11 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     progress: RoundProgress,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
@@ -108,20 +113,12 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     combined: Polynomial<F>,
     /// Native per-cycle operand values, kept for the post-hoc output-claim
     /// walk.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rows: Vec<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bound_challenges: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedInstructionClaimReductionKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    poly_heap_bytes(&kernel.combined)
-        + vec_heap_bytes(&kernel.rows)
-        + kernel.gruen.heap_bytes()
-        + vec_heap_bytes(&kernel.bound_challenges)
-});
-
 impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
     pub fn new(
         tau_low: &[F],
@@ -334,9 +331,10 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKerne
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan),
+            id,
             input_points,
             output_points,
             challenges,

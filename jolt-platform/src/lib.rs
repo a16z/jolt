@@ -21,6 +21,9 @@ pub use advice::*;
 mod spoil;
 pub use spoil::{spoil_proof, UnwrapOrSpoilProof};
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64", test))]
+pub mod size_class_alloc;
+
 #[cfg(all(
     feature = "malloc-shim",
     any(target_arch = "riscv32", target_arch = "riscv64")

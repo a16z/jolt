@@ -1,7 +1,7 @@
 //! This is a port of the sumcheck-based batch opening proof protocol implemented
 //! in Nova: https://github.com/microsoft/Nova/blob/2772826ba296b66f1cd5deecf7aca3fd1d10e1f4/src/spartan/snark.rs#L410-L424
 //! and such code is Copyright (c) Microsoft Corporation.
-//! For additively homomorphic commitment schemes (including Zeromorph, HyperKZG) we
+//! For additively homomorphic commitment schemes (e.g. Dory) we
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
@@ -169,12 +169,6 @@ pub enum SumcheckId {
     /// Lattice/packed mode: the fused-inc virtualization phase between
     /// stage 5 and the stage-6 address phase.
     /// Lattice/packed mode: aligns the fused increment with stage 6b.
-    /// Lattice/packed mode: the untrusted-advice byte reconstruction of the
-    /// stage-8 reconstruction phase.
-    UntrustedAdviceReconstruction,
-    /// Lattice/packed mode: the trusted-advice byte reconstruction of the
-    /// stage-8 reconstruction phase.
-    TrustedAdviceReconstruction,
     /// Lattice/packed mode: the bytecode chunk reconstruction of the
     /// stage-8 reconstruction phase.
     BytecodeChunkReconstruction,

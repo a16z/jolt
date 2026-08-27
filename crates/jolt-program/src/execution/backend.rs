@@ -28,10 +28,10 @@ pub trait TraceSource {
 /// Two-pass chunked execution: a fast checkpointing pass over the whole
 /// program, then parallel per-chunk replay.
 ///
-/// This is the producer-side contract for streaming consumers
-/// (`jolt-witness` deliberately makes random access to trace rows
-/// inexpressible so that a checkpointed, re-emulating trace source can
-/// implement every signature honestly).
+/// This is the producer-side contract for streaming consumers. Proof adapters
+/// that require retained random access must emit their compact row format at
+/// this boundary instead of draining a replaying source into another full
+/// trace allocation.
 pub trait ChunkedExecutionBackend: ExecutionBackend {
     /// Everything needed to deterministically re-execute one chunk,
     /// independent of every other chunk.

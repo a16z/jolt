@@ -11,7 +11,7 @@ pub(in crate::expand) fn expand_sll(
     let mut asm = ExpansionBuilder::new(*instruction);
     let v_pow2 = asm.allocate()?;
 
-    asm.expand_i(
+    asm.emit_i(
         SourceInstructionKind::VirtualPow2,
         v_pow2.operand(),
         reg(rs2(instruction)?),

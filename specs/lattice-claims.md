@@ -7,6 +7,17 @@
 | Status | in review |
 | PR | [#1675](https://github.com/a16z/jolt/pull/1675) |
 
+> **Advice update:** The byte-one-hot trusted/untrusted advice design in this
+> document is historical. The active protocol commits dense word advice and
+> directly opens the final `AdviceClaimReduction` claims; both advice objects
+> are precommitted groups of one joint Akita opening, in the canonical order
+> `[UntrustedAdvice, TrustedAdvice, OneHotTrace]`. The old advice IDs remain
+> only as positional-codec tombstones. One-hot trace and committed-program
+> reconstruction remain active. See
+> [a16z/jolt#1798](https://github.com/a16z/jolt/pull/1798)
+> for the current advice format, batch-opening flow, and preprocessing-time
+> schedule provisioning design.
+
 ## Purpose
 
 Akita is a lattice PCS: it commits to small-norm coefficient vectors and has no

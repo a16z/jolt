@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::traits::LookupTable;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
@@ -23,6 +24,7 @@ pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
+pub mod pext;
 pub mod pext_signed;
 pub mod pow2;
 pub mod pow2_w;
@@ -42,8 +44,7 @@ pub mod unsigned_less_than_equal;
 pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_unsigned_remainder;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
+pub mod virtual_negate_if;
 pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
@@ -53,6 +54,8 @@ pub mod virtual_srl;
 pub mod virtual_srlw;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;
+pub mod window_mask_b;
+pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod word_alignment;
 pub mod xor;
@@ -60,6 +63,7 @@ pub mod xor;
 pub use prefixes::{PrefixEval, Prefixes};
 pub use suffixes::{SuffixEval, Suffixes};
 
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
@@ -68,6 +72,7 @@ use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
+use pext::PextTable;
 use pext_signed::PextSignedTable;
 use pow2::Pow2Table;
 use pow2_w::Pow2WTable;
@@ -85,8 +90,7 @@ use unsigned_less_than_equal::UnsignedLessThanEqualTable;
 use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
-use virtual_change_divisor::VirtualChangeDivisorTable;
-use virtual_change_divisor_w::VirtualChangeDivisorWTable;
+use virtual_negate_if::VirtualNegateIfTable;
 use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualROTRTable;
 use virtual_rotrw::VirtualROTRWTable;
@@ -96,6 +100,8 @@ use virtual_srl::VirtualSRLTable;
 use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
 use virtual_xor_rotw::VirtualXORROTWTable;
+use window_mask_b::WindowMaskBTable;
+use window_mask_h::WindowMaskHTable;
 use window_mask_w::WindowMaskWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
@@ -152,8 +158,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualSRA(VirtualSRATable<XLEN>),
     VirtualROTR(VirtualROTRTable<XLEN>),
     VirtualROTRW(VirtualROTRWTable<XLEN>),
-    VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
-    VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
+    VirtualNegateIf(VirtualNegateIfTable<XLEN>),
     MulUNoOverflow(MulUNoOverflowTable<XLEN>),
     VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
@@ -171,6 +176,10 @@ pub enum LookupTableKind<const XLEN: usize> {
     ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
     VirtualSRLW(VirtualSRLWTable<XLEN>),
     VirtualSRAW(VirtualSRAWTable<XLEN>),
+    Pext(PextTable<XLEN>),
+    WindowMaskB(WindowMaskBTable<XLEN>),
+    WindowMaskH(WindowMaskHTable<XLEN>),
+    AlignAddr(AlignAddrTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -209,8 +218,7 @@ macro_rules! dispatch {
             Self::VirtualSRA($t) => $expr,
             Self::VirtualROTR($t) => $expr,
             Self::VirtualROTRW($t) => $expr,
-            Self::VirtualChangeDivisor($t) => $expr,
-            Self::VirtualChangeDivisorW($t) => $expr,
+            Self::VirtualNegateIf($t) => $expr,
             Self::MulUNoOverflow($t) => $expr,
             Self::VirtualXORROT32($t) => $expr,
             Self::VirtualXORROT24($t) => $expr,
@@ -228,6 +236,10 @@ macro_rules! dispatch {
             Self::ShiftRightBitmaskW($t) => $expr,
             Self::VirtualSRLW($t) => $expr,
             Self::VirtualSRAW($t) => $expr,
+            Self::Pext($t) => $expr,
+            Self::WindowMaskB($t) => $expr,
+            Self::WindowMaskH($t) => $expr,
+            Self::AlignAddr($t) => $expr,
         }
     };
 }

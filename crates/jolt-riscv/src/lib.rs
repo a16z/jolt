@@ -145,8 +145,7 @@ macro_rules! for_each_instruction_kind {
                 VirtualAssertValidDiv0 => AssertValidDiv0 => "jolt.virtual.assert_valid_div0",
                 VirtualAssertValidUnsignedRemainder => AssertValidUnsignedRemainder => "jolt.virtual.assert_valid_unsigned_remainder",
                 VirtualAssertMulUNoOverflow => AssertMulUNoOverflow => "jolt.virtual.assert_mul_u_no_overflow",
-                VirtualChangeDivisor => VirtualChangeDivisor => "jolt.virtual.change_divisor",
-                VirtualChangeDivisorW => VirtualChangeDivisorW => "jolt.virtual.change_divisor_w",
+                VirtualNegateIf => VirtualNegateIf => "jolt.virtual.negate_if",
                 VirtualZeroExtendWord => VirtualZeroExtendWord => "jolt.virtual.zero_extend_word",
                 VirtualSignExtendWord => VirtualSignExtendWord => "jolt.virtual.sign_extend_word",
                 VirtualPow2W => Pow2W => "jolt.virtual.pow2_w",
@@ -183,6 +182,10 @@ macro_rules! for_each_instruction_kind {
                 VirtualSRLIW => VirtualSrliw => "jolt.virtual.srliw",
                 VirtualSRAW => VirtualSraw => "jolt.virtual.sraw",
                 VirtualSRAIW => VirtualSraiw => "jolt.virtual.sraiw",
+                VirtualPext => Pext => "jolt.virtual.pext",
+                VirtualWindowMaskB => WindowMaskB => "jolt.virtual.windowmaskb",
+                VirtualWindowMaskH => WindowMaskH => "jolt.virtual.windowmaskh",
+                VirtualAlignAddr => AlignAddr => "jolt.virtual.alignaddr",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -249,8 +252,6 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualAssertValidDiv0 => AssertValidDiv0 => (0x0069, "jolt.virtual.assert_valid_div0"),
                 VirtualAssertValidUnsignedRemainder => AssertValidUnsignedRemainder => (0x006a, "jolt.virtual.assert_valid_unsigned_remainder"),
                 VirtualAssertMulUNoOverflow => AssertMulUNoOverflow => (0x006b, "jolt.virtual.assert_mul_u_no_overflow"),
-                VirtualChangeDivisor => VirtualChangeDivisor => (0x006c, "jolt.virtual.change_divisor"),
-                VirtualChangeDivisorW => VirtualChangeDivisorW => (0x006d, "jolt.virtual.change_divisor_w"),
                 VirtualZeroExtendWord => VirtualZeroExtendWord => (0x0070, "jolt.virtual.zero_extend_word"),
                 VirtualSignExtendWord => VirtualSignExtendWord => (0x0071, "jolt.virtual.sign_extend_word"),
                 VirtualPow2W => Pow2W => (0x0072, "jolt.virtual.pow2_w"),
@@ -283,6 +284,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualMULIW => MulIW => (0x008e, "jolt.virtual.muliw"),
                 VirtualWindowMaskW => WindowMaskW => (0x008f, "jolt.virtual.windowmaskw"),
                 VirtualPextSigned => PextSigned => (0x0090, "jolt.virtual.pextsigned"),
+                VirtualNegateIf => VirtualNegateIf => (0x0096, "jolt.virtual.negate_if"),
                 VirtualXORROTW22 => VirtualXorRotW22 => (0x0097, "jolt.virtual.xorrotw22"),
                 VirtualXORROTW19 => VirtualXorRotW19 => (0x0098, "jolt.virtual.xorrotw19"),
                 VirtualXORROTW6 => VirtualXorRotW6 => (0x0099, "jolt.virtual.xorrotw6"),
@@ -291,6 +293,11 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualSRLIW => VirtualSrliw => (0x0093, "jolt.virtual.srliw"),
                 VirtualSRAW => VirtualSraw => (0x0094, "jolt.virtual.sraw"),
                 VirtualSRAIW => VirtualSraiw => (0x0095, "jolt.virtual.sraiw"),
+                VirtualAlignAddr => AlignAddr => (0x009a, "jolt.virtual.alignaddr"),
+                VirtualPext => Pext => (0x009b, "jolt.virtual.pext"),
+                VirtualWindowMaskB => WindowMaskB => (0x009c, "jolt.virtual.windowmaskb"),
+                VirtualWindowMaskH => WindowMaskH => (0x009d, "jolt.virtual.windowmaskh"),
+                // 0x009e-0x00a0 are reserved by the narrow-store slice (ShiftDataB/H/W).
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

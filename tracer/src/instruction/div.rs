@@ -36,20 +36,18 @@ impl RISCVTrace for DIV {
         let x = cpu.x[self.operands.rs1 as usize];
         let y = cpu.x[self.operands.rs2 as usize];
 
-        let (quotient, remainder) = if y == 0 {
-            (u64::MAX, x.unsigned_abs())
+        let quotient = if y == 0 {
+            u64::MAX
         } else if x == cpu.most_negative() && y == -1 {
-            (x as u64, 0)
+            x as u64
         } else {
-            let quotient = x / y;
-            let remainder = (x % y).unsigned_abs();
-            (quotient as u64, remainder)
+            (x / y) as u64
         };
 
         super::trace_inline_sequence_with_advice(
             &Instruction::from(*self),
             cpu,
-            &[quotient, remainder],
+            &[quotient],
             trace,
         );
     }

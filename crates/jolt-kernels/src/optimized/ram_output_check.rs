@@ -98,25 +98,20 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     }
 }
 
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct OutputCheckKernel<F: JoltField> {
     progress: RoundProgress,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
     val_io: Polynomial<F>,
     val_final: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OutputCheckKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    kernel.gruen.heap_bytes()
-        + poly_heap_bytes(&kernel.io_mask)
-        + poly_heap_bytes(&kernel.val_io)
-        + poly_heap_bytes(&kernel.val_final)
-        + vec_heap_bytes(&kernel.bind_scratch)
-});
-
 impl<F: JoltField> OutputCheckKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
     /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
@@ -226,14 +221,8 @@ impl<F: JoltField> SumcheckKernel<F> for OutputCheckKernel<F> {
             (RamOutputCheckPublic::IoMask, self.io_mask.evals()[0]),
             (RamOutputCheckPublic::ValIo, self.val_io.evals()[0]),
         ] {
-            pin_derived_term(
-                relation,
-                JoltDerivedId::from(public),
-                input_points,
-                output_points,
-                challenges,
-                got,
-            )?;
+            let id = JoltDerivedId::from(public);
+            pin_derived_term(relation, id, input_points, output_points, challenges, got)?;
         }
         Ok(())
     }

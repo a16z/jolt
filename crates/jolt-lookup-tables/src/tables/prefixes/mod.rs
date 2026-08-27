@@ -7,13 +7,14 @@
 //! value becomes the prefix's checkpoint for the next phase. Checkpoints are
 //! initialized via [`SparseDensePrefix::default_checkpoint`].
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
-pub mod change_divisor;
-pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
+pub mod left_msb_right_operand;
+pub mod left_msb_right_operand_is_zero;
 pub mod left_operand_msb;
 pub mod left_shift;
 pub mod left_shift_helper;
@@ -23,15 +24,10 @@ pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
-pub mod negative_divisor_equals_remainder;
-pub mod negative_divisor_greater_than_remainder;
-pub mod negative_divisor_zero_remainder;
 pub mod or;
 pub mod overflow_bits_zero;
-pub mod positive_remainder_equals_divisor;
-pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
-pub mod pow2_offset_w;
+pub mod pow2_offset;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -59,6 +55,8 @@ use std::fmt::Display;
 use std::ops::Index;
 
 use crate::lookup_bits::LookupBits;
+use align_addr::AlignAddrPrefix;
+use pow2_offset::Pow2OffsetPrefix;
 
 /// A prefix polynomial evaluated at binary points during materialization.
 ///
@@ -133,11 +131,6 @@ pub enum Prefixes {
     LeftOperandMsb,
     RightOperandMsb,
     DivByZero,
-    PositiveRemainderEqualsDivisor,
-    PositiveRemainderLessThanDivisor,
-    NegativeDivisorZeroRemainder,
-    NegativeDivisorEqualsRemainder,
-    NegativeDivisorGreaterThanRemainder,
     Lsb,
     Pow2,
     Pow2W,
@@ -148,9 +141,9 @@ pub enum Prefixes {
     LeftShiftHelper,
     TwoLsb,
     SignExtensionUpperHalf,
-    ChangeDivisor,
-    ChangeDivisorW,
     RightOperand,
+    LeftMsbRightOperand,
+    LeftMsbRightOperandIsZero,
     RightOperandW,
     SignExtensionRightOperand,
     RightShiftW,
@@ -177,6 +170,9 @@ pub enum Prefixes {
     SignExtensionW,
     /// The prefix-owned portion of SRLW's `x_{XLEN/2-1} * y_0` predicate.
     SrlwSext,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
 }
 
 /// Total number of prefix variants.
@@ -206,11 +202,6 @@ macro_rules! dispatch_prefix {
             Prefixes::LeftOperandMsb => left_operand_msb::LeftOperandMsbPrefix::$method($($args),*),
             Prefixes::RightOperandMsb => right_operand_msb::RightOperandMsbPrefix::$method($($args),*),
             Prefixes::DivByZero => div_by_zero::DivByZeroPrefix::$method($($args),*),
-            Prefixes::PositiveRemainderEqualsDivisor => positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix::$method($($args),*),
-            Prefixes::PositiveRemainderLessThanDivisor => positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix::$method($($args),*),
-            Prefixes::NegativeDivisorZeroRemainder => negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix::$method($($args),*),
-            Prefixes::NegativeDivisorEqualsRemainder => negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix::$method($($args),*),
-            Prefixes::NegativeDivisorGreaterThanRemainder => negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix::$method($($args),*),
             Prefixes::Lsb => lsb::LsbPrefix::$method($($args),*),
             Prefixes::Pow2 => pow2::Pow2Prefix::$method($($args),*),
             Prefixes::Pow2W => pow2_w::Pow2WPrefix::$method($($args),*),
@@ -221,9 +212,9 @@ macro_rules! dispatch_prefix {
             Prefixes::LeftShiftHelper => left_shift_helper::LeftShiftHelperPrefix::$method($($args),*),
             Prefixes::TwoLsb => two_lsb::TwoLsbPrefix::$method($($args),*),
             Prefixes::SignExtensionUpperHalf => sign_extension_upper_half::SignExtensionUpperHalfPrefix::$method($($args),*),
-            Prefixes::ChangeDivisor => change_divisor::ChangeDivisorPrefix::$method($($args),*),
-            Prefixes::ChangeDivisorW => change_divisor_w::ChangeDivisorWPrefix::$method($($args),*),
             Prefixes::RightOperand => right_operand::RightOperandPrefix::$method($($args),*),
+            Prefixes::LeftMsbRightOperand => left_msb_right_operand::LeftMsbRightOperandPrefix::$method($($args),*),
+            Prefixes::LeftMsbRightOperandIsZero => left_msb_right_operand_is_zero::LeftMsbRightOperandIsZeroPrefix::$method($($args),*),
             Prefixes::RightOperandW => right_operand_w::RightOperandWPrefix::$method($($args),*),
             Prefixes::SignExtensionRightOperand => sign_extension_right_operand::SignExtensionRightOperandPrefix::$method($($args),*),
             Prefixes::RightShiftW => right_shift_w::RightShiftWPrefix::$method($($args),*),
@@ -238,7 +229,7 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
             Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
-            Prefixes::Pow2OffsetW => pow2_offset_w::Pow2OffsetWPrefix::$method($($args),*),
+            Prefixes::Pow2OffsetW => Pow2OffsetPrefix::<2>::$method($($args),*),
             Prefixes::WindowSign => window_sign::WindowSignPrefix::$method($($args),*),
             Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
             Prefixes::XorRotW22 => xor_rotw::XorRotWPrefix::<22>::$method($($args),*),
@@ -247,6 +238,9 @@ macro_rules! dispatch_prefix {
             Prefixes::WordMsb => word_msb::WordMsbPrefix::$method($($args),*),
             Prefixes::SignExtensionW => sign_extension_w::SignExtensionWPrefix::$method($($args),*),
             Prefixes::SrlwSext => srlw_sext::SrlwSextPrefix::$method($($args),*),
+            Prefixes::Pow2OffsetB => Pow2OffsetPrefix::<0>::$method($($args),*),
+            Prefixes::Pow2OffsetH => Pow2OffsetPrefix::<1>::$method($($args),*),
+            Prefixes::AlignAddr => AlignAddrPrefix::$method($($args),*),
         }
     };
 }

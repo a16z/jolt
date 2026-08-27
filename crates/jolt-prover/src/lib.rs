@@ -51,7 +51,11 @@ pub mod profile;
 mod recorder;
 pub mod stages;
 
+#[cfg(feature = "akita")]
+pub use akita::prove;
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
+#[cfg(not(feature = "akita"))]
+pub use dory::prove;
 pub use driver::{KernelSource, Proved, StageProver};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession};

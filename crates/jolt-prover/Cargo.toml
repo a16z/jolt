@@ -25,9 +25,11 @@ prover-fixtures = ["jolt-prover-legacy/host"]
 # and a host-only legacy build against an akita-shaped jolt-verifier fails to
 # compile.
 akita = [
+  "dep:jolt-akita",
   "jolt-verifier/akita",
   "jolt-claims/akita",
   "jolt-field/solinas",
+  "jolt-kernels/akita",
   "jolt-prover-legacy/akita",
 ]
 # Compile-time ZK mode: committed sumcheck recorders, hiding witness
@@ -78,6 +80,7 @@ allocative = [
 
 [dependencies]
 common.workspace = true
+jolt-akita = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
@@ -92,8 +95,8 @@ jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
-rayon = { workspace = true, optional = true }
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
+rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 

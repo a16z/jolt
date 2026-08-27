@@ -1,12 +1,11 @@
 //! Offline generator for the Jolt-owned Akita schedule catalogs.
 //!
-//! Runs akita's planner DP over every `OneHotTrace` and dense-flavor shape
-//! reachable from Jolt and emits the checked-in table modules under
-//! `src/schedules/` through the same `akita_planner::emit` machinery that
-//! produces akita's shipped tables.
+//! Runs akita's planner DP over every `OneHotTrace` shape reachable from Jolt and
+//! emits the checked-in table modules under `src/schedules/` through the same
+//! `akita_planner::emit` machinery that produces akita's shipped tables.
 //!
 //! ```text
-//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/src/schedules [dense|k16|k256]
+//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/src/schedules [k16|k256]
 //! ```
 
 use std::path::PathBuf;
@@ -23,11 +22,11 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let output_dir = PathBuf::from(
         args.next()
-            .expect("usage: gen_jolt_schedules <output-dir> [dense|k16|k256]"),
+            .expect("usage: gen_jolt_schedules <output-dir> [k16|k256]"),
     );
     let only = args.next();
 
-    for family in family_specs(output_dir).expect("Jolt schedule families must be valid") {
+    for family in family_specs(output_dir).expect("every family must declare a valid contract") {
         if only
             .as_deref()
             .is_some_and(|only| !family.module_name.ends_with(only))
@@ -43,7 +42,7 @@ fn main() {
         let source = emit_family_module(&family).expect("table generation must succeed");
         std::fs::write(&path, source).expect("write generated table");
         // The emitter's fixed import header is not rustfmt-stable; format the
-        // module so the checked-in file passes the workspace fmt lane. The
+        // module so the checked-in file passes the workspace fmt check. The
         // drift oracle compares schedule data only, so formatting is free.
         let status = std::process::Command::new("rustfmt")
             .arg("--edition")
