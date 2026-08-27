@@ -831,7 +831,7 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
 #[cfg(test)]
 pub(crate) mod test_utils {
     /// Build the muldiv guest and return the ELF bytes.
-    /// Mirrors the pattern used by `host::Program::build()` in jolt-prover-legacy.
+    /// Mirrors the pattern used by `jolt_host::Program::build()`.
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";

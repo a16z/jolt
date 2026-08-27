@@ -20,11 +20,8 @@ pub fn main() {
     } else {
         let shared_preprocessing = guest::preprocess_shared_muldiv(&mut program).unwrap();
         let prover_preprocessing = guest::preprocess_prover_muldiv(shared_preprocessing.clone());
-        let verifier_preprocessing = guest::preprocess_verifier_muldiv(
-            shared_preprocessing,
-            prover_preprocessing.generators.to_verifier_setup(),
-            None,
-        );
+        let verifier_preprocessing =
+            guest::verifier_preprocessing_from_prover_muldiv(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)
     };
 

@@ -312,10 +312,7 @@ where
     Ok((checked, transcript))
 }
 
-#[expect(
-    non_snake_case,
-    reason = "Matches current jolt-prover-legacy proof field name."
-)]
+#[expect(non_snake_case, reason = "Preserves the deployed proof field name.")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedInputs {
     pub public_io: JoltDevice,

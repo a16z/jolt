@@ -2,16 +2,14 @@
 #![allow(non_upper_case_globals)]
 
 use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
-use jolt_prover_legacy::zkvm::{
-    instruction::{
-        CircuitFlags, Flags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
-    },
-    r1cs::{
-        constraints::{ProductFactorExpr, PRODUCT_CONSTRAINTS, R1CS_CONSTRAINTS},
-        inputs::NUM_R1CS_INPUTS,
-        ops::LC,
-    },
-    witness::VirtualPolynomial,
+use jolt_field::{Fr, Ring};
+use jolt_r1cs::{
+    constraints::rv64::{self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE},
+    SparseRow,
+};
+use jolt_riscv::{
+    CircuitFlags, Flags, InstructionFlags, JoltInstruction, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
+    NUM_INSTRUCTION_FLAGS,
 };
 use std::{array, fmt::Write, str::FromStr};
 use tracer::instruction::{
@@ -108,6 +106,15 @@ struct JoltState<T = Int> {
     virtual_sequence_active: T,
 }
 
+fn signed_coefficient(value: &Fr) -> Int {
+    const COEFFICIENTS: [i128; 7] = [-(1i128 << 64), -4, -2, -1, 1, 2, 4];
+    let coefficient = COEFFICIENTS
+        .into_iter()
+        .find(|candidate| *value == Fr::from_i128(*candidate))
+        .unwrap_or_else(|| panic!("unsupported RV64 R1CS coefficient: {value:?}"));
+    Int::from_str(&coefficient.to_string()).unwrap()
+}
+
 impl JoltState {
     fn new(prefix: String) -> Self {
         JoltState {
@@ -183,60 +190,31 @@ impl JoltState {
         ]
     }
 
-    fn lc_to_int(&self, lc: &LC) -> Int {
-        let mut result = lc
-            .const_term()
-            .map(|c| Int::from_str(&c.to_string()).unwrap())
-            .unwrap_or(Int::from_i64(0));
-        lc.for_each_term(|idx, coeff| {
-            let coeff: Int = Int::from_str(&coeff.to_string()).unwrap();
-            result += coeff * self.r1cs_inputs()[idx];
-        });
-        result
+    fn r1cs_vars(&self) -> [Int; NUM_VARS_PER_CYCLE] {
+        let inputs = self.r1cs_inputs();
+        array::from_fn(|index| match index {
+            rv64::V_CONST => Int::from(1),
+            rv64::V_BRANCH => self.instruction_flags[InstructionFlags::Branch as usize].clone(),
+            rv64::V_NEXT_IS_NOOP => self.next_is_noop.clone(),
+            _ => inputs[index - 1].clone(),
+        })
+    }
+
+    fn sparse_row_to_int(row: &SparseRow<Fr>, vars: &[Int; NUM_VARS_PER_CYCLE]) -> Int {
+        row.iter().fold(Int::from(0), |sum, (index, coefficient)| {
+            sum + signed_coefficient(coefficient) * &vars[*index]
+        })
     }
 
     fn add_r1cs_constraints(&self, solver: &mut Solver) {
-        R1CS_CONSTRAINTS.iter().for_each(|c| {
-            let lhs = self.lc_to_int(&c.cons.a) * self.lc_to_int(&c.cons.b);
-            *solver += lhs.eq(Int::from(0));
-        });
-    }
-
-    fn virtpoly_to_int(&self, poly: &VirtualPolynomial) -> &Int {
-        match poly {
-            VirtualPolynomial::LeftInstructionInput => &self.left_input,
-            VirtualPolynomial::RightInstructionInput => &self.right_input,
-            VirtualPolynomial::Product => &self.product,
-            VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD) => {
-                &self.flags[CircuitFlags::WriteLookupOutputToRD as usize]
-            }
-            VirtualPolynomial::OpFlags(CircuitFlags::Jump) => {
-                &self.flags[CircuitFlags::Jump as usize]
-            }
-            VirtualPolynomial::LookupOutput => &self.lookup_output,
-            VirtualPolynomial::InstructionFlags(InstructionFlags::Branch) => {
-                &self.instruction_flags[InstructionFlags::Branch as usize]
-            }
-            VirtualPolynomial::ShouldBranch => &self.should_branch,
-            VirtualPolynomial::NextIsNoop => &self.next_is_noop,
-            VirtualPolynomial::ShouldJump => &self.should_jump,
-            _ => unreachable!(),
+        let matrices = rv64::rv64_trace_constraints::<Fr>();
+        let vars = self.r1cs_vars();
+        for ((a, b), c) in matrices.a.iter().zip(&matrices.b).zip(&matrices.c) {
+            let a = Self::sparse_row_to_int(a, &vars);
+            let b = Self::sparse_row_to_int(b, &vars);
+            let c = Self::sparse_row_to_int(c, &vars);
+            *solver += (a * b).eq(c);
         }
-    }
-
-    fn prodfac_to_int(&self, pf: ProductFactorExpr) -> Int {
-        match pf {
-            ProductFactorExpr::Var(poly) => self.virtpoly_to_int(&poly).clone(),
-            ProductFactorExpr::OneMinus(poly) => Int::from(1) - self.virtpoly_to_int(&poly),
-        }
-    }
-
-    fn add_product_constraints(&self, solver: &mut Solver) {
-        PRODUCT_CONSTRAINTS.iter().for_each(|c| {
-            let lhs = self.prodfac_to_int(c.left);
-            let rhs = self.prodfac_to_int(c.right);
-            *solver += (lhs * rhs).eq(self.virtpoly_to_int(&c.output));
-        });
     }
 
     fn add_input_constraints(&self, solver: &mut Solver) {
@@ -253,7 +231,6 @@ impl JoltState {
 
     fn add_constraints(&self, solver: &mut Solver) {
         self.add_r1cs_constraints(solver);
-        self.add_product_constraints(solver);
         self.add_input_constraints(solver);
     }
 
@@ -282,24 +259,36 @@ impl JoltState {
         let row = instr
             .try_jolt_instruction_row()
             .expect("Z3 instruction constraints require a final Jolt row");
-        let flags = row.circuit_flags();
-        let instruction_flags = row.instruction_flags();
+        let instruction = JoltInstruction::try_from(row)
+            .expect("final Jolt row has a recognized instruction kind");
+        let flags = instruction.circuit_flags();
+        let instruction_flags = instruction.instruction_flags();
 
         self.flags
             .iter()
             .zip(other.flags.iter())
-            .zip(flags)
-            .for_each(|((self_flag, other_flag), flag_value)| {
+            .zip(CIRCUIT_FLAGS)
+            .for_each(|((self_flag, other_flag), flag)| {
+                let flag_value = flags.get(flag);
                 let flag_value = Int::from(flag_value as i64);
                 *solver += self_flag.eq(&flag_value);
                 *solver += other_flag.eq(&flag_value);
             });
 
+        const INSTRUCTION_FLAGS: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
+            InstructionFlags::LeftOperandIsPC,
+            InstructionFlags::RightOperandIsImm,
+            InstructionFlags::LeftOperandIsRs1Value,
+            InstructionFlags::RightOperandIsRs2Value,
+            InstructionFlags::Branch,
+            InstructionFlags::IsNoop,
+        ];
         self.instruction_flags
             .iter()
             .zip(other.instruction_flags.iter())
-            .zip(instruction_flags)
-            .for_each(|((self_flag, other_flag), flag_value)| {
+            .zip(INSTRUCTION_FLAGS)
+            .for_each(|((self_flag, other_flag), flag)| {
+                let flag_value = instruction_flags.get(flag);
                 let flag_value = Int::from(flag_value as i64);
                 *solver += self_flag.eq(&flag_value);
                 *solver += other_flag.eq(&flag_value);

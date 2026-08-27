@@ -5,7 +5,7 @@ use arbitrary::{Arbitrary, Unstructured};
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
-use jolt_prover_legacy::host::Program;
+use jolt_host::Program;
 
 use tracer::instruction::Cycle;
 
@@ -161,22 +161,16 @@ impl Invariant for SoundnessInvariant {
     fn check(&self, setup: &SoundnessSetup, input: SoundnessInput) -> Result<(), CheckError> {
         // 1. Validate memory config
         input.memory.validate()?;
-        let mut memory_config = input.memory.to_memory_config();
+        let memory_config = input.memory.to_memory_config();
 
         // 2. Apply patch to sandbox in-place, revert on exit
         let _guard = apply_patch(&setup.sandbox_dir, &input.patch)?;
 
         // 3. Compile the patched guest
-        let elf_bytes = compile_guest(&setup.sandbox_dir, &memory_config)?;
+        let mut program = compile_guest(&setup.sandbox_dir, &memory_config)?;
 
         // _guard drops here (or on early return), reverting the patch
 
-        // 4. Decode to get program_size, then trace to get actual length
-        let (_bytecode, _memory_init, program_size, _e_entry) =
-            jolt_prover_legacy::guest::program::decode(&elf_bytes);
-        memory_config.program_size = Some(program_size);
-
-        let program = guests::GuestProgram::new(&elf_bytes, &memory_config);
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input.program_input, &[], &[]);
 
         if let Some(pos) = trace
@@ -199,7 +193,7 @@ impl Invariant for SoundnessInvariant {
         }
 
         // 5. Prove and verify
-        let prover_pp = guests::prover_preprocessing(&program, max_trace_length);
+        let prover_pp = guests::prover_preprocessing(&mut program, memory_config, max_trace_length);
         let verifier_pp = guests::verifier_preprocessing(&prover_pp);
         let (proof, honest_device) = guests::prove(&program, &prover_pp, &input.program_input);
 
@@ -353,20 +347,17 @@ pub fn filter_patch(patch: &str) -> String {
 /// Compile the sandbox guest and return the ELF bytes.
 ///
 /// `Program::build` panics on compilation failure, so we catch it.
-fn compile_guest(sandbox_dir: &Path, memory_config: &MemoryConfig) -> Result<Vec<u8>, CheckError> {
+fn compile_guest(sandbox_dir: &Path, memory_config: &MemoryConfig) -> Result<Program, CheckError> {
     let target_dir = sandbox_dir.join("target").to_string_lossy().to_string();
     let mc = *memory_config;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut program = Program::new("sandbox-guest");
         program.set_memory_config(mc);
         program.build(&target_dir);
-        program.get_elf_contents()
+        program
     }));
     match result {
-        Ok(Some(elf)) => Ok(elf),
-        Ok(None) => Err(CheckError::InvalidInput(
-            "guest ELF not found after build".into(),
-        )),
+        Ok(program) => Ok(program),
         Err(_) => Err(CheckError::InvalidInput(
             "guest compilation panicked".into(),
         )),
@@ -407,9 +398,9 @@ diff --git a/src/lib.rs b/src/lib.rs
     #[test]
     fn filter_drops_path_traversal() {
         let patch = "\
-diff --git a/../../crates/jolt-prover-legacy/src/lib.rs b/../../crates/jolt-prover-legacy/src/lib.rs
---- a/../../crates/jolt-prover-legacy/src/lib.rs
-+++ b/../../crates/jolt-prover-legacy/src/lib.rs
+diff --git a/../../crates/jolt-prover/src/lib.rs b/../../crates/jolt-prover/src/lib.rs
+--- a/../../crates/jolt-prover/src/lib.rs
++++ b/../../crates/jolt-prover/src/lib.rs
 @@ -1 +1 @@
 -safe
 +malicious

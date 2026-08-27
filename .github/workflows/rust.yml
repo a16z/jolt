@@ -110,8 +110,6 @@ jobs:
       # (the real packed prover generates its fixtures). Lint it explicitly.
       - name: cargo clippy -p jolt-verifier --features akita,prover-fixtures
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
-      - name: cargo clippy -p jolt-prover-legacy --features akita
-        run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
       # The modular prover's packed (Akita) path: lint alone and with
       # prover-fixtures so the acceptance suites keep compiling.
       - name: cargo clippy -p jolt-prover --features akita
@@ -120,7 +118,7 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
       # The profiling feature gates the profile harness bin and smoke test.
       # The smoke test cannot RUN in CI yet (reference-backend memory — see
-      # the NOTE above the legacy test jobs), but everything behind the
+      # the NOTE above the prover test jobs), but everything behind the
       # feature must keep compiling. Lint it in both flamegraph modes.
       - name: cargo clippy -p jolt-prover --features profiling
         run: cargo clippy -p jolt-prover --all-targets --features profiling
@@ -150,12 +148,11 @@ jobs:
           --features field-inline
           --
           -D warnings
-      - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,field-inline
+      - name: cargo clippy -p jolt-sdk --features host,field-inline
         run: >
           cargo clippy
           -q
           --message-format=short
-          -p jolt-prover-legacy
           -p jolt-sdk
           --all-targets
           --features host,field-inline
@@ -184,12 +181,11 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
-        working-directory: ./crates/jolt-prover-legacy
-        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
+        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p jolt-prover --release --target wasm32-unknown-unknown
 
   test-prover:
     runs-on: ubuntu-latest
-    name: Test jolt-prover-legacy
+    name: Test jolt-prover
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -219,8 +215,8 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run jolt-prover-legacy tests
-        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
+      - name: Run jolt-prover tests
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
 
   trace-equivalence:
     runs-on: ubuntu-latest
@@ -296,7 +292,7 @@ jobs:
 
   test-prover-zk:
     runs-on: ubuntu-latest
-    name: Test jolt-prover-legacy (zk)
+    name: Test jolt-prover (zk)
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -324,12 +320,6 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run jolt-prover-legacy tests with zk feature
-        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features zk
-      # The MODULAR prover's ZK acceptance suite: muldiv accept, tamper
-      # reject, advice, and committed-program e2es against the unmodified
-      # jolt-verifier ZK path — the PR's headline feature, otherwise
-      # uncovered (the crate-matrix job runs default features only).
       - name: Run jolt-prover tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zk
       # The jolt-kernels unit suite in its zk flavor.
@@ -338,7 +328,7 @@ jobs:
 
   test-prover-akita:
     runs-on: ubuntu-latest
-    name: Test jolt-prover-legacy (akita)
+    name: Test jolt-prover (akita)
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -367,14 +357,8 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # The packed-prover e2e suite: muldiv, forced K=256, trusted/untrusted
-      # advice, and committed-program, each proving and verifying over the
-      # Akita lattice PCS (the release-only perf harness stays ignored).
-      - name: Run jolt-prover-legacy tests with akita feature
-        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features akita
-      # The MODULAR packed-prover acceptance suites: the five e2e analogs
-      # (with live tampers) plus the four byte-diff ratchets asserting
-      # wire-for-wire equality with the legacy packed prover.
+      # Packed-prover acceptance: muldiv, forced K=256, advice,
+      # committed-program, and live tampering checks.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
 
@@ -383,7 +367,7 @@ jobs:
   # wired into CI yet. It proves through the reference backend, whose naive
   # RAM kernels retain ~18 GiB regardless of trace length — past
   # hosted-runner memory. Hook it up as a dedicated job (guest toolchain +
-  # jolt CLI install, mirroring the legacy test jobs above) once an
+  # jolt CLI install, mirroring the prover test jobs above) once an
   # optimized backend fits runner memory.
 
   test-verifier-akita-fixtures:
@@ -550,7 +534,7 @@ jobs:
         run: |
           set -euo pipefail
           pkgs=$(cargo metadata --format-version=1 --no-deps \
-                   | jq -r '.packages[] | select((.manifest_path | startswith("'"$(pwd)"'/crates/")) and .name != "jolt-prover-legacy") | .name' \
+                   | jq -r '.packages[] | select(.manifest_path | startswith("'"$(pwd)"'/crates/")) | .name' \
                    | tr '\n' ' ')
           echo "Found crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
@@ -570,9 +554,6 @@ jobs:
             fi
             i=$((i + 1))
           done
-      - name: Test lookup table prover ABI
-        if: matrix.shard == 1
-        run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
       # jolt-witness's parallel feature is not a default, so the shard loop
       # above tests only the serial paths; the shipped provers enable it
       # (via jolt-kernels' default), so test the rayon fast paths directly.
@@ -611,17 +592,11 @@ jobs:
             exit 1
           fi
 
-  # The byte-parity ratchet vs the legacy prover: every real byte_diff arm
-  # is behind jolt-prover's prover-fixtures feature (the default crate shard
-  # only discovers the ignored stub), so without this lane optimized
-  # proof/transcript divergence could merge green. Runs the whole
-  # prover-fixtures surface of jolt-prover: the stage-granular muldiv
-  # ratchet, the mode × trace-order whole-proof arms (both backends), the
-  # 2^17 chunk-boundary arm (slice-backed + forced chunk walk), and the
-  # {8, 32} wide one-hot geometry arm.
-  test-byte-parity:
+  # Verifier fixtures build real proofs, verify them through the public
+  # verifier API, and exercise transcript-tampering rejection.
+  test-verifier-fixtures:
     runs-on: ubuntu-latest
-    name: Byte parity vs legacy prover
+    name: Test jolt-verifier (prover fixtures)
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -649,8 +624,8 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run the jolt-prover byte-parity suite
-        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures --cargo-quiet
+      - name: Run verifier fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures --test-threads 1 --cargo-quiet
 
   test-akita-schedules:
     name: Akita schedule catalog drift

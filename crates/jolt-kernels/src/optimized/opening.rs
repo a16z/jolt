@@ -1,5 +1,5 @@
 //! The optimized joint-opening kernel: lazy grid embeddings for the stage-8
-//! batch opening, ported from the legacy prover's streaming-RLC machinery.
+//! batch opening.
 //!
 //! The reference slot materializes every opened polynomial dense over the
 //! full `2^total_vars` commitment domain — `O(polys · 2^total_vars)` field
@@ -9,24 +9,21 @@
 //! opening; `RlcSource` distributes it per constituent) and — in hiding
 //! mode — [`MultilinearPoly::evaluate`], so nothing needs the dense table.
 //! This kernel returns lazy views that answer both from compact per-cycle
-//! trace columns, the legacy techniques by name:
+//! trace columns:
 //!
-//! - **Sparse one-hot VMP** (legacy `OneHotPolynomial::vector_matrix_product`):
+//! - **Sparse one-hot VMP**:
 //!   a one-hot polynomial's fold is `result[col(idx)] += left[row(idx)]` at
 //!   the single hot grid index per cycle — `O(T)` group-free additions
 //!   instead of an `O(K · T)` dense walk over a materialized grid.
-//! - **Streaming trace columns** (legacy `StreamingRLCContext` /
-//!   `gen_from_trace`): the committed values are re-derived from one typed
+//! - **Streaming trace columns**: the committed values are re-derived from one typed
 //!   witness pass ([`CommittedColumnsWitness`], the same bundle the commit
 //!   kernel consumed) into packed per-cycle columns — `O(T)` small scalars
 //!   shared by every trace polynomial via [`Arc`], never `K × T` oracle
 //!   tables.
-//! - **Strided dense scatter** (legacy `RLCPolynomial::vector_matrix_product`,
-//!   address-major arm): a dense trace column contributes
+//! - **Strided dense scatter**: a dense trace column contributes
 //!   `result[col] += left[row] · value` at `index = t · t_stride`, covering
 //!   both coefficient orders with one placement formula.
-//! - **Precommitted block contribution** (legacy
-//!   `vmp_precommitted_contribution`): advice / committed-program tables
+//! - **Precommitted block contribution**: advice / committed-program tables
 //!   fold from their own balanced `(2^{ν_p} × 2^{σ_p})` matrix into the
 //!   grid's top-left block, `O(len)` work and space.
 //!
@@ -34,8 +31,7 @@
 //! batch opener (`combine_hints`), so no re-commit touches these views. The
 //! placement formulas are exactly the reference embeddings'
 //! (`reference::opening`); the in-module tests pin dense equality against
-//! the reference slot on a real synthetic trace, and `byte_diff` pins the
-//! full proof bytes against `jolt-prover-legacy`.
+//! the reference slot on a real synthetic trace.
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;

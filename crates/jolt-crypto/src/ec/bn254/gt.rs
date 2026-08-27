@@ -58,6 +58,20 @@ impl Default for Bn254GT {
     }
 }
 
+impl ark_serialize::CanonicalSerialize for Bn254GT {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.0.serialized_size(compress)
+    }
+}
+
 // GT's additive notation maps to Fq12 multiplication by design.
 #[expect(
     clippy::suspicious_arithmetic_impl,

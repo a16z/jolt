@@ -16,14 +16,14 @@ default = ["transcript-blake2b"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]
-prover-fixtures = ["jolt-prover-legacy/host"]
+prover-fixtures = []
 fs-audit = []
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
-zk = ["jolt-prover-legacy/zk"]
+zk = ["jolt-prover/zk"]
 # The packed (lattice/Akita) commitment mode: one packed one-hot witness per
 # commitment object, co-batched reduction opening. Mutually exclusive with
 # `zk` — one PIOP per compiled verifier.
-akita = ["jolt-prover-legacy/akita", "jolt-claims/akita"]
+akita = ["jolt-prover/akita", "jolt-claims/akita"]
 transcript-blake2b = []
 transcript-keccak = []
 transcript-poseidon = []
@@ -53,7 +53,13 @@ thiserror.workspace = true
 
 [dev-dependencies]
 bincode.workspace = true
-jolt-prover-legacy = { workspace = true, features = ["minimal"] }
+jolt-host.workspace = true
+jolt-prover.workspace = true
+jolt-witness.workspace = true
+jolt-akita.workspace = true
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+tracer.workspace = true
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
 serde_json = { workspace = true, features = ["std"] }

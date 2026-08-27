@@ -4,6 +4,21 @@ use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
 use thiserror::Error;
 
+#[derive(Debug, Error)]
+pub enum PreprocessingError {
+    #[error(transparent)]
+    Program(#[from] jolt_program::preprocess::PreprocessingError),
+
+    #[error(transparent)]
+    Openings(#[from] jolt_openings::OpeningsError),
+
+    #[error("invalid committed program: {reason}")]
+    InvalidCommittedProgram { reason: String },
+
+    #[error("failed to encode preprocessing: {reason}")]
+    Encoding { reason: String },
+}
+
 /// Errors surfaced while proving. The engine-level failures come through
 /// [`SumcheckError`], compute failures through [`KernelError`], and
 /// relation-level failures (claim wiring, point derivation) through

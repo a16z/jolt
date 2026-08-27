@@ -47,10 +47,10 @@ members = [
   "crates/jolt-utils",
   "crates/jolt-profiling",
   "crates/jolt-field",
+  "crates/jolt-host",
   "crates/jolt-kernels",
   "crates/jolt-kernels-derive",
   "crates/jolt-prover",
-  "crates/jolt-prover-legacy",
   "tracer",
   "common",
   "jolt-platform",
@@ -151,7 +151,7 @@ env_logger.workspace = true
 zeroos-build.workspace = true
 
 jolt-sdk = { workspace = true, features = ["host"] }
-jolt-prover-legacy = { workspace = true, features = ["default"] }
+jolt-prover.workspace = true
 
 [profile.test]
 opt-level = 3
@@ -425,7 +425,6 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 # Internal dependencies
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
-jolt-prover-legacy = { path = "./crates/jolt-prover-legacy", default-features = false }
 jolt-akita = { path = "./crates/jolt-akita" }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
@@ -433,6 +432,7 @@ jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-host = { path = "./crates/jolt-host" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }

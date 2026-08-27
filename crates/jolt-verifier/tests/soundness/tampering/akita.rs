@@ -25,6 +25,7 @@
     reason = "fixture tamper tests should fail loudly when the stored proof shape changes"
 )]
 
+use jolt_akita::{AkitaField, AkitaScheme};
 use jolt_claims::protocols::jolt::lattice::relations::{
     booleanity::LatticeBooleanityOutputClaims,
     bytecode_reconstruction::BytecodeChunkReconstructionOutputClaims,
@@ -32,7 +33,7 @@ use jolt_claims::protocols::jolt::lattice::relations::{
     read_raf::LatticeBytecodeReadRafOutputClaims,
 };
 use jolt_field::JoltField;
-use jolt_prover_legacy::zkvm::packed::{AkitaField, AkitaJoltProof, AkitaScheme};
+use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
     stage1::{
@@ -81,6 +82,7 @@ use jolt_verifier::stages::{
 
 use crate::support::akita_fixtures::{
     akita_advice_case, akita_committed_muldiv_case, akita_muldiv_case, AkitaFixtureCase,
+    AkitaJoltProof,
 };
 use crate::support::assert_rejects;
 
@@ -757,12 +759,7 @@ fn akita_proof_shape_tampers_reject() {
 #[test]
 fn akita_advice_commitment_presence_rejects() {
     let advice = akita_advice_case();
-    let result = jolt_verifier::verify::<
-        AkitaField,
-        AkitaScheme,
-        jolt_prover_legacy::zkvm::packed::AkitaVc,
-        jolt_prover_legacy::zkvm::packed::AkitaTranscript,
-    >(
+    let result = jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
         &advice.preprocessing,
         &advice.public_io,
         &advice.proof,

@@ -24,7 +24,7 @@ use std::time::Instant;
 use support::chain_input;
 
 // Empirically measured cycles per operation (see
-// crates/jolt-prover-legacy/benches/e2e_profiling.rs).
+// the prover profiling workloads).
 const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;

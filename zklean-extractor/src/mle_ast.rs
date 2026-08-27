@@ -13,7 +13,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError
 use ark_std::{One, Zero};
 use serde::{Deserialize, Serialize};
 
-use jolt_prover_legacy::field::{FieldOps, JoltField};
+#[cfg(test)]
+use jolt_field::JoltField;
+use jolt_field::{
+    AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring,
+    WithAccumulator,
+};
 
 #[cfg(test)]
 use crate::util::Environment;
@@ -127,10 +132,8 @@ fn edge_for_root(root: NodeId) -> Edge {
 // Thread-local storage for Transcript trait integration
 // =============================================================================
 //
-// These thread-locals enable MleAst to work with jolt-prover-legacy's generic Transcript trait.
-// The Transcript trait uses `F: JoltField` with methods like:
-//   - `append_scalar<F>(&mut self, scalar: &F)` - calls F::serialize
-//   - `challenge_scalar<F>(&mut self) -> F` - calls F::from_bytes
+// These thread-locals let symbolic transcript adapters tunnel MleAst values
+// through canonical field encoding APIs.
 //
 // Since MleAst implements JoltField but serialize/from_bytes don't make semantic sense
 // for ASTs, we use thread-local storage to tunnel the actual MleAst values through
@@ -141,7 +144,7 @@ fn edge_for_root(root: NodeId) -> Edge {
 //
 // Note: These are kept here (rather than a separate module) because they're used by
 // MleAst's own trait impls (from_bytes, serialize_with_mode) and form part of MleAst's
-// JoltField implementation machinery. Unlike scalar_ops/ast_bundle, they can't be
+// field implementation machinery. Unlike scalar_ops/ast_bundle, they can't be
 // cleanly decoupled from MleAst without introducing circular dependencies.
 // =============================================================================
 
@@ -591,11 +594,18 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
     match get_node(node) {
         Node::Atom(atom) => atom.evaluate(env),
         Node::Neg(edge) => -evaluate_edge(edge, env),
-        Node::Inv(edge) => F::one() / evaluate_edge(edge, env),
+        Node::Inv(edge) => evaluate_edge(edge, env)
+            .inverse()
+            .expect("symbolic inverse evaluated at zero"),
         Node::Add(e1, e2) => evaluate_edge(e1, env) + evaluate_edge(e2, env),
         Node::Mul(e1, e2) => evaluate_edge(e1, env) * evaluate_edge(e2, env),
         Node::Sub(e1, e2) => evaluate_edge(e1, env) - evaluate_edge(e2, env),
-        Node::Div(e1, e2) => evaluate_edge(e1, env) / evaluate_edge(e2, env),
+        Node::Div(e1, e2) => {
+            evaluate_edge(e1, env)
+                * evaluate_edge(e2, env)
+                    .inverse()
+                    .expect("symbolic division evaluated with a zero denominator")
+        }
         Node::TranscriptHash(_, _, _)
         | Node::ByteReverse(_)
         | Node::Truncate128Reverse(_)
@@ -1056,8 +1066,6 @@ impl std::ops::Div for MleAst {
     }
 }
 
-impl FieldOps for MleAst {}
-
 impl std::ops::Add<&Self> for MleAst {
     type Output = Self;
 
@@ -1116,8 +1124,6 @@ impl std::ops::Div<&Self> for MleAst {
         self
     }
 }
-
-impl FieldOps<&Self, Self> for MleAst {}
 
 impl std::ops::AddAssign for MleAst {
     fn add_assign(&mut self, rhs: Self) {
@@ -1282,11 +1288,8 @@ impl From<ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>> for MleAst {
     }
 }
 
-/// Required for `JoltField::Unreduced<N>` which is `Self` for MleAst.
-///
 /// Converts `[u64; N]` to a scalar constant. For N > 4, only the first 4 limbs
-/// are used (higher limbs are truncated). This is acceptable for symbolic execution
-/// since we're just creating a constant node. Actual arithmetic is tracked in the AST.
+/// are used; MleAst models BN254 scalar expressions.
 impl<const N: usize> From<[u64; N]> for MleAst {
     fn from(value: [u64; N]) -> Self {
         let mut limbs = [0u64; 4];
@@ -1296,29 +1299,9 @@ impl<const N: usize> From<[u64; N]> for MleAst {
     }
 }
 
-impl jolt_prover_legacy::field::UnreducedInteger for MleAst {}
+impl AdditiveGroup for MleAst {}
 
-impl JoltField for MleAst {
-    const NUM_BYTES: usize = 0;
-    const NUM_LIMBS: usize = 0;
-
-    const MONTGOMERY_R: Self = todo!();
-    const MONTGOMERY_R_SQUARE: Self = todo!();
-
-    type UnreducedElem = Self;
-    type UnreducedMulU64 = Self;
-    type UnreducedMulU128 = Self;
-    type UnreducedMulU128Accum = Self;
-    type UnreducedProduct = Self;
-    type UnreducedProductAccum = Self;
-
-    type Challenge = Self;
-    type SmallValueLookupTables = ();
-
-    fn random<R: rand_core::RngCore>(_rng: &mut R) -> Self {
-        unimplemented!("Not needed for constructing ASTs");
-    }
-
+impl Ring for MleAst {
     fn from_bool(val: bool) -> Self {
         Self::new_scalar([val as u64, 0, 0, 0])
     }
@@ -1397,21 +1380,11 @@ impl JoltField for MleAst {
             Self::new_scalar([l0, l1, l2, l3])
         }
     }
+}
 
-    fn square(&self) -> Self {
-        *self * self
-    }
-
-    fn from_bytes(_bytes: &[u8]) -> Self {
-        // Check if there's a pending challenge from PoseidonAstTranscript
-        if let Some(challenge) = take_pending_challenge() {
-            return challenge;
-        }
-        panic!("MleAst::from_bytes called without a pending challenge — PoseidonAstTranscript must call set_pending_challenge() before from_bytes()")
-    }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes(bytes)
+impl Field for MleAst {
+    fn random<R: rand_core::RngCore>(_rng: &mut R) -> Self {
+        unimplemented!("Not needed for constructing ASTs");
     }
 
     fn inverse(&self) -> Option<Self> {
@@ -1423,67 +1396,95 @@ impl JoltField for MleAst {
             Some(res)
         }
     }
+}
 
-    fn to_unreduced(&self) -> Self::UnreducedElem {
-        *self
+impl CanonicalBytes for MleAst {
+    const NUM_BYTES: usize = 32;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), Self::NUM_BYTES);
+        set_pending_append(*self);
+        out.fill(0);
     }
+}
 
-    fn mul_u64_unreduced(self, other: u64) -> Self::UnreducedMulU64 {
-        self * Self::from_u64(other)
-    }
+impl CanonicalEncoding for MleAst {
+    const MODULUS_BITS: u32 = 254;
 
-    fn mul_u128_unreduced(self, other: u128) -> Self::UnreducedMulU128 {
-        self * Self::from_u128(other)
-    }
+    fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
+        if let Some(challenge) = take_pending_challenge() {
+            return challenge;
+        }
 
-    fn mul_to_product(self, other: Self) -> Self::UnreducedProduct {
-        self * other
-    }
-
-    fn mul_to_product_accum(self, other: Self) -> Self::UnreducedProductAccum {
-        self * other
-    }
-
-    fn unreduced_mul_u64(a: &Self::UnreducedElem, b: u64) -> Self::UnreducedMulU64 {
-        *a * Self::from_u64(b)
-    }
-
-    fn unreduced_mul_to_product_accum(
-        a: &Self::UnreducedElem,
-        b: &Self::UnreducedElem,
-    ) -> Self::UnreducedProductAccum {
-        *a * b
-    }
-
-    fn mul_to_accum_mag<const M: usize>(
-        &self,
-        _mag: &ark_ff::BigInt<M>,
-    ) -> Self::UnreducedMulU128Accum {
-        unimplemented!("Not needed for constructing ASTs")
+        let value = num_bigint::BigUint::from_bytes_le(bytes)
+            % num_bigint::BigUint::from_bytes_le(
+                &crate::scalar_ops::BN254_MODULUS
+                    .map(u64::to_le_bytes)
+                    .concat(),
+            );
+        let digits = value.to_u64_digits();
+        let mut limbs = [0u64; 4];
+        for (dst, src) in limbs.iter_mut().zip(digits) {
+            *dst = src;
+        }
+        Self::new_scalar(limbs)
     }
 
-    fn mul_to_product_mag<const M: usize>(
-        &self,
-        _mag: &ark_ff::BigInt<M>,
-    ) -> Self::UnreducedProduct {
-        unimplemented!("Not needed for constructing ASTs")
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        if let Some(challenge) = take_pending_challenge() {
+            return Some(challenge);
+        }
+        if bytes.len() != Self::NUM_BYTES {
+            return None;
+        }
+
+        let value = num_bigint::BigUint::from_bytes_le(bytes);
+        let modulus = num_bigint::BigUint::from_bytes_le(
+            &crate::scalar_ops::BN254_MODULUS
+                .map(u64::to_le_bytes)
+                .concat(),
+        );
+        if value >= modulus {
+            return None;
+        }
+        let digits = value.to_u64_digits();
+        let mut limbs = [0u64; 4];
+        for (dst, src) in limbs.iter_mut().zip(digits) {
+            *dst = src;
+        }
+        Some(Self::new_scalar(limbs))
     }
 
-    fn reduce_mul_u64(x: Self::UnreducedMulU64) -> Self {
-        x
+    fn to_u128_checked(&self) -> Option<u128> {
+        match get_node(self.root) {
+            Node::Atom(Atom::Scalar([lo, hi, 0, 0])) => Some(lo as u128 | (hi as u128) << 64),
+            _ => None,
+        }
     }
-    fn reduce_mul_u128(x: Self::UnreducedMulU128) -> Self {
-        x
+
+    fn from_u128_checked(value: u128) -> Option<Self> {
+        Some(Self::from_u128(value))
     }
-    fn reduce_mul_u128_accum(x: Self::UnreducedMulU128Accum) -> Self {
-        x
+
+    fn from_u128_reduced(value: u128) -> Self {
+        Self::from_u128(value)
     }
-    fn reduce_product(x: Self::UnreducedProduct) -> Self {
-        x
+
+    fn num_bits(&self) -> u32 {
+        self.to_u128_checked().map_or(Self::MODULUS_BITS, |value| {
+            u128::BITS - value.leading_zeros()
+        })
     }
-    fn reduce_product_accum(x: Self::UnreducedProductAccum) -> Self {
-        x
+
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self::from_bytes_le_reduced(bytes)
     }
+}
+
+impl WithAccumulator for MleAst {
+    type Accumulator = NaiveAccumulator<Self>;
+    type SmallScalarAccumulator = NaiveAccumulator<Self>;
+    type SignedProductAccumulator = NaiveAccumulator<Self>;
 }
 
 /// Serialization for MleAst uses thread-local tunneling to pass symbolic values

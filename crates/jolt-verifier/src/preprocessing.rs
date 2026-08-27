@@ -11,9 +11,8 @@ use std::sync::Arc;
 use crate::VerifierError;
 
 /// Committed-program verifier inputs: trusted bytecode-chunk and program-image
-/// commitments plus the program metadata they bind to. Mirrors `jolt-prover-legacy`'s
-/// `CommittedProgramPreprocessing`; the chunk count is implied by
-/// `bytecode_chunk_commitments.len()`.
+/// commitments plus the program metadata they bind to.
+/// For Dory, the chunk count is implied by `bytecode_chunk_commitments.len()`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "PCS::Output: Serialize",
@@ -48,10 +47,9 @@ impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
     }
 }
 
-/// Program preprocessing in one of two modes, detected at runtime from the
-/// deserialized preprocessing exactly like `jolt-prover-legacy`'s
-/// `ProgramPreprocessing`: `Full` carries the bytecode table and initial RAM
-/// image, `Committed` replaces them with trusted commitments plus metadata.
+/// Program preprocessing in one of two modes. `Full` carries the bytecode
+/// table and initial RAM image; `Committed` replaces them with trusted
+/// commitments plus metadata.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "PCS::Output: Serialize",

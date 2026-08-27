@@ -169,8 +169,8 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param_in_closure = if has_trusted_advice {
-            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
-            trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
+            quote! { , trusted_advice_commitment: Option<jolt::VerifierTrustedAdviceCommitment>,
+            trusted_advice_hint: Option<jolt::TrustedAdviceOpeningHint> }
         } else {
             quote! {}
         };
@@ -183,7 +183,7 @@ impl MacroBuilder {
 
         let return_type = if has_trusted_advice {
             quote! {
-                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>) -> #prove_output_ty + Sync + Send
+                impl Fn(#(#all_types),*, Option<jolt::VerifierTrustedAdviceCommitment>, Option<jolt::TrustedAdviceOpeningHint>) -> #prove_output_ty + Sync + Send
             }
         } else {
             quote! {
@@ -195,7 +195,7 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_prover_fn_name<S: jolt::host::JoltProgramSource + Send + Sync + 'static>(
                 program: S,
-                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
+                preprocessing: jolt::JoltProverPreprocessing,
             ) -> #return_type
             {
                 #imports
@@ -363,7 +363,7 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_trusted_advice_args;)*
 
-                program.trace_analyze::<jolt::F>(&input_bytes, &untrusted_advice_bytes, &trusted_advice_bytes)
+                program.trace_analyze(&input_bytes, &untrusted_advice_bytes, &trusted_advice_bytes)
              }
         }
     }
@@ -568,13 +568,15 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let program_data =
-                    jolt::ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
-                Ok(JoltSharedPreprocessing::new(
-                    program_data,
+                let program_data = jolt::JoltProgramPreprocessing::new(
+                    bytecode,
+                    memory_init,
                     memory_layout,
+                    e_entry,
                     #max_trace_length,
-                ))
+                    program.instruction_profile(),
+                )?;
+                JoltSharedPreprocessing::new(program_data)
             }
         }
     }
@@ -602,14 +604,7 @@ impl MacroBuilder {
             pub fn #preprocess_shared_committed_fn_name(
                 program: &mut dyn jolt::host::JoltProgramSource,
                 bytecode_chunk_count: usize,
-            ) -> Result<
-                (
-                    jolt::JoltSharedPreprocessing,
-                    jolt::CommittedProgramProverData<jolt::PCS>,
-                    <jolt::PCS as jolt::CommitmentScheme>::ProverSetup,
-                ),
-                jolt::PreprocessingError,
-            >
+            ) -> Result<jolt::JoltProverPreprocessing, jolt::PreprocessingError>
             {
                 #imports
 
@@ -625,17 +620,18 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                let program_data =
-                    jolt::ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
-                let (shared_preprocessing, committed_program_prover_data, generators) =
-                    JoltSharedPreprocessing::new_committed(
-                        program_data,
-                        memory_layout,
-                        #max_trace_length,
-                        bytecode_chunk_count,
-                    );
-
-                Ok((shared_preprocessing, committed_program_prover_data, generators))
+                let program_data = jolt::JoltProgramPreprocessing::new(
+                    bytecode,
+                    memory_init,
+                    memory_layout,
+                    e_entry,
+                    #max_trace_length,
+                    program.instruction_profile(),
+                )?;
+                jolt::jolt_prover::dory::preprocess_committed(
+                    program_data,
+                    bytecode_chunk_count,
+                )
             }
         }
     }
@@ -651,12 +647,10 @@ impl MacroBuilder {
             pub fn #preprocess_prover_fn_name(
                 shared_preprocessing: jolt::JoltSharedPreprocessing
             )
-                -> jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
+                -> jolt::JoltProverPreprocessing
             {
                 #imports
-                let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
-
-                prover_preprocessing
+                jolt::jolt_prover::dory::from_shared(shared_preprocessing)
             }
         }
     }
@@ -678,18 +672,12 @@ impl MacroBuilder {
                 bytecode_chunk_count: usize,
             )
                 -> Result<
-                    jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
+                    jolt::JoltProverPreprocessing,
                     jolt::PreprocessingError,
                 >
             {
                 #imports
-                let (shared_preprocessing, committed_program_prover_data, generators) =
-                    #preprocess_shared_committed_fn_name(program, bytecode_chunk_count)?;
-                Ok(JoltProverPreprocessing::new_committed(
-                    shared_preprocessing,
-                    committed_program_prover_data,
-                    generators,
-                ))
+                #preprocess_shared_committed_fn_name(program, bytecode_chunk_count)
             }
         }
     }
@@ -704,15 +692,11 @@ impl MacroBuilder {
             pub fn #preprocess_verifier_fn_name(
                 shared_preprocess: jolt::JoltSharedPreprocessing,
                 generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
+                blindfold_setup: Option<jolt::BlindfoldSetup>,
             ) -> jolt::JoltVerifierPreprocessing
             {
-                jolt::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_shared::<
-                    jolt::F,
-                    jolt::Curve,
-                    jolt::PCS,
-                >(
-                    shared_preprocess,
+                jolt::jolt_prover::dory::from_shared_parts(
+                    &shared_preprocess,
                     generators,
                     blindfold_setup,
                 )
@@ -730,15 +714,11 @@ impl MacroBuilder {
         );
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>)
+            pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing)
                 -> jolt::JoltVerifierPreprocessing
             {
                 #imports
-                jolt::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
-                    jolt::F,
-                    jolt::Curve,
-                    jolt::PCS,
-                >(prover_preprocessing)
+                prover_preprocessing.verifier_preprocessing()
             }
         }
     }
@@ -754,9 +734,9 @@ impl MacroBuilder {
             return quote! {
                 #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
                 pub fn #commit_fn_name(
-                    _preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
-                ) -> (Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
-                      Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>)
+                    _preprocessing: &jolt::JoltProverPreprocessing,
+                ) -> (Option<jolt::VerifierTrustedAdviceCommitment>,
+                      Option<jolt::TrustedAdviceOpeningHint>)
                 {
                     (None, None)
                 }
@@ -777,48 +757,18 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #commit_fn_name(
                 #(#trusted_advice_inputs,)*
-                preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
-            ) -> (Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
-                  Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>)
+                preprocessing: &jolt::JoltProverPreprocessing,
+            ) -> (Option<jolt::VerifierTrustedAdviceCommitment>,
+                  Option<jolt::TrustedAdviceOpeningHint>)
             {
                 #imports
-                use jolt::CommitmentScheme;
-                use jolt::MultilinearPolynomial;
-                use jolt::populate_memory_states;
-
                 let mut trusted_advice_bytes = vec![];
                 #(#set_trusted_advice_args;)*
-
-                let max_trusted_advice_size = preprocessing.shared.memory_layout.max_trusted_advice_size;
-
-                let mut trusted_advice_vec = vec![0u64; (max_trusted_advice_size as usize) / 8];
-
-                populate_memory_states(
-                    0,
+                let committed = jolt::jolt_prover::dory::commit_trusted_advice(
+                    preprocessing,
                     &trusted_advice_bytes,
-                    Some(&mut trusted_advice_vec),
-                    None,
-                );
-
-                // Commit trusted advice in its dedicated Dory context, using a preprocessing-only
-                // matrix shape derived *deterministically* from the advice length (balanced dims).
-                //
-                // This makes the commitment independent of the trace length (preprocessing-only),
-                // while still allowing the prover to batch the advice opening into the single
-                // Stage 8 Dory opening proof by interpreting it as a zero-padded submatrix of the
-                // main polynomial matrix.
-                let (sigma_a, nu_a) =
-                    jolt::DoryGlobals::advice_sigma_nu_from_max_bytes(max_trusted_advice_size as usize);
-                let num_rows = 1usize << nu_a;
-                let num_cols = 1usize << sigma_a;
-
-                let _guard = jolt::DoryGlobals::initialize_context(num_rows, num_cols, jolt::DoryContext::TrustedAdvice, None);
-                let _ctx = jolt::DoryGlobals::with_context(jolt::DoryContext::TrustedAdvice);
-
-                let poly = MultilinearPolynomial::<jolt::F>::from(trusted_advice_vec);
-                let (commitment, hint) = jolt::PCS::commit(&poly, &preprocessing.generators);
-
-                (Some(commitment), Some(hint))
+                ).expect("trusted advice fits the configured memory layout");
+                (Some(committed.commitment), Some(committed.hint))
             }
         }
     }
@@ -832,7 +782,10 @@ impl MacroBuilder {
             },
             ReturnType::Type(_, ty) => quote! {
                 let mut outputs = io_device.outputs.clone();
-                outputs.resize(preprocessing.shared.memory_layout.max_output_size as usize, 0);
+                outputs.resize(
+                    preprocessing.verifier.program.memory_layout().max_output_size as usize,
+                    0,
+                );
                 let ret_val = jolt::postcard::from_bytes::<#ty>(&outputs).unwrap();
             },
         };
@@ -863,8 +816,8 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param = if has_trusted_advice {
-            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
-            trusted_advice_hint: Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint> }
+            quote! { , trusted_advice_commitment: Option<jolt::VerifierTrustedAdviceCommitment>,
+            trusted_advice_hint: Option<jolt::TrustedAdviceOpeningHint> }
         } else {
             quote! {}
         };
@@ -880,7 +833,7 @@ impl MacroBuilder {
             #[allow(clippy::too_many_arguments)]
             pub fn #prove_fn_name(
                 program: &dyn jolt::host::JoltProgramSource,
-                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
+                preprocessing: jolt::JoltProverPreprocessing,
                 #inputs
                 #commitment_param
             ) -> #prove_output_ty {
@@ -893,56 +846,22 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_program_trusted_advice_args;)*
 
-                // Two-pass strategy: First run compute_advice version to populate advice tape
-                let advice_tape = if let Some(compute_advice_elf_contents) = program.get_elf_compute_advice_contents() {
-                    use jolt::guest::program::{trace as guest_trace, decode as guest_decode};
-
-                    // Decode compute_advice ELF to get its program size
-                    let (_, _, compute_advice_program_size, _) = guest_decode(&compute_advice_elf_contents);
-
-                    let memory_config = MemoryConfig {
-                        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
-                        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
-                        max_input_size: preprocessing.shared.memory_layout.max_input_size,
-                        max_output_size: preprocessing.shared.memory_layout.max_output_size,
-                        stack_size: preprocessing.shared.memory_layout.stack_size,
-                        heap_size: preprocessing.shared.memory_layout.heap_size,
-                        program_size: Some(compute_advice_program_size),
-                    };
-
-                    // First pass: run compute_advice version to populate advice tape
-                    let (_lazy_trace, _, _, _, advice_tape) = guest_trace(
-                        &compute_advice_elf_contents,
-                        None,
-                        &input_bytes,
-                        &untrusted_advice_bytes,
-                        &trusted_advice_bytes,
-                        &memory_config,
-                        None, // Start with empty advice tape
-                    );
-
-                    // Reset read position for second pass
-                    let mut tape_for_second_pass = advice_tape;
-                    tape_for_second_pass.reset_read_position();
-                    Some(tape_for_second_pass)
-                } else {
-                    None
-                };
-
-                // Second pass: run normal version with populated advice tape to generate proof
-                let elf_contents_opt = program.get_elf_contents();
-                let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-                let prover = RV64IMACProver::gen_from_elf(&preprocessing,
-                    &elf_contents,
+                let advice_tape = jolt::compute_advice_tape(
+                    program,
+                    &input_bytes,
+                    &untrusted_advice_bytes,
+                    &trusted_advice_bytes,
+                    preprocessing.verifier.program.memory_layout(),
+                ).expect("compute-advice execution should succeed");
+                let (jolt_proof, io_device) = jolt::prove_program(
+                    program,
+                    &preprocessing,
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
                     #commitment_arg,
                     advice_tape,
                 ).expect("execution trace exceeds the max_trace_length configured in #[jolt::provable]");
-                let io_device = prover.program_io.clone();
-                let (jolt_proof, _) = prover.prove()
-                    .expect("prover should produce verifier-native proof");
 
                 #handle_return
 
@@ -1084,7 +1003,7 @@ impl MacroBuilder {
     }
 
     /// Generate `jolt_panic()` function that writes to the panic address.
-    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-prover-legacy.
+    /// This is called by the runtime's `#[panic_handler]` to signal panics to the prover.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         quote! {
             #[cfg(feature = "guest")]
@@ -1123,16 +1042,11 @@ impl MacroBuilder {
         quote! {
             #[cfg(not(feature = "guest"))]
             use jolt::{
-                JoltField,
-                RV64IMACProver,
-                RV64IMACProof,
                 host::Program,
                 host::JoltProgramSource,
-                JoltProverPreprocessing,
                 MemoryConfig,
                 MemoryLayout,
                 JoltDevice,
-                AdviceTape,
             };
             use jolt::{
                 JoltVerifierPreprocessing,

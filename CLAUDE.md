@@ -24,22 +24,18 @@ cargo nextest run --cargo-quiet
 # Run specific test in specific package
 cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
-# Primary correctness check — run muldiv e2e test in both modes
-cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
-
-# Modular prover acceptance suites (mirror CI): clear-mode byte-diff ratchets
-# vs the legacy prover, and the modular ZK e2e (muldiv accept, tamper reject,
-# advice, committed program)
+# Prover acceptance suites (mirror CI)
+cargo nextest run -p jolt-verifier standard_muldiv --features prover-fixtures --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk --cargo-quiet
+cargo nextest run -p jolt-prover --features akita,prover-fixtures --cargo-quiet
 ```
 
 ### Building
 
 ```bash
 # Prefer clippy over build for validation. Only build when preparing to execute a binary.
-cargo build -p jolt-prover-legacy -q
+cargo build -p jolt-prover -q
 
 # After pulling changes, reinstall the jolt CLI or guest builds may fail.
 cargo install --path . --locked
@@ -71,10 +67,6 @@ cargo run --release -p jolt-prover --features profiling,allocative -- profile --
 # jolt-eval telemetry objectives over the same summary (grammar: telemetry:<workload>:<metric>)
 cargo run -p jolt-eval --bin measure-objectives -- --objective telemetry:fibonacci:prover_time_s
 
-# Legacy prover
-cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome
-# --name options: sha2, sha3, sha2-chain, sha3-chain, fibonacci, btreemap
-RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome
 ```
 
 The span taxonomy (versioned, normative) lives in `crates/jolt-profiling/src/taxonomy.rs` — renaming a span is a schema change (summary keys and `telemetry:*` objectives break; the profiling smoke test enforces label presence, but it is not yet CI-wired — run it explicitly after taxonomy changes, see the NOTE in `.github/workflows/rust.yml`).
@@ -83,19 +75,19 @@ The span taxonomy (versioned, normative) lives in `crates/jolt-profiling/src/tax
 
 ### Crate Structure
 
-The workspace is mid-decomposition: `crates/` holds the modular stack (jolt-verifier, jolt-prover, jolt-sumcheck, jolt-poly, jolt-blindfold, jolt-witness, jolt-openings, jolt-r1cs, jolt-dory, jolt-transcript, jolt-utils, …26 crates), while **crates/jolt-prover-legacy** is the legacy monolith mapped below. Top-level crates: `tracer`, `jolt-sdk`, `jolt-inlines`, `common`.
+The proof system is split into focused crates under `crates/`. Top-level crates include `tracer`, `jolt-sdk`, `jolt-inlines`, and `common`.
 
 Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shout`, pinned in the root `Cargo.toml`.
 
-**jolt-prover-legacy** — Legacy core proving system
+**jolt-prover** — Prover orchestration for the staged Jolt protocol; Dory is the default PCS, `akita` selects the packed lattice path, and `zk` enables BlindFold.
 
-- `host/`: Guest ELF compilation and program analysis (feature-gated behind `host`)
-- `zkvm/`: Jolt PIOP — prover, verifier, R1CS/Spartan, memory checking, instruction lookups
-- `poly/`: Polynomial types, commitment schemes (Dory, Hyrax, Pedersen), opening proofs
-- `field/`: `JoltField` trait and BN254 scalar field implementation
-- `subprotocols/`: Sumcheck (batched, streaming, univariate skip), booleanity checks, BlindFold ZK protocol
-- `msm/`: Multi-scalar multiplication
-- `transcripts/`: Fiat-Shamir transcripts (Blake2b, Keccak)
+**jolt-verifier / jolt-claims** — Verifier staging and the symbolic protocol relations shared with the prover.
+
+**jolt-kernels / jolt-witness** — Reference and optimized prover kernels plus trace-backed witness construction.
+
+**jolt-host / jolt-program** — Guest builds, tracing entry points, bytecode expansion, and shared program preprocessing.
+
+**jolt-field / jolt-poly / jolt-sumcheck / jolt-openings** — Field, polynomial, sumcheck, and PCS abstractions.
 
 **tracer** — RISC-V emulator producing execution traces (`Cycle` per instruction)
 
@@ -105,7 +97,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 
 **common** — Shared constants (`XLEN`, `REGISTER_COUNT`, thresholds) and `JoltDevice`/`MemoryLayout` types
 
-Feature flag hierarchy: `host` ⊃ `prover` ⊃ `minimal`. Most code is unconditional; `host/` is the main gated module. The `akita` feature selects the packed (lattice/Akita) commitment mode — mutually exclusive with `zk` (compile error on the combination).
+The SDK's `host` feature enables native build/prove APIs. On `jolt-prover`, `akita` selects the packed lattice protocol and is mutually exclusive with `zk`.
 
 ### Key Type Parameters
 

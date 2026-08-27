@@ -3,9 +3,7 @@
 //! These five values are exactly the proof's wire config block
 //! (`JoltProof::{trace_length, ram_K, rw_config, one_hot_config,
 //! trace_polynomial_order}`) plus the Fiat-Shamir preamble inputs. The
-//! derivation policies here must match `jolt-prover-legacy`'s choices
-//! byte-for-byte while it remains the parity oracle; the byte-diff harness
-//! pins them.
+//! derivation policies here must match the verifier's choices byte-for-byte.
 
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
@@ -210,12 +208,10 @@ fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
     }
 }
 
-/// One-hot chunking policy, mirroring `jolt-prover-legacy`'s
-/// `OneHotConfig::new`: below the trace-length threshold (`log_T < 25`),
+/// Below the trace-length threshold (`log_T < 25`), use
 /// 4-bit committed chunks and `LOG_K/8 = 16`-bit virtual-RA chunks; at or
 /// above it, 8-bit committed chunks and `LOG_K/4 = 32`-bit virtual-RA chunks
-/// (a branch that requires a 2^25-cycle trace and may never have run in
-/// practice — kept for parity).
+/// (a branch that requires a 2^25-cycle trace).
 #[expect(non_snake_case)]
 fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
