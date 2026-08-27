@@ -378,58 +378,60 @@ fn commitments_from_proof_payload_order<C>(
     instruction_ra_count: usize,
     ram_ra_count: usize,
 ) -> Result<JoltCommitments<C>, VerifierError> {
-    let minimum =
-        2 + instruction_ra_count + ram_ra_count + cfg!(feature = "implicit-carry") as usize;
-    if commitments.len() < minimum {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: commitments.len(),
-        });
+    use jolt_claims::protocols::jolt::geometry::{
+        committed_openings::proof_commitment_order, ra::JoltRaPolynomialLayout,
+    };
+    use jolt_claims::protocols::jolt::JoltCommittedPolynomial as P;
+
+    let got = commitments.len();
+    let fixed = 2 + instruction_ra_count + ram_ra_count + cfg!(feature = "implicit-carry") as usize;
+    let count_mismatch = || VerifierError::InvalidCommitmentCount {
+        expected: fixed,
+        got,
+    };
+    // The bytecode chunk count is not on the wire: it is the remainder once
+    // the fixed columns are accounted for. Any future committed column must
+    // be added to `proof_commitment_order` (and counted here), or the
+    // remainder inference breaks with an explicit error below.
+    let Some(bytecode_ra_count) = got.checked_sub(fixed) else {
+        return Err(count_mismatch());
+    };
+    let layout = JoltRaPolynomialLayout::new(instruction_ra_count, bytecode_ra_count, ram_ra_count)
+        .map_err(|_| count_mismatch())?;
+    // jolt-claims' order table is the single source of truth for the payload
+    // layout; dispatch each commitment by the kind the table assigns to its
+    // position instead of splitting positionally.
+    let order = proof_commitment_order(layout);
+    debug_assert_eq!(order.len(), commitments.len());
+
+    let mut rd_inc = None;
+    let mut ram_inc = None;
+    let mut instruction_ra = Vec::with_capacity(instruction_ra_count);
+    let mut ram_ra = Vec::with_capacity(ram_ra_count);
+    let mut bytecode_ra = Vec::with_capacity(bytecode_ra_count);
+    #[cfg(feature = "implicit-carry")]
+    let mut carry = None;
+    for (kind, commitment) in order.into_iter().zip(commitments) {
+        match kind {
+            P::RdInc => rd_inc = Some(commitment),
+            P::RamInc => ram_inc = Some(commitment),
+            P::InstructionRa(_) => instruction_ra.push(commitment),
+            P::RamRa(_) => ram_ra.push(commitment),
+            P::BytecodeRa(_) => bytecode_ra.push(commitment),
+            #[cfg(feature = "implicit-carry")]
+            P::Carry => carry = Some(commitment),
+            _ => return Err(count_mismatch()),
+        }
     }
 
-    let mut commitments = commitments.into_iter();
-    let Some(rd_inc) = commitments.next() else {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: 0,
-        });
-    };
-    let Some(ram_inc) = commitments.next() else {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: 1,
-        });
-    };
-    let instruction_ra = commitments
-        .by_ref()
-        .take(instruction_ra_count)
-        .collect::<Vec<_>>();
-    let ram_ra = commitments.by_ref().take(ram_ra_count).collect::<Vec<_>>();
-    // The Carry commitment is appended after the BytecodeRa family in
-    // `all_committed_polynomials`; pull it explicitly so the trailing collect
-    // cannot swallow it.
-    #[cfg(feature = "implicit-carry")]
-    let (bytecode_ra, carry) = {
-        let mut rest = commitments.collect::<Vec<_>>();
-        let Some(carry) = rest.pop() else {
-            return Err(VerifierError::InvalidCommitmentCount {
-                expected: minimum,
-                got: minimum - 1,
-            });
-        };
-        (rest, carry)
-    };
-    #[cfg(not(feature = "implicit-carry"))]
-    let bytecode_ra = commitments.collect::<Vec<_>>();
-
     Ok(JoltCommitments::new(
-        rd_inc,
-        ram_inc,
+        rd_inc.ok_or_else(count_mismatch)?,
+        ram_inc.ok_or_else(count_mismatch)?,
         instruction_ra,
         ram_ra,
         bytecode_ra,
         #[cfg(feature = "implicit-carry")]
-        carry,
+        carry.ok_or_else(count_mismatch)?,
     ))
 }
 

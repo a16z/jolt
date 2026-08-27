@@ -108,6 +108,8 @@ impl SymbolicSumcheck for ProductRemainder {
         let mut right = product_weight(0) * opening(right_instruction_input_product())
             + product_weight(1) * opening(branch_flag_product())
             + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()));
+        // Weight slot 3 = the CarryUsed row's position in the legacy prover's
+        // `PRODUCT_CONSTRAINTS` table, pinned there by a const assertion.
         #[cfg(feature = "implicit-carry")]
         {
             use crate::protocols::jolt::geometry::spartan::{carry_product, uses_carry_product};

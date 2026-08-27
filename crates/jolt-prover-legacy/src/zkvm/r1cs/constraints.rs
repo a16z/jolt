@@ -662,6 +662,24 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
     },
 ];
 
+// WARNING: several consumers bind the carry lane positionally, assuming
+// `CarryUsed` is the LAST product constraint (weight slot 3): the trailing
+// Carry claim in `compute_claimed_factors` / `out_unr[8..10]`
+// (r1cs/evaluation.rs), `claims[claims.len() - 1]` in
+// `ProductVirtualRemainderProver::cache_openings` (spartan/product.rs), the
+// verifier's fused factors (`w[3]`, same file), and jolt-claims'
+// `product_remainder` (`weights[3]`). This pin turns a reorder or a fifth
+// constraint into a compile error instead of a silent mis-binding; update
+// every consumer above before relaxing it.
+#[cfg(feature = "implicit-carry")]
+const _: () = {
+    assert!(NUM_PRODUCT_CONSTRAINTS == 4);
+    assert!(matches!(
+        PRODUCT_CONSTRAINTS[NUM_PRODUCT_CONSTRAINTS - 1].label,
+        ProductConstraintLabel::CarryUsed
+    ));
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

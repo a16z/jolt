@@ -908,6 +908,8 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         let mut fused_left = w[0] * l_inst + w[1] * lookup_out + w[2] * j_flag;
         #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
         let mut fused_right = w[0] * r_inst + w[1] * branch_flag + w[2] * (F::one() - next_is_noop);
+        // Weight slot 3 = the CarryUsed row's position in
+        // `PRODUCT_CONSTRAINTS`, pinned there by a const assertion.
         #[cfg(feature = "implicit-carry")]
         {
             let uses_carry = accumulator

@@ -2158,6 +2158,10 @@ impl<
         polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * rd_inc_lagrange));
         scaling_factors.push(rd_inc_lagrange);
 
+        // WARNING: the stage-8 batch order must match jolt-claims'
+        // `final_opening_polynomial_order` entry-for-entry; that table puts
+        // Carry right after the Inc pair (unlike the commitment payload,
+        // where it is appended last).
         #[cfg(feature = "implicit-carry")]
         {
             let (carry_point, carry_claim) =

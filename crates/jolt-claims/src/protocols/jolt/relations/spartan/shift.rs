@@ -128,18 +128,14 @@ impl SymbolicSumcheck for Shift {
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(SpartanShiftChallenge::Gamma);
-        #[cfg(feature = "implicit-carry")]
-        let outer_terms = opening(unexpanded_pc_shift())
-            + gamma.clone() * opening(pc_shift())
-            + gamma.clone().pow(2) * opening(is_virtual_shift())
-            + gamma.clone().pow(3) * opening(is_first_in_sequence_shift())
-            + gamma.clone().pow(5)
-                * opening(crate::protocols::jolt::geometry::spartan::carry_shift());
-        #[cfg(not(feature = "implicit-carry"))]
         let outer_terms = opening(unexpanded_pc_shift())
             + gamma.clone() * opening(pc_shift())
             + gamma.clone().pow(2) * opening(is_virtual_shift())
             + gamma.clone().pow(3) * opening(is_first_in_sequence_shift());
+        #[cfg(feature = "implicit-carry")]
+        let outer_terms = outer_terms
+            + gamma.clone().pow(5)
+                * opening(crate::protocols::jolt::geometry::spartan::carry_shift());
         derived(SpartanShiftPublic::EqPlusOneOuter) * outer_terms
             + derived(SpartanShiftPublic::EqPlusOneProduct)
                 * gamma.pow(4)
