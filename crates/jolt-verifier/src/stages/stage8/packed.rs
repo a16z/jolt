@@ -24,6 +24,8 @@ use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, Precom
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
+#[cfg(feature = "field-inline")]
+use super::field_inline_packed::FieldIncLimbClaims;
 use super::precommitted::precommitted_final_openings;
 use super::reconstruction::ReconstructionClearOutput;
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
@@ -91,6 +93,40 @@ where
     Ok(())
 }
 
+/// The commitment half of the auxiliary metadata gate, shared with the FR
+/// limb seam (whose canonical plan is verifier-derived, so it has no
+/// preprocessing setup to cross-check).
+pub(super) fn validate_auxiliary_commitment_metadata<C>(
+    commitment: &C,
+    layout_digest: [u8; 32],
+    packed_num_vars: usize,
+) -> Result<(), VerifierError>
+where
+    C: OneHotTraceCommitmentMetadata,
+{
+    if commitment.is_one_hot_backend() {
+        return Err(batch_failed(
+            "auxiliary prefix-packed commitments must use Akita's dense backend",
+        ));
+    }
+    if commitment.layout_digest() != layout_digest {
+        return Err(batch_failed(
+            "auxiliary commitment has a noncanonical layout digest",
+        ));
+    }
+    if commitment.num_vars() != packed_num_vars {
+        return Err(batch_failed(format!(
+            "auxiliary commitment arity must equal canonical packed arity {packed_num_vars}"
+        )));
+    }
+    if commitment.poly_count() != 1 {
+        return Err(batch_failed(
+            "auxiliary prefix-packed objects must contain one physical polynomial",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_auxiliary_metadata<C, S>(
     commitment: &C,
     setup: &S,
@@ -100,27 +136,21 @@ where
     C: OneHotTraceCommitmentMetadata,
     S: OneHotTraceSetupMetadata,
 {
-    if commitment.is_one_hot_backend() {
-        return Err(batch_failed(
-            "auxiliary prefix-packed commitments must use Akita's dense backend",
-        ));
-    }
     let packed_num_vars = plan.packing().packed_num_vars();
-    if commitment.layout_digest() != plan.layout_digest()
-        || setup.default_layout_digest() != plan.layout_digest()
-    {
+    validate_auxiliary_commitment_metadata(commitment, plan.layout_digest(), packed_num_vars)?;
+    if setup.default_layout_digest() != plan.layout_digest() {
         return Err(batch_failed(
-            "auxiliary commitment/setup has a noncanonical layout digest",
+            "auxiliary setup has a noncanonical layout digest",
         ));
     }
-    if commitment.num_vars() != packed_num_vars || setup.max_num_vars() != packed_num_vars {
+    if setup.max_num_vars() != packed_num_vars {
         return Err(batch_failed(format!(
-            "auxiliary commitment/setup arity must equal canonical packed arity {packed_num_vars}"
+            "auxiliary setup arity must equal canonical packed arity {packed_num_vars}"
         )));
     }
-    if commitment.poly_count() != 1 || setup.max_num_polys_per_commitment_group() != 1 {
+    if setup.max_num_polys_per_commitment_group() != 1 {
         return Err(batch_failed(
-            "auxiliary prefix-packed objects must contain one physical polynomial",
+            "auxiliary prefix-packed setups must cover one physical polynomial",
         ));
     }
     Ok(())
@@ -222,6 +252,10 @@ pub fn verify<PCS, VC, T>(
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
+    #[cfg(feature = "field-inline")] field_inc_limbs_commitment: Option<&PCS::Output>,
+    #[cfg(feature = "field-inline")] field_inc_limbs_claims: Option<
+        &FieldIncLimbClaims<PCS::Field>,
+    >,
     proof: &crate::proof::AkitaJointOpeningProof<PCS::Proof>,
     transcript: &mut T,
     schedule: &PrecommittedSchedule,
@@ -293,8 +327,9 @@ where
         None
     };
 
-    // Canonical public batch order: [UntrustedAdvice, TrustedAdvice, OneHotTrace].
-    let mut precommitted = Vec::with_capacity(2);
+    // Canonical public batch order:
+    // [UntrustedAdvice, TrustedAdvice, FieldIncLimbs, OneHotTrace].
+    let mut precommitted = Vec::with_capacity(3);
     for (role, object, claim) in [
         (
             JoltAdviceKind::Untrusted.precommitted_role(),
@@ -317,6 +352,29 @@ where
                 ),
             ));
         }
+    }
+    #[cfg(feature = "field-inline")]
+    {
+        use super::field_inline_packed;
+        let (commitment, claims) = field_inline_packed::resolve_proof_slots(
+            schedule,
+            field_inc_limbs_commitment,
+            field_inc_limbs_claims,
+        )?;
+        let limb_plan =
+            field_inline_packed::limb_plan::<PCS::Field>(formula_dimensions.trace.log_t())?;
+        validate_auxiliary_commitment_metadata(
+            commitment,
+            limb_plan.layout_digest(),
+            limb_plan.packing().packed_num_vars(),
+        )?;
+        precommitted.push(field_inline_packed::reduced_precommitted_claim(
+            &limb_plan,
+            commitment,
+            claims,
+            field_inline_packed::reduced_field_rd_inc(stage6b),
+            transcript,
+        )?);
     }
 
     let main_group = GroupOpeningClaim::new(

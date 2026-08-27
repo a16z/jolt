@@ -400,6 +400,10 @@ mod field_inline_zk {
                 untrusted_advice: None,
                 bytecode: None,
                 program_image: None,
+                #[cfg(feature = "akita")]
+                field_inc_limbs: Some(
+                    jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbsScheduled,
+                ),
             },
         };
         let mut transcript = Blake2bTranscript::new(b"stage1-fr-zk");

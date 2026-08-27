@@ -23,6 +23,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+#[cfg(feature = "field-inline")]
+use jolt_akita::FieldIncLimbScheduleParams;
 use jolt_akita::{AdviceScheduleParams, AkitaSetupParams};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::{
@@ -466,6 +468,27 @@ fn advice_physical_num_vars(
     Ok(plan.packing().packed_num_vars())
 }
 
+/// The FR limb group's arity-line params from the jolt-claims laws: the
+/// packed trace's arity overhead over its own `log_T` (the chunk + selector
+/// overhead, constant per K), the dense prefix floor, and the limb-count
+/// selector width. The registry replays the line per swept final arity; the
+/// jolt-akita FR provisioning pin test holds it to the packing law.
+#[cfg(feature = "field-inline")]
+pub fn field_inc_limb_schedule_params(
+    trace_setup_num_vars: usize,
+    log_t: usize,
+) -> FieldIncLimbScheduleParams {
+    use jolt_claims::lattice::MIN_AUXILIARY_PACKED_NUM_VARS;
+    use jolt_claims::protocols::field_inline::lattice::field_inc_limb_count;
+    FieldIncLimbScheduleParams::new(
+        trace_setup_num_vars - log_t,
+        MIN_AUXILIARY_PACKED_NUM_VARS,
+        field_inc_limb_count::<AkitaField>()
+            .next_power_of_two()
+            .log_2(),
+    )
+}
+
 fn advice_schedule_params(
     max_untrusted_advice_bytes: usize,
     max_trusted_advice_bytes: usize,
@@ -728,17 +751,17 @@ impl AkitaPackedProver<'_> {
             self.program_io.memory_layout.max_trusted_advice_size as usize;
         let max_untrusted_advice_bytes =
             self.program_io.memory_layout.max_untrusted_advice_size as usize;
+        // The trace this prove uses may be shorter than the program's
+        // padded ceiling, but preprocessing must cover every arity a proof
+        // of this program can select, so sweep up to the ceiling's arity.
+        let max_final_num_vars = ONE_HOT_TRACE_LAYOUT
+            .setup_shape(&OneHotTraceShape {
+                log_t: self.preprocessing.shared.max_padded_trace_length.log_2(),
+                ..one_hot_trace_shape
+            })
+            .expect("the padded-ceiling OneHotTrace layout must exist")
+            .num_vars;
         let advice_schedule = if max_trusted_advice_bytes > 0 || max_untrusted_advice_bytes > 0 {
-            // The trace this prove uses may be shorter than the program's
-            // padded ceiling, but preprocessing must cover every arity a proof
-            // of this program can select, so sweep up to the ceiling's arity.
-            let max_final_num_vars = ONE_HOT_TRACE_LAYOUT
-                .setup_shape(&OneHotTraceShape {
-                    log_t: self.preprocessing.shared.max_padded_trace_length.log_2(),
-                    ..one_hot_trace_shape
-                })
-                .expect("the padded-ceiling OneHotTrace layout must exist")
-                .num_vars;
             advice_schedule_params(
                 max_untrusted_advice_bytes,
                 max_trusted_advice_bytes,
@@ -748,11 +771,23 @@ impl AkitaPackedProver<'_> {
         } else {
             None
         };
+        // An FR-on prover commits the limb group on every proof, so the FR
+        // arity line joins the schedule even with no advice declared.
+        #[cfg(feature = "field-inline")]
+        let advice_schedule = Some(
+            advice_schedule
+                .unwrap_or_else(|| AdviceScheduleParams::new(None, None, max_final_num_vars))
+                .with_field_inc_limbs(field_inc_limb_schedule_params(
+                    shape.num_vars,
+                    one_hot_trace_shape.log_t,
+                )),
+        );
         AkitaSetupParams::one_hot_only_grouped(
             shape.num_vars,
             shape.num_polys,
             1 + usize::from(max_untrusted_advice_bytes > 0)
-                + usize::from(max_trusted_advice_bytes > 0),
+                + usize::from(max_trusted_advice_bytes > 0)
+                + usize::from(cfg!(feature = "field-inline")),
             layout_digest,
             one_hot_k,
             advice_schedule,
@@ -1767,6 +1802,9 @@ impl AkitaPackedProver<'_> {
             untrusted_advice_commitment: advice_object
                 .as_ref()
                 .map(|object| object.commitment.clone()),
+            // Legacy has no packed FR path (see the clear-claims slot).
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs_commitment: None,
             claims: JoltProofClaims::Clear(claims),
             trace_length: self.trace.len(),
             ram_K: self.one_hot_params.ram_k,

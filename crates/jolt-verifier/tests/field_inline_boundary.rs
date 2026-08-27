@@ -27,16 +27,18 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // field-inline/akita mutual-exclusion compile error.
     ("config.rs", 3, "compile-time protocol config"),
     // The FR commitment payload is proof shape: carrier struct/field,
-    // constructor default, and the homomorphic commitment slot's attach
-    // builder.
-    ("proof.rs", 5, "FR commitment payload carriers"),
+    // constructor default, the homomorphic commitment slot's attach builder,
+    // and the packed limb-group commitment/claims slots with their carry-over
+    // lines.
+    ("proof.rs", 9, "FR commitment payload carriers"),
     // The payload presence check, the FR commitment absorb seams, and the
     // mode-specific test fixtures. (The fail-closed
     // require_field_inline_slices gate lived here until the FR prover
     // fixtures landed.)
-    ("verifier.rs", 9, "commitment absorb seams + test fixtures"),
-    // Module registration of the shared FR bytecode side-table seam.
-    ("stages/mod.rs", 1, "seam module registration"),
+    ("verifier.rs", 15, "commitment absorb seams + test fixtures"),
+    // Module registration of the shared FR bytecode side-table seam, plus
+    // the packed schedule's FR presence-marker field and its constructor.
+    ("stages/mod.rs", 4, "seam registration + FR schedule marker"),
     // Per-stage seam-module and FR-twin module registrations.
     ("stages/stage1/mod.rs", 1, "seam module registration"),
     ("stages/stage2/mod.rs", 2, "seam module registrations"),
@@ -44,7 +46,7 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ("stages/stage5/mod.rs", 3, "seam/twin module registrations"),
     ("stages/stage6a/mod.rs", 1, "seam module registration"),
     ("stages/stage6b/mod.rs", 2, "seam/twin module registrations"),
-    ("stages/stage8/mod.rs", 1, "seam module registration"),
+    ("stages/stage8/mod.rs", 2, "seam module registrations"),
     // Stage verify.rs files: exactly the flagged one-line divergences calling
     // their stage's field_inline seam (struct-literal fields keep the flag on
     // the field line — the uniform impossible-case shape).
@@ -60,9 +62,18 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ),
     (
         "stages/stage8/verify.rs",
-        4,
+        6,
         "flagged seam calls + FR plan test gate",
     ),
+    // The packed batch assembly: the FR proof-slot parameters and the flagged
+    // block calling the stage-8 packed FR seam.
+    (
+        "stages/stage8/packed.rs",
+        4,
+        "FR slot params + flagged seam call",
+    ),
+    // The FR recomposition-mismatch reject is a typed error variant.
+    ("error.rs", 1, "FR typed error variant"),
     // outputs.rs carrier fields are proof shape: FR batch-member slots,
     // output-claim carrier fields, point accessors, re-exports, and the
     // mode-specific test fixtures that construct them.
@@ -172,6 +183,7 @@ const SEAM_MODULES: &[&str] = &[
     "stages/stage6a/field_inline.rs",
     "stages/stage6b/field_inline.rs",
     "stages/stage8/field_inline.rs",
+    "stages/stage8/field_inline_packed.rs",
     "stages/zk/blindfold/field_inline.rs",
     // The FR ConcreteSumcheck twins: separate types per the protocol ruling,
     // cfg-gated at their module registrations.

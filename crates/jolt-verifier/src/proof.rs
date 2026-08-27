@@ -1,5 +1,7 @@
 //! Verifier-owned proof model types.
 
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+use crate::stages::stage8::field_inline_packed::FieldIncLimbClaims;
 use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -72,6 +74,15 @@ pub struct JoltProof<
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
+    /// The packed FR limb-group commitment (`FieldRdInc`'s u64 limb-word
+    /// columns as one dense precommitted group). Present on every FR-on
+    /// packed proof — all-zero content is legal, presence is not claim-gated.
+    /// Carried as an `Option` because producers without FR semantics (the
+    /// legacy packed converter) construct this type; their proofs fail the
+    /// protocol-config gate before the slot is read, and the stage-8 resolve
+    /// rejects a missing payload fail-closed for everything else.
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub field_inc_limbs_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -109,6 +120,8 @@ where
             stages: self.stages,
             joint_opening_proof: self.joint_opening_proof,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_limbs_commitment: self.field_inc_limbs_commitment,
             claims,
             trace_length: self.trace_length,
             ram_K: self.ram_K,
@@ -225,6 +238,11 @@ pub struct ClearProofClaims<F: JoltField> {
     /// cells are present exactly when advice or a committed program is.
     #[cfg(feature = "akita")]
     pub reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims<F>,
+    /// The FR limb-group evaluations at the stage-6b reduced `FieldRdInc`
+    /// point. Present on every FR-on packed proof (see
+    /// [`JoltProof::field_inc_limbs_commitment`] for the `Option` rationale).
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub field_inc_limbs: Option<FieldIncLimbClaims<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

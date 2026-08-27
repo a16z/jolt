@@ -702,6 +702,10 @@ where
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
+        #[cfg(feature = "field-inline")]
+        proof.field_inc_limbs_commitment.as_ref(),
+        #[cfg(feature = "field-inline")]
+        proof.clear_claims()?.field_inc_limbs.as_ref(),
         &proof.joint_opening_proof,
         transcript,
         &checked.precommitted,

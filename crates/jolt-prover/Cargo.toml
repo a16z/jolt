@@ -25,6 +25,8 @@ field-inline = [
   "jolt-r1cs/field-inline",
   "jolt-verifier/field-inline",
   "jolt-witness/field-inline",
+  # The packed FR limb-group schedule params (inert without `akita`).
+  "jolt-akita?/field-inline",
   # Weak forwards: jolt-witness/field-inline turns on jolt-riscv's FR
   # instruction variants, so any build that also compiles the tracer or the
   # legacy prover (the profiling harness and fixtures, and this crate's test

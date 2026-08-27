@@ -21,8 +21,12 @@ use jolt_verifier::stages::stage8::packed::{
 use jolt_verifier::stages::stage8::reconstruction::ReconstructionClearOutput;
 use jolt_verifier::{CheckedInputs, VerifierError};
 
+#[cfg(feature = "field-inline")]
+use super::field_inline::FieldIncLimbsObject;
 use super::witness::{AdviceObject, ProgramOneHot};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
 
 fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     ProverError::Verifier(VerifierError::FinalOpeningBatchFailed {
@@ -70,6 +74,17 @@ where
     .map_err(batch_failed::<F>)
 }
 
+/// The stage-8 wire artifacts: the joint opening proof and (FR builds) the
+/// limb-group claims the proof carries beside it.
+pub struct Stage8Artifacts<PCS>
+where
+    PCS: CommitmentScheme,
+{
+    pub joint_opening_proof: AkitaJointOpeningProof<PCS::Proof>,
+    #[cfg(feature = "field-inline")]
+    pub field_inc_limbs: FieldIncLimbClaims<PCS::Field>,
+}
+
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage8<F, PCS, VC, T>(
@@ -80,12 +95,13 @@ pub fn prove_stage8<F, PCS, VC, T>(
     one_hot_trace_hint: PCS::OpeningHint,
     untrusted_advice: Option<&AdviceObject<PCS>>,
     trusted_advice: Option<&AdviceObject<PCS>>,
+    #[cfg(feature = "field-inline")] field_inc_limbs: &FieldIncLimbsObject<PCS>,
     program: Option<&ProgramOneHot<PCS>>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
     transcript: &mut T,
-) -> Result<AkitaJointOpeningProof<PCS::Proof>, ProverError<F>>
+) -> Result<Stage8Artifacts<PCS>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -125,8 +141,9 @@ where
         .map(|object| reduce_auxiliary(&object.plan, &leaves, transcript))
         .transpose()?;
 
-    // Canonical public batch order: [UntrustedAdvice, TrustedAdvice, OneHotTrace].
-    let mut precommitted = Vec::with_capacity(2);
+    // Canonical public batch order:
+    // [UntrustedAdvice, TrustedAdvice, FieldIncLimbs, OneHotTrace].
+    let mut precommitted = Vec::with_capacity(3);
     for (role, object, claim) in [
         (
             JoltAdviceKind::Untrusted.precommitted_role(),
@@ -153,6 +170,13 @@ where
             ));
         }
     }
+    #[cfg(feature = "field-inline")]
+    let field_inc_limb_claims = {
+        let (claim, claims) =
+            super::field_inline::stage8_batch_entry(field_inc_limbs, stage6b, transcript)?;
+        precommitted.push((claim, field_inc_limbs.hint.clone()));
+        claims
+    };
 
     let main_group = GroupOpeningClaim::new(
         one_hot_trace_commitment.clone(),
@@ -184,5 +208,9 @@ where
         }
     }
 
-    Ok(AkitaJointOpeningProof::new(main_batch, auxiliary))
+    Ok(Stage8Artifacts {
+        joint_opening_proof: AkitaJointOpeningProof::new(main_batch, auxiliary),
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs: field_inc_limb_claims,
+    })
 }

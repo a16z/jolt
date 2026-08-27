@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
 use jolt_field::{Fr, JoltField};
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
@@ -1154,6 +1156,26 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the reconstruction final-claim fold covers the program image leaf",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage8.claims.field_inc_limbs",
+        "claims.field_inc_limbs.limbs",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the packed FR e2e (jolt-prover akita_field_inline_e2e) offsets a limb evaluation; \
+         the stage-8 linear recomposition check rejects it",
+    ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "proof.field_inc_limbs_commitment",
+        "proof.field_inc_limbs_commitment",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Active,
+        "the packed FR e2e flips the limb commitment's layout-digest byte, mutates the batch \
+         proof, and strips the group; each rejects",
+    ),
 ];
 
 pub fn all_targets() -> Vec<TamperTarget> {
@@ -1216,6 +1238,8 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.commitments[*]",
         "proof.joint_opening_proof",
         "proof.untrusted_advice_commitment",
+        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        "proof.field_inc_limbs_commitment",
         "proof.claims",
         "proof.trace_length",
         "proof.ram_K",
@@ -1421,6 +1445,8 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
             bytecode: None,
             program_image: None,
         },
+        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        field_inc_limbs: fill_optionals.then(|| FieldIncLimbClaims { limbs: vec![zero] }),
         stage1: stage1::outputs::Stage1OutputClaims::new(
             zero,
             stage1::outputs::Stage1BatchOutputClaims {

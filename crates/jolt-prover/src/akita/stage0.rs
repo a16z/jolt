@@ -16,6 +16,8 @@ use jolt_verifier::{
 };
 use jolt_witness::JoltWitnessPlane;
 
+#[cfg(feature = "field-inline")]
+use super::field_inline::FieldIncLimbsObject;
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -29,6 +31,9 @@ where
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
+    /// The FR limb group, committed on every FR-on packed proof.
+    #[cfg(feature = "field-inline")]
+    pub field_inc_limbs: FieldIncLimbsObject<PCS>,
 }
 
 /// Validate inputs, commit the packed objects, and seed the transcript.
@@ -129,7 +134,8 @@ where
             reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
         });
     }
-    // Advice commits precede the trace because their profiles select its grouped row.
+    // Precommitted objects commit before the trace because their frozen
+    // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
         Some(commit_advice::<PCS>(
             jolt_claims::protocols::jolt::JoltAdviceKind::Untrusted,
@@ -139,26 +145,40 @@ where
     } else {
         None
     };
+    #[cfg(feature = "field-inline")]
+    let field_inc_limbs = super::field_inline::commit_field_inc_limbs::<F, PCS>(log_t, witness)?;
 
-    // Canonical public batch order: [UntrustedAdvice, TrustedAdvice, OneHotTrace].
-    let precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> = untrusted_advice
-        .as_ref()
-        .map(|object| {
-            (
-                JoltAdviceKind::Untrusted.precommitted_role(),
-                &object.commitment,
-                &object.hint,
-            )
-        })
-        .into_iter()
-        .chain(trusted_advice.map(|object| {
-            (
-                JoltAdviceKind::Trusted.precommitted_role(),
-                &object.commitment,
-                &object.hint,
-            )
-        }))
-        .collect();
+    // Canonical public batch order:
+    // [UntrustedAdvice, TrustedAdvice, FieldIncLimbs, OneHotTrace].
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(unused_mut, reason = "the FR-off build appends nothing")
+    )]
+    let mut precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> =
+        untrusted_advice
+            .as_ref()
+            .map(|object| {
+                (
+                    JoltAdviceKind::Untrusted.precommitted_role(),
+                    &object.commitment,
+                    &object.hint,
+                )
+            })
+            .into_iter()
+            .chain(trusted_advice.map(|object| {
+                (
+                    JoltAdviceKind::Trusted.precommitted_role(),
+                    &object.commitment,
+                    &object.hint,
+                )
+            }))
+            .collect();
+    #[cfg(feature = "field-inline")]
+    precommitted.push((
+        jolt_claims::protocols::field_inline::lattice::field_inc_limbs_precommitted_role(),
+        &field_inc_limbs.commitment,
+        &field_inc_limbs.hint,
+    ));
     let required_batch_polys = precommitted.len() + 1;
     // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
@@ -206,6 +226,8 @@ where
         &commitment,
         untrusted_advice.as_ref().map(|object| &object.commitment),
         trusted_advice.map(|object| &object.commitment),
+        #[cfg(feature = "field-inline")]
+        Some(&field_inc_limbs.commitment),
         preprocessing
             .verifier
             .program
@@ -220,5 +242,7 @@ where
         commitment,
         hint,
         untrusted_advice,
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs,
     })
 }

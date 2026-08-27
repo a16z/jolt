@@ -688,6 +688,10 @@ mod packed {
             stage6b: packed_stage6b_claims_from_openings(&claims)?,
             stage7: packed_stage7_claims_from_openings(&claims)?,
             reconstruction: reconstruction_claims_from_openings(&claims),
+            // Legacy has no packed FR path; an FR-on verifier rejects the
+            // converted proof fail-closed on its disabled FR config.
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs: None,
         })
     }
 

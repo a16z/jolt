@@ -8,7 +8,14 @@
 // protocol-config gate); the FR wire cells get their own typed suite over
 // modular-prover fixtures (`field_inline`). The shape-agnostic `manifest`
 // checks run under every family.
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+// The akita sweep is legacy-fixture-driven too, so it is FR-off like the
+// other legacy suites (its exhaustive claim destructuring would otherwise
+// need the FR wire cells no legacy fixture can populate).
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 pub mod akita;
 #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
 pub mod commitments;
