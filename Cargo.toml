@@ -392,7 +392,7 @@ iai-callgrind = "0.16.1"
 # Runner summary structs only, as the schema oracle for the callgrind
 # objective's JSON parser (jolt-eval dev-dependency).
 iai-callgrind-runner = "0.16.1"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 
 # Logging
 log = { version = "0.4" }
