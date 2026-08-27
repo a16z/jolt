@@ -661,9 +661,17 @@ macro_rules! define_rv64imac_enums {
         impl Instruction {
             /// Whether tracing rewrites this instruction through its inline
             /// sequence so the constraint system never sees rd=x0.
+            ///
+            /// Only top-level (unexpanded) instructions qualify: a row inside
+            /// a virtual sequence is final bytecode — re-expanding it as a
+            /// source would strip its sequence stamp and execute a row that
+            /// diverges from the bytecode (the implicit-carry trailing
+            /// clobber row `ADDI x0,x0,0` is exactly such a row; its raw
+            /// rd=x0 semantics are consistent because it writes 0).
             #[inline]
             fn takes_rd0_expansion(&self) -> bool {
                 self.normalized_rd() == Some(0)
+                    && self.virtual_sequence_remaining().is_none()
                     && !matches!(
                         self,
                         Instruction::SCW(_)
