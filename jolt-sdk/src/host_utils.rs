@@ -279,20 +279,33 @@ pub fn prove_program(
         heap_size: memory_layout.heap_size,
         program_size: Some(memory_layout.program_size),
     };
+    let trace_inputs = TraceInputs::new(
+        inputs.to_vec(),
+        untrusted_advice.to_vec(),
+        trusted_advice.to_vec(),
+        memory_config,
+    )
+    .with_advice_tape(advice_tape);
+    #[cfg(not(feature = "field-inline"))]
     let trace = TracerBackend::new().trace_compact(
         &program,
-        TraceInputs::new(
-            inputs.to_vec(),
-            untrusted_advice.to_vec(),
-            trusted_advice.to_vec(),
-            memory_config,
-        )
-        .with_advice_tape(advice_tape),
+        trace_inputs,
         &program_preprocessing.bytecode,
     )?;
+    #[cfg(feature = "field-inline")]
+    let trace = program.trace_with(&mut TracerBackend::new(), trace_inputs)?;
     let public_io = trace.device.clone();
+    #[cfg(not(feature = "field-inline"))]
     let config = ProverConfig::derive_compact::<F>(
         trace.trace.as_slice(),
+        memory_layout,
+        preprocessing.verifier.program.min_bytecode_address(),
+        preprocessing.verifier.program.program_image_len_words(),
+        preprocessing.verifier.program.max_padded_trace_length(),
+    )?;
+    #[cfg(feature = "field-inline")]
+    let config = ProverConfig::derive::<F>(
+        trace.trace.rows(),
         memory_layout,
         preprocessing.verifier.program.min_bytecode_address(),
         preprocessing.verifier.program.program_image_len_words(),
@@ -305,10 +318,11 @@ pub fn prove_program(
     )
     .include_trusted_advice(trusted_advice_commitment.is_some())
     .include_untrusted_advice(!untrusted_advice.is_empty());
-    let witness = WitnessTraceBackend::<OwnedTrace>::from_compact(
-        witness_config,
-        JoltVmWitnessInputs::new(&program, &program_preprocessing, trace),
-    );
+    let witness_inputs = JoltVmWitnessInputs::new(&program, &program_preprocessing, trace);
+    #[cfg(not(feature = "field-inline"))]
+    let witness = WitnessTraceBackend::<OwnedTrace>::from_compact(witness_config, witness_inputs);
+    #[cfg(feature = "field-inline")]
+    let witness = WitnessTraceBackend::<OwnedTrace>::try_new(witness_config, witness_inputs)?;
     let trusted_advice = match (trusted_advice_commitment, trusted_advice_hint) {
         (Some(commitment), Some(hint)) => Some(TrustedAdviceCommitment { commitment, hint }),
         (None, None) => None,
