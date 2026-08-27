@@ -34,6 +34,14 @@ pub(crate) const PROTOCOL_INTERMEDIATE_REASON: &str =
 pub(crate) const UNSERVED_REASON: &str =
     "no consumer on the modular stack; no trace derivation is defined";
 
+/// WHY: feature-on, the modular stack *does* consume the carry columns
+/// (committed-openings order, stage 6b, `V_NEXT_CARRY`), but modular carry
+/// proving is a staged follow-up — the backend fails closed until a trace
+/// derivation is defined here.
+#[cfg(feature = "implicit-carry")]
+pub(crate) const CARRY_STAGED_REASON: &str =
+    "modular implicit-carry proving is a staged follow-up; no trace derivation is defined yet";
+
 fn not_served(id: JoltPolynomialId, reason: &'static str) -> WitnessError {
     WitnessError::NotServed {
         oracle: format!("{id:?}"),
@@ -88,7 +96,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                     ))
                 }
                 #[cfg(feature = "implicit-carry")]
-                C::Carry => Err(not_served(id, UNSERVED_REASON)),
+                C::Carry => Err(not_served(id, CARRY_STAGED_REASON)),
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
@@ -146,7 +154,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 | V::OpFlags(_)
                 | V::InstructionFlags(_) => Ok(Shape::new(self.trace_log_rows(), Dense)),
                 #[cfg(feature = "implicit-carry")]
-                V::CarryUsed | V::NextCarry => Err(not_served(id, UNSERVED_REASON)),
+                V::CarryUsed | V::NextCarry => Err(not_served(id, CARRY_STAGED_REASON)),
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)
@@ -196,7 +204,7 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 C::TrustedAdvice => self.materialize_trusted_advice(),
                 C::UntrustedAdvice => self.materialize_untrusted_advice(),
                 #[cfg(feature = "implicit-carry")]
-                C::Carry => Err(not_served(id, UNSERVED_REASON)),
+                C::Carry => Err(not_served(id, CARRY_STAGED_REASON)),
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
@@ -256,7 +264,7 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                     self.materialize_cycle_indexed::<F, LookupTableFlag, _>(table)
                 }
                 #[cfg(feature = "implicit-carry")]
-                V::CarryUsed | V::NextCarry => Err(not_served(id, UNSERVED_REASON)),
+                V::CarryUsed | V::NextCarry => Err(not_served(id, CARRY_STAGED_REASON)),
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)

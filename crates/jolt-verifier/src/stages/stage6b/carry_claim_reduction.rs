@@ -17,7 +17,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_poly::try_eq_mle;
+use jolt_poly::{try_eq_mle, EqPolynomial};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::{
@@ -113,8 +113,7 @@ impl<F: Field> ConcreteSumcheck<F> for CarryClaimReduction<F> {
                 try_eq_mle(opening_point, &self.shift_cycle).map_err(public_input_failed)
             }
             CarryClaimReductionPublic::EqZeroSelector => {
-                let zeros = vec![F::zero(); opening_point.len()];
-                try_eq_mle(opening_point, &zeros).map_err(public_input_failed)
+                Ok(EqPolynomial::zero_selector(opening_point))
             }
         }
     }

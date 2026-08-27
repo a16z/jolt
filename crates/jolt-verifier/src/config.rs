@@ -18,7 +18,7 @@ compile_error!(
 #[cfg(all(feature = "implicit-carry", feature = "akita"))]
 compile_error!(
     "the `implicit-carry` and `akita` features are mutually exclusive for now: the packed \
-     witness layout has no Carry column (see specs/implicit-carry-handling.md)"
+     witness layout has no Carry column (see the implicit-carry spec, issue #1710)"
 );
 
 #[cfg(all(feature = "implicit-carry", feature = "zk"))]

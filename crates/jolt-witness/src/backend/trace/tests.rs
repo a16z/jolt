@@ -858,6 +858,8 @@ fn advice_rejects_disabled_and_oversized_advice() {
 
 #[test]
 fn excluded_ids_report_their_classification() {
+    #[cfg(feature = "implicit-carry")]
+    use super::oracle::CARRY_STAGED_REASON;
     use super::oracle::{
         COMMITTED_PROGRAM_REASON, LATTICE_REASON, PROTOCOL_INTERMEDIATE_REASON, UNSERVED_REASON,
     };
@@ -924,13 +926,13 @@ fn excluded_ids_report_their_classification() {
     {
         assert_reason(
             JoltPolynomialId::Committed(JoltCommittedPolynomial::Carry),
-            UNSERVED_REASON,
+            CARRY_STAGED_REASON,
         );
         for id in [
             JoltVirtualPolynomial::CarryUsed,
             JoltVirtualPolynomial::NextCarry,
         ] {
-            assert_reason(JoltPolynomialId::Virtual(id), UNSERVED_REASON);
+            assert_reason(JoltPolynomialId::Virtual(id), CARRY_STAGED_REASON);
         }
     }
 }
