@@ -18,13 +18,6 @@ compile_error!(
      packed commitment axis (a lattice-friendly hiding commitment is a future workstream)"
 );
 
-#[cfg(all(feature = "field-inline", feature = "akita"))]
-compile_error!(
-    "the `field-inline` and `akita` features are mutually exclusive: the field-register \
-     commitment (`FieldRdInc`) is specified for the homomorphic RLC opening path only; its \
-     packed-commitment treatment is being reworked onto the dense-group batch opening"
-);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZkConfig {
     Transparent,

@@ -161,6 +161,12 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,zk
       - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline
         run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline
+      # The packed field-inline combination: the FR limb group rides the
+      # dense-group heterogeneous batch beside advice.
+      - name: cargo clippy -p jolt-verifier --features field-inline,akita
+        run: cargo clippy -p jolt-verifier --all-targets --features field-inline,akita
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline,akita
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,akita
       - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,field-inline
         run: >
           cargo clippy
@@ -438,6 +444,51 @@ jobs:
       # examples; the ci-bench sweep excludes this one).
       - name: Run the eqpoly-field example
         run: cargo run --profile ci -p eqpoly-field --features field-inline
+
+  test-prover-akita-field-inline:
+    runs-on: ubuntu-latest
+    name: Test jolt-prover (packed field-inline e2e)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      # The packed FR acceptance: eq-MLE over fp128 and the FR-inactive
+      # muldiv (the limb group present with all-zero content) accept, plus
+      # the packed FR wire tampers, all proven by the modular packed prover
+      # over both kernel backends with wire equality.
+      - name: Run jolt-prover packed field-inline e2e
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita
+      # The combined-feature verifier unit suite (no fixtures).
+      - name: Run jolt-verifier with field-inline,akita
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features field-inline,akita
+      # The combined-feature kernels unit suite: the composed FR-on packed
+      # kernels (akita parity tests with the FR geometry attached) run only
+      # under this pair.
+      - name: Run jolt-kernels with field-inline,akita
+        run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest

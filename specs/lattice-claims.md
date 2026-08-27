@@ -17,6 +17,12 @@
 > [a16z/jolt#1798](https://github.com/a16z/jolt/pull/1798)
 > for the current advice format, batch-opening flow, and preprocessing-time
 > schedule provisioning design.
+>
+> **Field-inline update:** on FR-on packed builds the joint opening carries a
+> third always-present dense precommitted group — `FieldRdInc`'s u64
+> limb-word columns, role-ordered after `TrustedAdvice` and bound to the
+> stage-6b reduced claim by one linear recomposition check
+> (`specs/field-inline-portability.md`, the dense-group status section).
 
 ## Purpose
 

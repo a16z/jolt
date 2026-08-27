@@ -155,14 +155,48 @@ the FR-inactive muldiv with the object absent, and five rejected tampers).
 The packed reconstruction kernel is the naive reference tier on both
 backends; a sparse optimized kernel is the noted follow-up.
 
-## Status (2026-08-27): packed axis being reworked onto dense-group batching
+## Status (2026-08-27): packed axis re-landed on dense-group batching
 
 Upstream #1798 replaced the byte one-hot advice objects with dense u64-word
-commitments opened through one heterogeneous batch, which is the shape the
-packed `FieldRdInc` treatment is being reworked onto: the one-hot limb
+commitments opened through one heterogeneous batch; the packed `FieldRdInc`
+treatment is re-landed on that mechanism, superseding the one-hot limb
 columns, the `FieldIncLimbReconstruction` member, and the claim-gated limb
-object above are removed, and the `field-inline x akita` compile error is
-restored in `jolt-verifier/src/config.rs` until the dense-group FR design
-lands. The fp128 ruling, the limb decomposition facts
+object above. The `field-inline x akita` compile error is removed again. The
+fp128 ruling, the limb decomposition facts
 (`canonical_limbs`/`limb_place_value`), and the Axis 2 encoding gates are
-unaffected.
+unchanged. The dense-group design:
+
+- One independent dense precommitted group carries `FieldRdInc`'s two
+  canonical u64 limb-word columns (fp128, L = 2), prefix-packed at `log_T`
+  through the shared dense schedule floor
+  (`protocols/field_inline/lattice/packing.rs`), committed in stage 0 beside
+  advice under a transparent setup, and opened in the SAME native
+  heterogeneous batch. Its frozen `PrecommittedRole` is order 2, transcript
+  label `field_inc_limbs`: the canonical batch order is
+  `[UntrustedAdvice, TrustedAdvice, FieldIncLimbs, OneHotTrace]`.
+- The stage-6b reduced `FieldRdInc` claim `(v, r)` binds to the group by ONE
+  explicit verifier equality BEFORE the packing reduction:
+  `v == e0 + 2^64 * e1` over the proof-carried limb evaluations at `r`
+  (typed `FieldIncLimbRecompositionMismatch` reject), which the batch then
+  binds to the committed columns through the selector-reduced physical
+  claim. No reconstruction sumcheck member, no booleanity legs.
+- Presence is never claim-gated: on an FR-on packed build the group is
+  ALWAYS present (all-zero content is legal — dense schedules are keyed by
+  `(num_vars, num_polys)` shape, never content), enforced fail-closed both
+  ways between `PrecommittedSchedule.field_inc_limbs` (always scheduled) and
+  the proof's commitment/claims slots.
+- Provisioning: `AdviceScheduleParams` carries the FR limb arity line
+  (`jolt-akita` `FieldIncLimbScheduleParams`, law-derived data pinned to the
+  jolt-claims packing law by the registry's FR provisioning tests), and the
+  grouped schedule registry enumerates FR-present combinations only — every
+  advice subset (including advice-absent) with the per-final-arity FR
+  profile appended last, planned under the same u64-bounded dense fold
+  policy as advice.
+
+Review gates met: FR-off akita and dory byte-identity (the byte-diff
+ratchets), dory FR-on fixtures unchanged, and the packed accept/tamper suite
+(`jolt-prover/tests/akita_field_inline_e2e.rs`: eq-MLE accepted on both
+kernel backends with wire equality, the FR-inactive muldiv accepted with the
+group present and all-zero, and the tamper matrix — limb-evaluation offset,
+layout-digest flip, batch-proof mutation, stripped group, spurious second
+FR-role group — all rejected).
