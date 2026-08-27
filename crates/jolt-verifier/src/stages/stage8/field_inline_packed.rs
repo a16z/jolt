@@ -106,6 +106,13 @@ pub fn reduced_field_rd_inc<F: JoltField>(stage6b: &Stage6bClearOutput<F>) -> (F
 /// 2. the prefix-pack reduction absorbs the limb evaluations and the reduced
 ///    point, draws the slot selector, and yields the one physical claim the
 ///    heterogeneous batch discharges under the frozen FR role.
+///
+/// The check pins the weighted sum only: nothing verifies that the committed
+/// columns are the canonical u64 decomposition (the u64 envelope is the
+/// dense backend's norm budget, not a verifier range check), so a prover may
+/// commit any limb split recomposing to the same claim. Benign — no relation
+/// consumes a limb column individually; only the recomposed `FieldRdInc`
+/// value reaches protocol state.
 pub fn reduced_precommitted_claim<F, C, T>(
     plan: &FieldIncLimbPackingPlan,
     commitment: &C,

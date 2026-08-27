@@ -469,8 +469,10 @@ mod clear {
         let one = AkitaField::from_u64(1);
 
         // The honest limb polynomial under a corrupted layout digest, through
-        // the real commit path: the metadata gate must reject before any
-        // opening verification.
+        // the real commit path. The digest is part of the commitment's
+        // absorbed identity, so the stage-0 transcript already diverges; the
+        // stage-8 metadata gate is the backstop that pins the digest to the
+        // canonical plan even off-transcript. Either layer rejects.
         let wrong_digest_commitment = {
             let honest = output
                 .proof
