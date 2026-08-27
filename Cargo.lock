@@ -3876,8 +3876,6 @@ dependencies = [
  "jolt-dory",
  "jolt-field",
  "jolt-host",
- "jolt-inlines-keccak256",
- "jolt-inlines-sha2",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",

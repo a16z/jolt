@@ -57,8 +57,6 @@ jolt-host.workspace = true
 jolt-prover.workspace = true
 jolt-witness.workspace = true
 jolt-akita.workspace = true
-jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
-jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 tracer.workspace = true
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }

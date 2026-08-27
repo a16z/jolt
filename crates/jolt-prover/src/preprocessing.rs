@@ -92,9 +92,41 @@ pub(crate) fn encode_shared_preprocessing_tail(
     encoded: &mut Vec<u8>,
 ) -> Result<(), SerializationError> {
     encode_program_metadata(metadata, encoded)?;
-    memory_layout.serialize_compressed(&mut *encoded)?;
+    encode_memory_layout(memory_layout, encoded)?;
     max_padded_trace_length.serialize_compressed(&mut *encoded)?;
     bytecode_chunk_count.serialize_compressed(&mut *encoded)
+}
+
+fn encode_memory_layout(
+    memory_layout: &MemoryLayout,
+    encoded: &mut Vec<u8>,
+) -> Result<(), SerializationError> {
+    // MemoryLayout's canonical derive requires std; use the same field order on wasm.
+    for value in [
+        memory_layout.program_size,
+        memory_layout.max_trusted_advice_size,
+        memory_layout.trusted_advice_start,
+        memory_layout.trusted_advice_end,
+        memory_layout.max_untrusted_advice_size,
+        memory_layout.untrusted_advice_start,
+        memory_layout.untrusted_advice_end,
+        memory_layout.max_input_size,
+        memory_layout.max_output_size,
+        memory_layout.input_start,
+        memory_layout.input_end,
+        memory_layout.output_start,
+        memory_layout.output_end,
+        memory_layout.stack_size,
+        memory_layout.stack_end,
+        memory_layout.heap_size,
+        memory_layout.heap_end,
+        memory_layout.panic,
+        memory_layout.termination,
+        memory_layout.io_end,
+    ] {
+        value.serialize_compressed(&mut *encoded)?;
+    }
+    Ok(())
 }
 
 fn blake2b_256(encoded: &[u8]) -> [u8; 32] {
