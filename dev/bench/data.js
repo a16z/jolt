@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787809437930,
+  "lastUpdate": 1787809626466,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -146290,6 +146290,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 867988,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ca47bbddc52d5c9fc320ff747536a4b1c9c5bc84",
+          "message": "perf: flatten BytecodePCMapper to packed one-word slots (#1809)\n\n* perf(program): flatten BytecodePCMapper to packed one-word slots\n\nget_pc was two dependent heap hops (Vec<Vec<(u16,usize)>>) per call, on\nthe per-cycle witness path (PC materialization in witness generation and\nthe packed bytecode walk) — ~220 ns/row measured on real sha2-chain\nrows. Each validated address is a single descending inline-vsr run at\nconsecutive bytecode indices, so it packs into (first_vsr, last_vsr,\nfirst_pc) in one u64: get_pc is one flat-array load + arithmetic\n(220.5 -> 10.5 ns/row standalone; full per-row extraction around it\n221.6 -> 3.4 ns/row).\n\nSame values for every (address, vsr) by construction; the run invariants\nthe entry-list walk validated are enforced at build (same\nInvalidInlineSequence errors) plus a new NonContiguousInlineSequence\nreject for interleaved sequences the packed form cannot represent (the\nold form accepted them silently; no real bytecode emits them). u32::MAX\nis reserved as the unmapped-slot sentinel, so a build whose pc would\nreach it is rejected (BytecodeTooLarge). jolt-program suite 41/41;\nlegacy byte-diff ratchets pass unchanged.\n\n* refactor(program): name bytecode PC slot fields\n\n* fix(program): reject extra bytecode zero-address rows\n\n* docs(program): document PcSlot field semantics\n\nSpell out what each packed field bounds: `first_pc` doubles as the unmapped\nsentinel, `first_vsr`/`last_vsr` are the upper/lower bounds of the address's\ndescending run, and `last_vsr` is 0 for anything the expander stamps.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(program): validate bytecode PC slots by address run\n\n`try_new` walked rows one at a time, using `EMPTY_SLOT` as a \"have I started\nthis address\" cursor and comparing a PC delta against a sequence delta to catch\ninterleaving. The structure it was validating — each maximal block of\nsame-address rows is one complete inline sequence — is now the structure of the\nloop, via `slice::chunk_by`.\n\nRequiring every run to reach its anchor at 0 (new `UnterminatedInlineSequence`\nreject, unreachable for expander output, which stamps `len - index - 1`) drops\n`last_vsr` from `PcSlot`: a slot now covers exactly `first_vsr..=0` at\n`first_pc..=first_pc + first_vsr`. The slot stays 8 bytes, since `u32 + u16`\npads to the same width.\n\nTwo fixtures move to the reject they now name:\n`rejects_interleaved_inline_sequences` revisits an address after its sequence\ncompletes (still `NonContiguousInlineSequence`), and\n`rejects_zero_address_outside_sentinel` no longer carries a truncated sequence\nthat fired first.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(program): store the sequence length in PcSlot\n\n`first_vsr` named the head of a countdown; the row count is the more direct\nreading of the same quantity. Storing it as `virtual_sequence_length` also frees\n`u32::MAX`: a mapped address always has at least one row, so length 0 is the\nunmapped marker instead.\n\nThat makes `PcSlot::default()` the empty slot, drops the `EMPTY_SLOT` const and\nthe reserved-PC filter, and folds the emptiness test into `get_pc`'s bounds\ncheck — a zero-length slot fails `vsr < length` for every `vsr`, so the hot path\nloses a branch.\n\nReserving 0 costs one representable length, so `MAX_INLINE_ROWS_PER_SOURCE` and\n`MAX_METADATA_SEQUENCE_ROWS` move from `u16::MAX + 1` to `u16::MAX`; both were\nderived from the old vsr encoding, and the packed slot is now the binding limit.\nThe largest registered inline is KECCAK256 at 3260 rows. `validate_run` still\nrejects an over-long run (`InlineSequenceTooLong`) since `try_new` is public.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-27T00:42:16-04:00",
+          "tree_id": "5467f7ddb3f58c725ec177393685e77f4f28f826",
+          "url": "https://github.com/a16z/jolt/commit/ca47bbddc52d5c9fc320ff747536a4b1c9c5bc84"
+        },
+        "date": 1787809621215,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.5672,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 871472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3927,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 496884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 499092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7211,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5961,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500548,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.638,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.887,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.2984,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 863716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5765,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 499248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4777,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 502600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.8197,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 501916,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.6095,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 507148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.2721,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1079000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.2815,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 642256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 74.8476,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2118832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.3261,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4896,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 511092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.5307,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861496,
             "unit": "KB",
             "extra": ""
           }
