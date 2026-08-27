@@ -52,7 +52,7 @@ jobs:
       # On PR: compare against baseline
       - name: Download baseline
         if: github.event_name == 'pull_request'
-        uses: dawidd6/action-download-artifact@v23
+        uses: dawidd6/action-download-artifact@v24
         with:
           name: criterion-baseline
           path: target/criterion/
