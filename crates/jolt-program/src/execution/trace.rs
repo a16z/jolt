@@ -1,7 +1,8 @@
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::{
-    CircuitFlags, Flags, JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
-    JoltInstructionRow, JoltInstructionTag, NormalizedOperands, RV64IMAC_JOLT,
+    CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, JoltCycle, JoltInstruction,
+    JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltInstructionTag,
+    NormalizedOperands, RV64IMAC_JOLT,
 };
 use std::sync::Arc;
 
@@ -490,14 +491,14 @@ impl TraceRow {
     /// The row's cached circuit flags (identical to deriving them from
     /// [`TraceRow::instruction`]; see the field docs).
     #[inline]
-    pub fn circuit_flags(&self) -> jolt_riscv::CircuitFlagSet {
-        jolt_riscv::CircuitFlagSet::from_bits(self.circuit_flags)
+    pub fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::from_bits(self.circuit_flags)
     }
 
     /// The row's cached instruction flags.
     #[inline]
-    pub fn instruction_flags(&self) -> jolt_riscv::InstructionFlagSet {
-        jolt_riscv::InstructionFlagSet::from_bits(self.instruction_flags)
+    pub fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::from_bits(self.instruction_flags)
     }
 
     /// The row's final instruction kind, without reconstructing the full row.

@@ -48,6 +48,7 @@ use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     RoundChallenges,
 };
+use crate::mem::PURGE_MIN_LOG_T;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -441,7 +442,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         if self.left.capacity() >= 8 * self.left.len().max(1) {
             self.left.shrink_to_fit();
             self.right.shrink_to_fit();
-            if !self.purged && self.challenges.total() >= crate::mem::PURGE_MIN_LOG_T {
+            if !self.purged && self.challenges.total() >= PURGE_MIN_LOG_T {
                 self.purged = true;
                 let _ = crate::mem::release_retained_memory();
             }
