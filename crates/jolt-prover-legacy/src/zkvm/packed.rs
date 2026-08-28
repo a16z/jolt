@@ -22,7 +22,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
-use jolt_akita::{AdviceScheduleParams, AkitaSetupParams};
+use jolt_akita::{AkitaSetupParams, PrecommittedScheduleParams};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     is_valid_committed_program_immediate, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
 };
@@ -34,7 +34,7 @@ use jolt_claims::protocols::jolt::lattice::{
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, GroupOpeningClaim,
-    PrecommittedClaim, PrecommittedRole, PrefixPackedClaims, TransparentObjectSetup,
+    PrecommittedClaim, PrefixPackedClaims, TransparentObjectSetup,
 };
 use jolt_poly::Polynomial;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
@@ -751,7 +751,7 @@ impl AkitaPackedProver<'_> {
         let has_precommitted = max_trusted_advice_bytes > 0
             || max_untrusted_advice_bytes > 0
             || !direct_program_physical_vars.is_empty();
-        let advice_schedule = if has_precommitted {
+        let precommitted_schedule = if has_precommitted {
             // The trace this prove uses may be shorter than the program's
             // padded ceiling, but preprocessing must cover every arity a proof
             // of this program can select, so sweep up to the ceiling's arity.
@@ -775,7 +775,7 @@ impl AkitaPackedProver<'_> {
                 .transpose()
                 .expect("trusted-advice physical arity must derive");
             Some(
-                AdviceScheduleParams::new(
+                PrecommittedScheduleParams::new(
                     untrusted_physical_vars,
                     trusted_physical_vars,
                     max_final_num_vars,
@@ -795,7 +795,7 @@ impl AkitaPackedProver<'_> {
             ),
             layout_digest,
             one_hot_k,
-            advice_schedule,
+            precommitted_schedule,
         )
     }
 
@@ -1471,48 +1471,25 @@ impl AkitaPackedProver<'_> {
         let mut precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
         if let Some(object) = advice_object.as_ref() {
             precommitted.push((
-                JoltAdviceKind::Untrusted.precommitted_role(),
+                object.plan.precommitted_role(),
                 &object.commitment,
                 &object.hint,
             ));
         }
         if let Some(object) = trusted_advice {
             precommitted.push((
-                JoltAdviceKind::Trusted.precommitted_role(),
+                object.plan.precommitted_role(),
                 &object.commitment,
                 &object.hint,
             ));
         }
         if let Some(program) = program {
-            for (object_index, object) in program.objects.iter().enumerate() {
-                let id = object
-                    .plan
-                    .packing()
-                    .ids()
-                    .first()
-                    .copied()
-                    .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-                        reason: "direct committed-program object has no polynomial id".to_owned(),
-                    })?;
-                let role = match id {
-                    JoltCommittedPolynomial::BytecodeChunk(index) => PrecommittedRole::new_indexed(
-                        2 + object_index as u64,
-                        b"bytecode_chunk",
-                        "bytecode-chunk",
-                        index as u64,
-                    ),
-                    JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::new(
-                        2 + object_index as u64,
-                        b"program_image_init",
-                        "program-image-init",
-                    ),
-                    _ => {
-                        return Err(VerifierError::FinalOpeningBatchFailed {
-                            reason: "unexpected direct committed-program object role".to_owned(),
-                        })
-                    }
-                };
-                precommitted.push((role, &object.commitment, &object.hint));
+            for object in &program.objects {
+                precommitted.push((
+                    object.plan.precommitted_role(),
+                    &object.commitment,
+                    &object.hint,
+                ));
             }
         }
         let one_hot_trace_witness = self.assemble_one_hot_trace(&plan, &fused_cycles);
@@ -1638,22 +1615,14 @@ impl AkitaPackedProver<'_> {
             .transpose()?;
 
         let mut batch_precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
-        for (role, object, claim) in [
-            (
-                JoltAdviceKind::Untrusted.precommitted_role(),
-                advice_object.as_ref(),
-                untrusted_physical.as_ref(),
-            ),
-            (
-                JoltAdviceKind::Trusted.precommitted_role(),
-                trusted_advice,
-                trusted_physical.as_ref(),
-            ),
+        for (object, claim) in [
+            (advice_object.as_ref(), untrusted_physical.as_ref()),
+            (trusted_advice, trusted_physical.as_ref()),
         ] {
             if let (Some(object), Some(claim)) = (object, claim) {
                 batch_precommitted.push((
                     PrecommittedClaim::new(
-                        role,
+                        object.plan.precommitted_role(),
                         GroupOpeningClaim::new(
                             object.commitment.clone(),
                             claim.point.as_slice().to_vec(),
@@ -1665,7 +1634,7 @@ impl AkitaPackedProver<'_> {
             }
         }
         if let Some(program) = program {
-            for (object_index, object) in program.objects.iter().enumerate() {
+            for object in &program.objects {
                 let claims = self.packed_program_claims(&object.plan)?;
                 let physical = object
                     .plan
@@ -1674,36 +1643,9 @@ impl AkitaPackedProver<'_> {
                     .map_err(|error| VerifierError::FinalOpeningBatchFailed {
                         reason: error.to_string(),
                     })?;
-                let id = object
-                    .plan
-                    .packing()
-                    .ids()
-                    .first()
-                    .copied()
-                    .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-                        reason: "direct committed-program object has no polynomial id".to_owned(),
-                    })?;
-                let role = match id {
-                    JoltCommittedPolynomial::BytecodeChunk(index) => PrecommittedRole::new_indexed(
-                        2 + object_index as u64,
-                        b"bytecode_chunk",
-                        "bytecode-chunk",
-                        index as u64,
-                    ),
-                    JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::new(
-                        2 + object_index as u64,
-                        b"program_image_init",
-                        "program-image-init",
-                    ),
-                    _ => {
-                        return Err(VerifierError::FinalOpeningBatchFailed {
-                            reason: "unexpected direct committed-program object role".to_owned(),
-                        })
-                    }
-                };
                 batch_precommitted.push((
                     PrecommittedClaim::new(
-                        role,
+                        object.plan.precommitted_role(),
                         GroupOpeningClaim::new(
                             object.commitment.clone(),
                             physical.point.as_slice().to_vec(),

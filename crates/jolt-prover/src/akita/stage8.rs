@@ -6,12 +6,10 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
 use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltRelationId};
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim, PrecommittedRole,
-};
+use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
@@ -29,7 +27,7 @@ fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     })
 }
 
-fn reduce_auxiliary<F, T>(
+fn reduce_precommitted<F, T>(
     plan: &PrefixPackedObjectPlan,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
     transcript: &mut T,
@@ -93,29 +91,21 @@ where
         .map_err(batch_failed::<F>)?;
 
     let untrusted_physical = untrusted_advice
-        .map(|object| reduce_auxiliary(&object.plan, &leaves, transcript))
+        .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
         .transpose()?;
     let trusted_physical = trusted_advice
-        .map(|object| reduce_auxiliary(&object.plan, &leaves, transcript))
+        .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
         .transpose()?;
 
     let mut precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
-    for (role, object, claim) in [
-        (
-            JoltAdviceKind::Untrusted.precommitted_role(),
-            untrusted_advice,
-            untrusted_physical.as_ref(),
-        ),
-        (
-            JoltAdviceKind::Trusted.precommitted_role(),
-            trusted_advice,
-            trusted_physical.as_ref(),
-        ),
+    for (object, claim) in [
+        (untrusted_advice, untrusted_physical.as_ref()),
+        (trusted_advice, trusted_physical.as_ref()),
     ] {
         if let (Some(object), Some(claim)) = (object, claim) {
             precommitted.push((
                 PrecommittedClaim::new(
-                    role,
+                    object.plan.precommitted_role(),
                     GroupOpeningClaim::new(
                         object.commitment.clone(),
                         claim.point.as_slice().to_vec(),
@@ -128,36 +118,11 @@ where
     }
 
     if let Some(program) = program {
-        for (object_index, object) in program.objects.iter().enumerate() {
-            let physical = reduce_auxiliary(&object.plan, &leaves, transcript)?;
-            let id = object
-                .plan
-                .packing()
-                .ids()
-                .first()
-                .copied()
-                .ok_or_else(|| batch_failed::<F>("direct program object has no polynomial id"))?;
-            let role = match id {
-                JoltCommittedPolynomial::BytecodeChunk(index) => PrecommittedRole::new_indexed(
-                    2 + object_index as u64,
-                    b"bytecode_chunk",
-                    "bytecode-chunk",
-                    index as u64,
-                ),
-                JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::new(
-                    2 + object_index as u64,
-                    b"program_image_init",
-                    "program-image-init",
-                ),
-                _ => {
-                    return Err(batch_failed::<F>(
-                        "unexpected direct committed-program object role",
-                    ))
-                }
-            };
+        for object in &program.objects {
+            let physical = reduce_precommitted(&object.plan, &leaves, transcript)?;
             precommitted.push((
                 PrecommittedClaim::new(
-                    role,
+                    object.plan.precommitted_role(),
                     GroupOpeningClaim::new(
                         object.commitment.clone(),
                         physical.point.as_slice().to_vec(),

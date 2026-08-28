@@ -26,10 +26,10 @@ use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 /// Upper bound on preprocessing-provisioned rows per config (at most 4 × 32).
 pub const MAX_REGISTERED_ROWS: usize = 128;
 
-/// Public inputs needed to restore this setup's grouped advice schedules.
+/// Public inputs needed to restore this setup's grouped precommitted schedules.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AdviceScheduleParams {
+pub struct PrecommittedScheduleParams {
     untrusted_physical_arity: Option<usize>,
     trusted_physical_arity: Option<usize>,
     #[serde(default)]
@@ -37,7 +37,7 @@ pub struct AdviceScheduleParams {
     final_arity_ceiling: usize,
 }
 
-impl AdviceScheduleParams {
+impl PrecommittedScheduleParams {
     pub fn new(
         untrusted_physical_num_vars: Option<usize>,
         trusted_physical_num_vars: Option<usize>,

@@ -502,8 +502,8 @@ impl CommitmentScheme for AkitaScheme {
             !(params.one_hot_only && params.dense_only),
             "a setup cannot skip both backend flavors"
         );
-        if let Some(advice_schedule) = params.advice_schedule.as_ref() {
-            let _registered_rows = advice_schedule
+        if let Some(precommitted_schedule) = params.precommitted_schedule.as_ref() {
+            let _registered_rows = precommitted_schedule
                 .provision(params.one_hot_k)
                 .map_err(|error| invalid_setup(&error))?;
         }
@@ -560,7 +560,7 @@ impl CommitmentScheme for AkitaScheme {
             max_total_batch_polys: params.max_total_batch_polys,
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
-            advice_schedule: params.advice_schedule,
+            precommitted_schedule: params.precommitted_schedule,
             backend_cache: BackendVerifierCache::with_schedule_rows(),
         };
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
@@ -854,7 +854,7 @@ mod tests {
             max_total_batch_polys: 1,
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
-            advice_schedule: None,
+            precommitted_schedule: None,
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -999,12 +999,13 @@ mod tests {
 
         use crate::configs::JoltOneHotK16;
         use crate::schedule_registry::{
-            self, AdviceScheduleParams, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+            self, PrecommittedScheduleParams, FIXTURE_K16_FINAL_NUM_VARS,
+            FIXTURE_TRUSTED_ADVICE_GROUP,
         };
 
         schedule_registry::reset_for_tests();
         let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.0;
-        let advice_schedule = AdviceScheduleParams::new(
+        let precommitted_schedule = PrecommittedScheduleParams::new(
             None,
             Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
             final_num_vars,
@@ -1015,7 +1016,7 @@ mod tests {
             2,
             [3; 32],
             AKITA_ONE_HOT_K16,
-            Some(advice_schedule),
+            Some(precommitted_schedule),
         ))
         .unwrap();
         let selection = schedule_registry::registered_rows::<JoltOneHotK16>()

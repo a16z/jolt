@@ -16,9 +16,7 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig};
 use jolt_field::JoltField;
-use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim, PrecommittedRole,
-};
+use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -88,7 +86,7 @@ where
     Ok(())
 }
 
-fn validate_auxiliary_metadata<C, S>(
+fn validate_precommitted_metadata<C, S>(
     commitment: &C,
     setup: &S,
     plan: &PrefixPackedObjectPlan,
@@ -99,7 +97,7 @@ where
 {
     if commitment.is_one_hot_backend() {
         return Err(batch_failed(
-            "auxiliary prefix-packed commitments must use Akita's dense backend",
+            "precommitted prefix-packed commitments must use Akita's dense backend",
         ));
     }
     let packed_num_vars = plan.packing().packed_num_vars();
@@ -107,17 +105,17 @@ where
         || setup.default_layout_digest() != plan.layout_digest()
     {
         return Err(batch_failed(
-            "auxiliary commitment/setup has a noncanonical layout digest",
+            "precommitted commitment/setup has a noncanonical layout digest",
         ));
     }
     if commitment.num_vars() != packed_num_vars || setup.max_num_vars() != packed_num_vars {
         return Err(batch_failed(format!(
-            "auxiliary commitment/setup arity must equal canonical packed arity {packed_num_vars}"
+            "precommitted commitment/setup arity must equal canonical packed arity {packed_num_vars}"
         )));
     }
     if commitment.poly_count() != 1 || setup.max_num_polys_per_commitment_group() != 1 {
         return Err(batch_failed(
-            "auxiliary prefix-packed objects must contain one physical polynomial",
+            "precommitted prefix-packed objects must contain one physical polynomial",
         ));
     }
     Ok(())
@@ -140,23 +138,7 @@ where
     PCS: CommitmentScheme,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let claims = object
-        .plan
-        .packing()
-        .ids()
-        .iter()
-        .map(|id| {
-            leaves
-                .get(id)
-                .cloned()
-                .map(|claim| (*id, claim))
-                .ok_or_else(|| {
-                    batch_failed(format!(
-                        "missing final auxiliary claim for packed leaf {id:?}"
-                    ))
-                })
-        })
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let claims = object_leaf_claims(&object.plan, leaves)?;
     let semantic = object.plan.packed_claims(&claims).map_err(batch_failed)?;
     object
         .plan
@@ -222,7 +204,7 @@ where
 {
     // Per-object packings, commitments, and setups in canonical object order:
     // `OneHotTrace` is one prefix-packed polynomial, followed
-    // by the optional auxiliary commitment objects. The shared layout is the
+    // by the optional precommitted objects. The shared layout is the
     // same one the prover committed under.
     // Optional objects join exactly when their direct final reductions exist;
     // presence must agree with the proof/preprocessing commitment slots.
@@ -265,13 +247,13 @@ where
     )?;
 
     let untrusted_claim = if let Some(object) = untrusted.as_ref() {
-        validate_auxiliary_metadata(object.commitment, object.setup, &object.plan)?;
+        validate_precommitted_metadata(object.commitment, object.setup, &object.plan)?;
         Some(reduce_object(object, &leaves, transcript)?)
     } else {
         None
     };
     let trusted_claim = if let Some(object) = trusted.as_ref() {
-        validate_auxiliary_metadata(object.commitment, object.setup, &object.plan)?;
+        validate_precommitted_metadata(object.commitment, object.setup, &object.plan)?;
         Some(reduce_object(object, &leaves, transcript)?)
     } else {
         None
@@ -324,21 +306,13 @@ where
         .checked_add(plans.len())
         .ok_or_else(|| batch_failed("precommitted group capacity overflows"))?;
     let mut precommitted = Vec::with_capacity(capacity);
-    for (role, object, claim) in [
-        (
-            JoltAdviceKind::Untrusted.precommitted_role(),
-            untrusted.as_ref(),
-            untrusted_claim.as_ref(),
-        ),
-        (
-            JoltAdviceKind::Trusted.precommitted_role(),
-            trusted.as_ref(),
-            trusted_claim.as_ref(),
-        ),
+    for (object, claim) in [
+        (untrusted.as_ref(), untrusted_claim.as_ref()),
+        (trusted.as_ref(), trusted_claim.as_ref()),
     ] {
         if let (Some(object), Some(claim)) = (object, claim) {
             precommitted.push(PrecommittedClaim::new(
-                role,
+                object.plan.precommitted_role(),
                 GroupOpeningClaim::new(
                     (*object.commitment).clone(),
                     claim.point.as_slice().to_vec(),
@@ -349,61 +323,20 @@ where
     }
 
     if let Some(committed) = committed {
-        for (object_index, ((plan, commitment), setup)) in plans
+        for ((plan, commitment), setup) in plans
             .into_iter()
             .zip(&committed.direct_program_commitments)
             .zip(&preprocessing.direct_program_setups)
-            .enumerate()
         {
             let object: ResolvedObject<'_, PCS> = ResolvedObject {
                 plan,
                 commitment,
                 setup,
             };
-            validate_auxiliary_metadata(object.commitment, object.setup, &object.plan)?;
+            validate_precommitted_metadata(object.commitment, object.setup, &object.plan)?;
             let physical = reduce_object(&object, &leaves, transcript)?;
-            let id = object
-                .plan
-                .packing()
-                .ids()
-                .first()
-                .copied()
-                .ok_or_else(|| batch_failed("direct program object has no polynomial id"))?;
-            let role_order = u64::try_from(object_index)
-                .ok()
-                .and_then(|index| index.checked_add(2))
-                .ok_or_else(|| batch_failed("direct program object index exceeds role capacity"))?;
-            let role = match id {
-                JoltCommittedPolynomial::BytecodeChunk(index) => {
-                    let transcript_index = u64::try_from(index).map_err(|_| {
-                        batch_failed("bytecode chunk index exceeds transcript capacity")
-                    })?;
-                    PrecommittedRole::new_indexed(
-                        role_order,
-                        b"bytecode_chunk",
-                        "bytecode-chunk",
-                        transcript_index,
-                    )
-                }
-                JoltCommittedPolynomial::ProgramImageInit => {
-                    PrecommittedRole::new(role_order, b"program_image_init", "program-image-init")
-                }
-                JoltCommittedPolynomial::RdInc
-                | JoltCommittedPolynomial::RamInc
-                | JoltCommittedPolynomial::InstructionRa(_)
-                | JoltCommittedPolynomial::BytecodeRa(_)
-                | JoltCommittedPolynomial::RamRa(_)
-                | JoltCommittedPolynomial::TrustedAdvice
-                | JoltCommittedPolynomial::UntrustedAdvice
-                | JoltCommittedPolynomial::BalancedIncDigit(_)
-                | JoltCommittedPolynomial::BalancedIncCarry => {
-                    return Err(batch_failed(
-                        "unexpected direct committed-program object role",
-                    ))
-                }
-            };
             precommitted.push(PrecommittedClaim::new(
-                role,
+                object.plan.precommitted_role(),
                 GroupOpeningClaim::new(
                     (*object.commitment).clone(),
                     physical.point.as_slice().to_vec(),
@@ -465,7 +398,7 @@ pub fn one_hot_trace_packed_claims<F: JoltField>(
     Ok(plan.packed_claims(common_point, evaluations))
 }
 
-/// One auxiliary object's leaf claims: each of the plan's canonical columns
+/// One precommitted object's leaf claims: each of the plan's canonical columns
 /// paired with its resolved leaf claim. Shared verbatim by the packed
 /// prover's stage 8, so both sides fail on the same missing leaf.
 pub fn object_leaf_claims<F: JoltField>(
@@ -482,7 +415,7 @@ pub fn object_leaf_claims<F: JoltField>(
                 .map(|claim| (*id, claim))
                 .ok_or_else(|| {
                     batch_failed(format!(
-                        "missing final auxiliary claim for packed leaf {id:?}"
+                        "missing final precommitted claim for packed leaf {id:?}"
                     ))
                 })
         })

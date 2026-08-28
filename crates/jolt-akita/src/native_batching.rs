@@ -927,35 +927,18 @@ mod tests {
             max_total_batch_polys: 260,
             default_layout_digest: layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            advice_schedule: None,
+            precommitted_schedule: None,
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);
-        let mut precommitted = vec![
-            PrecommittedClaim::new(
-                PrecommittedRole::new(0, b"untrusted_advice", "untrusted-advice"),
-                claim(dense()),
-            ),
-            PrecommittedClaim::new(
-                PrecommittedRole::new(1, b"trusted_advice", "trusted-advice"),
-                claim(dense()),
-            ),
-        ];
-        precommitted.extend((0_u64..256).map(|index| {
-            PrecommittedClaim::new(
-                PrecommittedRole::new_indexed(
-                    2 + index,
-                    b"bytecode_chunk",
-                    "bytecode-chunk",
-                    index,
-                ),
-                claim(dense()),
-            )
-        }));
-        precommitted.push(PrecommittedClaim::new(
-            PrecommittedRole::new(258, b"program_image_init", "program-image-init"),
-            claim(dense()),
-        ));
+        let precommitted = (0_u64..259)
+            .map(|order| {
+                PrecommittedClaim::new(
+                    PrecommittedRole::new(order, b"precommitted", "precommitted"),
+                    claim(dense()),
+                )
+            })
+            .collect::<Vec<_>>();
         let main = claim(commitment(
             AkitaBackendFlavor::OneHot,
             34,

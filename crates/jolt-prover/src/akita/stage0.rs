@@ -3,7 +3,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltRelationId};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
@@ -136,10 +136,10 @@ where
             reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
         });
     }
-    // Advice commits precede the trace because their profiles select its grouped row.
+    // Precommitted objects precede the trace because their profiles select its grouped row.
     let untrusted_advice = if untrusted_advice_present {
         Some(commit_advice::<PCS>(
-            jolt_claims::protocols::jolt::JoltAdviceKind::Untrusted,
+            JoltAdviceKind::Untrusted,
             &public_io.untrusted_advice,
             public_io.memory_layout.max_untrusted_advice_size as usize,
         )?)
@@ -152,7 +152,7 @@ where
             .as_ref()
             .map(|object| {
                 (
-                    JoltAdviceKind::Untrusted.precommitted_role(),
+                    object.plan.precommitted_role(),
                     &object.commitment,
                     &object.hint,
                 )
@@ -160,7 +160,7 @@ where
             .into_iter()
             .chain(trusted_advice.map(|object| {
                 (
-                    JoltAdviceKind::Trusted.precommitted_role(),
+                    object.plan.precommitted_role(),
                     &object.commitment,
                     &object.hint,
                 )
@@ -171,26 +171,12 @@ where
         .as_ref()
         .map(|data| &data.direct_program)
     {
-        for (object_index, object) in program.objects.iter().enumerate() {
-            let role = match object.plan.packing().ids()[0] {
-                JoltCommittedPolynomial::BytecodeChunk(index) => PrecommittedRole::new_indexed(
-                    2 + object_index as u64,
-                    b"bytecode_chunk",
-                    "bytecode-chunk",
-                    index as u64,
-                ),
-                JoltCommittedPolynomial::ProgramImageInit => PrecommittedRole::new(
-                    2 + object_index as u64,
-                    b"program_image_init",
-                    "program-image-init",
-                ),
-                _ => {
-                    return Err(ProverError::InvariantViolation {
-                        reason: "unexpected direct committed-program object role",
-                    })
-                }
-            };
-            precommitted.push((role, &object.commitment, &object.hint));
+        for object in &program.objects {
+            precommitted.push((
+                object.plan.precommitted_role(),
+                &object.commitment,
+                &object.hint,
+            ));
         }
     }
     let required_batch_polys = precommitted.len() + 1;
