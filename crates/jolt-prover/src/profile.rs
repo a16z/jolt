@@ -49,7 +49,6 @@ use jolt_field::Fr;
 // tracer, exactly as the legacy harness does.
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
-use jolt_inlines_sha2::Sha256;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
     format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing_with_trace_path,
@@ -542,10 +541,6 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
 struct ProvenRun {
     duration: std::time::Duration,
     proof_size: Option<usize>,
-    /// Wire-parity fingerprint for A/B runs: clear-mode proving is
-    /// deterministic, so byte-identical proofs ⇔ identical digests. `None`
-    /// on the packed build (no byte encoding to hash).
-    proof_sha256: Option<String>,
 }
 
 fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
@@ -609,17 +604,6 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
     }
-    if let Some(proof_sha256) = &run.proof_sha256 {
-        println!("modular {bench_name} (2^{scale}, {backend_label}): proof sha256 {proof_sha256}");
-        let hash_file = run_dir.join("proof.sha256");
-        if let Err(e) = fs::write(&hash_file, format!("{proof_sha256}\n")) {
-            eprintln!(
-                "Failed to write proof hash file {}: {e}",
-                hash_file.display()
-            );
-        }
-    }
-
     // The legacy harness's 7 CSV fields plus a trailing backend column, in
     // the run directory. Field 7 (`proof_size_compressed`)
     // duplicates the raw size exactly as legacy does — its
@@ -746,19 +730,9 @@ fn prove_workload(
     .expect("modular prove");
     let duration = now.elapsed();
 
-    let proof_bytes = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
-        .expect("serialize proof");
-    let proof_size = proof_bytes.len();
-    let proof_sha256 = {
-        use std::fmt::Write;
-        Sha256::digest(&proof_bytes)
-            .iter()
-            .fold(String::with_capacity(64), |mut s, byte| {
-                let _ = write!(s, "{byte:02x}");
-                s
-            })
-    };
-    drop(proof_bytes);
+    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+        .expect("serialize proof")
+        .len();
 
     // --- Correctness gate (unmeasured): the proof must verify.
     jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
@@ -772,7 +746,6 @@ fn prove_workload(
     ProvenRun {
         duration,
         proof_size: Some(proof_size),
-        proof_sha256: Some(proof_sha256),
     }
 }
 
@@ -889,7 +862,6 @@ fn prove_workload(
         // The packed proof has no byte encoding to measure: the upstream
         // akita field type carries no serde support at the pinned revision.
         proof_size: None,
-        proof_sha256: None,
     }
 }
 

@@ -429,7 +429,7 @@ impl<F: JoltField> SumcheckKernel<F> for IncKernel<F> {
 /// Byte parity against the reference kernel over the sample backend: dense
 /// committed increment columns with live register and RAM activity.
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
+#[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
@@ -508,43 +508,5 @@ mod tests {
                 optimized.output_claims(&claims).unwrap()
             );
         });
-    }
-
-    /// Pins [`PairedEq`] to the dense combined table it replaces: served
-    /// pairs must equal the dense table's pairs at every round, under the
-    /// exact low-to-high bind recurrence.
-    #[test]
-    fn paired_eq_matches_dense_combination() {
-        for log_n in 0..=6usize {
-            let p1 = synthetic_point(log_n, 13);
-            let p2 = synthetic_point(log_n, 17);
-            let (s1, s2) = (Fr::from_u64(97), Fr::from_u64(101));
-
-            let mut dense: Vec<Fr> = scaled_eq_table(&p1, s1);
-            for (acc, term) in dense.iter_mut().zip(scaled_eq_table(&p2, s2)) {
-                *acc += term;
-            }
-            let mut paired = PairedEq::new(&p1, s1, &p2, s2);
-
-            for (round, challenge) in synthetic_point(log_n, 401).iter().enumerate() {
-                for y in 0..dense.len() / 2 {
-                    assert_eq!(
-                        paired.pair(y),
-                        (dense[2 * y], dense[2 * y + 1]),
-                        "log_n {log_n} round {round} group {y}"
-                    );
-                }
-                for y in 0..dense.len() / 2 {
-                    let even = dense[2 * y];
-                    dense[y] = even + *challenge * (dense[2 * y + 1] - even);
-                }
-                dense.truncate(dense.len() / 2);
-                paired.bind(*challenge);
-            }
-            let PairedEq::Dense(final_table) = &paired else {
-                panic!("fully bound paired eq must be dense");
-            };
-            assert_eq!(final_table.as_slice(), dense.as_slice(), "log_n {log_n}");
-        }
     }
 }

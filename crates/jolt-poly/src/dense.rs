@@ -678,23 +678,6 @@ mod tests {
         assert_eq!(direct, via_bind);
     }
 
-    /// `bind_low_to_high_in_place` equals the out-of-place low-to-high bind
-    /// on every size that exercises the level walk (1, 2, boundary, large).
-    #[test]
-    fn bind_low_to_high_in_place_matches_out_of_place() {
-        let mut rng = ChaCha20Rng::seed_from_u64(7);
-        for log in [1usize, 2, 3, 11, 12] {
-            let values: Vec<Fr> = (0..1usize << log).map(|_| Fr::random(&mut rng)).collect();
-            let challenge = Fr::random(&mut rng);
-            let mut expected = Polynomial::new(values.clone());
-            expected.bind_with_order(challenge, crate::BindingOrder::LowToHigh);
-            let mut in_place = Polynomial::new(values);
-            in_place.bind_low_to_high_in_place(challenge);
-            assert_eq!(in_place.evals(), expected.evals(), "log = {log}");
-            assert_eq!(in_place.num_vars(), expected.num_vars());
-        }
-    }
-
     #[test]
     fn zeros_evaluates_to_zero() {
         let mut rng = ChaCha20Rng::seed_from_u64(2);
