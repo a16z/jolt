@@ -48,6 +48,9 @@ use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the
 // tracer, exactly as the legacy harness does.
 use jolt_inlines_keccak256 as _;
+#[cfg(feature = "akita")]
+use jolt_inlines_sha2 as _;
+#[cfg(not(feature = "akita"))]
 use jolt_inlines_sha2::Sha256;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
