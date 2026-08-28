@@ -1,7 +1,8 @@
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::{
-    CircuitFlags, Flags, JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
-    JoltInstructionRow, JoltInstructionTag, NormalizedOperands, RV64IMAC_JOLT,
+    CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, JoltCycle, JoltInstruction,
+    JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltInstructionTag,
+    NormalizedOperands, RV64IMAC_JOLT,
 };
 use std::sync::Arc;
 
@@ -236,18 +237,75 @@ pub struct MemoryImage {
     pub bytes: Vec<(u64, u8)>,
 }
 
-/// Presence bits and packed row metadata (`TraceRow::meta`).
-const RS1_PRESENT: u8 = 1 << 0;
-const RS2_PRESENT: u8 = 1 << 1;
-const RD_PRESENT: u8 = 1 << 2;
-/// Two-bit RAM tag at bits 3..5: [`RAM_NOOP`], [`RAM_READ`], or [`RAM_WRITE`].
-const RAM_TAG_SHIFT: u8 = 3;
-const RAM_TAG_MASK: u8 = 0b11 << RAM_TAG_SHIFT;
-const IMM_NEGATIVE: u8 = 1 << 5;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum RamAccessKind {
+    NoOp,
+    Read,
+    Write,
+}
 
-const RAM_NOOP: u8 = 0;
-const RAM_READ: u8 = 1 << RAM_TAG_SHIFT;
-const RAM_WRITE: u8 = 2 << RAM_TAG_SHIFT;
+/// Presence bits, RAM access kind, and immediate sign packed into one byte.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
+)]
+#[repr(transparent)]
+struct TraceRowMeta(u8);
+
+impl TraceRowMeta {
+    const RS1_PRESENT: u8 = 1 << 0;
+    const RS2_PRESENT: u8 = 1 << 1;
+    const RD_PRESENT: u8 = 1 << 2;
+    const RAM_ACCESS_SHIFT: u8 = 3;
+    const RAM_ACCESS_MASK: u8 = 0b11 << Self::RAM_ACCESS_SHIFT;
+    const IMM_NEGATIVE: u8 = 1 << 5;
+
+    fn new(registers: &RegisterState, ram_access: RamAccessKind, imm_negative: bool) -> Self {
+        let mut bits = (ram_access as u8) << Self::RAM_ACCESS_SHIFT;
+        bits |= Self::RS1_PRESENT * u8::from(registers.rs1.is_some());
+        bits |= Self::RS2_PRESENT * u8::from(registers.rs2.is_some());
+        bits |= Self::RD_PRESENT * u8::from(registers.rd.is_some());
+        bits |= Self::IMM_NEGATIVE * u8::from(imm_negative);
+        Self(bits)
+    }
+
+    #[inline]
+    fn rs1_present(self) -> bool {
+        self.0 & Self::RS1_PRESENT != 0
+    }
+
+    #[inline]
+    fn rs2_present(self) -> bool {
+        self.0 & Self::RS2_PRESENT != 0
+    }
+
+    #[inline]
+    fn rd_present(self) -> bool {
+        self.0 & Self::RD_PRESENT != 0
+    }
+
+    #[inline]
+    fn ram_access(self) -> RamAccessKind {
+        match (self.0 & Self::RAM_ACCESS_MASK) >> Self::RAM_ACCESS_SHIFT {
+            1 => RamAccessKind::Read,
+            2 => RamAccessKind::Write,
+            _ => RamAccessKind::NoOp,
+        }
+    }
+
+    #[inline]
+    fn apply_imm_sign(self, magnitude: u64) -> i128 {
+        let magnitude = magnitude as i128;
+        if self.0 & Self::IMM_NEGATIVE != 0 {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+}
 
 /// Cached `Load`/`Store` circuit-flag bits: the row class selecting the
 /// meaning of the four aliased value slots.
@@ -293,7 +351,7 @@ pub struct TraceRow {
     slots: [u64; 4],
     /// Source RV64 instruction address.
     address: u64,
-    /// Magnitude of the immediate; sign is [`IMM_NEGATIVE`] in `meta`.
+    /// Magnitude of the immediate; sign is carried in `meta`.
     imm_abs: u64,
     /// Cached circuit flags (a pure function of kind, `vsr`, `is_compressed`,
     /// `is_first_in_sequence` — all stored, so this is derived state; caching
@@ -306,7 +364,7 @@ pub struct TraceRow {
     /// Cached instruction flags (a pure function of kind).
     instruction_flags: u8,
     /// Presence bits, RAM tag, immediate sign.
-    meta: u8,
+    meta: TraceRowMeta,
     /// Recorded register ids, valid iff the matching presence bit is set.
     rs1_register: u8,
     rs2_register: u8,
@@ -369,7 +427,6 @@ impl TraceRow {
         let is_load = circuit_flags.get(CircuitFlags::Load);
         let is_store = circuit_flags.get(CircuitFlags::Store);
 
-        let mut meta = 0u8;
         let rs1 = registers.rs1.unwrap_or(RegisterRead {
             register: 0,
             value: 0,
@@ -383,23 +440,24 @@ impl TraceRow {
             pre_value: 0,
             post_value: 0,
         });
-        meta |= RS1_PRESENT * u8::from(registers.rs1.is_some());
-        meta |= RS2_PRESENT * u8::from(registers.rs2.is_some());
-        meta |= RD_PRESENT * u8::from(registers.rd.is_some());
-        let (ram_tag, ram_address, ram_pre, ram_post) = match ram_access {
-            RamAccess::Read(read) => (RAM_READ, read.address, read.value, read.value),
-            RamAccess::Write(write) => {
-                (RAM_WRITE, write.address, write.pre_value, write.post_value)
-            }
-            RamAccess::NoOp => (RAM_NOOP, 0, 0, 0),
+        let (ram_kind, ram_address, ram_pre, ram_post) = match ram_access {
+            RamAccess::Read(read) => (RamAccessKind::Read, read.address, read.value, read.value),
+            RamAccess::Write(write) => (
+                RamAccessKind::Write,
+                write.address,
+                write.pre_value,
+                write.post_value,
+            ),
+            RamAccess::NoOp => (RamAccessKind::NoOp, 0, 0, 0),
         };
-        meta |= ram_tag;
 
         let slots = if is_load {
             if registers.rs2.is_some() {
                 contract_violation(kind, "load row reads rs2");
             }
-            if ram_tag != RAM_NOOP && (ram_pre != rd.post_value || ram_post != rd.post_value) {
+            if ram_kind != RamAccessKind::NoOp
+                && (ram_pre != rd.post_value || ram_post != rd.post_value)
+            {
                 contract_violation(kind, "load RAM value must equal the rd write value");
             }
             [rs1.value, ram_address, rd.pre_value, rd.post_value]
@@ -407,7 +465,7 @@ impl TraceRow {
             if registers.rd.is_some() {
                 contract_violation(kind, "store row writes rd");
             }
-            if ram_tag == RAM_WRITE && ram_post != rs2.value {
+            if ram_kind == RamAccessKind::Write && ram_post != rs2.value {
                 contract_violation(kind, "store RAM write value must equal the rs2 value");
             }
             [rs1.value, rs2.value, ram_pre, ram_address]
@@ -422,7 +480,7 @@ impl TraceRow {
         let Ok(imm_abs) = u64::try_from(imm.unsigned_abs()) else {
             contract_violation(kind, "immediate does not fit the u64 magnitude encoding");
         };
-        meta |= IMM_NEGATIVE * u8::from(imm < 0);
+        let meta = TraceRowMeta::new(&registers, ram_kind, imm < 0);
         let virtual_sequence_remaining = match instruction.virtual_sequence_remaining {
             None => VSR_NONE,
             Some(VSR_NONE) => contract_violation(
@@ -464,7 +522,6 @@ impl TraceRow {
         fn operand(id: u8) -> Option<u8> {
             (id != OPERAND_NONE).then_some(id)
         }
-        let imm_abs = self.imm_abs as i128;
         JoltInstructionRow {
             instruction_kind: self.instruction_kind(),
             address: self.address as usize,
@@ -472,11 +529,7 @@ impl TraceRow {
                 rs1: operand(self.rs1_operand),
                 rs2: operand(self.rs2_operand),
                 rd: operand(self.rd_operand),
-                imm: if self.meta & IMM_NEGATIVE != 0 {
-                    -imm_abs
-                } else {
-                    imm_abs
-                },
+                imm: self.meta.apply_imm_sign(self.imm_abs),
             },
             virtual_sequence_remaining: (self.virtual_sequence_remaining != VSR_NONE)
                 .then_some(self.virtual_sequence_remaining),
@@ -490,14 +543,14 @@ impl TraceRow {
     /// The row's cached circuit flags (identical to deriving them from
     /// [`TraceRow::instruction`]; see the field docs).
     #[inline]
-    pub fn circuit_flags(&self) -> jolt_riscv::CircuitFlagSet {
-        jolt_riscv::CircuitFlagSet::from_bits(self.circuit_flags)
+    pub fn circuit_flags(&self) -> CircuitFlagSet {
+        CircuitFlagSet::from_bits(self.circuit_flags)
     }
 
     /// The row's cached instruction flags.
     #[inline]
-    pub fn instruction_flags(&self) -> jolt_riscv::InstructionFlagSet {
-        jolt_riscv::InstructionFlagSet::from_bits(self.instruction_flags)
+    pub fn instruction_flags(&self) -> InstructionFlagSet {
+        InstructionFlagSet::from_bits(self.instruction_flags)
     }
 
     /// The row's final instruction kind, without reconstructing the full row.
@@ -523,12 +576,7 @@ impl TraceRow {
     /// The instruction's immediate operand (`instruction().operands.imm`).
     #[inline]
     pub fn imm(&self) -> i128 {
-        let imm_abs = self.imm_abs as i128;
-        if self.meta & IMM_NEGATIVE != 0 {
-            -imm_abs
-        } else {
-            imm_abs
-        }
+        self.meta.apply_imm_sign(self.imm_abs)
     }
 
     #[inline]
@@ -544,7 +592,7 @@ impl TraceRow {
 
     #[inline]
     pub fn rs1_read(&self) -> Option<RegisterRead> {
-        (self.meta & RS1_PRESENT != 0).then_some(RegisterRead {
+        self.meta.rs1_present().then_some(RegisterRead {
             register: self.rs1_register,
             value: self.slots[0],
         })
@@ -554,7 +602,7 @@ impl TraceRow {
     pub fn rs2_read(&self) -> Option<RegisterRead> {
         // Loads have no rs2 (checked at construction), so slot 1 never needs
         // disambiguation here.
-        (self.meta & RS2_PRESENT != 0).then_some(RegisterRead {
+        self.meta.rs2_present().then_some(RegisterRead {
             register: self.rs2_register,
             value: self.slots[1],
         })
@@ -563,7 +611,7 @@ impl TraceRow {
     #[inline]
     pub fn rd_write(&self) -> Option<RegisterWrite> {
         // Stores have no rd (checked at construction).
-        (self.meta & RD_PRESENT != 0).then_some(RegisterWrite {
+        self.meta.rd_present().then_some(RegisterWrite {
             register: self.rd_register,
             pre_value: self.slots[2],
             post_value: self.slots[3],
@@ -582,17 +630,17 @@ impl TraceRow {
     #[inline]
     pub fn ram_access(&self) -> RamAccess {
         let (address, pre_value, post_value) = self.ram_slots();
-        match self.meta & RAM_TAG_MASK {
-            RAM_READ => RamAccess::Read(RamRead {
+        match self.meta.ram_access() {
+            RamAccessKind::Read => RamAccess::Read(RamRead {
                 address,
                 value: pre_value,
             }),
-            RAM_WRITE => RamAccess::Write(RamWrite {
+            RamAccessKind::Write => RamAccess::Write(RamWrite {
                 address,
                 pre_value,
                 post_value,
             }),
-            _ => RamAccess::NoOp,
+            RamAccessKind::NoOp => RamAccess::NoOp,
         }
     }
 }
@@ -607,32 +655,34 @@ impl JoltCycle for TraceRow {
 
     #[inline]
     fn rs1_val(&self) -> Option<u64> {
-        (self.meta & RS1_PRESENT != 0).then_some(self.slots[0])
+        self.meta.rs1_present().then_some(self.slots[0])
     }
 
     #[inline]
     fn rs2_val(&self) -> Option<u64> {
-        (self.meta & RS2_PRESENT != 0).then_some(self.slots[1])
+        self.meta.rs2_present().then_some(self.slots[1])
     }
 
     #[inline]
     fn rd_vals(&self) -> Option<(u64, u64)> {
-        (self.meta & RD_PRESENT != 0).then_some((self.slots[2], self.slots[3]))
+        self.meta
+            .rd_present()
+            .then_some((self.slots[2], self.slots[3]))
     }
 
     #[inline]
     fn ram_access_address(&self) -> Option<u64> {
-        (self.meta & RAM_TAG_MASK != RAM_NOOP).then_some(self.ram_slots().0)
+        (self.meta.ram_access() != RamAccessKind::NoOp).then_some(self.ram_slots().0)
     }
 
     #[inline]
     fn ram_read_value(&self) -> Option<u64> {
-        (self.meta & RAM_TAG_MASK != RAM_NOOP).then_some(self.ram_slots().1)
+        (self.meta.ram_access() != RamAccessKind::NoOp).then_some(self.ram_slots().1)
     }
 
     #[inline]
     fn ram_write_value(&self) -> Option<u64> {
-        (self.meta & RAM_TAG_MASK == RAM_WRITE).then_some(self.ram_slots().2)
+        (self.meta.ram_access() == RamAccessKind::Write).then_some(self.ram_slots().2)
     }
 }
 

@@ -49,6 +49,7 @@ use jolt_field::Fr;
 // tracer, exactly as the legacy harness does.
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
+use jolt_inlines_sha2::Sha256;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
     format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing_with_trace_path,
@@ -750,13 +751,12 @@ fn prove_workload(
     let proof_size = proof_bytes.len();
     let proof_sha256 = {
         use std::fmt::Write;
-        jolt_inlines_sha2::Sha256::digest(&proof_bytes).iter().fold(
-            String::with_capacity(64),
-            |mut s, byte| {
+        Sha256::digest(&proof_bytes)
+            .iter()
+            .fold(String::with_capacity(64), |mut s, byte| {
                 let _ = write!(s, "{byte:02x}");
                 s
-            },
-        )
+            })
     };
     drop(proof_bytes);
 

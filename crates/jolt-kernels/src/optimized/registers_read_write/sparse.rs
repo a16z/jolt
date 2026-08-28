@@ -3,6 +3,8 @@
 //! field), the in-place/fused bind walks, and the quadratic round walks.
 //! Representation and algorithm contracts live on the items themselves.
 
+use core::{cmp::Ordering, mem::MaybeUninit};
+
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
@@ -236,10 +238,7 @@ impl Cell for IndexedMeta {
 type SoaRow<'a, F> = (&'a [F], &'a [IndexedMeta]);
 
 /// One block's uninitialized output span across both SoA columns.
-type SoaSpareBlock<'a, F> = (
-    &'a mut [core::mem::MaybeUninit<F>],
-    &'a mut [core::mem::MaybeUninit<IndexedMeta>],
-);
+type SoaSpareBlock<'a, F> = (&'a mut [MaybeUninit<F>], &'a mut [MaybeUninit<IndexedMeta>]);
 
 /// Reassemble the working entry at `i` — pure representation change, the
 /// field values are the stored ones.
@@ -302,16 +301,16 @@ fn merge_soa<F: JoltField>(
     let (mut i, mut j) = (0usize, 0usize);
     while i < evens.1.len() && j < odds.1.len() {
         match evens.1[i].col.cmp(&odds.1[j].col) {
-            core::cmp::Ordering::Equal => {
+            Ordering::Equal => {
                 visit(Some(load_indexed(evens, i)), Some(load_indexed(odds, j)));
                 i += 1;
                 j += 1;
             }
-            core::cmp::Ordering::Less => {
+            Ordering::Less => {
                 visit(Some(load_indexed(evens, i)), None);
                 i += 1;
             }
-            core::cmp::Ordering::Greater => {
+            Ordering::Greater => {
                 visit(None, Some(load_indexed(odds, j)));
                 j += 1;
             }
@@ -747,12 +746,12 @@ fn merge_count<E: Cell>(evens: &[E], odds: &[E]) -> usize {
     let mut produced = 0;
     while i < evens.len() && j < odds.len() {
         match evens[i].col().cmp(&odds[j].col()) {
-            core::cmp::Ordering::Equal => {
+            Ordering::Equal => {
                 i += 1;
                 j += 1;
             }
-            core::cmp::Ordering::Less => i += 1,
-            core::cmp::Ordering::Greater => j += 1,
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
         }
         produced += 1;
     }
@@ -772,18 +771,18 @@ fn merge_bind<E: Cell, B>(
     let mut j = 0;
     while i < evens.len() && j < odds.len() {
         let bound = match evens[i].col().cmp(&odds[j].col()) {
-            core::cmp::Ordering::Equal => {
+            Ordering::Equal => {
                 let entry = bind(Some(&evens[i]), Some(&odds[j]));
                 i += 1;
                 j += 1;
                 entry
             }
-            core::cmp::Ordering::Less => {
+            Ordering::Less => {
                 let entry = bind(Some(&evens[i]), None);
                 i += 1;
                 entry
             }
-            core::cmp::Ordering::Greater => {
+            Ordering::Greater => {
                 let entry = bind(None, Some(&odds[j]));
                 j += 1;
                 entry
@@ -869,11 +868,8 @@ pub(super) enum SparseEntries<F: JoltField> {
     allocative(bound = "F: JoltField")
 )]
 pub(super) enum IncColumn<F: JoltField> {
-    Raw(
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<i128>,
-    ),
+    Raw(Vec<i128>),
     RawBound {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         raw: Vec<i128>,
         #[cfg_attr(feature = "allocative", allocative(skip))]
         r1: F,
@@ -1186,7 +1182,6 @@ pub(super) fn bind_indexed_to_direct<F: JoltField>(
     wa_lut: &CoeffLut<F>,
     r: F,
 ) -> Vec<SparseEntry<F, F>> {
-    use core::mem::MaybeUninit;
     let pair_predicate = |a: &IndexedMeta, b: &IndexedMeta| a.row() / 2 == b.row() / 2;
     let bounds = pair_aligned_bounds(metas, 1);
     let blocks = bounds.len() - 1;
@@ -1277,7 +1272,7 @@ fn accumulate_pair_group<F, E>(
     let mut j = 0;
     while i < evens.len() && j < odds.len() {
         match evens[i].col().cmp(&odds[j].col()) {
-            core::cmp::Ordering::Equal => {
+            Ordering::Equal => {
                 E::accumulate_pair_evals(
                     Some(&evens[i]),
                     Some(&odds[j]),
@@ -1289,11 +1284,11 @@ fn accumulate_pair_group<F, E>(
                 i += 1;
                 j += 1;
             }
-            core::cmp::Ordering::Less => {
+            Ordering::Less => {
                 E::accumulate_pair_evals(Some(&evens[i]), None, inc_evals, inner, ra_lut, wa_lut);
                 i += 1;
             }
-            core::cmp::Ordering::Greater => {
+            Ordering::Greater => {
                 E::accumulate_pair_evals(None, Some(&odds[j]), inc_evals, inner, ra_lut, wa_lut);
                 j += 1;
             }
@@ -1575,7 +1570,6 @@ pub(super) fn bind_seed_entries_fused<F: JoltField>(
     r1: F,
     r2: F,
 ) -> (Vec<F>, Vec<IndexedMeta>) {
-    use core::mem::MaybeUninit;
     // The count pass's u128 column bitmap is exact only while the register
     // domain fits it.
     const _: () = assert!(REGISTER_ADDRESS_BITS <= 7);

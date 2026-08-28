@@ -80,6 +80,7 @@ use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     RoundChallenges,
 };
+use crate::mem::PURGE_MIN_LOG_T;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -770,7 +771,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             self.bz.shrink_to_fit();
             // `rounds = log_t + 1` (joint cycle‖stream domain): strict
             // comparison keeps the threshold's log_t semantics.
-            if !self.purged && self.challenges.total() > crate::mem::PURGE_MIN_LOG_T {
+            if !self.purged && self.challenges.total() > PURGE_MIN_LOG_T {
                 self.purged = true;
                 let _ = crate::mem::release_retained_memory();
             }

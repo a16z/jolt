@@ -24,6 +24,11 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
 use std::collections::BTreeMap;
+#[cfg(not(feature = "zk"))]
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 use jolt_kernels::committed_program::{
     build_committed_bytecode_chunk_coeffs, program_image_words_padded,
@@ -335,21 +340,21 @@ impl<H: Clone> IntoHints<H> for &Vec<H> {
 /// transparent batch path does this) panics rather than serving stale data.
 #[cfg(not(feature = "zk"))]
 struct FoldOnce<F: JoltField> {
-    inner: std::sync::Mutex<Option<Box<dyn MultilinearPoly<F>>>>,
+    inner: Mutex<Option<Box<dyn MultilinearPoly<F>>>>,
     num_vars: usize,
-    remaining: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    remaining: Arc<AtomicUsize>,
 }
 
 #[cfg(not(feature = "zk"))]
 impl<F: JoltField> FoldOnce<F> {
     fn wrap(polynomials: Vec<Box<dyn MultilinearPoly<F>>>) -> Vec<Self> {
-        let remaining = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(polynomials.len()));
+        let remaining = Arc::new(AtomicUsize::new(polynomials.len()));
         polynomials
             .into_iter()
             .map(|poly| Self {
                 num_vars: poly.num_vars(),
-                inner: std::sync::Mutex::new(Some(poly)),
-                remaining: std::sync::Arc::clone(&remaining),
+                inner: Mutex::new(Some(poly)),
+                remaining: Arc::clone(&remaining),
             })
             .collect()
     }
@@ -397,11 +402,7 @@ impl<F: JoltField> MultilinearPoly<F> for FoldOnce<F> {
             // `poly` drops here: the view and (last Arc out) the shared
             // trace columns free mid-open.
         };
-        if self
-            .remaining
-            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel)
-            == 1
-        {
+        if self.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
             let _ = jolt_kernels::mem::release_retained_memory();
         }
         folded

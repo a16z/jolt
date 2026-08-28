@@ -14,11 +14,18 @@
 //! is the only session-parked carry ([`SharedRamAddresses`]) — 8 B/cycle
 //! instead of 24 across the prover's peak window.
 
+use core::marker::PhantomData;
 use std::sync::Arc;
 
+#[cfg(feature = "allocative")]
+use allocative::Visitor;
 use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
+#[cfg(feature = "parallel")]
+use jolt_utils::FirstErrorLatch;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
+#[cfg(feature = "parallel")]
+use jolt_witness::RandomAccessRows;
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -67,7 +74,7 @@ pub(crate) struct SharedRamAddresses(
 
 /// Bytes of the shared address column, attributed once at the session park.
 #[cfg(feature = "allocative")]
-fn visit_shared_addresses(addresses: &Arc<Vec<u64>>, visitor: &mut allocative::Visitor<'_>) {
+fn visit_shared_addresses(addresses: &Arc<Vec<u64>>, visitor: &mut Visitor<'_>) {
     jolt_poly::visit_scalars(addresses.as_ref(), visitor);
 }
 
@@ -133,7 +140,7 @@ where
     struct ColumnSplitter<B, S, const N: usize> {
         columns: [Vec<u64>; N],
         split: S,
-        _bundle: core::marker::PhantomData<B>,
+        _bundle: PhantomData<B>,
     }
     impl<B, S, const N: usize> StreamConsumer for ColumnSplitter<B, S, N>
     where
@@ -153,7 +160,7 @@ where
     let mut consumers = (ColumnSplitter {
         columns: core::array::from_fn(|_| Vec::with_capacity(cycles)),
         split,
-        _bundle: core::marker::PhantomData::<B>,
+        _bundle: PhantomData::<B>,
     },);
     stream_witnesses(witness, 0..cycles, SPLIT_CHUNK, &mut consumers)?;
     Ok(consumers.0.columns)
@@ -163,7 +170,7 @@ where
 /// every column's spare capacity (chunked so extraction load-balances).
 #[cfg(feature = "parallel")]
 fn collect_split_columns_par<F: JoltField, B, const N: usize>(
-    access: &jolt_witness::RandomAccessRows,
+    access: &RandomAccessRows,
     cycles: usize,
     split: &(impl Fn(&B) -> [u64; N] + Sync),
 ) -> Result<[Vec<u64>; N], KernelError<F>>
@@ -173,7 +180,7 @@ where
     use core::mem::MaybeUninit;
     let mut columns: [Vec<u64>; N] = core::array::from_fn(|_| Vec::with_capacity(cycles));
     let chunk_count = cycles.div_ceil(PAR_CHUNK).max(1);
-    let error = jolt_utils::FirstErrorLatch::new();
+    let error = FirstErrorLatch::new();
     {
         let mut chunk_views: Vec<[&mut [MaybeUninit<u64>]; N]> = Vec::with_capacity(chunk_count);
         let mut rests: [&mut [MaybeUninit<u64>]; N] = columns
@@ -236,10 +243,8 @@ pub(crate) struct RamAccessColumns {
     pub addresses: Arc<Vec<u64>>,
     /// Pre-access word value per cycle (a read's value, a write's pre-value);
     /// 0 on no-access cycles.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub post_values: Vec<u64>,
 }
 
