@@ -34,6 +34,7 @@ jolt-verifier::stages/stage6a/outputs.rs::Stage6aSumchecks::<generated>::batchin
 jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge_scalar#0
 jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge_scalar#1
 jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge_scalar#2
+jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge_scalar#3
 jolt-verifier::stages/stage6b/outputs.rs::Stage6bSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage7/outputs.rs::Stage7Sumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage8/reconstruction.rs::ReconstructionSumchecks::<generated>::batching_coefficient[*]

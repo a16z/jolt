@@ -37,6 +37,7 @@ jolt-program::preprocess/program.rs::ProgramMetadata.entry_bytecode_index
 jolt-program::preprocess/program.rs::ProgramMetadata.min_bytecode_address
 jolt-program::preprocess/program.rs::ProgramMetadata.program_image_len_words
 jolt-verifier::config.rs::JoltProtocolConfig.commitment
+jolt-verifier::config.rs::JoltProtocolConfig.field_inline
 jolt-verifier::config.rs::JoltProtocolConfig.scalar_challenge_endianness
 jolt-verifier::config.rs::JoltProtocolConfig.zk
 jolt-verifier::config.rs::ZkConfig::BlindFold
@@ -59,6 +60,7 @@ jolt-verifier::preprocessing.rs::ProgramPreprocessing::Committed.0
 jolt-verifier::preprocessing.rs::ProgramPreprocessing::Full.0
 jolt-verifier::proof.rs::AkitaJointOpeningProof.auxiliary
 jolt-verifier::proof.rs::AkitaJointOpeningProof.main_batch
+jolt-verifier::proof.rs::ClearProofClaims.field_inc_limbs
 jolt-verifier::proof.rs::ClearProofClaims.reconstruction
 jolt-verifier::proof.rs::ClearProofClaims.stage1
 jolt-verifier::proof.rs::ClearProofClaims.stage2
@@ -69,12 +71,14 @@ jolt-verifier::proof.rs::ClearProofClaims.stage6a
 jolt-verifier::proof.rs::ClearProofClaims.stage6b
 jolt-verifier::proof.rs::ClearProofClaims.stage7
 jolt-verifier::proof.rs::JoltCommitments.bytecode_ra
+jolt-verifier::proof.rs::JoltCommitments.field_inline
 jolt-verifier::proof.rs::JoltCommitments.instruction_ra
 jolt-verifier::proof.rs::JoltCommitments.ram_inc
 jolt-verifier::proof.rs::JoltCommitments.ram_ra
 jolt-verifier::proof.rs::JoltCommitments.rd_inc
 jolt-verifier::proof.rs::JoltProof.claims
 jolt-verifier::proof.rs::JoltProof.commitments
+jolt-verifier::proof.rs::JoltProof.field_inc_limbs_commitment
 jolt-verifier::proof.rs::JoltProof.joint_opening_proof
 jolt-verifier::proof.rs::JoltProof.one_hot_config
 jolt-verifier::proof.rs::JoltProof.protocol
