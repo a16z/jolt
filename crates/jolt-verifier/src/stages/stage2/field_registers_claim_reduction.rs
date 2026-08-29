@@ -21,14 +21,13 @@ pub use jolt_claims::protocols::field_inline::relations::claim_reductions::regis
     FieldRegistersClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::field_inline::{
-    FieldInlineDerivedId, FieldInlineRelationId, FieldRegistersClaimReductionPublic,
-    FieldRegistersTraceDimensions,
+    FieldInlineDerivedId, FieldRegistersClaimReductionPublic, FieldRegistersTraceDimensions,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 
 use crate::stages::derivations;
-use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
 use crate::VerifierError;
 
 #[derive(Clone)]
@@ -50,13 +49,10 @@ impl<F: JoltField> FieldRegistersClaimReduction<F> {
     }
 }
 
-fn public_input_failed(reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimSumcheckFailed {
-        stage: format!("{:?}", FieldInlineRelationId::FieldRegistersClaimReduction),
-        reason: reason.to_string(),
-    }
-}
-
+// Only the point geometry stays hand-written: the symbolic output expression
+// references the opening point and `EqSpartan` as opaque `Derived` leaves, so
+// their derivations cannot come from it. Everything else (claim evaluation,
+// struct fill, id projection) is trait defaults + derive-generated code.
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
     type Symbolic = ClaimReduction;
 
@@ -69,12 +65,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &FieldRegistersClaimReductionInputClaims<Vec<F>>,
     ) -> Result<FieldRegistersClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        let opening_point = derivations::reversed(sumcheck_point);
-        Ok(FieldRegistersClaimReductionOutputClaims {
-            rd_value: opening_point.clone(),
-            rs1_value: opening_point.clone(),
-            rs2_value: opening_point,
-        })
+        Ok(FieldRegistersClaimReductionOutputClaims::from_shared_point(
+            derivations::reversed(sumcheck_point),
+        ))
     }
 
     fn derive_output_term(
@@ -84,16 +77,13 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
         output_points: &FieldRegistersClaimReductionOutputClaims<Vec<F>>,
         _challenges: &FieldRegistersClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let FieldInlineDerivedId::FieldRegistersClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
-        };
-        match public_id {
+        match project_public(id)? {
             // The reduced openings share one opening point; bind it against the
             // low product remainder challenges (`tau_low`) — literally the
             // instruction claim reduction's `EqSpartan` derivation.
             FieldRegistersClaimReductionPublic::EqSpartan => {
                 derivations::eq_at_point(output_points.rd_value(), &self.tau_low)
-                    .map_err(public_input_failed)
+                    .map_err(|reason| stage_claim_failed(self.id(), reason))
             }
         }
     }

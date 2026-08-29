@@ -22,14 +22,13 @@ pub use jolt_claims::protocols::field_inline::relations::registers::{
     FieldRegistersReadWriteOutputClaims,
 };
 use jolt_claims::protocols::field_inline::{
-    FieldInlineDerivedId, FieldInlineRelationId, FieldRegistersReadWriteDimensions,
-    FieldRegistersReadWritePublic,
+    FieldInlineDerivedId, FieldRegistersReadWriteDimensions, FieldRegistersReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 
 use crate::stages::derivations;
-use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
 use crate::VerifierError;
 
 #[derive(Clone)]
@@ -53,16 +52,10 @@ impl<F: JoltField> FieldRegistersReadWriteChecking<F> {
     }
 }
 
-fn public_input_failed(reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimSumcheckFailed {
-        stage: format!(
-            "{:?}",
-            FieldInlineRelationId::FieldRegistersReadWriteChecking
-        ),
-        reason: reason.to_string(),
-    }
-}
-
+// Only the point geometry stays hand-written: the symbolic output expression
+// references the opening point and `EqCycle` as opaque `Derived` leaves, so
+// their derivations cannot come from it. Everything else (claim evaluation,
+// struct fill, id projection) is trait defaults + derive-generated code.
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
     type Symbolic = ReadWriteChecking;
 
@@ -78,15 +71,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
         let opening_point = self
             .dimensions
             .read_write_opening_point(sumcheck_point)
-            .map_err(public_input_failed)?
+            .map_err(|reason| stage_claim_failed(self.id(), reason))?
             .opening_point;
-        Ok(FieldRegistersReadWriteOutputClaims {
-            registers_val: opening_point.clone(),
-            rs1_ra: opening_point.clone(),
-            rs2_ra: opening_point.clone(),
-            rd_wa: opening_point.clone(),
-            rd_inc: opening_point,
-        })
+        Ok(FieldRegistersReadWriteOutputClaims::from_shared_point(
+            opening_point,
+        ))
     }
 
     fn derive_output_term(
@@ -96,10 +85,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
         output_points: &FieldRegistersReadWriteOutputClaims<Vec<F>>,
         _challenges: &FieldRegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let FieldInlineDerivedId::FieldRegistersReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
-        };
-        match public_id {
+        match project_public(id)? {
             // The upstream reduced point (`r_prod`) is the fixed cycle; this
             // instance's cycle sub-point is the opening point past the FR
             // address prefix — literally the ordinary
@@ -110,7 +96,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
                 self.dimensions.log_k(),
                 "field-register",
             )
-            .map_err(public_input_failed),
+            .map_err(|reason| stage_claim_failed(self.id(), reason)),
         }
     }
 }

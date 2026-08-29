@@ -504,6 +504,30 @@ where
     Ok(())
 }
 
+/// Project a composite-family derived id onto one relation's own public enum —
+/// the typed destructure every `derive_output_term` starts with, driven by the
+/// id family's generated `TryFrom` inverses of its `From` embeddings. A foreign
+/// relation's id is the same `MissingStageClaimDerived` miss the hand-written
+/// destructures returned. Family-generic: no protocol ids appear here.
+pub fn project_public<D, P>(id: &D) -> Result<P, VerifierError>
+where
+    D: Copy + Into<VerifierDerivedId>,
+    P: TryFrom<D>,
+{
+    P::try_from(*id).map_err(|_| VerifierError::MissingStageClaimDerived { id: (*id).into() })
+}
+
+/// Wrap a point-geometry failure in the uniform stage error, keyed by the
+/// relation's Debug-formatted id. Shared by the relations whose
+/// `derive_opening_points` / `derive_output_term` residue is point geometry, so
+/// none carries its own error-wrapping helper.
+pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierError {
+    VerifierError::StageClaimSumcheckFailed {
+        stage: format!("{stage:?}"),
+        reason: reason.to_string(),
+    }
+}
+
 /// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]
 /// reproduces a stage's inline Fiat-Shamir draw exactly.
 ///

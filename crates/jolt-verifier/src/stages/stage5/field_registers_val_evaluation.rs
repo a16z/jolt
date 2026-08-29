@@ -15,14 +15,14 @@ pub use jolt_claims::protocols::field_inline::relations::registers::{
     FieldRegistersValEvaluationInputClaims, FieldRegistersValEvaluationOutputClaims,
 };
 use jolt_claims::protocols::field_inline::{
-    FieldInlineDerivedId, FieldInlineRelationId, FieldRegistersTraceDimensions,
-    FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
+    FieldInlineDerivedId, FieldRegistersTraceDimensions, FieldRegistersValEvaluationPublic,
+    FIELD_REGISTERS_LOG_K,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 
 use crate::stages::derivations;
-use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
 use crate::VerifierError;
 
 #[derive(Clone)]
@@ -46,13 +46,10 @@ impl<F: JoltField> FieldRegistersValEvaluation<F> {
     }
 }
 
-fn public_input_failed(reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimSumcheckFailed {
-        stage: format!("{:?}", FieldInlineRelationId::FieldRegistersValEvaluation),
-        reason: reason.to_string(),
-    }
-}
-
+// Only the point geometry stays hand-written: the symbolic output expression
+// references the opening point and `LtCycle` as opaque `Derived` leaves, so
+// their derivations cannot come from it. Everything else (claim evaluation,
+// struct fill, id projection) is trait defaults + derive-generated code.
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
     type Symbolic = ValEvaluation;
 
@@ -71,17 +68,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
             self.trace_dimensions.log_t(),
             "field-register",
         )
-        .map_err(public_input_failed)?;
+        .map_err(|reason| stage_claim_failed(self.id(), reason))?;
         let cycle = self
             .trace_dimensions
             .cycle_opening_point(sumcheck_point)
-            .map_err(public_input_failed)?;
-        let opening_point = [address, cycle.as_slice()].concat();
-        // rd_inc and rd_wa are opened at the same point.
-        Ok(FieldRegistersValEvaluationOutputClaims {
-            rd_inc: opening_point.clone(),
-            rd_wa: opening_point,
-        })
+            .map_err(|reason| stage_claim_failed(self.id(), reason))?;
+        Ok(FieldRegistersValEvaluationOutputClaims::from_shared_point(
+            [address, cycle.as_slice()].concat(),
+        ))
     }
 
     fn derive_output_term(
@@ -91,10 +85,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
         output_points: &FieldRegistersValEvaluationOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        let FieldInlineDerivedId::FieldRegistersValEvaluation(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
-        };
-        match public_id {
+        match project_public(id)? {
             // Own cycle sub-point first, upstream FR read/write cycle second —
             // literally the ordinary `RegistersValEvaluation` `LtCycle`
             // derivation at the FR geometry (the spec's
@@ -105,7 +96,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
                 FIELD_REGISTERS_LOG_K,
                 "field-register",
             )
-            .map_err(public_input_failed),
+            .map_err(|reason| stage_claim_failed(self.id(), reason)),
         }
     }
 }

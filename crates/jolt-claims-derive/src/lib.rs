@@ -27,6 +27,10 @@
 //! `Some` (used for advice / committed-program openings that are present only in
 //! some proof configurations).
 //!
+//! A struct whose fields are all plain scalar cells additionally gets
+//! `from_shared_point` on the point cell: the constructor for a relation whose
+//! produced openings all open at one derived point.
+//!
 //! ## `#[derive(InputClaims)]`
 //!
 //! For a relation's *consumed*-claim struct. Each leaf field carries its own
@@ -583,6 +587,31 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     }
 
     let point_accessors = plans.iter().map(point_accessor);
+    // The shared-point constructor exists only for the all-scalar shape: a `Vec`
+    // family or `Option` leaf has no single "every opening at one point" form.
+    let from_shared_point = (!plans.is_empty()
+        && plans.iter().all(|plan| !plan.is_many && !plan.is_option))
+    .then(|| {
+        let fields = plans.iter().enumerate().map(|(index, plan)| {
+            let ident = &plan.ident;
+            // the last field takes ownership of the point; the rest clone it
+            if index + 1 == plans.len() {
+                quote!(#ident: point,)
+            } else {
+                quote!(#ident: point.clone(),)
+            }
+        });
+        quote! {
+            /// Every produced opening at the one shared opening `point` — the
+            /// point form of a relation whose produced openings all open at a
+            /// single derived point. Its `derive_opening_points` builds the
+            /// struct here, so the field enumeration stays owned by this derive
+            /// instead of a hand-written struct literal.
+            pub fn from_shared_point(point: ::std::vec::Vec<F>) -> Self {
+                Self { #(#fields)* }
+            }
+        }
+    });
 
     Ok(quote! {
         // The value resolver lives on the value cell (`C = F`): each field is read
@@ -616,6 +645,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         // `Option<Vec<F>>`). A field and its accessor share a name; `x` reads the
         // field, `x()` calls the accessor.
         impl<F: ::jolt_field::JoltField> #name<::std::vec::Vec<F>> {
+            #from_shared_point
             #(#point_accessors)*
         }
     })
