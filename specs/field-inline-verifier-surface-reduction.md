@@ -88,6 +88,37 @@ transcript byte, and fixture stays identical in every mode.
   attached to the PR discussion so reviewers can see the expanded form the
   derive produces.
 
+## Outcome (2026-08-29): the surface is at its floor; target superseded
+
+The campaign ran as three census-gated units and disproved this spec's
+premise. R1 (mechanism 1) landed −20 lines (commit a018601b3): the
+input-claim and challenge halves were already derived — `ConcreteSumcheck`'s
+trait defaults interpret the symbolic expressions, and only ~53 lines of
+struct-fill/id-destructure residue existed to remove. R2 (mechanism 2) was a
+no-go at ~55 recoverable lines: the BlindFold lowering already is the
+rows-plus-interpreter form this spec proposed (generic `map_expr` +
+jolt-claims geometry tables), the per-stage code is genuine math over
+differently-typed inputs, and stages 2/4/6b hand-curate wire-bearing absorb
+orders no static table can pin. R3 (mechanisms 3–5) was a no-go at ~48/~27/~5
+recoverable lines respectively: the seams' member constructors and attach
+targets are type-distinct (an executor costs what it removes at n=8), the
+composed Spartan/product code already consumes the feature-aware jolt-r1cs
+tables, and the bytecode converter is fail-closed validation plus
+already-schema-driven suppression.
+
+The measured floor under the 2026-08-18 separation ruling is **~4,800
+closure production code lines** (comments excluded). The acceptance target
+above (~2,400) was calibrated against a duplication hypothesis the three
+censuses refuted: the original construction had already banked the
+single-sourcing this spec set out to introduce. Further reduction requires
+one of: type-erasing per-stage claim structs into a dynamic registry
+(surrenders compile-time shape facts, net-negative at n=8); revisiting the
+separation ruling (explicit non-goal); or deleting spec-recorded protocol
+deviations (wire changes, not refactors). The only surviving crumb is a
+~40-line micro-helper harvest in the seams, excluded because its largest
+item relocates an absorb call site and forces an FS-inventory re-bless for
+single-digit savings.
+
 ## Open questions
 
 - Whether stage-2's curated absorb + `validate_product_aliases` equality
