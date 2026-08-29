@@ -127,22 +127,45 @@ pub type TrustedAdviceOpeningHint = DoryHint;
 pub type BlindfoldSetup = PedersenSetup<Bn254G1>;
 
 #[cfg(feature = "host")]
-pub fn preprocess_program(
+fn program_preprocessing(
     source: &mut dyn host::JoltProgramSource,
     mut memory_config: MemoryConfig,
     max_trace_length: usize,
-    bytecode_chunk_count: Option<usize>,
-) -> Result<JoltProverPreprocessing, PreprocessingError> {
+) -> Result<JoltProgramPreprocessing, PreprocessingError> {
     let (bytecode, memory_init, program_size, entry_address) = source.decode();
     memory_config.program_size = Some(program_size);
-    let program = JoltProgramPreprocessing::new(
+    JoltProgramPreprocessing::new(
         bytecode,
         memory_init,
         MemoryLayout::new(&memory_config),
         entry_address,
         max_trace_length,
         source.instruction_profile(),
-    )?;
+    )
+    .map_err(Into::into)
+}
+
+#[cfg(feature = "host")]
+pub fn preprocess_shared_program(
+    source: &mut dyn host::JoltProgramSource,
+    memory_config: MemoryConfig,
+    max_trace_length: usize,
+) -> Result<JoltSharedPreprocessing, PreprocessingError> {
+    JoltSharedPreprocessing::new(program_preprocessing(
+        source,
+        memory_config,
+        max_trace_length,
+    )?)
+}
+
+#[cfg(feature = "host")]
+pub fn preprocess_program(
+    source: &mut dyn host::JoltProgramSource,
+    memory_config: MemoryConfig,
+    max_trace_length: usize,
+    bytecode_chunk_count: Option<usize>,
+) -> Result<JoltProverPreprocessing, PreprocessingError> {
+    let program = program_preprocessing(source, memory_config, max_trace_length)?;
     match bytecode_chunk_count {
         Some(chunk_count) => jolt_prover::dory::preprocess_committed(program, chunk_count),
         None => JoltSharedPreprocessing::new(program).map(jolt_prover::dory::from_shared),

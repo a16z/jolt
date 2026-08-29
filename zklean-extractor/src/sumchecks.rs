@@ -4,12 +4,14 @@ use std::{
 };
 
 use jolt_claims::protocols::jolt::{
-    JoltCommittedPolynomial, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
+    relations::{
+        instruction::InputVirtualization, ram::ReadWriteChecking as RamReadWriteChecking,
+        registers::ReadWriteChecking as RegistersReadWriteChecking, spartan::Shift,
+    },
+    JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial, UnbatchedClaim as Claim,
+    UnbatchedClaimExpr as ClaimExpr, UnbatchedRelation as RelationClaims,
 };
-#[cfg(test)]
-use jolt_field::Ring;
 use jolt_lookup_tables::LookupTableKind;
-use jolt_riscv::{CircuitFlags, InstructionFlags};
 use regex::{NoExpand, Regex};
 
 use crate::{
@@ -17,195 +19,14 @@ use crate::{
     util::indent,
 };
 
-#[derive(Debug, Clone)]
-enum ClaimExpr {
-    Constant(i64),
-    Var(JoltPolynomialId),
-    Add(Box<Self>, Box<Self>),
-    Mul(Box<Self>, Box<Self>),
-    Sub(Box<Self>, Box<Self>),
-}
-
-impl ClaimExpr {
-    fn var(polynomial: impl Into<JoltPolynomialId>) -> Self {
-        Self::Var(polynomial.into())
-    }
-
-    fn add(self, rhs: Self) -> Self {
-        Self::Add(Box::new(self), Box::new(rhs))
-    }
-
-    fn mul(self, rhs: Self) -> Self {
-        Self::Mul(Box::new(self), Box::new(rhs))
-    }
-
-    fn sub(self, rhs: Self) -> Self {
-        Self::Sub(Box::new(self), Box::new(rhs))
-    }
-
-    fn visit_vars(&self, visit: &mut impl FnMut(JoltPolynomialId)) {
-        match self {
-            Self::Constant(_) => {}
-            Self::Var(polynomial) => visit(*polynomial),
-            Self::Add(lhs, rhs) | Self::Mul(lhs, rhs) | Self::Sub(lhs, rhs) => {
-                lhs.visit_vars(visit);
-                rhs.visit_vars(visit);
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn evaluate<F: Ring>(&self, resolve: &mut impl FnMut(JoltPolynomialId) -> F) -> F {
-        match self {
-            Self::Constant(value) => F::from_i64(*value),
-            Self::Var(polynomial) => resolve(*polynomial),
-            Self::Add(lhs, rhs) => lhs.evaluate(resolve) + rhs.evaluate(resolve),
-            Self::Mul(lhs, rhs) => lhs.evaluate(resolve) * rhs.evaluate(resolve),
-            Self::Sub(lhs, rhs) => lhs.evaluate(resolve) - rhs.evaluate(resolve),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Claim {
-    input_relation: JoltRelationId,
-    input: ClaimExpr,
-    output: ClaimExpr,
-    offset: bool,
-}
-
-#[derive(Debug, Clone)]
-struct RelationClaims {
-    output_relation: JoltRelationId,
-    claims: Vec<Claim>,
-}
-
-fn v(polynomial: JoltVirtualPolynomial) -> ClaimExpr {
-    ClaimExpr::var(polynomial)
-}
-
-fn c(polynomial: JoltCommittedPolynomial) -> ClaimExpr {
-    ClaimExpr::var(polynomial)
-}
-
 /// The per-cycle identities underlying the four relations exported to ZKLean.
-/// Their gamma-folded forms are the modular relations in `jolt-claims`.
+/// The runtime sumchecks fold this same metadata by their gamma challenges.
 fn extracted_claims() -> Vec<RelationClaims> {
-    use JoltRelationId as Relation;
-    use JoltVirtualPolynomial as Virtual;
-
     vec![
-        RelationClaims {
-            output_relation: Relation::RamReadWriteChecking,
-            claims: vec![
-                Claim {
-                    input_relation: Relation::SpartanOuter,
-                    input: v(Virtual::RamReadValue),
-                    output: v(Virtual::RamRa).mul(v(Virtual::RamVal)),
-                    offset: false,
-                },
-                Claim {
-                    input_relation: Relation::SpartanOuter,
-                    input: v(Virtual::RamWriteValue),
-                    output: v(Virtual::RamRa)
-                        .mul(v(Virtual::RamVal).add(c(JoltCommittedPolynomial::RamInc))),
-                    offset: false,
-                },
-            ],
-        },
-        RelationClaims {
-            output_relation: Relation::RegistersReadWriteChecking,
-            claims: vec![
-                Claim {
-                    input_relation: Relation::RegistersClaimReduction,
-                    input: v(Virtual::RdWriteValue),
-                    output: v(Virtual::RdWa)
-                        .mul(v(Virtual::RegistersVal).add(c(JoltCommittedPolynomial::RdInc))),
-                    offset: false,
-                },
-                Claim {
-                    input_relation: Relation::RegistersClaimReduction,
-                    input: v(Virtual::Rs1Value),
-                    output: v(Virtual::Rs1Ra).mul(v(Virtual::RegistersVal)),
-                    offset: false,
-                },
-                Claim {
-                    input_relation: Relation::RegistersClaimReduction,
-                    input: v(Virtual::Rs2Value),
-                    output: v(Virtual::Rs2Ra).mul(v(Virtual::RegistersVal)),
-                    offset: false,
-                },
-            ],
-        },
-        RelationClaims {
-            output_relation: Relation::InstructionInputVirtualization,
-            claims: vec![
-                Claim {
-                    input_relation: Relation::SpartanProductVirtualization,
-                    input: v(Virtual::RightInstructionInput),
-                    output: v(Virtual::InstructionFlags(
-                        InstructionFlags::RightOperandIsRs2Value,
-                    ))
-                    .mul(v(Virtual::Rs2Value))
-                    .add(
-                        v(Virtual::InstructionFlags(
-                            InstructionFlags::RightOperandIsImm,
-                        ))
-                        .mul(v(Virtual::Imm)),
-                    ),
-                    offset: false,
-                },
-                Claim {
-                    input_relation: Relation::SpartanProductVirtualization,
-                    input: v(Virtual::LeftInstructionInput),
-                    output: v(Virtual::InstructionFlags(
-                        InstructionFlags::LeftOperandIsRs1Value,
-                    ))
-                    .mul(v(Virtual::Rs1Value))
-                    .add(
-                        v(Virtual::InstructionFlags(InstructionFlags::LeftOperandIsPC))
-                            .mul(v(Virtual::UnexpandedPC)),
-                    ),
-                    offset: false,
-                },
-            ],
-        },
-        RelationClaims {
-            output_relation: Relation::SpartanShift,
-            claims: vec![
-                Claim {
-                    input_relation: Relation::SpartanOuter,
-                    input: v(Virtual::NextUnexpandedPC),
-                    output: v(Virtual::UnexpandedPC),
-                    offset: true,
-                },
-                Claim {
-                    input_relation: Relation::SpartanOuter,
-                    input: v(Virtual::NextPC),
-                    output: v(Virtual::PC),
-                    offset: true,
-                },
-                Claim {
-                    input_relation: Relation::SpartanOuter,
-                    input: v(Virtual::NextIsVirtual),
-                    output: v(Virtual::OpFlags(CircuitFlags::VirtualInstruction)),
-                    offset: true,
-                },
-                Claim {
-                    input_relation: Relation::SpartanOuter,
-                    input: v(Virtual::NextIsFirstInSequence),
-                    output: v(Virtual::OpFlags(CircuitFlags::IsFirstInSequence)),
-                    offset: true,
-                },
-                Claim {
-                    input_relation: Relation::SpartanProductVirtualization,
-                    input: ClaimExpr::Constant(1).sub(v(Virtual::NextIsNoop)),
-                    output: ClaimExpr::Constant(1)
-                        .sub(v(Virtual::InstructionFlags(InstructionFlags::IsNoop))),
-                    offset: true,
-                },
-            ],
-        },
+        RamReadWriteChecking::unbatched_relation(),
+        RegistersReadWriteChecking::unbatched_relation(),
+        InputVirtualization::unbatched_relation(),
+        Shift::unbatched_relation(),
     ]
 }
 
@@ -253,12 +74,12 @@ impl ZkLeanSumchecks {
         for relation_claims in &claims {
             vars.entry(relation_claims.output_relation).or_default();
             for claim in &relation_claims.claims {
-                claim.input.visit_vars(&mut |polynomial| {
+                claim.input.visit_polynomials(&mut |polynomial| {
                     vars.entry(claim.input_relation)
                         .or_default()
                         .insert(polynomial_ident(polynomial));
                 });
-                claim.output.visit_vars(&mut |polynomial| {
+                claim.output.visit_polynomials(&mut |polynomial| {
                     vars.entry(relation_claims.output_relation)
                         .or_default()
                         .insert(polynomial_ident(polynomial));
@@ -459,7 +280,7 @@ fn pretty_print_claim_expr(
 ) -> std::io::Result<()> {
     match expr {
         ClaimExpr::Constant(value) => write!(f, "{value}"),
-        ClaimExpr::Var(polynomial) => {
+        ClaimExpr::Polynomial(polynomial) => {
             write!(f, "{vars}.{}", ZkLeanVarRef::new(relation, *polynomial))
         }
         ClaimExpr::Add(lhs, rhs) | ClaimExpr::Mul(lhs, rhs) | ClaimExpr::Sub(lhs, rhs) => {
@@ -492,147 +313,5 @@ impl AsModule for ZkLeanSumchecks {
             imports: vec![String::from("zkLean"), String::from("Jolt.R1CS")],
             contents,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ark_std::{One, Zero};
-    use jolt_claims::protocols::jolt::relations::{
-        instruction::InputVirtualization, ram::ReadWriteChecking as RamReadWriteChecking,
-        registers::ReadWriteChecking as RegistersReadWriteChecking, spartan::Shift,
-    };
-    use jolt_claims::protocols::jolt::{
-        InstructionInputPublic, JoltChallengeId, JoltDerivedId, JoltOpeningId, RamReadWritePublic,
-        ReadWriteDimensions, RegistersReadWritePublic, SpartanShiftPublic, TraceDimensions,
-    };
-    use jolt_claims::SymbolicSumcheck;
-    use jolt_field::{Fr, Ring};
-
-    fn polynomial_values(claims: &RelationClaims) -> BTreeMap<JoltPolynomialId, Fr> {
-        let mut polynomials = BTreeSet::new();
-        for claim in &claims.claims {
-            claim.input.visit_vars(&mut |polynomial| {
-                polynomials.insert(polynomial);
-            });
-            claim.output.visit_vars(&mut |polynomial| {
-                polynomials.insert(polynomial);
-            });
-        }
-        polynomials
-            .into_iter()
-            .enumerate()
-            .map(|(index, polynomial)| (polynomial, Fr::from_u64(index as u64 + 2)))
-            .collect()
-    }
-
-    fn assert_matches_runtime_relation<S>(
-        extracted: &RelationClaims,
-        runtime: &S,
-        gamma: Fr,
-        output_weight: impl Fn(JoltRelationId) -> Fr,
-        derived_value: impl Fn(&JoltDerivedId) -> Fr,
-    ) where
-        S: SymbolicSumcheck<
-            RelationId = JoltRelationId,
-            OpeningId = JoltOpeningId,
-            DerivedId = JoltDerivedId,
-            ChallengeId = JoltChallengeId,
-        >,
-    {
-        assert_eq!(extracted.output_relation, S::id());
-        let values = polynomial_values(extracted);
-        let resolve_polynomial = |polynomial| values[&polynomial];
-
-        let runtime_input = runtime.input_expression::<Fr>().evaluate(
-            |opening| resolve_polynomial(opening.polynomial_id()),
-            |_| gamma,
-            |_| Fr::zero(),
-        );
-        let runtime_output = runtime.output_expression::<Fr>().evaluate(
-            |opening| resolve_polynomial(opening.polynomial_id()),
-            |_| gamma,
-            derived_value,
-        );
-
-        let mut gamma_power = Fr::one();
-        let mut extracted_input = Fr::zero();
-        let mut extracted_output = Fr::zero();
-        for claim in &extracted.claims {
-            extracted_input += gamma_power
-                * claim
-                    .input
-                    .evaluate(&mut |polynomial| resolve_polynomial(polynomial));
-            extracted_output += gamma_power
-                * output_weight(claim.input_relation)
-                * claim
-                    .output
-                    .evaluate(&mut |polynomial| resolve_polynomial(polynomial));
-            gamma_power *= gamma;
-        }
-
-        assert_eq!(extracted_input, runtime_input);
-        assert_eq!(extracted_output, runtime_output);
-    }
-
-    #[test]
-    fn exported_unfused_claims_gamma_fold_to_runtime_relations() {
-        let claims = extracted_claims();
-        let get = |relation| {
-            claims
-                .iter()
-                .find(|claims| claims.output_relation == relation)
-                .expect("exported relation exists")
-        };
-        let gamma = Fr::from_u64(37);
-        let eq = Fr::from_u64(41);
-        let eq_product = Fr::from_u64(43);
-
-        assert_matches_runtime_relation(
-            get(JoltRelationId::RamReadWriteChecking),
-            &RamReadWriteChecking::new(ReadWriteDimensions::new(5, 4, 2, 1)),
-            gamma,
-            |_| eq,
-            |derived| match derived {
-                JoltDerivedId::RamReadWrite(RamReadWritePublic::EqCycle) => eq,
-                _ => Fr::zero(),
-            },
-        );
-        assert_matches_runtime_relation(
-            get(JoltRelationId::RegistersReadWriteChecking),
-            &RegistersReadWriteChecking::new(ReadWriteDimensions::new(5, 7, 2, 1)),
-            gamma,
-            |_| eq,
-            |derived| match derived {
-                JoltDerivedId::RegistersReadWrite(RegistersReadWritePublic::EqCycle) => eq,
-                _ => Fr::zero(),
-            },
-        );
-        assert_matches_runtime_relation(
-            get(JoltRelationId::InstructionInputVirtualization),
-            &InputVirtualization::new(TraceDimensions::new(5)),
-            gamma,
-            |_| eq,
-            |derived| match derived {
-                JoltDerivedId::InstructionInput(InstructionInputPublic::EqProduct) => eq,
-                _ => Fr::zero(),
-            },
-        );
-        assert_matches_runtime_relation(
-            get(JoltRelationId::SpartanShift),
-            &Shift::new(TraceDimensions::new(5)),
-            gamma,
-            |input_relation| match input_relation {
-                JoltRelationId::SpartanOuter => eq,
-                JoltRelationId::SpartanProductVirtualization => eq_product,
-                _ => Fr::zero(),
-            },
-            |derived| match derived {
-                JoltDerivedId::SpartanShift(SpartanShiftPublic::EqPlusOneOuter) => eq,
-                JoltDerivedId::SpartanShift(SpartanShiftPublic::EqPlusOneProduct) => eq_product,
-                _ => Fr::zero(),
-            },
-        );
     }
 }

@@ -536,62 +536,27 @@ impl MacroBuilder {
     fn make_preprocess_shared_func(&self) -> TokenStream2 {
         let attributes = parse_attributes(&self.attr);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
-        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
-        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_untrusted_advice_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
-        let max_trusted_advice_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
-        let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
-        let heap_size = proc_macro2::Literal::u64_unsuffixed(attributes.heap_size);
-        let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
         let preprocess_shared_fn_name =
             Ident::new(&format!("preprocess_shared_{fn_name}"), fn_name.span());
+        let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_fn_name(program: &mut dyn jolt::host::JoltProgramSource)
                 -> Result<jolt::JoltSharedPreprocessing, jolt::PreprocessingError>
             {
-                #imports
-
-                let (bytecode, memory_init, program_size, e_entry) = program.decode();
-                let memory_config = MemoryConfig {
-                    max_input_size: #max_input_size,
-                    max_output_size: #max_output_size,
-                    max_untrusted_advice_size: #max_untrusted_advice_size,
-                    max_trusted_advice_size: #max_trusted_advice_size,
-                    stack_size: #stack_size,
-                    heap_size: #heap_size,
-                    program_size: Some(program_size),
-                };
-                let memory_layout = MemoryLayout::new(&memory_config);
-
-                let program_data = jolt::JoltProgramPreprocessing::new(
-                    bytecode,
-                    memory_init,
-                    memory_layout,
-                    e_entry,
+                jolt::preprocess_shared_program(
+                    program,
+                    #memory_config_fn_name(),
                     #max_trace_length,
-                    program.instruction_profile(),
-                )?;
-                JoltSharedPreprocessing::new(program_data)
+                )
             }
         }
     }
 
     fn make_preprocess_shared_committed_func(&self) -> TokenStream2 {
-        let imports = self.make_imports();
         let attributes = parse_attributes(&self.attr);
-        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
-        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_untrusted_advice_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
-        let max_trusted_advice_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
-        let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
-        let heap_size = proc_macro2::Literal::u64_unsuffixed(attributes.heap_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
 
         let fn_name = self.get_func_name();
@@ -599,6 +564,7 @@ impl MacroBuilder {
             &format!("preprocess_shared_committed_{fn_name}"),
             fn_name.span(),
         );
+        let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_shared_committed_fn_name(
@@ -606,31 +572,11 @@ impl MacroBuilder {
                 bytecode_chunk_count: usize,
             ) -> Result<jolt::JoltProverPreprocessing, jolt::PreprocessingError>
             {
-                #imports
-
-                let (bytecode, memory_init, program_size, e_entry) = program.decode();
-                let memory_config = MemoryConfig {
-                    max_input_size: #max_input_size,
-                    max_output_size: #max_output_size,
-                    max_untrusted_advice_size: #max_untrusted_advice_size,
-                    max_trusted_advice_size: #max_trusted_advice_size,
-                    stack_size: #stack_size,
-                    heap_size: #heap_size,
-                    program_size: Some(program_size),
-                };
-                let memory_layout = MemoryLayout::new(&memory_config);
-
-                let program_data = jolt::JoltProgramPreprocessing::new(
-                    bytecode,
-                    memory_init,
-                    memory_layout,
-                    e_entry,
+                jolt::preprocess_program(
+                    program,
+                    #memory_config_fn_name(),
                     #max_trace_length,
-                    program.instruction_profile(),
-                )?;
-                jolt::jolt_prover::dory::preprocess_committed(
-                    program_data,
-                    bytecode_chunk_count,
+                    Some(bytecode_chunk_count),
                 )
             }
         }

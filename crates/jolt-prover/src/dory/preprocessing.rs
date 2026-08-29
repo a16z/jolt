@@ -349,7 +349,26 @@ mod tests {
     use jolt_riscv::RV64IMAC_JOLT;
     use jolt_verifier::CommittedProgramPreprocessing;
 
-    use super::committed_program_digest;
+    use super::{committed_program_digest, from_shared, preprocess_committed};
+    use crate::JoltSharedPreprocessing;
+
+    fn assert_prover_preprocessing_round_trips(preprocessing: &super::DoryProverPreprocessing) {
+        let encoded =
+            bincode::serde::encode_to_vec(preprocessing, bincode::config::standard()).unwrap();
+        let (decoded, consumed): (super::DoryProverPreprocessing, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            bincode::serde::encode_to_vec(&decoded, bincode::config::standard()).unwrap(),
+            encoded
+        );
+        assert_eq!(
+            decoded.verifier.preprocessing_digest,
+            preprocessing.verifier.preprocessing_digest
+        );
+        assert_eq!(decoded.program(), preprocessing.program());
+    }
 
     #[test]
     fn committed_preprocessing_digest_is_legacy_compatible() {
@@ -377,5 +396,35 @@ mod tests {
                 95, 29, 19, 80, 25, 95, 199, 196, 52, 42, 106, 98, 139,
             ]
         );
+    }
+
+    #[test]
+    fn full_prover_preprocessing_round_trips() {
+        let full = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        let preprocessing = from_shared(JoltSharedPreprocessing::new(full).unwrap());
+        assert_prover_preprocessing_round_trips(&preprocessing);
+    }
+
+    #[test]
+    fn committed_prover_preprocessing_round_trips() {
+        let full = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        let preprocessing = preprocess_committed(full, 1).unwrap();
+        assert_prover_preprocessing_round_trips(&preprocessing);
     }
 }

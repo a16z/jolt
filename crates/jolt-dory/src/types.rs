@@ -107,6 +107,27 @@ impl<'de> Deserialize<'de> for DoryProof {
 #[derive(Clone)]
 pub struct DoryProverSetup(pub ArkworksProverSetup);
 
+impl Serialize for DoryProverSetup {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        canonical_serialize(&self.0, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DoryProverSetup {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let mut cursor = Cursor::new(&buf[..]);
+        let setup = ArkworksProverSetup::deserialize_compressed(&mut cursor)
+            .map_err(serde::de::Error::custom)?;
+        if cursor.position() != buf.len() as u64 {
+            return Err(serde::de::Error::custom(
+                "Dory prover setup encoding has trailing bytes",
+            ));
+        }
+        Ok(Self(setup))
+    }
+}
+
 #[derive(Clone)]
 pub struct DoryVerifierSetup(pub ArkworksVerifierSetup);
 
@@ -126,7 +147,7 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DoryHint {
     pub(crate) row_commitments: Vec<Bn254G1>,
     pub(crate) commit_blind: Fr,

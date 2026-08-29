@@ -1,6 +1,6 @@
 use jolt_field::{Fr, Ring};
 use jolt_r1cs::{
-    constraints::rv64::{self, NUM_CONSTRAINTS_PER_CYCLE, NUM_VARS_PER_CYCLE, V_CONST},
+    constraints::rv64::{self, RV64_CONSTRAINT_NAMES, RV64_VARIABLE_NAMES, V_CONST},
     ConstraintMatrices, SparseRow,
 };
 use jolt_riscv::CircuitFlags;
@@ -10,72 +10,6 @@ use crate::{
     modules::{AsModule, Module},
     util::indent,
 };
-
-const VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = [
-    "One",
-    "LeftInstructionInput",
-    "RightInstructionInput",
-    "Product",
-    "ShouldBranch",
-    "PC",
-    "UnexpandedPC",
-    "Imm",
-    "RamAddress",
-    "Rs1Value",
-    "Rs2Value",
-    "RdWriteValue",
-    "RamReadValue",
-    "RamWriteValue",
-    "LeftLookupOperand",
-    "RightLookupOperand",
-    "NextUnexpandedPC",
-    "NextPC",
-    "NextIsVirtual",
-    "NextIsFirstInSequence",
-    "LookupOutput",
-    "ShouldJump",
-    "OpFlags_AddOperands",
-    "OpFlags_SubtractOperands",
-    "OpFlags_MultiplyOperands",
-    "OpFlags_Load",
-    "OpFlags_Store",
-    "OpFlags_Jump",
-    "OpFlags_WriteLookupOutputToRD",
-    "OpFlags_VirtualInstruction",
-    "OpFlags_Assert",
-    "OpFlags_DoNotUpdateUnexpandedPC",
-    "OpFlags_Advice",
-    "OpFlags_IsCompressed",
-    "OpFlags_IsFirstInSequence",
-    "OpFlags_IsLastInSequence",
-    "Branch",
-    "NextIsNoop",
-];
-
-const CONSTRAINT_NAMES: [&str; NUM_CONSTRAINTS_PER_CYCLE] = [
-    "RamAddrEqRs1PlusImmIfLoadStore",
-    "RamAddrEqZeroIfNotLoadStore",
-    "RamReadEqRamWriteIfLoad",
-    "RamReadEqRdWriteIfLoad",
-    "Rs2EqRamWriteIfStore",
-    "LeftLookupZeroUnlessAddSubMul",
-    "LeftLookupEqLeftInputOtherwise",
-    "RightLookupAdd",
-    "RightLookupSub",
-    "RightLookupEqProductIfMul",
-    "RightLookupEqRightInputOtherwise",
-    "AssertLookupOne",
-    "RdWriteEqLookupIfWriteLookupToRd",
-    "RdWriteEqPCPlusConstIfWritePCtoRD",
-    "NextUnexpPCEqLookupIfShouldJump",
-    "NextUnexpPCEqPCPlusImmIfShouldBranch",
-    "NextUnexpPCUpdateOtherwise",
-    "NextPCEqPCPlusOneIfInline",
-    "MustStartSequenceFromBeginning",
-    "Product",
-    "ShouldBranch",
-    "ShouldJump",
-];
 
 pub struct ZkLeanR1CSConstraints<J> {
     matrices: ConstraintMatrices<Fr>,
@@ -103,7 +37,7 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
             indent(indent_level)
         )?;
         indent_level += 1;
-        for field in &VARIABLE_NAMES[1..] {
+        for field in &RV64_VARIABLE_NAMES[1..] {
             writeln!(f, "{}{field} : ZKExpr f", indent(indent_level))?;
         }
         writeln!(f)?;
@@ -117,7 +51,7 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
         indent_level += 1;
         writeln!(f, "{}witness := do", indent(indent_level))?;
         indent_level += 1;
-        for field in &VARIABLE_NAMES[1..] {
+        for field in &RV64_VARIABLE_NAMES[1..] {
             writeln!(
                 f,
                 "{}let {field} <- Witnessable.witness",
@@ -127,7 +61,7 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
         writeln!(f)?;
         writeln!(f, "{}pure {{", indent(indent_level))?;
         indent_level += 1;
-        for field in &VARIABLE_NAMES[1..] {
+        for field in &RV64_VARIABLE_NAMES[1..] {
             writeln!(f, "{}{field} := {field}", indent(indent_level))?;
         }
         indent_level -= 1;
@@ -149,7 +83,12 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
             .zip(&self.matrices.c)
             .enumerate()
         {
-            writeln!(f, "{}-- {}", indent(indent_level), CONSTRAINT_NAMES[index])?;
+            writeln!(
+                f,
+                "{}-- {}",
+                indent(indent_level),
+                RV64_CONSTRAINT_NAMES[index]
+            )?;
             writeln!(f, "{}ZKBuilder.constrainR1CS", indent(indent_level))?;
             indent_level += 1;
             writeln!(
@@ -212,7 +151,7 @@ fn pretty_print_term(inputs_struct: &str, variable: usize, coefficient: Fr) -> S
         return coefficient.to_string();
     }
 
-    let variable = format!("{inputs_struct}.{}", VARIABLE_NAMES[variable]);
+    let variable = format!("{inputs_struct}.{}", RV64_VARIABLE_NAMES[variable]);
     match coefficient {
         1 => variable,
         coefficient => format!("({coefficient}*{variable})"),

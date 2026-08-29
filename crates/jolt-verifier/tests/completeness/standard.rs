@@ -1,10 +1,24 @@
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support;
 
+const DORY_MULDIV_PROOF_DIGEST: [u8; 32] = [
+    74, 157, 108, 227, 221, 184, 160, 181, 189, 204, 163, 209, 56, 155, 205, 46, 148, 247, 96, 38,
+    255, 115, 71, 154, 146, 236, 110, 243, 111, 66, 219, 63,
+];
+const DORY_COMMITTED_MULDIV_PROOF_DIGEST: [u8; 32] = [
+    113, 41, 118, 10, 141, 181, 219, 89, 177, 44, 194, 60, 154, 251, 167, 61, 115, 217, 19, 176,
+    253, 114, 12, 224, 64, 51, 80, 197, 52, 33, 37, 144,
+];
+
 #[test]
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn standard_muldiv_verifier_proof_is_accepted() {
-    support::assert_accepts(crate::support::verifier_fixtures::standard_muldiv_case().verify());
+    let case = crate::support::verifier_fixtures::standard_muldiv_case();
+    support::assert_accepts(case.verify());
+    assert_eq!(
+        support::proof_wire_digest(&case.proof),
+        DORY_MULDIV_PROOF_DIGEST
+    );
 }
 
 #[test]
@@ -47,8 +61,11 @@ fn standard_sha2_small_verifier_proof_is_accepted() {
 #[test]
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn standard_committed_muldiv_verifier_proof_is_accepted() {
-    support::assert_accepts(
-        crate::support::verifier_fixtures::standard_committed_muldiv_case().verify(),
+    let case = crate::support::verifier_fixtures::standard_committed_muldiv_case();
+    support::assert_accepts(case.verify());
+    assert_eq!(
+        support::proof_wire_digest(&case.proof),
+        DORY_COMMITTED_MULDIV_PROOF_DIGEST
     );
 }
 

@@ -143,10 +143,9 @@ pub fn main() {
 
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_<fn>(target_dir);
-    let shared = guest::preprocess_shared_<fn>(&mut program);
-    let prover_prep = guest::preprocess_prover_<fn>(shared.clone());
-    let verifier_setup = prover_prep.generators.to_verifier_setup();
-    let verifier_prep = guest::preprocess_verifier_<fn>(shared, verifier_setup, None);
+    let shared = guest::preprocess_shared_<fn>(&mut program).unwrap();
+    let prover_prep = guest::preprocess_prover_<fn>(shared);
+    let verifier_prep = guest::verifier_preprocessing_from_prover_<fn>(&prover_prep);
     let prove = guest::build_prover_<fn>(program, prover_prep);
     let verify = guest::build_verifier_<fn>(verifier_prep);
 
@@ -196,10 +195,9 @@ Guest `Cargo.toml`:
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = ["zk"] }
 ```
 
-In the host, pass `BlindfoldSetup` to verifier preprocessing:
+In the host, derive verifier preprocessing from the ZK prover preprocessing:
 ```rust
-let blindfold_setup = prover_prep.blindfold_setup();
-let verifier_prep = guest::preprocess_verifier_<fn>(shared, verifier_setup, Some(blindfold_setup));
+let verifier_prep = guest::verifier_preprocessing_from_prover_<fn>(&prover_prep);
 ```
 
 Preprocessing runs once on first invocation and is not included in "Prover runtime". Diagnose failures:

@@ -75,13 +75,13 @@ impl StaticAnalysisObjective {
     pub fn all() -> Vec<Self> {
         vec![
             Self::Lloc(code_quality::lloc::LlocObjective {
-                target_dir: "crates/jolt-prover/src",
+                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
             }),
             Self::CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective {
-                target_dir: "crates/jolt-prover/src",
+                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
             }),
             Self::HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective {
-                target_dir: "crates/jolt-prover/src",
+                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
             }),
         ]
     }
@@ -130,7 +130,7 @@ impl StaticAnalysisObjective {
     }
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
-        &["crates/jolt-prover/"]
+        code_quality::PROOF_SYSTEM_CRATE_DIRS
     }
 }
 
@@ -381,7 +381,7 @@ mod tests {
         // Same variant with identical inner data looks up successfully.
         let lloc_same = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
-                target_dir: "crates/jolt-prover/src",
+                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
             },
         ));
         assert_eq!(m[&lloc_same], 100.0);
@@ -389,7 +389,7 @@ mod tests {
         // Same variant with different inner data does NOT match.
         let lloc_other = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
-                target_dir: "other/path",
+                crate_dirs: &["other/path"],
             },
         ));
         assert!(!m.contains_key(&lloc_other));

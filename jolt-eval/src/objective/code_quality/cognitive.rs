@@ -2,30 +2,30 @@ use std::path::Path;
 
 use rust_code_analysis::FuncSpace;
 
-use super::lloc::{analyze_rust_file, rust_files};
+use super::lloc::{analyze_rust_file, rust_files_in_crates};
+use super::PROOF_SYSTEM_CRATE_DIRS;
 use crate::objective::{
     MeasurementError, Objective, OptimizationObjective, StaticAnalysisObjective,
 };
 
 pub const COGNITIVE_COMPLEXITY: OptimizationObjective = OptimizationObjective::StaticAnalysis(
     StaticAnalysisObjective::CognitiveComplexity(CognitiveComplexityObjective {
-        target_dir: "crates/jolt-prover/src",
+        crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
     }),
 );
 
 /// Average cognitive complexity per function across all Rust files under
-/// a target directory.
+/// the modular proof system.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CognitiveComplexityObjective {
-    pub(crate) target_dir: &'static str,
+    pub(crate) crate_dirs: &'static [&'static str],
 }
 
 impl CognitiveComplexityObjective {
     pub fn collect_measurement_in(&self, repo_root: &Path) -> Result<f64, MeasurementError> {
-        let src_dir = repo_root.join(self.target_dir);
         let mut total = 0.0;
         let mut count = 0usize;
-        for path in rust_files(&src_dir)? {
+        for path in rust_files_in_crates(repo_root, self.crate_dirs)? {
             if let Some(space) = analyze_rust_file(&path) {
                 collect_leaf_cognitive(&space, &mut total, &mut count);
             }
@@ -45,10 +45,7 @@ impl Objective for CognitiveComplexityObjective {
     }
 
     fn description(&self) -> String {
-        format!(
-            "Average cognitive complexity per function in {}",
-            self.target_dir
-        )
+        "Average cognitive complexity per function in the modular proof system".to_string()
     }
 
     fn setup(&self) {}
@@ -78,9 +75,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cognitive_on_jolt_prover() {
+    fn cognitive_on_proof_system() {
         let obj = CognitiveComplexityObjective {
-            target_dir: "crates/jolt-prover/src",
+            crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
         };
         let val = obj.collect_measurement().unwrap();
         assert!(val > 0.0, "avg cognitive should be > 0, got {val}");

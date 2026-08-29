@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use ark_serialize::CanonicalSerialize;
-use jolt_akita::{AdviceScheduleParams, AkitaField, AkitaScheme, AkitaSetupParams};
+use jolt_akita::{
+    AdviceScheduleParams, AkitaField, AkitaProverSetup, AkitaScheme, AkitaSetupParams,
+    AkitaVerifierSetup,
+};
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_crypto::NoVectorCommitment;
@@ -28,6 +31,13 @@ pub type AkitaTranscript = LegacyBlake2bTranscript<AkitaField>;
 pub type AkitaProverPreprocessing = JoltProverPreprocessing<AkitaScheme, AkitaVc>;
 pub type AkitaVerifierPreprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
 
+struct TraceSetups {
+    prover: AkitaProverSetup,
+    verifier: AkitaVerifierSetup,
+    untrusted_advice: Option<AkitaVerifierSetup>,
+    trusted_advice: Option<AkitaVerifierSetup>,
+}
+
 pub fn preprocess_full(
     program: JoltProgramPreprocessing,
     config: &ProverConfig,
@@ -41,6 +51,29 @@ pub fn preprocess_full_with_advice(
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    let setups = trace_setups(&program, config, untrusted_advice, trusted_advice)?;
+    let preprocessing_digest = full_preprocessing_digest(&program)?;
+    let mut verifier = JoltVerifierPreprocessing::new(
+        ProgramPreprocessing::Full(Arc::new(program)),
+        preprocessing_digest,
+        setups.verifier,
+        None,
+    );
+    verifier.untrusted_advice_setup = setups.untrusted_advice;
+    verifier.trusted_advice_setup = setups.trusted_advice;
+    Ok(JoltProverPreprocessing {
+        verifier,
+        pcs_setup: setups.prover,
+        committed_program: None,
+    })
+}
+
+fn trace_setups(
+    program: &JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+) -> Result<TraceSetups, PreprocessingError> {
     let (shape, layout_digest, one_hot_k) =
         one_hot_trace_setup_shape(config, program.bytecode.code_size).map_err(|error| {
             PreprocessingError::InvalidCommittedProgram {
@@ -48,10 +81,10 @@ pub fn preprocess_full_with_advice(
             }
         })?;
     let untrusted_shape = untrusted_advice
-        .then(|| advice_object_shape(&program, JoltAdviceKind::Untrusted))
+        .then(|| advice_object_shape(program, JoltAdviceKind::Untrusted))
         .transpose()?;
     let trusted_shape = trusted_advice
-        .then(|| advice_object_shape(&program, JoltAdviceKind::Trusted))
+        .then(|| advice_object_shape(program, JoltAdviceKind::Trusted))
         .transpose()?;
     let advice_count = usize::from(untrusted_advice) + usize::from(trusted_advice);
     let params = if advice_count == 0 {
@@ -70,22 +103,14 @@ pub fn preprocess_full_with_advice(
             )),
         )
     };
-    let (pcs_setup, verifier_setup) = AkitaScheme::setup(params)?;
-    let preprocessing_digest = full_preprocessing_digest(&program)?;
-    let mut verifier = JoltVerifierPreprocessing::new(
-        ProgramPreprocessing::Full(Arc::new(program)),
-        preprocessing_digest,
-        verifier_setup,
-        None,
-    );
-    verifier.untrusted_advice_setup = untrusted_shape
-        .map(transparent_verifier_setup)
-        .transpose()?;
-    verifier.trusted_advice_setup = trusted_shape.map(transparent_verifier_setup).transpose()?;
-    Ok(JoltProverPreprocessing {
+    let (prover, verifier) = AkitaScheme::setup(params)?;
+    Ok(TraceSetups {
+        prover,
         verifier,
-        pcs_setup,
-        committed_program: None,
+        untrusted_advice: untrusted_shape
+            .map(transparent_verifier_setup)
+            .transpose()?,
+        trusted_advice: trusted_shape.map(transparent_verifier_setup).transpose()?,
     })
 }
 
@@ -132,17 +157,25 @@ pub fn preprocess_committed_with_advice(
         bytecode_chunk_count,
     };
     let preprocessing_digest = committed_program_digest(&committed_program)?;
-    let verifier_program = ProgramPreprocessing::Committed(committed_program);
-    let mut preprocessing =
-        preprocess_full_with_advice(program.clone(), config, untrusted_advice, trusted_advice)?;
-    preprocessing.verifier.program = verifier_program;
-    preprocessing.verifier.preprocessing_digest = preprocessing_digest;
-    preprocessing.verifier.program_one_hot_setups = verifier_setups;
-    preprocessing.committed_program = Some(CommittedProgramProverData {
-        full: Arc::new(program),
-        program_one_hot,
-    });
-    Ok(preprocessing)
+    let setups = trace_setups(&program, config, untrusted_advice, trusted_advice)?;
+    let program = Arc::new(program);
+    let mut verifier = JoltVerifierPreprocessing::new(
+        ProgramPreprocessing::Committed(committed_program),
+        preprocessing_digest,
+        setups.verifier,
+        None,
+    );
+    verifier.untrusted_advice_setup = setups.untrusted_advice;
+    verifier.trusted_advice_setup = setups.trusted_advice;
+    verifier.program_one_hot_setups = verifier_setups;
+    Ok(JoltProverPreprocessing {
+        verifier,
+        pcs_setup: setups.prover,
+        committed_program: Some(CommittedProgramProverData {
+            full: program,
+            program_one_hot,
+        }),
+    })
 }
 
 fn committed_program_digest(

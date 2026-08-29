@@ -6,6 +6,8 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_verifier::JoltVerifierPreprocessing;
+#[cfg(not(feature = "akita"))]
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::PreprocessingError;
@@ -179,6 +181,14 @@ mod tests {
 /// ([`crate::akita::witness::commit_program_one_hot`]) so proving consumes
 /// them directly instead of re-deriving them per proof.
 #[derive(Clone)]
+#[cfg_attr(not(feature = "akita"), derive(Serialize, Deserialize))]
+#[cfg_attr(
+    not(feature = "akita"),
+    serde(bound(
+        serialize = "PCS::OpeningHint: Serialize",
+        deserialize = "PCS::OpeningHint: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     pub full: Arc<JoltProgramPreprocessing>,
     /// One opening hint per committed bytecode chunk, in chunk order.
@@ -209,7 +219,18 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
 /// and, in committed-program mode, the retained full program and opening
 /// hints. Witness generation reads the full program through
 /// [`program`](Self::program).
+///
+/// Dory preprocessing is serializable. Akita preprocessing retains backend
+/// setup and witness objects and must be regenerated in the proving process.
 #[derive(Clone)]
+#[cfg_attr(not(feature = "akita"), derive(Serialize, Deserialize))]
+#[cfg_attr(
+    not(feature = "akita"),
+    serde(bound(
+        serialize = "JoltVerifierPreprocessing<PCS, VC>: Serialize, PCS::ProverSetup: Serialize, CommittedProgramProverData<PCS>: Serialize",
+        deserialize = "JoltVerifierPreprocessing<PCS, VC>: serde::de::DeserializeOwned, PCS::ProverSetup: serde::de::DeserializeOwned, CommittedProgramProverData<PCS>: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct JoltProverPreprocessing<PCS, VC>
 where
     PCS: CommitmentScheme,

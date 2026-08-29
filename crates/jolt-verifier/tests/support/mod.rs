@@ -69,3 +69,17 @@ pub mod verifier_fixtures;
 pub mod zk_audit;
 
 use jolt_verifier::VerifierError;
+
+#[cfg(feature = "prover-fixtures")]
+#[expect(
+    clippy::expect_used,
+    reason = "a fixture proof must serialize before its wire digest can be checked"
+)]
+/// Hashes the proof wire format for the frozen legacy byte-parity fixtures.
+pub fn proof_wire_digest<T: serde::Serialize>(proof: &T) -> [u8; 32] {
+    use blake2::{digest::consts::U32, Blake2b, Digest};
+
+    let bytes =
+        bincode::serde::encode_to_vec(proof, bincode::config::standard()).expect("serialize proof");
+    Blake2b::<U32>::digest(bytes).into()
+}

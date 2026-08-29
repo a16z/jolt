@@ -557,7 +557,8 @@ diff --git a/../../etc/passwd b/../../etc/passwd
         let setup = inv.setup();
         // The sandbox computes h = wrapping hash of input bytes.
         // For input [1,2,3]: h = ((0*31+1)*31+2)*31+3 = 1026
-        let honest_output = postcard::to_stdvec(&1026u32).unwrap();
+        let mut honest_output = postcard::to_stdvec(&1026u32).unwrap();
+        honest_output.resize(8, 0);
         let input = SoundnessInput {
             claimed_output: honest_output,
             claimed_panic: false,

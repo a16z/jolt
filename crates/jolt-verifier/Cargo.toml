@@ -53,6 +53,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 bincode.workspace = true
+blake2.workspace = true
 jolt-host.workspace = true
 jolt-prover.workspace = true
 jolt-witness.workspace = true
