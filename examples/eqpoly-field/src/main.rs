@@ -13,7 +13,7 @@ mod pipeline {
         JoltSharedPreprocessing, JoltVerifierPreprocessing, MemoryConfig, OwnedTrace, TraceInputs,
         TraceOutput, TracerBackend,
     };
-    use jolt_field::{CanonicalBytes, FromPrimitiveInt};
+    use jolt_field::{CanonicalBytes, Ring};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceRow};
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -204,7 +204,7 @@ mod pipeline {
             &prover_preprocessing,
             &config,
             None,
-            Arc::clone(&witness),
+            witness.as_ref(),
             &public_io,
         )
         .expect("modular FR prove");
