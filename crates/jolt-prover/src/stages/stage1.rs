@@ -7,6 +7,8 @@
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
 //! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -26,6 +28,8 @@ use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
 use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
@@ -151,30 +155,25 @@ where
 #[cfg(feature = "field-inline")]
 fn field_inline_outer_claims<F: JoltField>(
     sumchecks: &Stage1BatchSumchecks<F>,
-) -> Result<
-    jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims<F>,
-    ProverError<F>,
->{
+) -> Result<FieldRegistersSpartanOuterOutputClaims<F>, ProverError<F>> {
     use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings;
     use jolt_claims::OutputClaims as _;
 
     let values = sumchecks
         .outer_remainder
         .field_inline_outputs()
-        .ok_or(ProverError::Verifier(
-            jolt_verifier::VerifierError::MissingProofPayload {
-                field: "stage1 FR Spartan-outer appendage (composed remainder kernel)",
-            },
-        ))?;
+        .ok_or(ProverError::Verifier(VerifierError::MissingProofPayload {
+            field: "stage1 FR Spartan-outer appendage (composed remainder kernel)",
+        }))?;
     let openings = outer_output_openings();
-    jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims::from_opening_values(|id| {
+    FieldRegistersSpartanOuterOutputClaims::from_opening_values(|id| {
         openings
             .iter()
             .position(|candidate| candidate == id)
             .and_then(|position| values.get(position).copied())
     })
     .map_err(|error| {
-        ProverError::Verifier(jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+        ProverError::Verifier(VerifierError::StageClaimSumcheckFailed {
             stage: "Stage1Batch".to_string(),
             reason: format!("FR Spartan-outer appendage assembly failed: {error}"),
         })

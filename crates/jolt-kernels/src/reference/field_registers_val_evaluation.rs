@@ -14,6 +14,8 @@
 //! [`field_registers_claim_reduction`](super::field_registers_claim_reduction)
 //! pattern).
 
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
 use jolt_claims::protocols::field_inline::{
     FieldInlineDerivedId, FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
 };
@@ -25,6 +27,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
+use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::views::eq_table;
@@ -111,13 +114,13 @@ struct FieldRegistersValEvaluationKernel<F: JoltField> {
 
 // Size arithmetic rather than a derive, like the sibling kernels.
 #[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for FieldRegistersValEvaluationKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for FieldRegistersValEvaluationKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for (key, table) in [
-            (allocative::Key::new("lt_cycle"), &self.lt_cycle),
-            (allocative::Key::new("rd_inc"), &self.rd_inc),
-            (allocative::Key::new("rd_wa"), &self.rd_wa),
+            (Key::new("lt_cycle"), &self.lt_cycle),
+            (Key::new("rd_inc"), &self.rd_inc),
+            (Key::new("rd_wa"), &self.rd_wa),
         ] {
             visitor.visit_simple(key, table.len() * size_of::<F>());
         }
@@ -229,7 +232,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldRegistersValEvaluationKernel<F> {
         let got = self.lt_cycle.evals()[0];
         if got != expected {
             return Err(SumcheckKernelError::Verifier(
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "FieldRegistersValEvaluation".to_string(),
                     reason: format!(
                         "LtCycle table bound to {got:?}, but derive_output_term gives {expected:?}"

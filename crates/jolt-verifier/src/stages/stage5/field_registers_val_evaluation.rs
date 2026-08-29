@@ -10,7 +10,7 @@
 
 use core::marker::PhantomData;
 
-use jolt_claims::protocols::field_inline::relations::registers;
+use jolt_claims::protocols::field_inline::relations::registers::ValEvaluation;
 pub use jolt_claims::protocols::field_inline::relations::registers::{
     FieldRegistersValEvaluationInputClaims, FieldRegistersValEvaluationOutputClaims,
 };
@@ -27,7 +27,7 @@ use crate::VerifierError;
 
 #[derive(Clone)]
 pub struct FieldRegistersValEvaluation<F: JoltField> {
-    symbolic: registers::ValEvaluation,
+    symbolic: ValEvaluation,
     trace_dimensions: FieldRegistersTraceDimensions,
     _field: PhantomData<F>,
 }
@@ -35,7 +35,7 @@ pub struct FieldRegistersValEvaluation<F: JoltField> {
 impl<F: JoltField> FieldRegistersValEvaluation<F> {
     pub fn new(trace_dimensions: FieldRegistersTraceDimensions) -> Self {
         Self {
-            symbolic: registers::ValEvaluation::new(trace_dimensions),
+            symbolic: ValEvaluation::new(trace_dimensions),
             trace_dimensions,
             _field: PhantomData,
         }
@@ -54,7 +54,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
-    type Symbolic = registers::ValEvaluation;
+    type Symbolic = ValEvaluation;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

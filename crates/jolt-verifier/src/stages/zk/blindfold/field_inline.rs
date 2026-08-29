@@ -31,8 +31,11 @@ use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use super::{scale_expr, SourceValues, VerifierExpr, VerifierOpeningId, VerifierPublicId};
+use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::preprocessing::ProgramPreprocessing;
-use crate::stages::field_inline_bytecode::field_inline_stage_gamma_powers;
+use crate::stages::field_inline_bytecode::{
+    field_inline_stage_gamma_powers, FieldInlineBytecodeTable,
+};
 use crate::stages::stage4::Stage4OutputPoints;
 use crate::stages::stage5::Stage5OutputPoints;
 use crate::VerifierError;
@@ -226,7 +229,7 @@ pub(super) fn stage4_read_write<F: JoltField>(
     fixed_cycle: &[F],
     read_write_point: &[F],
 ) -> Result<field_registers::ReadWriteChecking, VerifierError> {
-    let fr_dimensions = crate::config::JOLT_VERIFIER_CONFIG
+    let fr_dimensions = JOLT_VERIFIER_CONFIG
         .field_inline
         .read_write_dimensions(log_t);
     let claims = field_registers::ReadWriteChecking::new(fr_dimensions);
@@ -418,7 +421,7 @@ pub(super) fn extend_bytecode_stage_values<F: JoltField, PCS: CommitmentScheme>(
 /// the clear composed relation performs, so the composed `StageValue(i)`
 /// publics cannot drift from the clear check.
 pub(super) fn composed_bytecode_stage_values<F: JoltField>(
-    table: &crate::stages::field_inline_bytecode::FieldInlineBytecodeTable,
+    table: &FieldInlineBytecodeTable,
     r_address: &[F],
     r_cycle: &[F],
     stage1_cycle_point: &[F],

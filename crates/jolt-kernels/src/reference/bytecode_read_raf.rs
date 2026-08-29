@@ -50,6 +50,9 @@
 #[cfg(not(feature = "field-inline"))]
 use std::collections::BTreeMap;
 
+#[cfg(all(feature = "field-inline", feature = "allocative"))]
+use allocative::{Allocative, Key, Visitor};
+
 use crate::ProverInputs;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
@@ -75,6 +78,8 @@ use jolt_field::JoltField;
 use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
+#[cfg(feature = "field-inline")]
+use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::relations::SumcheckOutputClaims;
@@ -139,7 +144,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
                 &program.bytecode.bytecode,
             );
         #[cfg(feature = "field-inline")]
-        let bytecode_rows: &[jolt_riscv::JoltInstructionRow] = &masked_bytecode;
+        let bytecode_rows: &[JoltInstructionRow] = &masked_bytecode;
         #[cfg(not(feature = "field-inline"))]
         let bytecode_rows = &program.bytecode.bytecode;
         let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
@@ -237,8 +242,8 @@ struct FieldInlineAddressLegs<F: JoltField> {
 
 // Hand impl: the array-of-table fields have no derive-visitable shape.
 #[cfg(all(feature = "field-inline", feature = "allocative"))]
-impl<F: JoltField> allocative::Allocative for FieldInlineAddressLegs<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for FieldInlineAddressLegs<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for table in self.pushforwards.iter().chain(&self.values) {
             table.visit(&mut visitor);
@@ -860,15 +865,15 @@ struct FusedIncCycleLeg<F: JoltField> {
 
 // Size arithmetic rather than a derive, like the sibling kernels.
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
-impl<F: JoltField> allocative::Allocative for ComposedBytecodeReadRafCycleKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for ComposedBytecodeReadRafCycleKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("coefficient"),
+            Key::new("coefficient"),
             self.coefficient.len() * size_of::<F>(),
         );
         visitor.visit_simple(
-            allocative::Key::new("bytecode_ra"),
+            Key::new("bytecode_ra"),
             self.bytecode_ra
                 .iter()
                 .map(|table| table.len() * size_of::<F>())
@@ -876,7 +881,7 @@ impl<F: JoltField> allocative::Allocative for ComposedBytecodeReadRafCycleKernel
         );
         #[cfg(feature = "akita")]
         visitor.visit_simple(
-            allocative::Key::new("fused"),
+            Key::new("fused"),
             (self.fused.coefficient.len() + self.fused.values.len()) * size_of::<F>(),
         );
         visitor.exit();

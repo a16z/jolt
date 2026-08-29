@@ -55,6 +55,8 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "field-inline")]
+use super::spartan_outer::FrRowCursor;
 use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     RoundChallenges,
@@ -245,7 +247,7 @@ fn extended_t1_values<F: JoltField>(
         #[cfg(feature = "field-inline")]
         let mut field_sums = vec![F::zero(); EXTENDED_SIZE];
         #[cfg(feature = "field-inline")]
-        let mut fr_cursor = super::spartan_outer::FrRowCursor::seek(fr_rows, x_out * in_len);
+        let mut fr_cursor = FrRowCursor::seek(fr_rows, x_out * in_len);
         for (x_in, &e) in e_in.iter().enumerate() {
             let t = x_out * in_len + x_in;
             let row = rows.row(t)?;
@@ -534,21 +536,19 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             let mut inner_zero = F::zero();
             let mut inner_infinity = F::zero();
             #[cfg(feature = "field-inline")]
-            let mut fr_cursor =
-                super::spartan_outer::FrRowCursor::seek(fr_rows_ref, 2 * x_out * in_len);
+            let mut fr_cursor = FrRowCursor::seek(fr_rows_ref, 2 * x_out * in_len);
             #[cfg(feature = "field-inline")]
-            let cell = |t: usize,
-                        fr_cursor: &mut super::spartan_outer::FrRowCursor<'_, F>|
-             -> Result<(F, F), WitnessError> {
-                let (left, right) = cell(&access.row(t)?);
-                Ok(match fr_cursor.advance(t) {
-                    Some(fr) => {
-                        let (fr_left, fr_right) = fr_factors(fr);
-                        (left + fr_left, right + fr_right)
-                    }
-                    None => (left, right),
-                })
-            };
+            let cell =
+                |t: usize, fr_cursor: &mut FrRowCursor<'_, F>| -> Result<(F, F), WitnessError> {
+                    let (left, right) = cell(&access.row(t)?);
+                    Ok(match fr_cursor.advance(t) {
+                        Some(fr) => {
+                            let (fr_left, fr_right) = fr_factors(fr);
+                            (left + fr_left, right + fr_right)
+                        }
+                        None => (left, right),
+                    })
+                };
             for (x_in, &e) in e_in.iter().enumerate() {
                 let pair = x_out * in_len + x_in;
                 #[cfg(feature = "field-inline")]

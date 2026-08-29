@@ -4,6 +4,8 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::Field;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldInlineWitnessOracle;
 use crate::{RowSource, Shape, WitnessBundle, WitnessError};
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -60,7 +62,7 @@ pub trait JoltWitnessOracle<F: Field> {
     /// Defaults to `None` so FR proving fails closed unless a backend
     /// explicitly attaches its field-inline view.
     #[cfg(feature = "field-inline")]
-    fn field_inline(&self) -> Option<&dyn crate::field_inline::FieldInlineWitnessOracle<F>> {
+    fn field_inline(&self) -> Option<&dyn FieldInlineWitnessOracle<F>> {
         None
     }
 }

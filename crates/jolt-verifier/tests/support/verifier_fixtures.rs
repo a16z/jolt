@@ -19,7 +19,7 @@ use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
+use jolt_verifier::{verify, JoltProof, JoltVerifierPreprocessing, VerifierError};
 
 use jolt_prover_legacy::{
     curve::Bn254Curve,
@@ -134,7 +134,7 @@ fn lock_exclusive(file: &fs::File) {
 type ProverField = jolt_prover_legacy::ark_bn254::Fr;
 type ProverCommitment = <DoryCommitmentScheme as ProverCommitmentScheme>::Commitment;
 type ProverOpeningHint = <DoryCommitmentScheme as ProverCommitmentScheme>::OpeningProofHint;
-pub type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme, Pedersen<Bn254G1>>;
+pub type VerifierFixtureProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 type TrustedAdviceCommitter = fn(
     &JoltProverPreprocessing<ProverField, Bn254Curve, DoryCommitmentScheme>,

@@ -1,10 +1,20 @@
 use std::collections::BTreeSet;
 
 use jolt_field::{Fr, JoltField};
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage2::outputs::FieldRegistersClaimReductionOutputClaims;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage4::FieldRegistersReadWriteOutputClaims;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage5::FieldRegistersValEvaluationOutputClaims;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims;
 #[cfg(all(feature = "akita", feature = "field-inline"))]
 use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
 use jolt_verifier::{
     proof::ClearProofClaims,
+    stages::stage1::outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
+    stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims},
     stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
 };
 use serde_json::Value;
@@ -1447,9 +1457,9 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
         },
         #[cfg(all(feature = "akita", feature = "field-inline"))]
         field_inc_limbs: fill_optionals.then(|| FieldIncLimbClaims { limbs: vec![zero] }),
-        stage1: stage1::outputs::Stage1OutputClaims::new(
+        stage1: Stage1OutputClaims::new(
             zero,
-            stage1::outputs::Stage1BatchOutputClaims {
+            Stage1BatchOutputClaims {
                 outer_remainder: stage1::OuterRemainderOutputClaims {
                     left_instruction_input: zero,
                     right_instruction_input: zero,
@@ -1489,9 +1499,9 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 },
             },
         ),
-        stage2: stage2::outputs::Stage2OutputClaims::new(
+        stage2: Stage2OutputClaims::new(
             zero,
-            stage2::outputs::Stage2BatchOutputClaims {
+            Stage2BatchOutputClaims {
                 ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
                     val: zero,
                     ra: zero,
@@ -1517,7 +1527,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     },
                 #[cfg(feature = "field-inline")]
                 field_registers_claim_reduction:
-                    stage2::outputs::FieldRegistersClaimReductionOutputClaims {
+                    FieldRegistersClaimReductionOutputClaims {
                         rd_value: zero,
                         rs1_value: zero,
                         rs2_value: zero,
@@ -1559,7 +1569,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rd_inc: zero,
             },
             #[cfg(feature = "field-inline")]
-            field_registers_read_write: stage4::FieldRegistersReadWriteOutputClaims {
+            field_registers_read_write: FieldRegistersReadWriteOutputClaims {
                 registers_val: zero,
                 rs1_ra: zero,
                 rs2_ra: zero,
@@ -1586,7 +1596,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rd_wa: zero,
             },
             #[cfg(feature = "field-inline")]
-            field_registers_val_evaluation: stage5::FieldRegistersValEvaluationOutputClaims {
+            field_registers_val_evaluation: FieldRegistersValEvaluationOutputClaims {
                 rd_inc: zero,
                 rd_wa: zero,
             },
@@ -1643,7 +1653,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
             },
             #[cfg(feature = "field-inline")]
             field_registers_inc_claim_reduction:
-                stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims { rd_inc: zero },
+                FieldRegistersIncClaimReductionOutputClaims { rd_inc: zero },
             trusted_advice: fill_optionals.then_some(
                 stage6b::outputs::TrustedAdviceCyclePhaseOutputClaims { trusted: zero },
             ),

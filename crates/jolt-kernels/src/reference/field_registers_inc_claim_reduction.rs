@@ -13,6 +13,8 @@
 //! [`field_registers_claim_reduction`](super::field_registers_claim_reduction)
 //! pattern).
 
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
 use jolt_claims::protocols::field_inline::{
     FieldInlineDerivedId, FieldRegistersIncClaimReductionPublic,
 };
@@ -24,6 +26,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
+use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::views::eq_table;
@@ -102,16 +105,13 @@ struct FieldRegistersIncClaimReductionKernel<F: JoltField> {
 
 // Size arithmetic rather than a derive, like the sibling kernels.
 #[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for FieldRegistersIncClaimReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for FieldRegistersIncClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for (key, table) in [
-            (allocative::Key::new("eq_read_write"), &self.eq_read_write),
-            (
-                allocative::Key::new("eq_val_evaluation"),
-                &self.eq_val_evaluation,
-            ),
-            (allocative::Key::new("rd_inc"), &self.rd_inc),
+            (Key::new("eq_read_write"), &self.eq_read_write),
+            (Key::new("eq_val_evaluation"), &self.eq_val_evaluation),
+            (Key::new("rd_inc"), &self.rd_inc),
         ] {
             visitor.visit_simple(key, table.len() * size_of::<F>());
         }
@@ -241,7 +241,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldRegistersIncClaimReductionKernel<F
             let got = table.evals()[0];
             if got != expected {
                 return Err(SumcheckKernelError::Verifier(
-                    jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                    VerifierError::StageClaimSumcheckFailed {
                         stage: "FieldRegistersIncClaimReduction".to_string(),
                         reason: format!(
                             "{public:?} table bound to {got:?}, but derive_output_term gives \

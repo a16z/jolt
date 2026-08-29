@@ -811,7 +811,7 @@ where
                     &full_program.bytecode.bytecode,
                 );
             #[cfg(feature = "field-inline")]
-            let bytecode_rows: &[jolt_riscv::JoltInstructionRow] = &masked_bytecode;
+            let bytecode_rows: &[_] = &masked_bytecode;
             #[cfg(not(feature = "field-inline"))]
             let bytecode_rows = &full_program.bytecode.bytecode;
             #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]

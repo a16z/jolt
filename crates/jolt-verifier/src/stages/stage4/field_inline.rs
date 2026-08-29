@@ -10,6 +10,7 @@ use super::field_registers_read_write_checking::{
     FieldRegistersReadWriteChecking, FieldRegistersReadWriteInputClaims,
 };
 use super::outputs::Stage4OutputClaims;
+use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::stages::relations::OutputClaims as _;
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 
@@ -18,7 +19,7 @@ use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 /// rw_config, so no eager phase-split validation is needed.
 pub fn read_write_member<F: JoltField>(log_t: usize) -> FieldRegistersReadWriteChecking<F> {
     FieldRegistersReadWriteChecking::new(
-        crate::config::JOLT_VERIFIER_CONFIG
+        JOLT_VERIFIER_CONFIG
             .field_inline
             .read_write_dimensions(log_t),
     )

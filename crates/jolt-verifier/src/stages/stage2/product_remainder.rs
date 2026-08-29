@@ -8,6 +8,11 @@
 //! [`ConcreteSumcheck`], so it stays hand-coded in the stage-2 verifier; this
 //! relation consumes that uni-skip's reduced opening as its input claim.
 
+#[cfg(feature = "field-inline")]
+use std::sync::{Arc, OnceLock};
+
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductRemainderInputClaims, ProductRemainderOutputClaims,
@@ -62,11 +67,7 @@ pub struct ProductRemainder<F: JoltField> {
     /// composed kernel clones the batch's relation instance and its write
     /// must be visible to the driver's curation and expected-output fold.
     #[cfg(feature = "field-inline")]
-    field_inline_outputs: std::sync::Arc<
-        std::sync::OnceLock<
-            jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims<F>,
-        >,
-    >,
+    field_inline_outputs: Arc<OnceLock<FieldRegistersProductOutputClaims<F>>>,
 }
 
 impl<F: JoltField> ProductRemainder<F> {
@@ -82,7 +83,7 @@ impl<F: JoltField> ProductRemainder<F> {
             tau_high,
             tau_low,
             #[cfg(feature = "field-inline")]
-            field_inline_outputs: std::sync::Arc::new(std::sync::OnceLock::new()),
+            field_inline_outputs: Arc::new(OnceLock::new()),
         }
     }
 
@@ -93,7 +94,7 @@ impl<F: JoltField> ProductRemainder<F> {
     #[cfg(feature = "field-inline")]
     pub fn set_field_inline_outputs(
         &self,
-        values: jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims<F>,
+        values: FieldRegistersProductOutputClaims<F>,
     ) -> Result<(), VerifierError> {
         let stored = self.field_inline_outputs.get_or_init(|| values.clone());
         if *stored != values {
@@ -108,11 +109,7 @@ impl<F: JoltField> ProductRemainder<F> {
     /// prove-side driver's curated absorb and the stage-2 recipe's claim
     /// assembly.
     #[cfg(feature = "field-inline")]
-    pub fn field_inline_outputs(
-        &self,
-    ) -> Option<
-        &jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims<F>,
-    >{
+    pub fn field_inline_outputs(&self) -> Option<&FieldRegistersProductOutputClaims<F>> {
         self.field_inline_outputs.get()
     }
 }
@@ -236,11 +233,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
         use jolt_claims::protocols::field_inline::geometry::product::{
             composed_remainder_factor_contributions, FieldProductLaneFactors,
         };
-        use jolt_claims::protocols::jolt::JoltDerivedId;
+        use jolt_claims::protocols::jolt::{JoltDerivedId, JoltExpr};
         use jolt_claims::{OutputClaims as _, SumcheckChallenges as _};
         use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
 
-        let evaluate_factor = |expression: jolt_claims::protocols::jolt::JoltExpr<F>| {
+        let evaluate_factor = |expression: JoltExpr<F>| {
             expression.try_evaluate(
                 |id| {
                     output_values

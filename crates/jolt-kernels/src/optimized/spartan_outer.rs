@@ -40,6 +40,8 @@
 //! nodes; ring homomorphism does the rest), and the wire assembly reuses the
 //! reference's own `jolt-poly` interpolation path.
 
+#[cfg(feature = "field-inline")]
+use core::cmp::Ordering;
 use std::collections::BTreeMap;
 
 #[cfg(feature = "field-inline")]
@@ -340,12 +342,12 @@ impl<'a, F> FrRowCursor<'a, F> {
     pub(crate) fn advance(&mut self, t: usize) -> Option<&'a FieldInlineSpartanRow<F>> {
         while let Some(&(cycle, ref row)) = self.rows.get(self.next) {
             match cycle.cmp(&t) {
-                core::cmp::Ordering::Less => self.next += 1,
-                core::cmp::Ordering::Equal => {
+                Ordering::Less => self.next += 1,
+                Ordering::Equal => {
                     self.next += 1;
                     return Some(row);
                 }
-                core::cmp::Ordering::Greater => return None,
+                Ordering::Greater => return None,
             }
         }
         None

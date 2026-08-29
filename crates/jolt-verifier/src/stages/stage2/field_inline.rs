@@ -13,6 +13,7 @@ use jolt_claims::protocols::field_inline::{
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::OutputClaims as _;
 use jolt_field::JoltField;
+use jolt_transcript::Transcript;
 
 use super::field_registers_claim_reduction::{
     FieldRegistersClaimReduction, FieldRegistersClaimReductionInputClaims,
@@ -216,7 +217,7 @@ impl<F: JoltField> Stage2BatchSumchecks<F> {
     /// Append every absorbed opening to the transcript in the curated order,
     /// each under the `b"opening_claim"` label, matching the prover's
     /// commitment order.
-    pub fn append_output_claims<T: jolt_transcript::Transcript<Challenge = F>>(
+    pub fn append_output_claims<T: Transcript<Challenge = F>>(
         &self,
         transcript: &mut T,
         claims: &Stage2BatchOutputClaims<F>,

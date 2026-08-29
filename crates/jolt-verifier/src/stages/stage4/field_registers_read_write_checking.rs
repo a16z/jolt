@@ -14,7 +14,9 @@
 //! `RegistersReadWriteChecking`: `EqCycle = Eq(upstream reduced cycle point,
 //! this instance's cycle sub-point)`.
 
-use jolt_claims::protocols::field_inline::relations::registers;
+use core::marker::PhantomData;
+
+use jolt_claims::protocols::field_inline::relations::registers::ReadWriteChecking;
 pub use jolt_claims::protocols::field_inline::relations::registers::{
     FieldRegistersReadWriteChallenges, FieldRegistersReadWriteInputClaims,
     FieldRegistersReadWriteOutputClaims,
@@ -32,17 +34,17 @@ use crate::VerifierError;
 
 #[derive(Clone)]
 pub struct FieldRegistersReadWriteChecking<F: JoltField> {
-    symbolic: registers::ReadWriteChecking,
+    symbolic: ReadWriteChecking,
     dimensions: FieldRegistersReadWriteDimensions,
-    _field: core::marker::PhantomData<F>,
+    _field: PhantomData<F>,
 }
 
 impl<F: JoltField> FieldRegistersReadWriteChecking<F> {
     pub fn new(dimensions: FieldRegistersReadWriteDimensions) -> Self {
         Self {
-            symbolic: registers::ReadWriteChecking::new(dimensions),
+            symbolic: ReadWriteChecking::new(dimensions),
             dimensions,
-            _field: core::marker::PhantomData,
+            _field: PhantomData,
         }
     }
 
@@ -62,7 +64,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
-    type Symbolic = registers::ReadWriteChecking;
+    type Symbolic = ReadWriteChecking;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

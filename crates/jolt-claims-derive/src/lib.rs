@@ -101,16 +101,19 @@
 // where wildcard fallbacks to Err/None are the correct, version-stable idiom.
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, GenericParam, Ident, Type};
+use syn::{
+    parse_macro_input, Attribute, Data, DeriveInput, Error, Field, Fields, GenericParam, Generics,
+    Ident, Path, Result, Type,
+};
 
 /// Owning relation comes from the struct-level `#[relation(..)]`.
 #[proc_macro_derive(OutputClaims, attributes(relation, opening, protocol))]
 pub fn derive_output_claims(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_output(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
@@ -119,7 +122,7 @@ pub fn derive_output_claims(input: TokenStream) -> TokenStream {
 pub fn derive_input_claims(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_input(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
@@ -129,7 +132,7 @@ pub fn derive_input_claims(input: TokenStream) -> TokenStream {
 pub fn derive_sumcheck_challenges(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_challenges(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
@@ -174,12 +177,12 @@ impl Namespace {
 
 /// Reads the optional struct-level `#[protocol(..)]` namespace selector;
 /// defaults to the jolt namespace.
-fn parse_namespace(attrs: &[Attribute]) -> syn::Result<Namespace> {
+fn parse_namespace(attrs: &[Attribute]) -> Result<Namespace> {
     let mut selected: Option<(Ident, Namespace)> = None;
     for attr in attrs {
         if attr.path().is_ident("protocol") {
             if selected.is_some() {
-                return Err(syn::Error::new_spanned(
+                return Err(Error::new_spanned(
                     attr,
                     "duplicate #[protocol(..)] attribute",
                 ));
@@ -189,7 +192,7 @@ fn parse_namespace(attrs: &[Attribute]) -> syn::Result<Namespace> {
                 "jolt" => Namespace::jolt(),
                 "field_inline" => Namespace::field_inline(),
                 other => {
-                    return Err(syn::Error::new_spanned(
+                    return Err(Error::new_spanned(
                         &ident,
                         format!("unknown protocol namespace `{other}` (expected `jolt` or `field_inline`)"),
                     ));
@@ -206,7 +209,7 @@ enum LeafKind {
     /// (`OpFlags(CircuitFlags::VirtualInstruction)` carries the `CircuitFlags::..`
     /// path as `payload`). A payload variant is always scalar — never indexed.
     Virtual {
-        variant: syn::Path,
+        variant: Path,
         payload: Option<TokenStream2>,
     },
     Committed(Ident),
@@ -230,16 +233,16 @@ struct FieldPlan {
     relation: Ident,
 }
 
-fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Field>> {
+fn named_fields(data: &Data, span: Span) -> Result<Vec<Field>> {
     match data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => Ok(fields.named.iter().cloned().collect()),
-            _ => Err(syn::Error::new(
+            _ => Err(Error::new(
                 span,
                 "OutputClaims/InputClaims require a struct with named fields",
             )),
         },
-        _ => Err(syn::Error::new(
+        _ => Err(Error::new(
             span,
             "OutputClaims/InputClaims can only be derived for structs",
         )),
@@ -251,14 +254,14 @@ fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Fi
 /// derive instantiates it at `F` (value form) and `Vec<F>` (point form), so any
 /// other shape would make those instantiations ill-formed. Errors clearly rather
 /// than emitting a wrongly instantiated impl.
-fn ensure_single_cell_generic(generics: &syn::Generics) -> syn::Result<()> {
+fn ensure_single_cell_generic(generics: &Generics) -> Result<()> {
     let type_params = generics
         .params
         .iter()
         .filter(|param| matches!(param, GenericParam::Type(_)))
         .count();
     if generics.where_clause.is_some() || generics.params.len() != 1 || type_params != 1 {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             generics,
             "OutputClaims/InputClaims require exactly one generic type parameter (the opening cell, e.g. `<C>`)",
         ));
@@ -266,12 +269,12 @@ fn ensure_single_cell_generic(generics: &syn::Generics) -> syn::Result<()> {
     Ok(())
 }
 
-fn parse_struct_relation(attrs: &[Attribute]) -> syn::Result<Option<Ident>> {
+fn parse_struct_relation(attrs: &[Attribute]) -> Result<Option<Ident>> {
     let mut relation = None;
     for attr in attrs {
         if attr.path().is_ident("relation") {
             if relation.is_some() {
-                return Err(syn::Error::new_spanned(
+                return Err(Error::new_spanned(
                     attr,
                     "duplicate #[relation(..)] attribute",
                 ));
@@ -282,15 +285,15 @@ fn parse_struct_relation(attrs: &[Attribute]) -> syn::Result<Option<Ident>> {
     Ok(relation)
 }
 
-fn opening_attr(field: &syn::Field) -> Option<&Attribute> {
+fn opening_attr(field: &Field) -> Option<&Attribute> {
     field
         .attrs
         .iter()
         .find(|attr| attr.path().is_ident("opening"))
 }
 
-fn parse_opening(attr: &Attribute) -> syn::Result<OpeningSpec> {
-    let mut virtual_variant: Option<(syn::Path, Option<TokenStream2>)> = None;
+fn parse_opening(attr: &Attribute) -> Result<OpeningSpec> {
+    let mut virtual_variant: Option<(Path, Option<TokenStream2>)> = None;
     let mut committed: Option<Ident> = None;
     let mut trusted_advice = false;
     let mut untrusted_advice = false;
@@ -332,9 +335,9 @@ fn parse_opening(attr: &Attribute) -> syn::Result<OpeningSpec> {
     let mut selected = kinds.into_iter().flatten();
     let kind = selected
         .next()
-        .ok_or_else(|| syn::Error::new_spanned(attr, "#[opening(..)] must name one opening"))?;
+        .ok_or_else(|| Error::new_spanned(attr, "#[opening(..)] must name one opening"))?;
     if selected.next().is_some() {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             attr,
             "#[opening(..)] must name exactly one opening",
         ));
@@ -367,16 +370,16 @@ fn is_vec_type(ty: &Type) -> bool {
 }
 
 fn plan_field(
-    field: &syn::Field,
+    field: &Field,
     struct_relation: Option<&Ident>,
     namespace: &Namespace,
-) -> syn::Result<FieldPlan> {
+) -> Result<FieldPlan> {
     let ident = field
         .ident
         .clone()
-        .ok_or_else(|| syn::Error::new_spanned(field, "fields must be named"))?;
+        .ok_or_else(|| Error::new_spanned(field, "fields must be named"))?;
     let attr = opening_attr(field).ok_or_else(|| {
-        syn::Error::new_spanned(
+        Error::new_spanned(
             field,
             "every field needs an #[opening(..)] annotation (nested aggregates are not supported)",
         )
@@ -388,7 +391,7 @@ fn plan_field(
             LeafKind::TrustedAdvice | LeafKind::UntrustedAdvice
         )
     {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             attr,
             "advice openings are jolt-protocol ids; this protocol namespace has no advice variant",
         ));
@@ -397,7 +400,7 @@ fn plan_field(
         // OutputClaims: relation is struct-level; `from` is not allowed.
         (Some(relation), None) => relation.clone(),
         (Some(_), Some(from)) => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 from,
                 "`from = ..` is only used by InputClaims; OutputClaims uses #[relation(..)]",
             ));
@@ -405,7 +408,7 @@ fn plan_field(
         // InputClaims: relation is the per-field `from`.
         (None, Some(from)) => from,
         (None, None) => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 attr,
                 "missing `from = ProducingRelation` on an input opening (or missing struct-level #[relation(..)] for an output opening)",
             ));
@@ -418,7 +421,7 @@ fn plan_field(
             LeafKind::TrustedAdvice | LeafKind::UntrustedAdvice
         )
     {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &field.ty,
             "advice openings are scalar; a `Vec` advice field has no indexed id",
         ));
@@ -432,7 +435,7 @@ fn plan_field(
             }
         )
     {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &field.ty,
             "per-element payload arrays (e.g. `OpFlags(CIRCUIT_FLAGS)` on a `Vec`) are not \
              supported; declare one field per element instead",
@@ -490,7 +493,7 @@ fn id_expr(
     }
 }
 
-fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
     ensure_single_cell_generic(&input.generics)?;
     let namespace = parse_namespace(&input.attrs)?;
@@ -499,7 +502,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     let plans = fields
         .iter()
         .map(|field| plan_field(field, struct_relation.as_ref(), &namespace))
-        .collect::<syn::Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?;
 
     let id_ty = namespace.opening_id.clone();
     // `order_chains` lists each leaf's id (per `Vec` element, per `Some` `Option`) in
@@ -644,7 +647,7 @@ fn point_accessor(plan: &FieldPlan) -> TokenStream2 {
     }
 }
 
-fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
     ensure_single_cell_generic(&input.generics)?;
     let namespace = parse_namespace(&input.attrs)?;
@@ -652,7 +655,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     let plans = fields
         .iter()
         .map(|field| plan_field(field, None, &namespace))
-        .collect::<syn::Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?;
 
     let id_ty = namespace.opening_id.clone();
     let mut resolve_arms = Vec::new();
@@ -728,41 +731,41 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
 /// Challenge fields are always a scalar `F` (one drawn Fiat-Shamir scalar).
 struct ChallengeFieldPlan {
     ident: Ident,
-    path: syn::Path,
+    path: Path,
 }
 
-fn challenge_attr(field: &syn::Field) -> Option<&Attribute> {
+fn challenge_attr(field: &Field) -> Option<&Attribute> {
     field
         .attrs
         .iter()
         .find(|attr| attr.path().is_ident("challenge"))
 }
 
-fn parse_challenge(attr: &Attribute) -> syn::Result<syn::Path> {
-    attr.parse_args::<syn::Path>()
+fn parse_challenge(attr: &Attribute) -> Result<Path> {
+    attr.parse_args::<Path>()
 }
 
-fn plan_challenge_field(field: &syn::Field) -> syn::Result<ChallengeFieldPlan> {
+fn plan_challenge_field(field: &Field) -> Result<ChallengeFieldPlan> {
     let ident = field
         .ident
         .clone()
-        .ok_or_else(|| syn::Error::new_spanned(field, "fields must be named"))?;
+        .ok_or_else(|| Error::new_spanned(field, "fields must be named"))?;
     let attr = challenge_attr(field).ok_or_else(|| {
-        syn::Error::new_spanned(
+        Error::new_spanned(
             field,
             "every field needs a #[challenge(SubEnum::Variant)] annotation",
         )
     })?;
     let path = parse_challenge(attr)?;
     if is_vec_type(&field.ty) {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &field.ty,
             "challenges are scalar; a `Vec` challenge field has no indexed id \
              (every challenge sub-enum variant is a unit variant)",
         ));
     }
     if is_option_type(&field.ty) {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &field.ty,
             "challenge fields are an unconditional scalar `F`; a conditional \
              `Option<F>` challenge is not supported (no relation draws one, and the \
@@ -773,7 +776,7 @@ fn plan_challenge_field(field: &syn::Field) -> syn::Result<ChallengeFieldPlan> {
 }
 
 /// The single field type generic parameter (the field type, conventionally `F`).
-fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
+fn field_type_param(generics: &Generics) -> Result<Ident> {
     generics
         .params
         .iter()
@@ -782,14 +785,14 @@ fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
             _ => None,
         })
         .ok_or_else(|| {
-            syn::Error::new_spanned(
+            Error::new_spanned(
                 generics,
                 "expected a field-type generic parameter (e.g. `<F>`)",
             )
         })
 }
 
-fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_challenges(input: DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
     let namespace = parse_namespace(&input.attrs)?;
     let challenge_id_ty = namespace.challenge_id.clone();
@@ -798,7 +801,7 @@ fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
     let plans = fields
         .iter()
         .map(plan_challenge_field)
-        .collect::<syn::Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?;
 
     let mut resolve_arms = Vec::new();
     let mut build_stmts = Vec::new();

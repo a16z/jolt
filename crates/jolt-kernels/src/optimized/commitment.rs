@@ -19,6 +19,8 @@
 //! The materializing modes (address-major order, widened grids) and advice
 //! commits delegate to the reference kernel unchanged.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -30,6 +32,8 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "field-inline")]
+use crate::commitment::FieldInlineWitnessCommitment;
 use crate::commitment::{
     finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
     CommittedColumnsWitness, ModeStreamingCommitment, WitnessCommitment,
@@ -93,10 +97,10 @@ where
         &self,
         session: &mut ProofSession,
         source: &dyn JoltWitnessPlane<F>,
-        ids: &[jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial],
+        ids: &[FieldInlineCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
-    ) -> Result<Vec<crate::commitment::FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
         // One dense trace-domain column today; the reference pass is already
         // the right shape, and sharing it keeps the tiers byte-identical.
         ReferenceBackend.commit_field_inline_witness(session, source, ids, grid, setup)

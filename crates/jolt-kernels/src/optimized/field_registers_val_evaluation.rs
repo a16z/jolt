@@ -34,6 +34,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
+use jolt_verifier::VerifierError;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use super::field_registers_read_write::SharedFieldRdWrites;
@@ -220,7 +221,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
         let got = self.lt.final_value();
         if got != expected {
             return Err(SumcheckKernelError::Verifier(
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "FieldRegistersValEvaluation".to_string(),
                     reason: format!(
                         "bound LT value {got:?}, but derive_output_term gives {expected:?}"

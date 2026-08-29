@@ -32,6 +32,8 @@ use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_riscv::JoltInstructionRow;
 
+#[cfg(feature = "field-inline")]
+use crate::stages::field_inline_bytecode::FieldInlineBytecodeFold;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
@@ -82,7 +84,7 @@ pub struct BytecodeReadRafCycleInputs<'a, F: JoltField> {
     /// under `field-inline`: `expected_output` composes the FR public stage
     /// values onto the ordinary ones from these.
     #[cfg(feature = "field-inline")]
-    pub field_inline: crate::stages::field_inline_bytecode::FieldInlineBytecodeFold<F>,
+    pub field_inline: FieldInlineBytecodeFold<F>,
 }
 
 fn cycle_symbolic(dimensions: BytecodeReadRafDimensions) -> CycleSymbolic {
@@ -134,7 +136,7 @@ pub struct BytecodeReadRaf<F: JoltField> {
     /// public stage values from these and adds them onto the ordinary staged
     /// publics (spec: `field-inline-protocol.md`, "Stage 6 Composition").
     #[cfg(feature = "field-inline")]
-    field_inline: crate::stages::field_inline_bytecode::FieldInlineBytecodeFold<F>,
+    field_inline: FieldInlineBytecodeFold<F>,
 }
 
 impl<F: JoltField> BytecodeReadRaf<F> {
@@ -1016,10 +1018,7 @@ impl<F: JoltField> BytecodeReadRafCycle<F> {
     /// and the stage-6 batch build already rejects it, so this arm is
     /// fail-closed rather than reachable.
     #[cfg(feature = "field-inline")]
-    pub fn field_inline_fold(
-        &self,
-    ) -> Result<&crate::stages::field_inline_bytecode::FieldInlineBytecodeFold<F>, VerifierError>
-    {
+    pub fn field_inline_fold(&self) -> Result<&FieldInlineBytecodeFold<F>, VerifierError> {
         match &self.variant {
             BytecodeReadRafCycleVariant::Full(relation) => Ok(&relation.field_inline),
             BytecodeReadRafCycleVariant::Committed(_) => {

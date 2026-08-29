@@ -24,6 +24,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
+use jolt_verifier::VerifierError;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -210,7 +211,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldIncKernel<F> {
         let got = self.weights.evals()[0];
         if got != expected {
             return Err(SumcheckKernelError::Verifier(
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "FieldRegistersIncClaimReduction".to_string(),
                     reason: format!(
                         "fused eq table bound to {got:?}, but the derived terms fold to \

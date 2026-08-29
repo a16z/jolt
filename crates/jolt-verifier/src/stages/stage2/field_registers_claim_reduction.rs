@@ -15,7 +15,7 @@
 //! `EqSpartan = Eq(reduced opening point, tau_low)` where `tau_low` is stage
 //! 1's remainder point tail, reversed.
 
-use jolt_claims::protocols::field_inline::relations::claim_reductions::registers;
+use jolt_claims::protocols::field_inline::relations::claim_reductions::registers::ClaimReduction;
 pub use jolt_claims::protocols::field_inline::relations::claim_reductions::registers::{
     FieldRegistersClaimReductionChallenges, FieldRegistersClaimReductionInputClaims,
     FieldRegistersClaimReductionOutputClaims,
@@ -33,14 +33,14 @@ use crate::VerifierError;
 
 #[derive(Clone)]
 pub struct FieldRegistersClaimReduction<F: JoltField> {
-    symbolic: registers::ClaimReduction,
+    symbolic: ClaimReduction,
     tau_low: Vec<F>,
 }
 
 impl<F: JoltField> FieldRegistersClaimReduction<F> {
     pub fn new(dimensions: FieldRegistersTraceDimensions, tau_low: Vec<F>) -> Self {
         Self {
-            symbolic: registers::ClaimReduction::new(dimensions),
+            symbolic: ClaimReduction::new(dimensions),
             tau_low,
         }
     }
@@ -58,7 +58,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
-    type Symbolic = registers::ClaimReduction;
+    type Symbolic = ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

@@ -40,7 +40,7 @@ use jolt_poly::Polynomial;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{
-    CommitmentConfig, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
+    CommitmentConfig, FieldInlineConfig, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
 };
 use jolt_verifier::preprocessing::{
     CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
@@ -1794,7 +1794,7 @@ impl AkitaPackedProver<'_> {
                 zk: ZkConfig::Transparent,
                 commitment: CommitmentConfig::Packed,
                 scalar_challenge_endianness: ScalarChallengeEndianness::Little,
-                field_inline: jolt_verifier::config::FieldInlineConfig::disabled(),
+                field_inline: FieldInlineConfig::disabled(),
             },
             commitments: commitment,
             stages,

@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_field::{CanonicalBytes, Fr, Ring};
 use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
@@ -32,7 +33,7 @@ use jolt_riscv::{
 };
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
-const ENTRY: u64 = common::constants::RAM_START_ADDRESS;
+const ENTRY: u64 = RAM_START_ADDRESS;
 
 fn encode(value: Fr) -> FieldEncodedValue {
     let mut bytes_le = [0u8; 32];

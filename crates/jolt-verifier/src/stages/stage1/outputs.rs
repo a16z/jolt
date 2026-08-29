@@ -1,5 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 1 verification.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
@@ -20,8 +22,7 @@ pub struct Stage1OutputClaims<F: JoltField> {
     /// an `Option` for the same producer reasons as the commitment payload, and
     /// required fail-closed by `stage1::verify`.
     #[cfg(feature = "field-inline")]
-    pub field_inline_outer:
-        Option<jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims<F>>,
+    pub field_inline_outer: Option<FieldRegistersSpartanOuterOutputClaims<F>>,
 }
 
 impl<F: JoltField> Stage1OutputClaims<F> {
@@ -98,9 +99,7 @@ pub struct Stage1ClearOutput<F: JoltField> {
     /// FR-on proof (`stage1::verify` fills it); `None` only from producers
     /// that have not wired field-inline yet.
     #[cfg(feature = "field-inline")]
-    pub field_inline_output_values: Option<
-        jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims<F>,
-    >,
+    pub field_inline_output_values: Option<FieldRegistersSpartanOuterOutputClaims<F>>,
 }
 
 impl<F: JoltField> Stage1ClearOutput<F> {

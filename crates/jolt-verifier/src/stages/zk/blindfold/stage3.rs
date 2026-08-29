@@ -1,5 +1,7 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::relations::spartan::SpartanShiftOutputClaims;
+
 pub(super) fn add_stage3<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     builder: Builder<PCS::Field, VC::Output>,
@@ -105,7 +107,7 @@ where
 
     let zero = PCS::Field::zero();
     let mut output_ids = composite_ids(
-        relations::spartan::SpartanShiftOutputClaims::<PCS::Field> {
+        SpartanShiftOutputClaims::<PCS::Field> {
             unexpanded_pc: zero,
             pc: zero,
             is_virtual: zero,

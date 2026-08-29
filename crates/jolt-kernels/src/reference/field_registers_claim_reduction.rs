@@ -9,6 +9,8 @@
 //! are hand-held instead. `τ_low` is the stage-1 remainder cycle binding the
 //! relation carries; `γ` is the member's drawn challenge.
 
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
 use jolt_claims::protocols::field_inline::{
     FieldInlineDerivedId, FieldRegistersClaimReductionPublic,
 };
@@ -20,6 +22,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
+use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::backend::{PrepareKernel, ProofSession};
@@ -38,7 +41,8 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>> for Referen
         KernelError<F>,
     > {
         use jolt_claims::protocols::field_inline::{
-            FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
+            FieldInlineChallengeId, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
+            FieldRegistersClaimReductionChallenge,
         };
         use jolt_claims::SumcheckChallenges as _;
         use jolt_poly::EqPolynomial;
@@ -57,11 +61,9 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>> for Referen
         };
         let gamma = inputs
             .challenges
-            .resolve_challenge(
-                &jolt_claims::protocols::field_inline::FieldInlineChallengeId::from(
-                    jolt_claims::protocols::field_inline::FieldRegistersClaimReductionChallenge::Gamma,
-                ),
-            )
+            .resolve_challenge(&FieldInlineChallengeId::from(
+                FieldRegistersClaimReductionChallenge::Gamma,
+            ))
             .ok_or(KernelError::InvariantViolation {
                 reason: "field-registers claim reduction is missing its gamma challenge",
             })?;
@@ -93,14 +95,14 @@ struct FieldRegistersClaimReductionKernel<F: JoltField> {
 
 // Size arithmetic rather than a derive, like the sibling kernels.
 #[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for FieldRegistersClaimReductionKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for FieldRegistersClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for (key, table) in [
-            (allocative::Key::new("eq_spartan"), &self.eq_spartan),
-            (allocative::Key::new("rd_value"), &self.rd_value),
-            (allocative::Key::new("rs1_value"), &self.rs1_value),
-            (allocative::Key::new("rs2_value"), &self.rs2_value),
+            (Key::new("eq_spartan"), &self.eq_spartan),
+            (Key::new("rd_value"), &self.rd_value),
+            (Key::new("rs1_value"), &self.rs1_value),
+            (Key::new("rs2_value"), &self.rs2_value),
         ] {
             visitor.visit_simple(key, table.len() * size_of::<F>());
         }
@@ -230,7 +232,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldRegistersClaimReductionKernel<F> {
         let got = self.eq_spartan.evals()[0];
         if got != expected {
             return Err(SumcheckKernelError::Verifier(
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "FieldRegistersClaimReduction".to_string(),
                     reason: format!(
                         "EqSpartan table bound to {got:?}, but derive_output_term gives \

@@ -10,9 +10,11 @@ use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 pub use super::field_registers_val_evaluation::{
     FieldRegistersValEvaluation, FieldRegistersValEvaluationOutputClaims,
 };
-use super::instruction_read_raf::{reconstruct_r_address, InstructionReadRaf};
-use super::ram_ra_claim_reduction::RamRaClaimReduction;
-use super::registers_val_evaluation::RegistersValEvaluation;
+use super::instruction_read_raf::{
+    reconstruct_r_address, InstructionReadRaf, InstructionReadRafOutputClaims,
+};
+use super::ram_ra_claim_reduction::{RamRaClaimReduction, RamRaClaimReductionOutputClaims};
+use super::registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationOutputClaims};
 
 /// Source-of-truth for stage 5's sumcheck batch, in Fiat-Shamir batch order
 /// (instruction read-RAF, RAM-RA reduction, register value-evaluation, the
@@ -44,10 +46,9 @@ impl<F: JoltField> Stage5OutputClaims<F> {
     /// val-evaluation slot defaults to all-zero claims, inert because such
     /// producers' proofs never declare the FR axis.
     pub fn new(
-        instruction_read_raf: super::instruction_read_raf::InstructionReadRafOutputClaims<F>,
-        ram_ra_claim_reduction: super::ram_ra_claim_reduction::RamRaClaimReductionOutputClaims<F>,
-        registers_val_evaluation:
-            super::registers_val_evaluation::RegistersValEvaluationOutputClaims<F>,
+        instruction_read_raf: InstructionReadRafOutputClaims<F>,
+        ram_ra_claim_reduction: RamRaClaimReductionOutputClaims<F>,
+        registers_val_evaluation: RegistersValEvaluationOutputClaims<F>,
     ) -> Self {
         Self {
             instruction_read_raf,

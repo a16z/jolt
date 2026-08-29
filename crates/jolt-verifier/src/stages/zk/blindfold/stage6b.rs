@@ -1,5 +1,10 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::relations::claim_reductions::increments::IncClaimReductionOutputClaims;
+use jolt_claims::protocols::jolt::relations::ram::{
+    RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
+};
+
 pub(super) fn add_stage6b<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     builder: Builder<PCS::Field, VC::Output>,
@@ -144,13 +149,13 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
         booleanity_opening_point,
     );
     output_ids.extend(composite_ids(
-        relations::ram::RamHammingBooleanityOutputClaims::<F> {
+        RamHammingBooleanityOutputClaims::<F> {
             ram_hamming_weight: F::zero(),
         }
         .canonical_order(),
     ));
     output_ids.extend(composite_ids(
-        relations::ram::RamRaVirtualizationOutputClaims::<F> {
+        RamRaVirtualizationOutputClaims::<F> {
             ram_ra: vec![
                 F::zero();
                 formula_dimensions
@@ -167,7 +172,7 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
         .all(),
     ));
     output_ids.extend(
-        relations::claim_reductions::increments::IncClaimReductionOutputClaims::<F> {
+        IncClaimReductionOutputClaims::<F> {
             ram_inc: F::zero(),
             rd_inc: F::zero(),
         }

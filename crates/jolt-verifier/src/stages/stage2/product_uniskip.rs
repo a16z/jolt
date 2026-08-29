@@ -13,6 +13,9 @@
 //! *input* derived (resolved before binding), so this relation overrides
 //! `derive_input_term` rather than `derive_output_term`.
 
+#[cfg(feature = "field-inline")]
+use std::sync::OnceLock;
+
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductUniskipInputClaims, ProductUniskipOutputClaims,
@@ -54,7 +57,7 @@ pub struct ProductUniskip<F: JoltField> {
     /// composed `input_claim` consumes them at the lane indices following the
     /// ordinary lanes.
     #[cfg(feature = "field-inline")]
-    field_inline_inputs: std::sync::OnceLock<[F; 2]>,
+    field_inline_inputs: OnceLock<[F; 2]>,
 }
 
 impl<F: JoltField> ProductUniskip<F> {
@@ -63,7 +66,7 @@ impl<F: JoltField> ProductUniskip<F> {
             symbolic: relations::spartan::ProductUniskip::new(dimensions),
             tau_high,
             #[cfg(feature = "field-inline")]
-            field_inline_inputs: std::sync::OnceLock::new(),
+            field_inline_inputs: OnceLock::new(),
         }
     }
 

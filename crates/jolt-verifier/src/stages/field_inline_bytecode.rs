@@ -18,7 +18,9 @@ use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPha
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
-use jolt_program::field_inline::FieldInlineBytecodeMetadata;
+use jolt_program::field_inline::{
+    FieldInlineBytecodeMetadata, FieldInlineBytecodeRow as ProgramFieldInlineBytecodeRow,
+};
 use jolt_riscv::{
     field_inline_operand_shape, FieldInlineOp, FieldInlineXRegisterRole, FieldRegister,
     JoltInstructionRow,
@@ -82,7 +84,7 @@ pub fn convert_field_inline_bytecode(
 
 fn convert_row(
     index: usize,
-    row: &jolt_program::field_inline::FieldInlineBytecodeRow,
+    row: &ProgramFieldInlineBytecodeRow,
 ) -> Result<FieldInlineBytecodeRow, VerifierError> {
     if !row.active {
         // The program-side validator rejects inactive rows carrying data, so

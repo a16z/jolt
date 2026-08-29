@@ -20,6 +20,7 @@ pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 /// per-relation claim plumbing it composes. See `specs/sumcheck-batch-derive.md`.
 pub use jolt_verifier_derive::SumcheckBatch;
 
+use core::fmt::Debug;
 use std::collections::BTreeSet;
 
 use jolt_claims::SymbolicSumcheck;
@@ -105,10 +106,10 @@ where
     SumcheckInputClaims<F, Self>: InputClaims<F, OpeningIdOf<F, Self>>,
     SumcheckOutputClaims<F, Self>: OutputClaims<F, OpeningIdOf<F, Self>>,
     ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, ChallengeIdOf<F, Self>>,
-    RelationIdOf<F, Self>: core::fmt::Debug + Copy,
-    OpeningIdOf<F, Self>: Copy + Ord + core::fmt::Debug + Into<VerifierOpeningId>,
-    DerivedIdOf<F, Self>: Copy + core::fmt::Debug + Into<VerifierDerivedId>,
-    ChallengeIdOf<F, Self>: Copy + core::fmt::Debug + Into<VerifierChallengeId>,
+    RelationIdOf<F, Self>: Debug + Copy,
+    OpeningIdOf<F, Self>: Copy + Ord + Debug + Into<VerifierOpeningId>,
+    DerivedIdOf<F, Self>: Copy + Debug + Into<VerifierDerivedId>,
+    ChallengeIdOf<F, Self>: Copy + Debug + Into<VerifierChallengeId>,
 {
     /// The relation's pure symbolic algebra: id types, sumcheck spec, and the
     /// input/output `Expr`s. The concrete instance holds its `Self::Symbolic` and
@@ -384,7 +385,7 @@ where
     // The diagnostic formats the relation id, so the helper spans every
     // protocol family a batch mixes (the derive's own presence errors use the
     // same string-typed variant).
-    <SymbolicOf<F, I> as SymbolicSumcheck>::RelationId: core::fmt::Debug,
+    <SymbolicOf<F, I> as SymbolicSumcheck>::RelationId: Debug,
 {
     match (member, claims) {
         (Some(_), Some(_)) | (None, None) => Ok(()),
@@ -443,7 +444,7 @@ where
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
     OpeningIdOf<F, I>: Copy + Into<VerifierOpeningId>,
-    RelationIdOf<F, I>: core::fmt::Debug,
+    RelationIdOf<F, I>: Debug,
 {
     for (aliased, source) in I::aliased_output_openings() {
         let target = claims

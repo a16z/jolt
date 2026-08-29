@@ -11,8 +11,10 @@ use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 pub use super::field_registers_read_write_checking::{
     FieldRegistersReadWriteChecking, FieldRegistersReadWriteOutputClaims,
 };
-use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation};
-use super::registers_read_write_checking::RegistersReadWriteChecking;
+use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims};
+use super::registers_read_write_checking::{
+    RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
+};
 
 /// Source-of-truth for stage 4's sumcheck batch, in Fiat-Shamir batch order
 /// (registers read-write, the field-inline FR read-write when composed, then
@@ -57,10 +59,8 @@ impl<F: JoltField> Stage4OutputClaims<F> {
     /// read-write slot defaults to all-zero claims, inert because such
     /// producers' proofs never declare the FR axis.
     pub fn new(
-        registers_read_write: super::registers_read_write_checking::RegistersReadWriteOutputClaims<
-            F,
-        >,
-        ram_val_check: super::ram_val_check::RamValCheckOutputClaims<F>,
+        registers_read_write: RegistersReadWriteOutputClaims<F>,
+        ram_val_check: RamValCheckOutputClaims<F>,
     ) -> Self {
         Self {
             registers_read_write,

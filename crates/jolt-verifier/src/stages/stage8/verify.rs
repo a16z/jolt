@@ -6,6 +6,8 @@ use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening}
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
 #[cfg(not(feature = "akita"))]
+use crate::stages::ids::VerifierOpeningId;
+#[cfg(not(feature = "akita"))]
 use crate::stages::{stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims};
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -51,7 +53,7 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 /// the composed plan can carry the field-inline entry alongside the jolt ones
 /// (under `field-inline`, spliced by the stage-8 `field_inline` seam).
 pub struct Stage8BatchEntry<'a, F: JoltField, C> {
-    pub id: crate::stages::ids::VerifierOpeningId,
+    pub id: VerifierOpeningId,
     pub commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
     pub opening_claim: Option<F>,
@@ -162,8 +164,7 @@ where
         )?;
         entries
     };
-    let opening_ids: Vec<crate::stages::ids::VerifierOpeningId> =
-        entries.iter().map(|entry| entry.id).collect();
+    let opening_ids: Vec<VerifierOpeningId> = entries.iter().map(|entry| entry.id).collect();
 
     if checked.zk {
         let gamma_powers = transcript.challenge_scalar_powers(entries.len());

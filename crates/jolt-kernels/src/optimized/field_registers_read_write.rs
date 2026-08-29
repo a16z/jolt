@@ -37,6 +37,9 @@
 //! Like the reference kernel, only the config-pinned FR phase split (phase 1
 //! = all cycle rounds, phase 2 = the 4 address rounds) is supported.
 
+use core::cmp::Ordering;
+use core::ops::Range;
+
 use jolt_claims::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineDerivedId,
     FieldInlinePolynomialId, FieldRegistersReadWriteChallenge, FieldRegistersReadWritePublic,
@@ -50,6 +53,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
+use jolt_verifier::VerifierError;
 use jolt_witness::field_inline::FieldInlineRegisterReadWriteRow;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
@@ -193,16 +197,16 @@ impl<F: JoltField> FieldSparseEntry<F> {
         let mut j = 0;
         while i < evens.len() && j < odds.len() {
             match evens[i].col.cmp(&odds[j].col) {
-                core::cmp::Ordering::Equal => {
+                Ordering::Equal => {
                     visit(Some(&evens[i]), Some(&odds[j]));
                     i += 1;
                     j += 1;
                 }
-                core::cmp::Ordering::Less => {
+                Ordering::Less => {
                     visit(Some(&evens[i]), None);
                     i += 1;
                 }
-                core::cmp::Ordering::Greater => {
+                Ordering::Greater => {
                     visit(None, Some(&odds[j]));
                     j += 1;
                 }
@@ -256,7 +260,7 @@ fn sparse_quadratic<F: JoltField>(
     };
     let mask = (1usize << in_bits) - 1;
 
-    let range_contribution = |range: core::ops::Range<usize>| -> [F; 2] {
+    let range_contribution = |range: Range<usize>| -> [F; 2] {
         let mut acc = [F::Accumulator::default(), F::Accumulator::default()];
         for group in entries[range].chunk_by(|a, b| a.row / 2 == b.row / 2) {
             let z = group[0].row / 2;
@@ -295,7 +299,7 @@ fn bind_sparse_entries<F: JoltField>(
     output: &mut Vec<FieldSparseEntry<F>>,
 ) {
     output.clear();
-    let merge_range = |range: core::ops::Range<usize>, out: &mut Vec<FieldSparseEntry<F>>| {
+    let merge_range = |range: Range<usize>, out: &mut Vec<FieldSparseEntry<F>>| {
         for group in entries[range].chunk_by(|a, b| a.row / 2 == b.row / 2) {
             let (evens, odds) = FieldSparseEntry::split_pair_group(group);
             FieldSparseEntry::merge_walk(evens, odds, |even, odd| {
@@ -792,7 +796,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldReadWriteKernel<F> {
         let got = self.eq_scalar;
         if got != expected {
             return Err(SumcheckKernelError::Verifier(
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "FieldRegistersReadWriteChecking".to_string(),
                     reason: format!(
                         "bound eq scalar {got:?}, but derive_output_term gives {expected:?}"

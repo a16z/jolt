@@ -17,7 +17,7 @@ use crate::zkvm::bytecode::{
 };
 use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
-use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 use tracer::instruction::Cycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -57,7 +57,7 @@ impl FullProgramPreprocessing {
         instructions: Vec<JoltInstructionRow>,
         memory_init: Vec<(u64, u8)>,
         entry_address: u64,
-        profile: jolt_riscv::JoltInstructionProfile,
+        profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
         Ok(Self {
             bytecode: Arc::new(BytecodePreprocessing::preprocess(
@@ -246,7 +246,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         instructions: Vec<JoltInstructionRow>,
         memory_init: Vec<(u64, u8)>,
         entry_address: u64,
-        profile: jolt_riscv::JoltInstructionProfile,
+        profile: JoltInstructionProfile,
     ) -> Result<Self, PreprocessingError> {
         Ok(Self::Full(
             FullProgramPreprocessing::preprocess_with_profile(

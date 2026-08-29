@@ -24,6 +24,8 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
@@ -42,6 +44,8 @@ use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
     VerifierOpeningClaim, ZkOpeningScheme,
 };
+#[cfg(feature = "field-inline")]
+use jolt_poly::MultilinearPoly;
 use jolt_poly::Point;
 use jolt_transcript::Transcript;
 use jolt_verifier::proof::JoltCommitments;
@@ -292,7 +296,7 @@ where
             FieldInlineCommittedPolynomial::FieldRdInc,
         ))?;
         let embedded = match config.trace_polynomial_order {
-            jolt_claims::protocols::jolt::TracePolynomialOrder::CycleMajor => {
+            TracePolynomialOrder::CycleMajor => {
                 let mut embedded: Vec<F> = vec![F::default(); 1usize << grid.total_vars];
                 let prefix =
                     embedded
@@ -303,7 +307,7 @@ where
                 prefix.copy_from_slice(&table);
                 embedded
             }
-            jolt_claims::protocols::jolt::TracePolynomialOrder::AddressMajor => {
+            TracePolynomialOrder::AddressMajor => {
                 let mut embedded: Vec<F> = vec![F::default(); 1usize << grid.total_vars];
                 let stride = grid.cycle_stride();
                 for (cycle, value) in table.into_iter().enumerate() {
@@ -317,10 +321,7 @@ where
                 embedded
             }
         };
-        polynomials.insert(
-            position,
-            Box::new(embedded) as Box<dyn jolt_poly::MultilinearPoly<F>>,
-        );
+        polynomials.insert(position, Box::new(embedded) as Box<dyn MultilinearPoly<F>>);
         let hint = field_inline_hints
             .iter()
             .find(|(id, _)| *id == FieldInlineCommittedPolynomial::FieldRdInc)

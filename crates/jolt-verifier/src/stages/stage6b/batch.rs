@@ -48,6 +48,8 @@ use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
+#[cfg(feature = "field-inline")]
+use crate::stages::field_inline_bytecode::FieldInlineBytecodeTable;
 use crate::stages::stage1::Stage1Output;
 use crate::stages::stage2::{Stage2BatchOutputPoints, Stage2Output};
 use crate::stages::stage3::outputs::Stage3OutputPoints;
@@ -80,7 +82,7 @@ pub struct Stage6bBuildParts<'a, F: JoltField> {
     /// The converted field-inline bytecode side table (required: the FR-on
     /// verifier rejects preprocessing without it before assembling parts).
     #[cfg(feature = "field-inline")]
-    pub field_inline_bytecode: crate::stages::field_inline_bytecode::FieldInlineBytecodeTable,
+    pub field_inline_bytecode: FieldInlineBytecodeTable,
     pub carried: &'a Stage6aCarriedChallenges<F>,
     pub eta: Option<F>,
     pub stage1_cycle_binding: Vec<F>,

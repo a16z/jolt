@@ -3,9 +3,17 @@
 
 use std::collections::HashMap;
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{
+    FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
+};
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::JoltField;
 
+#[cfg(feature = "field-inline")]
+use crate::field_inline::{
+    FieldInlineRegisterReadWriteRow, FieldInlineRegisterReadWriteRows, FieldInlineWitnessOracle,
+};
 use crate::{JoltWitnessOracle, Shape, WitnessError};
 
 pub(crate) const FIXED_LABEL: &str = "fixed";
@@ -28,15 +36,14 @@ pub struct FixedBackend<F> {
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, Default)]
 pub struct FixedFieldInline<F> {
-    columns:
-        HashMap<jolt_claims::protocols::field_inline::FieldInlinePolynomialId, (Shape, Vec<F>)>,
+    columns: HashMap<FieldInlinePolynomialId, (Shape, Vec<F>)>,
 }
 
 #[cfg(feature = "field-inline")]
 impl<F> FixedFieldInline<F> {
     pub fn insert(
         &mut self,
-        id: jolt_claims::protocols::field_inline::FieldInlinePolynomialId,
+        id: FieldInlinePolynomialId,
         shape: Shape,
         values: Vec<F>,
     ) -> Result<(), WitnessError> {
@@ -56,12 +63,10 @@ impl<F> FixedFieldInline<F> {
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: JoltField> crate::field_inline::FieldInlineRegisterReadWriteRows<F>
-    for FixedFieldInline<F>
-{
+impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for FixedFieldInline<F> {
     fn field_inline_register_read_write_rows(
         &self,
-    ) -> Result<Vec<crate::field_inline::FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
+    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
         Err(WitnessError::UnavailableView {
             label: "fixed field-inline register replay rows",
         })
@@ -69,30 +74,22 @@ impl<F: JoltField> crate::field_inline::FieldInlineRegisterReadWriteRows<F>
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: JoltField> crate::field_inline::FieldInlineWitnessOracle<F> for FixedFieldInline<F> {
-    fn shape(
-        &self,
-        id: jolt_claims::protocols::field_inline::FieldInlinePolynomialId,
-    ) -> Result<Shape, WitnessError> {
+impl<F: JoltField> FieldInlineWitnessOracle<F> for FixedFieldInline<F> {
+    fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError> {
         self.columns
             .get(&id)
             .map(|(shape, _)| *shape)
             .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
     }
 
-    fn oracle_table(
-        &self,
-        id: jolt_claims::protocols::field_inline::FieldInlinePolynomialId,
-    ) -> Result<Vec<F>, WitnessError> {
+    fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError> {
         self.columns
             .get(&id)
             .map(|(_, values)| values.clone())
             .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
     }
 
-    fn committed_order(
-        &self,
-    ) -> Vec<jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial> {
+    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
         Vec::new()
     }
 }
@@ -159,10 +156,10 @@ impl<F: JoltField> JoltWitnessOracle<F> for FixedBackend<F> {
     }
 
     #[cfg(feature = "field-inline")]
-    fn field_inline(&self) -> Option<&dyn crate::field_inline::FieldInlineWitnessOracle<F>> {
+    fn field_inline(&self) -> Option<&dyn FieldInlineWitnessOracle<F>> {
         self.field_inline
             .as_ref()
-            .map(|view| view as &dyn crate::field_inline::FieldInlineWitnessOracle<F>)
+            .map(|view| view as &dyn FieldInlineWitnessOracle<F>)
     }
 }
 

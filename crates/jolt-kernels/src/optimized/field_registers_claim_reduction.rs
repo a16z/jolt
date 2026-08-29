@@ -34,6 +34,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
+use jolt_verifier::VerifierError;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use super::support::RoundChallenges;
@@ -319,7 +320,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
         let got = self.gruen.current_scalar();
         if got != expected {
             return Err(SumcheckKernelError::Verifier(
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "FieldRegistersClaimReduction".to_string(),
                     reason: format!(
                         "bound eq scalar {got:?}, but derive_output_term gives {expected:?}"

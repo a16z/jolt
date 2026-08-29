@@ -1,5 +1,8 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
+use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
+
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
@@ -177,7 +180,7 @@ fn stage4_output_ids<F: JoltField>(
         output_ids.push(program_image::ram_val_check_contribution_opening().into());
     }
     output_ids.extend(composite_ids(
-        relations::registers::RegistersReadWriteOutputClaims::<F> {
+        RegistersReadWriteOutputClaims::<F> {
             registers_val: F::zero(),
             rs1_ra: F::zero(),
             rs2_ra: F::zero(),
@@ -196,7 +199,7 @@ fn stage4_output_ids<F: JoltField>(
     // canonical order is emitted (advice / program-image leaves left `None`),
     // preserving the prover's per-stage opening-id block order.
     output_ids.extend(composite_ids(
-        relations::ram::RamValCheckOutputClaims::<F> {
+        RamValCheckOutputClaims::<F> {
             untrusted_advice: None,
             trusted_advice: None,
             program_image: None,

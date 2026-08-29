@@ -1,5 +1,14 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
+use jolt_claims::protocols::jolt::relations::ram::{
+    RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
+};
+use jolt_claims::protocols::jolt::relations::spartan::ProductRemainderOutputClaims;
+
+use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::stage2::outputs::InstructionClaimReduction;
+
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
@@ -244,7 +253,7 @@ where
 /// [`stage2_opening_equalities`], not alias-elided).
 fn stage2_output_ids_and_aliases<F: JoltField>(
 ) -> (Vec<VerifierOpeningId>, Vec<OpeningAlias<VerifierOpeningId>>) {
-    let product_order = relations::spartan::ProductRemainderOutputClaims::<F> {
+    let product_order = ProductRemainderOutputClaims::<F> {
         left_instruction_input: F::zero(),
         right_instruction_input: F::zero(),
         jump_flag: F::zero(),
@@ -255,15 +264,14 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
         virtual_instruction: F::zero(),
     }
     .canonical_order();
-    let instruction_outputs =
-        relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims::<F> {
-            lookup_output: F::zero(),
-            left_lookup_operand: F::zero(),
-            right_lookup_operand: F::zero(),
-            left_instruction_input: F::zero(),
-            right_instruction_input: F::zero(),
-        }
-        .canonical_order();
+    let instruction_outputs = InstructionClaimReductionOutputClaims::<F> {
+        lookup_output: F::zero(),
+        left_lookup_operand: F::zero(),
+        right_lookup_operand: F::zero(),
+        left_instruction_input: F::zero(),
+        right_instruction_input: F::zero(),
+    }
+    .canonical_order();
 
     // Single-sourced from the reduction's declared alias pairs
     // (`ConcreteSumcheck::aliased_output_openings`): the committed output rows
@@ -271,13 +279,13 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
     // `OpeningAlias` rows mirror the same `(aliased, source)` pairs — so
     // BlindFold's row layout cannot drift from the clear path's generated absorb
     // and `validate_aliases`.
-    let alias_pairs = <crate::stages::stage2::outputs::InstructionClaimReduction<F> as
-        crate::stages::relations::ConcreteSumcheck<F>>::aliased_output_openings();
+    let alias_pairs =
+        <InstructionClaimReduction<F> as ConcreteSumcheck<F>>::aliased_output_openings();
     let aliased_targets: std::collections::BTreeSet<_> =
         alias_pairs.iter().map(|(aliased, _)| *aliased).collect();
 
     let mut output_ids: Vec<VerifierOpeningId> = composite_ids(
-        relations::ram::RamReadWriteOutputClaims::<F> {
+        RamReadWriteOutputClaims::<F> {
             val: F::zero(),
             ra: F::zero(),
             inc: F::zero(),
@@ -301,10 +309,10 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
     #[cfg(feature = "field-inline")]
     output_ids.extend(super::field_inline::stage2_claim_reduction_output_ids());
     output_ids.extend(composite_ids(
-        relations::ram::RamRafEvaluationOutputClaims::<F> { ram_ra: F::zero() }.canonical_order(),
+        RamRafEvaluationOutputClaims::<F> { ram_ra: F::zero() }.canonical_order(),
     ));
     output_ids.extend(composite_ids(
-        relations::ram::RamOutputCheckOutputClaims::<F> {
+        RamOutputCheckOutputClaims::<F> {
             val_final: F::zero(),
         }
         .canonical_order(),

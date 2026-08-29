@@ -10,8 +10,13 @@
 //! Under the `akita` feature the symbolic swaps to the lattice address phase,
 //! whose input fold additionally consumes the four reduced `Inc` claims
 
+#[cfg(feature = "field-inline")]
+use std::sync::OnceLock;
+
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
 };
@@ -25,6 +30,10 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 
+#[cfg(feature = "field-inline")]
+use super::field_inline::{FieldInlineBytecodeReadRafGeometry, FieldInlineBytecodeReadRafInputs};
+#[cfg(feature = "field-inline")]
+use crate::stages::relations::SumcheckInputClaims;
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints};
 use crate::stages::stage2::Stage2BatchOutputPoints;
 use crate::stages::stage3::outputs::Stage3OutputPoints;
@@ -227,14 +236,12 @@ pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     /// claim is computed. See
     /// [`field_inline::FieldInlineBytecodeReadRafInputs`](super::field_inline::FieldInlineBytecodeReadRafInputs).
     #[cfg(feature = "field-inline")]
-    field_inline_inputs:
-        std::sync::OnceLock<super::field_inline::FieldInlineBytecodeReadRafInputs<F>>,
+    field_inline_inputs: OnceLock<FieldInlineBytecodeReadRafInputs<F>>,
     /// The FR side table and opening points the address-phase kernel folds
     /// over, set by both fronts right after the batch build. See
     /// [`field_inline::FieldInlineBytecodeReadRafGeometry`](super::field_inline::FieldInlineBytecodeReadRafGeometry).
     #[cfg(feature = "field-inline")]
-    field_inline_geometry:
-        std::sync::OnceLock<super::field_inline::FieldInlineBytecodeReadRafGeometry<F>>,
+    field_inline_geometry: OnceLock<FieldInlineBytecodeReadRafGeometry<F>>,
 }
 
 impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
@@ -251,9 +258,9 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
             stage_points,
             entry_bytecode_index,
             #[cfg(feature = "field-inline")]
-            field_inline_inputs: std::sync::OnceLock::new(),
+            field_inline_inputs: OnceLock::new(),
             #[cfg(feature = "field-inline")]
-            field_inline_geometry: std::sync::OnceLock::new(),
+            field_inline_geometry: OnceLock::new(),
         }
     }
 
@@ -262,7 +269,7 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
     #[cfg(feature = "field-inline")]
     pub fn set_field_inline_geometry(
         &self,
-        geometry: super::field_inline::FieldInlineBytecodeReadRafGeometry<F>,
+        geometry: FieldInlineBytecodeReadRafGeometry<F>,
     ) -> Result<(), VerifierError> {
         let stored = self.field_inline_geometry.get_or_init(|| geometry.clone());
         if *stored != geometry {
@@ -281,7 +288,7 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
     #[cfg(feature = "field-inline")]
     pub fn field_inline_geometry(
         &self,
-    ) -> Result<&super::field_inline::FieldInlineBytecodeReadRafGeometry<F>, VerifierError> {
+    ) -> Result<&FieldInlineBytecodeReadRafGeometry<F>, VerifierError> {
         self.field_inline_geometry
             .get()
             .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
@@ -296,7 +303,7 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
     #[cfg(feature = "field-inline")]
     pub fn set_field_inline_inputs(
         &self,
-        values: super::field_inline::FieldInlineBytecodeReadRafInputs<F>,
+        values: FieldInlineBytecodeReadRafInputs<F>,
     ) -> Result<(), VerifierError> {
         let stored = self.field_inline_inputs.get_or_init(|| values.clone());
         if *stored != values {
@@ -394,8 +401,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     #[cfg(feature = "field-inline")]
     fn input_claim(
         &self,
-        input_values: &crate::stages::relations::SumcheckInputClaims<F, Self>,
-        challenges: &jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges<F>,
+        input_values: &SumcheckInputClaims<F, Self>,
+        challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         use jolt_claims::{InputClaims as _, SumcheckChallenges as _};
 

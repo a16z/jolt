@@ -28,6 +28,14 @@
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
+#[cfg(feature = "field-inline")]
+use self::field_registers_claim_reduction::OptimizedFieldRegistersClaimReduction;
+#[cfg(feature = "field-inline")]
+use self::field_registers_inc_claim_reduction::OptimizedFieldRegistersIncClaimReduction;
+#[cfg(feature = "field-inline")]
+use self::field_registers_read_write::OptimizedFieldRegistersReadWrite;
+#[cfg(feature = "field-inline")]
+use self::field_registers_val_evaluation::OptimizedFieldRegistersValEvaluation;
 use crate::commitment::ModeStreamingCommitment;
 
 use crate::JoltBackend;
@@ -134,15 +142,11 @@ where
 
         #[cfg(feature = "field-inline")]
         {
-            self.field_registers_claim_reduction =
-                Box::new(field_registers_claim_reduction::OptimizedFieldRegistersClaimReduction);
-            self.field_registers_read_write =
-                Box::new(field_registers_read_write::OptimizedFieldRegistersReadWrite);
-            self.field_registers_val_evaluation =
-                Box::new(field_registers_val_evaluation::OptimizedFieldRegistersValEvaluation);
-            self.field_registers_inc_claim_reduction = Box::new(
-                field_registers_inc_claim_reduction::OptimizedFieldRegistersIncClaimReduction,
-            );
+            self.field_registers_claim_reduction = Box::new(OptimizedFieldRegistersClaimReduction);
+            self.field_registers_read_write = Box::new(OptimizedFieldRegistersReadWrite);
+            self.field_registers_val_evaluation = Box::new(OptimizedFieldRegistersValEvaluation);
+            self.field_registers_inc_claim_reduction =
+                Box::new(OptimizedFieldRegistersIncClaimReduction);
         }
 
         self.booleanity_address = Box::new(booleanity::OptimizedBooleanityAddress);

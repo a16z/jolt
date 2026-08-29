@@ -15,7 +15,7 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::VerifierError;
 
-use crate::ProofSession;
+use crate::{MaybeAllocative, ProofSession};
 
 /// Extraction/self-check failures a [`SumcheckKernel`] can surface: the
 /// kernel-side error vocabulary the generated prove drivers name. Deliberately
@@ -74,7 +74,7 @@ pub enum SumcheckKernelError<F: Field> {
 // site), and spelling them with the relation's own id families — required for
 // non-jolt protocol families — would name `Self` in a bound's type arguments,
 // which breaks dyn compatibility.
-pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + crate::backend::MaybeAllocative {
+pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + MaybeAllocative {
     type Relation: ConcreteSumcheck<F>;
 
     /// Extract the member's typed produced-opening values from its fully

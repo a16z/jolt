@@ -1,5 +1,9 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafOutputOpenings;
+use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
+use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
+
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
@@ -189,18 +193,17 @@ where
 /// `field-inline`) the two FR val-evaluation rows at the tail — the clear
 /// absorb order (the generated `Stage5Sumchecks` member-declaration absorb).
 fn stage5_output_ids<F: JoltField>(
-    instruction_output_openings: instruction::InstructionReadRafOutputOpenings,
+    instruction_output_openings: InstructionReadRafOutputOpenings,
 ) -> Vec<VerifierOpeningId> {
     let mut output_ids: Vec<VerifierOpeningId> =
         composite_ids(instruction_output_openings.lookup_table_flags);
     output_ids.extend(composite_ids(instruction_output_openings.instruction_ra));
     output_ids.push(instruction_output_openings.instruction_raf_flag.into());
     output_ids.extend(composite_ids(
-        relations::ram::RamRaClaimReductionOutputClaims::<F> { ram_ra: F::zero() }
-            .canonical_order(),
+        RamRaClaimReductionOutputClaims::<F> { ram_ra: F::zero() }.canonical_order(),
     ));
     output_ids.extend(composite_ids(
-        relations::registers::RegistersValEvaluationOutputClaims::<F> {
+        RegistersValEvaluationOutputClaims::<F> {
             rd_inc: F::zero(),
             rd_wa: F::zero(),
         }

@@ -21,6 +21,8 @@
 #[cfg(not(feature = "field-inline"))]
 use std::collections::BTreeMap;
 
+#[cfg(all(feature = "allocative", feature = "field-inline"))]
+use allocative::{Allocative, Key, Visitor};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
 #[cfg(feature = "field-inline")]
@@ -38,7 +40,16 @@ use jolt_r1cs::constraints::jolt::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
+#[cfg(feature = "field-inline")]
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::relations::{
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
+    SumcheckOutputPoints,
+};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessOracle;
 #[cfg(feature = "field-inline")]
 use jolt_witness::WitnessError;
@@ -50,6 +61,8 @@ use crate::uniskip::UniskipKernel;
 #[cfg(not(feature = "field-inline"))]
 use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
+#[cfg(feature = "field-inline")]
+use crate::SumcheckKernelError;
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
 impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
@@ -486,17 +499,17 @@ struct ComposedOuterRemainderKernel<F: JoltField> {
 // Size arithmetic rather than a derive, like the sibling kernels: `F` stays
 // unbounded and the tables dominate.
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
-impl<F: JoltField> allocative::Allocative for ComposedOuterRemainderKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for ComposedOuterRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("tau_kernel"),
+            Key::new("tau_kernel"),
             self.tau_kernel.len() * size_of::<F>(),
         );
-        visitor.visit_simple(allocative::Key::new("az"), self.az.len() * size_of::<F>());
-        visitor.visit_simple(allocative::Key::new("bz"), self.bz.len() * size_of::<F>());
+        visitor.visit_simple(Key::new("az"), self.az.len() * size_of::<F>());
+        visitor.visit_simple(Key::new("bz"), self.bz.len() * size_of::<F>());
         visitor.visit_simple(
-            allocative::Key::new("column_tables"),
+            Key::new("column_tables"),
             self.column_tables
                 .iter()
                 .map(|table| table.len() * size_of::<F>())
@@ -524,16 +537,16 @@ impl<F: JoltField> ComposedOuterRemainderKernel<F> {
         self.rounds_bound += 1;
     }
 
-    fn require_fully_bound(&self) -> Result<(), crate::SumcheckKernelError<F>> {
+    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         match self.remaining_rounds() {
             0 => Ok(()),
-            remaining => Err(crate::SumcheckKernelError::NotFullyBound { remaining }),
+            remaining => Err(SumcheckKernelError::NotFullyBound { remaining }),
         }
     }
 }
 
 #[cfg(feature = "field-inline")]
-impl<F: JoltField> jolt_sumcheck::ProveRounds<F> for ComposedOuterRemainderKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ComposedOuterRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
         use jolt_verifier::stages::relations::ConcreteSumcheck as _;
         self.relation.rounds()
@@ -544,7 +557,7 @@ impl<F: JoltField> jolt_sumcheck::ProveRounds<F> for ComposedOuterRemainderKerne
         bind: Option<F>,
         round: usize,
         previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, jolt_sumcheck::SumcheckError<F>> {
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 
         if let Some(challenge) = bind {
@@ -568,7 +581,7 @@ impl<F: JoltField> jolt_sumcheck::ProveRounds<F> for ComposedOuterRemainderKerne
         }
         let round_sum = evals[0] + evals[1];
         if round_sum != previous_claim {
-            return Err(jolt_sumcheck::SumcheckError::RoundCheckFailed {
+            return Err(SumcheckError::RoundCheckFailed {
                 round,
                 expected: previous_claim,
                 actual: round_sum,
@@ -577,7 +590,7 @@ impl<F: JoltField> jolt_sumcheck::ProveRounds<F> for ComposedOuterRemainderKerne
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn finish_rounds(&mut self, bind: F) -> Result<(), jolt_sumcheck::SumcheckError<F>> {
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
         self.bind_tables(bind);
         Ok(())
     }
@@ -589,11 +602,8 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
 
     fn output_claims(
         &mut self,
-        inputs: &jolt_verifier::stages::relations::SumcheckInputClaims<F, OuterRemainder<F>>,
-    ) -> Result<
-        jolt_verifier::stages::relations::SumcheckOutputClaims<F, OuterRemainder<F>>,
-        crate::SumcheckKernelError<F>,
-    > {
+        inputs: &SumcheckInputClaims<F, OuterRemainder<F>>,
+    ) -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, SumcheckKernelError<F>> {
         use jolt_claims::{InputClaims as _, OutputClaims as _};
 
         self.require_fully_bound()?;
@@ -609,20 +619,18 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
             .collect();
         self.relation
             .set_field_inline_outputs(field_inline_values)
-            .map_err(crate::SumcheckKernelError::Verifier)?;
+            .map_err(SumcheckKernelError::Verifier)?;
 
         let ordinary_ids = &self.ordinary_ids;
         let column_tables = &self.column_tables;
-        jolt_verifier::stages::relations::SumcheckOutputClaims::<F, OuterRemainder<F>>::from_opening_values(
-            |id| {
-                ordinary_ids
-                    .iter()
-                    .position(|candidate| candidate == id)
-                    .map(|position| column_tables[position].evals()[0])
-                    .or_else(|| inputs.resolve_input(id))
-            },
-        )
-        .map_err(crate::SumcheckKernelError::from)
+        SumcheckOutputClaims::<F, OuterRemainder<F>>::from_opening_values(|id| {
+            ordinary_ids
+                .iter()
+                .position(|candidate| candidate == id)
+                .map(|position| column_tables[position].evals()[0])
+                .or_else(|| inputs.resolve_input(id))
+        })
+        .map_err(SumcheckKernelError::from)
     }
 
     /// Ties the materialized tables to the verifier's scalar path: the bound
@@ -633,16 +641,10 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
     fn validate_derived_tables(
         &self,
         relation: &OuterRemainder<F>,
-        input_points: &jolt_verifier::stages::relations::SumcheckInputPoints<F, OuterRemainder<F>>,
-        output_points: &jolt_verifier::stages::relations::SumcheckOutputPoints<
-            F,
-            OuterRemainder<F>,
-        >,
-        challenges: &jolt_verifier::stages::relations::ConcreteSumcheckChallenges<
-            F,
-            OuterRemainder<F>,
-        >,
-    ) -> Result<(), crate::SumcheckKernelError<F>> {
+        input_points: &SumcheckInputPoints<F, OuterRemainder<F>>,
+        output_points: &SumcheckOutputPoints<F, OuterRemainder<F>>,
+        challenges: &ConcreteSumcheckChallenges<F, OuterRemainder<F>>,
+    ) -> Result<(), SumcheckKernelError<F>> {
         use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 
         self.require_fully_bound()?;
@@ -657,7 +659,7 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
         let expected_tau_kernel = resolve(SpartanOuterPublic::TauKernel)?;
         let got_tau_kernel = self.tau_kernel.evals()[0];
         if got_tau_kernel != expected_tau_kernel {
-            return Err(crate::SumcheckKernelError::DerivedTableDrift {
+            return Err(SumcheckKernelError::DerivedTableDrift {
                 id: JoltDerivedId::from(SpartanOuterPublic::TauKernel),
                 expected: expected_tau_kernel,
                 got: got_tau_kernel,
@@ -676,8 +678,8 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
             ("Bz", expected_bz, self.bz.evals()[0]),
         ] {
             if got != expected {
-                return Err(crate::SumcheckKernelError::Verifier(
-                    jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                return Err(SumcheckKernelError::Verifier(
+                    VerifierError::StageClaimSumcheckFailed {
                         stage: "SpartanOuter".to_string(),
                         reason: format!(
                             "composed {label} linear form bound to {got:?}, but the \

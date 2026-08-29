@@ -19,6 +19,8 @@
 //! `16·T` — with the sparse ≤3-entries-per-active-cycle replay walk left to
 //! an optimized tier.
 
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
 use jolt_claims::protocols::field_inline::{FieldInlineDerivedId, FieldRegistersReadWritePublic};
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
@@ -28,6 +30,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
+use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::views::{eq_table, tile};
@@ -127,16 +130,16 @@ struct FieldRegistersReadWriteKernel<F: JoltField> {
 
 // Size arithmetic rather than a derive, like the sibling kernels.
 #[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for FieldRegistersReadWriteKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl<F: JoltField> Allocative for FieldRegistersReadWriteKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for (key, table) in [
-            (allocative::Key::new("eq_cycle"), &self.eq_cycle),
-            (allocative::Key::new("registers_val"), &self.registers_val),
-            (allocative::Key::new("rs1_ra"), &self.rs1_ra),
-            (allocative::Key::new("rs2_ra"), &self.rs2_ra),
-            (allocative::Key::new("rd_wa"), &self.rd_wa),
-            (allocative::Key::new("rd_inc"), &self.rd_inc),
+            (Key::new("eq_cycle"), &self.eq_cycle),
+            (Key::new("registers_val"), &self.registers_val),
+            (Key::new("rs1_ra"), &self.rs1_ra),
+            (Key::new("rs2_ra"), &self.rs2_ra),
+            (Key::new("rd_wa"), &self.rd_wa),
+            (Key::new("rd_inc"), &self.rd_inc),
         ] {
             visitor.visit_simple(key, table.len() * size_of::<F>());
         }
@@ -263,7 +266,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldRegistersReadWriteKernel<F> {
         let got = self.eq_cycle.evals()[0];
         if got != expected {
             return Err(SumcheckKernelError::Verifier(
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "FieldRegistersReadWriteChecking".to_string(),
                     reason: format!(
                         "EqCycle table bound to {got:?}, but derive_output_term gives {expected:?}"

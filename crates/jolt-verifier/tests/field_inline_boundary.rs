@@ -76,7 +76,11 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // outputs.rs carrier fields are proof shape: FR batch-member slots,
     // output-claim carrier fields, point accessors, re-exports, and the
     // mode-specific test fixtures that construct them.
-    ("stages/stage1/outputs.rs", 4, "FR carrier fields"),
+    (
+        "stages/stage1/outputs.rs",
+        5,
+        "FR carrier fields + gated import",
+    ),
     (
         "stages/stage2/outputs.rs",
         18,
@@ -99,36 +103,37 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // stage's field_inline seam or jolt-claims composed-lane helpers).
     (
         "stages/stage1/outer_remainder.rs",
-        8,
-        "FR appendage carrier + accessor + override",
+        9,
+        "FR appendage carrier + accessor + override + gated import",
     ),
     (
         "stages/stage2/product_uniskip.rs",
-        5,
-        "FR appendage carrier + override",
+        6,
+        "FR appendage carrier + override + gated import",
     ),
     (
         "stages/stage2/product_remainder.rs",
-        6,
-        "FR appendage carrier + accessor + override",
+        8,
+        "FR appendage carrier + accessor + override + gated imports",
     ),
     (
         "stages/stage6a/bytecode_read_raf.rs",
-        9,
-        "FR appendage carriers (input values + kernel geometry) + override shell",
+        13,
+        "FR appendage carriers (input values + kernel geometry) + override shell + \
+         gated imports",
     ),
     (
         "stages/stage6b/bytecode_read_raf.rs",
-        10,
+        11,
         "FR fold constructor leg + composed publics + kernel fold accessor + \
-         ordinary-fold operand masking",
+         ordinary-fold operand masking + gated import",
     ),
     // The stage-6b batch build: FR draw slot, build-parts leg, and the flagged
     // seam calls assembling the FR members (struct fields cannot move).
     (
         "stages/stage6b/batch.rs",
-        15,
-        "FR batch legs + flagged seam calls",
+        16,
+        "FR batch legs + flagged seam calls + gated import",
     ),
     // The BlindFold lowering: the composite VerifierPublicId FR arms (type
     // shape), the flagged seam calls into blindfold/field_inline.rs, and the

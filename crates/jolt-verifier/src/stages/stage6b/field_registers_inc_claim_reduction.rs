@@ -11,7 +11,7 @@
 //! the stage-4 FR read/write cycle point)` and `EqValEvaluation = Eq(bound
 //! cycle point, the stage-5 FR val-evaluation cycle point)`.
 
-use jolt_claims::protocols::field_inline::relations::claim_reductions::increments;
+use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::ClaimReduction;
 pub use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::{
     FieldRegistersIncClaimReductionChallenges, FieldRegistersIncClaimReductionInputClaims,
     FieldRegistersIncClaimReductionOutputClaims,
@@ -29,7 +29,7 @@ use crate::VerifierError;
 
 #[derive(Clone)]
 pub struct FieldRegistersIncClaimReduction<F: JoltField> {
-    symbolic: increments::ClaimReduction,
+    symbolic: ClaimReduction,
     read_write_cycle: Vec<F>,
     val_evaluation_cycle: Vec<F>,
 }
@@ -41,7 +41,7 @@ impl<F: JoltField> FieldRegistersIncClaimReduction<F> {
         val_evaluation_cycle: Vec<F>,
     ) -> Self {
         Self {
-            symbolic: increments::ClaimReduction::new(trace_dimensions),
+            symbolic: ClaimReduction::new(trace_dimensions),
             read_write_cycle,
             val_evaluation_cycle,
         }
@@ -65,7 +65,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersIncClaimReduction<F> {
-    type Symbolic = increments::ClaimReduction;
+    type Symbolic = ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

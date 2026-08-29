@@ -3,6 +3,10 @@
     reason = "Tracer concrete instruction names mirror generated Jolt instruction constants"
 )]
 
+#[cfg(feature = "fp128-field-inline")]
+use jolt_field::AkitaField;
+#[cfg(not(feature = "fp128-field-inline"))]
+use jolt_field::Fr;
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
@@ -135,9 +139,9 @@ field_instruction!(
 // always agree on the encoding. Everything below is generic over F; no other
 // line names a concrete field.
 #[cfg(not(feature = "fp128-field-inline"))]
-type ProofField = jolt_field::Fr;
+type ProofField = Fr;
 #[cfg(feature = "fp128-field-inline")]
-type ProofField = jolt_field::AkitaField;
+type ProofField = AkitaField;
 
 fn execute_field_inline(
     op: FieldInlineOp,

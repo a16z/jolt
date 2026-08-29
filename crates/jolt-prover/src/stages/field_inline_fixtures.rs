@@ -13,8 +13,9 @@
 
 use std::sync::Arc;
 
-use common::constants::RAM_START_ADDRESS;
-use jolt_claims::protocols::jolt::JoltOneHotConfig;
+use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_program::execution::{
@@ -36,7 +37,7 @@ use jolt_verifier::stages::PrecommittedSchedule;
 use jolt_verifier::CheckedInputs;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
-use crate::JoltProverPreprocessing;
+use crate::{JoltProverPreprocessing, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
 // 3, not 2: the last physical cycle must be a noop (constraint 21's
@@ -380,7 +381,7 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
         trusted_advice_commitment_present: false,
-        vc_capacity: cfg!(feature = "zk").then_some(common::constants::MAX_BLINDFOLD_GENERATORS),
+        vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
         precommitted: PrecommittedSchedule {
             trusted_advice: None,
             untrusted_advice: None,
@@ -395,17 +396,17 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
 /// The stage recipes' derived-config shape for the fixture traces: the same
 /// derivation `ProverConfig::derive` performs, at the fixture's scale (no
 /// RAM traffic, so `ram_K` stays at a small power of two).
-pub(crate) fn test_prover_config() -> crate::ProverConfig {
+pub(crate) fn test_prover_config() -> ProverConfig {
     // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
     const RAM_LOG_K: usize = 6;
-    crate::ProverConfig {
+    ProverConfig {
         trace_length: 1 << LOG_T,
         ram_K: 1 << RAM_LOG_K,
-        rw_config: jolt_claims::protocols::jolt::JoltReadWriteConfig {
+        rw_config: JoltReadWriteConfig {
             ram_rw_phase1_num_rounds: LOG_T as u8,
             ram_rw_phase2_num_rounds: RAM_LOG_K as u8,
             registers_rw_phase1_num_rounds: LOG_T as u8,
-            registers_rw_phase2_num_rounds: common::constants::REGISTER_COUNT.ilog2() as u8,
+            registers_rw_phase2_num_rounds: REGISTER_COUNT.ilog2() as u8,
         },
         one_hot_config: JoltOneHotConfig {
             log_k_chunk: 4,
@@ -418,8 +419,8 @@ pub(crate) fn test_prover_config() -> crate::ProverConfig {
 /// A well-formed memory layout for the fixture traces (the default layout is
 /// degenerate: its lowest mapped address is zero, which `PublicIoMemory`
 /// rejects).
-pub(crate) fn test_memory_layout() -> common::jolt_device::MemoryLayout {
-    common::jolt_device::MemoryLayout::new(&common::jolt_device::MemoryConfig {
+pub(crate) fn test_memory_layout() -> MemoryLayout {
+    MemoryLayout::new(&MemoryConfig {
         program_size: Some(1024),
         max_trusted_advice_size: 0,
         max_untrusted_advice_size: 0,
@@ -431,8 +432,8 @@ pub(crate) fn test_memory_layout() -> common::jolt_device::MemoryLayout {
 }
 
 /// The fixture traces' program I/O: empty, over [`test_memory_layout`].
-pub(crate) fn test_public_io() -> common::jolt_device::JoltDevice {
-    common::jolt_device::JoltDevice {
+pub(crate) fn test_public_io() -> JoltDevice {
+    JoltDevice {
         memory_layout: test_memory_layout(),
         ..Default::default()
     }

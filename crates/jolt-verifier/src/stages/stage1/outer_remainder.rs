@@ -19,6 +19,10 @@
 //! in the stage-1 verifier; this relation consumes that uni-skip's reduced opening
 //! as its input claim.
 
+#[cfg(feature = "field-inline")]
+use std::sync::Arc;
+use std::sync::OnceLock;
+
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderInputClaims, OuterRemainderOutputClaims,
@@ -148,11 +152,11 @@ pub struct OuterRemainder<F: JoltField> {
     /// The relation's own bound point (the remainder challenges), captured by
     /// [`derive_opening_points`](ConcreteSumcheck::derive_opening_points) — the
     /// third coefficient-table input, which exists only after the batch reduces.
-    bound_point: std::sync::OnceLock<Vec<F>>,
+    bound_point: OnceLock<Vec<F>>,
     /// The expanded coefficient table, built lazily on the first
     /// `derive_output_term` call so the ZK path (which never evaluates the output
     /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
-    coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
+    coefficients: OnceLock<OuterRemainderCoefficients<F>>,
     /// The 13 FR-local Spartan-outer opening values (appended-column order),
     /// set by `stage1::verify` from the proof's claims before the batch check
     /// (prove side: by the composed remainder kernel once fully bound). Behind
@@ -160,7 +164,7 @@ pub struct OuterRemainder<F: JoltField> {
     /// clones the batch's relation instance and its write must be visible to
     /// the driver's curation and expected-output fold.
     #[cfg(feature = "field-inline")]
-    field_inline_outputs: std::sync::Arc<std::sync::OnceLock<Vec<F>>>,
+    field_inline_outputs: Arc<OnceLock<Vec<F>>>,
 }
 
 impl<F: JoltField> OuterRemainder<F> {
@@ -176,10 +180,10 @@ impl<F: JoltField> OuterRemainder<F> {
             variable_count,
             tau,
             uniskip_challenge,
-            bound_point: std::sync::OnceLock::new(),
-            coefficients: std::sync::OnceLock::new(),
+            bound_point: OnceLock::new(),
+            coefficients: OnceLock::new(),
             #[cfg(feature = "field-inline")]
-            field_inline_outputs: std::sync::Arc::new(std::sync::OnceLock::new()),
+            field_inline_outputs: Arc::new(OnceLock::new()),
         }
     }
 
