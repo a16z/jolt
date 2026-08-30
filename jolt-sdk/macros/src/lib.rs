@@ -70,7 +70,6 @@ impl MacroBuilder {
         let trace_to_file_fn = self.make_trace_to_file_func();
         let compile_fn = self.make_compile_func();
         let preprocess_shared_fn = self.make_preprocess_shared_func();
-        let preprocess_shared_committed_fn = self.make_preprocess_shared_committed_func();
         let preprocess_prover_fn = self.make_preprocess_prover_func();
         let preprocess_committed_prover_fn = self.make_preprocess_committed_prover_func();
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
@@ -107,7 +106,6 @@ impl MacroBuilder {
             #trace_to_file_fn
             #compile_fn
             #preprocess_shared_fn
-            #preprocess_shared_committed_fn
             #preprocess_prover_fn
             #preprocess_committed_prover_fn
             #preprocess_verifier_fn
@@ -555,33 +553,6 @@ impl MacroBuilder {
         }
     }
 
-    fn make_preprocess_shared_committed_func(&self) -> TokenStream2 {
-        let attributes = parse_attributes(&self.attr);
-        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
-
-        let fn_name = self.get_func_name();
-        let preprocess_shared_committed_fn_name = Ident::new(
-            &format!("preprocess_shared_committed_{fn_name}"),
-            fn_name.span(),
-        );
-        let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
-        quote! {
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_shared_committed_fn_name(
-                program: &mut dyn jolt::host::JoltProgramSource,
-                bytecode_chunk_count: usize,
-            ) -> Result<jolt::JoltProverPreprocessing, jolt::PreprocessingError>
-            {
-                jolt::preprocess_program(
-                    program,
-                    #memory_config_fn_name(),
-                    #max_trace_length,
-                    Some(bytecode_chunk_count),
-                )
-            }
-        }
-    }
-
     fn make_preprocess_prover_func(&self) -> TokenStream2 {
         let imports = self.make_imports();
 
@@ -602,15 +573,13 @@ impl MacroBuilder {
     }
 
     fn make_preprocess_committed_prover_func(&self) -> TokenStream2 {
-        let imports = self.make_imports();
+        let attributes = parse_attributes(&self.attr);
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
 
         let fn_name = self.get_func_name();
         let preprocess_committed_fn_name =
             Ident::new(&format!("preprocess_committed_{fn_name}"), fn_name.span());
-        let preprocess_shared_committed_fn_name = Ident::new(
-            &format!("preprocess_shared_committed_{fn_name}"),
-            fn_name.span(),
-        );
+        let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_committed_fn_name(
@@ -622,8 +591,12 @@ impl MacroBuilder {
                     jolt::PreprocessingError,
                 >
             {
-                #imports
-                #preprocess_shared_committed_fn_name(program, bytecode_chunk_count)
+                jolt::preprocess_program(
+                    program,
+                    #memory_config_fn_name(),
+                    #max_trace_length,
+                    Some(bytecode_chunk_count),
+                )
             }
         }
     }

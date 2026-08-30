@@ -14,6 +14,7 @@ use std::{
 use std::{os::fd::AsRawFd, os::raw::c_int};
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;
@@ -244,6 +245,43 @@ pub fn standard_committed_muldiv_case() -> VerifierFixtureCase {
         VerifierFixtureKind::CommittedMulDivSmall,
         generate_committed_muldiv,
     )
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn fresh_standard_muldiv_address_major_case() -> VerifierFixtureCase {
+    let _guard = verifier_fixture_lock();
+    fresh_case_from_accepted_fixture(|| {
+        generate_muldiv_with_order(TracePolynomialOrder::AddressMajor)
+    })
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn fresh_standard_committed_muldiv_address_major_case(
+    bytecode_chunk_count: usize,
+) -> VerifierFixtureCase {
+    let _guard = verifier_fixture_lock();
+    fresh_case_from_accepted_fixture(|| {
+        generate_committed_muldiv_with_order(
+            bytecode_chunk_count,
+            TracePolynomialOrder::AddressMajor,
+        )
+    })
+}
+
+#[cfg(not(feature = "zk"))]
+pub fn fresh_standard_committed_advice_case() -> VerifierFixtureCase {
+    let _guard = verifier_fixture_lock();
+    fresh_case_from_accepted_fixture(generate_committed_advice_consumer)
+}
+
+#[cfg(not(feature = "zk"))]
+fn fresh_case_from_accepted_fixture(
+    generate: impl FnOnce() -> GeneratedVerifierFixture,
+) -> VerifierFixtureCase {
+    let fixture = generate();
+    assert_verifier_accepts(&fixture, fixture.proof.clone(), fixture.public_io.clone());
+    let public_io = fixture.public_io.clone();
+    case_from_parts(fixture, public_io)
 }
 
 #[cfg(not(feature = "zk"))]
@@ -483,9 +521,13 @@ fn assert_verifier_accepts(
 }
 
 fn generate_muldiv() -> GeneratedVerifierFixture {
+    generate_muldiv_with_order(TracePolynomialOrder::CycleMajor)
+}
+
+fn generate_muldiv_with_order(order: TracePolynomialOrder) -> GeneratedVerifierFixture {
     let program = Program::new("muldiv-guest");
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-    generate_verifier_fixture(program, inputs, Vec::new(), Vec::new())
+    generate_verifier_fixture_with_order(program, inputs, Vec::new(), Vec::new(), order)
 }
 
 #[cfg(not(feature = "zk"))]
@@ -542,24 +584,60 @@ fn generate_sha2_small() -> GeneratedVerifierFixture {
 
 #[cfg(not(feature = "zk"))]
 fn generate_advice_consumer() -> GeneratedVerifierFixture {
-    generate_verifier_fixture(
-        Program::new("advice-consumer-guest"),
-        postcard::to_stdvec(&12u64).expect("serialize advice consumer public input"),
-        postcard::to_stdvec(&5u64).expect("serialize untrusted advice"),
-        postcard::to_stdvec(&7u64).expect("serialize trusted advice"),
+    generate_advice_consumer_with_committed_program(false)
+}
+
+#[cfg(not(feature = "zk"))]
+fn generate_committed_advice_consumer() -> GeneratedVerifierFixture {
+    generate_advice_consumer_with_committed_program(true)
+}
+
+#[cfg(not(feature = "zk"))]
+fn generate_advice_consumer_with_committed_program(
+    committed_program: bool,
+) -> GeneratedVerifierFixture {
+    let program = Program::new("advice-consumer-guest");
+    let inputs = postcard::to_stdvec(&12u64).expect("serialize advice consumer public input");
+    let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+    let trusted_advice = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
+    let run = prepare_guest(program, &inputs, &untrusted_advice, &trusted_advice);
+    let config = derive_config(&run);
+    let preprocessing = if committed_program {
+        jolt_prover::dory::preprocess_committed(run.program_preprocessing, 2)
+            .expect("committed preprocessing")
+    } else {
+        let shared =
+            JoltSharedPreprocessing::new(run.program_preprocessing).expect("shared preprocessing");
+        jolt_prover::dory::from_shared(shared)
+    };
+    prove_prepared(
+        run.program,
+        run.trace,
+        config,
+        preprocessing,
+        &trusted_advice,
     )
 }
 
 fn generate_committed_muldiv() -> GeneratedVerifierFixture {
-    const BYTECODE_CHUNK_COUNT: usize = 2;
+    generate_committed_muldiv_with_order(2, TracePolynomialOrder::CycleMajor)
+}
 
+fn generate_committed_muldiv_with_order(
+    bytecode_chunk_count: usize,
+    order: TracePolynomialOrder,
+) -> GeneratedVerifierFixture {
     let program = Program::new("muldiv-guest");
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(program, &inputs, &[], &[]);
-    let config = derive_config(&run);
-    let preprocessing =
-        jolt_prover::dory::preprocess_committed(run.program_preprocessing, BYTECODE_CHUNK_COUNT)
-            .expect("committed preprocessing");
+    let mut config = derive_config(&run);
+    config.trace_polynomial_order = order;
+    let preprocessing = jolt_prover::dory::preprocess_committed_with_order(
+        run.program_preprocessing,
+        bytecode_chunk_count,
+        order,
+    )
+    .expect("committed preprocessing");
     prove_prepared(run.program, run.trace, config, preprocessing, &[])
 }
 
@@ -569,8 +647,25 @@ fn generate_verifier_fixture(
     untrusted_advice: Vec<u8>,
     trusted_advice: Vec<u8>,
 ) -> GeneratedVerifierFixture {
+    generate_verifier_fixture_with_order(
+        program,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        TracePolynomialOrder::CycleMajor,
+    )
+}
+
+fn generate_verifier_fixture_with_order(
+    program: Program,
+    inputs: Vec<u8>,
+    untrusted_advice: Vec<u8>,
+    trusted_advice: Vec<u8>,
+    order: TracePolynomialOrder,
+) -> GeneratedVerifierFixture {
     let run = prepare_guest(program, &inputs, &untrusted_advice, &trusted_advice);
-    let config = derive_config(&run);
+    let mut config = derive_config(&run);
+    config.trace_polynomial_order = order;
     let shared =
         JoltSharedPreprocessing::new(run.program_preprocessing).expect("shared preprocessing");
     let preprocessing = jolt_prover::dory::from_shared(shared);

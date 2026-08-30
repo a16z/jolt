@@ -6,7 +6,7 @@ use jolt_akita::{
     AkitaVerifierSetup,
 };
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
-use jolt_claims::protocols::jolt::JoltAdviceKind;
+use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -51,6 +51,7 @@ pub fn preprocess_full_with_advice(
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    validate_trace_order(config)?;
     let setups = trace_setups(&program, config, untrusted_advice, trusted_advice)?;
     let preprocessing_digest = full_preprocessing_digest(&program)?;
     let mut verifier = JoltVerifierPreprocessing::new(
@@ -76,7 +77,7 @@ fn trace_setups(
 ) -> Result<TraceSetups, PreprocessingError> {
     let (shape, layout_digest, one_hot_k) =
         one_hot_trace_setup_shape(config, program.bytecode.code_size).map_err(|error| {
-            PreprocessingError::InvalidCommittedProgram {
+            PreprocessingError::InvalidConfiguration {
                 reason: error.to_string(),
             }
         })?;
@@ -129,6 +130,7 @@ pub fn preprocess_committed_with_advice(
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    validate_trace_order(config)?;
     let metadata =
         program
             .metadata()
@@ -227,11 +229,11 @@ pub fn commit_trusted_advice(
             .memory_layout()
             .max_trusted_advice_size,
     )
-    .map_err(|_| PreprocessingError::InvalidCommittedProgram {
+    .map_err(|_| PreprocessingError::InvalidAdvice {
         reason: "trusted advice size does not fit usize".to_owned(),
     })?;
     commit_advice::<AkitaScheme>(JoltAdviceKind::Trusted, advice_bytes, max_bytes).map_err(
-        |error| PreprocessingError::InvalidCommittedProgram {
+        |error| PreprocessingError::InvalidAdvice {
             reason: error.to_string(),
         },
     )
@@ -245,16 +247,24 @@ fn advice_object_shape(
         JoltAdviceKind::Trusted => program.memory_layout.max_trusted_advice_size,
         JoltAdviceKind::Untrusted => program.memory_layout.max_untrusted_advice_size,
     };
-    let max_bytes =
-        usize::try_from(max_bytes).map_err(|_| PreprocessingError::InvalidCommittedProgram {
-            reason: "advice size does not fit usize".to_owned(),
-        })?;
+    let max_bytes = usize::try_from(max_bytes).map_err(|_| PreprocessingError::InvalidAdvice {
+        reason: "advice size does not fit usize".to_owned(),
+    })?;
     let word_vars = (max_bytes / 8).next_power_of_two().ilog2() as usize;
     advice_packing_plan(kind, word_vars)
         .map(|plan| (plan.packing().packed_num_vars(), plan.layout_digest()))
-        .map_err(|error| PreprocessingError::InvalidCommittedProgram {
+        .map_err(|error| PreprocessingError::InvalidAdvice {
             reason: error.to_string(),
         })
+}
+
+fn validate_trace_order(config: &ProverConfig) -> Result<(), PreprocessingError> {
+    if config.trace_polynomial_order != TracePolynomialOrder::CycleMajor {
+        return Err(PreprocessingError::InvalidConfiguration {
+            reason: "Akita supports only cycle-major trace polynomials".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn transparent_verifier_setup(

@@ -14,8 +14,17 @@ pub enum PreprocessingError {
     #[error(transparent)]
     Openings(#[from] OpeningsError),
 
+    #[error("invalid program preprocessing: {reason}")]
+    InvalidProgram { reason: String },
+
     #[error("invalid committed program: {reason}")]
     InvalidCommittedProgram { reason: String },
+
+    #[error("invalid prover configuration: {reason}")]
+    InvalidConfiguration { reason: String },
+
+    #[error("invalid advice: {reason}")]
+    InvalidAdvice { reason: String },
 
     #[error("failed to encode preprocessing: {reason}")]
     Encoding { reason: String },

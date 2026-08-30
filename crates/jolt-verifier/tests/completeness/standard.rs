@@ -70,6 +70,18 @@ fn standard_committed_muldiv_verifier_proof_is_accepted() {
 }
 
 #[test]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn standard_address_major_verifier_proofs_are_accepted() {
+    for case in [
+        crate::support::verifier_fixtures::fresh_standard_muldiv_address_major_case(),
+        crate::support::verifier_fixtures::fresh_standard_committed_muldiv_address_major_case(2),
+        crate::support::verifier_fixtures::fresh_standard_committed_muldiv_address_major_case(64),
+    ] {
+        support::assert_accepts(case.verify());
+    }
+}
+
+#[test]
 #[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
 #[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate this verifier fixture"]
 fn standard_muldiv_verifier_proof_is_accepted() {}

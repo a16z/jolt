@@ -6,8 +6,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_verifier::JoltVerifierPreprocessing;
-#[cfg(not(feature = "akita"))]
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 
 use crate::PreprocessingError;
@@ -28,6 +27,30 @@ impl JoltSharedPreprocessing {
     }
 }
 
+impl Serialize for JoltSharedPreprocessing {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.program.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for JoltSharedPreprocessing {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let program = Arc::<JoltProgramPreprocessing>::deserialize(deserializer)?;
+        let preprocessing_digest =
+            full_preprocessing_digest(&program).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            program,
+            preprocessing_digest,
+        })
+    }
+}
+
 /// Reproduces the canonical encoding used by `JoltSharedPreprocessing` before
 /// the host pipeline moved out of the legacy prover. This keeps the default
 /// program-bound Fiat-Shamir preamble unchanged across the migration.
@@ -36,12 +59,11 @@ pub(crate) fn full_preprocessing_digest(
 ) -> Result<[u8; 32], PreprocessingError> {
     const DEFAULT_BYTECODE_CHUNK_COUNT: usize = 1;
 
-    let metadata =
-        program
-            .metadata()
-            .ok_or_else(|| PreprocessingError::InvalidCommittedProgram {
-                reason: "entry address is absent from bytecode preprocessing".to_owned(),
-            })?;
+    let metadata = program
+        .metadata()
+        .ok_or_else(|| PreprocessingError::InvalidProgram {
+            reason: "entry address is absent from bytecode preprocessing".to_owned(),
+        })?;
     canonical_preprocessing_digest(|encoded| {
         FULL_PROGRAM_TAG.serialize_compressed(&mut *encoded)?;
         program.bytecode.serialize_compressed(&mut *encoded)?;
@@ -144,7 +166,7 @@ mod tests {
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_riscv::RV64IMAC_JOLT;
 
-    use super::full_preprocessing_digest;
+    use super::{full_preprocessing_digest, JoltSharedPreprocessing};
 
     #[test]
     fn full_preprocessing_digest_is_stable() {
@@ -165,6 +187,34 @@ mod tests {
                 249, 19, 196, 162, 146, 128, 195, 60, 253, 174, 10, 250, 92, 68,
             ]
         );
+    }
+
+    #[test]
+    fn shared_preprocessing_round_trip_recomputes_the_digest() {
+        let program = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        let shared = JoltSharedPreprocessing::new(program).unwrap();
+        let expected_digest = shared.preprocessing_digest;
+        let mut stale = shared.clone();
+        stale.preprocessing_digest = [0xa5; 32];
+
+        let encoded = bincode::serde::encode_to_vec(&shared, bincode::config::standard()).unwrap();
+        let stale_encoded =
+            bincode::serde::encode_to_vec(&stale, bincode::config::standard()).unwrap();
+        assert_eq!(encoded, stale_encoded);
+
+        let (decoded, consumed): (JoltSharedPreprocessing, usize) =
+            bincode::serde::decode_from_slice(&stale_encoded, bincode::config::standard()).unwrap();
+        assert_eq!(consumed, stale_encoded.len());
+        assert_eq!(decoded.preprocessing_digest, expected_digest);
+        assert_eq!(decoded.program, shared.program);
     }
 }
 

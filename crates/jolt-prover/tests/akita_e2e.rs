@@ -11,7 +11,7 @@ mod akita_tests {
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
-    use jolt_claims::protocols::jolt::JoltOneHotConfig;
+    use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_host::{JoltProgramSource, Program};
     use jolt_program::execution::{JoltProgram, OwnedTrace, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -231,6 +231,43 @@ mod akita_tests {
         };
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("forced-K256 proof must verify");
+    }
+
+    #[test]
+    fn akita_rejects_address_major_preprocessing_and_proving() {
+        let (run, mut config) = muldiv_run();
+        config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
+
+        let result = preprocessing::preprocess_full(run.preprocessing, &config);
+        assert!(matches!(
+            result,
+            Err(jolt_prover::PreprocessingError::InvalidConfiguration { .. })
+        ));
+
+        let (run, mut config) = muldiv_run();
+        let preprocessing = preprocessing::preprocess_full(run.preprocessing, &config)
+            .expect("cycle-major preprocessing");
+        config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
+        let program_preprocessing = preprocessing.program_arc().expect("full program");
+        let public_io = run.trace.device.clone();
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
+            witness_config(&config, false, false),
+            JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
+        );
+        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+            &JoltAkitaBackend::optimized(),
+            &preprocessing,
+            &config,
+            None,
+            &witness,
+            &public_io,
+        );
+        assert!(matches!(
+            result,
+            Err(jolt_prover::ProverError::Unsupported {
+                reason: "Akita supports only cycle-major trace polynomials"
+            })
+        ));
     }
 
     #[test]

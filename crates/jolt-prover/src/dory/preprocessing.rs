@@ -92,6 +92,14 @@ pub fn preprocess_committed(
     full: JoltProgramPreprocessing,
     bytecode_chunk_count: usize,
 ) -> Result<DoryProverPreprocessing, PreprocessingError> {
+    preprocess_committed_with_order(full, bytecode_chunk_count, TracePolynomialOrder::CycleMajor)
+}
+
+pub fn preprocess_committed_with_order(
+    full: JoltProgramPreprocessing,
+    bytecode_chunk_count: usize,
+    trace_order: TracePolynomialOrder,
+) -> Result<DoryProverPreprocessing, PreprocessingError> {
     let metadata = full
         .metadata()
         .ok_or_else(|| PreprocessingError::InvalidCommittedProgram {
@@ -111,7 +119,7 @@ pub fn preprocess_committed(
     ));
 
     let (bytecode_chunk_commitments, bytecode_chunk_hints) =
-        commit_bytecode_chunks(&full, bytecode_chunk_count, &pcs_setup)?;
+        commit_bytecode_chunks(&full, bytecode_chunk_count, trace_order, &pcs_setup)?;
     let (program_image_commitment, program_image_hint) =
         commit_program_image(&full, image_candidate, &pcs_setup);
     let committed_program = CommittedProgramPreprocessing {
@@ -136,7 +144,7 @@ pub fn preprocess_committed(
             full: Arc::new(full),
             bytecode_chunk_hints,
             program_image_hint,
-            trace_order: TracePolynomialOrder::CycleMajor,
+            trace_order,
         }),
     })
 }
@@ -213,12 +221,12 @@ pub fn commit_trusted_advice(
             .memory_layout()
             .max_trusted_advice_size,
     )
-    .map_err(|_| PreprocessingError::InvalidCommittedProgram {
+    .map_err(|_| PreprocessingError::InvalidAdvice {
         reason: "trusted advice size does not fit usize".to_owned(),
     })?;
     let words =
         common::advice::canonical_advice_words(advice_bytes, max_bytes).map_err(|error| {
-            PreprocessingError::InvalidCommittedProgram {
+            PreprocessingError::InvalidAdvice {
                 reason: error.to_string(),
             }
         })?;
@@ -297,6 +305,7 @@ fn commit_table(
 fn commit_bytecode_chunks(
     full: &JoltProgramPreprocessing,
     bytecode_chunk_count: usize,
+    trace_order: TracePolynomialOrder,
     setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
 ) -> Result<
     (
@@ -312,7 +321,7 @@ fn commit_bytecode_chunks(
     let tables = build_committed_bytecode_chunk_coeffs::<Fr>(
         &full.bytecode.bytecode,
         bytecode_chunk_count,
-        TracePolynomialOrder::CycleMajor,
+        trace_order,
     )
     .map_err(|error| PreprocessingError::InvalidCommittedProgram {
         reason: error.to_string(),

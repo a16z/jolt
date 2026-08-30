@@ -45,9 +45,10 @@ pub struct ProverConfig {
     /// Coefficient placement of the trace polynomials in the commitment
     /// matrix. [`ProverConfig::derive`] always picks cycle-major (legacy has
     /// no production selection logic); address-major is chosen by
-    /// overwriting this field after derivation. Committed-program
-    /// preprocessing bakes this order into its chunk commitments — it must
-    /// be chosen before preprocessing and match here (stage 0 checks).
+    /// overwriting this field after derivation. Dory committed-program
+    /// preprocessing bakes this order into its chunk commitments, so pass it
+    /// to `preprocess_committed_with_order` and keep the values equal. Akita
+    /// supports only cycle-major order.
     pub trace_polynomial_order: TracePolynomialOrder,
 }
 

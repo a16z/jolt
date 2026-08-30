@@ -10,6 +10,6 @@ pub mod stages;
 
 pub use preprocessing::{
     commit_trusted_advice, from_shared, from_shared_parts, preprocess_committed,
-    DoryProverPreprocessing, DoryVerifierPreprocessing,
+    preprocess_committed_with_order, DoryProverPreprocessing, DoryVerifierPreprocessing,
 };
 pub use prover::prove;
