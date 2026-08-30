@@ -9,7 +9,7 @@
 //!
 //! - The stream delivers *superchunks* (many `row_width` windows at once), so
 //!   one extraction pass fans out to a `(column × window)` rayon grid via the
-//!   [`StreamingCommitment`] batch entry points (`feed_i128_rows`,
+//!   [`jolt_openings::StreamingCommitment`] batch entry points (`feed_i128_rows`,
 //!   `process_one_hot_chunks`).
 //! - Tier-2 finishes (one multi-pairing per column) run in parallel across
 //!   columns.

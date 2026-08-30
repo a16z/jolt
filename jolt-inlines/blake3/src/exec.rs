@@ -1,7 +1,7 @@
 use crate::IV;
 
 /// Rust implementation of BLAKE3 compression on the host.
-/// The following code is obtained from reference BLAKE3 implementation (https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs)
+/// The following code is obtained from the [reference BLAKE3 implementation](https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs).
 pub fn execute_blake3_compression(
     chaining_value: &mut [u32; 8],
     block_words: &[u32; 16],

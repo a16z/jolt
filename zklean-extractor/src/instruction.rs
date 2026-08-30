@@ -20,7 +20,7 @@ pub enum OperandInterleaving {
     ///     rs1 || rs2
     Concatenated,
     /// Indicates that the operands should be interleaved:
-    ///     rs1[0] || rs2[0] || rs1[1] || rs2[1] || ...
+    ///     `rs1[0] || rs2[0] || rs1[1] || rs2[1] || ...`
     Interleaved,
 }
 

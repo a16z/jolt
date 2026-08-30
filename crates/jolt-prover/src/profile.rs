@@ -43,8 +43,7 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
-// Keep the inline libraries linked so their host-side registrations reach the
-// tracer, exactly as the legacy harness does.
+// Keep the inline libraries linked so their host-side registrations reach the tracer.
 use jolt_host::{JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
@@ -67,9 +66,8 @@ use crate::JoltBackend;
 use crate::JoltSharedPreprocessing;
 use crate::ProverConfig;
 
-// Empirically measured cycles per operation for RV64IMAC — copied from the
-// legacy harness (`benches/e2e_profiling.rs`) so both harnesses construct
-// identical guest inputs for a given scale.
+// Empirically measured RV64IMAC cycles per operation. These values keep
+// current benchmark scales comparable with prior results.
 const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
@@ -135,8 +133,7 @@ impl Workload {
         }
     }
 
-    /// The guest input targeting `target` trace cycles — the same mapping as
-    /// the legacy harness's `master_benchmark`.
+    /// The guest input targeting `target` trace cycles.
     fn input(self, target: usize) -> Vec<u8> {
         match self {
             Self::Fibonacci => {
@@ -603,12 +600,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         );
     }
 
-    // The legacy harness's 7 CSV fields plus a trailing backend column, in
-    // the run directory. Field 7 (`proof_size_compressed`)
-    // duplicates the raw size exactly as legacy does — its
-    // `prove_example_with_trace` returns `proof_size` for both fields, the
-    // compressed encoding having been retired — so the columns stay
-    // directly comparable across the two harnesses.
+    // The CSV has seven historical fields plus the backend column. With no
+    // compressed encoding, field 7 repeats the raw proof size.
     let summary_line = format!(
         "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label}\n",
         bench_name,

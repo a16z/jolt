@@ -293,18 +293,17 @@ object. The earlier arbitrary-point reduction sumcheck has been deleted.
 
 | piece | where |
 |---|---|
-| compact-source column assembly (`assemble_one_hot_trace`) | `jolt-prover-legacy/src/zkvm/packed.rs` |
-| prove pipeline (one physical OneHotTrace opening plus direct auxiliary openings) | `jolt-prover-legacy/src/zkvm/packed.rs` |
-| layout and point mapping (`address‖cycle` → `cycle‖address`) | `jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
-| fixed-capacity prefix selector reduction (`PrefixPackedLayout`) | `jolt-openings/src/prefix.rs` |
-| owned backend adapter (`commit_one_hot_group_owned`, `open_one_hot_group_from_hint`) | `jolt-akita/src/{scheme,adapters}.rs` |
-| verifier mirror | `jolt-verifier/src/stages/stage8/packed.rs` |
-| flavor/measurement bench (`flavor_bench`, `BENCH_*` env knobs) | `jolt-akita/src/scheme.rs` |
-| packed config (`K=16` or `K=256`, selected like Dory) | `jolt-prover-legacy/src/zkvm/config.rs`, `preprocessing.rs` |
+| compact-source column assembly (`assemble_one_hot_trace_rows`) | `crates/jolt-prover/src/akita/witness.rs` |
+| prove pipeline (one physical OneHotTrace opening plus direct auxiliary openings) | `crates/jolt-prover/src/akita/` |
+| layout and point mapping (`address‖cycle` → `cycle‖address`) | `crates/jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
+| fixed-capacity prefix selector reduction (`PrefixPackedLayout`) | `crates/jolt-openings/src/prefix.rs` |
+| owned backend adapter (`commit_one_hot_group_owned`, `open_one_hot_group_from_hint`) | `crates/jolt-akita/src/` |
+| verifier mirror | `crates/jolt-verifier/src/stages/stage8/packed.rs` |
+| flavor/measurement bench (`flavor_bench`, `BENCH_*` env knobs) | `crates/jolt-akita/src/scheme.rs` |
+| packed config (`K=16` or `K=256`, selected like Dory) | `crates/jolt-prover/src/config.rs`, `crates/jolt-prover/src/akita/` |
 
-The `akita-*` deps build from the local `../akita` clone (committed on this
-branch for co-design; pin a fork rev before the branch travels). (This spec
-lives in `specs/` — the repo `.gitignore` swallows `docs/` directories.)
+The workspace pins the `akita-*` crates to revision `2322d485` in the root
+`Cargo.toml`.
 
 ## Status (2026-07-14): paused at the decision gate
 

@@ -79,7 +79,7 @@ impl Program {
 
     /// Set backtrace mode for the guest build.
     ///
-    /// This adds --backtrace <mode> to the cargo-jolt CLI.
+    /// This adds `--backtrace <mode>` to the cargo-jolt CLI.
     /// Valid modes: "off", "dwarf", "frame-pointers".
     pub fn set_backtrace(&mut self, mode: &str) {
         self.backtrace = Some(mode.to_string());

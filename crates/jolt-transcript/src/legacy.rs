@@ -110,7 +110,7 @@ pub trait AppendToTranscript {
     /// Absorbs this value into the transcript.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
 
-    /// Byte length of the payload absorbed by [`append_to_transcript`], when
+    /// Byte length of the payload absorbed by [`Self::append_to_transcript`], when
     /// the type participates in variable-length labeled appends.
     fn transcript_payload_len(&self) -> Option<u64> {
         None

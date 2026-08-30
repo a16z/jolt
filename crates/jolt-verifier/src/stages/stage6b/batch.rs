@@ -1,6 +1,6 @@
 //! Construction of the stage-6b cycle-phase sumcheck batch.
 //!
-//! [`Stage6bSumchecks::build`] assembles the batch members ONCE, after
+//! `Stage6bSumchecks::build` assembles the batch members ONCE, after
 //! stage 6a and the post-6a draws, directly from the upstream stage outputs. It
 //! derives the mode-agnostic constructor legs (per-stage cycle bindings, reduced
 //! points, the stage-6a address openings) plus the clear-only value aux
@@ -211,7 +211,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         })
     }
 
-    /// The leg-assembly core of [`build`](Self::build), over data both sides
+    /// The leg-assembly core of `Self::build`, over data both sides
     /// hold: the prove-side stage-6b recipe constructs the batch through this
     /// same constructor from its clear carriers, so the ten member legs are
     /// single-sourced.

@@ -5,15 +5,14 @@
 //! `(2^7 × T)` one-hot `rd_wa` grid into a dense cycle table at prepare time
 //! and binds three dense `T`-sized tables per round.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/registers/val_evaluation.rs`:
+//! Carries forward the former registers value-evaluation optimizations:
 //!
 //! - **Lazy one-hot `wa`** (legacy `RaPolynomial`, first-round form): round 0
 //!   serves `wa(j) = eq(r_address)[rd_j]` straight from the per-cycle hot
 //!   indices and the K-sized eq table — the `K × T` grid is never
 //!   materialized, and the reference's prepare-time `address_fold` over it is
 //!   gone. The dense bound vector (T/2) appears only at the first bind.
-//! - **Split LT** ([`SplitLt`], legacy `LtPolynomial`): `LT(j, r_cycle)` is
+//! - **Split LT** (`SplitLt`, legacy `LtPolynomial`): `LT(j, r_cycle)` is
 //!   served from three ~√T tables instead of a dense `T`-sized one.
 //! - **Eval-at-{0,2,3} sampling** with the engine hint supplying s(1)
 //!   (legacy samples {1,2,∞}; both interpolate the same cubic exactly).

@@ -79,7 +79,7 @@
 /// Version of the span label set documented in this module.
 pub const TAXONOMY_VERSION: u32 = 1;
 
-/// The whole-run root span (`crates/jolt-prover/src/prover.rs`). Named
+/// The whole-run root span emitted by the Dory and Akita provers. Named
 /// `jolt_prover::prove` rather than bare `prove`, which jolt-dory uses for an
 /// inner opening-proof span. Carries `trace_length`; the dark-time and
 /// peak-memory summary metrics are computed over its interval.

@@ -1,7 +1,7 @@
 //! Lagrange interpolation utilities over integer domains.
 //!
 //! Provides building blocks for the univariate skip optimization in sumcheck
-//! protocols. All functions are generic over [`Field`] and operate on
+//! protocols. All functions are generic over [`JoltField`] and operate on
 //! integer-indexed domains (symmetric or arbitrary).
 
 use std::{fmt, marker::PhantomData};

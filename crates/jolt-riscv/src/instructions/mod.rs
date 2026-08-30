@@ -336,7 +336,7 @@ crate::for_each_instruction_kind!(define_source_instruction);
 /// Typed view over expanded rows that have static lookup/circuit metadata.
 ///
 /// Each variant wraps an instruction newtype parameterized by the canonical
-/// [`JoltInstructionRow`](crate::JoltInstructionRow) row. Static-flag
+/// [`JoltInstructionRow`] row. Static-flag
 /// dispatch and the flag-exclusivity tests rely on this concretization to
 /// satisfy `T: JoltInstructionRowData` on the `Flags` impls.
 ///

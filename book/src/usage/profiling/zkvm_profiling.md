@@ -23,8 +23,7 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 `--backend` selects the prover backend (both subcommands): `reference`
 (default) is the naive test oracle — absolute numbers are provisional,
 attribution is meaningful relatively — while `optimized` is the performance
-tier (legacy-parity prover performance), slotting into the same
-instrumented seams.
+tier, slotting into the same instrumented seams.
 
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =

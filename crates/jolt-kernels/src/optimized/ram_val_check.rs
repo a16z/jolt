@@ -1,16 +1,15 @@
 //! The optimized RAM value-check (stage 4) kernel.
 //!
 //! The summand is `inc(j) · ra(j) · (LT(j, r_cycle) + γ)` over the cycle
-//! domain. Techniques ported from `jolt-prover-legacy/src/zkvm/ram/
-//! val_evaluation.rs` (the same shape as the optimized registers
-//! value-evaluation kernel):
+//! domain. It uses the same optimizations as the registers value-evaluation
+//! kernel:
 //!
-//! - **Lazy one-hot `ra`** ([`LazyFoldedRa`]): rounds 0–3 serve
+//! - **Lazy one-hot `ra`** (`LazyFoldedRa`): rounds 0–3 serve
 //!   `ra(j) = eq(r_address)[addresses[j]]` straight from the session-shared
 //!   RAM access columns and the `K`-sized eq table — the `(K × T)` grid and
 //!   the reference's dense `T`-sized address fold are never materialized;
 //!   a dense vector first appears at `T/16`.
-//! - **Split LT with γ folded in** ([`SplitLt`]): `LT(j, r_cycle) + γ` is
+//! - **Split LT with γ folded in** (`SplitLt`): `LT(j, r_cycle) + γ` is
 //!   served from three `~√T` tables instead of a dense `T`-sized one.
 //! - **Eval-at-{0,2,3} sampling** with the engine hint supplying `s(1)`.
 //! - **Deferred-reduction accumulation** of the triple products.

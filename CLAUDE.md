@@ -50,7 +50,7 @@ cargo install --path . --locked
 cargo run --release -p jolt-prover --features profiling -- profile --name fibonacci --format chrome
 # --name options (default scale): fibonacci (16), sha2-chain (22), sha3-chain (22), btreemap (20)
 # --scale <log2 trace length> overrides; --format none = no-subscriber Instant baseline
-# --backend reference (default, naive test oracle) | optimized (performance tier, legacy-parity);
+# --backend reference (default, naive test oracle) | optimized (performance tier);
 # optimized artifacts get an _optimized suffix on the run dir and latest_ symlink
 
 # Canonical summary queries (no Perfetto UI needed) — see book/src/usage/profiling/zkvm_profiling.md

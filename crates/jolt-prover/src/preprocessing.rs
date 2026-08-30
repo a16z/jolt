@@ -228,7 +228,7 @@ mod tests {
 /// On the packed (`akita`) build the per-chunk/image hints are replaced by
 /// the precommitted `ProgramOneHot` objects themselves — witnesses, plans,
 /// setups, and hints — built once at preprocessing time
-/// ([`crate::akita::witness::commit_program_one_hot`]) so proving consumes
+/// (`crate::akita::witness::commit_program_one_hot`) so proving consumes
 /// them directly instead of re-deriving them per proof.
 #[derive(Clone)]
 #[cfg_attr(not(feature = "akita"), derive(Serialize, Deserialize))]

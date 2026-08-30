@@ -1,8 +1,8 @@
 //! Per-stage RSS tracking driven by span lifecycle.
 //!
-//! [`StageMemoryLayer`] watches the prover-stage spans both provers emit
-//! (`prove_stage0`..`prove_stage8`, plus the whole-run roots
-//! `jolt_prover::prove` / `prove_parts` / `E2E`), samples the process RSS
+//! [`StageMemoryLayer`] watches the prover-stage spans
+//! (`prove_stage0`..`prove_stage8` plus the `jolt_prover::prove` root), samples
+//! the process RSS
 //! when each span opens and closes, and records the rows for
 //! [`report_stage_memory`]. It also emits a
 //! `stage_rss` tracing event at every close, so a Chrome/Perfetto trace
@@ -52,15 +52,9 @@ static STAGE_MEMORY_ROWS: Mutex<RowLog> = Mutex::new(RowLog {
     warned_full: false,
 });
 
-/// The stage spans worth boundary-sampling: the per-stage prover recipes
-/// (modular `prove_stage0`..`prove_stage8`, legacy `prove_stage1`..) and the
-/// whole-run roots (modular `jolt_prover::prove`, legacy `prove_parts`, both
-/// harnesses' `E2E`).
+/// The stage spans worth boundary-sampling.
 fn tracked(name: &str) -> bool {
-    name.starts_with("prove_stage")
-        || name == crate::taxonomy::ROOT_SPAN
-        || name == "prove_parts"
-        || name == "E2E"
+    name.starts_with("prove_stage") || name == crate::taxonomy::ROOT_SPAN
 }
 
 /// A `tracing_subscriber` layer sampling process RSS at stage-span

@@ -180,7 +180,7 @@ impl AkitaScheme {
         )
     }
 
-    /// Contextual owned one-hot final commit used by the legacy packed path.
+    /// Contextual owned one-hot final commit with precommitted objects.
     /// The witness buffers move into the opening hint without cloning.
     pub fn commit_one_hot_group_owned_with_precommitted(
         setup: &AkitaProverSetup,

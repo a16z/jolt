@@ -15,7 +15,7 @@
 //!   domain, so the per-cycle hot index is a chunk of that cycle's lookup
 //!   index / mapped PC / remapped RAM address. Both phases gather through
 //!   [`RaChunkSelector`]s over the packed stage-5 rows
-//!   ([`SharedInstructionRows`], reclaimed from the [`ProofSession`] or
+//!   (`SharedInstructionRows`, reclaimed from the [`ProofSession`] or
 //!   collected in one streaming pass) and never materialize the `K × T`
 //!   grids the naive tier's `oracle_table` walks, nor per-polynomial index
 //!   columns (legacy `RaIndices`).
@@ -30,7 +30,7 @@
 //!   `x_i(j) = eq(r_address)[hot_i(j)]` is a lookup into a `K`-sized table
 //!   pre-scaled by `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no
 //!   batching multiply in the round loop (legacy `SharedRaPolynomials`
-//!   pre-scaling), served by the shared [`LazyFoldedRa`] state machine —
+//!   pre-scaling), served by the shared `LazyFoldedRa` state machine:
 //!   index-encoded for the first four binds, dense at `T/16` after.
 //! - **Split-eq / Gruen round messages (cycle phase).** Only the constant
 //!   and leading coefficients of the inner quadratic are accumulated, in

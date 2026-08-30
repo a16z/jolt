@@ -16,7 +16,7 @@
 //!   the single hot grid index per cycle — `O(T)` group-free additions
 //!   instead of an `O(K · T)` dense walk over a materialized grid.
 //! - **Streaming trace columns**: the committed values are re-derived from one typed
-//!   witness pass ([`CommittedColumnsWitness`], the same bundle the commit
+//!   witness pass (`CommittedColumnsWitness`, the same bundle the commit
 //!   kernel consumed) into packed per-cycle columns — `O(T)` small scalars
 //!   shared by every trace polynomial via [`Arc`], never `K × T` oracle
 //!   tables.

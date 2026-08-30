@@ -5,8 +5,7 @@
 //! `K`-sized address-eq table and binds four dense tables (eq, mask, val_io,
 //! val_final) through the naive expression interpreter every round.
 //!
-//! Techniques ported from `jolt-prover-legacy/src/zkvm/ram/output_check.rs`
-//! (`OutputSumcheckProver`):
+//! Carries forward the former `OutputSumcheckProver` optimizations:
 //!
 //! - **Gruen split-eq factoring**: `eq(r_address, ·)` is held as an
 //!   `E_out ⊗ E_in` tensor plus a per-round linear factor

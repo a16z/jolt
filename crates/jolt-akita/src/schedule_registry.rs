@@ -2,7 +2,7 @@
 //!
 //! Advice layouts are known only during preprocessing, so their grouped rows
 //! cannot be emitted in the static catalog. [`provision`] plans those rows once
-//! and publishes them for the static [`CommitmentConfig`](akita_config::CommitmentConfig)
+//! and publishes them for the static [`CommitmentConfig`]
 //! resolution hooks. Resolution never invokes the planner.
 
 use std::any::TypeId;

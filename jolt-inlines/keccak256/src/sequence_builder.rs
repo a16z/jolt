@@ -8,7 +8,7 @@
 //!   - “Round” = single application of θ ρ π χ ι to the state.
 //!   - “Rate”  = 1088 bits (136 B) that interact with the message/output.
 //!   - “Capacity” = 512 bits hidden from the attacker (1600 − 1088).
-//!   - “Permutation” = Keccak-f[1600] : 24 rounds, each θ→ρ→π→χ→ι.
+//!   - “Permutation” = `Keccak-f[1600]`: 24 rounds, each θ -> ρ -> π -> χ -> ι.
 //!
 //! Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 //! Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
