@@ -434,13 +434,15 @@ fn invalid_compact_row(row: &TraceRow, reason: &'static str) -> WitnessError {
 }
 
 /// Upper bound, in bytes, on a dense `(K × T)` oracle grid materialized by
-/// the trace backend. The RAM read-write grids are `ram_K · 2^log_T` field
-/// elements, so the request grows linearly with the trace length and reaches
+/// the trace backend: the RAM and register read-write grids and the one-hot
+/// RA grids. The request grows linearly with the trace length and reaches
 /// hundreds of GiB at profiling scales (`ram_K = 4096`, `log_T = 22`, 32-byte
 /// field: 2^39 bytes). Past this bound the global allocator aborts the
 /// process with an opaque `memory allocation of N bytes failed`; refusing
 /// with a `WitnessError` keeps the failure actionable. 32 GiB admits every
-/// in-tree test and the documented small-scale profiling defaults.
+/// in-tree test and the fibonacci profiling default (scale 16); the larger
+/// documented profiling defaults are refused by design and belong on the
+/// optimized backend.
 pub(crate) const MAX_DENSE_GRID_BYTES: usize = 1 << 35;
 
 /// The element count of a dense `addresses × cycles` grid of `F`, refused
