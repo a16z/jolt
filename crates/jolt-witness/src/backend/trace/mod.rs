@@ -433,6 +433,45 @@ fn invalid_compact_row(row: &TraceRow, reason: &'static str) -> WitnessError {
     }
 }
 
+/// Upper bound, in bytes, on a dense `(K × T)` oracle grid materialized by
+/// the trace backend. The RAM read-write grids are `ram_K · 2^log_T` field
+/// elements, so the request grows linearly with the trace length and reaches
+/// hundreds of GiB at profiling scales (`ram_K = 4096`, `log_T = 22`, 32-byte
+/// field: 2^39 bytes). Past this bound the global allocator aborts the
+/// process with an opaque `memory allocation of N bytes failed`; refusing
+/// with a `WitnessError` keeps the failure actionable. 32 GiB admits every
+/// in-tree test and the documented small-scale profiling defaults.
+pub(crate) const MAX_DENSE_GRID_BYTES: usize = 1 << 35;
+
+/// The element count of a dense `addresses × cycles` grid of `F`, refused
+/// with an actionable error when the byte size overflows or exceeds
+/// [`MAX_DENSE_GRID_BYTES`].
+pub(crate) fn checked_dense_grid_len<F>(
+    addresses: usize,
+    cycles: usize,
+) -> Result<usize, WitnessError> {
+    let len = addresses
+        .checked_mul(cycles)
+        .ok_or_else(|| WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: format!("dense grid of {addresses} addresses x {cycles} cycles overflows"),
+        })?;
+    let bytes = len.checked_mul(core::mem::size_of::<F>());
+    match bytes {
+        Some(bytes) if bytes <= MAX_DENSE_GRID_BYTES => Ok(len),
+        _ => Err(WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: format!(
+                "dense grid of {addresses} addresses x {cycles} cycles needs {} bytes \
+                 (> {MAX_DENSE_GRID_BYTES} max); this naive materialization is a test \
+                 oracle sized for small traces — use the optimized backend for larger \
+                 shapes",
+                bytes.map_or_else(|| "overflowing".to_owned(), |bytes| bytes.to_string()),
+            ),
+        }),
+    }
+}
+
 pub(crate) fn checked_pow2(log_rows: usize) -> Result<usize, WitnessError> {
     if log_rows >= usize::BITS as usize {
         return Err(WitnessError::InvalidDimensions {
