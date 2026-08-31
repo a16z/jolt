@@ -428,6 +428,7 @@ mod tests {
             config.registers_val_evaluation.trace_cutoff_elements,
             1 << 26
         );
+        assert_eq!(config.instruction_read_raf.address_cutoff_elements, 1 << 24);
         assert_eq!(config.registers_read_write.trace_cutoff_elements, 1 << 25);
         assert_eq!(
             config.ram_read_write.gpu_record_scatter_cutoff_elements,

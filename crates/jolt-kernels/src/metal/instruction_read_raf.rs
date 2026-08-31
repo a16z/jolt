@@ -49,7 +49,7 @@ pub struct InstructionReadRafMetalConfig {
 impl Default for InstructionReadRafMetalConfig {
     fn default() -> Self {
         Self {
-            address_cutoff_elements: 1 << 25,
+            address_cutoff_elements: 1 << 24,
             stage1_scatter_threads_per_threadgroup: 256,
             address_dispatch: AddressPhaseSequenceConfig::default(),
             cutoff_elements: 1 << 16,

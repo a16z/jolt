@@ -116,6 +116,47 @@ inline uint address_suffix_full_swap_bytes_32(uint value) {
         | ((value & 0xff000000u) >> 24);
 }
 
+inline ulong address_suffix_full_pext(ulong x, ulong y) {
+    ulong output = 0;
+    uint destination = 0;
+    while (y != 0) {
+        uint source = ctz(y);
+        output |= ((x >> source) & 1ul) << destination;
+        destination += 1;
+        y &= y - 1;
+    }
+    return output;
+}
+
+inline ulong address_suffix_full_window_sign(ulong x, ulong y) {
+    return y == 0 ? 0ul : ((x >> (63u - (uint)clz(y))) & 1ul);
+}
+
+inline ulong address_suffix_full_sign_extension_w(AddressSuffixFullBits bits) {
+    if (bits.len == 0) {
+        return 0ul;
+    }
+
+    constexpr uint word_half = 32u;
+    uint count = min(bits.operand_len, word_half);
+    ulong fill = 0;
+    if (bits.len >= 64) {
+        if (((bits.x >> (word_half - 1)) & 1ul) == 0) {
+            return 0ul;
+        }
+        fill = 0xffffffff00000000ul;
+    }
+    uint first_position = word_half - count;
+    for (uint offset = 0; offset < count; offset++) {
+        uint position = first_position + offset;
+        if (position != 0) {
+            ulong y_bit = (bits.y >> (count - 1 - offset)) & 1ul;
+            fill += (1ul - y_bit) << position;
+        }
+    }
+    return fill;
+}
+
 inline ulong address_suffix_full_evaluate(uchar kind, AddressSuffixFullBits bits) {
     ulong operand_mask = address_suffix_full_mask(bits.operand_len);
     switch (kind) {
@@ -196,6 +237,29 @@ inline ulong address_suffix_full_evaluate(uchar kind, AddressSuffixFullBits bits
         case 40: return (ulong)address_suffix_full_rotate_right_32((uint)bits.x ^ (uint)bits.y, 12);
         case 41: return (ulong)address_suffix_full_rotate_right_32((uint)bits.x ^ (uint)bits.y, 8);
         case 42: return (ulong)address_suffix_full_rotate_right_32((uint)bits.x ^ (uint)bits.y, 7);
+        case 43: {
+            if (bits.len < 3) return 1ul;
+            return 1ul << (((bits.lo >> 2) & 1ul) * 32);
+        }
+        case 44: return address_suffix_full_pext(bits.x, bits.y);
+        case 45: {
+            uint count = popcount(bits.y);
+            return count < 64 ? 1ul << count : 0ul;
+        }
+        case 46: return address_suffix_full_window_sign(bits.x, bits.y);
+        case 47: {
+            ulong sign = address_suffix_full_window_sign(bits.x, bits.y);
+            uint count = popcount(bits.y);
+            return sign != 0 && count < 64 ? 1ul << count : 0ul;
+        }
+        case 48: return (ulong)address_suffix_full_rotate_right_32((uint)bits.x ^ (uint)bits.y, 22);
+        case 49: return (ulong)address_suffix_full_rotate_right_32((uint)bits.x ^ (uint)bits.y, 19);
+        case 50: return (ulong)address_suffix_full_rotate_right_32((uint)bits.x ^ (uint)bits.y, 6);
+        case 51: return address_suffix_full_sign_extension_w(bits);
+        case 52: return bits.len < 64 ? 0ul : ((bits.x >> 31) & 1ul) * (bits.y & 1ul);
+        case 53: return 1ul << (8 * (uint)(bits.lo & 7ul));
+        case 54: return 1ul << (8 * (uint)(bits.lo & 6ul));
+        case 55: return bits.lo & ~7ul;
         default: return 0ul;
     }
 }
