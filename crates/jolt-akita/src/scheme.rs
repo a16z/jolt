@@ -94,7 +94,11 @@ impl TraceCommitmentBackend {
     }
 
     pub const fn shape_is_metal_qualified(one_hot_k: usize, num_vars: usize) -> bool {
-        one_hot_k == AKITA_ONE_HOT_K256 && matches!(num_vars, 38..=41)
+        match one_hot_k {
+            AKITA_ONE_HOT_K16 => matches!(num_vars, 34..=38),
+            AKITA_ONE_HOT_K256 => matches!(num_vars, 38..=41),
+            _ => false,
+        }
     }
 
     pub(crate) const fn opening_shape_is_metal_qualified(
@@ -434,8 +438,8 @@ impl AkitaScheme {
             backend_prover_setup.expanded.as_ref(),
         )
         .map_err(akita_error)?;
-        with_backend_pool(|| match profiles {
-            None => AkitaOneHotK256BackendScheme::commit::<
+        with_backend_pool(|| match (setup.one_hot_k(), profiles) {
+            (AKITA_ONE_HOT_K16, None) => AkitaOneHotK16BackendScheme::commit::<
                 TracePackedOneHot,
                 akita_metal::MetalBackend,
             >(
@@ -444,7 +448,7 @@ impl AkitaScheme {
                 &stack,
                 GroupContext::scheduler_without_precommitted_groups(),
             ),
-            Some(profiles) => AkitaOneHotK256BackendScheme::commit::<
+            (AKITA_ONE_HOT_K16, Some(profiles)) => AkitaOneHotK16BackendScheme::commit::<
                 TracePackedOneHot,
                 akita_metal::MetalBackend,
             >(
@@ -453,6 +457,25 @@ impl AkitaScheme {
                 &stack,
                 GroupContext::scheduler_with_precommitted_groups(profiles),
             ),
+            (AKITA_ONE_HOT_K256, None) => AkitaOneHotK256BackendScheme::commit::<
+                TracePackedOneHot,
+                akita_metal::MetalBackend,
+            >(
+                backend_prover_setup,
+                std::slice::from_ref(source),
+                &stack,
+                GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            (AKITA_ONE_HOT_K256, Some(profiles)) => AkitaOneHotK256BackendScheme::commit::<
+                TracePackedOneHot,
+                akita_metal::MetalBackend,
+            >(
+                backend_prover_setup,
+                std::slice::from_ref(source),
+                &stack,
+                GroupContext::scheduler_with_precommitted_groups(profiles),
+            ),
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
         })
         .map(split_commit_output)
         .map_err(commit_failed)
