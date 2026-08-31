@@ -260,6 +260,13 @@ mod muldiv {
                 spartan_product_remainder:
                     jolt_kernels::metal::SpartanProductRemainderMetalConfig {
                         trace_cutoff_elements: 2,
+                        cpu_tail_elements: config.trace_length / 128,
+                        reuse_outer_state_a: true,
+                        terminal_cache_cutoff_elements: 2,
+                        dispatch:
+                            jolt_kernels::metal::solinas::ProductRemainderSequenceConfig {
+                                ..Default::default()
+                            },
                         ..Default::default()
                     },
                 instruction_claim_reduction:
@@ -352,6 +359,7 @@ mod muldiv {
         verify(&proof).expect("packed verifier should accept the packed proof");
         #[cfg(all(feature = "metal", target_os = "macos"))]
         {
+            assert_eq!(metal.outer_product_state_b_reuses(), 1);
             assert_eq!(metal.product_remainder_sequences(), 1);
             assert_eq!(metal.product_uniskip_dispatches(), 0);
             assert_eq!(metal.product_uniskip_carrier_hits(), 1);

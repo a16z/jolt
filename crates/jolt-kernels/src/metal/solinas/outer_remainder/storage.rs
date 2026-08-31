@@ -1,4 +1,4 @@
-use std::slice;
+use std::{slice, time::Duration};
 
 use jolt_field::AkitaField;
 use metal::{
@@ -13,8 +13,8 @@ use super::{
         OUTER_REMAINDER_A_LOOKUP_FIELDS,
     },
     plan::{
-        field_bytes, opening_output_count, outer_remainder_sequence_storage_bytes_with_config,
-        storage_geometry, validate_opening_threadgroup_memory, SIMD_WIDTH,
+        field_bytes, opening_output_count, opening_threadgroup_memory_lengths, storage_geometry,
+        validate_opening_threadgroup_memory, SIMD_WIDTH,
     },
     registers_claim::{carrier_geometry, RegistersClaimCarrierGeometry},
     shader::{
@@ -42,6 +42,38 @@ pub(super) struct PipelineSetLimits {
     pub(super) reduction: PipelineLimits,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OuterRemainderStorageEvalStats {
+    pub(crate) borrowed_state_b: bool,
+    pub(crate) initialized_bytes: u64,
+    pub(crate) initialization_gpu_active: Duration,
+    pub(crate) initialization_device_buffers: usize,
+    pub(crate) materialize_limits: PipelineLimits,
+    pub(crate) stream_bind_limits: PipelineLimits,
+    pub(crate) transition_limits: PipelineLimits,
+    pub(crate) opening_limits: PipelineLimits,
+    pub(crate) reduction_limits: PipelineLimits,
+    pub(crate) registers_claim_build_limits: Option<PipelineLimits>,
+    pub(crate) registers_claim_reduce_limits: Option<PipelineLimits>,
+    pub(crate) registers_claim_dot_limits: Option<PipelineLimits>,
+    pub(crate) materialize_threads: usize,
+    pub(crate) stream_bind_threads: usize,
+    pub(crate) transition_threads: usize,
+    pub(crate) opening_threads: usize,
+    pub(crate) reduction_threads: usize,
+    pub(crate) registers_claim_build_threads: usize,
+    pub(crate) registers_claim_reduce_threads: usize,
+    pub(crate) registers_claim_dot_threads: usize,
+    pub(crate) opening_dynamic_threadgroup_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct StorageInitializationStats {
+    bytes: u64,
+    gpu_active: Duration,
+    device_buffers: usize,
+}
+
 pub(super) struct Threads {
     pub(super) materialize: usize,
     pub(super) stream_bind: usize,
@@ -55,7 +87,7 @@ pub(super) struct Threads {
 
 pub(super) struct DenseBuffers {
     pub(super) state_a: Buffer,
-    pub(super) state_b: Buffer,
+    pub(super) state_b: Option<Buffer>,
 }
 
 pub(super) struct Buffers {
@@ -82,7 +114,10 @@ impl Buffers {
         let dense = self.dense.as_ref().map_or([0, 0], |dense| {
             [
                 dense.state_a.as_ptr() as usize,
-                dense.state_b.as_ptr() as usize,
+                dense
+                    .state_b
+                    .as_ref()
+                    .map_or(0, |state_b| state_b.as_ptr() as usize),
             ]
         });
         [
@@ -97,26 +132,17 @@ impl Buffers {
             self.opening_output.as_ptr() as usize,
         ]
     }
+}
 
-    fn all(&self) -> Result<[&Buffer; DEVICE_BUFFERS], MetalError> {
-        let dense = self
-            .dense
-            .as_ref()
-            .ok_or(MetalError::InvalidOuterRemainderState {
-                expected: "allocated dense storage",
-                got: "released dense storage",
-            })?;
-        Ok([
-            &dense.state_a,
-            &dense.state_b,
-            &self.e_in,
-            &self.e_out,
-            &self.a_lookup,
-            &self.message_partials,
-            &self.message_output,
-            &self.opening_partials,
-            &self.opening_output,
-        ])
+enum StateBSource {
+    Owned,
+    Borrowed(Buffer),
+    Deferred,
+}
+
+impl StateBSource {
+    const fn is_borrowed(&self) -> bool {
+        !matches!(self, Self::Owned)
     }
 }
 
@@ -129,6 +155,8 @@ pub(super) struct Storage {
     pub(super) max_threadgroups: usize,
     pub(super) dense_bytes: u64,
     pub(super) owned_bytes: u64,
+    borrowed_state_b: bool,
+    initialization: StorageInitializationStats,
 }
 
 pub(crate) struct OuterRemainderSequenceStorage {
@@ -155,6 +183,37 @@ impl SolinasMetal {
         &self,
         cycles: usize,
         config: OuterRemainderSequenceConfig,
+    ) -> Result<OuterRemainderSequenceStorage, MetalError> {
+        self.prepare_outer_remainder_sequence_storage_inner(cycles, config, StateBSource::Owned)
+    }
+
+    pub(crate) fn prepare_outer_remainder_sequence_storage_deferring_state_b(
+        &self,
+        cycles: usize,
+        config: OuterRemainderSequenceConfig,
+    ) -> Result<OuterRemainderSequenceStorage, MetalError> {
+        self.prepare_outer_remainder_sequence_storage_inner(cycles, config, StateBSource::Deferred)
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub(crate) fn prepare_outer_remainder_sequence_storage_borrowing_state_b(
+        &self,
+        cycles: usize,
+        config: OuterRemainderSequenceConfig,
+        state_b: Buffer,
+    ) -> Result<OuterRemainderSequenceStorage, MetalError> {
+        self.prepare_outer_remainder_sequence_storage_inner(
+            cycles,
+            config,
+            StateBSource::Borrowed(state_b),
+        )
+    }
+
+    fn prepare_outer_remainder_sequence_storage_inner(
+        &self,
+        cycles: usize,
+        config: OuterRemainderSequenceConfig,
+        state_b_source: StateBSource,
     ) -> Result<OuterRemainderSequenceStorage, MetalError> {
         if cycles < 4 || !cycles.is_power_of_two() {
             return Err(MetalError::InvalidOuterRemainderRows(cycles));
@@ -280,11 +339,23 @@ impl SolinasMetal {
             let bytes = field_bytes(elements)?;
             self.validate_buffer_length(bytes)?;
         }
-        self.validate_additional_working_set(outer_remainder_sequence_storage_bytes_with_config(
-            cycles, config,
-        )?)?;
+        let state_b_bytes = field_bytes(current_elements / 2)?;
+        if matches!(
+            &state_b_source,
+            StateBSource::Borrowed(state_b) if state_b.length() != state_b_bytes
+        ) {
+            return Err(MetalError::InvalidOuterRemainderConfig(
+                "borrowed state B has the wrong length",
+            ));
+        }
+        let borrowed_state_b = state_b_source.is_borrowed();
+        let owned_bytes = geometry
+            .owned_bytes
+            .checked_sub(u64::from(borrowed_state_b) * state_b_bytes)
+            .ok_or(MetalError::InputTooLong(current_elements))?;
+        self.validate_additional_working_set(owned_bytes)?;
         let dense_bytes = field_bytes(current_elements)?
-            .checked_mul(2)
+            .checked_add(u64::from(!borrowed_state_b) * state_b_bytes)
             .ok_or(MetalError::InputTooLong(current_elements))?;
         let opening_outputs = opening_output_count(config.product_uniskip_carrier);
         let registers_claim = if config.registers_claim_carrier {
@@ -305,10 +376,15 @@ impl SolinasMetal {
         } else {
             None
         };
+        let state_b = match state_b_source {
+            StateBSource::Owned => Some(new_field_buffer(self, current_elements / 2)?),
+            StateBSource::Borrowed(state_b) => Some(state_b),
+            StateBSource::Deferred => None,
+        };
         let buffers = Buffers {
             dense: Some(DenseBuffers {
                 state_a: new_field_buffer(self, current_elements)?,
-                state_b: new_field_buffer(self, current_elements)?,
+                state_b,
             }),
             e_in: new_field_buffer(self, weight_capacity)?,
             e_out: new_field_buffer(self, weight_capacity)?,
@@ -319,7 +395,12 @@ impl SolinasMetal {
             opening_output: new_field_buffer(self, opening_outputs)?,
             registers_claim,
         };
-        initialize_storage(self, &buffers, config.storage_initialization)?;
+        let initialization = initialize_storage(
+            self,
+            &buffers,
+            config.storage_initialization,
+            borrowed_state_b,
+        )?;
 
         Ok(OuterRemainderSequenceStorage {
             storage: Storage {
@@ -330,7 +411,9 @@ impl SolinasMetal {
                 weight_capacity,
                 max_threadgroups,
                 dense_bytes,
-                owned_bytes: geometry.owned_bytes,
+                owned_bytes,
+                borrowed_state_b,
+                initialization,
             },
             cycles,
             config,
@@ -346,17 +429,127 @@ impl OuterRemainderSequenceStorage {
         cycles: usize,
         config: OuterRemainderSequenceConfig,
     ) -> bool {
+        let Some((expected_owned_bytes, expected_state_b_bytes)) =
+            storage_geometry(cycles, config).ok().and_then(|geometry| {
+                field_bytes(geometry.current_elements / 2)
+                    .ok()
+                    .and_then(|state_b_bytes| {
+                        geometry
+                            .owned_bytes
+                            .checked_sub(u64::from(self.storage.borrowed_state_b) * state_b_bytes)
+                            .map(|owned_bytes| (owned_bytes, state_b_bytes))
+                    })
+            })
+        else {
+            return false;
+        };
         self.storage.context.device_registry_id() == context.device_registry_id()
             && self.cycles == cycles
             && self.config == config
+            && self.storage.owned_bytes == expected_owned_bytes
+            && self
+                .storage
+                .buffers
+                .dense
+                .as_ref()
+                .and_then(|dense| dense.state_b.as_ref())
+                .is_some_and(|state_b| state_b.length() == expected_state_b_bytes)
     }
 
     pub(crate) const fn owned_bytes(&self) -> u64 {
         self.storage.owned_bytes
     }
 
+    #[cfg(feature = "test-utils")]
+    pub(crate) fn eval_stats(&self) -> Result<OuterRemainderStorageEvalStats, MetalError> {
+        let pipelines = &self.storage.pipelines;
+        let threads = &self.storage.threads;
+        let pipeline_limits = |pipeline: &ComputePipelineState| SolinasMetal::limits(pipeline);
+        let opening_dynamic_threadgroup_bytes = opening_threadgroup_memory_lengths(
+            threads.opening,
+            self.config.product_uniskip_carrier,
+        )?
+        .into_iter()
+        .try_fold(0u64, |total, bytes| total.checked_add(bytes))
+        .ok_or(MetalError::InvalidOuterRemainderConfig(
+            "opening threadgroup byte count overflowed",
+        ))?;
+        Ok(OuterRemainderStorageEvalStats {
+            borrowed_state_b: self.storage.borrowed_state_b,
+            initialized_bytes: self.storage.initialization.bytes,
+            initialization_gpu_active: self.storage.initialization.gpu_active,
+            initialization_device_buffers: self.storage.initialization.device_buffers,
+            materialize_limits: pipeline_limits(&pipelines.materialize),
+            stream_bind_limits: pipeline_limits(&pipelines.stream_bind),
+            transition_limits: pipeline_limits(&pipelines.transition),
+            opening_limits: pipeline_limits(&pipelines.opening),
+            reduction_limits: pipeline_limits(&pipelines.reduction),
+            registers_claim_build_limits: pipelines
+                .registers_claim_build
+                .as_ref()
+                .map(pipeline_limits),
+            registers_claim_reduce_limits: pipelines
+                .registers_claim_reduce
+                .as_ref()
+                .map(pipeline_limits),
+            registers_claim_dot_limits: pipelines.registers_claim_dot.as_ref().map(pipeline_limits),
+            materialize_threads: threads.materialize,
+            stream_bind_threads: threads.stream_bind,
+            transition_threads: threads.transition,
+            opening_threads: threads.opening,
+            reduction_threads: threads.reduction,
+            registers_claim_build_threads: threads.registers_claim_build,
+            registers_claim_reduce_threads: threads.registers_claim_reduce,
+            registers_claim_dot_threads: threads.registers_claim_dot,
+            opening_dynamic_threadgroup_bytes,
+        })
+    }
+
     pub(crate) fn buffer_identities(&self) -> [usize; DEVICE_BUFFERS] {
         self.storage.buffers.identities()
+    }
+
+    pub(crate) fn awaits_product_state_b(&self) -> bool {
+        self.storage.borrowed_state_b
+            && self
+                .storage
+                .buffers
+                .dense
+                .as_ref()
+                .is_some_and(|dense| dense.state_b.is_none())
+    }
+
+    pub(crate) fn attach_product_state_b(&mut self, state_b: Buffer) -> Result<(), MetalError> {
+        if !self.awaits_product_state_b() {
+            return Err(MetalError::InvalidOuterRemainderState {
+                expected: "deferred Product-owned state B",
+                got: "owned or already attached state B",
+            });
+        }
+        let expected_bytes = field_bytes(self.current_elements / 2)?;
+        if state_b.length() != expected_bytes
+            || state_b.device().registry_id() != self.storage.context.device_registry_id()
+        {
+            return Err(MetalError::InvalidOuterRemainderConfig(
+                "Product-owned state B has the wrong shape or device",
+            ));
+        }
+        let dense =
+            self.storage
+                .buffers
+                .dense
+                .as_mut()
+                .ok_or(MetalError::InvalidOuterRemainderState {
+                    expected: "allocated dense storage for Product state-B attachment",
+                    got: "released dense storage",
+                })?;
+        if dense.state_a.as_ptr() == state_b.as_ptr() {
+            return Err(MetalError::InvalidOuterRemainderConfig(
+                "Outer dense state buffers alias",
+            ));
+        }
+        dense.state_b = Some(state_b);
+        Ok(())
     }
 
     pub(crate) fn share_product_state_a(&self) -> Result<Buffer, MetalError> {
@@ -376,12 +569,41 @@ fn initialize_storage(
     context: &SolinasMetal,
     buffers: &Buffers,
     mode: OuterRemainderStorageInitialization,
-) -> Result<(), MetalError> {
-    let buffers = buffers.all()?;
+    borrowed_state_b: bool,
+) -> Result<StorageInitializationStats, MetalError> {
+    let dense = buffers
+        .dense
+        .as_ref()
+        .ok_or(MetalError::InvalidOuterRemainderState {
+            expected: "allocated dense storage",
+            got: "released dense storage",
+        })?;
+    let mut initialized = Vec::with_capacity(DEVICE_BUFFERS);
+    initialized.push(&dense.state_a);
+    if !borrowed_state_b {
+        initialized.push(
+            dense
+                .state_b
+                .as_ref()
+                .ok_or(MetalError::InvalidOuterRemainderState {
+                    expected: "owned dense state B",
+                    got: "missing dense state B",
+                })?,
+        );
+    }
+    initialized.extend([
+        &buffers.e_in,
+        &buffers.e_out,
+        &buffers.a_lookup,
+        &buffers.message_partials,
+        &buffers.message_output,
+        &buffers.opening_partials,
+        &buffers.opening_output,
+    ]);
     let bytes = match mode {
         OuterRemainderStorageInitialization::Lazy => 0,
         OuterRemainderStorageInitialization::Full => {
-            buffers.iter().try_fold(0u64, |total, buffer| {
+            initialized.iter().try_fold(0u64, |total, buffer| {
                 total
                     .checked_add(buffer.length())
                     .ok_or(MetalError::InvalidOuterRemainderConfig(
@@ -390,29 +612,55 @@ fn initialize_storage(
             })?
         }
     };
-    let device_buffers =
-        usize::from(mode == OuterRemainderStorageInitialization::Full) * DEVICE_BUFFERS;
+    let device_buffers = usize::from(mode == OuterRemainderStorageInitialization::Full)
+        * (DEVICE_BUFFERS - usize::from(borrowed_state_b));
     let span = tracing::info_span!(
         "MetalOuterRemainder::storage_initialize",
         mode = mode.as_str(),
         device_buffers,
         bytes,
+        gpu_active_ns = tracing::field::Empty,
     );
     let _entered = span.enter();
-    if mode == OuterRemainderStorageInitialization::Full {
+    let gpu_active = if mode == OuterRemainderStorageInitialization::Full {
         let command_buffer = context.queue.new_command_buffer();
         autoreleasepool(|| {
             let encoder = command_buffer.new_blit_command_encoder();
-            for buffer in buffers {
+            for buffer in initialized {
                 encoder.fill_buffer(buffer, NSRange::new(0, buffer.length()), 0);
             }
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
+        completed_command_gpu_time(command_buffer)?
+    } else {
+        Duration::ZERO
+    };
+    let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
+    let _ = span.record("gpu_active_ns", gpu_active_ns);
+    Ok(StorageInitializationStats {
+        bytes,
+        gpu_active,
+        device_buffers,
+    })
+}
+
+#[cfg(feature = "test-utils")]
+impl SolinasMetal {
+    pub(crate) fn prepare_eval_outer_state_b(&self, cycles: usize) -> Result<Buffer, MetalError> {
+        let state_b = new_field_buffer(self, cycles)?;
+        let command_buffer = self.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_blit_command_encoder();
+            encoder.fill_buffer(&state_b, NSRange::new(0, state_b.length()), 0);
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
         let _ = completed_command_gpu_time(command_buffer)?;
+        Ok(state_b)
     }
-    Ok(())
 }
 
 pub(super) fn write_fields(

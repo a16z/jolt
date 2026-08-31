@@ -26,6 +26,12 @@ pub const RAM_RAF_AKITA_OFFSET: u32 = 0xffff_a7f7;
 
 pub const RAM_RAF_FOLD_PIPELINE: &str = "solinas_ram_raf_fold_tiles";
 pub const RAM_RAF_FINALIZE_PIPELINE: &str = "solinas_ram_raf_finalize";
+pub const RAM_RAF_SEGMENTED_COLD_PIPELINE: &str = "solinas_ram_raf_segmented_cold";
+pub const RAM_RAF_SEGMENTED_BOUNDED_PIPELINE: &str = "solinas_ram_raf_segmented_bounded";
+pub const RAM_RAF_SEGMENTED_HOT_CHUNK_PIPELINE: &str = "solinas_ram_raf_segmented_hot_chunk";
+pub const RAM_RAF_SEGMENTED_HOT_FINALIZE_PIPELINE: &str = "solinas_ram_raf_segmented_hot_finalize";
+pub const RAM_RAF_SEGMENTED_THREADS: usize = 256;
+pub const RAM_RAF_SEGMENTED_THREADGROUP_BYTES: usize = 8 * FIELD_BYTES;
 
 const FIELD_BYTES: usize = 16;
 
@@ -79,6 +85,24 @@ pub struct RamRafFoldParams {
 
 const _: [(); 32] = [(); size_of::<RamRafFoldParams>()];
 const _: [(); 4] = [(); align_of::<RamRafFoldParams>()];
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RamRafSegmentedParams {
+    pub rows: u32,
+    pub addresses: u32,
+    pub accesses: u32,
+    pub inner_length: u32,
+    pub outer_length: u32,
+    pub cold_segment_threshold: u32,
+    pub hot_message_chunk_size: u32,
+    pub bounded_address_count: u32,
+    pub hot_address_count: u32,
+    pub hot_message_chunk_count: u32,
+}
+
+const _: [(); 40] = [(); size_of::<RamRafSegmentedParams>()];
+const _: [(); 4] = [(); align_of::<RamRafSegmentedParams>()];
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -513,12 +537,13 @@ impl<F: Field> RamRafAffineTail<F> {
     }
 
     pub fn input_claim(&self) -> F {
-        self.ra
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(index, value)| (self.base + self.step * F::from_u64(index as u64)) * value)
-            .sum()
+        let mut claim = F::zero();
+        let mut address = self.base;
+        for &value in &self.ra {
+            claim += address * value;
+            address += self.step;
+        }
+        claim
     }
 
     pub fn message(&self, previous_claim: F) -> Result<RamRafQuadraticMessage<F>, RamRafError> {
@@ -528,13 +553,15 @@ impl<F: Field> RamRafAffineTail<F> {
         let mut at_zero = F::zero();
         let mut at_one = F::zero();
         let mut delta_sum = F::zero();
-        for (pair_index, pair) in self.ra.chunks_exact(2).enumerate() {
+        let mut u_zero = self.base;
+        let pair_step = self.step + self.step;
+        for pair in self.ra.chunks_exact(2) {
             let r_zero = pair[0];
             let r_one = pair[1];
-            let u_zero = self.base + self.step * F::from_u64((pair_index as u64).saturating_mul(2));
             at_zero += u_zero * r_zero;
             at_one += (u_zero + self.step) * r_one;
             delta_sum += r_one - r_zero;
+            u_zero += pair_step;
         }
         if at_zero + at_one != previous_claim {
             return Err(RamRafError::RoundClaimMismatch);
@@ -668,4 +695,64 @@ fn checked_product(label: &'static str, lhs: usize, rhs: usize) -> Result<usize,
 
 fn shader_count(label: &'static str, value: usize) -> Result<u32, RamRafError> {
     u32::try_from(value).map_err(|_| RamRafError::ShaderCount { label, value })
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tail property test setup")]
+mod tests {
+    use jolt_field::AkitaField;
+
+    use super::*;
+
+    fn direct_claim(ra: &[AkitaField], base: AkitaField, step: AkitaField) -> AkitaField {
+        ra.iter()
+            .copied()
+            .enumerate()
+            .map(|(index, value)| (base + step * AkitaField::from_u64(index as u64)) * value)
+            .sum()
+    }
+
+    fn direct_message(
+        ra: &[AkitaField],
+        base: AkitaField,
+        step: AkitaField,
+        x: AkitaField,
+    ) -> AkitaField {
+        ra.chunks_exact(2)
+            .enumerate()
+            .map(|(pair_index, pair)| {
+                let index = AkitaField::from_u64((2 * pair_index) as u64);
+                let address = base + step * (index + x);
+                let value = pair[0] + x * (pair[1] - pair[0]);
+                address * value
+            })
+            .sum()
+    }
+
+    #[test]
+    fn affine_tail_matches_direct_polynomial_definition() {
+        let values = (0..32)
+            .map(|index| AkitaField::from_u64(11 + 17 * index))
+            .collect::<Vec<_>>();
+        let mut tail = RamRafAffineTail::new(values, 0x1000).unwrap();
+
+        while tail.ra.len() > 1 {
+            let claim = direct_claim(&tail.ra, tail.base, tail.step);
+            assert_eq!(tail.input_claim(), claim);
+            let message = tail.message(claim).unwrap();
+            for (x, got) in message.evaluations().into_iter().enumerate() {
+                assert_eq!(
+                    got,
+                    direct_message(
+                        &tail.ra,
+                        tail.base,
+                        tail.step,
+                        AkitaField::from_u64(x as u64),
+                    )
+                );
+            }
+            tail.bind(AkitaField::from_u64(3 + tail.rounds_bound() as u64))
+                .unwrap();
+        }
+    }
 }

@@ -26,6 +26,13 @@ const PRODUCTION_TILE_PIPELINES: [&str; 5] = [
     "solinas_booleanity_address_tile_3",
     "solinas_booleanity_address_tile_4",
 ];
+const PRODUCTION_THREE_RAM_TILE_PIPELINES: [&str; 5] = [
+    "solinas_booleanity_address_tile_0",
+    "solinas_booleanity_address_tile_1",
+    "solinas_booleanity_address_tile_2",
+    "solinas_booleanity_address_tile_ram3_3",
+    "solinas_booleanity_address_tile_ram3_4",
+];
 const PRODUCTION_TILE_PIPELINES_3: [&str; 10] = [
     "solinas_booleanity_address_tile_3_0",
     "solinas_booleanity_address_tile_3_1",
@@ -39,6 +46,12 @@ const PRODUCTION_TILE_PIPELINES_3: [&str; 10] = [
     "solinas_booleanity_address_tile_3_9",
 ];
 const FINALIZE_PIPELINE: &str = "solinas_booleanity_address_finalize";
+
+#[derive(Clone, Copy)]
+enum ProductionSelectorSchedule {
+    TwoRam,
+    ThreeRam,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BooleanityAddressPushforwardConfig {
@@ -178,10 +191,15 @@ impl SolinasMetal {
             .copied()
             .map(|selector| selector_abi(selector, chunk_bits))
             .collect::<Result<Vec<_>, _>>()?;
-        let production_schedule = is_production_selector_schedule(selectors);
-        let tile_pipeline_names = match config.selectors_per_tile {
-            MAX_SELECTORS_PER_TILE if production_schedule => PRODUCTION_TILE_PIPELINES.to_vec(),
-            3 if production_schedule => PRODUCTION_TILE_PIPELINES_3.to_vec(),
+        let production_schedule = production_selector_schedule(selectors);
+        let tile_pipeline_names = match (config.selectors_per_tile, production_schedule) {
+            (MAX_SELECTORS_PER_TILE, Some(ProductionSelectorSchedule::TwoRam)) => {
+                PRODUCTION_TILE_PIPELINES.to_vec()
+            }
+            (MAX_SELECTORS_PER_TILE, Some(ProductionSelectorSchedule::ThreeRam)) => {
+                PRODUCTION_THREE_RAM_TILE_PIPELINES.to_vec()
+            }
+            (3, Some(ProductionSelectorSchedule::TwoRam)) => PRODUCTION_TILE_PIPELINES_3.to_vec(),
             _ => vec![TILE_PIPELINE],
         };
         let production_specialized = tile_pipeline_names.len() > 1;
@@ -509,33 +527,44 @@ impl BooleanityAddressPushforward {
     }
 }
 
-fn is_production_selector_schedule(selectors: &[BooleanitySelector]) -> bool {
-    if selectors.len() != 29 {
-        return false;
-    }
+fn production_selector_schedule(
+    selectors: &[BooleanitySelector],
+) -> Option<ProductionSelectorSchedule> {
+    let (ram_chunks, schedule) = match selectors.len() {
+        29 => (2, ProductionSelectorSchedule::TwoRam),
+        30 => (3, ProductionSelectorSchedule::ThreeRam),
+        _ => return None,
+    };
+    let inc_start = 18 + ram_chunks;
     selectors
         .iter()
         .copied()
         .enumerate()
         .all(|(index, selector)| {
-            let expected = match index {
-                0..=15 => BooleanitySelector::Lookup {
+            let expected = if index < 16 {
+                BooleanitySelector::Lookup {
                     shift: (8 * (15 - index)) as u32,
-                },
-                16..=17 => BooleanitySelector::Bytecode {
+                }
+            } else if index < 18 {
+                BooleanitySelector::Bytecode {
                     shift: (8 * (17 - index)) as u32,
-                },
-                18..=19 => BooleanitySelector::Ram {
-                    shift: (8 * (19 - index)) as u32,
-                },
-                20..=27 => BooleanitySelector::FusedInc {
-                    shift: (8 * (index - 20)) as u32,
-                },
-                28 => BooleanitySelector::FusedIncMsb,
-                _ => return false,
+                }
+            } else if index < inc_start {
+                BooleanitySelector::Ram {
+                    shift: (8 * (inc_start - 1 - index)) as u32,
+                }
+            } else if index < inc_start + 8 {
+                BooleanitySelector::FusedInc {
+                    shift: (8 * (index - inc_start)) as u32,
+                }
+            } else if index == inc_start + 8 {
+                BooleanitySelector::FusedIncMsb
+            } else {
+                return false;
             };
             selector == expected
         })
+        .then_some(schedule)
 }
 
 fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
@@ -560,42 +589,44 @@ mod tests {
     #[test]
     fn pushforward_matches_exact_cpu_oracle_across_selector_tiles() {
         let rows = rows(1 << 12);
-        let selectors = selectors();
         let e_in = fields(1 << 10, 0x1234_5678_9abc_def0);
         let e_out = fields(4, 0x0ddc_0ffe_e15e_beef);
-        let expected = oracle(&rows, &selectors, &e_in, &e_out);
         let context = SolinasMetal::for_akita().unwrap();
         let resident = context.prepare_booleanity_rows(&rows).unwrap();
         let resident_identity = resident.allocation_identity();
 
-        for selectors_per_tile in [1, 3, 4, 6] {
-            let invocation = context
-                .prepare_booleanity_address_pushforward_with_weights(
-                    resident.clone(),
-                    &selectors,
-                    &e_in,
-                    &e_out,
-                    BooleanityAddressPushforwardConfig {
-                        inner_log2: 10,
-                        selectors_per_tile,
-                        tile_threads_per_threadgroup: Some(256),
-                        finalize_threads_per_threadgroup: Some(256),
-                    },
-                )
-                .unwrap();
-            assert_eq!(invocation.resident_row_identity(), resident_identity);
-            assert_eq!(
-                invocation.selector_tiles(),
-                selectors.len().div_ceil(selectors_per_tile)
-            );
-            assert_eq!(
-                invocation.uses_production_specialization(),
-                matches!(selectors_per_tile, 3 | 6)
-            );
-            let identities = invocation.static_buffer_identities();
-            invocation.execute().unwrap();
-            assert_eq!(invocation.static_buffer_identities(), identities);
-            assert_eq!(invocation.read_masses().unwrap(), expected);
+        for ram_chunks in [2, 3] {
+            let selectors = selectors(ram_chunks);
+            let expected = oracle(&rows, &selectors, &e_in, &e_out);
+            for selectors_per_tile in [1, 3, 4, 6] {
+                let invocation = context
+                    .prepare_booleanity_address_pushforward_with_weights(
+                        resident.clone(),
+                        &selectors,
+                        &e_in,
+                        &e_out,
+                        BooleanityAddressPushforwardConfig {
+                            inner_log2: 10,
+                            selectors_per_tile,
+                            tile_threads_per_threadgroup: Some(256),
+                            finalize_threads_per_threadgroup: Some(256),
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(invocation.resident_row_identity(), resident_identity);
+                assert_eq!(
+                    invocation.selector_tiles(),
+                    selectors.len().div_ceil(selectors_per_tile)
+                );
+                assert_eq!(
+                    invocation.uses_production_specialization(),
+                    selectors_per_tile == 6 || (ram_chunks == 2 && selectors_per_tile == 3)
+                );
+                let identities = invocation.static_buffer_identities();
+                invocation.execute().unwrap();
+                assert_eq!(invocation.static_buffer_identities(), identities);
+                assert_eq!(invocation.read_masses().unwrap(), expected);
+            }
         }
     }
 
@@ -627,14 +658,16 @@ mod tests {
         assert_eq!(invocation.read_masses().unwrap(), expected);
     }
 
-    fn selectors() -> Vec<BooleanitySelector> {
+    fn selectors(ram_chunks: usize) -> Vec<BooleanitySelector> {
         let mut selectors = (0..16)
             .map(|index| BooleanitySelector::Lookup {
                 shift: (8 * (15 - index)) as u32,
             })
             .collect::<Vec<_>>();
         selectors.extend([8, 0].map(|shift| BooleanitySelector::Bytecode { shift }));
-        selectors.extend([8, 0].map(|shift| BooleanitySelector::Ram { shift }));
+        selectors.extend((0..ram_chunks).map(|index| BooleanitySelector::Ram {
+            shift: (8 * (ram_chunks - 1 - index)) as u32,
+        }));
         selectors.extend((0..8).map(|index| BooleanitySelector::FusedInc {
             shift: (8 * index) as u32,
         }));

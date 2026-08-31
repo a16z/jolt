@@ -18,9 +18,22 @@ use super::backend::MetalBackend;
 use super::solinas::ram_cycle_family::{
     HostSparseRamHammingBooleanity, RamCycleFamilyOwner, RamHammingSparsePlan,
 };
+use super::solinas::RamHammingSequence;
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
+use crate::optimized::ram_trace::RamAccessColumns;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
+
+const METAL_RAM_HAMMING_MIN_ELEMENTS: usize = 64;
+
+#[cfg(feature = "test-utils")]
+mod evaluation;
+#[cfg(feature = "test-utils")]
+pub use evaluation::{
+    RamHammingBooleanityCpuEvalFixture, RamHammingBooleanityEvalError,
+    RamHammingBooleanityEvalResult, RamHammingBooleanityEvalSample,
+    RamHammingBooleanityRoundTiming, RamHammingBooleanityShapeSnapshot,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +56,13 @@ struct HostSparseRamHammingKernel {
     next_round: usize,
 }
 
+struct MetalRamHammingKernel {
+    sequence: RamHammingSequence,
+    rounds: usize,
+    next_round: usize,
+    terminal: Option<[AkitaField; 2]>,
+}
+
 #[cfg(feature = "allocative")]
 impl allocative::Allocative for HostSparseRamHammingKernel {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
@@ -51,6 +71,15 @@ impl allocative::Allocative for HostSparseRamHammingKernel {
             allocative::Key::new("sparse_sequence"),
             self.sequence.owned_heap_bytes(),
         );
+        visitor.exit();
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalRamHammingKernel {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("sequence"), &self.sequence);
         visitor.exit();
     }
 }
@@ -142,6 +171,101 @@ impl SumcheckKernel<AkitaField> for HostSparseRamHammingKernel {
     }
 }
 
+impl ProveRounds<AkitaField> for MetalRamHammingKernel {
+    fn num_rounds(&self) -> usize {
+        self.rounds
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<AkitaField>,
+        round: usize,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        if round != self.next_round || round >= self.rounds || (round == 0) != bind.is_none() {
+            return Err(metal_error(
+                "RAM Hamming Metal sequence received an out-of-order round",
+            ));
+        }
+        let polynomial = match bind {
+            Some(challenge) => self
+                .sequence
+                .bind_and_message(challenge, previous_claim)
+                .map_err(|error| metal_error(error.to_string()))?,
+            None => self
+                .sequence
+                .message(previous_claim)
+                .map_err(|error| metal_error(error.to_string()))?,
+        };
+        let actual =
+            polynomial.evaluate(AkitaField::zero()) + polynomial.evaluate(AkitaField::one());
+        if actual != previous_claim {
+            return Err(SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual,
+            });
+        }
+        self.next_round += 1;
+        Ok(polynomial)
+    }
+
+    fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
+        if self.next_round != self.rounds || self.terminal.is_some() {
+            return Err(metal_error(
+                "RAM Hamming Metal sequence cannot finish before all rounds",
+            ));
+        }
+        let terminal = self
+            .sequence
+            .finish_bind(bind)
+            .map_err(|error| metal_error(error.to_string()))?;
+        self.terminal = Some([terminal.hamming(), terminal.eq_cycle()]);
+        Ok(())
+    }
+}
+
+impl MetalRamHammingKernel {
+    fn terminal(&self) -> Result<[AkitaField; 2], SumcheckKernelError<AkitaField>> {
+        self.terminal
+            .ok_or(SumcheckKernelError::NotFullyBound { remaining: 1 })
+    }
+}
+
+impl SumcheckKernel<AkitaField> for MetalRamHammingKernel {
+    type Relation = RamHammingBooleanity<AkitaField>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &SumcheckInputClaims<AkitaField, Self::Relation>,
+    ) -> Result<RamHammingBooleanityOutputClaims<AkitaField>, SumcheckKernelError<AkitaField>> {
+        Ok(RamHammingBooleanityOutputClaims {
+            ram_hamming_weight: self.terminal()?[0],
+        })
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &Self::Relation,
+        input_points: &SumcheckInputPoints<AkitaField, Self::Relation>,
+        output_points: &SumcheckOutputPoints<AkitaField, Self::Relation>,
+        challenges: &ConcreteSumcheckChallenges<AkitaField, Self::Relation>,
+    ) -> Result<(), SumcheckKernelError<AkitaField>> {
+        let id = JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle);
+        let expected =
+            match relation.derive_output_term(&id, input_points, output_points, challenges) {
+                Ok(value) => value,
+                Err(VerifierError::MissingStageClaimDerived { .. }) => return Ok(()),
+                Err(error) => return Err(error.into()),
+            };
+        let got = self.terminal()?[1];
+        if got != expected {
+            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+        }
+        Ok(())
+    }
+}
+
 impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBackend {
     fn prepare(
         &self,
@@ -171,15 +295,43 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
                 reason: "stage-1 cycle binding has the wrong variable count",
             });
         }
+        if cycles < METAL_RAM_HAMMING_MIN_ELEMENTS {
+            record_route(cycles, "optimized_cpu", "below_device_minimum", 0, 0);
+            return OptimizedRamHammingBooleanity.prepare(session, witness, inputs);
+        }
 
         let Some(owner) = session.state::<Arc<RamCycleFamilyOwner>>().cloned() else {
-            record_route(cycles, "optimized_cpu", "missing_owner", 0, 0);
-            return OptimizedRamHammingBooleanity.prepare(session, witness, inputs);
+            return prepare_metal_ram_hamming(
+                self,
+                session,
+                witness,
+                stage1_cycle_binding,
+                log_t,
+                cycles,
+                "missing_owner",
+                0,
+                0,
+            );
         };
         if owner.receipt().log_t() != log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM cycle-family owner has stale geometry",
             });
+        }
+        if minimum_sparse_products(owner.receipt().access_count())
+            > self.config.ram_hamming_booleanity.max_sparse_products
+        {
+            return prepare_metal_ram_hamming(
+                self,
+                session,
+                witness,
+                stage1_cycle_binding,
+                log_t,
+                cycles,
+                "sparse_lower_bound",
+                owner.receipt().source_generation(),
+                owner.receipt().fingerprint(),
+            );
         }
         let prepare_span = tracing::info_span!(
             "MetalRamHammingBooleanity::sparse_prepare",
@@ -217,7 +369,7 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
         let product_cap = u64::try_from(self.config.ram_hamming_booleanity.max_sparse_products)
             .map_err(|_| prepare_error("RAM Hamming sparse product cap does not fit telemetry"))?;
         if predicted > self.config.ram_hamming_booleanity.max_sparse_products {
-            let _ = prepare_span.record("selected", "optimized_cpu");
+            let _ = prepare_span.record("selected", "packed_access_width32_v1");
             let _ = prepare_span.record("fallback_reason", "product_cap");
             let _ = prepare_span.record("access_leaves", plan.access_leaves());
             let _ = prepare_span.record("parent_nodes", plan.parent_nodes());
@@ -227,15 +379,20 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
             let _ = prepare_span.record("topology_builds", 1);
             let _ = prepare_span.record("topology_bytes", plan.topology_bytes());
             let _ = prepare_span.record("complete_plan", true);
-            record_route(
-                cycles,
-                "optimized_cpu",
-                "product_cap",
-                owner.receipt().source_generation(),
-                owner.receipt().fingerprint(),
-            );
+            let source_generation = owner.receipt().source_generation();
+            let source_fingerprint = owner.receipt().fingerprint();
             drop(_prepare_guard);
-            return OptimizedRamHammingBooleanity.prepare(session, witness, inputs);
+            return prepare_metal_ram_hamming(
+                self,
+                session,
+                witness,
+                stage1_cycle_binding,
+                log_t,
+                cycles,
+                "product_cap",
+                source_generation,
+                source_fingerprint,
+            );
         }
         let access_leaves = plan.access_leaves();
         let parent_nodes = plan.parent_nodes();
@@ -291,6 +448,67 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the production route receipt keeps geometry and source identity explicit"
+)]
+fn prepare_metal_ram_hamming(
+    backend: &MetalBackend,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    stage1_cycle_binding: &[AkitaField],
+    log_t: usize,
+    cycles: usize,
+    fallback_reason: &'static str,
+    source_generation: u64,
+    source_fingerprint: u64,
+) -> Result<
+    Box<dyn SumcheckKernel<AkitaField, Relation = RamHammingBooleanity<AkitaField>>>,
+    KernelError<AkitaField>,
+> {
+    let route = tracing::info_span!(
+        "MetalRamHammingBooleanity::device_prepare",
+        cycles,
+        log_t,
+        requested = "packed_access_width32_v1",
+        selected = "packed_access_width32_v1",
+        fallback_reason,
+        source_generation,
+        source_fingerprint,
+        additional_source_row_scans = 0,
+        member_upload_bytes = 0,
+        complete_sequence = true,
+    );
+    let _route_guard = route.enter();
+    let columns = RamAccessColumns::shared(session, witness, log_t)?;
+    let sequence = backend
+        .context
+        .prepare_ram_hamming_sequence(columns, stage1_cycle_binding)
+        .map_err(|error| KernelError::Sumcheck(metal_error(error.to_string())))?;
+    record_route(
+        cycles,
+        "packed_access_width32_v1",
+        fallback_reason,
+        source_generation,
+        source_fingerprint,
+    );
+    #[cfg(any(test, feature = "test-utils"))]
+    let _ = backend
+        .test_counters
+        .ram_hamming_metal_sequences
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(Box::new(MetalRamHammingKernel {
+        sequence,
+        rounds: log_t,
+        next_round: 0,
+        terminal: None,
+    }))
+}
+
+fn minimum_sparse_products(access_leaves: usize) -> u128 {
+    (access_leaves.div_ceil(2) as u128).saturating_mul(7)
+}
+
 fn record_route(
     cycles: usize,
     selected: &'static str,
@@ -301,7 +519,7 @@ fn record_route(
     let _span = tracing::info_span!(
         "MetalRamHammingBooleanity::route",
         cycles,
-        requested = "host_sparse_v1",
+        requested = "hybrid_sparse_or_packed_v1",
         selected,
         fallback_reason,
         source_generation,
@@ -313,6 +531,13 @@ fn record_route(
 fn sparse_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
     SumcheckError::ComputeBackend {
         backend: "host-sparse",
+        message: message.into(),
+    }
+}
+
+fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
         message: message.into(),
     }
 }
@@ -349,7 +574,7 @@ mod tests {
     #[test]
     fn topology_sparse_sequence_matches_optimized_cpu() {
         let shape = FixtureShape {
-            log_t: 5,
+            log_t: 6,
             ram_k: 64,
         };
         let ops = vec![
@@ -418,13 +643,58 @@ mod tests {
             actual
                 .validate_derived_tables(&relation, &points, &output_points, &challenges)
                 .unwrap();
+
+            let mut direct_expected = OptimizedRamHammingBooleanity
+                .prepare(&mut ProofSession::default(), witness, inputs())
+                .unwrap();
+            let mut direct_config = MetalConfig::default();
+            direct_config.ram_hamming_booleanity.trace_cutoff_elements = 1 << shape.log_t;
+            direct_config.ram_hamming_booleanity.max_sparse_products = 0;
+            let direct_metal = MetalBackend::new(direct_config).unwrap();
+            let mut direct_session = ProofSession::default();
+            assert!(shared_ram_cycle_family_owner(
+                &mut direct_session,
+                witness,
+                shape.log_t,
+                shape.log_k(),
+            )
+            .unwrap()
+            .is_some());
+            let mut direct =
+                PrepareKernel::prepare(&direct_metal, &mut direct_session, witness, inputs())
+                    .unwrap();
+            assert_eq!(direct_metal.ram_hamming_sparse_sequences(), 0);
+            assert_eq!(direct_metal.ram_hamming_metal_sequences(), 1);
+
+            let mut direct_claim = AkitaField::zero();
+            let mut direct_bind = None;
+            for (round, challenge) in round_challenges.iter().copied().enumerate() {
+                let expected_poly = direct_expected
+                    .prove_round(direct_bind, round, direct_claim)
+                    .unwrap();
+                let actual_poly = direct
+                    .prove_round(direct_bind, round, direct_claim)
+                    .unwrap();
+                assert_eq!(actual_poly, expected_poly, "direct round {round} mismatch");
+                direct_claim = expected_poly.evaluate(challenge);
+                direct_bind = Some(challenge);
+            }
+            direct_expected.finish_rounds(last).unwrap();
+            direct.finish_rounds(last).unwrap();
+            assert_eq!(
+                direct.output_claims(&claims).unwrap(),
+                direct_expected.output_claims(&claims).unwrap()
+            );
+            direct
+                .validate_derived_tables(&relation, &points, &output_points, &challenges)
+                .unwrap();
         });
     }
 
     #[test]
-    fn sparse_product_cap_is_inclusive_and_falls_back_before_round_zero() {
+    fn sparse_product_cap_is_inclusive_and_selects_device_before_round_zero() {
         let shape = FixtureShape {
-            log_t: 5,
+            log_t: 6,
             ram_k: 64,
         };
         let ops = vec![
@@ -480,6 +750,7 @@ mod tests {
                 PrepareKernel::prepare(&fallback, &mut fallback_session, witness, inputs())
                     .unwrap();
             assert_eq!(fallback.ram_hamming_sparse_sequences(), 0);
+            assert_eq!(fallback.ram_hamming_metal_sequences(), 1);
         });
     }
 }

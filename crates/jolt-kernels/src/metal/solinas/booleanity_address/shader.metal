@@ -207,7 +207,69 @@ inline void booleanity_address_add_production_selector(
     }
 }
 
-template <uint production_offset, uint production_count, bool aggregate_inc>
+template <uint selector>
+inline void booleanity_address_add_three_ram_production_selector(
+    BooleanityRow row,
+    threadgroup atomic_uint* sums,
+    uint local,
+    constant BooleanityAddressParams& params,
+    SolinasFp128 weight)
+{
+    if (selector < 8u) {
+        booleanity_address_add_lookup_word(
+            sums,
+            row.lookup_hi,
+            local,
+            8u * (7u - selector),
+            weight);
+    } else if (selector < 16u) {
+        booleanity_address_add_lookup_word(
+            sums,
+            row.lookup_lo,
+            local,
+            8u * (15u - selector),
+            weight);
+    } else if (selector < 18u) {
+        booleanity_address_add_bytecode(
+            sums,
+            row.packed_pc_and_flags,
+            local,
+            8u * (17u - selector),
+            weight);
+    } else if (selector < 21u) {
+        booleanity_address_add_ram(
+            sums,
+            row.ram_address_plus_one,
+            local,
+            8u * (20u - selector),
+            weight);
+    } else {
+        ulong biased;
+        int carry;
+        booleanity_address_inc(
+            row.fused_inc_magnitude,
+            row.packed_pc_and_flags,
+            params.inc_bias,
+            biased,
+            carry);
+        if (selector < 29u) {
+            booleanity_address_add_inc(
+                sums, biased, local, 8u * (selector - 21u), weight);
+        } else {
+            booleanity_address_add(
+                sums,
+                local,
+                (uint)carry & (BOOLEANITY_ADDRESS_BINS - 1u),
+                weight);
+        }
+    }
+}
+
+template <
+    uint production_offset,
+    uint production_count,
+    bool aggregate_inc,
+    bool three_ram>
 inline void booleanity_address_tile_impl(
     device const ulong* rows,
     device const BooleanitySelector* selectors,
@@ -254,20 +316,33 @@ inline void booleanity_address_tile_impl(
                 params.inc_bias,
                 biased,
                 carry);
+            uint hot_24 = ((uint)(biased >> 24) + BOOLEANITY_ADDRESS_BINS / 2u)
+                & (BOOLEANITY_ADDRESS_BINS - 1u);
             uint hot_32 = ((uint)(biased >> 32) + BOOLEANITY_ADDRESS_BINS / 2u)
                 & (BOOLEANITY_ADDRESS_BINS - 1u);
             uint hot_40 = ((uint)(biased >> 40) + BOOLEANITY_ADDRESS_BINS / 2u)
                 & (BOOLEANITY_ADDRESS_BINS - 1u);
             uint hot_48 = ((uint)(biased >> 48) + BOOLEANITY_ADDRESS_BINS / 2u)
                 & (BOOLEANITY_ADDRESS_BINS - 1u);
-            if (hot_32 == 0u && hot_40 == 0u && hot_48 == 0u) {
+            if ((!three_ram || hot_24 == 0u)
+                && hot_32 == 0u
+                && hot_40 == 0u
+                && hot_48 == 0u) {
                 booleanity_address_local_add(common_inc_sum, weight);
             } else {
-                booleanity_address_add(sums, 0u, hot_32, weight);
-                booleanity_address_add(sums, 1u, hot_40, weight);
-                booleanity_address_add(sums, 2u, hot_48, weight);
+                if (three_ram) {
+                    booleanity_address_add(sums, 0u, hot_24, weight);
+                    booleanity_address_add(sums, 1u, hot_32, weight);
+                    booleanity_address_add(sums, 2u, hot_40, weight);
+                    booleanity_address_add(sums, 3u, hot_48, weight);
+                } else {
+                    booleanity_address_add(sums, 0u, hot_32, weight);
+                    booleanity_address_add(sums, 1u, hot_40, weight);
+                    booleanity_address_add(sums, 2u, hot_48, weight);
+                }
             }
-            booleanity_address_add_inc(sums, biased, 3u, 56u, weight);
+            booleanity_address_add_inc(
+                sums, biased, three_ram ? 4u : 3u, 56u, weight);
             if (carry < 0) {
                 booleanity_address_local_add(negative_carry_sum, weight);
             } else if (carry > 0) {
@@ -277,28 +352,58 @@ inline void booleanity_address_tile_impl(
             }
         } else {
             if (production_count > 0u) {
-                booleanity_address_add_production_selector<production_offset>(
-                    row, sums, 0u, params, weight);
+                if (three_ram) {
+                    booleanity_address_add_three_ram_production_selector<production_offset>(
+                        row, sums, 0u, params, weight);
+                } else {
+                    booleanity_address_add_production_selector<production_offset>(
+                        row, sums, 0u, params, weight);
+                }
             }
             if (production_count > 1u) {
-                booleanity_address_add_production_selector<production_offset + 1u>(
-                    row, sums, 1u, params, weight);
+                if (three_ram) {
+                    booleanity_address_add_three_ram_production_selector<production_offset + 1u>(
+                        row, sums, 1u, params, weight);
+                } else {
+                    booleanity_address_add_production_selector<production_offset + 1u>(
+                        row, sums, 1u, params, weight);
+                }
             }
             if (production_count > 2u) {
-                booleanity_address_add_production_selector<production_offset + 2u>(
-                    row, sums, 2u, params, weight);
+                if (three_ram) {
+                    booleanity_address_add_three_ram_production_selector<production_offset + 2u>(
+                        row, sums, 2u, params, weight);
+                } else {
+                    booleanity_address_add_production_selector<production_offset + 2u>(
+                        row, sums, 2u, params, weight);
+                }
             }
             if (production_count > 3u) {
-                booleanity_address_add_production_selector<production_offset + 3u>(
-                    row, sums, 3u, params, weight);
+                if (three_ram) {
+                    booleanity_address_add_three_ram_production_selector<production_offset + 3u>(
+                        row, sums, 3u, params, weight);
+                } else {
+                    booleanity_address_add_production_selector<production_offset + 3u>(
+                        row, sums, 3u, params, weight);
+                }
             }
             if (production_count > 4u) {
-                booleanity_address_add_production_selector<production_offset + 4u>(
-                    row, sums, 4u, params, weight);
+                if (three_ram) {
+                    booleanity_address_add_three_ram_production_selector<production_offset + 4u>(
+                        row, sums, 4u, params, weight);
+                } else {
+                    booleanity_address_add_production_selector<production_offset + 4u>(
+                        row, sums, 4u, params, weight);
+                }
             }
             if (production_count > 5u) {
-                booleanity_address_add_production_selector<production_offset + 5u>(
-                    row, sums, 5u, params, weight);
+                if (three_ram) {
+                    booleanity_address_add_three_ram_production_selector<production_offset + 5u>(
+                        row, sums, 5u, params, weight);
+                } else {
+                    booleanity_address_add_production_selector<production_offset + 5u>(
+                        row, sums, 5u, params, weight);
+                }
             }
         }
     }
@@ -306,10 +411,14 @@ inline void booleanity_address_tile_impl(
         booleanity_address_flush_local(sums, 0u, 0u, common_inc_sum);
         booleanity_address_flush_local(sums, 1u, 0u, common_inc_sum);
         booleanity_address_flush_local(sums, 2u, 0u, common_inc_sum);
+        if (three_ram) {
+            booleanity_address_flush_local(sums, 3u, 0u, common_inc_sum);
+        }
+        uint carry_local = three_ram ? 5u : 4u;
         booleanity_address_flush_local(
-            sums, 4u, BOOLEANITY_ADDRESS_BINS - 1u, negative_carry_sum);
-        booleanity_address_flush_local(sums, 4u, 0u, zero_carry_sum);
-        booleanity_address_flush_local(sums, 4u, 1u, positive_carry_sum);
+            sums, carry_local, BOOLEANITY_ADDRESS_BINS - 1u, negative_carry_sum);
+        booleanity_address_flush_local(sums, carry_local, 0u, zero_carry_sum);
+        booleanity_address_flush_local(sums, carry_local, 1u, positive_carry_sum);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -321,7 +430,7 @@ inline void booleanity_address_tile_impl(
     }
 }
 
-#define BOOLEANITY_ADDRESS_TILE_ENTRY(name, offset, count, aggregate_inc)          \
+#define BOOLEANITY_ADDRESS_TILE_ENTRY(name, offset, count, aggregate_inc, three_ram) \
 kernel void name(                                                                 \
     device const ulong* rows [[buffer(0)]],                                       \
     device const BooleanitySelector* selectors [[buffer(1)]],                    \
@@ -334,26 +443,28 @@ kernel void name(                                                               
     uint tid [[thread_index_in_threadgroup]],                                     \
     uint threads [[threads_per_threadgroup]])                                     \
 {                                                                                 \
-    booleanity_address_tile_impl<offset, count, aggregate_inc>(                   \
+    booleanity_address_tile_impl<offset, count, aggregate_inc, three_ram>(        \
         rows, selectors, e_in, e_out, partials, params, sums, x_out, tid, threads); \
 }
 
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile, 0u, 0u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_0, 0u, 6u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_1, 6u, 6u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_2, 12u, 6u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3, 18u, 6u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_4, 24u, 5u, true)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_0, 0u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_1, 3u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_2, 6u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_3, 9u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_4, 12u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_5, 15u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_6, 18u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_7, 21u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_8, 24u, 3u, false)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_9, 27u, 2u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile, 0u, 0u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_0, 0u, 6u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_1, 6u, 6u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_2, 12u, 6u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3, 18u, 6u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_4, 24u, 5u, true, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_ram3_3, 18u, 6u, false, true)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_ram3_4, 24u, 6u, true, true)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_0, 0u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_1, 3u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_2, 6u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_3, 9u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_4, 12u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_5, 15u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_6, 18u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_7, 21u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_8, 24u, 3u, false, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_9, 27u, 2u, false, false)
 
 #undef BOOLEANITY_ADDRESS_TILE_ENTRY
 

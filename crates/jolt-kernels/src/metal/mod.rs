@@ -40,18 +40,86 @@ pub use instruction_read_raf::InstructionReadRafMetalConfig;
 #[cfg(test)]
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
 pub use ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
+#[cfg(feature = "test-utils")]
+pub use ram_hamming_booleanity::{
+    RamHammingBooleanityCpuEvalFixture, RamHammingBooleanityEvalError,
+    RamHammingBooleanityEvalResult, RamHammingBooleanityEvalSample,
+    RamHammingBooleanityRoundTiming, RamHammingBooleanityShapeSnapshot,
+};
+pub use ram_ra_claim_reduction::RamRaClaimReductionMetalConfig;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use ram_ra_claim_reduction::{
+    RamRaClaimReductionCpuMetalEvalFixture, RamRaClaimReductionEvalError,
+    RamRaClaimReductionEvalResult, RamRaClaimReductionEvalSample,
+    RamRaClaimReductionMetalEvalSample, RamRaClaimReductionRoundTiming,
+    RamRaClaimReductionShapeSnapshot,
+};
 pub use ram_ra_virtualization::RamRaVirtualizationMetalConfig;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use ram_ra_virtualization::{
+    RamRaVirtualizationCpuEvalSample, RamRaVirtualizationCpuMetalEvalFixture,
+    RamRaVirtualizationEvalError, RamRaVirtualizationEvalResult, RamRaVirtualizationRoundTiming,
+    RamRaVirtualizationShapeSnapshot,
+};
 pub use ram_raf_evaluation::RamRafEvaluationMetalConfig;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use ram_raf_evaluation::{
+    RamRafEvaluationCpuEvalSample, RamRafEvaluationCpuMetalEvalFixture, RamRafEvaluationEvalError,
+    RamRafEvaluationEvalResult, RamRafEvaluationMetalEvalSample, RamRafEvaluationRoundTiming,
+    RamRafEvaluationShapeSnapshot,
+};
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use ram_read_write::{
+    RamReadWriteBucketSnapshot, RamReadWriteCpuEvalSample, RamReadWriteCpuMetalEvalFixture,
+    RamReadWriteDispatchSnapshot, RamReadWriteEvalError, RamReadWriteEvalResult,
+    RamReadWriteMetalEvalSample, RamReadWritePreparationSnapshot, RamReadWriteRoundTiming,
+};
 pub use ram_val_check::RamValCheckMetalConfig;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use ram_val_check::{
+    RamValCheckCpuEvalSample, RamValCheckCpuMetalEvalFixture, RamValCheckEvalError,
+    RamValCheckEvalResult, RamValCheckRoundTiming, RamValCheckShapeSnapshot,
+};
 pub use registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
+};
+pub use registers_read_write::RegistersReadWriteMetalConfig;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use registers_read_write::{
+    RegistersReadWriteCpuEvalSample, RegistersReadWriteCpuMetalEvalFixture,
+    RegistersReadWriteEvalError, RegistersReadWriteEvalResult, RegistersReadWriteMetalEvalSample,
+    RegistersReadWriteRoundTiming, RegistersReadWriteShapeSnapshot,
 };
 pub use registers_val_evaluation::{
     RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
 };
 #[cfg(feature = "test-utils")]
 #[doc(hidden)]
-pub use spartan_outer::OuterRemainderGpuActiveBreakdown;
+pub use spartan_outer::{
+    OuterRemainderCpuEvalSample, OuterRemainderCpuMetalEvalFixture, OuterRemainderEvalError,
+    OuterRemainderEvalResult, OuterRemainderGpuActiveBreakdown, OuterRemainderMetalEvalSample,
+    OuterRemainderPipelineSnapshot, OuterRemainderThreadSnapshot,
+};
 pub use spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
 pub use spartan_product::SpartanProductRemainderMetalConfig;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use spartan_product::{
+    ProductRemainderCpuEvalSample, ProductRemainderCpuMetalEvalFixture, ProductRemainderEvalError,
+    ProductRemainderEvalResult, ProductRemainderMetalEvalSample,
+    ProductRemainderNumericWidthSnapshot, ProductRemainderRoundTiming,
+    ProductRemainderShapeSnapshot,
+};
 pub use spartan_shift::SpartanShiftMetalConfig;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use spartan_shift::{
+    SpartanShiftCpuMetalEvalFixture, SpartanShiftEvalError, SpartanShiftEvalResult,
+    SpartanShiftEvalSample, SpartanShiftRoundTiming, SpartanShiftShapeSnapshot,
+};

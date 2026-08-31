@@ -1,5 +1,5 @@
 use std::{
-    mem::size_of,
+    mem::{self, size_of},
     slice,
     time::{Duration, Instant},
 };
@@ -11,8 +11,10 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
-    Fp128, MetalError, ProductRemainderRows, ProductRemainderSourceKind, SolinasMetal,
+    buffer_from_slice, completed_command_gpu_time, encode_column_reductions,
+    product_remainder::{in_place_bind_schedule, InPlaceBindRange},
+    set_inline_bytes, Fp128, MetalError, ProductRemainderRows, ProductRemainderSourceKind,
+    SolinasMetal,
 };
 use super::{
     finalize_openings, finish_bind, nontrivial_gamma_powers, InstructionClaimGeometry,
@@ -26,7 +28,33 @@ use super::{
 const STAGE1_ROWS_MATERIALIZE_PIPELINE: &str = "solinas_instruction_claim_materialize_stage1_rows";
 const STAGE1_LOOKUP_OPENING_PIPELINE: &str =
     "solinas_instruction_claim_open_stage1_lookup_operands";
+const IN_PLACE_BIND_PIPELINE: &str = "solinas_instruction_claim_bind_range";
+const IN_PLACE_COPY_PIPELINE: &str = "solinas_instruction_claim_copy_prefix";
+const IN_PLACE_MESSAGE_PIPELINE: &str = "solinas_instruction_claim_bound_message";
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InstructionClaimBindRangeParams {
+    source_offset: u32,
+    destination_offset: u32,
+    output_start: u32,
+    output_count: u32,
+}
+
+const _: [(); 16] = [(); size_of::<InstructionClaimBindRangeParams>()];
+
+impl InstructionClaimBindRangeParams {
+    fn new(range: InPlaceBindRange) -> Result<Self, MetalError> {
+        Ok(Self {
+            source_offset: 0,
+            destination_offset: 0,
+            output_start: u32::try_from(range.start)
+                .map_err(|_| MetalError::InputTooLong(range.start))?,
+            output_count: u32::try_from(range.count)
+                .map_err(|_| MetalError::InputTooLong(range.count))?,
+        })
+    }
+}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct InstructionClaimTiming {
     pub wall: Duration,
@@ -100,11 +128,15 @@ enum InstructionClaimPhase {
     Materialized,
     CpuTail,
     Finished,
+    TransitionRetired,
 }
 
 struct InstructionClaimPipelines {
     materialize: ComputePipelineState,
     transition: ComputePipelineState,
+    in_place_bind: ComputePipelineState,
+    in_place_copy: ComputePipelineState,
+    in_place_message: ComputePipelineState,
     opening: ComputePipelineState,
     aliased_opening: ComputePipelineState,
     reduction: ComputePipelineState,
@@ -292,17 +324,26 @@ impl SolinasMetal {
         let aliased_opening_pipeline = rows.aliased_opening_pipeline();
         let materialize = self.compile_named_pipeline(materialize_pipeline)?;
         let transition = self.compile_named_pipeline(TRANSITION_PIPELINE)?;
+        let in_place_bind = self.compile_named_pipeline(IN_PLACE_BIND_PIPELINE)?;
+        let in_place_copy = self.compile_named_pipeline(IN_PLACE_COPY_PIPELINE)?;
+        let in_place_message = self.compile_named_pipeline(IN_PLACE_MESSAGE_PIPELINE)?;
         let opening = self.compile_named_pipeline(opening_mode.pipeline())?;
         let aliased_opening = self.compile_named_pipeline(aliased_opening_pipeline)?;
         let reduction = self.compile_named_pipeline(REDUCTION_PIPELINE)?;
         let materialize_limits = Self::limits(&materialize);
         let transition_limits = Self::limits(&transition);
+        let in_place_bind_limits = Self::limits(&in_place_bind);
+        let in_place_copy_limits = Self::limits(&in_place_copy);
+        let in_place_message_limits = Self::limits(&in_place_message);
         let opening_limits = Self::limits(&opening);
         let aliased_opening_limits = Self::limits(&aliased_opening);
         let reduction_limits = Self::limits(&reduction);
         for (pipeline, limits) in [
             (materialize_pipeline, materialize_limits),
             (TRANSITION_PIPELINE, transition_limits),
+            (IN_PLACE_BIND_PIPELINE, in_place_bind_limits),
+            (IN_PLACE_COPY_PIPELINE, in_place_copy_limits),
+            (IN_PLACE_MESSAGE_PIPELINE, in_place_message_limits),
             (opening_mode.pipeline(), opening_limits),
             (aliased_opening_pipeline, aliased_opening_limits),
             (REDUCTION_PIPELINE, reduction_limits),
@@ -366,6 +407,21 @@ impl SolinasMetal {
                 "the recursive reduction must use one SIMD group",
             ));
         }
+        for limits in [
+            in_place_bind_limits,
+            in_place_copy_limits,
+            in_place_message_limits,
+        ] {
+            let resolved = Self::resolve_threadgroup_width(
+                Some(config.transition_threads_per_threadgroup),
+                limits,
+            )?;
+            if resolved != config.transition_threads_per_threadgroup {
+                return Err(MetalError::InvalidInstructionClaimState(
+                    "in-place transition threadgroup width differs from the dense path",
+                ));
+            }
+        }
 
         let gamma_powers = nontrivial_gamma_powers(gamma)
             .iter()
@@ -388,6 +444,9 @@ impl SolinasMetal {
             pipelines: InstructionClaimPipelines {
                 materialize,
                 transition,
+                in_place_bind,
+                in_place_copy,
+                in_place_message,
                 opening,
                 aliased_opening,
                 reduction,
@@ -493,6 +552,11 @@ impl InstructionClaimSequence {
                 "a joint transition needs a materialized instruction state",
             ));
         }
+        if !self.source_in_a {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "joint in-place instruction state left state A",
+            ));
+        }
         let round = self.rounds_bound + 1;
         let params =
             InstructionClaimPhaseParams::transition(self.geometry, round, e_in.len(), e_out.len())?;
@@ -500,14 +564,67 @@ impl InstructionClaimSequence {
         let challenge = Fp128::from_jolt_field(&challenge);
         self.context
             .validate_inputs("joint instruction claim challenge", &[challenge])?;
-        encoder.set_compute_pipeline_state(&self.pipelines.transition);
-        encoder.set_buffer(0, Some(self.source_buffer()), 0);
-        encoder.set_buffer(1, Some(self.destination_buffer()), 0);
-        encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
-        encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
-        encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
-        set_inline_bytes(encoder, 5, &challenge);
-        set_inline_bytes(encoder, 6, &params);
+        let state = &self.buffers.state_a;
+        let scratch = &self.buffers.partial_b;
+        let bound_elements = self.current_elements / 2;
+        let schedule = in_place_bind_schedule(bound_elements, self.layout.partial_fields());
+        if schedule.prefix == 0 {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "joint in-place instruction scratch is empty",
+            ));
+        }
+
+        encoder.set_compute_pipeline_state(&self.pipelines.in_place_bind);
+        encoder.set_buffer(0, Some(state), 0);
+        encoder.set_buffer(1, Some(scratch), 0);
+        set_inline_bytes(encoder, 2, &challenge);
+        let prefix = InPlaceBindRange {
+            start: 0,
+            count: schedule.prefix,
+        };
+        let prefix_params = InstructionClaimBindRangeParams::new(prefix)?;
+        set_inline_bytes(encoder, 3, &prefix_params);
+        dispatch_linear(
+            encoder,
+            prefix.count,
+            self.config.transition_threads_per_threadgroup,
+        );
+        encoder.memory_barrier_with_resources(&[&**state, &**scratch]);
+
+        encoder.set_compute_pipeline_state(&self.pipelines.in_place_copy);
+        encoder.set_buffer(0, Some(scratch), 0);
+        encoder.set_buffer(1, Some(state), 0);
+        let prefix_count = u32::try_from(schedule.prefix)
+            .map_err(|_| MetalError::InputTooLong(schedule.prefix))?;
+        set_inline_bytes(encoder, 2, &prefix_count);
+        dispatch_linear(
+            encoder,
+            schedule.prefix,
+            self.config.transition_threads_per_threadgroup,
+        );
+        encoder.memory_barrier_with_resources(&[&**state, &**scratch]);
+
+        encoder.set_compute_pipeline_state(&self.pipelines.in_place_bind);
+        encoder.set_buffer(0, Some(state), 0);
+        encoder.set_buffer(1, Some(state), 0);
+        set_inline_bytes(encoder, 2, &challenge);
+        for range in schedule.direct {
+            let range_params = InstructionClaimBindRangeParams::new(range)?;
+            set_inline_bytes(encoder, 3, &range_params);
+            dispatch_linear(
+                encoder,
+                range.count,
+                self.config.transition_threads_per_threadgroup,
+            );
+            encoder.memory_barrier_with_resources(&[&**state]);
+        }
+
+        encoder.set_compute_pipeline_state(&self.pipelines.in_place_message);
+        encoder.set_buffer(0, Some(state), 0);
+        encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+        set_inline_bytes(encoder, 4, &params);
         encoder
             .set_threadgroup_memory_length(0, self.config.transition_threadgroup_bytes()? as u64);
         dispatch_blocks(
@@ -542,10 +659,43 @@ impl InstructionClaimSequence {
         }
         self.current_elements /= 2;
         self.rounds_bound += 1;
-        self.source_in_a = !self.source_in_a;
         self.timing.wall += wall;
         self.timing.gpu_active += gpu_active;
         Ok(())
+    }
+
+    pub(in crate::metal::solinas) fn bind_and_message_in_place_timed(
+        &mut self,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<
+        (
+            [AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
+            InstructionClaimTiming,
+        ),
+        MetalError,
+    > {
+        let started = Instant::now();
+        let (message, gpu_active) = autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            let output = self.encode_joint_transition(encoder, challenge, e_in, e_out);
+            encoder.end_encoding();
+            let output = output?;
+            finish_command::<INSTRUCTION_CLAIM_MESSAGE_COLUMNS>(
+                &self.context,
+                command_buffer,
+                &output,
+                "in-place instruction claim transition message",
+            )
+        })?;
+        let timing = InstructionClaimTiming {
+            wall: started.elapsed(),
+            gpu_active,
+        };
+        self.complete_joint_transition(timing.wall, timing.gpu_active)?;
+        Ok((message, timing))
     }
 
     pub(in crate::metal::solinas) const fn joint_materialize_threads_per_threadgroup(
@@ -570,6 +720,41 @@ impl InstructionClaimSequence {
 
     pub(in crate::metal::solinas) fn joint_device_registry_id(&self) -> u64 {
         self.context.device_registry_id()
+    }
+
+    #[cfg(test)]
+    pub(in crate::metal::solinas) const fn joint_state_b_buffer(&self) -> &Buffer {
+        &self.buffers.state_b
+    }
+
+    pub(in crate::metal::solinas) fn release_joint_alternate(&mut self) -> Result<u64, MetalError> {
+        if self.phase != InstructionClaimPhase::Raw
+            || self.current_elements != self.geometry.rows()
+            || !self.source_in_a
+        {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "joint alternate release requires a raw sequence",
+            ));
+        }
+        let expected_bytes = self
+            .layout
+            .state_b_fields()
+            .checked_mul(size_of::<Fp128>())
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(self.layout.state_b_fields()))?;
+        if self.buffers.state_b.length() != expected_bytes {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "joint instruction alternate has already been released or has the wrong size",
+            ));
+        }
+        let tombstone = self
+            .context
+            .device
+            .new_buffer(1, MTLResourceOptions::StorageModeShared);
+        let alternate = mem::replace(&mut self.buffers.state_b, tombstone);
+        let released_bytes = alternate.length();
+        drop(alternate);
+        Ok(released_bytes)
     }
 
     copy_field_getters! { pub(crate), { joint_gamma => gamma: AkitaField }}
@@ -1000,7 +1185,10 @@ impl InstructionClaimSequence {
         ),
         MetalError,
     > {
-        if self.phase != InstructionClaimPhase::Finished {
+        if !matches!(
+            self.phase,
+            InstructionClaimPhase::Finished | InstructionClaimPhase::TransitionRetired
+        ) {
             return Err(MetalError::InvalidInstructionClaimState(
                 "aliased openings require the final combined claim",
             ));
@@ -1196,7 +1384,10 @@ impl InstructionClaimSequence {
 
     #[cfg(feature = "test-utils")]
     pub fn read_current_state(&self) -> Result<Vec<AkitaField>, MetalError> {
-        if self.phase == InstructionClaimPhase::Raw {
+        if matches!(
+            self.phase,
+            InstructionClaimPhase::Raw | InstructionClaimPhase::TransitionRetired
+        ) {
             return Err(MetalError::InvalidInstructionClaimState(
                 "the combined state is not materialized",
             ));
@@ -1222,6 +1413,26 @@ impl InstructionClaimSequence {
             e_out,
             "e_out",
         )
+    }
+
+    pub(crate) fn retire_transition_state(&mut self) -> Result<usize, MetalError> {
+        if self.phase != InstructionClaimPhase::Finished {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "transition retirement requires the final combined claim",
+            ));
+        }
+        let tombstone = self
+            .context
+            .device
+            .new_buffer(1, MTLResourceOptions::StorageModeShared);
+        let state_a = mem::replace(&mut self.buffers.state_a, tombstone.clone());
+        let state_b = mem::replace(&mut self.buffers.state_b, tombstone);
+        let retired_bytes = usize::try_from(state_a.length().saturating_add(state_b.length()))
+            .map_err(|_| MetalError::InputTooLong(usize::MAX))?;
+        drop(state_a);
+        drop(state_b);
+        self.phase = InstructionClaimPhase::TransitionRetired;
+        Ok(retired_bytes)
     }
 
     fn source_buffer(&self) -> &Buffer {
@@ -1304,6 +1515,25 @@ fn dispatch_blocks(
     encoder.dispatch_thread_groups(
         MTLSize {
             width: blocks as u64,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: threads_per_threadgroup as u64,
+            height: 1,
+            depth: 1,
+        },
+    );
+}
+
+fn dispatch_linear(
+    encoder: &metal::ComputeCommandEncoderRef,
+    elements: usize,
+    threads_per_threadgroup: usize,
+) {
+    encoder.dispatch_thread_groups(
+        MTLSize {
+            width: elements.div_ceil(threads_per_threadgroup) as u64,
             height: 1,
             depth: 1,
         },

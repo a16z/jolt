@@ -490,6 +490,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                         source_compact_bytes = source_bytes[0],
                         source_residual_storage_id = source_ids[1],
                         source_residual_bytes = source_bytes[1],
+                        source_residual_allocations = 1usize,
                         instruction_rows_storage_id = source_receipt.instruction_rows_storage_id(),
                         instruction_rows_bytes = source_receipt.instruction_rows_bytes(),
                         producer_plane_allocations = 0usize,

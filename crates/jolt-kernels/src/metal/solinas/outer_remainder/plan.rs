@@ -158,7 +158,7 @@ pub(super) fn storage_geometry(
         .ok_or(MetalError::InputTooLong(max_threadgroups))?;
     let element_counts = [
         current_elements,
-        current_elements,
+        current_elements / 2,
         weight_capacity,
         weight_capacity,
         OUTER_REMAINDER_A_LOOKUP_FIELDS,

@@ -60,9 +60,14 @@ mod product_remainder;
 mod product_uniskip;
 #[doc(hidden)]
 pub mod ram_cycle_family;
+mod ram_hamming_sequence;
+mod ram_ra_claim_reduction;
+mod ram_ra_sequence;
 mod ram_raf_evaluation;
 mod ram_read_write;
+mod ram_val_sequence;
 pub mod registers_claim_reduction;
+pub(crate) mod registers_read_write;
 mod registers_val;
 mod runtime;
 mod source;
@@ -92,15 +97,16 @@ pub use bytecode_cycle::{
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
 pub(crate) use instruction_claim_reduction_successor::{
-    PendingProductInstructionInitialMessage, ProductInstructionRoundService,
-    ProductInstructionRoundStats,
+    PendingProductInstructionInitialMessage, ProductInstructionOpenings,
+    ProductInstructionRoundService, ProductInstructionRoundStats,
 };
 pub(crate) use instruction_input::{
     instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
     instruction_input_sequence_storage_bytes, instruction_input_weight_capacities,
     InstructionInputSequenceStorage, PendingInstructionInputPrimer,
     INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS, INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
-    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS, REGISTER_RD_INDEX_SHIFT, REGISTER_RS1_INDEX_SHIFT,
+    REGISTER_RS2_INDEX_SHIFT,
 };
 pub use instruction_input::{
     InstructionInputRow, InstructionInputRows, InstructionInputSequence,
@@ -132,7 +138,7 @@ pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRegistersClaimCarrier,
     OuterRegistersClaimCarrierReceipt, OuterRemainderSequenceStorage,
-    PendingOuterRegistersClaimCarrier,
+    OuterRemainderStorageEvalStats, PendingOuterRegistersClaimCarrier,
 };
 pub use outer_remainder::{
     OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
@@ -155,6 +161,9 @@ pub use product_uniskip::{
     PRODUCT_UNISKIP_EXTENDED_NODES, PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS,
     PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
 };
+pub(crate) use ram_hamming_sequence::RamHammingSequence;
+pub(crate) use ram_ra_claim_reduction::RamRaClaimReductionSequence;
+pub(crate) use ram_ra_sequence::RamRaSequence;
 pub use ram_raf_evaluation::{
     dense_pushforward_oracle, split_equality as ram_raf_split_equality, split_pushforward_oracle,
     PendingRamRafSequence, RamRafAddress, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
@@ -165,7 +174,17 @@ pub use ram_raf_evaluation::{
     RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS, RAM_RAF_SIMD_WIDTH,
     RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
 };
-pub(crate) use ram_read_write::{RamReadWriteFinish, RamReadWriteSequence, SparseCycleProduct};
+pub(crate) use ram_read_write::{
+    RamRafSegmentedAddressPlane, RamReadWriteDispatchTiming, RamReadWriteFinish,
+    RamReadWritePreparationTiming, RamReadWriteSequence, SparseCycleProduct,
+    RAM_READ_WRITE_CYCLE_TILE_LOG2,
+};
+pub(crate) use ram_val_sequence::RamValSequence;
+pub(crate) use registers_read_write::{
+    PendingRegistersReadWriteStage1Pipelines, RegistersReadWriteCycleObservation,
+    RegistersReadWriteStage1ChunkWriter, RegistersReadWriteStage1Source,
+    RegistersReadWriteStage1Storage,
+};
 pub(crate) use registers_val::PendingRegistersValFirstMessage;
 pub use registers_val::{
     RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
@@ -179,9 +198,9 @@ pub use spartan_outer_uniskip::{
     SpartanOuterUniskipRow, SpartanOuterUniskipRows, SPARTAN_OUTER_EXTENDED_NODES,
 };
 pub(crate) use spartan_outer_uniskip::{
-    spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_residual_row_bytes,
-    spartan_outer_uniskip_row_bytes, OuterResidualArenaKey, OuterResidualReleaseReceipt,
-    PendingSpartanStage1SourcePrimer, SpartanOuterUniskipResidualRow,
+    spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_row_bytes,
+    spartan_outer_uniskip_successor_row_bytes, OuterResidualArenaKey, OuterResidualReleaseReceipt,
+    PendingSpartanStage1SourcePrimer, SpartanOuterUniskipColdRow, SpartanOuterUniskipSuccessorRow,
 };
 
 pub const OFFSET_275: u32 = 275;
@@ -251,6 +270,12 @@ pub enum MetalError {
     FunctionLookup { name: &'static str, message: String },
     #[error("failed to compile Metal entry point `{name}`: {message}")]
     PipelineCompilation { name: &'static str, message: String },
+    #[error("the Metal pipeline cache is poisoned")]
+    PipelineCachePoisoned,
+    #[error("the Metal private-buffer pool is poisoned")]
+    PrivateBufferPoolPoisoned,
+    #[error("the Metal no-copy buffer cache is poisoned")]
+    NoCopyBufferCachePoisoned,
     #[error("a non-noop dispatch requires at least one element")]
     EmptyInput,
     #[error("input length {0} exceeds the shader's 32-bit element count")]
@@ -390,6 +415,20 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
+    #[error("RAM RA needs a power-of-two row count of at least 32, got {0}")]
+    InvalidRamRaRows(usize),
+    #[error("RAM RA factor-table storage has length {got}, expected {expected}")]
+    RamRaStorageLength { expected: usize, got: usize },
+    #[error("RAM RA split weights cover {covered} pairs, expected {expected}")]
+    RamRaWeightShape { expected: usize, covered: usize },
+    #[error(
+        "RAM RA pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedRamRaExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
     #[error(
         "registers value evaluation needs a power-of-two cycle count of at least four, got {0}"
     )]
@@ -504,10 +543,16 @@ pub enum MetalError {
         invalid_rows: u32,
         unsupported_dispatches: u32,
     },
+    #[error("invalid resident RAM RAF state: {0}")]
+    InvalidRamRafState(&'static str),
     #[error("invalid resident product remainder state: {0}")]
     InvalidProductRemainderState(&'static str),
     #[error("invalid resident RAM read-write state: {0}")]
     InvalidRamReadWriteState(&'static str),
+    #[error("invalid registers read-write first-message state: {0}")]
+    InvalidRegistersReadWriteState(&'static str),
+    #[error("registers read-write pipeline has execution width {got}, expected {expected}")]
+    UnsupportedRegistersReadWriteExecutionWidth { expected: usize, got: usize },
     #[error(
         "product remainder pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
@@ -518,6 +563,8 @@ pub enum MetalError {
     },
     #[error("invalid resident Instruction RA state: {0}")]
     InvalidInstructionRaState(&'static str),
+    #[error("invalid resident RAM RA state: {0}")]
+    InvalidRamRaState(&'static str),
     #[error("InstructionInput needs a power-of-two row count of at least four, got {0}")]
     InvalidInstructionInputRows(usize),
     #[error("InstructionInput table storage has length {got}, expected {expected}")]

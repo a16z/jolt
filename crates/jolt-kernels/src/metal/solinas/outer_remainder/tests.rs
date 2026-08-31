@@ -39,12 +39,12 @@ fn opening_layouts_close_their_dynamic_threadgroup_memory() {
     assert_eq!(layout.row_stride_words, 20);
     assert!(layout.shard_sums);
 
-    let base = opening_threadgroup_memory_lengths(256, false).unwrap();
-    assert_eq!(base, [10_240, 1_024, 3_920]);
-    assert_eq!(base.into_iter().sum::<u64>(), 15_184);
+    let lengths = opening_threadgroup_memory_lengths(256, false).unwrap();
+    assert_eq!(lengths, [10_240, 1_024, 3_920]);
+    assert_eq!(lengths.into_iter().sum::<u64>(), 15_184);
 
-    let carrier = opening_threadgroup_memory_lengths(256, true).unwrap();
-    assert_eq!(carrier, [10_240, 1_024, 3_552]);
+    let carrier_lengths = opening_threadgroup_memory_lengths(256, true).unwrap();
+    assert_eq!(carrier_lengths, [10_240, 1_024, 3_552]);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn abi_params_have_stable_sizes() {
 }
 
 #[test]
-fn log_26_storage_has_two_two_gib_state_buffers() {
+fn log_26_storage_uses_in_place_stream_bind_capacity() {
     let config = OuterRemainderSequenceConfig::default();
     let geometry = storage_geometry(1 << 26, config).unwrap();
 
@@ -66,7 +66,7 @@ fn log_26_storage_has_two_two_gib_state_buffers() {
         geometry.element_counts,
         [
             1 << 27,
-            1 << 27,
+            1 << 26,
             1 << 13,
             1 << 13,
             230,
@@ -76,11 +76,11 @@ fn log_26_storage_has_two_two_gib_state_buffers() {
             35
         ],
     );
-    assert_eq!(geometry.owned_bytes, 4_300_083_376);
+    assert_eq!(geometry.owned_bytes, 3_226_341_552);
     assert_eq!(field_bytes(1 << 27).unwrap(), 1 << 31);
     assert_eq!(
         outer_remainder_sequence_storage_bytes_with_config(1 << 26, config).unwrap(),
-        4_300_083_376,
+        3_226_341_552,
     );
     assert_eq!(
         outer_remainder_sequence_max_buffer_bytes_with_config(1 << 26, config).unwrap(),
@@ -97,7 +97,7 @@ fn log_25_screen_retains_the_saturated_threadgroup_cap() {
     assert_eq!(geometry.current_elements, 1 << 26);
     assert_eq!(geometry.weight_capacity, 1 << 13);
     assert_eq!(geometry.max_threadgroups, 8192);
-    assert_eq!(geometry.owned_bytes, 2_152_599_728);
+    assert_eq!(geometry.owned_bytes, 1_615_728_816);
     assert_eq!(
         outer_remainder_sequence_max_buffer_bytes_with_config(1 << 25, config).unwrap(),
         1 << 30,

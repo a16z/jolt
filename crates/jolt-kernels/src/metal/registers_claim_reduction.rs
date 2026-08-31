@@ -16,7 +16,7 @@ use super::solinas::registers_claim_reduction::{
 use super::solinas::OuterRegistersClaimCarrierSubmission;
 use super::solinas::{
     OuterRegistersClaimCarrier, OuterRegistersClaimCarrierReceipt,
-    PendingOuterRegistersClaimCarrier, SolinasMetal,
+    PendingOuterRegistersClaimCarrier, RegistersReadWriteStage1Source, SolinasMetal,
 };
 use crate::optimized::registers_claim_reduction::OptimizedRegistersClaimReduction;
 use crate::{
@@ -531,6 +531,15 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
                     return Err(KernelError::InvariantViolation {
                         reason: "registers claim-reduction stage-1 carry changed provenance",
                     });
+                }
+                if session.state::<RegistersReadWriteStage1Source>().is_some() {
+                    if session.state::<RegistersClaimResidentRdPlane>().is_some() {
+                        return Err(KernelError::InvariantViolation {
+                            reason: "resident register rd-post plane was already parked",
+                        });
+                    }
+                    let rd_post = carry.rd.clone();
+                    session.park(rd_post);
                 }
                 let prefix = carry
                     .partial_q

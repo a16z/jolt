@@ -25,6 +25,14 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+#[cfg(feature = "test-utils")]
+mod evaluation;
+#[cfg(feature = "test-utils")]
+pub use evaluation::{
+    SpartanShiftCpuMetalEvalFixture, SpartanShiftEvalError, SpartanShiftEvalResult,
+    SpartanShiftEvalSample, SpartanShiftRoundTiming, SpartanShiftShapeSnapshot,
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanShiftMetalConfig {
     pub trace_cutoff_elements: usize,
@@ -128,6 +136,11 @@ impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
                 return OptimizedSpartanShift.prepare(session, witness, inputs);
             }
         };
+        #[cfg(any(test, feature = "test-utils"))]
+        let _ = self
+            .test_counters
+            .spartan_shift_sequences
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);

@@ -23,17 +23,21 @@ use akita_challenges::SparseChallenge;
 use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, ExtField, MulBaseUnreduced, PseudoMersenneField};
 use akita_prover::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use akita_prover::compute::DecomposeFoldChunkSink;
 use akita_prover::compute::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldChunkSink, DecomposeFoldPlan,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
+    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
     SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
     SubringCoefficientPackingPlan, TensorPackedWitness, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use akita_prover::PackedOneHotView;
 use akita_prover::{
     BatchDecomposeFoldOutcome, CommitInnerWitness, ComputeBackendSetup, CpuBackend,
-    PackedOneHotPoly, PackedOneHotView, RootCommitSource, RootOpeningSource, RootPolyMeta,
-    RootPolyShape, RootTensorSource,
+    PackedOneHotPoly, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource,
 };
 use akita_types::{FpExtEncoding, PreparedSubringCoefficientPackingPoint};
 use rayon::prelude::*;

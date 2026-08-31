@@ -412,6 +412,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         )
         .entered();
         validate_witness(&hint, commitment, &polynomials)?;
+        #[cfg(all(feature = "metal", target_os = "macos"))]
         let trace_backend = hint.trace_backend.clone();
         let (backend_commitment, backend_hint) = hint
             .backend

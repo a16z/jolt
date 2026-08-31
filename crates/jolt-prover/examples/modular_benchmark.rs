@@ -534,6 +534,15 @@ mod akita_benchmark {
 
         #[clap(short, long, value_enum, default_value = "optimized")]
         backend: Backend,
+
+        /// Overrides the production threshold for the experimental Product/Instruction
+        /// terminal cache. Intended for below-threshold validation runs.
+        #[clap(long, hide = true)]
+        metal_terminal_cache_cutoff_elements: Option<usize>,
+
+        /// Forces full Outer storage preinitialization for controlled A/B runs.
+        #[clap(long, hide = true)]
+        metal_outer_full_initialization: bool,
     }
 
     pub fn run() {
@@ -568,7 +577,14 @@ mod akita_benchmark {
         );
         let _guards = setup_tracing(&formats, &trace_name);
 
-        run_benchmark(cli.name, scale, cli.target_trace_size, cli.backend);
+        run_benchmark(
+            cli.name,
+            scale,
+            cli.target_trace_size,
+            cli.backend,
+            cli.metal_terminal_cache_cutoff_elements,
+            cli.metal_outer_full_initialization,
+        );
     }
 
     fn run_benchmark(
@@ -576,6 +592,8 @@ mod akita_benchmark {
         scale: usize,
         target_trace_size: Option<usize>,
         backend_choice: Backend,
+        metal_terminal_cache_cutoff_elements: Option<usize>,
+        metal_outer_full_initialization: bool,
     ) {
         let bench_name = bench.as_str();
         let max_trace_length = 1usize << scale;
@@ -702,8 +720,35 @@ mod akita_benchmark {
             Backend::Optimized => akita::JoltAkitaBackend::optimized(),
             #[cfg(all(feature = "metal", target_os = "macos"))]
             Backend::Metal => {
-                println!("AKITA_METAL_PROFILE value=production");
-                akita::JoltAkitaBackend::metal().expect("Metal backend should initialize")
+                let mut config = jolt_kernels::metal::MetalConfig::production();
+                if let Some(cutoff) = metal_terminal_cache_cutoff_elements {
+                    config
+                        .spartan_product_remainder
+                        .terminal_cache_cutoff_elements = cutoff;
+                }
+                if metal_outer_full_initialization {
+                    config
+                        .spartan_outer_remainder
+                        .dispatch
+                        .storage_initialization =
+                        jolt_kernels::metal::solinas::OuterRemainderStorageInitialization::Full;
+                }
+                println!(
+                    "AKITA_METAL_PROFILE value=production terminal_cache_cutoff_elements={} outer_storage_initialization={}",
+                    config
+                        .spartan_product_remainder
+                        .terminal_cache_cutoff_elements,
+                    config
+                        .spartan_outer_remainder
+                        .dispatch
+                        .storage_initialization
+                        .as_str(),
+                );
+                let metal = jolt_kernels::metal::MetalBackend::new(config)
+                    .expect("Metal backend should initialize");
+                akita::JoltAkitaBackend::optimized()
+                    .with_metal_compute(&metal)
+                    .expect("Metal trace commitment backend should initialize")
             }
         };
         if backend_choice == Backend::Optimized {
@@ -821,26 +866,30 @@ mod akita_benchmark {
 
             let opening = backend
                 .last_trace_opening_metrics()
-                .expect("Metal trace opening metrics should be readable")
-                .expect("Metal trace opening metrics should be present");
-            println!(
-                "AKITA_TRACE_OPENING_METRICS opening_index_bytes={} \
-                 opening_index_ms={:.6} opening_index_gpu_ms={:.6} \
-                 allocation_bytes={} command_wall_ms={:.6} gpu_ms={:.6} \
-                 packed_indexed_calls={} cpu_fallback_calls={} \
-                 planned_cpu_calls={} planned_cpu_work_units={} cpu_tail_work_units={}",
-                opening.opening_index_bytes,
-                opening.opening_index_time.as_secs_f64() * 1_000.0,
-                opening.opening_index_gpu_time.as_secs_f64() * 1_000.0,
-                opening.allocation_bytes,
-                opening.command_wall_time.as_secs_f64() * 1_000.0,
-                opening.gpu_active_time.as_secs_f64() * 1_000.0,
-                opening.packed_decompose_indexed_calls,
-                opening.cpu_fallback_calls,
-                opening.planned_cpu_calls,
-                opening.planned_cpu_work_units,
-                opening.cpu_tail_work_units,
-            );
+                .expect("Metal trace opening metrics should be readable");
+            if let Some(opening) = opening {
+                println!(
+                    "AKITA_TRACE_OPENING_METRICS opening_index_bytes={} \
+                     opening_index_ms={:.6} opening_index_gpu_ms={:.6} \
+                     allocation_bytes={} command_wall_ms={:.6} gpu_ms={:.6} \
+                     packed_indexed_calls={} cpu_fallback_calls={} \
+                     planned_cpu_calls={} planned_cpu_work_units={} cpu_tail_work_units={}",
+                    opening.opening_index_bytes,
+                    opening.opening_index_time.as_secs_f64() * 1_000.0,
+                    opening.opening_index_gpu_time.as_secs_f64() * 1_000.0,
+                    opening.allocation_bytes,
+                    opening.command_wall_time.as_secs_f64() * 1_000.0,
+                    opening.gpu_active_time.as_secs_f64() * 1_000.0,
+                    opening.packed_decompose_indexed_calls,
+                    opening.cpu_fallback_calls,
+                    opening.planned_cpu_calls,
+                    opening.planned_cpu_work_units,
+                    opening.cpu_tail_work_units,
+                );
+            } else {
+                assert!(!qualified, "qualified trace opening should dispatch Metal");
+                println!("AKITA_TRACE_OPENING_METRICS qualified=false route=cpu");
+            }
         }
 
         // The Akita field uses its own canonical serializer, while the Jolt

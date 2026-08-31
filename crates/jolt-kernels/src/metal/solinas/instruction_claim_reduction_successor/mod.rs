@@ -5,6 +5,6 @@ mod runtime;
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 
 pub(crate) use runtime::{
-    PendingProductInstructionInitialMessage, ProductInstructionRoundService,
-    ProductInstructionRoundStats,
+    PendingProductInstructionInitialMessage, ProductInstructionOpenings,
+    ProductInstructionRoundService, ProductInstructionRoundStats,
 };

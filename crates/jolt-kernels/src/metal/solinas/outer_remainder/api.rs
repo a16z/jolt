@@ -85,5 +85,6 @@ pub struct OuterRemainderStorageStats {
     pub buffer_identities: [usize; DEVICE_BUFFERS],
     pub compact_row_identity: usize,
     pub residual_row_identity: usize,
+    pub cold_row_identity: Option<usize>,
     pub row_device_registry_id: u64,
 }

@@ -5,13 +5,19 @@ use jolt_field::AkitaField;
 #[cfg(test)]
 use super::Fp128;
 
+#[cfg(test)]
+mod prefix;
 mod runtime;
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 
-pub(crate) use runtime::{RamReadWriteFinish, RamReadWriteSequence};
+pub(crate) use runtime::{
+    RamRafSegmentedAddressPlane, RamReadWriteDispatchTiming, RamReadWriteFinish,
+    RamReadWritePreparationTiming, RamReadWriteSequence,
+};
 
 pub const RAM_READ_WRITE_ADDRESS_PIPELINE: &str = "solinas_ram_read_write_address";
+pub const RAM_READ_WRITE_ADDRESS_BOUNDED_PIPELINE: &str = "solinas_ram_read_write_address_bounded";
 pub const RAM_READ_WRITE_ADDRESS_HOT_COUNT_PIPELINE: &str =
     "solinas_ram_read_write_address_hot_count";
 pub const RAM_READ_WRITE_ADDRESS_HOT_PREFIX_PIPELINE: &str =
@@ -22,14 +28,28 @@ pub const RAM_READ_WRITE_ADDRESS_HOT_MESSAGE_PIPELINE: &str =
     "solinas_ram_read_write_address_hot_message";
 pub const RAM_READ_WRITE_CYCLE_PIPELINE: &str = "solinas_ram_read_write_cycle";
 pub const RAM_READ_WRITE_REDUCTION_PIPELINE: &str = "solinas_ram_read_write_reduce";
+pub const RAM_READ_WRITE_INITIAL_SCATTER_PIPELINE: &str = "solinas_ram_read_write_initial_scatter";
+pub const RAM_READ_WRITE_PREFIX_ADDRESS_PIPELINE: &str = "solinas_ram_read_write_prefix_address";
+pub const RAM_READ_WRITE_PREFIX_ADDRESS_TRANSITION_PIPELINE: &str =
+    "solinas_ram_read_write_prefix_address_transition";
+pub const RAM_READ_WRITE_PREFIX_HOT_TRANSITION_PIPELINE: &str =
+    "solinas_ram_read_write_prefix_hot_transition";
+pub const RAM_READ_WRITE_PREFIX_CYCLE_PIPELINE: &str = "solinas_ram_read_write_prefix_cycle";
+pub const RAM_READ_WRITE_PREFIX_CYCLE_TRANSITION_PIPELINE: &str =
+    "solinas_ram_read_write_prefix_cycle_transition";
 pub const RAM_READ_WRITE_THREADS: usize = 256;
 pub const RAM_READ_WRITE_SIMD_WIDTH: usize = 32;
 pub const RAM_READ_WRITE_REDUCTION_WIDTH: usize = 32;
 pub const RAM_READ_WRITE_CYCLE_TILE_LOG2: usize = 12;
-pub const RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD: usize = 1 << 12;
+pub const RAM_READ_WRITE_CYCLE_THREADGROUP_BYTES_MAX: u64 = 1024;
+pub const RAM_READ_WRITE_HOT_SEGMENT_THRESHOLD: usize = 1 << 6;
 pub const RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE: usize = 1 << 12;
+pub const RAM_READ_WRITE_BOUNDED_SEGMENT_MAX: usize = RAM_READ_WRITE_HOT_MESSAGE_CHUNK_SIZE;
+pub const RAM_READ_WRITE_BOUNDED_THREADGROUP_BYTES_MAX: u64 = 1024;
 pub const RAM_READ_WRITE_HOT_COMPACTION_THREADS: usize = 256;
 pub const RAM_READ_WRITE_HOT_THREADGROUP_BYTES_MAX: u64 = 1024;
+pub const RAM_READ_WRITE_RECORD_PREFIX_LOG_T_MIN: usize = 29;
+pub const RAM_READ_WRITE_RECORD_PREFIX_ROUNDS: usize = 6;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -71,9 +91,24 @@ struct PhaseParams {
     bind: u32,
     emit_message: u32,
     hot_source_aux: u32,
+    hot_threshold: u32,
+    source_initial: u32,
 }
 
-const _: [(); 24] = [(); size_of::<PhaseParams>()];
+const _: [(); 32] = [(); size_of::<PhaseParams>()];
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PrefixPhaseParams {
+    records: u32,
+    output_stride: u32,
+    e_in_length: u32,
+    rounds_bound: u32,
+    bind: u32,
+    reserved: [u32; 3],
+}
+
+const _: [(); 32] = [(); size_of::<PrefixPhaseParams>()];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CycleProductRoot {

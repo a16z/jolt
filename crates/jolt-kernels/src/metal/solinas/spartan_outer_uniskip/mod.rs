@@ -25,6 +25,8 @@ use super::{
 pub const SPARTAN_OUTER_EXTENDED_NODES: usize = 9;
 const ROW_WORDS: usize = 20;
 const RESIDUAL_ROW_WORDS: usize = 14;
+const SUCCESSOR_ROW_WORDS: usize = 8;
+const COLD_ROW_WORDS: usize = 6;
 const SIMD_WIDTH: usize = 32;
 const BLOCKS_PIPELINE: &str = "solinas_spartan_outer_uniskip_blocks";
 const REDUCE_PIPELINE: &str = "solinas_spartan_outer_uniskip_reduce";
@@ -98,6 +100,85 @@ pub(crate) struct SpartanOuterUniskipResidualRow {
     words: [u64; RESIDUAL_ROW_WORDS],
 }
 
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SpartanOuterUniskipSuccessorRow {
+    words: [u64; SUCCESSOR_ROW_WORDS],
+}
+
+impl SpartanOuterUniskipSuccessorRow {
+    pub(crate) const fn stage1_ram_pre_value(self) -> u64 {
+        self.words[3]
+    }
+
+    #[cfg(test)]
+    const fn words(self) -> [u64; SUCCESSOR_ROW_WORDS] {
+        self.words
+    }
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SpartanOuterUniskipColdRow {
+    words: [u64; COLD_ROW_WORDS],
+}
+
+impl SpartanOuterUniskipResidualRow {
+    pub(crate) const fn partition(
+        self,
+    ) -> (SpartanOuterUniskipSuccessorRow, SpartanOuterUniskipColdRow) {
+        (
+            SpartanOuterUniskipSuccessorRow {
+                words: [
+                    self.words[0],
+                    self.words[1],
+                    self.words[2],
+                    self.words[7],
+                    self.words[8],
+                    self.words[9],
+                    self.words[10],
+                    self.words[13],
+                ],
+            },
+            SpartanOuterUniskipColdRow {
+                words: [
+                    self.words[3],
+                    self.words[4],
+                    self.words[5],
+                    self.words[6],
+                    self.words[11],
+                    self.words[12],
+                ],
+            },
+        )
+    }
+
+    #[cfg(test)]
+    const fn from_partition(
+        successor: SpartanOuterUniskipSuccessorRow,
+        cold: SpartanOuterUniskipColdRow,
+    ) -> Self {
+        Self {
+            words: [
+                successor.words[0],
+                successor.words[1],
+                successor.words[2],
+                cold.words[0],
+                cold.words[1],
+                cold.words[2],
+                cold.words[3],
+                successor.words[3],
+                successor.words[4],
+                successor.words[5],
+                successor.words[6],
+                cold.words[4],
+                cold.words[5],
+                successor.words[7],
+            ],
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct OuterResidualArenaKey {
     pub(crate) generation: u64,
@@ -106,6 +187,7 @@ pub(crate) struct OuterResidualArenaKey {
     pub(crate) storage_id: usize,
     pub(crate) storage_bytes: u64,
     pub(crate) compact_storage_id: usize,
+    pub(crate) compact_storage_bytes: u64,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -116,7 +198,8 @@ pub(crate) struct OuterResidualReleaseReceipt {
 #[derive(Clone)]
 pub struct SpartanOuterUniskipRows {
     instruction_input_rows: InstructionInputRows,
-    residual_buffer: Buffer,
+    successor_buffer: Buffer,
+    cold_buffer: Option<Buffer>,
     len: usize,
     explicit_rows: usize,
     device_registry_id: u64,
@@ -150,16 +233,42 @@ impl SpartanOuterUniskipRows {
         self.instruction_input_rows.buffer()
     }
 
-    pub(crate) fn residual_buffer(&self) -> &Buffer {
-        &self.residual_buffer
+    pub(crate) fn successor_buffer(&self) -> &Buffer {
+        &self.successor_buffer
+    }
+
+    pub(crate) fn cold_buffer(&self) -> Result<&Buffer, MetalError> {
+        self.cold_buffer
+            .as_ref()
+            .ok_or(MetalError::InvalidOuterRemainderState {
+                expected: "live Stage-1 cold residual storage",
+                got: "retired Stage-1 cold residual storage",
+            })
+    }
+
+    pub(crate) fn retire_cold_buffer(&mut self) -> Result<usize, MetalError> {
+        let cold = self
+            .cold_buffer
+            .take()
+            .ok_or(MetalError::InvalidOuterRemainderState {
+                expected: "live Stage-1 cold residual storage",
+                got: "already retired Stage-1 cold residual storage",
+            })?;
+        Ok(cold.as_ptr() as usize)
     }
 
     pub fn allocation_identity(&self) -> usize {
-        self.residual_buffer.as_ptr() as usize
+        self.successor_buffer.as_ptr() as usize
     }
 
     pub fn instruction_input_allocation_identity(&self) -> usize {
         self.instruction_input_rows.allocation_identity()
+    }
+
+    pub(crate) fn cold_allocation_identity(&self) -> Option<usize> {
+        self.cold_buffer
+            .as_ref()
+            .map(|buffer| buffer.as_ptr() as usize)
     }
 
     pub(crate) fn residual_arena_key(&self) -> OuterResidualArenaKey {
@@ -168,13 +277,18 @@ impl SpartanOuterUniskipRows {
             rows: self.len,
             device_registry_id: self.device_registry_id,
             storage_id: self.allocation_identity(),
-            storage_bytes: self.residual_buffer.length(),
+            storage_bytes: self.successor_buffer.length(),
             compact_storage_id: self.instruction_input_allocation_identity(),
+            compact_storage_bytes: self.instruction_input_buffer().length(),
         }
     }
 
     pub(crate) fn share_instruction_input_rows(&mut self) -> InstructionInputRows {
         self.accounts_instruction_input_rows = false;
+        self.instruction_input_rows.clone()
+    }
+
+    pub(crate) fn clone_instruction_input_rows(&self) -> InstructionInputRows {
         self.instruction_input_rows.clone()
     }
 
@@ -187,7 +301,7 @@ impl SpartanOuterUniskipRows {
     ) -> Result<super::ProductRemainderRows, MetalError> {
         super::ProductRemainderRows::from_spartan_stage1(
             self.instruction_input_buffer().clone(),
-            self.residual_buffer.clone(),
+            self.successor_buffer.clone(),
             self.len,
             self.device_registry_id,
             self.generation,
@@ -200,9 +314,15 @@ impl allocative::Allocative for SpartanOuterUniskipRows {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("device_residual_rows"),
-            self.len * size_of::<SpartanOuterUniskipResidualRow>(),
+            allocative::Key::new("device_successor_rows"),
+            self.len * size_of::<SpartanOuterUniskipSuccessorRow>(),
         );
+        if self.cold_buffer.is_some() {
+            visitor.visit_simple(
+                allocative::Key::new("device_cold_rows"),
+                self.len * size_of::<SpartanOuterUniskipColdRow>(),
+            );
+        }
         if self.accounts_instruction_input_rows {
             visitor.visit_simple(
                 allocative::Key::new("device_instruction_input_rows"),
@@ -639,19 +759,19 @@ struct Params {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SourcePrimerParams {
-    word_counts: [u64; 5],
+    word_counts: [u64; 6],
     page_words: u32,
     total_threads: u32,
 }
 
-const _: [(); 48] = [(); size_of::<SourcePrimerParams>()];
+const _: [(); 56] = [(); size_of::<SourcePrimerParams>()];
 
 #[must_use = "the Stage1 source primer must be joined before its source is consumed"]
 pub(crate) struct PendingSpartanStage1SourcePrimer {
     command: Option<CommandBuffer>,
-    sources: [Buffer; 5],
+    sources: [Buffer; 6],
     checksums: Buffer,
-    source_identities: [usize; 5],
+    source_identities: [usize; 6],
 }
 
 #[cfg(feature = "allocative")]
@@ -671,7 +791,7 @@ impl Drop for PendingSpartanStage1SourcePrimer {
 
 impl PendingSpartanStage1SourcePrimer {
     pub(crate) fn join(mut self) -> Result<(), MetalError> {
-        let source_identities: [usize; 5] =
+        let source_identities: [usize; 6] =
             std::array::from_fn(|index| self.sources[index].as_ptr() as usize);
         if source_identities != self.source_identities
             || self.checksums.length() != byte_length::<u32>(SOURCE_PRIMER_THREADS)?
@@ -694,7 +814,8 @@ impl PendingSpartanStage1SourcePrimer {
 
 struct Buffers {
     instruction_input_rows: Buffer,
-    residual_rows: Buffer,
+    successor_rows: Buffer,
+    cold_rows: Buffer,
     e_in: Buffer,
     e_out: Buffer,
     block_sums: Buffer,
@@ -730,7 +851,8 @@ impl SolinasMetal {
         let [shift_unexpanded_pc, shift_pc, shift_flags] = shift.source_buffers();
         let sources = [
             outer.instruction_input_buffer().clone(),
-            outer.residual_buffer().clone(),
+            outer.successor_buffer().clone(),
+            outer.cold_buffer()?.clone(),
             shift_unexpanded_pc.clone(),
             shift_pc.clone(),
             shift_flags.clone(),
@@ -777,9 +899,9 @@ impl SolinasMetal {
             for (index, source) in sources.iter().enumerate() {
                 encoder.set_buffer(index as u64, Some(source), 0);
             }
-            encoder.set_buffer(5, Some(&checksums), 0);
+            encoder.set_buffer(6, Some(&checksums), 0);
             encoder.set_bytes(
-                6,
+                7,
                 size_of::<SourcePrimerParams>() as u64,
                 std::ptr::from_ref(&params).cast::<std::ffi::c_void>(),
             );
@@ -823,11 +945,19 @@ impl SolinasMetal {
     ) -> Result<SpartanOuterUniskipRows, MetalError> {
         self.prepare_spartan_outer_uniskip_rows_with_fill(
             rows.len(),
-            |instruction_input, residual| {
-                for ((source, instruction_input), residual) in
-                    rows.iter().copied().zip(instruction_input).zip(residual)
+            |instruction_input, successor, cold| {
+                for (((source, instruction_input), successor), cold) in rows
+                    .iter()
+                    .copied()
+                    .zip(instruction_input)
+                    .zip(successor)
+                    .zip(cold)
                 {
-                    (*instruction_input, *residual) = source.split();
+                    let (input, residual) = source.split();
+                    let (successor_row, cold_row) = residual.partition();
+                    *instruction_input = input;
+                    *successor = successor_row;
+                    *cold = cold_row;
                 }
                 Ok(())
             },
@@ -839,30 +969,36 @@ impl SolinasMetal {
         rows: usize,
         fill: impl FnOnce(
             &mut [InstructionInputRow],
-            &mut [SpartanOuterUniskipResidualRow],
+            &mut [SpartanOuterUniskipSuccessorRow],
+            &mut [SpartanOuterUniskipColdRow],
         ) -> Result<(), MetalError>,
     ) -> Result<SpartanOuterUniskipRows, MetalError> {
         if rows == 0 {
             return Err(MetalError::EmptyInput);
         }
         let instruction_input_bytes = byte_length::<InstructionInputRow>(rows)?;
-        let residual_bytes = byte_length::<SpartanOuterUniskipResidualRow>(rows)?;
-        for bytes in [instruction_input_bytes, residual_bytes] {
+        let successor_bytes = byte_length::<SpartanOuterUniskipSuccessorRow>(rows)?;
+        let cold_bytes = byte_length::<SpartanOuterUniskipColdRow>(rows)?;
+        for bytes in [instruction_input_bytes, successor_bytes, cold_bytes] {
             self.validate_buffer_length(bytes)?;
         }
         let row_bytes = instruction_input_bytes
-            .checked_add(residual_bytes)
+            .checked_add(successor_bytes)
+            .and_then(|bytes| bytes.checked_add(cold_bytes))
             .ok_or(MetalError::InputTooLong(rows))?;
         self.validate_additional_working_set(row_bytes)?;
         let instruction_input_buffer = self.device.new_buffer(
             instruction_input_bytes,
             MTLResourceOptions::StorageModeShared,
         );
-        let residual_buffer = self
+        let successor_buffer = self
             .device
-            .new_buffer(residual_bytes, MTLResourceOptions::StorageModeShared);
-        // SAFETY: both shared buffers have exactly `rows` elements and no command
-        // buffer can observe either allocation until `fill` returns.
+            .new_buffer(successor_bytes, MTLResourceOptions::StorageModeShared);
+        let cold_buffer = self
+            .device
+            .new_buffer(cold_bytes, MTLResourceOptions::StorageModeShared);
+        // SAFETY: the shared buffers have exactly `rows` elements and no command
+        // buffer can observe an allocation until `fill` returns.
         let instruction_input = unsafe {
             slice::from_raw_parts_mut(
                 instruction_input_buffer
@@ -871,16 +1007,23 @@ impl SolinasMetal {
                 rows,
             )
         };
-        // SAFETY: see the paired compact-buffer construction above.
-        let residual = unsafe {
+        // SAFETY: see the instruction-input-buffer construction above.
+        let successor = unsafe {
             slice::from_raw_parts_mut(
-                residual_buffer
+                successor_buffer
                     .contents()
-                    .cast::<SpartanOuterUniskipResidualRow>(),
+                    .cast::<SpartanOuterUniskipSuccessorRow>(),
                 rows,
             )
         };
-        fill(instruction_input, residual)?;
+        // SAFETY: see the instruction-input-buffer construction above.
+        let cold = unsafe {
+            slice::from_raw_parts_mut(
+                cold_buffer.contents().cast::<SpartanOuterUniskipColdRow>(),
+                rows,
+            )
+        };
+        fill(instruction_input, successor, cold)?;
         let device_registry_id = self.device_registry_id();
         let generation = NEXT_OUTER_RESIDUAL_GENERATION
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -897,7 +1040,8 @@ impl SolinasMetal {
                 rows,
                 device_registry_id,
             ),
-            residual_buffer,
+            successor_buffer,
+            cold_buffer: Some(cold_buffer),
             len: rows,
             explicit_rows: rows,
             device_registry_id,
@@ -911,7 +1055,8 @@ impl SolinasMetal {
         rows: usize,
         fill: impl FnOnce(
             &mut [InstructionInputRow],
-            &mut [SpartanOuterUniskipResidualRow],
+            &mut [SpartanOuterUniskipSuccessorRow],
+            &mut [SpartanOuterUniskipColdRow],
             &mut [u64],
             &mut [u64],
             &mut [SpartanShiftFlagWord],
@@ -923,8 +1068,8 @@ impl SolinasMetal {
             self.prepare_spartan_shift_rows_with_fill(rows, true, |unexpanded_pc, pc, flags| {
                 let prepared = self.prepare_spartan_outer_uniskip_rows_with_fill(
                     rows,
-                    |instruction_input, residual| {
-                        fill(instruction_input, residual, unexpanded_pc, pc, flags)
+                    |instruction_input, successor, cold| {
+                        fill(instruction_input, successor, cold, unexpanded_pc, pc, flags)
                     },
                 )?;
                 outer_rows = Some(prepared);
@@ -942,12 +1087,14 @@ impl SolinasMetal {
     ) -> Result<(), MetalError> {
         let geometry = SpartanShiftGeometry::new(rows)?;
         let instruction_input_bytes = byte_length::<InstructionInputRow>(rows)?;
-        let residual_bytes = byte_length::<SpartanOuterUniskipResidualRow>(rows)?;
+        let successor_bytes = byte_length::<SpartanOuterUniskipSuccessorRow>(rows)?;
+        let cold_bytes = byte_length::<SpartanOuterUniskipColdRow>(rows)?;
         let shift_value_bytes = byte_length::<u64>(geometry.rows())?;
         let shift_flag_bytes = byte_length::<SpartanShiftFlagWord>(geometry.flag_words())?;
         for bytes in [
             instruction_input_bytes,
-            residual_bytes,
+            successor_bytes,
+            cold_bytes,
             shift_value_bytes,
             shift_flag_bytes,
         ] {
@@ -957,7 +1104,8 @@ impl SolinasMetal {
             .checked_mul(2)
             .ok_or(MetalError::InputTooLong(rows))?;
         let additional = instruction_input_bytes
-            .checked_add(residual_bytes)
+            .checked_add(successor_bytes)
+            .and_then(|bytes| bytes.checked_add(cold_bytes))
             .and_then(|bytes| bytes.checked_add(shift_value_total_bytes))
             .and_then(|bytes| bytes.checked_add(shift_flag_bytes))
             .ok_or(MetalError::InputTooLong(rows))?;
@@ -973,7 +1121,8 @@ impl SolinasMetal {
     ) -> Result<SpartanOuterUniskipInvocation<'_>, MetalError> {
         self.prepare_spartan_outer_uniskip_from_buffers(
             rows.instruction_input_buffer().clone(),
-            rows.residual_buffer().clone(),
+            rows.successor_buffer().clone(),
+            rows.cold_buffer()?.clone(),
             rows.len,
             e_in,
             e_out,
@@ -981,10 +1130,15 @@ impl SolinasMetal {
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the internal boundary keeps the three resident buffers and proof geometry explicit"
+    )]
     fn prepare_spartan_outer_uniskip_from_buffers(
         &self,
         instruction_input_rows_buffer: Buffer,
-        residual_rows_buffer: Buffer,
+        successor_rows_buffer: Buffer,
+        cold_rows_buffer: Buffer,
         rows: usize,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
@@ -1094,7 +1248,8 @@ impl SolinasMetal {
             reduce_pipeline,
             buffers: Buffers {
                 instruction_input_rows: instruction_input_rows_buffer,
-                residual_rows: residual_rows_buffer,
+                successor_rows: successor_rows_buffer,
+                cold_rows: cold_rows_buffer,
                 e_in: buffer_from_slice(&self.device, &e_in_fp),
                 e_out: buffer_from_slice(&self.device, &e_out_fp),
                 block_sums: self
@@ -1125,11 +1280,12 @@ impl SpartanOuterUniskipInvocation<'_> {
             let blocks = command_buffer.new_compute_command_encoder();
             blocks.set_compute_pipeline_state(&self.blocks_pipeline);
             blocks.set_buffer(0, Some(&self.buffers.instruction_input_rows), 0);
-            blocks.set_buffer(1, Some(&self.buffers.residual_rows), 0);
-            blocks.set_buffer(2, Some(&self.buffers.e_in), 0);
-            blocks.set_buffer(3, Some(&self.buffers.e_out), 0);
-            blocks.set_buffer(4, Some(&self.buffers.block_sums), 0);
-            blocks.set_buffer(5, Some(&self.buffers.params), 0);
+            blocks.set_buffer(1, Some(&self.buffers.successor_rows), 0);
+            blocks.set_buffer(2, Some(&self.buffers.cold_rows), 0);
+            blocks.set_buffer(3, Some(&self.buffers.e_in), 0);
+            blocks.set_buffer(4, Some(&self.buffers.e_out), 0);
+            blocks.set_buffer(5, Some(&self.buffers.block_sums), 0);
+            blocks.set_buffer(6, Some(&self.buffers.params), 0);
             blocks.set_threadgroup_memory_length(
                 0,
                 byte_length::<Fp128>(self.threads_per_threadgroup)?,
@@ -1210,8 +1366,8 @@ pub(crate) fn spartan_outer_uniskip_row_bytes(rows: usize) -> Result<u64, MetalE
     byte_length::<SpartanOuterUniskipRow>(rows)
 }
 
-pub(crate) fn spartan_outer_uniskip_residual_row_bytes(rows: usize) -> Result<u64, MetalError> {
-    byte_length::<SpartanOuterUniskipResidualRow>(rows)
+pub(crate) fn spartan_outer_uniskip_successor_row_bytes(rows: usize) -> Result<u64, MetalError> {
+    byte_length::<SpartanOuterUniskipSuccessorRow>(rows)
 }
 
 pub(crate) fn spartan_outer_uniskip_invocation_bytes(rows: usize) -> Result<u64, MetalError> {
@@ -1248,10 +1404,10 @@ pub(crate) fn spartan_outer_uniskip_invocation_bytes(rows: usize) -> Result<u64,
 
 const _: () = assert!(size_of::<SpartanOuterUniskipRow>() == 160);
 const _: () = assert!(size_of::<SpartanOuterUniskipResidualRow>() == 112);
-const _: () = assert!(
-    size_of::<InstructionInputRow>() + size_of::<SpartanOuterUniskipResidualRow>()
-        == size_of::<SpartanOuterUniskipRow>()
-);
+const _: () = assert!(size_of::<SpartanOuterUniskipSuccessorRow>() == 64);
+const _: () = assert!(size_of::<SpartanOuterUniskipColdRow>() == 48);
+const _: () =
+    assert!(size_of::<InstructionInputRow>() + size_of::<SpartanOuterUniskipResidualRow>() == 160);
 const _: () = assert!(size_of::<Params>() == 16);
 
 #[cfg(test)]
@@ -1766,20 +1922,27 @@ mod tests {
         assert_eq!(resident.explicit_rows(), explicit_rows);
         let compact_id = resident.instruction_input_allocation_identity();
         let residual_id = resident.allocation_identity();
-        let mut sequence = context
-            .prepare_outer_remainder_sequence(
-                resident,
-                OuterRemainderSequenceConfig {
-                    max_threadgroups: 2,
-                    cpu_tail_elements: 4,
-                    storage_initialization: OuterRemainderStorageInitialization::Lazy,
-                    product_uniskip_carrier: true,
-                    ..OuterRemainderSequenceConfig::default()
-                },
-            )
+        let config = OuterRemainderSequenceConfig {
+            max_threadgroups: 2,
+            cpu_tail_elements: 4,
+            storage_initialization: OuterRemainderStorageInitialization::Lazy,
+            product_uniskip_carrier: true,
+            ..OuterRemainderSequenceConfig::default()
+        };
+        let storage = context
+            .prepare_outer_remainder_sequence_storage(resident.len(), config)
             .unwrap();
+        #[cfg(feature = "test-utils")]
+        {
+            let initialization = storage.eval_stats().unwrap();
+            assert_eq!(initialization.initialized_bytes, 0);
+            assert_eq!(initialization.initialization_device_buffers, 0);
+            assert_eq!(initialization.initialization_gpu_active, Duration::ZERO);
+        }
+        let mut sequence = storage.attach(resident).unwrap();
         assert!(sequence.instruction_input_arena_release_receipt().is_err());
         let storage_before_export = sequence.storage_stats().unwrap();
+        assert!(storage_before_export.cold_row_identity.is_some());
         assert!(storage_before_export
             .buffer_identities
             .iter()
@@ -1844,7 +2007,7 @@ mod tests {
         assert_eq!(storage_after_export.buffer_identities[..2], [0, 0]);
         assert_eq!(
             storage_before_export.owned_bytes - storage_after_export.owned_bytes,
-            (4 * packed.len() * size_of::<Fp128>()) as u64
+            (3 * packed.len() * size_of::<Fp128>()) as u64
         );
 
         let opening_in = (0..4)
@@ -1865,6 +2028,7 @@ mod tests {
             sequence.take_product_uniskip_endpoints(),
             Some(expected_product_endpoints)
         );
+        assert_eq!(sequence.storage_stats().unwrap().cold_row_identity, None);
         let release = sequence.instruction_input_arena_release_receipt().unwrap();
         assert_ne!(release.key.generation, 0);
         assert_eq!(release.key.rows, packed.len());
@@ -1873,13 +2037,33 @@ mod tests {
         assert_eq!(release.key.compact_storage_id, compact_id);
         assert_eq!(
             release.key.storage_bytes,
-            spartan_outer_uniskip_residual_row_bytes(packed.len()).unwrap()
+            spartan_outer_uniskip_successor_row_bytes(packed.len()).unwrap()
+        );
+        assert_eq!(
+            release.key.compact_storage_bytes,
+            byte_length::<InstructionInputRow>(packed.len()).unwrap()
         );
         let stats = sequence.storage_stats().unwrap();
         assert_eq!(stats.compact_row_identity, compact_id);
         assert_eq!(stats.residual_row_identity, residual_id);
         let compact = sequence.into_instruction_input_rows().unwrap();
         assert_eq!(compact.allocation_identity(), compact_id);
+    }
+
+    #[test]
+    fn residual_partition_reconstructs_every_logical_word() {
+        let residual = SpartanOuterUniskipResidualRow {
+            words: std::array::from_fn(|index| 0x1000 + index as u64),
+        };
+        let (successor, cold) = residual.partition();
+        assert_eq!(
+            successor.words(),
+            [0x1000, 0x1001, 0x1002, 0x1007, 0x1008, 0x1009, 0x100a, 0x100d]
+        );
+        assert_eq!(
+            SpartanOuterUniskipResidualRow::from_partition(successor, cold),
+            residual
+        );
     }
 
     #[test]
@@ -1891,12 +2075,12 @@ mod tests {
         let split = point.len() / 2;
         let e_out = EqPolynomial::<AkitaField>::evals(&point[..split], None);
         let e_in = EqPolynomial::<AkitaField>::evals(&point[split..], None);
+        let context = SolinasMetal::for_akita().unwrap();
         let expected = reference(&rows, &e_in, &e_out);
         assert_eq!(
             evaluate_spartan_outer_uniskip_cpu(&rows, &e_in, &e_out).unwrap(),
             expected
         );
-        let context = SolinasMetal::for_akita().unwrap();
         let invocation = context
             .prepare_spartan_outer_uniskip(
                 &rows,

@@ -368,9 +368,11 @@ impl TraceCommitmentBackend {
             .entered();
             let _metrics = metal
                 .backend
-                .prewarm_packed_fp128_d512_matrix(
+                .prewarm_packed_fp128_commitment_matrix(
                     prepared.as_ref(),
                     commitment.num_positions_per_block,
+                    commitment.outer_commit_matrix.output_rank(),
+                    commitment.outer_commit_matrix.input_width(),
                 )
                 .map_err(akita_error)?;
             let stream_buffer = PackedOneHotStreamBuffer::zeroed(

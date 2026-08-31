@@ -113,7 +113,7 @@ kernel void solinas_product_uniskip_extended_blocks2(
 
 kernel void solinas_product_uniskip_stage1_extended_blocks2(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterUniskipResidualRow* residual_rows [[buffer(1)]],
+    device const SpartanOuterSuccessorRow* residual_rows [[buffer(1)]],
     device const SolinasFp128* e_in [[buffer(2)]],
     device const SolinasFp128* e_out [[buffer(3)]],
     device SolinasFp128* partials [[buffer(4)]],
@@ -132,14 +132,14 @@ kernel void solinas_product_uniskip_stage1_extended_blocks2(
     for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
         uint row_index = x_out * params.e_in_length + x_in;
         device const InstructionInputRow& compact = compact_rows[row_index];
-        device const SpartanOuterUniskipResidualRow& residual = residual_rows[row_index];
+        device const SpartanOuterSuccessorRow& residual = residual_rows[row_index];
         ulong flags = instruction_input_row_word(compact, 5u);
         product_uniskip_accumulate(
-            product_remainder_from_u64(spartan_outer_residual_word(residual, 0u)),
-            product_remainder_from_u64(spartan_outer_residual_word(residual, 13u)),
+            product_remainder_from_u64(spartan_outer_successor_word(residual, 0u)),
+            product_remainder_from_u64(spartan_outer_successor_word(residual, 13u)),
             product_remainder_from_signed_u128(
-                spartan_outer_residual_word(residual, 1u),
-                spartan_outer_residual_word(residual, 2u),
+                spartan_outer_successor_word(residual, 1u),
+                spartan_outer_successor_word(residual, 2u),
                 product_remainder_flag(
                     flags,
                     SPARTAN_PRODUCT_FLAG_RIGHT_NONNEGATIVE)),

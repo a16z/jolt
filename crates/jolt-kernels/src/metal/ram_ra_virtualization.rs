@@ -3,8 +3,8 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
 use jolt_field::AkitaField;
-use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputPoints,
@@ -19,10 +19,21 @@ use super::ram_cycle_family::shared_ram_cycle_family_owner;
 use super::solinas::ram_cycle_family::{
     estimated_ram_ra_virtualization_products, HostSparseRamRaVirtualization, RamCycleFamilyOwner,
 };
+use super::solinas::RamRaSequence;
 use crate::optimized::ram_trace::RamAccessColumns;
 use crate::optimized::OptimizedBackend;
+use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
+
+#[cfg(feature = "test-utils")]
+mod evaluation;
+#[cfg(feature = "test-utils")]
+pub use evaluation::{
+    RamRaVirtualizationCpuEvalSample, RamRaVirtualizationCpuMetalEvalFixture,
+    RamRaVirtualizationEvalError, RamRaVirtualizationEvalResult, RamRaVirtualizationRoundTiming,
+    RamRaVirtualizationShapeSnapshot,
 };
 
 const MAX_SPARSE_PRODUCTS: u128 = 1_000_000;
@@ -43,6 +54,139 @@ impl Default for RamRaVirtualizationMetalConfig {
 struct HostSparseRamRaVirtualizationKernel {
     sequence: HostSparseRamRaVirtualization<AkitaField>,
     next_round: usize,
+}
+
+struct MetalRamRaVirtualizationKernel {
+    sequence: RamRaSequence,
+    gruen: GruenSplitEqPolynomial<AkitaField>,
+    log_t: usize,
+    num_factors: usize,
+    next_round: usize,
+    final_values: Option<[AkitaField; 3]>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalRamRaVirtualizationKernel {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("sequence"), &self.sequence);
+        visitor.visit_simple(
+            allocative::Key::new("gruen"),
+            crate::backend::gruen_heap_bytes(&self.gruen),
+        );
+        visitor.exit();
+    }
+}
+
+impl ProveRounds<AkitaField> for MetalRamRaVirtualizationKernel {
+    fn num_rounds(&self) -> usize {
+        self.log_t
+    }
+
+    fn execution_domain(&self) -> RoundExecutionDomain {
+        if self.final_values.is_some() {
+            RoundExecutionDomain::Host
+        } else {
+            RoundExecutionDomain::Accelerator
+        }
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<AkitaField>,
+        round: usize,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        if round != self.next_round || (round == 0) != bind.is_none() {
+            return Err(device_error(
+                "RAM RA device sequence received an out-of-order round",
+            ));
+        }
+        if let Some(challenge) = bind {
+            self.gruen.bind(challenge);
+        }
+        let _round_span = if self.sequence.is_dense() {
+            tracing::info_span!(
+                "MetalRamRaVirtualization::dense_round",
+                elements = self.sequence.current_elements()
+            )
+            .entered()
+        } else {
+            tracing::info_span!(
+                "MetalRamRaVirtualization::lazy_round",
+                elements = self.sequence.current_elements(),
+                branch_width = self.sequence.branch_width()
+            )
+            .entered()
+        };
+        let q_evals = {
+            let e_in = self.gruen.e_in_current();
+            let e_out = self.gruen.e_out_current();
+            match bind {
+                Some(challenge) => self.sequence.bind_and_message(challenge, e_in, e_out),
+                None => self.sequence.message(e_in, e_out),
+            }
+            .map_err(|error| device_error(error.to_string()))?
+        };
+        self.next_round += 1;
+        Ok(self
+            .gruen
+            .gruen_poly_from_evals(&q_evals[..self.num_factors], previous_claim))
+    }
+
+    fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
+        if self.next_round != self.log_t || self.final_values.is_some() {
+            return Err(device_error(
+                "RAM RA device sequence finished outside its terminal state",
+            ));
+        }
+        self.gruen.bind(bind);
+        self.final_values = Some(
+            self.sequence
+                .finish_bind(bind)
+                .map_err(|error| device_error(error.to_string()))?,
+        );
+        Ok(())
+    }
+}
+
+impl SumcheckKernel<AkitaField> for MetalRamRaVirtualizationKernel {
+    type Relation = RamRaVirtualization<AkitaField>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &SumcheckInputClaims<AkitaField, Self::Relation>,
+    ) -> Result<RamRaVirtualizationOutputClaims<AkitaField>, SumcheckKernelError<AkitaField>> {
+        let values = self
+            .final_values
+            .ok_or(SumcheckKernelError::NotFullyBound {
+                remaining: self.log_t.saturating_sub(self.next_round),
+            })?;
+        Ok(RamRaVirtualizationOutputClaims {
+            ram_ra: values[..self.num_factors].to_vec(),
+        })
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &Self::Relation,
+        input_points: &SumcheckInputPoints<AkitaField, Self::Relation>,
+        output_points: &SumcheckOutputPoints<AkitaField, Self::Relation>,
+        challenges: &ConcreteSumcheckChallenges<AkitaField, Self::Relation>,
+    ) -> Result<(), SumcheckKernelError<AkitaField>> {
+        if self.final_values.is_none() {
+            return Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.log_t.saturating_sub(self.next_round),
+            });
+        }
+        let id = JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle);
+        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
+        let got = self.gruen.current_scalar();
+        if got != expected {
+            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "allocative")]
@@ -177,15 +321,94 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
                 reason: "committed RAM RA chunk width outside the supported one-hot range",
             });
         }
-        if committed_address_chunks(r_address, chunk_bits).len()
-            != dimensions.num_committed_ra_polys()
-        {
+        let chunks = committed_address_chunks(r_address, chunk_bits);
+        if chunks.len() != dimensions.num_committed_ra_polys() {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM address chunk count disagrees with the committed RA count",
             });
         }
 
         let log_k = r_address.len();
+        if chunk_bits == 8
+            && (2..=3).contains(&chunks.len())
+            && chunks.iter().all(|chunk| chunk.len() == 8)
+        {
+            let columns = RamAccessColumns::shared(session, witness, log_t)?;
+            let address_domain = 1usize
+                .checked_shl(u32::try_from(log_k).map_err(|_| KernelError::Unsupported {
+                    reason: "RAM RA address domain is too large",
+                })?)
+                .ok_or(KernelError::Unsupported {
+                    reason: "RAM RA address domain is too large",
+                })?;
+            columns.validate_addresses(address_domain)?;
+            let parked_columns =
+                session
+                    .take::<Arc<RamAccessColumns>>()
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "RAM access columns disappeared before the direct RAM RA sequence",
+                    })?;
+            if !Arc::ptr_eq(&columns, &parked_columns) {
+                return Err(KernelError::InvariantViolation {
+                    reason: "RAM access columns changed before the direct RAM RA sequence",
+                });
+            }
+            let sparse_owner_removed = session.take::<Arc<RamCycleFamilyOwner>>().is_some();
+            let chunk_tables = chunks
+                .iter()
+                .flat_map(|chunk| eq_table(chunk))
+                .collect::<Vec<_>>();
+            let gruen = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh);
+            let e_in_capacity = gruen.e_in_current().len();
+            let e_out_capacity = gruen.e_out_current().len();
+            let sequence = {
+                let _span = tracing::info_span!(
+                    "MetalRamRaVirtualization::sequence_prepare",
+                    cycles,
+                    source_upload_bytes = 0
+                )
+                .entered();
+                self.context
+                    .prepare_ram_ra_sequence(
+                        parked_columns,
+                        &chunk_tables,
+                        chunks.len(),
+                        e_in_capacity,
+                        e_out_capacity,
+                    )
+                    .map_err(|error| device_prepare_error(error.to_string()))?
+            };
+            let _route = tracing::info_span!(
+                "MetalRamRaVirtualization::route",
+                cycles,
+                log_t,
+                log_k,
+                requested = "device_cycle_sequence_v1",
+                selected = "device_cycle_sequence_v1",
+                fallback_reason = "none",
+                source_kind = "shared_ram_address_column_zero_copy",
+                source_bytes = cycles * std::mem::size_of::<u32>(),
+                additional_source_row_scans = 0,
+                member_upload_bytes = 0,
+                sparse_owner_removed,
+                complete_sequence = true,
+            )
+            .entered();
+            #[cfg(any(test, feature = "test-utils"))]
+            let _ = self
+                .test_counters
+                .ram_ra_virtualization_metal_sequences
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok(Box::new(MetalRamRaVirtualizationKernel {
+                sequence,
+                gruen,
+                log_t,
+                num_factors: chunks.len(),
+                next_round: 0,
+                final_values: None,
+            }));
+        }
+
         let Some(owner) = shared_ram_cycle_family_owner(session, witness, log_t, log_k)? else {
             return OptimizedBackend.prepare(session, witness, inputs);
         };
@@ -286,6 +509,17 @@ fn sparse_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
 
 fn prepare_error(message: impl Into<String>) -> KernelError<AkitaField> {
     KernelError::Sumcheck(sparse_error(message))
+}
+
+fn device_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: message.into(),
+    }
+}
+
+fn device_prepare_error(message: impl Into<String>) -> KernelError<AkitaField> {
+    KernelError::Sumcheck(device_error(message))
 }
 
 fn kernel_error(error: impl ToString) -> SumcheckKernelError<AkitaField> {

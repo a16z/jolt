@@ -133,3 +133,43 @@ required-features = ["profiling"]
 [[example]]
 name = "modular_benchmark"
 required-features = ["prover-fixtures"]
+
+[[example]]
+name = "metal_outer_remainder_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_product_remainder_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_ram_read_write_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_ram_raf_evaluation_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_spartan_shift_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_ram_ra_claim_reduction_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_ram_ra_virtualization_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_ram_hamming_booleanity_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_ram_val_check_cpu_eval"
+required-features = ["prover-fixtures", "metal"]
+
+[[example]]
+name = "metal_registers_read_write_cpu_eval"
+required-features = ["prover-fixtures", "metal"]

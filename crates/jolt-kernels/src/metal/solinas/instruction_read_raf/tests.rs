@@ -71,6 +71,7 @@ fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
     let mut packed_metadata = [MaybeUninit::uninit()];
     let mut claims = [MaybeUninit::uninit()];
     let mut counts = [0; INSTRUCTION_READ_RAF_SEGMENTS];
+    let ram_remap_compatible = std::sync::atomic::AtomicBool::new(true);
     let mut writer = InstructionReadRafStage1ChunkWriter {
         lookup_lo: &mut lookup_lo,
         lookup_hi: &mut lookup_hi,
@@ -78,6 +79,7 @@ fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
         packed_metadata: &mut packed_metadata,
         claims: &mut claims,
         counts: &mut counts,
+        ram_remap_compatible: &ram_remap_compatible,
         written: 0,
     };
     writer
@@ -119,6 +121,7 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
     let mut scalar_metadata = [MaybeUninit::uninit(); ROWS];
     let mut scalar_claims = [MaybeUninit::uninit(); ROWS];
     let mut scalar_counts = [0; INSTRUCTION_READ_RAF_SEGMENTS];
+    let scalar_ram_remap_compatible = std::sync::atomic::AtomicBool::new(true);
     let scalar_written = {
         let mut scalar = InstructionReadRafStage1ChunkWriter {
             lookup_lo: &mut scalar_lookup_lo,
@@ -127,6 +130,7 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
             packed_metadata: &mut scalar_metadata,
             claims: &mut scalar_claims,
             counts: &mut scalar_counts,
+            ram_remap_compatible: &scalar_ram_remap_compatible,
             written: 0,
         };
         for _ in 0..ROWS {
@@ -143,6 +147,7 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
     let mut repeated_metadata = [MaybeUninit::uninit(); ROWS];
     let mut repeated_claims = [MaybeUninit::uninit(); ROWS];
     let mut repeated_counts = [0; INSTRUCTION_READ_RAF_SEGMENTS];
+    let repeated_ram_remap_compatible = std::sync::atomic::AtomicBool::new(true);
     let repeated_written = {
         let mut repeated = InstructionReadRafStage1ChunkWriter {
             lookup_lo: &mut repeated_lookup_lo,
@@ -151,6 +156,7 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
             packed_metadata: &mut repeated_metadata,
             claims: &mut repeated_claims,
             counts: &mut repeated_counts,
+            ram_remap_compatible: &repeated_ram_remap_compatible,
             written: 0,
         };
         repeated

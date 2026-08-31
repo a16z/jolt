@@ -23,4 +23,4 @@ pub(crate) use sequence::OuterRegistersClaimCarrierSubmission;
 pub use sequence::OuterRemainderSequence;
 pub(crate) use sequence::PendingOuterRegistersClaimCarrier;
 pub(super) use shader::SOURCE;
-pub(crate) use storage::OuterRemainderSequenceStorage;
+pub(crate) use storage::{OuterRemainderSequenceStorage, OuterRemainderStorageEvalStats};

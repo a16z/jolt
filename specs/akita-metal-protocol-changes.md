@@ -224,6 +224,120 @@ No wider opening basis, altered challenge distribution, relaxed SIS policy,
 extra witness commitment, committed-witness degree-nine fusion, or adaptive
 default lane was adopted.
 
+## Structural candidates not adopted
+
+The post-S16 T28 feasibility audit considered the following protocol changes. None is
+present in the branch. They are recorded here so that prover-side experiments cannot
+silently turn into protocol changes.
+
+### Combined Product/Instruction terminal claim
+
+A new protocol version could carry one Fiat--Shamir-weighted combination of the two
+remaining lookup-operand evaluations from Stage 2 through InstructionInput,
+Instruction Read-RAF, and the final opening accumulator. This preserves the statement
+and can use the existing random-linear-combination soundness argument, but it changes
+claim types and verifier equations across four stages. Its complete effective ceiling
+is only about 2.06 seconds even if the terminal spans and all of Stage 3 disappear, so
+it does not change the T28 5x feasibility bound. It was rejected before code.
+
+### Authenticated memory event log
+
+One address-sorted `(address, cycle, pre, post)` event log could replace the RAM and
+register read/write/value relations if a permutation argument authenticates it against
+the cycle-major access tape and adjacency constraints enforce value continuity. This
+would change the memory-consistency argument, add witness columns and challenges,
+replace several stage outputs/openings, and require a new soundness proof. It is held
+as a separate protocol campaign; it is not a minor Metal backend option.
+
+### Committed address symbols
+
+The T28 follow-up closed both obvious encodings. Raw bit planes would recover a
+one-hot opening through
+
+```text
+sum_t eq(r_cycle, t) * product_j
+    (r_addr[j] * b_j(t) + (1 - r_addr[j]) * (1 - b_j(t))),
+```
+
+but sparse commitment needs about 3.194 trillion D512 ring additions on the measured
+BTreeMap shape, while a direct post-bind fp128 product frontier exceeds the 90-GiB
+limit. Direct bytes require a degree-255 equality polynomial or a new lookup argument;
+Akita Stage 1's quadratic range image is not a generic 256-entry lookup.
+
+The remaining candidate uses four balanced radix-4 digits per address byte. Map
+`0,1,2,3` to `0,1,-2,-1`, commit four length-`T` digit polynomials per semantic
+member, and keep member/digit indices outside the multilinear domain. For a requested
+digit `a`, the equality factor is its cubic Lagrange polynomial `L_a(c)`. With
+`S = c(c + 1)`, every such cubic can be written
+
+```text
+L_a(c) = A_a + B_a c + C_a S + D_a cS.
+```
+
+Akita already range-checks the balanced basis-4 digit alphabet and binds `S`; the
+smallest proposed extension authenticates the additional virtual `cS` table and uses
+a low-degree product tree for the four digit factors. It must not become one
+degree-13 sumcheck. A grouped T28 layout has 120 compact digit polynomials, 30 GiB of
+i8 source, about 62.9 million D512 root rings, and about 1.96 GiB of root-successor
+fields. Sparse root commitment is still worse than the current hot-entry path, so the
+candidate requires a dense NTT root.
+
+This remains a candidate, not a branch protocol. It changes the committed witness
+layout, one-hot Booleanity/Hamming reduction, mapped opening relation, proof shape,
+verifier equations, and schedule family, but not the Jolt statement or memory
+argument. Before production code it needs an exact deleted-owner audit, a complete
+T28 replacement bound, a <=90-GiB lifetime schedule, a soundness-error delta, and a
+new transcript/layout version. The old one-hot config must remain available and
+cross-version proofs must fail closed. The active design and admission gates are in
+`akita-metal-e2e-structural-5x-goal.md` revision 4.
+
+#### Revision-4 feasibility decision: rejected before protocol code
+
+The bounded revision-4 audit is complete. The accepted trace exposes exactly
+23.158291853 seconds of work that the representation can delete: 14.148838542
+seconds of one-hot commit, 6.001420542 seconds of one-hot Akita evaluation,
+0.514324292 seconds of Stage-6a/6b Booleanity preparation and address rounds,
+1.908901644 seconds of causally exposed Stage-6b Booleanity round time, and
+0.584806833 seconds of the Hamming-only Stage-7 wrapper. The mixed Stage-6b
+credit comes from replaying each accepted host/accelerator join, not from
+crediting the member's inclusive span. S15 and unrelated mixed-stage work receive
+no credit. With a required 15.079061-second saving, the complete replacement may
+cost at most 8.079230853 seconds; the most favorable CPU charge is zero.
+
+Address zero does not require another committed presence bit. The current packed
+object is the zero-lane-omitted polynomial
+`D_r(t) = eq(r, a(t)) - eq(r, 0)`, and the existing Hamming claim reconstructs
+`P_full = D + eq(r, 0) H`. This covers both a valid remapped RAM address zero and
+an absent access without changing the memory argument.
+
+The deterministic `(T28, 120 polynomials, bound 2)` planner requires 62,914,560
+D512 source rings. Five-prime dense commitment entails about 724.776 billion NTT
+butterflies plus 161.061 billion pointwise products. The retained exact D512
+operation family sustains about 11.19 billion Montgomery products/s; even granting
+an unmeasured 4x improvement puts the root alone at 19.79 seconds. The compulsory
+120 `cS` plus 63 selector-product nodes add a 3.003-second ideal fp128 floor. This
+22.79-second favorable envelope excludes source extraction, binds, range proof,
+recursive opening, inverse/CRT work, synchronization, transcript, verifier, and
+CPU effects, yet already exceeds the 8.079-second replacement ceiling by 14.71
+seconds. Admission would require the root to run at 174.50 billion modular
+products/s, 15.59x the measured exact D512 rate.
+
+The byte-lifetime design itself fits: 30 GiB of compact source retires after the
+root; the root successor is about 1.96 GiB; 84 post-prefix address factors use 42
+GiB; nine linearly combined increment tables use 4.5 GiB; products are streamed
+rather than materialized; and the conservative peak is about 84.1 GiB. Memory is
+not the rejecting gate. The planned Akita payload also shrinks from the measured
+268,861 bytes to 74,538 bytes, with an estimated 2,928-byte Jolt-side increase.
+
+No measured constant straddles the decision, so the specification's prototype
+exception does not apply. No `Radix4AddressV1` layout, transcript separator,
+schedule, proof type, prover, verifier, or fallback behavior has been added. A
+future revisit would need all of those, cross-version rejection, and a soundness
+composition: fp128 currently uses a degree-one challenge field, and the naïve new
+sumcheck/RLC delta is roughly `364 / |F|`, insufficient by itself to claim an
+unchanged strict 128-bit target. P4c is rejected in Phase 1; OneHotV1 remains the
+only branch protocol.
+
 ## Compatibility and review gates
 
 The schedule and Jolt layout changes already have canonical digests. The current

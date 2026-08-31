@@ -27,6 +27,13 @@ struct InstructionClaimReductionParams {
     uint reserved;
 };
 
+struct InstructionClaimBindRangeParams {
+    uint source_offset;
+    uint destination_offset;
+    uint output_start;
+    uint output_count;
+};
+
 struct InstructionClaimOpeningParams {
     uint rows;
     uint e_in_length;
@@ -273,6 +280,80 @@ kernel void solinas_instruction_claim_bind_message(
         destination[destination_index] = low;
         destination[destination_index + 1u] = high;
 
+        SolinasFp128 weight = e_in[x_in];
+        sums[0] = solinas_add(
+            sums[0], solinas_mul_wide(weight, low));
+        sums[1] = solinas_add(
+            sums[1],
+            solinas_mul_wide(
+                weight, solinas_add(high, solinas_sub(high, low))));
+    }
+
+    instruction_claim_finish_block(
+        sums,
+        INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
+        e_out[x_out],
+        partials,
+        shared,
+        x_out,
+        params.e_out_length,
+        lane,
+        simdgroup,
+        threads / 32u);
+}
+
+kernel void solinas_instruction_claim_bind_range(
+    device const SolinasFp128* source [[buffer(0)]],
+    device SolinasFp128* destination [[buffer(1)]],
+    constant SolinasFp128& challenge [[buffer(2)]],
+    constant InstructionClaimBindRangeParams& params [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= params.output_count) {
+        return;
+    }
+    uint output_index = params.output_start + gid;
+    uint source_index = params.source_offset + 2u * output_index;
+    destination[params.destination_offset + output_index] = instruction_claim_bind(
+        source[source_index], source[source_index + 1u], challenge);
+}
+
+kernel void solinas_instruction_claim_copy_prefix(
+    device const SolinasFp128* source [[buffer(0)]],
+    device SolinasFp128* destination [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid < count) {
+        destination[gid] = source[gid];
+    }
+}
+
+kernel void solinas_instruction_claim_bound_message(
+    device const SolinasFp128* state [[buffer(0)]],
+    device const SolinasFp128* e_in [[buffer(1)]],
+    device const SolinasFp128* e_out [[buffer(2)]],
+    device SolinasFp128* partials [[buffer(3)]],
+    constant InstructionClaimPhaseParams& params [[buffer(4)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint x_out [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    if (x_out >= params.e_out_length) {
+        return;
+    }
+
+    SolinasFp128 sums[INSTRUCTION_CLAIM_MESSAGE_COLUMNS];
+    sums[0] = solinas_zero();
+    sums[1] = solinas_zero();
+    for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
+        uint pair = x_out * params.e_in_length + x_in;
+        uint index = 2u * pair;
+        SolinasFp128 low = state[index];
+        SolinasFp128 high = state[index + 1u];
         SolinasFp128 weight = e_in[x_in];
         sums[0] = solinas_add(
             sums[0], solinas_mul_wide(weight, low));

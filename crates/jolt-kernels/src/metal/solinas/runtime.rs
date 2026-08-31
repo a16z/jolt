@@ -1,4 +1,12 @@
-use std::{ffi::c_void, mem::size_of, time::Duration};
+use std::{
+    any::Any,
+    collections::HashMap,
+    ffi::c_void,
+    mem::size_of,
+    ops::Deref,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
 use metal::{
@@ -8,6 +16,67 @@ use metal::{
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+type PipelineCache = Arc<Mutex<HashMap<(&'static str, Option<u32>), ComputePipelineState>>>;
+
+type PrivateBufferPoolHandle = Arc<Mutex<PrivateBufferPool>>;
+
+type NoCopyBufferCacheHandle = Arc<Mutex<Vec<NoCopyBufferEntry>>>;
+
+struct NoCopyBufferEntry {
+    pointer: usize,
+    bytes: u64,
+    buffer: Buffer,
+    _owner: Arc<dyn Any + Send + Sync>,
+}
+
+#[derive(Default)]
+struct PrivateBufferPool {
+    shape: Option<(usize, usize)>,
+    epoch: u64,
+    cap_bytes: u64,
+    free_bytes: u64,
+    free: Vec<Buffer>,
+}
+
+pub(super) struct PooledPrivateBuffer {
+    buffer: Buffer,
+    pool: PrivateBufferPoolHandle,
+    epoch: u64,
+    reusable: bool,
+    reused: bool,
+}
+
+impl PooledPrivateBuffer {
+    pub(super) const fn was_reused(&self) -> bool {
+        self.reused
+    }
+}
+
+impl Deref for PooledPrivateBuffer {
+    type Target = Buffer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
+impl Drop for PooledPrivateBuffer {
+    fn drop(&mut self) {
+        if !self.reusable {
+            return;
+        }
+        let bytes = self.buffer.length();
+        let Ok(mut pool) = self.pool.lock() else {
+            return;
+        };
+        if pool.epoch != self.epoch || pool.free_bytes.saturating_add(bytes) > pool.cap_bytes {
+            return;
+        }
+        pool.free_bytes += bytes;
+        pool.free.push(self.buffer.clone());
+    }
+}
 
 pub(crate) fn set_inline_bytes<T>(
     encoder: &metal::ComputeCommandEncoderRef,
@@ -113,6 +182,9 @@ pub struct SolinasMetal {
     pub(super) queue: CommandQueue,
     pub(super) library: Library,
     pub(super) offset: u32,
+    pub(super) pipeline_cache: PipelineCache,
+    private_buffer_pool: PrivateBufferPoolHandle,
+    no_copy_buffer_cache: NoCopyBufferCacheHandle,
 }
 
 impl SolinasMetal {
@@ -160,6 +232,108 @@ impl SolinasMetal {
             queue,
             library,
             offset,
+            pipeline_cache: Arc::new(Mutex::new(HashMap::new())),
+            private_buffer_pool: Arc::new(Mutex::new(PrivateBufferPool::default())),
+            no_copy_buffer_cache: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub(super) fn shared_no_copy_buffer<T>(
+        &self,
+        owner: Arc<T>,
+        pointer: *mut c_void,
+        bytes: u64,
+    ) -> Result<(Buffer, bool), MetalError>
+    where
+        T: Any + Send + Sync,
+    {
+        self.validate_buffer_length(bytes)?;
+        let address = pointer as usize;
+        let mut cache = self
+            .no_copy_buffer_cache
+            .lock()
+            .map_err(|_| MetalError::NoCopyBufferCachePoisoned)?;
+        if let Some(entry) = cache
+            .iter()
+            .find(|entry| entry.pointer == address && entry.bytes == bytes)
+        {
+            return Ok((entry.buffer.clone(), true));
+        }
+        let buffer = self.device.new_buffer_with_bytes_no_copy(
+            pointer,
+            bytes,
+            MTLResourceOptions::StorageModeShared,
+            None,
+        );
+        cache.push(NoCopyBufferEntry {
+            pointer: address,
+            bytes,
+            buffer: buffer.clone(),
+            _owner: owner,
+        });
+        Ok((buffer, false))
+    }
+
+    pub(super) fn begin_private_buffer_pool_epoch(
+        &self,
+        shape: (usize, usize),
+        cap_bytes: u64,
+    ) -> Result<u64, MetalError> {
+        let mut pool = self
+            .private_buffer_pool
+            .lock()
+            .map_err(|_| MetalError::PrivateBufferPoolPoisoned)?;
+        if pool.shape != Some(shape) {
+            pool.free.clear();
+            pool.free_bytes = 0;
+            pool.shape = Some(shape);
+            pool.epoch = pool.epoch.wrapping_add(1).max(1);
+        }
+        pool.cap_bytes = cap_bytes;
+        Ok(pool.epoch)
+    }
+
+    pub(super) fn new_pooled_private_buffer(
+        &self,
+        bytes: u64,
+        options: MTLResourceOptions,
+        epoch: u64,
+        threshold_bytes: u64,
+    ) -> Result<PooledPrivateBuffer, MetalError> {
+        self.validate_buffer_length(bytes)?;
+        let reusable =
+            options == MTLResourceOptions::StorageModePrivate && bytes >= threshold_bytes;
+        let buffer = if reusable {
+            let mut pool = self
+                .private_buffer_pool
+                .lock()
+                .map_err(|_| MetalError::PrivateBufferPoolPoisoned)?;
+            if pool.epoch != epoch {
+                return Err(MetalError::InvalidRegistersReadWriteState(
+                    "registers read-write payload pool epoch changed",
+                ));
+            }
+            let match_index = pool
+                .free
+                .iter()
+                .rposition(|buffer| buffer.length() == bytes);
+            match match_index {
+                Some(index) => {
+                    pool.free_bytes = pool.free_bytes.saturating_sub(bytes);
+                    Some(pool.free.swap_remove(index))
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let reused = buffer.is_some();
+        Ok(PooledPrivateBuffer {
+            buffer: buffer.unwrap_or_else(|| self.device.new_buffer(bytes, options)),
+            pool: Arc::clone(&self.private_buffer_pool),
+            epoch,
+            reusable,
+            reused,
         })
     }
 
@@ -189,6 +363,14 @@ impl SolinasMetal {
         &self,
         name: &'static str,
     ) -> Result<ComputePipelineState, MetalError> {
+        let key = (name, None);
+        let mut cache = self
+            .pipeline_cache
+            .lock()
+            .map_err(|_| MetalError::PipelineCachePoisoned)?;
+        if let Some(pipeline) = cache.get(&key) {
+            return Ok(pipeline.clone());
+        }
         let _span = tracing::info_span!(
             "MetalSolinas::pipeline_compile",
             pipeline = name,
@@ -199,9 +381,12 @@ impl SolinasMetal {
             .library
             .get_function(name, None)
             .map_err(|message| MetalError::FunctionLookup { name, message })?;
-        self.device
+        let pipeline = self
+            .device
             .new_compute_pipeline_state_with_function(&function)
-            .map_err(|message| MetalError::PipelineCompilation { name, message })
+            .map_err(|message| MetalError::PipelineCompilation { name, message })?;
+        let _ = cache.insert(key, pipeline.clone());
+        Ok(pipeline)
     }
 
     pub(super) fn validate_inputs(

@@ -19,10 +19,15 @@ const PRODUCT_INSTRUCTION_SERVICE_SOURCE: &str =
 const PRODUCT_UNISKIP_SOURCE: &str = super::product_uniskip::SOURCE;
 const RAM_RAF_EVALUATION_SOURCE: &str = super::ram_raf_evaluation::SOURCE;
 const RAM_READ_WRITE_SOURCE: &str = super::ram_read_write::SOURCE;
+const REGISTERS_READ_WRITE_SOURCE: &str = super::registers_read_write::SOURCE;
 const REGISTERS_VAL_SOURCE: &str = include_str!("registers_val/shader.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity/shader.metal");
 const BOOLEANITY_ADDRESS_SOURCE: &str = include_str!("booleanity_address/shader.metal");
 const INSTRUCTION_RA_SEQUENCE_SOURCE: &str = include_str!("instruction_ra_sequence/shader.metal");
+const RAM_RA_SEQUENCE_SOURCE: &str = include_str!("ram_ra_sequence/shader.metal");
+const RAM_RA_CLAIM_REDUCTION_SOURCE: &str = super::ram_ra_claim_reduction::SOURCE;
+const RAM_HAMMING_SEQUENCE_SOURCE: &str = include_str!("ram_hamming_sequence/shader.metal");
+const RAM_VAL_SEQUENCE_SOURCE: &str = include_str!("ram_val_sequence/shader.metal");
 const INSTRUCTION_INPUT_SOURCE: &str = include_str!("instruction_input/shader.metal");
 const BYTECODE_CYCLE_SOURCE: &str = include_str!("bytecode_cycle/shader.metal");
 const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row/shader.metal");
@@ -96,10 +101,15 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("product_uniskip", PRODUCT_UNISKIP_SOURCE),
     SourceFragment::new("ram_raf_evaluation", RAM_RAF_EVALUATION_SOURCE),
     SourceFragment::new("ram_read_write", RAM_READ_WRITE_SOURCE),
+    SourceFragment::new("registers_read_write", REGISTERS_READ_WRITE_SOURCE),
     SourceFragment::new("registers_val", REGISTERS_VAL_SOURCE),
     SourceFragment::new("booleanity", BOOLEANITY_SOURCE),
     SourceFragment::new("booleanity_address", BOOLEANITY_ADDRESS_SOURCE),
     SourceFragment::new("instruction_ra_sequence", INSTRUCTION_RA_SEQUENCE_SOURCE),
+    SourceFragment::new("ram_ra_sequence", RAM_RA_SEQUENCE_SOURCE),
+    SourceFragment::new("ram_ra_claim_reduction", RAM_RA_CLAIM_REDUCTION_SOURCE),
+    SourceFragment::new("ram_hamming_sequence", RAM_HAMMING_SEQUENCE_SOURCE),
+    SourceFragment::new("ram_val_sequence", RAM_VAL_SEQUENCE_SOURCE),
     SourceFragment::new("bytecode_cycle", BYTECODE_CYCLE_SOURCE),
     SourceFragment::new("bytecode_row", BYTECODE_ROW_SOURCE),
     SourceFragment::new("spartan_outer_uniskip", SPARTAN_OUTER_UNISKIP_SOURCE),
@@ -161,6 +171,9 @@ mod tests {
             "solinas_product_uniskip_reduce2",
             "solinas_registers_claim_build_linear_q",
             "solinas_registers_claim_fold_direct",
+            "solinas_ram_ra_claim_build_q_compact",
+            "solinas_ram_ra_claim_build_q_single_term",
+            "solinas_ram_ra_claim_build_q_vector",
         ] {
             assert!(!source.contains(rejected), "rejected kernel {rejected}");
         }
@@ -183,7 +196,7 @@ mod tests {
         assert_eq!(manifest_fragment_ids("metal_source_fragments"), fragments);
         assert_eq!(
             manifest_fragment_ids("cpu_delegated_slots"),
-            ["registers_read_write", "ram_output_check"]
+            ["ram_output_check"]
         );
     }
 }

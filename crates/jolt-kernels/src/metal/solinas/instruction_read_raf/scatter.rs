@@ -1,6 +1,7 @@
 use std::mem::size_of;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
@@ -259,6 +260,7 @@ impl SolinasMetal {
         config: InstructionReadRafCompatibilityScatterConfig,
         bytecode: Option<BytecodeAddressFusedScatterRequest>,
     ) -> Result<InstructionReadRafDenseGroupedPlanes, MetalError> {
+        let prepare_started = Instant::now();
         let source_receipt = source.receipt();
         let rows = source_receipt.rows();
         let log_rows = rows.ilog2() as usize;
@@ -341,7 +343,15 @@ impl SolinasMetal {
         }
 
         let chunks = source.counts().len();
+        let layout_started = Instant::now();
         let (chunk_bases, segment_offsets, segment_ranges) = scatter_layout(source.counts(), rows)?;
+        tracing::info!(
+            target: "jolt::metal",
+            rows,
+            chunks,
+            wall_ns = duration_nanos(layout_started.elapsed()),
+            "prepared Instruction Read-RAF compatibility-scatter layout"
+        );
         let out_log = log_rows / 2;
         let (out_point, in_point) = r_reduction.split_at(out_log);
         let e_in = EqPolynomial::<AkitaField>::evals(in_point, None)
@@ -395,6 +405,7 @@ impl SolinasMetal {
             .ok_or(MetalError::InputTooLong(rows))?;
         self.validate_additional_working_set(additional)?;
 
+        let allocation_started = Instant::now();
         let packed_rows = self
             .device
             .new_buffer(packed_rows_bytes, MTLResourceOptions::StorageModeShared);
@@ -477,6 +488,15 @@ impl SolinasMetal {
                 rows,
             )?,
         };
+        tracing::info!(
+            target: "jolt::metal",
+            rows,
+            output_bytes = packed_rows_bytes + lookups_bytes + inverse_bytes + weights_bytes,
+            wall_ns = duration_nanos(allocation_started.elapsed()),
+            storage_mode = "shared",
+            "allocated Instruction Read-RAF compatibility-scatter outputs"
+        );
+        let dispatch_started = Instant::now();
         let params = buffer_from_slice(&self.device, std::slice::from_ref(&params));
         let command_buffer = self.queue.new_command_buffer();
         autoreleasepool(|| {
@@ -532,6 +552,22 @@ impl SolinasMetal {
         });
         command_buffer.commit();
         command_buffer.wait_until_completed();
+        tracing::info!(
+            target: "jolt::metal",
+            rows,
+            bytecode_descriptors = bytecode_receipt.map_or(0, |receipt| receipt.descriptors()),
+            bytecode_max_descriptors_per_chunk = bytecode_receipt
+                .map_or(0, |receipt| receipt.max_descriptors_per_chunk()),
+            bytecode_pivots = bytecode_receipt.map_or(0, |receipt| receipt.pivots()),
+            bytecode_max_pivots_per_chunk = bytecode_receipt
+                .map_or(0, |receipt| receipt.max_pivots_per_chunk()),
+            dynamic_threadgroup_bytes = threadgroup_bytes,
+            static_threadgroup_bytes = limits.static_threadgroup_memory_length,
+            threadgroup_memory_limit_bytes = maximum_threadgroup_bytes,
+            wall_ns = duration_nanos(dispatch_started.elapsed()),
+            storage_mode = "shared",
+            "completed Instruction Read-RAF compatibility scatter"
+        );
         let status_value = read_status(&status);
         if status_value != 0 {
             return Err(invalid_scatter(
@@ -622,14 +658,22 @@ impl SolinasMetal {
             complete_overwrite: true,
             bytecode: bytecode_receipt,
         };
-        Ok(InstructionReadRafDenseGroupedPlanes {
+        let planes = InstructionReadRafDenseGroupedPlanes {
             packed_rows,
             lookups,
             inverse,
             weights,
             receipt,
             bytecode_carrier,
-        })
+        };
+        tracing::info!(
+            target: "jolt::metal",
+            rows,
+            wall_ns = duration_nanos(prepare_started.elapsed()),
+            storage_mode = "shared",
+            "prepared Instruction Read-RAF compatibility-scatter planes"
+        );
+        Ok(planes)
     }
 }
 
@@ -896,4 +940,8 @@ fn next_completion_serial() -> Result<u64, MetalError> {
 
 fn invalid_scatter(message: impl Into<String>) -> MetalError {
     MetalError::InvalidInstructionReadRafGrouped(message.into())
+}
+
+fn duration_nanos(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }

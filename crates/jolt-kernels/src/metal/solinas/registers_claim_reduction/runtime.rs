@@ -92,7 +92,19 @@ impl RegistersClaimResidentRdPlane {
         self.metadata.source_generation
     }
 
-    fn validate_for(
+    pub(crate) const fn resident_bytes(&self) -> u64 {
+        self.metadata.plane_bytes
+    }
+
+    pub(crate) const fn completion_serial(&self) -> u64 {
+        self.metadata.completion_serial
+    }
+
+    pub(crate) fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    pub(crate) fn validate_for(
         &self,
         context: &SolinasMetal,
         geometry: RegistersClaimGeometry,
@@ -112,6 +124,16 @@ impl RegistersClaimResidentRdPlane {
             context.device_registry_id(),
             self.metadata.allocation_identity,
         )
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RegistersClaimResidentRdPlane {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.visit_simple(
+            allocative::Key::new("device_rows"),
+            self.metadata.plane_bytes as usize,
+        );
     }
 }
 
@@ -139,6 +161,36 @@ pub(crate) struct RegistersClaimAliasFoldObservation {
 }
 
 impl SolinasMetal {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn prepare_test_registers_claim_resident_rd_plane(
+        &self,
+        rows: usize,
+        physical_rows: usize,
+        mut value: impl FnMut(usize) -> u64,
+    ) -> Result<RegistersClaimResidentRdPlane, RegistersClaimError> {
+        if physical_rows == 0 || physical_rows > rows {
+            return Err(RegistersClaimError::InvalidState(
+                "test resident rd plane has invalid physical rows",
+            ));
+        }
+        let bytes = to_u64(
+            rows.checked_mul(size_of::<u64>())
+                .ok_or(MetalError::InputTooLong(rows))?,
+        )?;
+        self.validate_buffer_length(bytes)?;
+        let buffer = self
+            .device
+            .new_buffer(bytes, MTLResourceOptions::StorageModeShared);
+        // SAFETY: the new shared buffer is exclusively owned and has `rows`
+        // contiguous u64 elements.
+        let values = unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<u64>(), rows) };
+        for (row, output) in values.iter_mut().take(physical_rows).enumerate() {
+            *output = value(row);
+        }
+        values[physical_rows..].fill(0);
+        self.attach_registers_claim_resident_rd_plane(buffer, rows, 1, 1)
+    }
+
     pub(crate) fn attach_registers_claim_resident_rd_plane(
         &self,
         buffer: Buffer,

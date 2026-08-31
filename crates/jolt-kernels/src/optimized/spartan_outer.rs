@@ -42,10 +42,14 @@
 //! reference's own `jolt-poly` interpolation path.
 
 use std::collections::BTreeMap;
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+use std::time::{Duration, Instant};
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+use jolt_claims::NoChallenges;
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::signed::{S192, S256, S64};
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -93,7 +97,8 @@ use super::instruction_input::prepare_instruction_input_rows;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use super::ram_trace::{
     RamAccessBundle, RamAccessCollection, RamAccessCollectionChunkWriter,
-    RamAccessCollectionStorage,
+    RamAccessCollectionStorage, RamReadWriteRecordCollection,
+    RamReadWriteRecordCollectionChunkWriter, RamReadWriteRecordCollectionStorage,
 };
 use super::support::collect_rows;
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -108,11 +113,14 @@ use crate::metal::solinas::spartan_shift::{
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
     instruction_input_row_bytes, instruction_read_raf_claim_and_count_rank,
-    spartan_outer_uniskip_residual_row_bytes, BooleanityRow, InstructionInputRow,
+    spartan_outer_uniskip_successor_row_bytes, BooleanityRow, InstructionInputRow,
     InstructionInputRows, InstructionReadRafStage1ChunkWriter, InstructionReadRafStage1Owner,
-    InstructionReadRafStage1Storage, MetalError, RegistersValInstructionSourceRequest,
-    SolinasMetal, SpartanOuterUniskipConfig, SpartanOuterUniskipResidualRow,
-    SpartanOuterUniskipRow, SpartanOuterUniskipRows, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+    InstructionReadRafStage1Storage, MetalError, RegistersReadWriteStage1ChunkWriter,
+    RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,
+    RegistersValInstructionSourceRequest, SolinasMetal, SpartanOuterUniskipColdRow,
+    SpartanOuterUniskipConfig, SpartanOuterUniskipRow, SpartanOuterUniskipRows,
+    SpartanOuterUniskipSuccessorRow, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+    RAM_READ_WRITE_CYCLE_TILE_LOG2,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -459,6 +467,7 @@ struct Stage1ProjectionRow {
     outer: SpartanOuterRow,
     instruction: Stage1InstructionFacts,
     ram_access: RamAccessBundle,
+    register_indices: [Option<u8>; 2],
     register_write: Option<(u8, u64, u64)>,
 }
 
@@ -488,6 +497,9 @@ impl WitnessBundle for Stage1ProjectionRow {
         } else {
             0
         };
+        let register_write = row
+            .rd_index()
+            .map(|register| (register, row.rd_pre_value(), row.rd_write_value()));
         Ok(Self {
             outer,
             instruction: Stage1InstructionFacts {
@@ -505,9 +517,8 @@ impl WitnessBundle for Stage1ProjectionRow {
                 ram_inc,
                 ram_hamming_weight: RamHammingWeight::extract(row, next, env)?,
             },
-            register_write: row
-                .rd_index()
-                .map(|register| (register, row.rd_pre_value(), row.rd_write_value())),
+            register_indices: [row.rs1_index(), row.rs2_index()],
+            register_write,
         })
     }
 
@@ -547,7 +558,8 @@ fn pack_stage1_instruction_source(
 #[derive(Clone, Copy)]
 struct PackedStage1PaddingRow {
     instruction_input: InstructionInputRow,
-    residual: SpartanOuterUniskipResidualRow,
+    successor: SpartanOuterUniskipSuccessorRow,
+    cold: SpartanOuterUniskipColdRow,
     instruction_source: BooleanityRow,
     table_plus_one: u8,
     raf: bool,
@@ -625,12 +637,14 @@ fn pack_stage1_padding_row(
             })?;
     let packed = SpartanOuterUniskipRow::from_spartan_outer(&projected.outer);
     let (instruction_input, residual) = packed.split();
+    let (successor, cold) = residual.partition();
     let (instruction_source, table_plus_one, raf) =
         pack_stage1_instruction_source(projected.instruction)?;
     let full_mask = |value: bool| if value { u32::MAX } else { 0 };
     Ok(PackedStage1PaddingRow {
         instruction_input,
-        residual,
+        successor,
+        cold,
         instruction_source,
         table_plus_one,
         raf,
@@ -648,14 +662,16 @@ fn pack_stage1_padding_row(
 #[cfg(all(feature = "metal", target_os = "macos"))]
 fn fill_stage1_outer_padding(
     instruction_input: &mut [InstructionInputRow],
-    residual: &mut [SpartanOuterUniskipResidualRow],
+    successor: &mut [SpartanOuterUniskipSuccessorRow],
+    cold: &mut [SpartanOuterUniskipColdRow],
     start: usize,
     count: usize,
     padding: &PackedStage1PaddingRow,
 ) {
     let end = start + count;
     instruction_input[start..end].fill(padding.instruction_input);
-    residual[start..end].fill(padding.residual);
+    successor[start..end].fill(padding.successor);
+    cold[start..end].fill(padding.cold);
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -696,27 +712,37 @@ fn fill_stage1_shift_padding(
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
-struct Stage1OwnerChunkWriters<'borrow, 'instruction, 'bytecode, 'ram> {
+struct Stage1OwnerChunkWriters<'borrow, 'instruction, 'bytecode, 'ram, 'ram_records, 'registers> {
     instruction: &'borrow mut InstructionReadRafStage1ChunkWriter<'instruction>,
     bytecode: Option<&'borrow mut BytecodeAddressStage1TopologyChunkWriter<'bytecode>>,
     ram_access: Option<&'borrow mut RamAccessCollectionChunkWriter<'ram>>,
+    ram_records: Option<&'borrow mut RamReadWriteRecordCollectionChunkWriter<'ram_records>>,
+    registers: Option<&'borrow mut RegistersReadWriteStage1ChunkWriter<'registers>>,
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
-impl Stage1OwnerChunkWriters<'_, '_, '_, '_> {
+impl Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_> {
     fn len(&self) -> usize {
         self.instruction.len()
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one decoded row feeds several independently optional Stage-1 owners"
+    )]
     fn push(
         &mut self,
         row_index: usize,
         explicit_rows: usize,
         instruction: Stage1InstructionFacts,
         ram_access: RamAccessBundle,
+        register_indices: [Option<u8>; 2],
         register_write: Option<(u8, u64, u64)>,
         bytecode_scratch: &mut BytecodeAddressStage1TopologyScratch,
     ) -> Result<(), MetalError> {
+        self.instruction.record_ram_remap_compatibility(
+            ram_access.ram_hamming_weight.0 == instruction.remapped_ram_address.0.is_some(),
+        );
         let (row, table_plus_one, raf) = pack_stage1_instruction_source(instruction)?;
         if let Some(topology) = self.bytecode.as_mut() {
             let rank = if row_index < explicit_rows {
@@ -745,6 +771,14 @@ impl Stage1OwnerChunkWriters<'_, '_, '_, '_> {
                 MetalError::InvalidRamAccessCollection(error.reason().to_owned())
             })?;
         }
+        if let Some(writer) = self.ram_records.as_mut() {
+            writer.push(ram_access).map_err(|error| {
+                MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+            })?;
+        }
+        if let Some(writer) = self.registers.as_mut() {
+            writer.push(register_indices, register_write)?;
+        }
         Ok(())
     }
 
@@ -753,6 +787,9 @@ impl Stage1OwnerChunkWriters<'_, '_, '_, '_> {
         padding: &PackedStage1PaddingRow,
         count: usize,
     ) -> Result<(), MetalError> {
+        self.instruction.record_ram_remap_compatibility(
+            padding.ram_access.ram_hamming_weight.0 == padding.ram_access.address.0.is_some(),
+        );
         self.instruction.fill_repeated_with_register_write(
             padding.instruction_source,
             padding.table_plus_one,
@@ -767,6 +804,16 @@ impl Stage1OwnerChunkWriters<'_, '_, '_, '_> {
                 .map_err(|error| {
                     MetalError::InvalidRamAccessCollection(error.reason().to_owned())
                 })?;
+        }
+        if let Some(writer) = self.ram_records.as_mut() {
+            writer
+                .fill_repeated(padding.ram_access, count)
+                .map_err(|error| {
+                    MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+                })?;
+        }
+        if let Some(writer) = self.registers.as_mut() {
+            writer.fill_empty(count)?;
         }
         Ok(())
     }
@@ -783,17 +830,31 @@ impl Stage1OwnerChunkWriters<'_, '_, '_, '_> {
                 MetalError::InvalidRamAccessCollection(error.reason().to_owned())
             })?;
         }
+        if let Some(writer) = self.ram_records.as_mut() {
+            writer.finish().map_err(|error| {
+                MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+            })?;
+        }
         Ok(())
     }
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
-fn run_stage1_owner_chunks<'instruction, 'bytecode, 'ram, R>(
+fn run_stage1_owner_chunks<'instruction, 'bytecode, 'ram, 'ram_records, 'registers, R>(
     instruction: &mut [InstructionReadRafStage1ChunkWriter<'instruction>],
     bytecode: Option<&mut [BytecodeAddressStage1TopologyChunkWriter<'bytecode>]>,
     ram_access: Option<&mut [RamAccessCollectionChunkWriter<'ram>]>,
+    ram_records: Option<&mut [RamReadWriteRecordCollectionChunkWriter<'ram_records>]>,
+    registers: Option<&mut [RegistersReadWriteStage1ChunkWriter<'registers>]>,
     fill: impl FnOnce(
-        &mut [Stage1OwnerChunkWriters<'_, 'instruction, 'bytecode, 'ram>],
+        &mut [Stage1OwnerChunkWriters<
+            '_,
+            'instruction,
+            'bytecode,
+            'ram,
+            'ram_records,
+            'registers,
+        >],
     ) -> Result<R, MetalError>,
 ) -> Result<R, MetalError> {
     if bytecode
@@ -812,8 +873,25 @@ fn run_stage1_owner_chunks<'instruction, 'bytecode, 'ram, R>(
             "Stage-1 RAM chunk counts disagree".to_owned(),
         ));
     }
-    let mut chunks: Vec<Stage1OwnerChunkWriters<'_, 'instruction, 'bytecode, 'ram>> = match bytecode
+    if ram_records
+        .as_ref()
+        .is_some_and(|writers| writers.len() != instruction.len())
     {
+        return Err(MetalError::InvalidRamAccessCollection(
+            "Stage-1 RAM record chunk counts disagree".to_owned(),
+        ));
+    }
+    if registers
+        .as_ref()
+        .is_some_and(|writers| writers.len() != instruction.len())
+    {
+        return Err(MetalError::InvalidRegistersReadWriteState(
+            "Stage-1 register chunk counts disagree",
+        ));
+    }
+    let mut chunks: Vec<
+        Stage1OwnerChunkWriters<'_, 'instruction, 'bytecode, 'ram, 'ram_records, 'registers>,
+    > = match bytecode {
         Some(bytecode) => instruction
             .iter_mut()
             .zip(bytecode)
@@ -821,6 +899,8 @@ fn run_stage1_owner_chunks<'instruction, 'bytecode, 'ram, R>(
                 instruction,
                 bytecode: Some(bytecode),
                 ram_access: None,
+                ram_records: None,
+                registers: None,
             })
             .collect(),
         None => instruction
@@ -829,12 +909,24 @@ fn run_stage1_owner_chunks<'instruction, 'bytecode, 'ram, R>(
                 instruction,
                 bytecode: None,
                 ram_access: None,
+                ram_records: None,
+                registers: None,
             })
             .collect(),
     };
     if let Some(ram_access) = ram_access {
         for (chunk, ram_access) in chunks.iter_mut().zip(ram_access) {
             chunk.ram_access = Some(ram_access);
+        }
+    }
+    if let Some(ram_records) = ram_records {
+        for (chunk, ram_records) in chunks.iter_mut().zip(ram_records) {
+            chunk.ram_records = Some(ram_records);
+        }
+    }
+    if let Some(registers) = registers {
+        for (chunk, registers) in chunks.iter_mut().zip(registers) {
+            chunk.registers = Some(registers);
         }
     }
     fill(&mut chunks)
@@ -845,20 +937,168 @@ fn with_stage1_owner_chunks<R>(
     instruction: &mut InstructionReadRafStage1Storage,
     bytecode: Option<&mut BytecodeAddressStage1TopologyStorage>,
     ram_access: Option<&mut RamAccessCollectionStorage>,
-    fill: impl FnOnce(&mut [Stage1OwnerChunkWriters<'_, '_, '_, '_>]) -> Result<R, MetalError>,
+    ram_records: Option<&mut RamReadWriteRecordCollectionStorage>,
+    registers: Option<&mut RegistersReadWriteStage1Storage>,
+    fill: impl FnOnce(&mut [Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_>]) -> Result<R, MetalError>,
 ) -> Result<R, MetalError> {
-    instruction.with_chunk_writers(|instruction| match ram_access {
-        Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
-            Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
-                run_stage1_owner_chunks(instruction, Some(bytecode), Some(ram_access), fill)
+    instruction.with_chunk_writers(|instruction| match ram_records {
+        Some(ram_records) => ram_records.with_chunk_writers(|ram_records| match registers {
+            Some(registers) => registers.with_chunk_writers(|registers| match ram_access {
+                Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            Some(ram_access),
+                            Some(ram_records),
+                            Some(registers),
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        Some(ram_access),
+                        Some(ram_records),
+                        Some(registers),
+                        fill,
+                    ),
+                }),
+                None => match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            None,
+                            Some(ram_records),
+                            Some(registers),
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        None,
+                        Some(ram_records),
+                        Some(registers),
+                        fill,
+                    ),
+                },
             }),
-            None => run_stage1_owner_chunks(instruction, None, Some(ram_access), fill),
+            None => match ram_access {
+                Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            Some(ram_access),
+                            Some(ram_records),
+                            None,
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        Some(ram_access),
+                        Some(ram_records),
+                        None,
+                        fill,
+                    ),
+                }),
+                None => match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            None,
+                            Some(ram_records),
+                            None,
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        None,
+                        Some(ram_records),
+                        None,
+                        fill,
+                    ),
+                },
+            },
         }),
-        None => match bytecode {
-            Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
-                run_stage1_owner_chunks(instruction, Some(bytecode), None, fill)
+        None => match registers {
+            Some(registers) => registers.with_chunk_writers(|registers| match ram_access {
+                Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            Some(ram_access),
+                            None,
+                            Some(registers),
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        Some(ram_access),
+                        None,
+                        Some(registers),
+                        fill,
+                    ),
+                }),
+                None => match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            None,
+                            None,
+                            Some(registers),
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        None,
+                        None,
+                        Some(registers),
+                        fill,
+                    ),
+                },
             }),
-            None => run_stage1_owner_chunks(instruction, None, None, fill),
+            None => match ram_access {
+                Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            Some(ram_access),
+                            None,
+                            None,
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        Some(ram_access),
+                        None,
+                        None,
+                        fill,
+                    ),
+                }),
+                None => match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(instruction, Some(bytecode), None, None, None, fill)
+                    }),
+                    None => run_stage1_owner_chunks(instruction, None, None, None, None, fill),
+                },
+            },
         },
     })
 }
@@ -1016,6 +1256,7 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
             explicit_rows,
             compact_row_bytes = 48,
             residual_row_bytes = 112,
+            residual_allocations = 1,
             full_domain_copy_bytes = 0,
             full_domain_copy_dispatches = 0,
             host_repack_rows = 0,
@@ -1293,8 +1534,10 @@ fn record_bytecode_stage1_topology_span(
 pub(crate) struct InstructionReadRafStage1Ready {
     pub(crate) owner: InstructionReadRafStage1Owner,
     pub(crate) bytecode_topology: Option<BytecodeAddressStage1TopologyOwner>,
+    pub(crate) registers_read_write: Option<RegistersReadWriteStage1Source>,
     pub(crate) registers_val: Option<RegistersValInstructionSourceRequest>,
     pub(crate) ram_access: Option<RamAccessCollection>,
+    pub(crate) ram_read_write_records: Option<RamReadWriteRecordCollection>,
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -1308,13 +1551,19 @@ type ShiftStage1OwnerPreparedRows = (
 );
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage-1 admission selects each optional resident owner independently"
+)]
 pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
     context: &SolinasMetal,
     witness: &dyn JoltWitnessPlane<AkitaField>,
     cycles: usize,
     prepare_bytecode_carrier: bool,
+    prepare_registers_read_write: bool,
     prepare_registers_val: bool,
     prepare_ram_access: bool,
+    prepare_ram_read_write_records: bool,
 ) -> Result<Stage1OwnerPreparedRows, MetalSpartanDenseRowsError> {
     let owned = witness
         .owned_rows()
@@ -1347,123 +1596,195 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
         .then(|| RamAccessCollectionStorage::new(cycles, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
         .transpose()
         .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let mut ram_read_write_records = prepare_ram_read_write_records
+        .then(|| {
+            RamReadWriteRecordCollectionStorage::new(
+                cycles,
+                INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+                (cycles.ilog2() as usize).min(RAM_READ_WRITE_CYCLE_TILE_LOG2),
+            )
+        })
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let mut registers_read_write = prepare_registers_read_write
+        .then(|| context.prepare_registers_read_write_stage1_storage(cycles))
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
     let outer_rows = context
-        .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |instruction_input, residual| {
-            with_stage1_owner_chunks(
-                &mut source,
-                bytecode_topology.as_mut(),
-                ram_access.as_mut(),
-                |owner_chunks| {
-                    let fill_chunk =
-                        |chunk: usize,
-                         instruction_input: &mut [InstructionInputRow],
-                         residual: &mut [SpartanOuterUniskipResidualRow],
-                         owner: &mut Stage1OwnerChunkWriters<'_, '_, '_, '_>,
-                         bytecode_scratch: &mut BytecodeAddressStage1TopologyScratch|
-                         -> Result<(), MetalError> {
-                            if instruction_input.len() != owner.len()
-                                || residual.len() != owner.len()
-                            {
-                                return Err(MetalError::InvalidInstructionReadRafGrouped(
-                                    "Stage-1 owner chunks disagree on row count".to_owned(),
-                                ));
-                            }
-                            let chunk_start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
-                            let parts =
-                                stage1_chunk_parts(chunk_start, owner.len(), explicit_rows, cycles);
-                            for offset in 0..parts.physical {
-                                let row_index = chunk_start + offset;
-                                let projected: Stage1ProjectionRow = access
-                                    .window(row_index)
-                                    .map_err(|error| MetalError::SpartanOuterRowExtraction {
-                                        row: row_index,
-                                        message: error.to_string(),
-                                    })?;
-                                (instruction_input[offset], residual[offset]) =
-                                    SpartanOuterUniskipRow::from_spartan_outer(&projected.outer)
-                                        .split();
-                                owner.push(
-                                    row_index,
+        .prepare_spartan_outer_uniskip_rows_with_fill(
+            cycles,
+            |instruction_input, successor, cold| {
+                with_stage1_owner_chunks(
+                    &mut source,
+                    bytecode_topology.as_mut(),
+                    ram_access.as_mut(),
+                    ram_read_write_records.as_mut(),
+                    registers_read_write.as_mut(),
+                    |owner_chunks| {
+                        let fill_chunk =
+                            |chunk: usize,
+                             instruction_input: &mut [InstructionInputRow],
+                             successor: &mut [SpartanOuterUniskipSuccessorRow],
+                             cold: &mut [SpartanOuterUniskipColdRow],
+                             owner: &mut Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_>,
+                             bytecode_scratch: &mut BytecodeAddressStage1TopologyScratch|
+                             -> Result<(), MetalError> {
+                                if instruction_input.len() != owner.len()
+                                    || successor.len() != owner.len()
+                                    || cold.len() != owner.len()
+                                {
+                                    return Err(MetalError::InvalidInstructionReadRafGrouped(
+                                        "Stage-1 owner chunks disagree on row count".to_owned(),
+                                    ));
+                                }
+                                let chunk_start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+                                let parts = stage1_chunk_parts(
+                                    chunk_start,
+                                    owner.len(),
                                     explicit_rows,
-                                    projected.instruction,
-                                    projected.ram_access,
-                                    projected.register_write,
-                                    bytecode_scratch,
-                                )?;
-                            }
-                            let mut padding_start = parts.physical;
-                            if parts.regular_padding != 0 {
-                                let regular = padding.regular.ok_or_else(|| {
-                                    MetalError::InvalidInstructionReadRafGrouped(
-                                        "regular Stage-1 padding template is missing".to_owned(),
-                                    )
-                                })?;
-                                fill_stage1_outer_padding(
-                                    instruction_input,
-                                    residual,
-                                    padding_start,
-                                    parts.regular_padding,
-                                    &regular,
+                                    cycles,
                                 );
-                                owner.fill_padding(&regular, parts.regular_padding)?;
-                                padding_start += parts.regular_padding;
-                            }
-                            if parts.terminal_padding != 0 {
-                                let terminal = padding.terminal.ok_or_else(|| {
-                                    MetalError::InvalidInstructionReadRafGrouped(
-                                        "terminal Stage-1 padding template is missing".to_owned(),
-                                    )
-                                })?;
-                                fill_stage1_outer_padding(
-                                    instruction_input,
-                                    residual,
-                                    padding_start,
-                                    parts.terminal_padding,
-                                    &terminal,
-                                );
-                                owner.fill_padding(&terminal, parts.terminal_padding)?;
-                            }
-                            owner.finish(bytecode_scratch)
-                        };
-                    #[cfg(feature = "parallel")]
+                                for offset in 0..parts.physical {
+                                    let row_index = chunk_start + offset;
+                                    let projected: Stage1ProjectionRow =
+                                        access.window(row_index).map_err(|error| {
+                                            MetalError::SpartanOuterRowExtraction {
+                                                row: row_index,
+                                                message: error.to_string(),
+                                            }
+                                        })?;
+                                    let (input, residual_row) =
+                                        SpartanOuterUniskipRow::from_spartan_outer(
+                                            &projected.outer,
+                                        )
+                                        .split();
+                                    let (successor_row, cold_row) = residual_row.partition();
+                                    instruction_input[offset] = input.with_register_indices(
+                                        projected.register_indices[0],
+                                        projected.register_indices[1],
+                                        projected.register_write.map(|(index, _, _)| index),
+                                    )?;
+                                    successor[offset] = successor_row;
+                                    cold[offset] = cold_row;
+                                    owner.push(
+                                        row_index,
+                                        explicit_rows,
+                                        projected.instruction,
+                                        projected.ram_access,
+                                        projected.register_indices,
+                                        projected.register_write,
+                                        bytecode_scratch,
+                                    )?;
+                                }
+                                let mut padding_start = parts.physical;
+                                if parts.regular_padding != 0 {
+                                    let regular = padding.regular.ok_or_else(|| {
+                                        MetalError::InvalidInstructionReadRafGrouped(
+                                            "regular Stage-1 padding template is missing"
+                                                .to_owned(),
+                                        )
+                                    })?;
+                                    fill_stage1_outer_padding(
+                                        instruction_input,
+                                        successor,
+                                        cold,
+                                        padding_start,
+                                        parts.regular_padding,
+                                        &regular,
+                                    );
+                                    owner.fill_padding(&regular, parts.regular_padding)?;
+                                    padding_start += parts.regular_padding;
+                                }
+                                if parts.terminal_padding != 0 {
+                                    let terminal = padding.terminal.ok_or_else(|| {
+                                        MetalError::InvalidInstructionReadRafGrouped(
+                                            "terminal Stage-1 padding template is missing"
+                                                .to_owned(),
+                                        )
+                                    })?;
+                                    fill_stage1_outer_padding(
+                                        instruction_input,
+                                        successor,
+                                        cold,
+                                        padding_start,
+                                        parts.terminal_padding,
+                                        &terminal,
+                                    );
+                                    owner.fill_padding(&terminal, parts.terminal_padding)?;
+                                }
+                                owner.finish(bytecode_scratch)
+                            };
+                        #[cfg(feature = "parallel")]
                     instruction_input
                         .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
-                        .zip(residual.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                        .zip(successor.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                        .zip(cold.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
                         .zip(owner_chunks.par_iter_mut())
                         .enumerate()
                         .try_for_each_init(
                             BytecodeAddressStage1TopologyScratch::new,
-                            |scratch, (chunk, ((instruction_input, residual), owner))| {
-                                fill_chunk(chunk, instruction_input, residual, owner, scratch)
+                            |scratch,
+                             (chunk, (((instruction_input, successor), cold), owner))| {
+                                fill_chunk(
+                                    chunk,
+                                    instruction_input,
+                                    successor,
+                                    cold,
+                                    owner,
+                                    scratch,
+                                )
                             },
                         )?;
-                    #[cfg(not(feature = "parallel"))]
-                    {
-                        let mut scratch = BytecodeAddressStage1TopologyScratch::new();
-                        for (chunk, ((instruction_input, residual), owner)) in instruction_input
-                            .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
-                            .zip(residual.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
-                            .zip(owner_chunks.iter_mut())
-                            .enumerate()
+                        #[cfg(not(feature = "parallel"))]
                         {
-                            fill_chunk(chunk, instruction_input, residual, owner, &mut scratch)?;
+                            let mut scratch = BytecodeAddressStage1TopologyScratch::new();
+                            for (chunk, (((instruction_input, successor), cold), owner)) in
+                                instruction_input
+                                    .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                                    .zip(
+                                        successor
+                                            .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
+                                    )
+                                    .zip(cold.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                    .zip(owner_chunks.iter_mut())
+                                    .enumerate()
+                            {
+                                fill_chunk(
+                                    chunk,
+                                    instruction_input,
+                                    successor,
+                                    cold,
+                                    owner,
+                                    &mut scratch,
+                                )?;
+                            }
                         }
-                    }
-                    Ok(())
-                },
-            )
-        })
+                        Ok(())
+                    },
+                )
+            },
+        )
         .map_err(MetalSpartanDenseRowsError::Metal)?
         .with_explicit_rows(explicit_rows)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let owner = source.seal().map_err(MetalSpartanDenseRowsError::Metal)?;
+    let registers_read_write = registers_read_write
+        .map(|storage| {
+            storage.seal(
+                outer_rows.clone_instruction_input_rows(),
+                &owner,
+                explicit_rows,
+            )
+        })
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
     let source_storage_ids = [
         outer_rows.instruction_input_allocation_identity(),
         outer_rows.allocation_identity(),
     ];
     let source_storage_bytes = [
         instruction_input_row_bytes(cycles).map_err(MetalSpartanDenseRowsError::Metal)?,
-        spartan_outer_uniskip_residual_row_bytes(cycles)
+        spartan_outer_uniskip_successor_row_bytes(cycles)
             .map_err(MetalSpartanDenseRowsError::Metal)?,
     ];
     let bytecode_topology = bytecode_topology
@@ -1472,6 +1793,10 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let ram_access = ram_access
         .map(RamAccessCollectionStorage::seal)
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let ram_read_write_records = ram_read_write_records
+        .map(RamReadWriteRecordCollectionStorage::seal)
         .transpose()
         .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
     let registers_val = prepare_registers_val
@@ -1492,8 +1817,10 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
     let prepared = InstructionReadRafStage1Ready {
         owner,
         bytecode_topology,
+        registers_read_write,
         registers_val,
         ram_access,
+        ram_read_write_records,
     };
     let _ = span.record(
         "compact_rows_storage_id",
@@ -1540,12 +1867,13 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
     let (outer_rows, shift_rows) = context
         .prepare_spartan_outer_uniskip_rows_with_shift_fill(
             cycles,
-            |instruction_input, residual, unexpanded_pc, pc, flags| {
+            |instruction_input, successor, cold, unexpanded_pc, pc, flags| {
                 #[cfg(feature = "parallel")]
                 {
                     instruction_input
                         .par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD)
-                        .zip(residual.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
+                        .zip(successor.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
+                        .zip(cold.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
                         .zip(unexpanded_pc.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
                         .zip(pc.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
                         .zip(flags.par_iter_mut())
@@ -1553,7 +1881,10 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
                         .try_for_each(
                             |(
                                 word_index,
-                                ((((instruction_input, residual), unexpanded_pc), pc), flags),
+                                (
+                                    ((((instruction_input, successor), cold), unexpanded_pc), pc),
+                                    flags,
+                                ),
                             )|
                              -> Result<(), MetalError> {
                                 let mut packed_flags = SpartanShiftFlagWord::default();
@@ -1566,8 +1897,12 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
                                             message: error.to_string(),
                                         }
                                     })?;
-                                    (instruction_input[offset], residual[offset]) =
+                                    let (input, residual) =
                                         SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                                    let (successor_row, cold_row) = residual.partition();
+                                    instruction_input[offset] = input;
+                                    successor[offset] = successor_row;
+                                    cold[offset] = cold_row;
                                     write_metal_spartan_shift_row(
                                         &row,
                                         offset,
@@ -1591,8 +1926,12 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
                                 message: error.to_string(),
                             }
                         })?;
-                        (instruction_input[row_index], residual[row_index]) =
+                        let (input, residual) =
                             SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                        let (successor_row, cold_row) = residual.partition();
+                        instruction_input[row_index] = input;
+                        successor[row_index] = successor_row;
+                        cold[row_index] = cold_row;
                         write_metal_spartan_shift_row(
                             &row,
                             row_index % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
@@ -1621,13 +1960,19 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage-1 admission selects each optional resident owner independently"
+)]
 pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
     context: &SolinasMetal,
     witness: &dyn JoltWitnessPlane<AkitaField>,
     cycles: usize,
     prepare_bytecode_carrier: bool,
+    prepare_registers_read_write: bool,
     prepare_registers_val: bool,
     prepare_ram_access: bool,
+    prepare_ram_read_write_records: bool,
 ) -> Result<ShiftStage1OwnerPreparedRows, MetalSpartanDenseRowsError> {
     context
         .validate_spartan_outer_uniskip_shift_rows_capacity(cycles)
@@ -1663,27 +2008,45 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
         .then(|| RamAccessCollectionStorage::new(cycles, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
         .transpose()
         .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let mut ram_read_write_records = prepare_ram_read_write_records
+        .then(|| {
+            RamReadWriteRecordCollectionStorage::new(
+                cycles,
+                INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+                (cycles.ilog2() as usize).min(RAM_READ_WRITE_CYCLE_TILE_LOG2),
+            )
+        })
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let mut registers_read_write = prepare_registers_read_write
+        .then(|| context.prepare_registers_read_write_stage1_storage(cycles))
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
     let (outer_rows, shift_rows) = context
         .prepare_spartan_outer_uniskip_rows_with_shift_fill(
             cycles,
-            |instruction_input, residual, unexpanded_pc, pc, flags| {
+            |instruction_input, successor, cold, unexpanded_pc, pc, flags| {
                 with_stage1_owner_chunks(
                     &mut source,
                     bytecode_topology.as_mut(),
                     ram_access.as_mut(),
+                    ram_read_write_records.as_mut(),
+                    registers_read_write.as_mut(),
                     |owner_chunks| {
                         let fill_chunk =
                             |chunk: usize,
                              instruction_input: &mut [InstructionInputRow],
-                             residual: &mut [SpartanOuterUniskipResidualRow],
+                             successor: &mut [SpartanOuterUniskipSuccessorRow],
+                             cold: &mut [SpartanOuterUniskipColdRow],
                              unexpanded_pc: &mut [u64],
                              pc: &mut [u64],
                              flags: &mut [SpartanShiftFlagWord],
-                             owner: &mut Stage1OwnerChunkWriters<'_, '_, '_, '_>,
+                             owner: &mut Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_>,
                              bytecode_scratch: &mut BytecodeAddressStage1TopologyScratch|
                              -> Result<(), MetalError> {
                                 if instruction_input.len() != owner.len()
-                                    || residual.len() != owner.len()
+                                    || successor.len() != owner.len()
+                                    || cold.len() != owner.len()
                                     || unexpanded_pc.len() != owner.len()
                                     || pc.len() != owner.len()
                                     || flags.len() != owner.len() / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD
@@ -1710,11 +2073,19 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                                                 message: error.to_string(),
                                             }
                                         })?;
-                                    (instruction_input[offset], residual[offset]) =
+                                    let (input, residual_row) =
                                         SpartanOuterUniskipRow::from_spartan_outer(
                                             &projected.outer,
                                         )
                                         .split();
+                                    let (successor_row, cold_row) = residual_row.partition();
+                                    instruction_input[offset] = input.with_register_indices(
+                                        projected.register_indices[0],
+                                        projected.register_indices[1],
+                                        projected.register_write.map(|(index, _, _)| index),
+                                    )?;
+                                    successor[offset] = successor_row;
+                                    cold[offset] = cold_row;
                                     write_metal_spartan_shift_row(
                                         &projected.outer,
                                         offset % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
@@ -1727,6 +2098,7 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                                         explicit_rows,
                                         projected.instruction,
                                         projected.ram_access,
+                                        projected.register_indices,
                                         projected.register_write,
                                         bytecode_scratch,
                                     )?;
@@ -1741,7 +2113,8 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                                     })?;
                                     fill_stage1_outer_padding(
                                         instruction_input,
-                                        residual,
+                                        successor,
+                                        cold,
                                         padding_start,
                                         parts.regular_padding,
                                         &regular,
@@ -1766,7 +2139,8 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                                     })?;
                                     fill_stage1_outer_padding(
                                         instruction_input,
-                                        residual,
+                                        successor,
+                                        cold,
                                         padding_start,
                                         parts.terminal_padding,
                                         &terminal,
@@ -1788,7 +2162,8 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                         #[cfg(feature = "parallel")]
                         instruction_input
                             .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
-                            .zip(residual.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                            .zip(successor.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                            .zip(cold.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
                             .zip(
                                 unexpanded_pc
                                     .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
@@ -1804,7 +2179,13 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                                     chunk,
                                     (
                                         (
-                                            (((instruction_input, residual), unexpanded_pc), pc),
+                                            (
+                                                (
+                                                    ((instruction_input, successor), cold),
+                                                    unexpanded_pc,
+                                                ),
+                                                pc,
+                                            ),
                                             flags,
                                         ),
                                         owner,
@@ -1813,7 +2194,8 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                                     fill_chunk(
                                         chunk,
                                         instruction_input,
-                                        residual,
+                                        successor,
+                                        cold,
                                         unexpanded_pc,
                                         pc,
                                         flags,
@@ -1828,12 +2210,19 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                             for (
                                 chunk,
                                 (
-                                    ((((instruction_input, residual), unexpanded_pc), pc), flags),
+                                    (
+                                        (
+                                            (((instruction_input, successor), cold), unexpanded_pc),
+                                            pc,
+                                        ),
+                                        flags,
+                                    ),
                                     owner,
                                 ),
                             ) in instruction_input
                                 .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
-                                .zip(residual.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(successor.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(cold.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
                                 .zip(
                                     unexpanded_pc
                                         .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
@@ -1846,7 +2235,8 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                                 fill_chunk(
                                     chunk,
                                     instruction_input,
-                                    residual,
+                                    successor,
+                                    cold,
                                     unexpanded_pc,
                                     pc,
                                     flags,
@@ -1865,13 +2255,23 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
         .with_explicit_rows(explicit_rows)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let owner = source.seal().map_err(MetalSpartanDenseRowsError::Metal)?;
+    let registers_read_write = registers_read_write
+        .map(|storage| {
+            storage.seal(
+                outer_rows.clone_instruction_input_rows(),
+                &owner,
+                explicit_rows,
+            )
+        })
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
     let source_storage_ids = [
         outer_rows.instruction_input_allocation_identity(),
         outer_rows.allocation_identity(),
     ];
     let source_storage_bytes = [
         instruction_input_row_bytes(cycles).map_err(MetalSpartanDenseRowsError::Metal)?,
-        spartan_outer_uniskip_residual_row_bytes(cycles)
+        spartan_outer_uniskip_successor_row_bytes(cycles)
             .map_err(MetalSpartanDenseRowsError::Metal)?,
     ];
     let bytecode_topology = bytecode_topology
@@ -1880,6 +2280,10 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let ram_access = ram_access
         .map(RamAccessCollectionStorage::seal)
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let ram_read_write_records = ram_read_write_records
+        .map(RamReadWriteRecordCollectionStorage::seal)
         .transpose()
         .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
     let registers_val = prepare_registers_val
@@ -1900,8 +2304,10 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
     let prepared = InstructionReadRafStage1Ready {
         owner,
         bytecode_topology,
+        registers_read_write,
         registers_val,
         ram_access,
+        ram_read_write_records,
     };
     let _ = span.record(
         "compact_rows_storage_id",
@@ -2025,31 +2431,39 @@ fn prepare_metal_spartan_outer_rows(
     );
     let _entered = span.enter();
     let prepared = context
-        .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |instruction_input, residual| {
+        .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |instruction_input, successor, cold| {
             #[cfg(feature = "parallel")]
             {
                 instruction_input
                     .par_iter_mut()
-                    .zip(residual.par_iter_mut())
+                    .zip(successor.par_iter_mut())
+                    .zip(cold.par_iter_mut())
                     .enumerate()
                     .try_for_each(
-                        |(row_index, (instruction_input, residual))| -> Result<(), MetalError> {
+                        |(row_index, ((instruction_input, successor), cold))| -> Result<(), MetalError> {
                             let row = access.row(row_index).map_err(|error| {
                                 MetalError::SpartanOuterRowExtraction {
                                     row: row_index,
                                     message: error.to_string(),
                                 }
                             })?;
-                            (*instruction_input, *residual) =
+                            let (input, residual) =
                                 SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                            let (successor_row, cold_row) = residual.partition();
+                            *instruction_input = input;
+                            *successor = successor_row;
+                            *cold = cold_row;
                             Ok(())
                         },
                     )?;
             }
             #[cfg(not(feature = "parallel"))]
             {
-                for (row_index, (instruction_input, residual)) in
-                    instruction_input.iter_mut().zip(residual).enumerate()
+                for (row_index, ((instruction_input, successor), cold)) in instruction_input
+                    .iter_mut()
+                    .zip(successor)
+                    .zip(cold)
+                    .enumerate()
                 {
                     let row = access.row(row_index).map_err(|error| {
                         MetalError::SpartanOuterRowExtraction {
@@ -2057,8 +2471,12 @@ fn prepare_metal_spartan_outer_rows(
                             message: error.to_string(),
                         }
                     })?;
-                    (*instruction_input, *residual) =
+                    let (input, residual) =
                         SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                    let (successor_row, cold_row) = residual.partition();
+                    *instruction_input = input;
+                    *successor = successor_row;
+                    *cold = cold_row;
                 }
             }
             Ok(())
@@ -2691,6 +3109,192 @@ impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
     }
 }
 
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OptimizedOuterEvalResult {
+    pub(crate) round_polynomials: Vec<Vec<AkitaField>>,
+    pub(crate) final_claim: AkitaField,
+    pub(crate) output_claims: Vec<AkitaField>,
+}
+
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+#[derive(Clone, Debug)]
+pub(crate) struct OptimizedOuterEvalSample {
+    pub(crate) result: OptimizedOuterEvalResult,
+    pub(crate) member_wall: Duration,
+    pub(crate) prepare_wall: Duration,
+    pub(crate) rounds_wall: Duration,
+    pub(crate) finish_wall: Duration,
+    pub(crate) output_wall: Duration,
+}
+
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+pub(crate) fn compute_optimized_outer_eval_input_claim(
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    log_t: usize,
+    tau: &[AkitaField],
+    uniskip_challenge: AkitaField,
+) -> Result<AkitaField, String> {
+    if tau.len() != log_t + 2 {
+        return Err("Outer evaluator tau geometry is invalid".to_owned());
+    }
+    let cycles = 1usize
+        .checked_shl(u32::try_from(log_t).map_err(|error| error.to_string())?)
+        .ok_or_else(|| "Outer evaluator trace domain overflows usize".to_owned())?;
+    let rows = RowsStore::resolve(witness, cycles).map_err(|error| error.to_string())?;
+    let tau_low = &tau[..=log_t];
+    let lagrange = centered_lagrange_evals::<AkitaField>(DOMAIN, uniskip_challenge)
+        .map_err(|error| error.to_string())?;
+    let scaling = centered_lagrange_kernel(DOMAIN, tau[log_t + 1], uniskip_challenge)
+        .map_err(|error| error.to_string())?;
+    let split_eq =
+        GruenSplitEqPolynomial::new_with_scaling(tau_low, BindingOrder::LowToHigh, Some(scaling));
+    let e_out = split_eq.e_out_current();
+    let e_in = split_eq.e_in_current();
+    let access = rows.access();
+    let block = |x_out: usize| -> Result<(AkitaField, AkitaField), WitnessError> {
+        let mut q_zero = AkitaField::zero();
+        let mut q_one = AkitaField::zero();
+        for (x_in, &weight) in e_in.iter().enumerate() {
+            let row = access.row(x_out * e_in.len() + x_in)?;
+            let values = row_group_values(&row);
+            let (az_zero, bz_zero) = fold_group(&lagrange, &values.a_first, &values.b_first);
+            let (az_one, bz_one) = fold_group(
+                &lagrange[..SECOND_GROUP_LEN],
+                &values.a_second,
+                &values.b_second,
+            );
+            q_zero += weight * az_zero * bz_zero;
+            q_one += weight * az_one * bz_one;
+        }
+        Ok((e_out[x_out] * q_zero, e_out[x_out] * q_one))
+    };
+    let add = |left: (AkitaField, AkitaField), right: (AkitaField, AkitaField)| {
+        (left.0 + right.0, left.1 + right.1)
+    };
+    #[cfg(feature = "parallel")]
+    let (q_zero, q_one) = (0..e_out.len())
+        .into_par_iter()
+        .map(block)
+        .try_reduce(
+            || (AkitaField::zero(), AkitaField::zero()),
+            |left, right| Ok(add(left, right)),
+        )
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(feature = "parallel"))]
+    let (q_zero, q_one) = {
+        let mut total = (AkitaField::zero(), AkitaField::zero());
+        for x_out in 0..e_out.len() {
+            total = add(total, block(x_out).map_err(|error| error.to_string())?);
+        }
+        total
+    };
+    let eq_one = split_eq.current_scalar() * tau_low[log_t];
+    let eq_zero = split_eq.current_scalar() - eq_one;
+    Ok(eq_zero * q_zero + eq_one * q_one)
+}
+
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+pub(crate) fn run_optimized_outer_eval(
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    log_t: usize,
+    tau: &[AkitaField],
+    uniskip_challenge: AkitaField,
+    input_claim: AkitaField,
+    challenges: &[AkitaField],
+) -> Result<OptimizedOuterEvalSample, String> {
+    let cycles = 1usize
+        .checked_shl(u32::try_from(log_t).map_err(|error| error.to_string())?)
+        .ok_or_else(|| "Outer evaluator trace domain overflows usize".to_owned())?;
+    if tau.len() != log_t + 2 || challenges.len() != log_t + 1 {
+        return Err("Outer evaluator challenge geometry is invalid".to_owned());
+    }
+    let rows = RowsStore::resolve(witness, cycles).map_err(|error| error.to_string())?;
+    let relation = OuterRemainder::new(
+        SpartanOuterDimensions::rv64(log_t),
+        tau.to_vec(),
+        uniskip_challenge,
+    );
+    let claims =
+        jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output(
+            input_claim,
+        );
+    let points = jolt_verifier::stages::stage1::outer_remainder::OuterRemainderInputClaims::<
+        Vec<AkitaField>,
+    >::default();
+    let no_challenges = NoChallenges::<AkitaField>::default();
+    let carry = SpartanOuterCarry {
+        log_t,
+        tau: tau.to_vec(),
+        rows,
+        t1_values: Vec::new(),
+    };
+
+    let member_started = Instant::now();
+    let prepare_started = Instant::now();
+    let mut kernel = OuterRemainderKernel::prepare(
+        carry,
+        &ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &no_challenges,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let prepare_wall = prepare_started.elapsed();
+
+    let rounds_started = Instant::now();
+    let mut bind = None;
+    let mut previous_claim = input_claim;
+    let mut round_polynomials = Vec::with_capacity(challenges.len());
+    for (round, &challenge) in challenges.iter().enumerate() {
+        let polynomial = kernel
+            .prove_round(bind, round, previous_claim)
+            .map_err(|error| error.to_string())?;
+        previous_claim = polynomial.evaluate(challenge);
+        round_polynomials.push(polynomial.coefficients().to_vec());
+        bind = Some(challenge);
+    }
+    let rounds_wall = rounds_started.elapsed();
+
+    let finish_started = Instant::now();
+    let final_challenge = challenges
+        .last()
+        .copied()
+        .ok_or_else(|| "Outer evaluator has no terminal challenge".to_owned())?;
+    kernel
+        .finish_rounds(final_challenge)
+        .map_err(|error| error.to_string())?;
+    let finish_wall = finish_started.elapsed();
+
+    let output_started = Instant::now();
+    let output_points = relation
+        .derive_opening_points(challenges, &points)
+        .map_err(|error| error.to_string())?;
+    let output_claims = kernel
+        .output_claims(&claims)
+        .map_err(|error| error.to_string())?;
+    kernel
+        .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
+        .map_err(|error| error.to_string())?;
+    let output_claims = output_claims.opening_values();
+    let output_wall = output_started.elapsed();
+
+    Ok(OptimizedOuterEvalSample {
+        result: OptimizedOuterEvalResult {
+            round_polynomials,
+            final_claim: previous_claim,
+            output_claims,
+        },
+        member_wall: member_started.elapsed(),
+        prepare_wall,
+        rounds_wall,
+        finish_wall,
+        output_wall,
+    })
+}
+
 /// Byte parity against the reference kernels: identical uni-skip first-round
 /// polynomials, identical remainder round polynomials at every round,
 /// identical typed output claims — from identical `ProverInputs`, over
@@ -3221,6 +3825,35 @@ mod tests {
                 assert_eq!(
                     reconstructed_increment, row.instruction.fused_inc.0,
                     "fused increment at cycle {cycle}"
+                );
+            }
+        });
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn stage1_projection_register_source_matches_register_cycle_rows() {
+        use crate::optimized::registers_read_write::RegisterCycleRow;
+
+        with_sample_backend(|backend| {
+            let projected: Vec<Stage1ProjectionRow> = backend.bundles().unwrap();
+            let expected: Vec<RegisterCycleRow> = backend.bundles().unwrap();
+            assert_eq!(projected.len(), expected.len());
+            for (cycle, (projected, expected)) in projected.into_iter().zip(expected).enumerate() {
+                assert_eq!(
+                    projected.register_indices[0],
+                    expected.rs1.map(|(index, _)| index),
+                    "rs1 index at cycle {cycle}"
+                );
+                assert_eq!(
+                    projected.register_indices[1],
+                    expected.rs2.map(|(index, _)| index),
+                    "rs2 index at cycle {cycle}"
+                );
+                assert_eq!(
+                    projected.register_write,
+                    expected.rd.map(|(index, pre, post)| (index, pre, post)),
+                    "rd row at cycle {cycle}"
                 );
             }
         });

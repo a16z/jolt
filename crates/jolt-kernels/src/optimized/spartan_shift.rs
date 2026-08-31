@@ -31,7 +31,7 @@
 //!   ring-accumulator `fmadd` for the field-by-field `Q` products.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
-#[cfg(all(test, feature = "metal", target_os = "macos"))]
+#[cfg(all(feature = "metal", target_os = "macos"))]
 use jolt_field::AkitaField;
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, SignedScalarAccumulator};
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
@@ -48,7 +48,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::support::collect_rows;
-#[cfg(all(test, feature = "metal", target_os = "macos"))]
+#[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
     spartan_shift::{SpartanShiftFlagWord, SpartanShiftResidentRows},
     MetalError, SolinasMetal,
@@ -74,7 +74,7 @@ struct SpartanShiftRow {
     is_noop: InstructionFlag,
 }
 
-#[cfg(all(test, feature = "metal", target_os = "macos"))]
+#[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) fn prepare_metal_spartan_shift_witness_rows(
     context: &SolinasMetal,
     witness: &dyn JoltWitnessPlane<AkitaField>,
@@ -172,7 +172,7 @@ pub(crate) fn prepare_metal_spartan_shift_witness_rows(
     })
 }
 
-#[cfg(all(test, feature = "metal", target_os = "macos"))]
+#[cfg(all(feature = "metal", target_os = "macos"))]
 fn write_spartan_shift_row(
     row: SpartanShiftRow,
     bit: usize,

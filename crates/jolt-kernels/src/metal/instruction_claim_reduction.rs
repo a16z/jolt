@@ -14,8 +14,9 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
 use super::solinas::instruction_claim_reduction::{
-    finalize_aliased_openings, round_polynomial_from_q_endpoints, InstructionClaimAliasedOpenings,
-    InstructionClaimKernelConfig, InstructionClaimSequence, PendingInstructionClaimInitialMessage,
+    finalize_aliased_openings, nontrivial_gamma_powers, round_polynomial_from_q_endpoints,
+    InstructionClaimAliasedOpenings, InstructionClaimKernelConfig, InstructionClaimSequence,
+    PendingInstructionClaimInitialMessage,
 };
 use super::solinas::{MetalError, ProductInstructionRoundService, ProductInstructionRoundStats};
 use super::spartan_product::{MetalInstructionClaimAliasOutput, MetalInstructionClaimHandoff};
@@ -111,7 +112,7 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
             }
             (
                 MetalInstructionClaimState::Joint(prefetched.service),
-                Some(prefetched.endpoints),
+                prefetched.endpoints,
             )
         } else {
             let prepared = self
@@ -143,27 +144,27 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
             joint_prefetched,
         );
         let _submit_entered = submit_span.enter();
-        let (pending_initial, state) = if initial_endpoints.is_some() {
-            (None, Some(state))
-        } else {
-            let MetalInstructionClaimState::Standalone(sequence) = state else {
-                return Err(KernelError::InvariantViolation {
-                    reason: "joint instruction state is missing its prefetched endpoints",
-                });
-            };
-            let pending = match (*sequence).submit_initial_message(e_in, e_out) {
-                Ok(pending) => pending,
-                Err(error) if instruction_prepare_fallback_reason(&error).is_some() => {
-                    tracing::warn!(
-                        target: "jolt::metal",
-                        error = %error,
-                        "instruction claim first submission failed before round absorption; using optimized CPU"
-                    );
-                    return OptimizedInstructionClaimReduction.prepare(session, witness, inputs);
-                }
-                Err(error) => return Err(metal_prepare_error(error)),
-            };
-            (Some(pending), None)
+        let (pending_initial, state) = match (initial_endpoints.is_some(), state) {
+            (true, state) => (None, Some(state)),
+            (false, MetalInstructionClaimState::Joint(service)) => {
+                (None, Some(MetalInstructionClaimState::Joint(service)))
+            }
+            (false, MetalInstructionClaimState::Standalone(sequence)) => {
+                let pending = match (*sequence).submit_initial_message(e_in, e_out) {
+                    Ok(pending) => pending,
+                    Err(error) if instruction_prepare_fallback_reason(&error).is_some() => {
+                        tracing::warn!(
+                            target: "jolt::metal",
+                            error = %error,
+                            "instruction claim first submission failed before round absorption; using optimized CPU"
+                        );
+                        return OptimizedInstructionClaimReduction
+                            .prepare(session, witness, inputs);
+                    }
+                    Err(error) => return Err(metal_prepare_error(error)),
+                };
+                (Some(pending), None)
+            }
         };
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
@@ -275,6 +276,23 @@ enum MetalInstructionClaimState {
 }
 
 impl MetalInstructionClaimState {
+    fn take_initial_message(&mut self) -> Result<[AkitaField; 2], SumcheckError<AkitaField>> {
+        match self {
+            Self::Standalone(_) => Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "standalone Instruction first message was already consumed".to_string(),
+            }),
+            Self::Joint(service) => service
+                .lock()
+                .map_err(|_| SumcheckError::ComputeBackend {
+                    backend: "metal",
+                    message: "joint Product/Instruction service lock is poisoned".to_string(),
+                })?
+                .take_instruction_initial_message()
+                .map_err(metal_round_error),
+        }
+    }
+
     fn current_elements(&self) -> Result<usize, SumcheckError<AkitaField>> {
         match self {
             Self::Standalone(sequence) => Ok(sequence.current_elements()),
@@ -320,9 +338,13 @@ impl MetalInstructionClaimState {
         }
     }
 
-    fn finish(&mut self, challenge: AkitaField) -> Result<AkitaField, MetalError> {
+    fn finish(&mut self, challenge: AkitaField) -> Result<(AkitaField, usize), MetalError> {
         match self {
-            Self::Standalone(sequence) => sequence.finish(challenge),
+            Self::Standalone(sequence) => {
+                let claim = sequence.finish(challenge)?;
+                let retired_bytes = sequence.retire_transition_state()?;
+                Ok((claim, retired_bytes))
+            }
             Self::Joint(service) => service
                 .lock()
                 .map_err(|_| {
@@ -446,13 +468,15 @@ impl ProveRounds<AkitaField> for MetalInstructionClaimKernel {
                     });
                 }
                 message
-            } else {
-                if self.state.is_some() {
+            } else if let Some(state) = &mut self.state {
+                if self.pending_initial.is_some() {
                     return Err(SumcheckError::ComputeBackend {
                         backend: "metal",
-                        message: "instruction claim first message was already consumed".to_string(),
+                        message: "Instruction first-message ownership is ambiguous".to_string(),
                     });
                 }
+                state.take_initial_message()?
+            } else {
                 let pending =
                     self.pending_initial
                         .take()
@@ -483,7 +507,13 @@ impl ProveRounds<AkitaField> for MetalInstructionClaimKernel {
                 backend: "metal",
                 message: "instruction claim resident sequence is missing".to_string(),
             })?;
-        self.combined_claim = Some(state.finish(bind).map_err(metal_round_error)?);
+        let (combined_claim, retired_bytes) = state.finish(bind).map_err(metal_round_error)?;
+        tracing::info!(
+            target: "jolt::metal",
+            retired_bytes,
+            "retired Instruction transition state after final bind"
+        );
+        self.combined_claim = Some(combined_claim);
         Ok(())
     }
 }
@@ -503,19 +533,11 @@ impl SumcheckKernel<AkitaField> for MetalInstructionClaimKernel {
         let combined_claim = self.combined_claim.ok_or_else(|| {
             metal_output_error("instruction claim final combined value is missing")
         })?;
-        let (e_in, e_out) = self.host.opening_weights();
         let span = tracing::info_span!(
             "MetalInstructionClaimReduction::output_claims",
             gpu_active_ns = tracing::field::Empty,
         );
         let _entered = span.enter();
-        let state = self
-            .state
-            .as_mut()
-            .ok_or_else(|| metal_output_error("instruction claim resident sequence is missing"))?;
-        let (lookup_operands, timing) =
-            state.openings(&e_in, &e_out).map_err(metal_output_error)?;
-        let _ = span.record("gpu_active_ns", duration_nanos(timing.gpu_active));
         let published = self
             .aliases
             .lock()
@@ -523,17 +545,41 @@ impl SumcheckKernel<AkitaField> for MetalInstructionClaimKernel {
             .take()
             .ok_or_else(|| metal_output_error("product remainder did not publish its aliases"))?;
         validate_alias_output(&published, self.row_storage_id, &self.host.challenges)?;
-        let openings = finalize_aliased_openings(
-            self.gamma,
-            combined_claim,
-            lookup_operands,
-            InstructionClaimAliasedOpenings {
-                lookup_output: published.values.lookup_output,
-                left_instruction_input: published.values.left_instruction_input,
-                right_instruction_input: published.values.right_instruction_input,
-            },
-        )
-        .map_err(metal_output_error)?;
+        let aliases = InstructionClaimAliasedOpenings {
+            lookup_output: published.values.lookup_output,
+            left_instruction_input: published.values.left_instruction_input,
+            right_instruction_input: published.values.right_instruction_input,
+        };
+        let (lookup_operands, gpu_active) =
+            if let Some(left_lookup_operand) = published.values.left_lookup_operand {
+                let powers = nontrivial_gamma_powers(self.gamma);
+                let inverse = powers[1].inverse().ok_or_else(|| {
+                    metal_output_error(
+                        "cached instruction aliases cannot recover right lookup at zero gamma",
+                    )
+                })?;
+                let right_lookup_operand = (combined_claim
+                    - aliases.lookup_output
+                    - powers[0] * left_lookup_operand
+                    - powers[2] * aliases.left_instruction_input
+                    - powers[3] * aliases.right_instruction_input)
+                    * inverse;
+                (
+                    [left_lookup_operand, right_lookup_operand],
+                    std::time::Duration::ZERO,
+                )
+            } else {
+                let (e_in, e_out) = self.host.opening_weights();
+                let state = self.state.as_mut().ok_or_else(|| {
+                    metal_output_error("instruction claim resident sequence is missing")
+                })?;
+                let (values, timing) = state.openings(&e_in, &e_out).map_err(metal_output_error)?;
+                (values, timing.gpu_active)
+            };
+        let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
+        let openings =
+            finalize_aliased_openings(self.gamma, combined_claim, lookup_operands, aliases)
+                .map_err(metal_output_error)?;
         Ok(InstructionClaimReductionOutputClaims {
             lookup_output: openings.lookup_output,
             left_lookup_operand: openings.left_lookup_operand,

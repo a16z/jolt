@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    mem::size_of,
     time::{Duration, Instant},
 };
 
@@ -42,8 +41,10 @@ use super::solinas::{
     outer_remainder_sequence_storage_bytes_with_config, spartan_outer_uniskip_invocation_bytes,
     spartan_outer_uniskip_row_bytes, InstructionInputRows, MetalError, OuterRemainderPhase,
     OuterRemainderSequence, OuterRemainderSequenceConfig, OuterRemainderSequenceStorage,
-    PendingSpartanStage1SourcePrimer, RegistersValInstructionSourceLease,
-    RegistersValInstructionSourceRequest, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
+    PendingRegistersReadWriteStage1Pipelines, PendingSpartanStage1SourcePrimer,
+    RegistersReadWriteStage1Source, RegistersValInstructionSourceLease,
+    RegistersValInstructionSourceRequest, SolinasMetal, SpartanOuterUniskipConfig,
+    SpartanOuterUniskipRows,
 };
 use super::spartan_dense::SpartanDenseResidentOwner;
 use super::spartan_product::MetalProductUniskipEndpointCarrier;
@@ -60,6 +61,15 @@ use crate::optimized::spartan_outer::{
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
+
+#[cfg(feature = "test-utils")]
+mod evaluation;
+#[cfg(feature = "test-utils")]
+pub use evaluation::{
+    OuterRemainderCpuEvalSample, OuterRemainderCpuMetalEvalFixture, OuterRemainderEvalError,
+    OuterRemainderEvalResult, OuterRemainderMetalEvalSample, OuterRemainderPipelineSnapshot,
+    OuterRemainderThreadSnapshot,
 };
 
 const OUTER_DOMAIN: usize = OUTER_UNISKIP_DOMAIN_SIZE;
@@ -260,27 +270,40 @@ impl MetalBackend {
         let maximum_buffer_bytes =
             outer_remainder_sequence_max_buffer_bytes_with_config(cycles, config.dispatch)
                 .map_err(metal_prepare_error)?;
+        let defer_state_b = self.config.spartan_product_remainder.reuse_outer_state_a
+            && cycles >= self.config.spartan_product_remainder.trace_cutoff_elements
+            && session
+                .state::<SpartanOuterUniskipRows>()
+                .is_some_and(|rows| {
+                    rows.len() == cycles
+                        && rows.device_registry_id() == self.context.device_registry_id()
+                });
         let span = tracing::info_span!(
             "MetalOuterRemainder::storage_prepare",
             cycles,
             planned_device_bytes,
             maximum_buffer_bytes,
+            defer_state_b,
             initialization_mode = config.dispatch.storage_initialization.as_str(),
             admitted = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
         );
         let _span = span.enter();
-        match self
-            .context
-            .prepare_outer_remainder_sequence_storage(cycles, config.dispatch)
-        {
+        let storage = if defer_state_b {
+            self.context
+                .prepare_outer_remainder_sequence_storage_deferring_state_b(cycles, config.dispatch)
+        } else {
+            self.context
+                .prepare_outer_remainder_sequence_storage(cycles, config.dispatch)
+        };
+        match storage {
             Ok(storage) => {
                 let _ = span.record("admitted", true);
                 let _ = span.record("fallback_reason", "none");
                 tracing::info!(
                     target: "jolt::metal",
                     bytes = storage.owned_bytes(),
-                    "admitted pre-touched outer-remainder Metal storage"
+                    "admitted outer-remainder Metal storage"
                 );
                 session.park(storage);
                 Ok(())
@@ -316,11 +339,20 @@ fn outer_remainder_storage_fallback_reason(error: &MetalError) -> Option<&'stati
 }
 
 pub(super) fn publish_instruction_read_raf_stage1(
+    context: &SolinasMetal,
     session: &mut ProofSession,
     ready: InstructionReadRafStage1Ready,
 ) -> Result<(), KernelError<AkitaField>> {
+    if ready.ram_access.is_some() && ready.ram_read_write_records.is_some() {
+        return Err(KernelError::InvariantViolation {
+            reason: "Stage-1 RAM publication selected two source representations",
+        });
+    }
     if let Some(ram_access) = &ready.ram_access {
         ram_access.validate_publish(session)?;
+    }
+    if let Some(records) = &ready.ram_read_write_records {
+        records.validate_publish(session)?;
     }
     if session
         .state::<super::solinas::InstructionReadRafStage1Owner>()
@@ -333,6 +365,12 @@ pub(super) fn publish_instruction_read_raf_stage1(
             && session
                 .state::<RegistersValInstructionSourceRequest>()
                 .is_some())
+        || (ready.registers_read_write.is_some()
+            && session.state::<RegistersReadWriteStage1Source>().is_some())
+        || (ready.registers_read_write.is_some()
+            && session
+                .state::<PendingRegistersReadWriteStage1Pipelines>()
+                .is_some())
     {
         return Err(KernelError::InvariantViolation {
             reason: "InstructionReadRAF Stage-1 publication would replace resident state",
@@ -342,11 +380,21 @@ pub(super) fn publish_instruction_read_raf_stage1(
     if let Some(topology) = ready.bytecode_topology {
         session.park(topology);
     }
+    if let Some(source) = ready.registers_read_write {
+        let pending = context
+            .submit_registers_read_write_stage1_pipeline_warmup(&source)
+            .map_err(metal_prepare_error)?;
+        session.park(pending);
+        session.park(source);
+    }
     if let Some(request) = ready.registers_val {
         session.park(request);
     }
     if let Some(ram_access) = ready.ram_access {
         ram_access.publish(session)?;
+    }
+    if let Some(records) = ready.ram_read_write_records {
+        records.publish(session)?;
     }
     Ok(())
 }
@@ -370,6 +418,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             == RegistersValEvaluationSource::Stage1Resident
             && cycles >= self.config.registers_val_evaluation.trace_cutoff_elements;
         let prepare_registers_val = register_val_owner_requested && (26..=28).contains(&log_t);
+        let prepare_registers_read_write = register_val_owner_requested && log_t == 28;
         if prepare_registers_val
             && witness
                 .owned_rows()
@@ -391,10 +440,21 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 reason: "RegistersVal Stage-1 owner was already parked",
             });
         }
-        let stage1_projection_owner_requested =
-            instruction_read_raf_owner_requested || prepare_registers_val;
+        if prepare_registers_read_write
+            && session.state::<RegistersReadWriteStage1Source>().is_some()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers read-write Stage-1 source was already parked",
+            });
+        }
+        let stage1_projection_owner_requested = instruction_read_raf_owner_requested
+            || prepare_registers_val
+            || prepare_registers_read_write;
         let prepare_ram_access =
             stage1_projection_owner_requested && self.ram_raf_witness_requested(log_t, witness)?;
+        let prepare_ram_read_write_records = stage1_projection_owner_requested
+            && !prepare_ram_access
+            && cycles >= super::ram_read_write::RAM_READ_WRITE_STAGE1_SOURCE_CUTOFF_ELEMENTS;
         let prepare_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajor
             && cycles >= self.config.bytecode_read_raf_address.trace_cutoff_elements
@@ -426,7 +486,11 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             for candidate in
                 resident_row_admission_candidates(stage1_eligible, instruction_input_eligible)
             {
-                if (prepare_bytecode_carrier || prepare_registers_val) && !candidate.stage1 {
+                if (prepare_bytecode_carrier
+                    || prepare_registers_val
+                    || prepare_registers_read_write)
+                    && !candidate.stage1
+                {
                     continue;
                 }
                 let borrow_outer_residual = self.config.instruction_input.dense_storage_mode
@@ -543,7 +607,9 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 }
             }
         }
-        if (prepare_bytecode_carrier || prepare_registers_val) && admitted_plan.is_none() {
+        if (prepare_bytecode_carrier || prepare_registers_val || prepare_registers_read_write)
+            && admitted_plan.is_none()
+        {
             return Err(last_admission_error.map_or(
                 KernelError::InvariantViolation {
                     reason: "required Stage-1 owner plan was not admitted",
@@ -575,8 +641,10 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             witness,
                             cycles,
                             prepare_bytecode_carrier,
+                            prepare_registers_read_write,
                             prepare_registers_val,
                             prepare_ram_access,
+                            prepare_ram_read_write_records,
                         )
                         .map(|(rows, shift_rows, prepared)| (rows, shift_rows, Some(prepared)))
                     } else {
@@ -624,8 +692,10 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                     witness,
                                     cycles,
                                     prepare_bytecode_carrier,
+                                    prepare_registers_read_write,
                                     prepare_registers_val,
                                     prepare_ram_access,
+                                    prepare_ram_read_write_records,
                                 )
                                 .map(|(rows, prepared)| (rows, Some(prepared)))
                                 .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
@@ -648,8 +718,10 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         witness,
                         cycles,
                         prepare_bytecode_carrier,
+                        prepare_registers_read_write,
                         prepare_registers_val,
                         prepare_ram_access,
+                        prepare_ram_read_write_records,
                     )
                     .map(|(rows, prepared)| (rows, Some(prepared)))
                     .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
@@ -660,7 +732,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                     )
                 };
                 if let Some(ready) = instruction_read_raf_ready {
-                    publish_instruction_read_raf_stage1(session, ready)?;
+                    publish_instruction_read_raf_stage1(&self.context, session, ready)?;
                 }
                 let compact_rows = plan
                     .instruction_input
@@ -758,6 +830,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             let _span = tracing::info_span!("MetalSpartanStage1::source_primer_join").entered();
             primer.join().map_err(metal_prepare_error)?;
         }
+        self.start_ram_read_write_sequence_prefetch(session, log_t)?;
         let stage1_compact_rows_storage_id = session
             .state::<SpartanOuterUniskipRows>()
             .map(SpartanOuterUniskipRows::instruction_input_allocation_identity)
@@ -943,21 +1016,17 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             });
         }
         let dispatch = self.config.spartan_outer_remainder.dispatch;
-        let planned_device_bytes =
-            outer_remainder_sequence_storage_bytes_with_config(cycles, dispatch)
-                .map_err(metal_prepare_error)?;
         let storage = session.state::<OuterRemainderSequenceStorage>().ok_or(
             KernelError::InvariantViolation {
                 reason: "Metal outer remainder lost its prepared storage",
             },
         )?;
-        if !storage.matches(&self.context, cycles, dispatch)
-            || storage.owned_bytes() != planned_device_bytes
-        {
+        if !storage.matches(&self.context, cycles, dispatch) {
             return Err(KernelError::InvariantViolation {
                 reason: "prepared outer-remainder storage disagrees with the relation geometry",
             });
         }
+        let storage_owned_bytes = storage.owned_bytes();
         let compact_rows_storage_id = rows.instruction_input_allocation_identity();
         let residual_rows_storage_id = rows.allocation_identity();
         let device_registry_id = rows.device_registry_id();
@@ -977,7 +1046,7 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             tracing::info_span!("MetalOuterRemainder::sequence_prepare", cycles, rounds).entered();
         let sequence = storage.attach(rows).map_err(metal_prepare_error)?;
         let attached = sequence.storage_stats().map_err(metal_prepare_error)?;
-        if attached.owned_bytes != planned_device_bytes
+        if attached.owned_bytes != storage_owned_bytes
             || attached.buffer_identities != storage_buffer_identities
         {
             return Err(KernelError::InvariantViolation {
@@ -1811,19 +1880,19 @@ mod tests {
 
         assert_eq!(
             working_set(1 << 26, true, true, false, false, true, true, true),
-            22_581_416_272
+            21_507_674_448
         );
         assert_eq!(
             working_set(1 << 28, true, true, false, false, true, true, true),
-            90_305_466_704
+            86_010_499_408
         );
         assert_eq!(
             working_set(1 << 26, true, true, true, false, true, true, true),
-            24_796_008_784
+            23_722_266_960
         );
         assert_eq!(
             working_set(1 << 27, true, true, true, false, true, true, true),
-            49_585_983_824
+            47_438_500_176
         );
         assert_eq!(
             working_set(1 << 26, false, true, false, false, false, false, false),
@@ -1835,7 +1904,7 @@ mod tests {
         );
         assert_eq!(
             working_set(1 << 28, true, false, false, false, true, true, true),
-            64_533_696_848
+            60_238_729_552
         );
     }
 

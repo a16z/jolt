@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -116,7 +116,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-field",
  "akita-transcript",
@@ -128,7 +128,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -142,7 +142,7 @@ dependencies = [
 [[package]]
 name = "akita-field"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-serialization",
  "num-traits",
@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "akita-metal"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-algebra",
  "akita-field",
@@ -172,7 +172,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -192,7 +192,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -204,7 +204,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -225,7 +225,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -235,7 +235,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -243,7 +243,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -257,7 +257,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-algebra",
  "akita-field",
@@ -270,7 +270,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -281,7 +281,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -300,7 +300,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8291c2dbcd75f413e9697b7cb7ff89942a0c9005#8291c2dbcd75f413e9697b7cb7ff89942a0c9005"
+source = "git+https://github.com/markosg04/akita.git?rev=0e52ebf17e36a2c303756d882ca9eae7faf47b42#0e52ebf17e36a2c303756d882ca9eae7faf47b42"
 dependencies = [
  "akita-algebra",
  "akita-challenges",

@@ -2,8 +2,12 @@ struct InstructionInputRow {
     ulong2 chunks[3];
 };
 
-struct SpartanOuterUniskipResidualRow {
-    ulong2 chunks[7];
+struct SpartanOuterSuccessorRow {
+    ulong2 chunks[4];
+};
+
+struct SpartanOuterColdRow {
+    ulong2 chunks[3];
 };
 
 inline ulong instruction_input_row_word(
@@ -13,11 +17,58 @@ inline ulong instruction_input_row_word(
     return row.chunks[word >> 1][word & 1u];
 }
 
-inline ulong spartan_outer_residual_word(
-    device const SpartanOuterUniskipResidualRow& row,
+inline ulong spartan_outer_successor_word(
+    device const SpartanOuterSuccessorRow& row,
     uint word)
 {
-    return row.chunks[word >> 1][word & 1u];
+    uint stored_word;
+    switch (word) {
+        case 0u: stored_word = 0u; break;
+        case 1u: stored_word = 1u; break;
+        case 2u: stored_word = 2u; break;
+        case 7u: stored_word = 3u; break;
+        case 8u: stored_word = 4u; break;
+        case 9u: stored_word = 5u; break;
+        case 10u: stored_word = 6u; break;
+        default: stored_word = 7u; break;
+    }
+    return row.chunks[stored_word >> 1][stored_word & 1u];
+}
+
+inline ulong spartan_outer_cold_word(
+    device const SpartanOuterColdRow& row,
+    uint word)
+{
+    uint stored_word;
+    switch (word) {
+        case 3u: stored_word = 0u; break;
+        case 4u: stored_word = 1u; break;
+        case 5u: stored_word = 2u; break;
+        case 6u: stored_word = 3u; break;
+        case 11u: stored_word = 4u; break;
+        default: stored_word = 5u; break;
+    }
+    return row.chunks[stored_word >> 1][stored_word & 1u];
+}
+
+inline ulong spartan_outer_residual_word(
+    device const SpartanOuterSuccessorRow& successor,
+    device const SpartanOuterColdRow& cold,
+    uint word)
+{
+    switch (word) {
+        case 0u:
+        case 1u:
+        case 2u:
+        case 7u:
+        case 8u:
+        case 9u:
+        case 10u:
+        case 13u:
+            return spartan_outer_successor_word(successor, word);
+        default:
+            return spartan_outer_cold_word(cold, word);
+    }
 }
 
 struct SpartanSigned192 {

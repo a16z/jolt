@@ -4,7 +4,7 @@
 #define SPARTAN_OUTER_FIRST_ROWS_PER_SIMD 5u
 #define SPARTAN_OUTER_SECOND_NODES 3u
 #define SPARTAN_OUTER_SECOND_ROWS_PER_SIMD 10u
-#define SPARTAN_STAGE1_PRIMER_SOURCES 5u
+#define SPARTAN_STAGE1_PRIMER_SOURCES 6u
 
 struct SpartanOuterUniskipParams {
     uint rows;
@@ -21,12 +21,13 @@ struct SpartanStage1SourcePrimerParams {
 
 kernel void solinas_spartan_stage1_source_primer(
     device const uint* instruction_input [[buffer(0)]],
-    device const uint* residual [[buffer(1)]],
-    device const uint* unexpanded_pc [[buffer(2)]],
-    device const uint* pc [[buffer(3)]],
-    device const uint* shift_flags [[buffer(4)]],
-    device uint* checksums [[buffer(5)]],
-    constant SpartanStage1SourcePrimerParams& params [[buffer(6)]],
+    device const uint* successor [[buffer(1)]],
+    device const uint* cold [[buffer(2)]],
+    device const uint* unexpanded_pc [[buffer(3)]],
+    device const uint* pc [[buffer(4)]],
+    device const uint* shift_flags [[buffer(5)]],
+    device uint* checksums [[buffer(6)]],
+    constant SpartanStage1SourcePrimerParams& params [[buffer(7)]],
     uint gid [[thread_position_in_grid]])
 {
     if (gid >= params.total_threads) {
@@ -48,13 +49,15 @@ kernel void solinas_spartan_stage1_source_primer(
         if (local_page < pages[0]) {
             value = instruction_input[local_page * params.page_words];
         } else if ((local_page -= pages[0]) < pages[1]) {
-            value = residual[local_page * params.page_words];
+            value = successor[local_page * params.page_words];
         } else if ((local_page -= pages[1]) < pages[2]) {
-            value = unexpanded_pc[local_page * params.page_words];
+            value = cold[local_page * params.page_words];
         } else if ((local_page -= pages[2]) < pages[3]) {
+            value = unexpanded_pc[local_page * params.page_words];
+        } else if ((local_page -= pages[3]) < pages[4]) {
             value = pc[local_page * params.page_words];
         } else {
-            local_page -= pages[3];
+            local_page -= pages[4];
             value = shift_flags[local_page * params.page_words];
         }
         checksum ^= value ^ (uint)page;
@@ -120,7 +123,8 @@ inline SolinasFp128 spartan_field_sum_reduce(SpartanFieldSum192 accumulator) {
 
 inline void spartan_outer_accumulate_contribution(
     device const InstructionInputRow& instruction_input,
-    device const SpartanOuterUniskipResidualRow& residual,
+    device const SpartanOuterSuccessorRow& successor,
+    device const SpartanOuterColdRow& cold,
     constant const int* c,
     SolinasFp128 even_weight,
     SolinasFp128 odd_weight,
@@ -147,8 +151,8 @@ inline void spartan_outer_accumulate_contribution(
 
     ulong rs1 = instruction_input_row_word(instruction_input, 0u);
     ulong rs2 = instruction_input_row_word(instruction_input, 2u);
-    ulong memory_0 = spartan_outer_residual_word(residual, 6u);
-    ulong memory_1 = spartan_outer_residual_word(residual, 7u);
+    ulong memory_0 = spartan_outer_residual_word(successor, cold, 6u);
+    ulong memory_1 = spartan_outer_residual_word(successor, cold, 7u);
     ulong ram_address = load != 0 || store != 0 ? memory_0 : 0;
     ulong rd_write = store != 0 ? 0 : (load != 0 ? memory_1 : memory_0);
     ulong ram_read = load != 0 || store != 0 ? memory_1 : 0;
@@ -172,17 +176,17 @@ inline void spartan_outer_accumulate_contribution(
     spartan_accumulate_scaled_u64(bz_first, rd_write, -c[2]);
     spartan_accumulate_scaled_u64(bz_first, rs2, c[3]);
     spartan_accumulate_scaled_u64(
-        bz_first, spartan_outer_residual_word(residual, 8u), c[4] + c[5]);
+        bz_first, spartan_outer_residual_word(successor, cold, 8u), c[4] + c[5]);
     spartan_accumulate_scaled_u64(
-        bz_first, spartan_outer_residual_word(residual, 0u), -c[5]);
+        bz_first, spartan_outer_residual_word(successor, cold, 0u), -c[5]);
     spartan_accumulate_scaled_u64(
-        bz_first, spartan_outer_residual_word(residual, 13u), c[6] - c[7]);
+        bz_first, spartan_outer_residual_word(successor, cold, 13u), c[6] - c[7]);
     spartan_accumulate_scaled_u64(
-        bz_first, spartan_outer_residual_word(residual, 11u), c[7]);
+        bz_first, spartan_outer_residual_word(successor, cold, 11u), c[7]);
     spartan_accumulate_scaled_u64(
-        bz_first, spartan_outer_residual_word(residual, 12u), c[8]);
+        bz_first, spartan_outer_residual_word(successor, cold, 12u), c[8]);
     spartan_accumulate_scaled_u64(
-        bz_first, spartan_outer_residual_word(residual, 5u), -c[8]);
+        bz_first, spartan_outer_residual_word(successor, cold, 5u), -c[8]);
     spartan_accumulate_i32(bz_first, -c[6] - c[8] + c[9] - do_not_update * c[9]);
     SolinasFp128 first = spartan_small_times_s192(az_first, bz_first);
 
@@ -207,34 +211,34 @@ inline void spartan_outer_accumulate_contribution(
         -c[0] - c[7]);
     spartan_accumulate_scaled_u128(
         bz_second,
-        spartan_outer_residual_word(residual, 9u),
-        spartan_outer_residual_word(residual, 10u),
+        spartan_outer_residual_word(successor, cold, 9u),
+        spartan_outer_residual_word(successor, cold, 10u),
         true,
         c[1] + c[2] + c[3] + c[4]);
     spartan_accumulate_scaled_u64(
-        bz_second, spartan_outer_residual_word(residual, 0u), -c[1] - c[2]);
+        bz_second, spartan_outer_residual_word(successor, cold, 0u), -c[1] - c[2]);
     spartan_accumulate_scaled_u128(
         bz_second,
-        spartan_outer_residual_word(residual, 1u),
-        spartan_outer_residual_word(residual, 2u),
+        spartan_outer_residual_word(successor, cold, 1u),
+        spartan_outer_residual_word(successor, cold, 2u),
         spartan_outer_flag(flags, 17),
         -c[1] + c[2] - c[4]);
     spartan_accumulate_pow64(bz_second, -c[2]);
     spartan_accumulate_scaled_u128(
         bz_second,
-        spartan_outer_residual_word(residual, 3u),
-        spartan_outer_residual_word(residual, 4u),
+        spartan_outer_residual_word(successor, cold, 3u),
+        spartan_outer_residual_word(successor, cold, 4u),
         spartan_outer_flag(flags, 19),
         -c[3]);
     spartan_accumulate_scaled_u64(bz_second, rd_write, c[5] + c[6]);
     spartan_accumulate_scaled_u64(
-        bz_second, spartan_outer_residual_word(residual, 13u), -c[5]);
+        bz_second, spartan_outer_residual_word(successor, cold, 13u), -c[5]);
     spartan_accumulate_scaled_u64(
         bz_second,
         instruction_input_row_word(instruction_input, 1u),
         -c[6] - c[7] - c[8]);
     spartan_accumulate_scaled_u64(
-        bz_second, spartan_outer_residual_word(residual, 11u), c[7] + c[8]);
+        bz_second, spartan_outer_residual_word(successor, cold, 11u), c[7] + c[8]);
     spartan_accumulate_i32(
         bz_second,
         -4 * c[6] - 4 * c[8]
@@ -248,11 +252,12 @@ inline void spartan_outer_accumulate_contribution(
 
 kernel void solinas_spartan_outer_uniskip_blocks(
     device const InstructionInputRow* instruction_input_rows [[buffer(0)]],
-    device const SpartanOuterUniskipResidualRow* residual_rows [[buffer(1)]],
-    device const SolinasFp128* e_in [[buffer(2)]],
-    device const SolinasFp128* e_out [[buffer(3)]],
-    device SolinasFp128* block_sums [[buffer(4)]],
-    constant SpartanOuterUniskipParams& params [[buffer(5)]],
+    device const SpartanOuterSuccessorRow* successor_rows [[buffer(1)]],
+    device const SpartanOuterColdRow* cold_rows [[buffer(2)]],
+    device const SolinasFp128* e_in [[buffer(3)]],
+    device const SolinasFp128* e_out [[buffer(4)]],
+    device SolinasFp128* block_sums [[buffer(5)]],
+    constant SpartanOuterUniskipParams& params [[buffer(6)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint block [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
@@ -273,7 +278,8 @@ kernel void solinas_spartan_outer_uniskip_blocks(
                 if (row_index < params.rows) {
                     spartan_outer_accumulate_contribution(
                         instruction_input_rows[row_index],
-                        residual_rows[row_index],
+                        successor_rows[row_index],
+                        cold_rows[row_index],
                         SPARTAN_OUTER_EXTENSION[node],
                         e_in[2 * pair],
                         e_in[2 * pair + 1],
@@ -314,7 +320,8 @@ kernel void solinas_spartan_outer_uniskip_blocks(
                 if (row_index < params.rows) {
                     spartan_outer_accumulate_contribution(
                         instruction_input_rows[row_index],
-                        residual_rows[row_index],
+                        successor_rows[row_index],
+                        cold_rows[row_index],
                         SPARTAN_OUTER_EXTENSION[node + SPARTAN_OUTER_FIRST_NODES],
                         e_in[2 * pair],
                         e_in[2 * pair + 1],

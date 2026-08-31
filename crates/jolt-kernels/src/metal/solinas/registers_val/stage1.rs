@@ -102,7 +102,10 @@ impl RegistersValInstructionSourceRequest {
 }
 
 impl SolinasMetal {
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the request validates two source allocations and their provenance at one boundary"
+    )]
     pub(crate) fn prepare_registers_val_instruction_source_request(
         &self,
         cycles: usize,

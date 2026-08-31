@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
@@ -29,13 +29,17 @@ use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::ram_read_write::{
+    RamReadWriteStage1Source, RAM_READ_WRITE_STAGE1_SOURCE_CUTOFF_ELEMENTS,
+};
+use super::solinas::instruction_claim_reduction::InstructionClaimSequence;
 #[cfg(test)]
 use super::solinas::ProductRemainderRow;
 use super::solinas::{
     MetalError, OuterRemainderSequenceStorage, PendingProductInstructionInitialMessage,
-    PendingProductRemainderInitialMessage, ProductInstructionRoundService,
-    ProductInstructionRoundStats, ProductRemainderRows, ProductRemainderSequence,
-    ProductRemainderSequenceConfig, SpartanOuterUniskipRows,
+    PendingProductRemainderInitialMessage, ProductInstructionOpenings,
+    ProductInstructionRoundService, ProductInstructionRoundStats, ProductRemainderRows,
+    ProductRemainderSequence, ProductRemainderSequenceConfig, SpartanOuterUniskipRows,
 };
 #[cfg(test)]
 use crate::optimized::spartan_product::SpartanProductRow;
@@ -47,6 +51,16 @@ use crate::{
 };
 #[cfg(test)]
 use jolt_witness::collect_bundles;
+
+#[cfg(feature = "test-utils")]
+mod evaluation;
+#[cfg(feature = "test-utils")]
+pub use evaluation::{
+    ProductRemainderCpuEvalSample, ProductRemainderCpuMetalEvalFixture, ProductRemainderEvalError,
+    ProductRemainderEvalResult, ProductRemainderMetalEvalSample,
+    ProductRemainderNumericWidthSnapshot, ProductRemainderRoundTiming,
+    ProductRemainderShapeSnapshot,
+};
 
 const DOMAIN: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
@@ -71,6 +85,7 @@ impl allocative::Allocative for MetalInstructionClaimResidentRows {
 #[derive(Clone, Copy)]
 pub(super) struct MetalInstructionClaimAliases {
     pub(super) lookup_output: AkitaField,
+    pub(super) left_lookup_operand: Option<AkitaField>,
     pub(super) left_instruction_input: AkitaField,
     pub(super) right_instruction_input: AkitaField,
 }
@@ -92,7 +107,7 @@ pub(super) struct MetalInstructionClaimHandoff {
 
 pub(super) struct MetalInstructionClaimPrefetchedInitial {
     pub(super) service: Arc<Mutex<ProductInstructionRoundService>>,
-    pub(super) endpoints: [AkitaField; 2],
+    pub(super) endpoints: Option<[AkitaField; 2]>,
 }
 
 #[cfg(feature = "allocative")]
@@ -109,6 +124,8 @@ pub struct SpartanProductRemainderMetalConfig {
     pub trace_cutoff_elements: usize,
     pub cpu_tail_elements: usize,
     pub reuse_outer_state_a: bool,
+    pub defer_joint_materialization_cutoff_elements: usize,
+    pub terminal_cache_cutoff_elements: usize,
     pub dispatch: ProductRemainderSequenceConfig,
 }
 
@@ -118,6 +135,8 @@ impl Default for SpartanProductRemainderMetalConfig {
             trace_cutoff_elements: 1 << 18,
             cpu_tail_elements: 1 << 12,
             reuse_outer_state_a: false,
+            defer_joint_materialization_cutoff_elements: 1 << 29,
+            terminal_cache_cutoff_elements: 1 << 30,
             dispatch: ProductRemainderSequenceConfig::default(),
         }
     }
@@ -161,24 +180,41 @@ impl MetalBackend {
             return Ok(());
         };
         let row_storage_id = rows.allocation_identity();
+        if cycles >= RAM_READ_WRITE_STAGE1_SOURCE_CUTOFF_ELEMENTS {
+            if session.state::<RamReadWriteStage1Source>().is_some() {
+                return Err(KernelError::InvariantViolation {
+                    reason: "Product witness preparation found a stale Stage-1 RAM source",
+                });
+            }
+            if let Some(instruction) = session
+                .state::<super::solinas::InstructionReadRafStage1Owner>()
+                .cloned()
+            {
+                session.park(RamReadWriteStage1Source::new(instruction, rows.clone())?);
+            }
+        }
 
         let e_in_capacity = 1usize << (log_t / 2);
         let e_out_capacity = cycles / e_in_capacity;
         let instruction_product_rows = rows.clone();
-        let state_a = self
-            .config
-            .spartan_product_remainder
-            .reuse_outer_state_a
-            .then(|| {
-                session
-                    .state::<OuterRemainderSequenceStorage>()
-                    .ok_or(KernelError::InvariantViolation {
-                        reason: "Product state reuse requires resident Outer storage",
-                    })?
-                    .share_product_state_a()
-                    .map_err(metal_prepare_error)
-            })
-            .transpose()?;
+        let reuse_outer_state = self.config.spartan_product_remainder.reuse_outer_state_a;
+        let (state_a, attach_state_b) = if reuse_outer_state {
+            let Some(storage) = session.state::<OuterRemainderSequenceStorage>() else {
+                let _ = span.record("admitted", false);
+                let _ = span.record("fallback_reason", "outer_storage_missing");
+                return Ok(());
+            };
+            (
+                Some(
+                    storage
+                        .share_product_state_a()
+                        .map_err(metal_prepare_error)?,
+                ),
+                storage.awaits_product_state_b(),
+            )
+        } else {
+            (None, false)
+        };
         let sequence = self
             .context
             .prepare_product_remainder_sequence_with_rows_and_state_a(
@@ -192,6 +228,9 @@ impl MetalBackend {
         let sequence = match sequence {
             Ok(sequence) => sequence,
             Err(error) if error.is_capacity_error() => {
+                if attach_state_b {
+                    drop(session.take::<OuterRemainderSequenceStorage>());
+                }
                 let _ = span.record("admitted", false);
                 let _ = span.record("fallback_reason", "capacity");
                 tracing::warn!(
@@ -208,6 +247,25 @@ impl MetalBackend {
             return Err(KernelError::InvariantViolation {
                 reason: "product-remainder witness preparation ended in the wrong state",
             });
+        }
+        if attach_state_b {
+            let state_b = sequence
+                .share_outer_state_b()
+                .map_err(metal_prepare_error)?;
+            let mut storage = session.take::<OuterRemainderSequenceStorage>().ok_or(
+                KernelError::InvariantViolation {
+                    reason: "deferred Outer storage disappeared before Product state-B attachment",
+                },
+            )?;
+            storage
+                .attach_product_state_b(state_b)
+                .map_err(metal_prepare_error)?;
+            session.park(storage);
+            #[cfg(any(test, feature = "test-utils"))]
+            let _ = self
+                .test_counters
+                .outer_product_state_b_reuses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         let _ = span.record("admitted", true);
         let _ = span.record("fallback_reason", "none");
@@ -232,6 +290,15 @@ struct MetalProductUniskipCarry {
 enum MetalProductRemainderPrefetchCommand {
     Product(Box<PendingProductRemainderInitialMessage>),
     ProductInstruction(Box<PendingProductInstructionInitialMessage>),
+    DeferredProductInstruction(Box<DeferredProductInstructionInitialMessage>),
+}
+
+struct DeferredProductInstructionInitialMessage {
+    product: ProductRemainderSequence,
+    instruction: InstructionClaimSequence,
+    e_in: Vec<AkitaField>,
+    e_out: Vec<AkitaField>,
+    terminal_cache: bool,
 }
 
 struct MetalProductRemainderPrefetch {
@@ -294,6 +361,18 @@ impl allocative::Allocative for MetalProductRemainderPrefetch {
                     pending.as_ref(),
                 );
             }
+            MetalProductRemainderPrefetchCommand::DeferredProductInstruction(deferred) => {
+                visitor.visit_field(allocative::Key::new("product"), &deferred.product);
+                visitor.visit_field(allocative::Key::new("instruction"), &deferred.instruction);
+                visitor.visit_simple(
+                    allocative::Key::new("e_in"),
+                    crate::backend::vec_heap_bytes(&deferred.e_in),
+                );
+                visitor.visit_simple(
+                    allocative::Key::new("e_out"),
+                    crate::backend::vec_heap_bytes(&deferred.e_out),
+                );
+            }
         }
         if let Some(rows) = &self.instruction_rows {
             visitor.visit_field(allocative::Key::new("instruction_rows"), rows);
@@ -324,6 +403,7 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             .ok_or(KernelError::InvariantViolation {
                 reason: "Spartan product trace length overflows usize",
             })?;
+        self.start_prefetched_ram_raf_cpu(session, log_t, tau_low)?;
         let endpoint_carrier = session.take::<MetalProductUniskipEndpointCarrier>();
         let use_metal = cycles >= self.config.spartan_product_remainder.trace_cutoff_elements
             && session.state::<ProductRemainderSequence>().is_some();
@@ -535,6 +615,13 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         let instruction_gamma = session
             .state::<Stage2ProductInstructionPrefetch<AkitaField>>()
             .map(|prefetch| prefetch.instruction_gamma);
+        let terminal_cache = cycles
+            >= self
+                .config
+                .spartan_product_remainder
+                .terminal_cache_cutoff_elements
+            && host.lagrange_weights[0] != AkitaField::zero()
+            && instruction_gamma.is_some_and(|gamma| gamma != AkitaField::zero());
         let instruction_rows = if instruction_gamma.is_some()
             && cycles
                 >= self
@@ -584,17 +671,50 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             cycles,
             rounds,
             joint_product_instruction = joint.is_some(),
+            terminal_cache = joint.is_some() && terminal_cache,
+            deferred = joint.is_some()
+                && cycles
+                    >= self
+                        .config
+                        .spartan_product_remainder
+                        .defer_joint_materialization_cutoff_elements,
         );
         let _entered = span.enter();
         let (command, instruction_rows) = if let Some((instruction, rows)) = joint {
-            let pending = self
-                .context
-                .submit_product_instruction_initial_message(sequence, instruction, &e_in, &e_out)
-                .map_err(metal_prepare_error)?;
-            (
-                MetalProductRemainderPrefetchCommand::ProductInstruction(Box::new(pending)),
-                Some(rows),
-            )
+            if cycles
+                >= self
+                    .config
+                    .spartan_product_remainder
+                    .defer_joint_materialization_cutoff_elements
+            {
+                (
+                    MetalProductRemainderPrefetchCommand::DeferredProductInstruction(Box::new(
+                        DeferredProductInstructionInitialMessage {
+                            product: sequence,
+                            instruction,
+                            e_in,
+                            e_out,
+                            terminal_cache,
+                        },
+                    )),
+                    Some(rows),
+                )
+            } else {
+                let pending = self
+                    .context
+                    .submit_product_instruction_initial_message(
+                        sequence,
+                        instruction,
+                        &e_in,
+                        &e_out,
+                        terminal_cache,
+                    )
+                    .map_err(metal_prepare_error)?;
+                (
+                    MetalProductRemainderPrefetchCommand::ProductInstruction(Box::new(pending)),
+                    Some(rows),
+                )
+            }
         } else {
             let pending = sequence
                 .submit_initial_message(&e_in, &e_out)
@@ -678,111 +798,171 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                 reason: "product-remainder prefetch duplicated its resident sequence",
             });
         }
-        let (sequence, first_message, prefetched_instruction_parts, prefetched_instruction_rows) =
-            if let Some(prefetched) = prefetched {
-                if prefetched.log_t != rounds
-                    || prefetched.tau_low != tau_low
-                    || prefetched.uniskip_challenge != inputs.relation.uniskip_challenge()
-                    || prefetched.tau_high != inputs.relation.tau_high()
-                    || prefetched.row_storage_id != carry_row_storage_id
-                    || prefetched.device_registry_id != carry_device_registry_id
-                {
-                    return Err(KernelError::InvariantViolation {
-                        reason: "prefetched product remainder disagrees with its relation or carry",
-                    });
-                }
-                let prepare_span = tracing::info_span!(
-                    "MetalProductRemainder::prepare",
-                    cycles,
-                    rounds,
-                    prefetched = true,
-                    joint_product_instruction = matches!(
-                        &prefetched.command,
-                        MetalProductRemainderPrefetchCommand::ProductInstruction(_)
-                    ),
-                );
-                let _entered = prepare_span.enter();
-                match prefetched.command {
-                    MetalProductRemainderPrefetchCommand::Product(pending) => {
-                        let (sequence, first_message, _stats) =
-                            (*pending).join().map_err(metal_prepare_error)?;
-                        (sequence, first_message, None, None)
-                    }
-                    MetalProductRemainderPrefetchCommand::ProductInstruction(pending) => {
-                        let (sequence, first_message, instruction, endpoints) =
-                            (*pending).join().map_err(metal_prepare_error)?;
-                        (
-                            sequence,
-                            first_message,
-                            Some((instruction, endpoints)),
-                            prefetched.instruction_rows,
-                        )
-                    }
-                }
-            } else {
-                let mut sequence = session.take::<ProductRemainderSequence>().ok_or(
-                    KernelError::InvariantViolation {
-                        reason: "Metal product remainder lost its preinitialized sequence",
-                    },
-                )?;
-                if !sequence.is_ready()
-                    || sequence.storage_layout().rows() != cycles
-                    || sequence.device_registry_id() != self.context.device_registry_id()
-                    || sequence.device_registry_id() != carry_device_registry_id
-                    || sequence.row_allocation_identity() != carry_row_storage_id
-                {
-                    return Err(KernelError::InvariantViolation {
-                    reason:
-                        "Metal product-remainder sequence has the wrong state, shape, device, or rows",
+        let (
+            state,
+            pending_endpoints,
+            prefetched_instruction,
+            prefetched_instruction_rows,
+            row_storage_id,
+        ) = if let Some(prefetched) = prefetched {
+            if prefetched.log_t != rounds
+                || prefetched.tau_low != tau_low
+                || prefetched.uniskip_challenge != inputs.relation.uniskip_challenge()
+                || prefetched.tau_high != inputs.relation.tau_high()
+                || prefetched.row_storage_id != carry_row_storage_id
+                || prefetched.device_registry_id != carry_device_registry_id
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason: "prefetched product remainder disagrees with its relation or carry",
                 });
+            }
+            let prepare_span = tracing::info_span!(
+                "MetalProductRemainder::prepare",
+                cycles,
+                rounds,
+                prefetched = true,
+                joint_product_instruction = matches!(
+                    &prefetched.command,
+                    MetalProductRemainderPrefetchCommand::ProductInstruction(_)
+                        | MetalProductRemainderPrefetchCommand::DeferredProductInstruction(_)
+                ),
+                deferred = matches!(
+                    &prefetched.command,
+                    MetalProductRemainderPrefetchCommand::DeferredProductInstruction(_)
+                ),
+            );
+            let _entered = prepare_span.enter();
+            match prefetched.command {
+                MetalProductRemainderPrefetchCommand::Product(pending) => {
+                    let (sequence, first_message, _stats) =
+                        (*pending).join().map_err(metal_prepare_error)?;
+                    validate_product_sequence(
+                        &sequence,
+                        cycles,
+                        carry_device_registry_id,
+                        carry_row_storage_id,
+                        self.context.device_registry_id(),
+                        false,
+                    )?;
+                    (
+                        MetalProductRemainderState::Standalone(Box::new(sequence)),
+                        Some(first_message),
+                        None,
+                        None,
+                        carry_row_storage_id,
+                    )
                 }
-                let (e_in, e_out) = host.current_weights()?;
-                let prepare_span = tracing::info_span!(
-                    "MetalProductRemainder::prepare",
-                    cycles,
-                    rounds,
-                    prefetched = false,
-                    materialize_gpu_active_ns = tracing::field::Empty,
-                );
-                let _entered = prepare_span.enter();
-                sequence
-                    .set_lagrange_weights(host.lagrange_weights)
-                    .map_err(metal_prepare_error)?;
-                let (first_message, materialize_gpu_active) = sequence
-                    .restart_message_timed(&e_in, &e_out)
-                    .map_err(metal_prepare_error)?;
-                let _ = prepare_span.record(
-                    "materialize_gpu_active_ns",
-                    duration_nanos(materialize_gpu_active),
-                );
-                (sequence, first_message, None, None)
-            };
-        if sequence.storage_layout().rows() != cycles
-            || sequence.device_registry_id() != self.context.device_registry_id()
-            || sequence.device_registry_id() != carry_device_registry_id
-            || sequence.row_allocation_identity() != carry_row_storage_id
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "Metal product-remainder handoff changed shape, device, or rows",
-            });
-        }
-        let row_storage_id = sequence.row_allocation_identity();
-        let (state, prefetched_instruction) =
-            if let Some((instruction, endpoints)) = prefetched_instruction_parts {
-                let service = Arc::new(Mutex::new(
-                    ProductInstructionRoundService::new(sequence, instruction, &tau_low)
-                        .map_err(metal_prepare_error)?,
-                ));
-                (
-                    MetalProductRemainderState::Joint(Arc::clone(&service)),
-                    Some(MetalInstructionClaimPrefetchedInitial { service, endpoints }),
-                )
-            } else {
-                (
-                    MetalProductRemainderState::Standalone(Box::new(sequence)),
-                    None,
-                )
-            };
+                MetalProductRemainderPrefetchCommand::ProductInstruction(pending) => {
+                    let (sequence, first_message, instruction, endpoints) =
+                        (*pending).join().map_err(metal_prepare_error)?;
+                    validate_product_sequence(
+                        &sequence,
+                        cycles,
+                        carry_device_registry_id,
+                        carry_row_storage_id,
+                        self.context.device_registry_id(),
+                        false,
+                    )?;
+                    let row_storage_id = sequence.row_allocation_identity();
+                    let service =
+                        ProductInstructionRoundService::new(sequence, instruction, &tau_low)
+                            .map_err(metal_prepare_error)?;
+                    let service = Arc::new(Mutex::new(service));
+                    (
+                        MetalProductRemainderState::Joint(Arc::clone(&service)),
+                        Some(first_message),
+                        Some(MetalInstructionClaimPrefetchedInitial {
+                            service,
+                            endpoints: Some(endpoints),
+                        }),
+                        prefetched.instruction_rows,
+                        row_storage_id,
+                    )
+                }
+                MetalProductRemainderPrefetchCommand::DeferredProductInstruction(deferred) => {
+                    let DeferredProductInstructionInitialMessage {
+                        product,
+                        instruction,
+                        e_in,
+                        e_out,
+                        terminal_cache,
+                    } = *deferred;
+                    validate_product_sequence(
+                        &product,
+                        cycles,
+                        carry_device_registry_id,
+                        carry_row_storage_id,
+                        self.context.device_registry_id(),
+                        true,
+                    )?;
+                    let pending = self
+                        .context
+                        .submit_product_instruction_initial_message(
+                            product,
+                            instruction,
+                            &e_in,
+                            &e_out,
+                            terminal_cache,
+                        )
+                        .map_err(metal_prepare_error)?;
+                    let service = pending
+                        .into_round_service(&tau_low)
+                        .map_err(metal_prepare_error)?;
+                    let service = Arc::new(Mutex::new(service));
+                    (
+                        MetalProductRemainderState::Joint(Arc::clone(&service)),
+                        None,
+                        Some(MetalInstructionClaimPrefetchedInitial {
+                            service,
+                            endpoints: None,
+                        }),
+                        prefetched.instruction_rows,
+                        carry_row_storage_id,
+                    )
+                }
+            }
+        } else {
+            let mut sequence = session.take::<ProductRemainderSequence>().ok_or(
+                KernelError::InvariantViolation {
+                    reason: "Metal product remainder lost its preinitialized sequence",
+                },
+            )?;
+            validate_product_sequence(
+                &sequence,
+                cycles,
+                carry_device_registry_id,
+                carry_row_storage_id,
+                self.context.device_registry_id(),
+                true,
+            )?;
+            let (e_in, e_out) = host.current_weights()?;
+            let prepare_span = tracing::info_span!(
+                "MetalProductRemainder::prepare",
+                cycles,
+                rounds,
+                prefetched = false,
+                materialize_gpu_active_ns = tracing::field::Empty,
+            );
+            let _entered = prepare_span.enter();
+            sequence
+                .set_lagrange_weights(host.lagrange_weights)
+                .map_err(metal_prepare_error)?;
+            let (first_message, materialize_gpu_active) = sequence
+                .restart_message_timed(&e_in, &e_out)
+                .map_err(metal_prepare_error)?;
+            let _ = prepare_span.record(
+                "materialize_gpu_active_ns",
+                duration_nanos(materialize_gpu_active),
+            );
+            let row_storage_id = sequence.row_allocation_identity();
+            (
+                MetalProductRemainderState::Standalone(Box::new(sequence)),
+                Some(first_message),
+                None,
+                None,
+                row_storage_id,
+            )
+        };
         let carry =
             session
                 .take::<MetalProductUniskipCarry>()
@@ -847,13 +1027,34 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         Ok(Box::new(MetalProductRemainderKernel {
             host,
             state,
-            pending_endpoints: Some(first_message),
+            pending_endpoints,
             row_storage_id,
             instruction_aliases,
             cpu_tail: None,
             cpu_tail_elements: self.config.spartan_product_remainder.cpu_tail_elements,
         }))
     }
+}
+
+fn validate_product_sequence(
+    sequence: &ProductRemainderSequence,
+    cycles: usize,
+    carry_device_registry_id: u64,
+    carry_row_storage_id: usize,
+    backend_device_registry_id: u64,
+    require_ready: bool,
+) -> Result<(), KernelError<AkitaField>> {
+    if (require_ready && !sequence.is_ready())
+        || sequence.storage_layout().rows() != cycles
+        || sequence.device_registry_id() != backend_device_registry_id
+        || sequence.device_registry_id() != carry_device_registry_id
+        || sequence.row_allocation_identity() != carry_row_storage_id
+    {
+        return Err(KernelError::InvariantViolation {
+            reason: "Metal product-remainder sequence has the wrong state, shape, device, or rows",
+        });
+    }
+    Ok(())
 }
 
 fn product_prepare_fallback_reason(error: &MetalError) -> Option<&'static str> {
@@ -884,6 +1085,13 @@ fn metal_round_error(error: MetalError) -> SumcheckError<AkitaField> {
 }
 
 fn metal_output_error(error: MetalError) -> SumcheckKernelError<AkitaField> {
+    SumcheckKernelError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    }
+}
+
+fn round_output_error(error: SumcheckError<AkitaField>) -> SumcheckKernelError<AkitaField> {
     SumcheckKernelError::ComputeBackend {
         backend: "metal",
         message: error.to_string(),
@@ -1005,6 +1213,22 @@ impl ProductRemainderCpuTail {
         self.left.len()
     }
 
+    fn terminal_factors(
+        &self,
+        challenge: AkitaField,
+    ) -> Result<[AkitaField; 2], SumcheckError<AkitaField>> {
+        if self.current_elements() != 2 {
+            return Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "product-remainder terminal factors require two resident rows".to_string(),
+            });
+        }
+        Ok([
+            self.left[0] + challenge * (self.left[1] - self.left[0]),
+            self.right[0] + challenge * (self.right[1] - self.right[0]),
+        ])
+    }
+
     fn bind_and_message(
         &mut self,
         challenge: AkitaField,
@@ -1061,6 +1285,23 @@ enum MetalProductRemainderState {
 }
 
 impl MetalProductRemainderState {
+    fn take_initial_message(&mut self) -> Result<[AkitaField; 2], SumcheckError<AkitaField>> {
+        match self {
+            Self::Standalone(_) => Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "standalone Product first message was already consumed".to_string(),
+            }),
+            Self::Joint(service) => service
+                .lock()
+                .map_err(|_| SumcheckError::ComputeBackend {
+                    backend: "metal",
+                    message: "joint Product/Instruction service lock is poisoned".to_string(),
+                })?
+                .take_product_initial_message()
+                .map_err(metal_round_error),
+        }
+    }
+
     fn current_elements(&self) -> Result<usize, SumcheckError<AkitaField>> {
         match self {
             Self::Standalone(sequence) => Ok(sequence.current_elements()),
@@ -1087,6 +1328,28 @@ impl MetalProductRemainderState {
                 })?
                 .read_product_current_state()
                 .map_err(metal_round_error),
+        }
+    }
+
+    fn terminal_factors(
+        &self,
+        challenge: AkitaField,
+    ) -> Result<[AkitaField; 2], SumcheckError<AkitaField>> {
+        let (left, right) = self.read_current_state()?;
+        ProductRemainderCpuTail::new(left, right)?.terminal_factors(challenge)
+    }
+
+    fn retire_transition_state_after_cpu_tail_copy(&mut self) -> Result<usize, MetalError> {
+        match self {
+            Self::Standalone(sequence) => sequence.retire_transition_state_after_cpu_tail_copy(),
+            Self::Joint(service) => service
+                .lock()
+                .map_err(|_| {
+                    MetalError::InvalidProductRemainderState(
+                        "joint Product/Instruction service lock is poisoned",
+                    )
+                })?
+                .retire_product_transition_state_after_cpu_tail_copy(),
         }
     }
 
@@ -1128,12 +1391,26 @@ impl MetalProductRemainderState {
         after_cpu_tail: bool,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-    ) -> Result<([AkitaField; 8], Duration), MetalError> {
+        terminal_factors: [AkitaField; 2],
+        lagrange_weights: [AkitaField; 3],
+    ) -> Result<ProductInstructionOpenings, MetalError> {
         match self {
             Self::Standalone(sequence) if after_cpu_tail => {
-                sequence.openings_after_cpu_tail_timed(e_in, e_out)
+                let (values, gpu_active) = sequence.openings_after_cpu_tail_timed(e_in, e_out)?;
+                Ok(ProductInstructionOpenings {
+                    values,
+                    left_lookup_operand: None,
+                    gpu_active,
+                })
             }
-            Self::Standalone(sequence) => sequence.openings_timed(e_in, e_out),
+            Self::Standalone(sequence) => {
+                let (values, gpu_active) = sequence.openings_timed(e_in, e_out)?;
+                Ok(ProductInstructionOpenings {
+                    values,
+                    left_lookup_operand: None,
+                    gpu_active,
+                })
+            }
             Self::Joint(service) => service
                 .lock()
                 .map_err(|_| {
@@ -1141,7 +1418,13 @@ impl MetalProductRemainderState {
                         "joint Product/Instruction service lock is poisoned",
                     )
                 })?
-                .product_openings(after_cpu_tail, e_in, e_out),
+                .product_openings(
+                    after_cpu_tail,
+                    e_in,
+                    e_out,
+                    terminal_factors,
+                    lagrange_weights,
+                ),
         }
     }
 }
@@ -1205,6 +1488,15 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
                 );
                 let _entered = span.enter();
                 let (left, right) = self.state.read_current_state()?;
+                let retired_bytes = self
+                    .state
+                    .retire_transition_state_after_cpu_tail_copy()
+                    .map_err(metal_round_error)?;
+                tracing::info!(
+                    target: "jolt::metal",
+                    retired_bytes,
+                    "retired Product transition state after CPU-tail handoff"
+                );
                 self.cpu_tail = Some(ProductRemainderCpuTail::new(left, right)?);
             }
             self.host.bind(challenge);
@@ -1245,12 +1537,10 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
                         .to_string(),
                 });
             }
-            self.pending_endpoints
-                .take()
-                .ok_or_else(|| SumcheckError::ComputeBackend {
-                    backend: "metal",
-                    message: "product-remainder first message was already consumed".to_string(),
-                })?
+            match self.pending_endpoints.take() {
+                Some(endpoints) => endpoints,
+                None => self.state.take_initial_message()?,
+            }
         };
         Ok(self.host.polynomial(endpoints, previous_claim))
     }
@@ -1290,9 +1580,34 @@ impl SumcheckKernel<AkitaField> for MetalProductRemainderKernel {
             gpu_active_ns = tracing::field::Empty,
         );
         let _entered = span.enter();
-        let (values, gpu_active) = self
+        let terminal_challenge = self.host.challenges.last().copied().ok_or_else(|| {
+            SumcheckKernelError::ComputeBackend {
+                backend: "metal",
+                message: "product remainder has no terminal challenge".to_string(),
+            }
+        })?;
+        let terminal_factors = if let Some(cpu_tail) = &self.cpu_tail {
+            cpu_tail
+                .terminal_factors(terminal_challenge)
+                .map_err(round_output_error)?
+        } else {
+            self.state
+                .terminal_factors(terminal_challenge)
+                .map_err(round_output_error)?
+        };
+        let ProductInstructionOpenings {
+            values,
+            left_lookup_operand,
+            gpu_active,
+        } = self
             .state
-            .openings(self.cpu_tail.is_some(), &e_in, &e_out)
+            .openings(
+                self.cpu_tail.is_some(),
+                &e_in,
+                &e_out,
+                terminal_factors,
+                self.host.lagrange_weights,
+            )
             .map_err(metal_output_error)?;
         let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
         if let Some(slot) = &self.instruction_aliases {
@@ -1313,6 +1628,7 @@ impl SumcheckKernel<AkitaField> for MetalProductRemainderKernel {
                 challenges: self.host.challenges.clone(),
                 values: MetalInstructionClaimAliases {
                     lookup_output: values[4],
+                    left_lookup_operand,
                     left_instruction_input: values[0],
                     right_instruction_input: values[1],
                 },
@@ -1475,6 +1791,7 @@ mod tests {
 
                 let mut config = super::super::MetalConfig::default();
                 config.spartan_product_remainder.trace_cutoff_elements = 2;
+                config.spartan_product_remainder.dispatch.prime_workspace = false;
                 let metal = MetalBackend::new(config).unwrap();
                 let mut metal_session = ProofSession::default();
                 let stage1 =

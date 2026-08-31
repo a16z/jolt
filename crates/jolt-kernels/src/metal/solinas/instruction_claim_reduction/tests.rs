@@ -1,9 +1,8 @@
 use core::mem::{align_of, size_of};
 
+use crate::optimized::instruction_claim_reduction::InstructionOperandRow;
 use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
-
-use crate::optimized::instruction_claim_reduction::InstructionOperandRow;
 
 use super::*;
 
@@ -777,7 +776,6 @@ fn stage1_sequence_matches_standalone_sequence() {
     let mut standalone = context
         .prepare_instruction_claim_sequence(&planes, gamma, InstructionClaimKernelConfig::default())
         .expect("standalone instruction sequence should prepare");
-
     let log_t = rows.trailing_zeros() as usize;
     let point = (0..log_t)
         .map(|index| AkitaField::from_u64(101 + 2 * index as u64))
@@ -815,6 +813,14 @@ fn stage1_sequence_matches_standalone_sequence() {
     let (r_hi, r_lo) = reversed.split_at(log_t / 2);
     let e_out = EqPolynomial::evals(r_hi, None);
     let e_in = EqPolynomial::evals(r_lo, None);
+    let layout = direct.storage_layout();
+    let expected_retired_bytes =
+        (layout.state_a_fields() + layout.state_b_fields()) * size_of::<[u64; 2]>();
+    assert_eq!(
+        direct.retire_transition_state().unwrap(),
+        expected_retired_bytes
+    );
+    assert!(direct.read_current_state().is_err());
     let direct_openings = direct.aliased_openings(&e_in, &e_out).unwrap();
     let standalone_openings = standalone.aliased_openings(&e_in, &e_out).unwrap();
     assert_eq!(direct_openings, standalone_openings);

@@ -121,4 +121,5 @@ kernel void solinas_registers_claim_fold_alias_rd(
         }
         rd_dense[x_hi] = total;
     }
+
 }

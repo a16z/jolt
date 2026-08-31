@@ -25,6 +25,7 @@ use super::ram_val_check::RamValCheckMetalConfig;
 use super::registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
 };
+use super::registers_read_write::RegistersReadWriteMetalConfig;
 use super::registers_val_evaluation::{
     RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
 };
@@ -58,6 +59,8 @@ pub struct MetalConfig {
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-5 registers value-evaluation settings.
     pub registers_val_evaluation: RegistersValEvaluationMetalConfig,
+    /// Stage-4 registers read-write settings.
+    pub registers_read_write: RegistersReadWriteMetalConfig,
     /// Stage-2 RAM RAF-evaluation settings.
     pub ram_raf_evaluation: RamRafEvaluationMetalConfig,
     /// Stage-2 high-activity RAM read-write settings.
@@ -94,6 +97,15 @@ impl MetalConfig {
             BytecodeReadRafAddressImplementation::AddressMajor;
         config.bytecode_read_raf_address.trace_cutoff_elements = 1 << 26;
         config.spartan_product_remainder.reuse_outer_state_a = true;
+        config
+            .spartan_product_remainder
+            .defer_joint_materialization_cutoff_elements = 1 << 29;
+        config
+            .spartan_product_remainder
+            .terminal_cache_cutoff_elements = 1 << 30;
+        config.spartan_product_remainder.dispatch.prime_workspace = false;
+        config.spartan_product_remainder.dispatch.async_state_b_fill = true;
+        config.spartan_shift.dispatch.high_tile_elements = 512;
         config.registers_claim_reduction.implementation =
             RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
         config
@@ -103,13 +115,14 @@ impl MetalConfig {
         config
             .spartan_outer_remainder
             .dispatch
-            .storage_initialization = OuterRemainderStorageInitialization::Full;
+            .storage_initialization = OuterRemainderStorageInitialization::Lazy;
         config.instruction_input.dispatch.storage_initialization =
             InstructionInputStorageInitialization::Lazy;
         config.instruction_input.dense_storage_mode =
             InstructionInputDenseStorageMode::OuterResidual;
         config.registers_val_evaluation.source = RegistersValEvaluationSource::Stage1Resident;
         config.registers_val_evaluation.trace_cutoff_elements = 1 << 26;
+        config.ram_read_write.gpu_record_scatter_cutoff_elements = 1 << 29;
         config
     }
 }
@@ -120,19 +133,32 @@ impl MetalConfig {
 pub(super) struct MetalTestCounters {
     pub(super) hamming_dispatches: AtomicUsize,
     pub(super) outer_remainder_sequences: AtomicUsize,
+    pub(super) outer_product_state_b_reuses: AtomicUsize,
     pub(super) product_remainder_sequences: AtomicUsize,
     pub(super) product_uniskip_dispatches: AtomicUsize,
     pub(super) product_uniskip_carrier_hits: AtomicUsize,
+    pub(super) spartan_shift_sequences: AtomicUsize,
     pub(super) instruction_claim_sequences: AtomicUsize,
     pub(super) registers_claim_alias_sequences: AtomicUsize,
     pub(super) registers_val_sequences: AtomicUsize,
+    pub(super) registers_read_write_metal_sequences: AtomicUsize,
     pub(super) ram_val_sparse_sequences: AtomicUsize,
     pub(super) ram_read_write_sparse_sequences: AtomicUsize,
     pub(super) ram_read_write_metal_sequences: AtomicUsize,
     pub(super) ram_read_write_multigroup_hot_sequences: AtomicUsize,
+    pub(super) ram_ra_claim_metal_sequences: AtomicUsize,
     pub(super) ram_ra_claim_sparse_sequences: AtomicUsize,
+    pub(super) ram_ra_claim_q_wall_ns: AtomicUsize,
+    pub(super) ram_ra_claim_q_gpu_ns: AtomicUsize,
+    pub(super) ram_ra_claim_q_wait_wall_ns: AtomicUsize,
+    pub(super) ram_ra_claim_q_readback_wall_ns: AtomicUsize,
+    pub(super) ram_ra_claim_address_alias_reuses: AtomicUsize,
+    pub(super) ram_ra_claim_h_wall_ns: AtomicUsize,
+    pub(super) ram_ra_claim_h_gpu_ns: AtomicUsize,
     pub(super) ram_ra_virtualization_sparse_sequences: AtomicUsize,
+    pub(super) ram_ra_virtualization_metal_sequences: AtomicUsize,
     pub(super) ram_hamming_sparse_sequences: AtomicUsize,
+    pub(super) ram_hamming_metal_sequences: AtomicUsize,
 }
 
 macro_rules! test_counter_getters {
@@ -178,6 +204,14 @@ impl MetalBackend {
     }
 
     fn validate_config(config: &MetalConfig) -> Result<(), MetalError> {
+        if !matches!(
+            config.ram_ra_claim_reduction.q_slices,
+            1 | 4 | 8 | 16 | 32 | 64 | 128 | 256
+        ) {
+            return Err(MetalError::InvalidRamRaState(
+                "RAM RA claim-reduction Q slices must be a supported power-of-two geometry",
+            ));
+        }
         let _ = config.spartan_shift.dispatch.validate()?;
         let remainder_trace_cutoff = config.spartan_outer_remainder.trace_cutoff_elements;
         if remainder_trace_cutoff < 4 || !remainder_trace_cutoff.is_power_of_two() {
@@ -243,6 +277,12 @@ impl MetalBackend {
             config.spartan_outer_remainder.dispatch.cpu_tail_elements,
             config.spartan_product_remainder.trace_cutoff_elements,
             config.spartan_product_remainder.cpu_tail_elements,
+            config
+                .spartan_product_remainder
+                .defer_joint_materialization_cutoff_elements,
+            config
+                .spartan_product_remainder
+                .terminal_cache_cutoff_elements,
             config.spartan_shift.trace_cutoff_elements,
             config.instruction_claim_reduction.trace_cutoff_elements,
             config.instruction_input.trace_cutoff_elements,
@@ -250,8 +290,11 @@ impl MetalBackend {
             config.registers_claim_reduction.trace_cutoff_elements,
             config.registers_val_evaluation.trace_cutoff_elements,
             config.registers_val_evaluation.cutoff_elements,
+            config.registers_read_write.trace_cutoff_elements,
             config.ram_raf_evaluation.dispatch.trace_cutoff,
+            config.ram_raf_evaluation.cpu_prefetch_cutoff_elements,
             config.ram_read_write.trace_cutoff_elements,
+            config.ram_read_write.gpu_record_scatter_cutoff_elements,
             config.ram_val_check.trace_cutoff_elements,
             config.ram_ra_claim_reduction.trace_cutoff_elements,
             config.ram_ra_virtualization.trace_cutoff_elements,
@@ -292,19 +335,32 @@ impl MetalBackend {
     test_counter_getters! {
         hamming_dispatches,
         outer_remainder_sequences,
+        outer_product_state_b_reuses,
         product_remainder_sequences,
         product_uniskip_dispatches,
         product_uniskip_carrier_hits,
+        spartan_shift_sequences,
         instruction_claim_sequences,
         registers_claim_alias_sequences,
         registers_val_sequences,
+        registers_read_write_metal_sequences,
         ram_val_sparse_sequences,
         ram_read_write_sparse_sequences,
         ram_read_write_metal_sequences,
         ram_read_write_multigroup_hot_sequences,
+        ram_ra_claim_metal_sequences,
         ram_ra_claim_sparse_sequences,
+        ram_ra_claim_q_wall_ns,
+        ram_ra_claim_q_gpu_ns,
+        ram_ra_claim_q_wait_wall_ns,
+        ram_ra_claim_q_readback_wall_ns,
+        ram_ra_claim_address_alias_reuses,
+        ram_ra_claim_h_wall_ns,
+        ram_ra_claim_h_gpu_ns,
         ram_ra_virtualization_sparse_sequences,
+        ram_ra_virtualization_metal_sequences,
         ram_hamming_sparse_sequences,
+        ram_hamming_metal_sequences,
     }
 }
 
@@ -372,12 +428,17 @@ mod tests {
             config.registers_val_evaluation.trace_cutoff_elements,
             1 << 26
         );
+        assert_eq!(config.registers_read_write.trace_cutoff_elements, 1 << 25);
+        assert_eq!(
+            config.ram_read_write.gpu_record_scatter_cutoff_elements,
+            1 << 29
+        );
         assert_eq!(
             config
                 .spartan_outer_remainder
                 .dispatch
                 .storage_initialization,
-            OuterRemainderStorageInitialization::Full
+            OuterRemainderStorageInitialization::Lazy
         );
         assert_eq!(
             config.instruction_input.dispatch.storage_initialization,
@@ -387,6 +448,15 @@ mod tests {
             config.instruction_input.dense_storage_mode,
             InstructionInputDenseStorageMode::OuterResidual
         );
+        assert!(!config.spartan_product_remainder.dispatch.prime_workspace);
+        assert!(config.spartan_product_remainder.dispatch.async_state_b_fill);
+        assert_eq!(
+            config
+                .spartan_product_remainder
+                .defer_joint_materialization_cutoff_elements,
+            1 << 29
+        );
+        assert_eq!(config.spartan_shift.dispatch.high_tile_elements, 512);
         assert!(MetalBackend::validate_config(&config).is_ok());
     }
 

@@ -9,7 +9,7 @@ use metal::{
 
 use super::{
     completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
-    spartan_outer_uniskip_residual_row_bytes, validate_completed_command, Fp128, MetalError,
+    spartan_outer_uniskip_successor_row_bytes, validate_completed_command, Fp128, MetalError,
     OuterResidualArenaKey, OuterResidualReleaseReceipt, PipelineLimits, ReductionBuffer,
     SolinasMetal, SpartanOuterUniskipRows,
 };
@@ -26,6 +26,7 @@ const ROW_IMM_HIGH: usize = 4;
 const ROW_FLAGS: usize = 5;
 
 const FLAG_LOAD: u32 = 0;
+const FLAG_STORE: u32 = 1;
 const FLAG_IMM_POSITIVE: u32 = 18;
 const FLAG_LEFT_OPERAND_IS_RS1: u32 = 20;
 const FLAG_LEFT_OPERAND_IS_PC: u32 = 21;
@@ -33,6 +34,9 @@ const FLAG_RIGHT_OPERAND_IS_RS2: u32 = 22;
 const FLAG_RIGHT_OPERAND_IS_IMM: u32 = 23;
 const FLAG_BRANCH: u32 = 25;
 const FLAG_NEXT_IS_NOOP: u32 = 26;
+pub(crate) const REGISTER_RS1_INDEX_SHIFT: u32 = 32;
+pub(crate) const REGISTER_RS2_INDEX_SHIFT: u32 = 40;
+pub(crate) const REGISTER_RD_INDEX_SHIFT: u32 = 48;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -90,7 +94,33 @@ impl InstructionInputRow {
         }
     }
 
+    pub(crate) fn with_register_indices(
+        mut self,
+        rs1: Option<u8>,
+        rs2: Option<u8>,
+        rd: Option<u8>,
+    ) -> Result<Self, MetalError> {
+        let encode = |index: Option<u8>| match index {
+            Some(index) if index < 128 => Ok(u64::from(index) + 1),
+            Some(_) => Err(MetalError::InvalidInstructionInputRows(1)),
+            None => Ok(0),
+        };
+        self.words[ROW_FLAGS] |= encode(rs1)? << REGISTER_RS1_INDEX_SHIFT;
+        self.words[ROW_FLAGS] |= encode(rs2)? << REGISTER_RS2_INDEX_SHIFT;
+        self.words[ROW_FLAGS] |= encode(rd)? << REGISTER_RD_INDEX_SHIFT;
+        Ok(self)
+    }
+
     copy_field_getters! { pub, { words: [u64; INSTRUCTION_INPUT_ROW_WORDS] }}
+
+    pub(crate) const fn stage1_ram_source(self) -> (bool, bool, u64) {
+        let flags = self.words[ROW_FLAGS];
+        (
+            flags & (1 << FLAG_LOAD) != 0,
+            flags & (1 << FLAG_STORE) != 0,
+            self.words[ROW_RS2],
+        )
+    }
 
     pub fn fields<F: jolt_field::Field>(&self) -> [F; INSTRUCTION_INPUT_TABLES] {
         let flags = self.words[ROW_FLAGS];
@@ -732,21 +762,22 @@ impl SolinasMetal {
                 ));
             }
             let expected = outer_rows.residual_arena_key();
-            let expected_parent_bytes = spartan_outer_uniskip_residual_row_bytes(rows)?;
+            let expected_successor_bytes = spartan_outer_uniskip_successor_row_bytes(rows)?;
             if expected.rows != rows
                 || expected.device_registry_id != self.device_registry_id()
-                || expected.storage_bytes != expected_parent_bytes
-                || borrowed_dense_bytes > expected.storage_bytes
+                || expected.storage_bytes != expected_successor_bytes
+                || layout.buffer_bytes[0] > expected.storage_bytes
+                || layout.buffer_bytes[1] > expected.compact_storage_bytes
             {
                 return Err(MetalError::InvalidInstructionInputState(
                     "Outer residual arena has the wrong shape or device",
                 ));
             }
             (
-                BufferRegion::range(outer_rows.residual_buffer(), 0, layout.buffer_bytes[0])?,
+                BufferRegion::range(outer_rows.successor_buffer(), 0, layout.buffer_bytes[0])?,
                 BufferRegion::range(
-                    outer_rows.residual_buffer(),
-                    layout.buffer_bytes[0],
+                    outer_rows.instruction_input_buffer(),
+                    0,
                     layout.buffer_bytes[1],
                 )?,
                 DenseArenaState::OuterResidual {
@@ -827,28 +858,75 @@ impl InstructionInputSequenceStorage {
         receipt: OuterResidualReleaseReceipt,
         resident_rows: &InstructionInputRows,
     ) -> Result<(), MetalError> {
-        let DenseArenaState::OuterResidual { expected, released } = &mut self.dense_arena else {
-            return Err(MetalError::InvalidInstructionInputState(
-                "owned dense storage received an Outer release receipt",
-            ));
+        let expected = match self.dense_arena {
+            DenseArenaState::Owned => {
+                return Err(MetalError::InvalidInstructionInputState(
+                    "owned dense storage received an Outer release receipt",
+                ));
+            }
+            DenseArenaState::OuterResidual {
+                expected: _,
+                released: true,
+            } => {
+                return Err(MetalError::InvalidInstructionInputState(
+                    "Outer residual arena was released more than once",
+                ));
+            }
+            DenseArenaState::OuterResidual {
+                expected,
+                released: false,
+            } => expected,
         };
-        if *released {
-            return Err(MetalError::InvalidInstructionInputState(
-                "Outer residual arena was released more than once",
-            ));
-        }
-        if receipt.key != *expected
+        if receipt.key != expected
             || resident_rows.len() != expected.rows
             || resident_rows.device_registry_id() != expected.device_registry_id
             || resident_rows.allocation_identity() != expected.compact_storage_id
             || self.buffers.dense_a.allocation_identity() != expected.storage_id
-            || self.buffers.dense_b.allocation_identity() != expected.storage_id
+            || self.buffers.dense_b.allocation_identity() != expected.compact_storage_id
         {
             return Err(MetalError::InvalidInstructionInputState(
                 "Outer residual release receipt changed before InstructionInput",
             ));
         }
-        *released = true;
+        let dense_b_bytes = self.buffers.dense_b.length();
+        self.context
+            .validate_additional_working_set(dense_b_bytes)?;
+        let dense_b_elements = usize::try_from(dense_b_bytes)
+            .ok()
+            .and_then(|bytes| bytes.checked_div(size_of::<Fp128>()))
+            .ok_or(MetalError::InvalidInstructionInputState(
+                "deferred dense-B byte count does not fit the host",
+            ))?;
+        let compact_placeholder_id = self.buffers.dense_b.allocation_identity();
+        let deferred_dense_b = new_buffer(&self.context, dense_b_elements)?;
+        let deferred_dense_b_id = deferred_dense_b.allocation_identity();
+        if deferred_dense_b_id == expected.compact_storage_id
+            || deferred_dense_b_id == expected.storage_id
+            || self.buffers.all()[2..]
+                .iter()
+                .any(|buffer| buffer.allocation_identity() == deferred_dense_b_id)
+        {
+            return Err(MetalError::InvalidInstructionInputState(
+                "deferred dense-B allocation aliases live InstructionInput storage",
+            ));
+        }
+        self.buffers.dense_b = deferred_dense_b;
+        self.owned_bytes = self.owned_bytes.checked_add(dense_b_bytes).ok_or(
+            MetalError::InvalidInstructionInputState(
+                "deferred dense-B storage accounting overflowed",
+            ),
+        )?;
+        self.dense_arena = DenseArenaState::OuterResidual {
+            expected,
+            released: true,
+        };
+        tracing::info!(
+            target: "jolt::metal",
+            compact_placeholder_id,
+            deferred_dense_b_id,
+            deferred_dense_b_bytes = dense_b_bytes,
+            "allocated InstructionInput dense B after Outer release"
+        );
         Ok(())
     }
 
@@ -1420,11 +1498,25 @@ mod tests {
         instruction_input_sequence_storage_bytes, instruction_input_storage_layout,
         instruction_input_weight_capacities, validate_u32_element_count, InstructionInputParams,
         InstructionInputRow, InstructionInputSequenceConfig, InstructionInputStorageInitialization,
-        INSTRUCTION_INPUT_TABLES,
+        INSTRUCTION_INPUT_TABLES, REGISTER_RD_INDEX_SHIFT, REGISTER_RS1_INDEX_SHIFT,
+        REGISTER_RS2_INDEX_SHIFT,
     };
     use crate::metal::solinas::{
         MetalError, OuterResidualReleaseReceipt, SolinasMetal, SpartanOuterUniskipRow,
     };
+
+    #[test]
+    fn register_indices_use_only_non_protocol_metadata_bits() {
+        let base = InstructionInputRow::default();
+        let encoded = base
+            .with_register_indices(Some(127), Some(63), Some(91))
+            .unwrap();
+        let flags = encoded.words()[5];
+        assert_eq!((flags >> REGISTER_RS1_INDEX_SHIFT) & 0xff, 128);
+        assert_eq!((flags >> REGISTER_RS2_INDEX_SHIFT) & 0xff, 64);
+        assert_eq!((flags >> REGISTER_RD_INDEX_SHIFT) & 0xff, 92);
+        assert_eq!(encoded.fields::<AkitaField>(), base.fields::<AkitaField>());
+    }
 
     #[test]
     fn weight_capacities_cover_initial_pairs() {
@@ -1471,7 +1563,7 @@ mod tests {
     }
 
     #[test]
-    fn borrowed_outer_residual_requires_release_and_preserves_guard() {
+    fn borrowed_outer_residual_defers_dense_b_and_preserves_compact_source() {
         let rows = packed_rows(16);
         let initial_tables: Vec<AkitaField> = (0..INSTRUCTION_INPUT_TABLES)
             .flat_map(|table| {
@@ -1484,11 +1576,21 @@ mod tests {
             .prepare_spartan_outer_uniskip_rows(&rows)
             .expect("Outer rows should prepare");
         let key = outer.residual_arena_key();
-        // SAFETY: the shared parent allocation is live for `key.storage_bytes`.
-        let parent_before_prepare = unsafe {
+        // SAFETY: the shared successor allocation is live for the byte length
+        // recorded in the release key.
+        let successor_before_prepare = unsafe {
             slice::from_raw_parts(
-                outer.residual_buffer().contents().cast::<u8>(),
+                outer.successor_buffer().contents().cast::<u8>(),
                 usize::try_from(key.storage_bytes).unwrap(),
+            )
+        }
+        .to_vec();
+        // SAFETY: the shared compact allocation is live for the byte length
+        // recorded in the release key.
+        let compact_before_prepare = unsafe {
+            slice::from_raw_parts(
+                outer.instruction_input_buffer().contents().cast::<u8>(),
+                usize::try_from(key.compact_storage_bytes).unwrap(),
             )
         }
         .to_vec();
@@ -1507,19 +1609,14 @@ mod tests {
                 config,
             )
             .expect("borrowed storage should prepare");
-        let layout =
-            instruction_input_storage_layout(rows.len(), e_in_capacity, e_out_capacity).unwrap();
-        let guard_offset = layout.buffer_bytes[0] + layout.buffer_bytes[1];
-        let guard_len = usize::try_from(key.storage_bytes - guard_offset).unwrap();
-        // SAFETY: storage preparation must leave the still-owned parent untouched.
-        let parent_after_prepare = unsafe {
+        // SAFETY: storage preparation must leave the still-owned successor untouched.
+        let successor_after_prepare = unsafe {
             slice::from_raw_parts(
-                outer.residual_buffer().contents().cast::<u8>(),
+                outer.successor_buffer().contents().cast::<u8>(),
                 usize::try_from(key.storage_bytes).unwrap(),
             )
         };
-        assert_eq!(parent_after_prepare, parent_before_prepare);
-        let guard_before = parent_before_prepare[usize::try_from(guard_offset).unwrap()..].to_vec();
+        assert_eq!(successor_after_prepare, successor_before_prepare);
 
         assert!(storage.requires_outer_residual_release());
         assert_eq!(storage.owned_bytes(), 480);
@@ -1529,13 +1626,10 @@ mod tests {
         );
         assert_eq!(
             storage.buffers.dense_b.allocation_identity(),
-            key.storage_id
+            key.compact_storage_id
         );
         assert_eq!(storage.buffers.dense_a.offset_bytes(), 0);
-        assert_eq!(
-            storage.buffers.dense_b.offset_bytes(),
-            layout.buffer_bytes[0]
-        );
+        assert_eq!(storage.buffers.dense_b.offset_bytes(), 0);
         let mut wrong = key;
         wrong.rows *= 2;
         assert!(storage
@@ -1550,6 +1644,15 @@ mod tests {
             .unlock_outer_residual(OuterResidualReleaseReceipt { key }, &resident)
             .expect("the exact release receipt should unlock the arena");
         assert!(!storage.requires_outer_residual_release());
+        assert_ne!(
+            storage.buffers.dense_b.allocation_identity(),
+            key.compact_storage_id
+        );
+        assert_ne!(
+            storage.buffers.dense_b.allocation_identity(),
+            key.storage_id
+        );
+        assert_eq!(storage.owned_bytes(), 992);
         assert!(storage
             .unlock_outer_residual(OuterResidualReleaseReceipt { key }, &resident)
             .is_err());
@@ -1629,19 +1732,15 @@ mod tests {
         sequence.read_current_tables(&mut readback).unwrap();
         assert_eq!(readback, tables_2);
 
-        // SAFETY: the parent allocation and checked guard range remain live
-        // after the synchronous commands complete.
-        let guard_after = unsafe {
+        // SAFETY: the complete compact allocation remains live after the
+        // synchronous commands complete.
+        let compact_after = unsafe {
             slice::from_raw_parts(
-                outer
-                    .residual_buffer()
-                    .contents()
-                    .cast::<u8>()
-                    .add(usize::try_from(guard_offset).unwrap()),
-                guard_len,
+                outer.instruction_input_buffer().contents().cast::<u8>(),
+                usize::try_from(key.compact_storage_bytes).unwrap(),
             )
         };
-        assert_eq!(guard_after, guard_before);
+        assert_eq!(compact_after, compact_before_prepare);
     }
 
     #[test]

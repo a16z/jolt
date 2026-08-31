@@ -1,12 +1,12 @@
 use std::{
-    mem::{align_of, size_of},
+    mem::{self, align_of, size_of},
     slice,
     time::Duration,
 };
 
 use jolt_field::{AkitaField, Field};
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer, CommandQueue,
     ComputePipelineState, MTLResourceOptions, MTLSize, NSRange,
 };
 use thiserror::Error;
@@ -20,7 +20,7 @@ use super::product_uniskip::{
 };
 use super::{
     buffer_from_slice, completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
-    spartan_outer_uniskip_residual_row_bytes, validate_completed_command, Fp128,
+    spartan_outer_uniskip_successor_row_bytes, validate_completed_command, Fp128,
     InstructionInputRow, MetalError, SolinasMetal,
 };
 
@@ -35,8 +35,13 @@ pub(crate) const MATERIALIZE_PIPELINE: &str = "solinas_product_remainder_materia
 pub(crate) const MATERIALIZE_STAGE1_PIPELINE: &str =
     "solinas_product_remainder_materialize_stage1_message";
 pub(crate) const TRANSITION_PIPELINE: &str = "solinas_product_remainder_bind_and_message";
+const IN_PLACE_BIND_PIPELINE: &str = "solinas_product_remainder_bind_range";
+const IN_PLACE_COPY_PIPELINE: &str = "solinas_product_remainder_copy_prefix";
+const IN_PLACE_MESSAGE_PIPELINE: &str = "solinas_product_remainder_bound_message";
 pub(crate) const OPENINGS_PIPELINE: &str = "solinas_product_remainder_openings";
 pub(crate) const OPENINGS_STAGE1_PIPELINE: &str = "solinas_product_remainder_stage1_openings";
+const TERMINAL_CACHE_OPENINGS_PIPELINE: &str =
+    "solinas_product_instruction_terminal_cache_openings";
 pub(crate) const REDUCTION_PIPELINE: &str = "solinas_product_remainder_reduce";
 
 const ROW_LEFT_INPUT: usize = 0;
@@ -59,6 +64,8 @@ pub struct ProductRemainderSequenceConfig {
     pub materialize_threads_per_threadgroup: Option<usize>,
     pub transition_threads_per_threadgroup: Option<usize>,
     pub openings_threads_per_threadgroup: Option<usize>,
+    pub prime_workspace: bool,
+    pub async_state_b_fill: bool,
 }
 
 impl Default for ProductRemainderSequenceConfig {
@@ -68,6 +75,8 @@ impl Default for ProductRemainderSequenceConfig {
             materialize_threads_per_threadgroup: Some(128),
             transition_threads_per_threadgroup: Some(64),
             openings_threads_per_threadgroup: Some(128),
+            prime_workspace: true,
+            async_state_b_fill: false,
         }
     }
 }
@@ -364,7 +373,7 @@ impl ProductRemainderRows {
             .checked_mul(size_of::<InstructionInputRow>())
             .and_then(|bytes| u64::try_from(bytes).ok())
             .ok_or(MetalError::InputTooLong(len))?;
-        let residual_bytes = spartan_outer_uniskip_residual_row_bytes(len)?;
+        let residual_bytes = spartan_outer_uniskip_successor_row_bytes(len)?;
         if len < 2
             || !len.is_power_of_two()
             || generation == 0
@@ -462,9 +471,222 @@ pub(crate) struct ProductRemainderReductionParams {
     pub(crate) _reserved: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::metal::solinas) struct ProductInstructionTerminalCacheParams {
+    pub(in crate::metal::solinas) rows: u32,
+    pub(in crate::metal::solinas) e_in_length: u32,
+    pub(in crate::metal::solinas) e_out_length: u32,
+    pub(in crate::metal::solinas) exceptions_per_group: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::metal::solinas) struct ProductInstructionTerminalCacheStats {
+    pub(in crate::metal::solinas) capacity_bytes: u64,
+    pub(in crate::metal::solinas) dense_bytes: u64,
+    pub(in crate::metal::solinas) exception_count: usize,
+    pub(in crate::metal::solinas) overflow_groups: usize,
+    pub(in crate::metal::solinas) active_logical_bytes: u64,
+}
+
+pub(in crate::metal::solinas) struct ProductInstructionTerminalCacheOpenings {
+    pub(in crate::metal::solinas) values: [AkitaField; PRODUCT_REMAINDER_OPENINGS],
+    pub(in crate::metal::solinas) gpu_active: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProductInstructionTerminalCacheLayout {
+    rows: usize,
+    groups: usize,
+    rows_per_group: usize,
+    lookup_low_offset: usize,
+    left_lookup_low_offset: usize,
+    flags_offset: usize,
+    counts_offset: usize,
+    exceptions_offset: usize,
+    exceptions_per_group: usize,
+    capacity_bytes: usize,
+}
+
+struct ProductInstructionTerminalCache {
+    layout: ProductInstructionTerminalCacheLayout,
+    openings_pipeline: ComputePipelineState,
+    stats: Option<ProductInstructionTerminalCacheStats>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProductRemainderBindRangeParams {
+    source_offset: u32,
+    destination_offset: u32,
+    output_start: u32,
+    output_count: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::metal::solinas) struct InPlaceBindRange {
+    pub(in crate::metal::solinas) start: usize,
+    pub(in crate::metal::solinas) count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::metal::solinas) struct InPlaceBindSchedule {
+    pub(in crate::metal::solinas) prefix: usize,
+    pub(in crate::metal::solinas) direct: Vec<InPlaceBindRange>,
+}
+
 const _: [(); 16] = [(); size_of::<ProductRemainderPhaseParams>()];
 const _: [(); 16] = [(); size_of::<ProductRemainderOpeningParams>()];
 const _: [(); 16] = [(); size_of::<ProductRemainderReductionParams>()];
+const _: [(); 16] = [(); size_of::<ProductRemainderBindRangeParams>()];
+const _: [(); 16] = [(); size_of::<ProductInstructionTerminalCacheParams>()];
+
+impl ProductInstructionTerminalCacheLayout {
+    fn new(
+        rows: usize,
+        initial_e_in_length: usize,
+        groups: usize,
+        capacity_bytes: usize,
+    ) -> Result<Self, ProductRemainderShapeError> {
+        let rows_per_group = initial_e_in_length.checked_mul(2).ok_or(
+            ProductRemainderShapeError::ByteLengthOverflow {
+                name: "terminal cache rows per group",
+            },
+        )?;
+        if groups == 0
+            || rows_per_group == 0
+            || groups.checked_mul(rows_per_group) != Some(rows)
+            || rows_per_group >= (1usize << 31)
+        {
+            return Err(ProductRemainderShapeError::WeightShape {
+                phase: "terminal cache",
+                expected: rows,
+                e_in: initial_e_in_length,
+                e_out: groups,
+            });
+        }
+        let lookup_low_offset = 0;
+        let left_lookup_low_offset = rows.checked_mul(size_of::<u32>()).ok_or(
+            ProductRemainderShapeError::ByteLengthOverflow {
+                name: "terminal cache lookup low",
+            },
+        )?;
+        let flags_offset = left_lookup_low_offset
+            .checked_add(rows.checked_mul(size_of::<u32>()).ok_or(
+                ProductRemainderShapeError::ByteLengthOverflow {
+                    name: "terminal cache left-lookup low",
+                },
+            )?)
+            .ok_or(ProductRemainderShapeError::ByteLengthOverflow {
+                name: "terminal cache flags offset",
+            })?;
+        let counts_offset = flags_offset.checked_add(rows).ok_or(
+            ProductRemainderShapeError::ByteLengthOverflow {
+                name: "terminal cache counts offset",
+            },
+        )?;
+        if !counts_offset.is_multiple_of(align_of::<u32>()) {
+            return Err(ProductRemainderShapeError::ByteLengthOverflow {
+                name: "terminal cache counts alignment",
+            });
+        }
+        let counts_end = counts_offset
+            .checked_add(groups.checked_mul(size_of::<u32>()).ok_or(
+                ProductRemainderShapeError::ByteLengthOverflow {
+                    name: "terminal cache counts",
+                },
+            )?)
+            .ok_or(ProductRemainderShapeError::ByteLengthOverflow {
+                name: "terminal cache counts end",
+            })?;
+        let exceptions_offset =
+            counts_end
+                .checked_add(7)
+                .ok_or(ProductRemainderShapeError::ByteLengthOverflow {
+                    name: "terminal cache exception alignment",
+                })?
+                & !7;
+        let exception_bytes = capacity_bytes.checked_sub(exceptions_offset).ok_or(
+            ProductRemainderShapeError::StorageLength {
+                name: "terminal cache",
+                expected: exceptions_offset,
+                got: capacity_bytes,
+            },
+        )?;
+        let exceptions_per_group = exception_bytes / groups / size_of::<u64>();
+        if exceptions_per_group == 0 || exceptions_per_group >= (1usize << 31) {
+            return Err(ProductRemainderShapeError::ByteLengthOverflow {
+                name: "terminal cache exception capacity",
+            });
+        }
+        Ok(Self {
+            rows,
+            groups,
+            rows_per_group,
+            lookup_low_offset,
+            left_lookup_low_offset,
+            flags_offset,
+            counts_offset,
+            exceptions_offset,
+            exceptions_per_group,
+            capacity_bytes,
+        })
+    }
+
+    fn params(
+        self,
+        rows: usize,
+        e_in_length: usize,
+        e_out_length: usize,
+    ) -> Result<ProductInstructionTerminalCacheParams, MetalError> {
+        Ok(ProductInstructionTerminalCacheParams {
+            rows: u32::try_from(rows).map_err(|_| MetalError::InputTooLong(rows))?,
+            e_in_length: u32::try_from(e_in_length)
+                .map_err(|_| MetalError::InputTooLong(e_in_length))?,
+            e_out_length: u32::try_from(e_out_length)
+                .map_err(|_| MetalError::InputTooLong(e_out_length))?,
+            exceptions_per_group: u32::try_from(self.exceptions_per_group)
+                .map_err(|_| MetalError::InputTooLong(self.exceptions_per_group))?,
+        })
+    }
+
+    fn dense_bytes(self) -> usize {
+        self.exceptions_offset
+    }
+}
+
+impl ProductRemainderBindRangeParams {
+    fn new(
+        source_offset: usize,
+        destination_offset: usize,
+        range: InPlaceBindRange,
+    ) -> Result<Self, ProductRemainderShapeError> {
+        Ok(Self {
+            source_offset: shader_count("in-place source offset", source_offset)?,
+            destination_offset: shader_count("in-place destination offset", destination_offset)?,
+            output_start: shader_count("in-place output start", range.start)?,
+            output_count: shader_count("in-place output count", range.count)?,
+        })
+    }
+}
+
+pub(in crate::metal::solinas) fn in_place_bind_schedule(
+    bound_elements: usize,
+    scratch_capacity: usize,
+) -> InPlaceBindSchedule {
+    let prefix = bound_elements.min(scratch_capacity);
+    let mut direct = Vec::new();
+    let mut start = prefix;
+    while start < bound_elements {
+        let end = start.saturating_mul(2).min(bound_elements);
+        direct.push(InPlaceBindRange {
+            start,
+            count: end - start,
+        });
+        start = end;
+    }
+    InPlaceBindSchedule { prefix, direct }
+}
 
 impl ProductRemainderPhaseParams {
     pub(crate) fn materialize(
@@ -655,6 +877,7 @@ impl ProductRemainderStorageLayout {
 enum ProductRemainderPhase {
     Ready,
     Materialized,
+    TransitionRetired,
 }
 
 struct ProductRemainderBuffers {
@@ -673,6 +896,9 @@ pub struct ProductRemainderSequence {
     uniskip_pipeline: ComputePipelineState,
     materialize_pipeline: ComputePipelineState,
     transition_pipeline: ComputePipelineState,
+    in_place_bind_pipeline: ComputePipelineState,
+    in_place_copy_pipeline: ComputePipelineState,
+    in_place_message_pipeline: ComputePipelineState,
     openings_pipeline: ComputePipelineState,
     reduction_pipeline: ComputePipelineState,
     buffers: ProductRemainderBuffers,
@@ -682,6 +908,9 @@ pub struct ProductRemainderSequence {
     materialize_threads_per_threadgroup: usize,
     transition_threads_per_threadgroup: usize,
     openings_threads_per_threadgroup: usize,
+    prime_workspace: bool,
+    state_b_fill_queue: Option<CommandQueue>,
+    terminal_cache: Option<ProductInstructionTerminalCache>,
     current_elements: usize,
     source_in_a: bool,
     phase: ProductRemainderPhase,
@@ -689,6 +918,7 @@ pub struct ProductRemainderSequence {
 
 struct ProductRemainderInitialMessageCommand {
     command_buffer: CommandBuffer,
+    state_b_fill: Option<CommandBuffer>,
     output: Buffer,
     sequence_identity: usize,
 }
@@ -714,6 +944,9 @@ impl Drop for PendingProductRemainderInitialMessage {
     fn drop(&mut self) {
         if let Some(command) = &self.command {
             command.command_buffer.wait_until_completed();
+            if let Some(state_b_fill) = &command.state_b_fill {
+                state_b_fill.wait_until_completed();
+            }
         }
     }
 }
@@ -878,11 +1111,17 @@ impl SolinasMetal {
         let uniskip_pipeline = self.compile_named_pipeline(uniskip_pipeline_name)?;
         let materialize_pipeline = self.compile_named_pipeline(materialize_pipeline_name)?;
         let transition_pipeline = self.compile_named_pipeline(TRANSITION_PIPELINE)?;
+        let in_place_bind_pipeline = self.compile_named_pipeline(IN_PLACE_BIND_PIPELINE)?;
+        let in_place_copy_pipeline = self.compile_named_pipeline(IN_PLACE_COPY_PIPELINE)?;
+        let in_place_message_pipeline = self.compile_named_pipeline(IN_PLACE_MESSAGE_PIPELINE)?;
         let openings_pipeline = self.compile_named_pipeline(openings_pipeline_name)?;
         let reduction_pipeline = self.compile_named_pipeline(REDUCTION_PIPELINE)?;
         let uniskip_limits = Self::limits(&uniskip_pipeline);
         let materialize_limits = Self::limits(&materialize_pipeline);
         let transition_limits = Self::limits(&transition_pipeline);
+        let in_place_bind_limits = Self::limits(&in_place_bind_pipeline);
+        let in_place_copy_limits = Self::limits(&in_place_copy_pipeline);
+        let in_place_message_limits = Self::limits(&in_place_message_pipeline);
         let openings_limits = Self::limits(&openings_pipeline);
         let reduction_limits = Self::limits(&reduction_pipeline);
         if uniskip_limits.thread_execution_width != PRODUCT_UNISKIP_SIMD_WIDTH {
@@ -895,6 +1134,9 @@ impl SolinasMetal {
         for (pipeline, limits) in [
             (materialize_pipeline_name, materialize_limits),
             (TRANSITION_PIPELINE, transition_limits),
+            (IN_PLACE_BIND_PIPELINE, in_place_bind_limits),
+            (IN_PLACE_COPY_PIPELINE, in_place_copy_limits),
+            (IN_PLACE_MESSAGE_PIPELINE, in_place_message_limits),
             (openings_pipeline_name, openings_limits),
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
@@ -919,6 +1161,19 @@ impl SolinasMetal {
             config.transition_threads_per_threadgroup,
             transition_limits,
         )?;
+        for limits in [
+            in_place_bind_limits,
+            in_place_copy_limits,
+            in_place_message_limits,
+        ] {
+            let resolved =
+                Self::resolve_threadgroup_width(Some(transition_threads_per_threadgroup), limits)?;
+            if resolved != transition_threads_per_threadgroup {
+                return Err(MetalError::InvalidProductRemainderState(
+                    "in-place transition threadgroup width differs from the dense path",
+                ));
+            }
+        }
         let openings_threads_per_threadgroup = Self::resolve_threadgroup_width(
             config.openings_threads_per_threadgroup,
             openings_limits,
@@ -946,6 +1201,9 @@ impl SolinasMetal {
             uniskip_pipeline,
             materialize_pipeline,
             transition_pipeline,
+            in_place_bind_pipeline,
+            in_place_copy_pipeline,
+            in_place_message_pipeline,
             openings_pipeline,
             reduction_pipeline,
             buffers: ProductRemainderBuffers {
@@ -964,6 +1222,11 @@ impl SolinasMetal {
             materialize_threads_per_threadgroup,
             transition_threads_per_threadgroup,
             openings_threads_per_threadgroup,
+            prime_workspace: config.prime_workspace,
+            state_b_fill_queue: config
+                .async_state_b_fill
+                .then(|| self.device.new_command_queue()),
+            terminal_cache: None,
             current_elements: row_count,
             source_in_a: true,
             phase: ProductRemainderPhase::Ready,
@@ -1058,6 +1321,11 @@ impl ProductRemainderSequence {
                 "a joint transition needs a materialized product state",
             ));
         }
+        if !self.source_in_a {
+            return Err(MetalError::InvalidProductRemainderState(
+                "joint in-place product state left state A",
+            ));
+        }
         let params = ProductRemainderPhaseParams::transition(
             self.current_elements,
             e_in.len(),
@@ -1067,14 +1335,80 @@ impl ProductRemainderSequence {
         let challenge = Fp128::from_jolt_field(&challenge);
         self.context
             .validate_inputs("joint product remainder challenge", &[challenge])?;
-        encoder.set_compute_pipeline_state(&self.transition_pipeline);
-        encoder.set_buffer(0, Some(self.source_buffer()), 0);
-        encoder.set_buffer(1, Some(self.destination_buffer()), 0);
-        encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
-        encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
-        encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
-        set_inline_bytes(encoder, 5, &challenge);
-        set_inline_bytes(encoder, 6, &params);
+        let state = &self.buffers.state_a;
+        let scratch = &self.buffers.partial_b;
+        let bound_elements = self.current_elements / 2;
+        let schedule = in_place_bind_schedule(bound_elements, self.layout.partial_fields());
+        if schedule.prefix == 0 {
+            return Err(MetalError::InvalidProductRemainderState(
+                "joint in-place product scratch is empty",
+            ));
+        }
+
+        encoder.set_compute_pipeline_state(&self.in_place_bind_pipeline);
+        encoder.set_buffer(0, Some(state), 0);
+        encoder.set_buffer(1, Some(scratch), 0);
+        set_inline_bytes(encoder, 2, &challenge);
+        let prefix = InPlaceBindRange {
+            start: 0,
+            count: schedule.prefix,
+        };
+        let prefix_params = ProductRemainderBindRangeParams::new(0, 0, prefix)?;
+        set_inline_bytes(encoder, 3, &prefix_params);
+        dispatch_product_remainder_linear(
+            encoder,
+            prefix.count,
+            self.transition_threads_per_threadgroup,
+        );
+        encoder.memory_barrier_with_resources(&[&**state, &**scratch]);
+
+        encoder.set_compute_pipeline_state(&self.in_place_copy_pipeline);
+        encoder.set_buffer(0, Some(scratch), 0);
+        encoder.set_buffer(1, Some(state), 0);
+        let prefix_count = shader_count("in-place prefix", schedule.prefix)?;
+        set_inline_bytes(encoder, 2, &prefix_count);
+        dispatch_product_remainder_linear(
+            encoder,
+            schedule.prefix,
+            self.transition_threads_per_threadgroup,
+        );
+        encoder.memory_barrier_with_resources(&[&**state, &**scratch]);
+
+        encoder.set_compute_pipeline_state(&self.in_place_bind_pipeline);
+        encoder.set_buffer(0, Some(state), 0);
+        encoder.set_buffer(1, Some(state), 0);
+        set_inline_bytes(encoder, 2, &challenge);
+        for range in schedule.direct {
+            let range_params = ProductRemainderBindRangeParams::new(0, 0, range)?;
+            set_inline_bytes(encoder, 3, &range_params);
+            dispatch_product_remainder_linear(
+                encoder,
+                range.count,
+                self.transition_threads_per_threadgroup,
+            );
+            encoder.memory_barrier_with_resources(&[&**state]);
+        }
+
+        let right = InPlaceBindRange {
+            start: 0,
+            count: bound_elements,
+        };
+        let right_params =
+            ProductRemainderBindRangeParams::new(self.current_elements, bound_elements, right)?;
+        set_inline_bytes(encoder, 3, &right_params);
+        dispatch_product_remainder_linear(
+            encoder,
+            right.count,
+            self.transition_threads_per_threadgroup,
+        );
+        encoder.memory_barrier_with_resources(&[&**state]);
+
+        encoder.set_compute_pipeline_state(&self.in_place_message_pipeline);
+        encoder.set_buffer(0, Some(state), 0);
+        encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+        set_inline_bytes(encoder, 4, &params);
         encoder.set_threadgroup_memory_length(
             0,
             product_remainder_threadgroup_bytes(
@@ -1111,7 +1445,6 @@ impl ProductRemainderSequence {
             ));
         }
         self.current_elements /= 2;
-        self.source_in_a = !self.source_in_a;
         Ok(())
     }
 
@@ -1132,11 +1465,220 @@ impl ProductRemainderSequence {
         &self.context
     }
 
+    pub(in crate::metal::solinas) fn enable_joint_terminal_cache(
+        &mut self,
+        initial_e_in_length: usize,
+        e_out_length: usize,
+    ) -> Result<(), MetalError> {
+        if !self.is_ready()
+            || self.terminal_cache.is_some()
+            || self.buffers.rows.source_kind() != ProductRemainderSourceKind::SpartanStage1
+        {
+            return Err(MetalError::InvalidProductRemainderState(
+                "joint terminal cache requires a ready Stage-1 product sequence",
+            ));
+        }
+        let capacity_bytes = usize::try_from(self.buffers.state_b.length())
+            .map_err(|_| MetalError::InputTooLong(usize::MAX))?;
+        let layout = ProductInstructionTerminalCacheLayout::new(
+            self.layout.rows(),
+            initial_e_in_length,
+            e_out_length,
+            capacity_bytes,
+        )?;
+        let openings_pipeline = self
+            .context
+            .compile_named_pipeline(TERMINAL_CACHE_OPENINGS_PIPELINE)?;
+        let limits = SolinasMetal::limits(&openings_pipeline);
+        if limits.thread_execution_width != PRODUCT_REMAINDER_SIMD_WIDTH {
+            return Err(MetalError::UnsupportedProductRemainderExecutionWidth {
+                pipeline: TERMINAL_CACHE_OPENINGS_PIPELINE,
+                expected: PRODUCT_REMAINDER_SIMD_WIDTH,
+                got: limits.thread_execution_width,
+            });
+        }
+        let resolved = SolinasMetal::resolve_threadgroup_width(
+            Some(self.openings_threads_per_threadgroup),
+            limits,
+        )?;
+        if resolved != self.openings_threads_per_threadgroup {
+            return Err(MetalError::InvalidProductRemainderState(
+                "terminal cache opening threadgroup width differs from Product openings",
+            ));
+        }
+        self.state_b_fill_queue = None;
+        self.terminal_cache = Some(ProductInstructionTerminalCache {
+            layout,
+            openings_pipeline,
+            stats: None,
+        });
+        Ok(())
+    }
+
+    pub(in crate::metal::solinas) fn encode_joint_terminal_cache(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+    ) -> Result<Option<ProductInstructionTerminalCacheParams>, MetalError> {
+        let Some(cache) = &self.terminal_cache else {
+            return Ok(None);
+        };
+        let layout = cache.layout;
+        encoder.set_buffer(
+            10,
+            Some(&self.buffers.state_b),
+            layout.lookup_low_offset as u64,
+        );
+        encoder.set_buffer(
+            11,
+            Some(&self.buffers.state_b),
+            layout.left_lookup_low_offset as u64,
+        );
+        encoder.set_buffer(12, Some(&self.buffers.state_b), layout.flags_offset as u64);
+        encoder.set_buffer(13, Some(&self.buffers.state_b), layout.counts_offset as u64);
+        encoder.set_buffer(
+            14,
+            Some(&self.buffers.state_b),
+            layout.exceptions_offset as u64,
+        );
+        layout
+            .params(layout.rows, layout.rows_per_group / 2, layout.groups)
+            .map(Some)
+    }
+
+    pub(in crate::metal::solinas) fn complete_joint_terminal_cache(
+        &mut self,
+    ) -> Result<Option<ProductInstructionTerminalCacheStats>, MetalError> {
+        let Some(cache) = &self.terminal_cache else {
+            return Ok(None);
+        };
+        let layout = cache.layout;
+        let counts = unsafe {
+            // SAFETY: the joint materialization command has completed and wrote
+            // one counter for every cache equality block; layout construction
+            // validates the byte offset's u32 alignment.
+            slice::from_raw_parts(
+                self.buffers
+                    .state_b
+                    .contents()
+                    .cast::<u32>()
+                    .add(layout.counts_offset / size_of::<u32>()),
+                layout.groups,
+            )
+        };
+        let mut exception_count = 0usize;
+        let mut overflow_groups = 0usize;
+        for &encoded in counts {
+            overflow_groups += usize::from(encoded & (1 << 31) != 0);
+            exception_count = exception_count
+                .checked_add((encoded & !(1 << 31)) as usize)
+                .ok_or(MetalError::InputTooLong(usize::MAX))?;
+        }
+        let dense_bytes = u64::try_from(layout.dense_bytes())
+            .map_err(|_| MetalError::InputTooLong(layout.dense_bytes()))?;
+        let exception_bytes = exception_count
+            .checked_mul(size_of::<u64>())
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(exception_count))?;
+        let stats = ProductInstructionTerminalCacheStats {
+            capacity_bytes: u64::try_from(layout.capacity_bytes)
+                .map_err(|_| MetalError::InputTooLong(layout.capacity_bytes))?,
+            dense_bytes,
+            exception_count,
+            overflow_groups,
+            active_logical_bytes: dense_bytes
+                .checked_add(exception_bytes)
+                .ok_or(MetalError::InputTooLong(exception_count))?,
+        };
+        if overflow_groups == 0 {
+            if let Some(cache) = &mut self.terminal_cache {
+                cache.stats = Some(stats);
+            }
+        } else {
+            let _ = self.release_terminal_cache_buffer()?;
+        }
+        Ok(Some(stats))
+    }
+
+    #[cfg(test)]
+    pub(in crate::metal::solinas) const fn joint_state_b_buffer(&self) -> &Buffer {
+        &self.buffers.state_b
+    }
+
+    pub(in crate::metal::solinas) fn release_joint_alternate(&mut self) -> Result<u64, MetalError> {
+        if !self.is_ready() || self.terminal_cache.is_some() {
+            return Err(MetalError::InvalidProductRemainderState(
+                "joint alternate release requires a ready sequence",
+            ));
+        }
+        let expected_bytes = self
+            .layout
+            .state_b_fields()
+            .checked_mul(size_of::<Fp128>())
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(self.layout.state_b_fields()))?;
+        if self.buffers.state_b.length() != expected_bytes {
+            return Err(MetalError::InvalidProductRemainderState(
+                "joint product alternate has already been released or has the wrong size",
+            ));
+        }
+        let tombstone = self
+            .context
+            .device
+            .new_buffer(1, MTLResourceOptions::StorageModeShared);
+        let alternate = mem::replace(&mut self.buffers.state_b, tombstone);
+        self.state_b_fill_queue = None;
+        let released_bytes = alternate.length();
+        drop(alternate);
+        Ok(released_bytes)
+    }
+
+    fn release_terminal_cache_buffer(&mut self) -> Result<u64, MetalError> {
+        let cache = self
+            .terminal_cache
+            .take()
+            .ok_or(MetalError::InvalidProductRemainderState(
+                "terminal cache was released without an active layout",
+            ))?;
+        let expected = u64::try_from(cache.layout.capacity_bytes)
+            .map_err(|_| MetalError::InputTooLong(cache.layout.capacity_bytes))?;
+        if self.buffers.state_b.length() != expected {
+            return Err(MetalError::InvalidProductRemainderState(
+                "terminal cache buffer has the wrong capacity",
+            ));
+        }
+        let tombstone = self
+            .context
+            .device
+            .new_buffer(1, MTLResourceOptions::StorageModeShared);
+        let cache_buffer = mem::replace(&mut self.buffers.state_b, tombstone);
+        let bytes = cache_buffer.length();
+        drop(cache_buffer);
+        Ok(bytes)
+    }
+
+    pub(in crate::metal::solinas) fn submit_state_b_fill(&self) -> Option<CommandBuffer> {
+        self.state_b_fill_queue.as_ref().map(|queue| {
+            let command = queue.new_command_buffer().to_owned();
+            let encoder = command.new_blit_command_encoder();
+            encoder.fill_buffer(
+                &self.buffers.state_b,
+                NSRange::new(0, self.buffers.state_b.length()),
+                0,
+            );
+            encoder.end_encoding();
+            command.commit();
+            command
+        })
+    }
+
     pub(crate) fn prime_workspace(&self) -> Result<(), MetalError> {
         if !self.is_ready() {
             return Err(MetalError::InvalidProductRemainderState(
                 "workspace priming requires a ready sequence",
             ));
+        }
+        if !self.prime_workspace {
+            return Ok(());
         }
         let state_a_identity = self.buffers.state_a.as_ptr() as usize;
         let state_b_identity = self.buffers.state_b.as_ptr() as usize;
@@ -1163,6 +1705,15 @@ impl ProductRemainderSequence {
         validate_completed_command(command_buffer)
     }
 
+    pub(crate) fn share_outer_state_b(&self) -> Result<Buffer, MetalError> {
+        if !self.is_ready() {
+            return Err(MetalError::InvalidProductRemainderState(
+                "Outer state-B sharing requires a ready sequence",
+            ));
+        }
+        Ok(self.buffers.state_b.clone())
+    }
+
     pub(crate) fn set_lagrange_weights(
         &mut self,
         weights: [AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS + 1],
@@ -1172,7 +1723,8 @@ impl ProductRemainderSequence {
             PRODUCT_REMAINDER_MESSAGE_COLUMNS + 1,
             &weights,
             "Lagrange weights",
-        )
+        )?;
+        Ok(())
     }
 
     pub fn uniskip_message_timed(
@@ -1312,7 +1864,11 @@ impl ProductRemainderSequence {
             ));
         }
         command.command_buffer.wait_until_completed();
-        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
+        let mut gpu_active = completed_command_gpu_time(&command.command_buffer)?;
+        if let Some(state_b_fill) = &command.state_b_fill {
+            state_b_fill.wait_until_completed();
+            gpu_active += completed_command_gpu_time(state_b_fill)?;
+        }
         // SAFETY: completion makes the two reduced fields at the front of the
         // selected shared output buffer visible to the host.
         let values = unsafe {
@@ -1337,7 +1893,11 @@ impl ProductRemainderSequence {
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
         let command = self.submit_materialize_message_command(e_in, e_out)?;
         command.command_buffer.wait_until_completed();
-        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
+        let mut gpu_active = completed_command_gpu_time(&command.command_buffer)?;
+        if let Some(state_b_fill) = &command.state_b_fill {
+            state_b_fill.wait_until_completed();
+            gpu_active += completed_command_gpu_time(state_b_fill)?;
+        }
         // SAFETY: the completed reduction leaves two fields at the front of
         // the selected shared output buffer.
         let values = unsafe {
@@ -1416,8 +1976,10 @@ impl ProductRemainderSequence {
                 self.buffers.partial_b.clone()
             };
             command_buffer.commit();
+            let state_b_fill = self.submit_state_b_fill();
             Ok(ProductRemainderInitialMessageCommand {
                 command_buffer,
+                state_b_fill,
                 output,
                 sequence_identity: self.buffers.state_a.as_ptr() as usize,
             })
@@ -1542,13 +2104,117 @@ impl ProductRemainderSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_OPENINGS], Duration), MetalError> {
-        if self.phase != ProductRemainderPhase::Materialized || self.current_elements <= 2 {
+        if !matches!(
+            self.phase,
+            ProductRemainderPhase::Materialized | ProductRemainderPhase::TransitionRetired
+        ) {
             return Err(MetalError::InvalidProductRemainderState(
                 "CPU-tail openings require an unfinished resident sequence",
             ));
         }
         let (openings, active_time) = self.execute_openings(e_in, e_out)?;
         Ok((openings, active_time))
+    }
+
+    pub(in crate::metal::solinas) fn terminal_cache_openings_timed(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<Option<ProductInstructionTerminalCacheOpenings>, MetalError> {
+        let Some(cache) = &self.terminal_cache else {
+            return Ok(None);
+        };
+        if !matches!(
+            self.phase,
+            ProductRemainderPhase::Materialized | ProductRemainderPhase::TransitionRetired
+        ) || self.current_elements <= 2
+        {
+            return Err(MetalError::InvalidProductRemainderState(
+                "terminal cache openings require an unfinished Product sequence",
+            ));
+        }
+        let layout = cache.layout;
+        let groups_per_cache = layout
+            .rows_per_group
+            .checked_div(e_in.len())
+            .filter(|&ratio| {
+                ratio != 0
+                    && layout.groups.checked_mul(ratio) == Some(e_out.len())
+                    && e_in.len().checked_mul(e_out.len()) == Some(layout.rows)
+            });
+        if groups_per_cache.is_none() {
+            return Err(MetalError::InvalidProductRemainderState(
+                "terminal cache opening weights disagree with its equality blocks",
+            ));
+        }
+        let _ = cache.stats.ok_or(MetalError::InvalidProductRemainderState(
+            "terminal cache openings were requested before construction completed",
+        ))?;
+        let pipeline = cache.openings_pipeline.clone();
+        let params = layout.params(layout.rows_per_group, e_in.len(), e_out.len())?;
+        self.write_weights(e_in, e_out)?;
+        let (values, gpu_active) = autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&pipeline);
+            encoder.set_buffer(
+                0,
+                Some(&self.buffers.state_b),
+                layout.lookup_low_offset as u64,
+            );
+            encoder.set_buffer(
+                1,
+                Some(&self.buffers.state_b),
+                layout.left_lookup_low_offset as u64,
+            );
+            encoder.set_buffer(2, Some(&self.buffers.state_b), layout.flags_offset as u64);
+            encoder.set_buffer(3, Some(&self.buffers.state_b), layout.counts_offset as u64);
+            encoder.set_buffer(
+                4,
+                Some(&self.buffers.state_b),
+                layout.exceptions_offset as u64,
+            );
+            encoder.set_buffer(5, Some(&self.buffers.e_in), 0);
+            encoder.set_buffer(6, Some(&self.buffers.e_out), 0);
+            encoder.set_buffer(7, Some(&self.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 8, &params);
+            encoder.set_threadgroup_memory_length(
+                0,
+                product_remainder_threadgroup_bytes(
+                    PRODUCT_REMAINDER_OPENINGS,
+                    self.openings_threads_per_threadgroup,
+                ) as u64,
+            );
+            dispatch_product_remainder_blocks(
+                encoder,
+                e_out.len(),
+                self.openings_threads_per_threadgroup,
+            );
+            let final_in_a = encode_product_remainder_reductions(
+                encoder,
+                &self.reduction_pipeline,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                PRODUCT_REMAINDER_OPENINGS,
+            )?;
+            encoder.end_encoding();
+            finish_product_remainder_command::<PRODUCT_REMAINDER_OPENINGS>(
+                &self.context,
+                command_buffer,
+                if final_in_a {
+                    &self.buffers.partial_a
+                } else {
+                    &self.buffers.partial_b
+                },
+                "product instruction terminal cache openings",
+            )
+        })?;
+        let _ = self.release_terminal_cache_buffer()?;
+        Ok(Some(ProductInstructionTerminalCacheOpenings {
+            values,
+            gpu_active,
+        }))
     }
 
     fn execute_openings(
@@ -1651,9 +2317,9 @@ impl ProductRemainderSequence {
             ));
         }
         let state = self.source_buffer();
+        // SAFETY: the active buffer stores two `current_elements` tables and
+        // all preceding commands have completed.
         let values = unsafe {
-            // SAFETY: the active buffer stores two `current_elements` tables
-            // and all preceding commands have completed.
             slice::from_raw_parts(state.contents().cast::<Fp128>(), 2 * self.current_elements)
         };
         self.context
@@ -1678,6 +2344,30 @@ impl ProductRemainderSequence {
             e_out,
             "e_out",
         )
+    }
+
+    pub(crate) fn retire_transition_state_after_cpu_tail_copy(
+        &mut self,
+    ) -> Result<usize, MetalError> {
+        if self.phase != ProductRemainderPhase::Materialized || self.current_elements <= 2 {
+            return Err(MetalError::InvalidProductRemainderState(
+                "transition retirement requires an active CPU tail",
+            ));
+        }
+        let tombstone = self
+            .context
+            .device
+            .new_buffer(1, MTLResourceOptions::StorageModeShared);
+        let state_a = mem::replace(&mut self.buffers.state_a, tombstone.clone());
+        let mut retired_bytes = state_a.length();
+        if self.terminal_cache.is_none() {
+            let state_b = mem::replace(&mut self.buffers.state_b, tombstone);
+            retired_bytes = retired_bytes.saturating_add(state_b.length());
+        }
+        let retired_bytes =
+            usize::try_from(retired_bytes).map_err(|_| MetalError::InputTooLong(usize::MAX))?;
+        self.phase = ProductRemainderPhase::TransitionRetired;
+        Ok(retired_bytes)
     }
 
     fn source_buffer(&self) -> &Buffer {
@@ -1709,6 +2399,25 @@ fn dispatch_product_remainder_blocks(
     encoder.dispatch_thread_groups(
         MTLSize {
             width: blocks as u64,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: threads_per_threadgroup as u64,
+            height: 1,
+            depth: 1,
+        },
+    );
+}
+
+fn dispatch_product_remainder_linear(
+    encoder: &metal::ComputeCommandEncoderRef,
+    elements: usize,
+    threads_per_threadgroup: usize,
+) {
+    encoder.dispatch_thread_groups(
+        MTLSize {
+            width: elements.div_ceil(threads_per_threadgroup) as u64,
             height: 1,
             depth: 1,
         },
@@ -1970,6 +2679,42 @@ mod tests {
     use super::super::SpartanOuterUniskipRow;
     use super::*;
 
+    fn native_width_boundary_row(index: usize) -> ProductRemainderRow {
+        let u32_max = u64::from(u32::MAX);
+        let unsigned = [
+            0,
+            u32_max,
+            u32_max + 1,
+            u64::MAX,
+            1,
+            1 << 31,
+            1 << 32,
+            u64::MAX - 1,
+            17,
+        ];
+        let signed = [
+            0,
+            i128::from(u32::MAX),
+            i128::from(u32::MAX) + 1,
+            -i128::from(u32::MAX),
+            -(i128::from(u32::MAX) + 1),
+            i128::from(u64::MAX),
+            -i128::from(u64::MAX),
+            i128::MIN,
+            i128::MAX,
+        ];
+        ProductRemainderRow::new(
+            unsigned[index % unsigned.len()],
+            signed[index % signed.len()],
+            index.is_multiple_of(3),
+            index.is_multiple_of(5),
+            unsigned[(index + 3) % unsigned.len()],
+            index.is_multiple_of(7),
+            index.is_multiple_of(11),
+            index.is_multiple_of(13),
+        )
+    }
+
     #[test]
     fn row_abi_and_word_order_are_fixed() {
         assert_eq!(size_of::<ProductRemainderRow>(), 40);
@@ -2002,18 +2747,7 @@ mod tests {
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
         let row_count = 1usize << 10;
         let rows = (0..row_count)
-            .map(|index| {
-                ProductRemainderRow::new(
-                    (17 * index + 3) as u64,
-                    index as i128 - 513,
-                    index % 3 == 0,
-                    index % 5 == 0,
-                    (29 * index + 11) as u64,
-                    index % 7 == 0,
-                    index % 11 == 0,
-                    index % 13 == 0,
-                )
-            })
+            .map(native_width_boundary_row)
             .collect::<Vec<_>>();
         let e_in = (0..32)
             .map(|index| AkitaField::from_u64((37 * index + 19) as u64))
@@ -2049,20 +2783,12 @@ mod tests {
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
         let row_count = 1usize << 10;
         let rows = (0..row_count)
-            .map(|index| {
-                ProductRemainderRow::new(
-                    (17 * index + 3) as u64,
-                    index as i128 - 513,
-                    index % 3 == 0,
-                    index % 5 == 0,
-                    (29 * index + 11) as u64,
-                    index % 7 == 0,
-                    index % 11 == 0,
-                    index % 13 == 0,
-                )
-            })
+            .map(native_width_boundary_row)
             .collect::<Vec<_>>();
         let e_in = (0..16)
+            .map(|index| AkitaField::from_u64((37 * index + 19) as u64))
+            .collect::<Vec<_>>();
+        let opening_e_in = (0..32)
             .map(|index| AkitaField::from_u64((37 * index + 19) as u64))
             .collect::<Vec<_>>();
         let e_out = (0..32)
@@ -2084,11 +2810,10 @@ mod tests {
                 ProductRemainderSequenceConfig::default(),
             )
             .expect("resident product sequence should prepare");
-
         let pending = sequence
             .submit_initial_message(&e_in, &e_out)
             .expect("the materialization should submit");
-        let (sequence, actual, gpu_active) =
+        let (mut sequence, actual, gpu_active) =
             pending.join().expect("the materialization should join");
         let (left, right) = sequence
             .read_current_state()
@@ -2096,9 +2821,53 @@ mod tests {
 
         assert_eq!(actual, expected.endpoints);
         assert_eq!([left, right].concat(), expected.state);
+        assert_eq!(
+            sequence
+                .openings_after_cpu_tail_timed(&opening_e_in, &e_out)
+                .expect("the source openings should execute")
+                .0,
+            reference::openings(&rows, &opening_e_in, &e_out)
+                .expect("the independent openings should be well-shaped")
+        );
         assert!(gpu_active > Duration::ZERO);
         assert_eq!(sequence.current_elements(), row_count);
         assert_eq!(sequence.round_device_buffer_allocations(), 0);
+
+        let round_1_challenge = AkitaField::from_u64(101);
+        let expected_round_1 = reference::bind_and_message(
+            &expected.state,
+            row_count,
+            round_1_challenge,
+            &e_in,
+            &e_out[..16],
+        )
+        .unwrap();
+        assert_eq!(
+            sequence
+                .bind_and_message(round_1_challenge, &e_in, &e_out[..16])
+                .unwrap(),
+            expected_round_1.endpoints
+        );
+        let (left, right) = sequence.read_current_state().unwrap();
+        assert_eq!([left, right].concat(), expected_round_1.state);
+
+        let round_2_challenge = AkitaField::from_u64(103);
+        let expected_round_2 = reference::bind_and_message(
+            &expected_round_1.state,
+            row_count / 2,
+            round_2_challenge,
+            &e_in[..8],
+            &e_out[..16],
+        )
+        .unwrap();
+        assert_eq!(
+            sequence
+                .bind_and_message(round_2_challenge, &e_in[..8], &e_out[..16])
+                .unwrap(),
+            expected_round_2.endpoints
+        );
+        let (left, right) = sequence.read_current_state().unwrap();
+        assert_eq!([left, right].concat(), expected_round_2.state);
     }
 
     #[test]
@@ -2106,18 +2875,7 @@ mod tests {
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
         let row_count = 1usize << 8;
         let packed = (0..row_count)
-            .map(|index| {
-                ProductRemainderRow::new(
-                    (17 * index + 3) as u64,
-                    index as i128 - 129,
-                    index % 3 == 0,
-                    index % 5 == 0,
-                    (29 * index + 11) as u64,
-                    index % 7 == 0,
-                    index % 11 == 0,
-                    index % 13 == 0,
-                )
-            })
+            .map(native_width_boundary_row)
             .collect::<Vec<_>>();
         let stage1 = packed
             .iter()
@@ -2196,15 +2954,23 @@ mod tests {
                 .unwrap()
                 .0
         );
+        let expected_openings = reference::openings(&packed, &e_in, &e_out).unwrap();
+        let layout = actual.storage_layout();
+        let expected_retired_bytes =
+            (layout.state_a_fields() + layout.state_b_fields()) * size_of::<Fp128>();
+        assert_eq!(
+            actual
+                .retire_transition_state_after_cpu_tail_copy()
+                .unwrap(),
+            expected_retired_bytes
+        );
+        assert!(actual.read_current_state().is_err());
         assert_eq!(
             actual
                 .openings_after_cpu_tail_timed(&e_in, &e_out)
                 .unwrap()
                 .0,
-            expected
-                .openings_after_cpu_tail_timed(&e_in, &e_out)
-                .unwrap()
-                .0
+            expected_openings
         );
     }
 
@@ -2235,6 +3001,46 @@ mod tests {
                 nonnegative: false,
             })
         );
+    }
+
+    #[test]
+    fn in_place_schedule_covers_each_output_with_race_free_intervals() {
+        for log_bound in 1..=30 {
+            let bound_elements = 1usize << log_bound;
+            for scratch_capacity in [1, 3, 17, 81_920, bound_elements] {
+                let schedule = in_place_bind_schedule(bound_elements, scratch_capacity);
+                assert_eq!(schedule.prefix, bound_elements.min(scratch_capacity));
+                let mut cursor = schedule.prefix;
+                for range in schedule.direct {
+                    assert_eq!(range.start, cursor);
+                    let end = range.start + range.count;
+                    assert!(end <= 2 * range.start);
+                    cursor = end;
+                }
+                assert_eq!(cursor, bound_elements);
+            }
+        }
+
+        for bound_elements in [2, 4, 8, 16, 32, 64, 128, 256, 512] {
+            for scratch_capacity in [1, 3, 17, 81] {
+                let source = (0..2 * bound_elements).collect::<Vec<_>>();
+                let expected = (0..bound_elements)
+                    .map(|index| source[2 * index] + 3 * source[2 * index + 1])
+                    .collect::<Vec<_>>();
+                let schedule = in_place_bind_schedule(bound_elements, scratch_capacity);
+                let mut state = source;
+                let scratch = (0..schedule.prefix)
+                    .map(|index| state[2 * index] + 3 * state[2 * index + 1])
+                    .collect::<Vec<_>>();
+                state[..schedule.prefix].copy_from_slice(&scratch);
+                for range in schedule.direct {
+                    for index in range.start..range.start + range.count {
+                        state[index] = state[2 * index] + 3 * state[2 * index + 1];
+                    }
+                }
+                assert_eq!(&state[..bound_elements], expected);
+            }
+        }
     }
 
     #[test]

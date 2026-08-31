@@ -20,10 +20,15 @@
     "product_uniskip",
     "ram_raf_evaluation",
     "ram_read_write",
+    "registers_read_write",
     "registers_val",
     "booleanity",
     "booleanity_address",
     "instruction_ra_sequence",
+    "ram_ra_sequence",
+    "ram_ra_claim_reduction",
+    "ram_hamming_sequence",
+    "ram_val_sequence",
     "bytecode_cycle",
     "bytecode_row",
     "spartan_outer_uniskip",
@@ -41,6 +46,7 @@
     "instruction_claim_reduction",
     "instruction_input",
     "registers_claim_reduction",
+    "registers_read_write",
     "registers_val_evaluation",
     "ram_read_write",
     "ram_raf_evaluation",
@@ -57,7 +63,6 @@
     "hamming_weight_claim_reduction"
   ],
   "cpu_delegated_slots": [
-    "registers_read_write",
     "ram_output_check"
   ]
 }

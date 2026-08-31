@@ -1,6 +1,6 @@
 use std::mem::{size_of, MaybeUninit};
 use std::slice;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use metal::{
@@ -74,6 +74,7 @@ struct InstructionReadRafStage1Inner {
     rows: BooleanityRows,
     claims: Buffer,
     counts: Box<[InstructionReadRafChunkCounts]>,
+    ram_remap_compatible: bool,
     receipt: InstructionReadRafStage1Receipt,
 }
 
@@ -124,6 +125,7 @@ pub(crate) struct InstructionReadRafStage1Storage {
     row_buffer: Buffer,
     claim_buffer: Buffer,
     counts: Box<[InstructionReadRafChunkCounts]>,
+    ram_remap_compatible: AtomicBool,
 }
 
 pub(crate) struct InstructionReadRafStage1ChunkWriter<'a> {
@@ -133,6 +135,7 @@ pub(crate) struct InstructionReadRafStage1ChunkWriter<'a> {
     packed_metadata: &'a mut [MaybeUninit<u64>],
     claims: &'a mut [MaybeUninit<u8>],
     counts: &'a mut InstructionReadRafChunkCounts,
+    ram_remap_compatible: &'a AtomicBool,
     written: usize,
 }
 
@@ -162,6 +165,7 @@ impl SolinasMetal {
                 .device
                 .new_buffer(claim_bytes, MTLResourceOptions::StorageModeShared),
             counts: vec![[0; INSTRUCTION_READ_RAF_SEGMENTS]; chunks].into_boxed_slice(),
+            ram_remap_compatible: AtomicBool::new(true),
         })
     }
 }
@@ -208,6 +212,7 @@ impl InstructionReadRafStage1Storage {
                     packed_metadata,
                     claims,
                     counts,
+                    ram_remap_compatible: &self.ram_remap_compatible,
                     written: 0,
                 },
             )
@@ -265,6 +270,7 @@ impl InstructionReadRafStage1Storage {
                 rows,
                 claims: self.claim_buffer,
                 counts: self.counts,
+                ram_remap_compatible: self.ram_remap_compatible.load(Ordering::Relaxed),
                 receipt,
             },
         )))
@@ -274,6 +280,12 @@ impl InstructionReadRafStage1Storage {
 impl InstructionReadRafStage1ChunkWriter<'_> {
     pub fn len(&self) -> usize {
         self.fused_inc_magnitude.len()
+    }
+
+    pub(crate) fn record_ram_remap_compatibility(&self, compatible: bool) {
+        if !compatible {
+            self.ram_remap_compatible.store(false, Ordering::Relaxed);
+        }
     }
 
     #[cfg(test)]
@@ -394,6 +406,23 @@ impl InstructionReadRafStage1Owner {
 
     pub(crate) fn booleanity_rows(&self) -> BooleanityRows {
         self.0.rows.clone()
+    }
+
+    pub(crate) fn packed_metadata(&self) -> &[u64] {
+        let rows = self.0.receipt.rows;
+        // SAFETY: the immutable Stage-1 owner stores four complete SoA u64
+        // columns; packed metadata is the fourth column and the owner keeps
+        // the shared allocation alive for the returned slice.
+        unsafe {
+            slice::from_raw_parts(
+                self.0.rows.buffer().contents().cast::<u64>().add(3 * rows),
+                rows,
+            )
+        }
+    }
+
+    pub(crate) fn ram_remap_compatible(&self) -> bool {
+        self.0.ram_remap_compatible
     }
 
     pub(crate) fn lease(

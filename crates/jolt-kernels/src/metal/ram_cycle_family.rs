@@ -84,7 +84,7 @@ pub(super) fn shared_ram_cycle_family_owner(
     columns.validate_addresses(address_domain)?;
     let activity =
         session
-            .state::<RamIncrementActivity>()
+            .state::<Arc<RamIncrementActivity>>()
             .ok_or(KernelError::InvariantViolation {
                 reason: "RAM access collection did not publish increment activity",
             })?;
