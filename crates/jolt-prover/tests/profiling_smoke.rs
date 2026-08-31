@@ -22,7 +22,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
 use jolt_profiling::summary::ProfileSummary;
-use jolt_profiling::taxonomy;
+use jolt_profiling::taxonomy::{self, TAXONOMY_VERSION};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
 use serde_json::Value;
 
@@ -101,7 +101,7 @@ fn profile_run_emits_conformant_artifacts() {
     assert!(
         missing.is_empty(),
         "missing taxonomy-v{} labels: {missing:?}",
-        taxonomy::TAXONOMY_VERSION
+        TAXONOMY_VERSION
     );
 
     // Headline summary sanity: root present with a positive wall time and

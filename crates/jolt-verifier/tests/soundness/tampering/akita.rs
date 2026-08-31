@@ -77,6 +77,7 @@ use jolt_verifier::stages::{
         outputs::Stage7OutputClaims,
     },
 };
+use jolt_verifier::VerifierError;
 
 use crate::support::akita_fixtures::{
     akita_advice_case, akita_committed_muldiv_case, akita_muldiv_case, AkitaFixtureCase,
@@ -628,7 +629,7 @@ fn perturb_leaf(value: &mut serde_json::Value, path: &str) {
 fn sweep_commitment(
     commitment: &AkitaCommitment,
     minimum_leaves: usize,
-    mut verify: impl FnMut(AkitaCommitment) -> Result<(), jolt_verifier::VerifierError>,
+    mut verify: impl FnMut(AkitaCommitment) -> Result<(), VerifierError>,
 ) {
     let value = serde_json::to_value(commitment).expect("commitment serializes");
     let mut paths = Vec::new();
