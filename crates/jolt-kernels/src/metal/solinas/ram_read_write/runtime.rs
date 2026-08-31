@@ -5,13 +5,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use jolt_field::{AkitaField, FromPrimitiveInt};
+use jolt_field::{One as _, Zero as _};
+use jolt_field::{Prime128OffsetA7F7 as AkitaField, Ring};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePassDescriptor, ComputePipelineState, CounterSampleBuffer,
-    CounterSampleBufferDescriptor, MTLCounterSamplingPoint, MTLResourceOptions, MTLSize,
-    MTLStorageMode, NSRange,
+    ComputePassDescriptor, ComputePipelineState, CounterSampleBuffer, MTLResourceOptions, MTLSize,
+    NSRange,
 };
+#[cfg(feature = "test-utils")]
+use metal::{CounterSampleBufferDescriptor, MTLCounterSamplingPoint, MTLStorageMode};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -1629,6 +1631,7 @@ impl RamReadWriteSequence {
         }
     }
 
+    #[cfg(feature = "test-utils")]
     pub(crate) fn enable_dispatch_timing(&mut self) -> Result<(), MetalError> {
         if self.dispatch_profiler.is_some() {
             return Ok(());

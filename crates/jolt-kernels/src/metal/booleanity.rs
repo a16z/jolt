@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::{
     SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims, SumcheckOutputPoints,
@@ -486,6 +487,7 @@ pub(super) fn booleanity_address_can_fallback(error: &MetalError) -> bool {
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
     use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions;
+    use jolt_field::Ring as _;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhaseChallenges;
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;

@@ -7,7 +7,8 @@ use std::{
 };
 
 use jolt_field::signed::{S192, S256, S64};
-use jolt_field::{AkitaField, SignedProductAccumulator as _, WithSignedProductAccumulator};
+use jolt_field::Zero as _;
+use jolt_field::{Accumulator as _, Prime128OffsetA7F7 as AkitaField, WithAccumulator};
 use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
@@ -702,10 +703,8 @@ pub fn evaluate_spartan_outer_uniskip_cpu(
         });
     }
     let block = |block: usize| {
-        let mut accumulators: [
-            <AkitaField as WithSignedProductAccumulator>::SignedProductAccumulator;
-            SPARTAN_OUTER_EXTENDED_NODES
-        ] = Default::default();
+        let mut accumulators: [<AkitaField as WithAccumulator>::SignedProductAccumulator;
+            SPARTAN_OUTER_EXTENDED_NODES] = Default::default();
         for pair in 0..pairs_per_block {
             let values = cpu_row_groups(rows[block * pairs_per_block + pair]);
             let products = cpu_extended_products(&values);
@@ -1413,7 +1412,7 @@ const _: () = assert!(size_of::<Params>() == 16);
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_field::FromPrimitiveInt;
+    use jolt_field::{FromPrimitiveInt, One as _};
     use jolt_poly::EqPolynomial;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::OpFlag;

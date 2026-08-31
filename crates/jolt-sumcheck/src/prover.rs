@@ -49,9 +49,15 @@ use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
 /// engine threads the challenge bookkeeping: `bind` is `None` exactly on the
 /// member's first active round, and the final active round's challenge arrives
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
-pub trait ProveRounds<F: JoltField> {
+pub trait ProveRounds<F: JoltField>: Send {
     /// The number of rounds/variables in this member's sumcheck.
     fn num_rounds(&self) -> usize;
+
+    /// Which execution lane the member's next round uses. This is compute
+    /// metadata only and does not affect the statement, proof, or transcript.
+    fn execution_domain(&self) -> RoundExecutionDomain {
+        RoundExecutionDomain::Host
+    }
 
     /// Bind `bind` — the member's previous active round's challenge (`None`
     /// on its first active round) — then compute the round polynomial for
@@ -69,6 +75,15 @@ pub trait ProveRounds<F: JoltField> {
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
+}
+
+/// The resource domain used by a member's next [`ProveRounds::prove_round`]
+/// call.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub enum RoundExecutionDomain {
+    #[default]
+    Host,
+    Accelerator,
 }
 
 /// One active member for a single batch round.
@@ -132,6 +147,67 @@ impl<F: JoltField> RoundScheduler<F> for SequentialRounds {
             item.run()?;
         }
         Ok(())
+    }
+
+    fn batch_finish_rounds(
+        &mut self,
+        finishes: &mut [MemberFinish<'_, F>],
+    ) -> Result<(), SumcheckError<F>> {
+        for item in finishes.iter_mut() {
+            item.run()?;
+        }
+        Ok(())
+    }
+}
+
+/// Runs host and accelerator members as two concurrent serial lanes. The
+/// accelerator stays on the caller thread so device runtimes keep their
+/// thread-local behavior.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TwoLaneRounds;
+
+impl<F: JoltField> RoundScheduler<F> for TwoLaneRounds {
+    fn batch_prove_round(
+        &mut self,
+        work: &mut [MemberRound<'_, F>],
+    ) -> Result<(), SumcheckError<F>> {
+        work.sort_unstable_by_key(|item| item.member.execution_domain());
+        let accelerator_start = work
+            .partition_point(|item| item.member.execution_domain() == RoundExecutionDomain::Host);
+        let (host, accelerator) = work.split_at_mut(accelerator_start);
+        if host.is_empty() || accelerator.is_empty() {
+            for item in work.iter_mut() {
+                item.run()?;
+            }
+            return Ok(());
+        }
+
+        std::thread::scope(|scope| {
+            let host_span = tracing::info_span!("sumcheck_host_lane", members = host.len());
+            let host_task = scope.spawn(move || {
+                host_span.in_scope(|| {
+                    for item in host.iter_mut() {
+                        item.run()?;
+                    }
+                    Ok(())
+                })
+            });
+
+            let accelerator_result =
+                tracing::info_span!("sumcheck_accelerator_lane", members = accelerator.len())
+                    .in_scope(|| {
+                        for item in accelerator.iter_mut() {
+                            item.run()?;
+                        }
+                        Ok(())
+                    });
+            let host_result = match host_task.join() {
+                Ok(result) => result,
+                Err(payload) => std::panic::resume_unwind(payload),
+            };
+            accelerator_result?;
+            host_result
+        })
     }
 
     fn batch_finish_rounds(

@@ -2,7 +2,8 @@ use std::{slice, sync::Arc, thread::JoinHandle};
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamReadWritePublic};
-use jolt_field::{AkitaField, CanonicalU64, FromPrimitiveInt};
+use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7 as AkitaField, Ring};
+use jolt_field::{One as _, Zero as _};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -1391,7 +1392,7 @@ impl MetalBackend {
             .into_iter()
             .map(|value| {
                 value
-                    .to_canonical_u64_checked()
+                    .to_u64_checked()
                     .ok_or(KernelError::InvariantViolation {
                         reason: "RAM final memory is not canonically representable as u64",
                     })

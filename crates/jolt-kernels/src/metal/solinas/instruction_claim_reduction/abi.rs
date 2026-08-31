@@ -238,6 +238,7 @@ impl InstructionClaimOperandPlanes {
         &self.right_instruction_input
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub(super) fn row(
         &self,
         index: usize,
@@ -392,7 +393,7 @@ pub fn scale_q_endpoints<F: Field>(q_endpoints: [F; 2], linear_evals: [F; 2]) ->
 ///
 /// The driver, not this helper, combines members, absorbs the batched
 /// polynomial, and draws the next challenge.
-pub fn round_polynomial_from_q_endpoints<F: Field>(
+pub fn round_polynomial_from_q_endpoints<F: jolt_field::JoltField>(
     previous_claim: F,
     q_endpoints: [F; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
     linear_evals: [F; 2],

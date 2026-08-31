@@ -53,7 +53,13 @@ where
     // recipes still thread it to mint their clear recorders.
     let mode = ProofMode::<VC>::new(None)?;
     let mut session = backend.begin_proof();
+    let log_t = config.trace_length.ilog2() as usize;
+    backend
+        .base
+        .spartan_outer_uniskip
+        .prepare_witness(&mut session, log_t, witness)?;
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
+        backend,
         preprocessing,
         config,
         trusted_advice,
@@ -62,7 +68,6 @@ where
     )?;
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
-    let log_t = config.trace_length.ilog2() as usize;
 
     let stage1 = prove_stage1::<F, PCS, VC, T>(
         &backend.base,

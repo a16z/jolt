@@ -40,21 +40,22 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
-use jolt_claims::protocols::jolt::geometry::spartan::{
-    outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
-};
-use jolt_claims::protocols::jolt::{
-    JoltDerivedId, JoltOpeningId, JoltPolynomialId, SpartanOuterPublic,
-};
+use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
+use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
 use jolt_claims::{InputClaims as _, OutputClaims as _};
-use jolt_field::signed::{S128, S192, S256, S64};
+use jolt_field::signed::{S192, S256, S64};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_field::Zero as _;
 use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
-use jolt_riscv::{CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_riscv::InterleavedBitsMarker;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -62,19 +63,50 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+use jolt_witness::witnesses::SpartanOuterRow;
+#[cfg(all(feature = "metal", target_os = "macos"))]
 use jolt_witness::witnesses::{
-    lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
-    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
-    RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
-    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
+    BytecodePc, Extract, FusedInc, InstructionRafFlag, LookupIndex, RamHammingWeight, RamInc,
+    RamReadValue as Stage1RamReadValue, RamWriteValue as Stage1RamWriteValue, RemappedRamAddress,
+    TableIndex, WitnessEnv,
 };
-use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_witness::WitnessBundle;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::instruction_input::prepare_instruction_input_rows;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use super::ram_trace::{
+    RamAccessBundle, RamAccessCollection, RamAccessCollectionChunkWriter,
+    RamAccessCollectionStorage, RamReadWriteRecordCollection,
+    RamReadWriteRecordCollectionChunkWriter, RamReadWriteRecordCollectionStorage,
+};
 use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     RoundChallenges,
+};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::bytecode_read_raf_address::{
+    BytecodeAddressStage1TopologyChunkWriter, BytecodeAddressStage1TopologyOwner,
+    BytecodeAddressStage1TopologyScratch, BytecodeAddressStage1TopologyStorage,
+};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::spartan_shift::{
+    SpartanShiftFlagWord, SpartanShiftResidentRows, SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
+};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::{
+    instruction_input_row_bytes, instruction_read_raf_claim_and_count_rank,
+    spartan_outer_uniskip_successor_row_bytes, BooleanityRow, InstructionInputRow,
+    InstructionInputRows, InstructionReadRafStage1ChunkWriter, InstructionReadRafStage1Owner,
+    InstructionReadRafStage1Storage, MetalError, RegistersReadWriteStage1ChunkWriter,
+    RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,
+    RegistersValInstructionSourceRequest, SolinasMetal, SpartanOuterUniskipColdRow,
+    SpartanOuterUniskipConfig, SpartanOuterUniskipRow, SpartanOuterUniskipRows,
+    SpartanOuterUniskipSuccessorRow, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+    RAM_READ_WRITE_CYCLE_TILE_LOG2,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -87,120 +119,6 @@ const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
-
-#[derive(Clone, Copy, Debug)]
-struct SpartanOuterRow {
-    left_instruction_input: LeftInstructionInput,
-    right_instruction_input: RightInstructionInput,
-    product: Product,
-    should_branch: ShouldBranch,
-    pc: Pc,
-    unexpanded_pc: UnexpandedPc,
-    imm: Imm,
-    ram_address: RamAddress,
-    rs1_value: Rs1Value,
-    rs2_value: Rs2Value,
-    rd_write_value: RdWriteValue,
-    ram_read_value: RamReadValue,
-    ram_write_value: RamWriteValue,
-    left_lookup_operand: LeftLookupOperand,
-    right_lookup_operand: RightLookupOperand,
-    next_unexpanded_pc: NextUnexpandedPc,
-    next_pc: NextPc,
-    next_is_virtual: NextIsVirtual,
-    next_is_first_in_sequence: NextIsFirstInSequence,
-    lookup_output: LookupOutput,
-    should_jump: ShouldJump,
-    add_operands: OpFlag,
-    subtract_operands: OpFlag,
-    multiply_operands: OpFlag,
-    load: OpFlag,
-    store: OpFlag,
-    jump: OpFlag,
-    write_lookup_output_to_rd: OpFlag,
-    virtual_instruction: OpFlag,
-    assert_flag: OpFlag,
-    do_not_update_unexpanded_pc: OpFlag,
-    advice: OpFlag,
-    is_compressed: OpFlag,
-    is_first_in_sequence: OpFlag,
-    is_last_in_sequence: OpFlag,
-}
-
-impl WitnessBundle for SpartanOuterRow {
-    #[inline]
-    fn from_row(
-        row: &TraceRow,
-        next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        let circuit_flags = row.circuit_flags();
-        let instruction_flags = row.instruction_flags();
-        let (
-            (left_instruction_input, right_instruction_input),
-            (left_lookup_operand, right_lookup_operand),
-            lookup_output,
-        ) = lookup_values(row);
-        let next_flags = next.map(TraceRow::circuit_flags);
-        let flag = |flag| OpFlag(circuit_flags[flag]);
-
-        Ok(Self {
-            left_instruction_input: LeftInstructionInput(left_instruction_input),
-            right_instruction_input: RightInstructionInput(right_instruction_input),
-            product: Product(
-                S64::from_u64(left_instruction_input)
-                    .mul_trunc::<2, 2>(&S128::from_i128(right_instruction_input)),
-            ),
-            should_branch: ShouldBranch(
-                instruction_flags[InstructionFlags::Branch] && lookup_output == 1,
-            ),
-            pc: Pc(row.pc()),
-            unexpanded_pc: UnexpandedPc(row.unexpanded_pc()),
-            imm: Imm(row.imm()),
-            ram_address: RamAddress(row.ram_address()),
-            rs1_value: Rs1Value(row.rs1_value()),
-            rs2_value: Rs2Value(row.rs2_value()),
-            rd_write_value: RdWriteValue(row.rd_write_value()),
-            ram_read_value: RamReadValue(row.ram_read_value()),
-            ram_write_value: RamWriteValue(row.ram_write_value()),
-            left_lookup_operand: LeftLookupOperand(left_lookup_operand),
-            right_lookup_operand: RightLookupOperand(right_lookup_operand),
-            next_unexpanded_pc: NextUnexpandedPc(next.map_or(0, TraceRow::unexpanded_pc)),
-            next_pc: NextPc(next.map_or(0, TraceRow::pc)),
-            next_is_virtual: NextIsVirtual(
-                next_flags.is_some_and(|flags| flags[CircuitFlags::VirtualInstruction]),
-            ),
-            next_is_first_in_sequence: NextIsFirstInSequence(
-                next_flags.is_some_and(|flags| flags[CircuitFlags::IsFirstInSequence]),
-            ),
-            lookup_output: LookupOutput(lookup_output),
-            should_jump: ShouldJump(
-                circuit_flags[CircuitFlags::Jump] && !next.is_some_and(|row| row.is_noop()),
-            ),
-            add_operands: flag(CircuitFlags::AddOperands),
-            subtract_operands: flag(CircuitFlags::SubtractOperands),
-            multiply_operands: flag(CircuitFlags::MultiplyOperands),
-            load: flag(CircuitFlags::Load),
-            store: flag(CircuitFlags::Store),
-            jump: flag(CircuitFlags::Jump),
-            write_lookup_output_to_rd: flag(CircuitFlags::WriteLookupOutputToRD),
-            virtual_instruction: flag(CircuitFlags::VirtualInstruction),
-            assert_flag: flag(CircuitFlags::Assert),
-            do_not_update_unexpanded_pc: flag(CircuitFlags::DoNotUpdateUnexpandedPC),
-            advice: flag(CircuitFlags::Advice),
-            is_compressed: flag(CircuitFlags::IsCompressed),
-            is_first_in_sequence: flag(CircuitFlags::IsFirstInSequence),
-            is_last_in_sequence: flag(CircuitFlags::IsLastInSequence),
-        })
-    }
-
-    fn annotated_ids() -> Vec<JoltPolynomialId> {
-        SPARTAN_OUTER_R1CS_INPUTS
-            .into_iter()
-            .map(JoltPolynomialId::Virtual)
-            .collect()
-    }
-}
 
 /// One cycle's integer values of the 19 eq-conditional rows, split into the
 /// two uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as
@@ -421,6 +339,659 @@ struct SpartanOuterCarry<F: JoltField> {
     t1_values: Vec<F>,
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct Stage1InstructionFacts {
+    lookup_index: LookupIndex,
+    table_index: TableIndex,
+    raf_flag: InstructionRafFlag,
+    mapped_pc: BytecodePc,
+    remapped_ram_address: RemappedRamAddress,
+    fused_inc: FusedInc,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone, Copy, Debug)]
+struct Stage1ProjectionRow {
+    outer: SpartanOuterRow,
+    instruction: Stage1InstructionFacts,
+    ram_access: RamAccessBundle,
+    register_indices: [Option<u8>; 2],
+    register_write: Option<(u8, u64, u64)>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl WitnessBundle for Stage1ProjectionRow {
+    fn from_row(
+        row: &jolt_riscv::JoltTraceRow,
+        next: Option<&jolt_riscv::JoltTraceRow>,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        let outer = SpartanOuterRow::from_row(row, next, env)?;
+        let raf = !row.circuit_flags().is_interleaved_operands();
+        let lookup_index = if raf {
+            outer.right_lookup_operand.0
+        } else {
+            jolt_lookup_tables::interleave_bits(
+                outer.left_lookup_operand.0,
+                outer.right_lookup_operand.0 as u64,
+            )
+        };
+        let remapped_ram_address = RemappedRamAddress::extract(row, next, env)?;
+        let ram_inc = RamInc::extract(row, next, env)?;
+        let fused_inc = if row.is_store() {
+            ram_inc.0
+        } else if row.rd_index().is_some() {
+            i128::from(row.rd_write_value()) - i128::from(row.rd_pre_value())
+        } else {
+            0
+        };
+        let register_write = row
+            .rd_index()
+            .map(|register| (register, row.rd_pre_value(), row.rd_write_value()));
+        Ok(Self {
+            outer,
+            instruction: Stage1InstructionFacts {
+                lookup_index: LookupIndex(lookup_index),
+                table_index: TableIndex::extract(row, next, env)?,
+                raf_flag: InstructionRafFlag(raf),
+                mapped_pc: BytecodePc(row.pc() as usize),
+                remapped_ram_address,
+                fused_inc: FusedInc(fused_inc),
+            },
+            ram_access: RamAccessBundle {
+                address: remapped_ram_address,
+                pre_value: Stage1RamReadValue(row.ram_read_value()),
+                post_value: Stage1RamWriteValue(row.ram_write_value()),
+                ram_inc,
+                ram_hamming_weight: RamHammingWeight::extract(row, next, env)?,
+            },
+            register_indices: [row.rs1_index(), row.rs2_index()],
+            register_write,
+        })
+    }
+
+    fn annotated_ids() -> Vec<jolt_claims::protocols::jolt::JoltPolynomialId> {
+        SpartanOuterRow::annotated_ids()
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn pack_stage1_instruction_source(
+    facts: Stage1InstructionFacts,
+) -> Result<(BooleanityRow, u8, bool), MetalError> {
+    let mapped_pc = Some(facts.mapped_pc.0 as u64);
+    let row = BooleanityRow::new(
+        facts.lookup_index.0,
+        mapped_pc,
+        facts.remapped_ram_address.0,
+        facts.fused_inc.0,
+    )?;
+    let table_plus_one = facts
+        .table_index
+        .0
+        .map_or(Some(0), |table| table.checked_add(1))
+        .and_then(|table| u8::try_from(table).ok())
+        .ok_or(MetalError::InvalidInstructionReadRafGrouped(
+            "lookup table index cannot be encoded by the Stage-1 owner".to_owned(),
+        ))?;
+    let _ = instruction_read_raf_claim_and_count_rank(table_plus_one, facts.raf_flag.0).ok_or(
+        MetalError::InvalidInstructionReadRafGrouped(
+            "lookup table index exceeds the InstructionReadRAF table domain".to_owned(),
+        ),
+    )?;
+    Ok((row, table_plus_one, facts.raf_flag.0))
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone, Copy)]
+struct PackedStage1PaddingRow {
+    instruction_input: InstructionInputRow,
+    successor: SpartanOuterUniskipSuccessorRow,
+    cold: SpartanOuterUniskipColdRow,
+    instruction_source: BooleanityRow,
+    table_plus_one: u8,
+    raf: bool,
+    unexpanded_pc: u64,
+    pc: u64,
+    shift_flags: SpartanShiftFlagWord,
+    ram_access: RamAccessBundle,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone, Copy)]
+struct Stage1PaddingRows {
+    regular: Option<PackedStage1PaddingRow>,
+    terminal: Option<PackedStage1PaddingRow>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl Stage1PaddingRows {
+    fn new(
+        access: &jolt_witness::RandomAccessRows,
+        explicit_rows: usize,
+        cycles: usize,
+    ) -> Result<Self, MetalError> {
+        let regular = (explicit_rows + 1 < cycles)
+            .then(|| pack_stage1_padding_row(access, explicit_rows))
+            .transpose()?;
+        let terminal = (explicit_rows < cycles)
+            .then(|| pack_stage1_padding_row(access, cycles - 1))
+            .transpose()?;
+        Ok(Self { regular, terminal })
+    }
+
+    const fn source_window_count(self, explicit_rows: usize) -> usize {
+        explicit_rows + self.regular.is_some() as usize + self.terminal.is_some() as usize
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone, Copy)]
+struct Stage1ChunkParts {
+    physical: usize,
+    regular_padding: usize,
+    terminal_padding: usize,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn stage1_chunk_parts(
+    chunk_start: usize,
+    chunk_len: usize,
+    explicit_rows: usize,
+    cycles: usize,
+) -> Stage1ChunkParts {
+    let physical = explicit_rows.saturating_sub(chunk_start).min(chunk_len);
+    let terminal_padding = usize::from(
+        explicit_rows < cycles && chunk_start + chunk_len == cycles && physical < chunk_len,
+    );
+    Stage1ChunkParts {
+        physical,
+        regular_padding: chunk_len - physical - terminal_padding,
+        terminal_padding,
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn pack_stage1_padding_row(
+    access: &jolt_witness::RandomAccessRows,
+    row_index: usize,
+) -> Result<PackedStage1PaddingRow, MetalError> {
+    let projected: Stage1ProjectionRow =
+        access
+            .window(row_index)
+            .map_err(|error| MetalError::SpartanOuterRowExtraction {
+                row: row_index,
+                message: error.to_string(),
+            })?;
+    let packed = SpartanOuterUniskipRow::from_spartan_outer(&projected.outer);
+    let (instruction_input, residual) = packed.split();
+    let (successor, cold) = residual.partition();
+    let (instruction_source, table_plus_one, raf) =
+        pack_stage1_instruction_source(projected.instruction)?;
+    let full_mask = |value: bool| if value { u32::MAX } else { 0 };
+    Ok(PackedStage1PaddingRow {
+        instruction_input,
+        successor,
+        cold,
+        instruction_source,
+        table_plus_one,
+        raf,
+        unexpanded_pc: projected.outer.unexpanded_pc.0,
+        pc: projected.outer.pc.0,
+        shift_flags: SpartanShiftFlagWord {
+            is_virtual: full_mask(projected.outer.virtual_instruction.0),
+            is_first_in_sequence: full_mask(projected.outer.is_first_in_sequence.0),
+            is_noop: full_mask(projected.outer.is_noop.0),
+        },
+        ram_access: projected.ram_access,
+    })
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn fill_stage1_outer_padding(
+    instruction_input: &mut [InstructionInputRow],
+    successor: &mut [SpartanOuterUniskipSuccessorRow],
+    cold: &mut [SpartanOuterUniskipColdRow],
+    start: usize,
+    count: usize,
+    padding: &PackedStage1PaddingRow,
+) {
+    let end = start + count;
+    instruction_input[start..end].fill(padding.instruction_input);
+    successor[start..end].fill(padding.successor);
+    cold[start..end].fill(padding.cold);
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn fill_stage1_shift_padding(
+    unexpanded_pc: &mut [u64],
+    pc: &mut [u64],
+    flags: &mut [SpartanShiftFlagWord],
+    start: usize,
+    count: usize,
+    padding: &PackedStage1PaddingRow,
+) {
+    let end = start + count;
+    unexpanded_pc[start..end].fill(padding.unexpanded_pc);
+    pc[start..end].fill(padding.pc);
+    for (word, flag_word) in flags
+        .iter_mut()
+        .enumerate()
+        .take(end.div_ceil(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
+        .skip(start / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD)
+    {
+        let low = start.saturating_sub(word * SPARTAN_SHIFT_FLAG_ROWS_PER_WORD);
+        let high = end
+            .saturating_sub(word * SPARTAN_SHIFT_FLAG_ROWS_PER_WORD)
+            .min(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD);
+        let low_mask = u32::MAX.checked_shl(low as u32).unwrap_or(0);
+        let high_mask = u32::MAX
+            .checked_shr((SPARTAN_SHIFT_FLAG_ROWS_PER_WORD - high) as u32)
+            .unwrap_or(0);
+        let mask = low_mask & high_mask;
+        let merge = |current: u32, value: u32| (current & !mask) | (value & mask);
+        flag_word.is_virtual = merge(flag_word.is_virtual, padding.shift_flags.is_virtual);
+        flag_word.is_first_in_sequence = merge(
+            flag_word.is_first_in_sequence,
+            padding.shift_flags.is_first_in_sequence,
+        );
+        flag_word.is_noop = merge(flag_word.is_noop, padding.shift_flags.is_noop);
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+struct Stage1OwnerChunkWriters<'borrow, 'instruction, 'bytecode, 'ram, 'ram_records, 'registers> {
+    instruction: &'borrow mut InstructionReadRafStage1ChunkWriter<'instruction>,
+    bytecode: Option<&'borrow mut BytecodeAddressStage1TopologyChunkWriter<'bytecode>>,
+    ram_access: Option<&'borrow mut RamAccessCollectionChunkWriter<'ram>>,
+    ram_records: Option<&'borrow mut RamReadWriteRecordCollectionChunkWriter<'ram_records>>,
+    registers: Option<&'borrow mut RegistersReadWriteStage1ChunkWriter<'registers>>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_> {
+    fn len(&self) -> usize {
+        self.instruction.len()
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one decoded row feeds several independently optional Stage-1 owners"
+    )]
+    fn push(
+        &mut self,
+        row_index: usize,
+        explicit_rows: usize,
+        instruction: Stage1InstructionFacts,
+        ram_access: RamAccessBundle,
+        register_indices: [Option<u8>; 2],
+        register_write: Option<(u8, u64, u64)>,
+        bytecode_scratch: &mut BytecodeAddressStage1TopologyScratch,
+    ) -> Result<(), MetalError> {
+        self.instruction.record_ram_remap_compatibility(
+            ram_access.ram_hamming_weight.0 == instruction.remapped_ram_address.0.is_some(),
+        );
+        let (row, table_plus_one, raf) = pack_stage1_instruction_source(instruction)?;
+        if let Some(topology) = self.bytecode.as_mut() {
+            let rank = if row_index < explicit_rows {
+                topology.record(bytecode_scratch, instruction.mapped_pc.0)?
+            } else {
+                0
+            };
+            self.instruction.push_with_register_write(
+                row,
+                table_plus_one,
+                raf,
+                rank,
+                register_write,
+            )?;
+        } else {
+            self.instruction.push_with_register_write(
+                row,
+                table_plus_one,
+                raf,
+                0,
+                register_write,
+            )?;
+        }
+        if let Some(writer) = self.ram_access.as_mut() {
+            writer.push(ram_access).map_err(|error| {
+                MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+            })?;
+        }
+        if let Some(writer) = self.ram_records.as_mut() {
+            writer.push(ram_access).map_err(|error| {
+                MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+            })?;
+        }
+        if let Some(writer) = self.registers.as_mut() {
+            writer.push(register_indices, register_write)?;
+        }
+        Ok(())
+    }
+
+    fn fill_padding(
+        &mut self,
+        padding: &PackedStage1PaddingRow,
+        count: usize,
+    ) -> Result<(), MetalError> {
+        self.instruction.record_ram_remap_compatibility(
+            padding.ram_access.ram_hamming_weight.0 == padding.ram_access.address.0.is_some(),
+        );
+        self.instruction.fill_repeated_with_register_write(
+            padding.instruction_source,
+            padding.table_plus_one,
+            padding.raf,
+            0,
+            None,
+            count,
+        )?;
+        if let Some(writer) = self.ram_access.as_mut() {
+            writer
+                .fill_repeated(padding.ram_access, count)
+                .map_err(|error| {
+                    MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+                })?;
+        }
+        if let Some(writer) = self.ram_records.as_mut() {
+            writer
+                .fill_repeated(padding.ram_access, count)
+                .map_err(|error| {
+                    MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+                })?;
+        }
+        if let Some(writer) = self.registers.as_mut() {
+            writer.fill_empty(count)?;
+        }
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        bytecode_scratch: &mut BytecodeAddressStage1TopologyScratch,
+    ) -> Result<(), MetalError> {
+        if let Some(topology) = self.bytecode.as_mut() {
+            topology.finish(bytecode_scratch)?;
+        }
+        if let Some(writer) = self.ram_access.as_mut() {
+            writer.finish().map_err(|error| {
+                MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+            })?;
+        }
+        if let Some(writer) = self.ram_records.as_mut() {
+            writer.finish().map_err(|error| {
+                MetalError::InvalidRamAccessCollection(error.reason().to_owned())
+            })?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn run_stage1_owner_chunks<'instruction, 'bytecode, 'ram, 'ram_records, 'registers, R>(
+    instruction: &mut [InstructionReadRafStage1ChunkWriter<'instruction>],
+    bytecode: Option<&mut [BytecodeAddressStage1TopologyChunkWriter<'bytecode>]>,
+    ram_access: Option<&mut [RamAccessCollectionChunkWriter<'ram>]>,
+    ram_records: Option<&mut [RamReadWriteRecordCollectionChunkWriter<'ram_records>]>,
+    registers: Option<&mut [RegistersReadWriteStage1ChunkWriter<'registers>]>,
+    fill: impl FnOnce(
+        &mut [Stage1OwnerChunkWriters<
+            '_,
+            'instruction,
+            'bytecode,
+            'ram,
+            'ram_records,
+            'registers,
+        >],
+    ) -> Result<R, MetalError>,
+) -> Result<R, MetalError> {
+    if bytecode
+        .as_ref()
+        .is_some_and(|writers| writers.len() != instruction.len())
+    {
+        return Err(MetalError::InvalidInstructionReadRafGrouped(
+            "Stage-1 owner chunk counts disagree".to_owned(),
+        ));
+    }
+    if ram_access
+        .as_ref()
+        .is_some_and(|writers| writers.len() != instruction.len())
+    {
+        return Err(MetalError::InvalidRamAccessCollection(
+            "Stage-1 RAM chunk counts disagree".to_owned(),
+        ));
+    }
+    if ram_records
+        .as_ref()
+        .is_some_and(|writers| writers.len() != instruction.len())
+    {
+        return Err(MetalError::InvalidRamAccessCollection(
+            "Stage-1 RAM record chunk counts disagree".to_owned(),
+        ));
+    }
+    if registers
+        .as_ref()
+        .is_some_and(|writers| writers.len() != instruction.len())
+    {
+        return Err(MetalError::InvalidRegistersReadWriteState(
+            "Stage-1 register chunk counts disagree",
+        ));
+    }
+    let mut chunks: Vec<
+        Stage1OwnerChunkWriters<'_, 'instruction, 'bytecode, 'ram, 'ram_records, 'registers>,
+    > = match bytecode {
+        Some(bytecode) => instruction
+            .iter_mut()
+            .zip(bytecode)
+            .map(|(instruction, bytecode)| Stage1OwnerChunkWriters {
+                instruction,
+                bytecode: Some(bytecode),
+                ram_access: None,
+                ram_records: None,
+                registers: None,
+            })
+            .collect(),
+        None => instruction
+            .iter_mut()
+            .map(|instruction| Stage1OwnerChunkWriters {
+                instruction,
+                bytecode: None,
+                ram_access: None,
+                ram_records: None,
+                registers: None,
+            })
+            .collect(),
+    };
+    if let Some(ram_access) = ram_access {
+        for (chunk, ram_access) in chunks.iter_mut().zip(ram_access) {
+            chunk.ram_access = Some(ram_access);
+        }
+    }
+    if let Some(ram_records) = ram_records {
+        for (chunk, ram_records) in chunks.iter_mut().zip(ram_records) {
+            chunk.ram_records = Some(ram_records);
+        }
+    }
+    if let Some(registers) = registers {
+        for (chunk, registers) in chunks.iter_mut().zip(registers) {
+            chunk.registers = Some(registers);
+        }
+    }
+    fill(&mut chunks)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn with_stage1_owner_chunks<R>(
+    instruction: &mut InstructionReadRafStage1Storage,
+    bytecode: Option<&mut BytecodeAddressStage1TopologyStorage>,
+    ram_access: Option<&mut RamAccessCollectionStorage>,
+    ram_records: Option<&mut RamReadWriteRecordCollectionStorage>,
+    registers: Option<&mut RegistersReadWriteStage1Storage>,
+    fill: impl FnOnce(&mut [Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_>]) -> Result<R, MetalError>,
+) -> Result<R, MetalError> {
+    instruction.with_chunk_writers(|instruction| match ram_records {
+        Some(ram_records) => ram_records.with_chunk_writers(|ram_records| match registers {
+            Some(registers) => registers.with_chunk_writers(|registers| match ram_access {
+                Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            Some(ram_access),
+                            Some(ram_records),
+                            Some(registers),
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        Some(ram_access),
+                        Some(ram_records),
+                        Some(registers),
+                        fill,
+                    ),
+                }),
+                None => match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            None,
+                            Some(ram_records),
+                            Some(registers),
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        None,
+                        Some(ram_records),
+                        Some(registers),
+                        fill,
+                    ),
+                },
+            }),
+            None => match ram_access {
+                Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            Some(ram_access),
+                            Some(ram_records),
+                            None,
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        Some(ram_access),
+                        Some(ram_records),
+                        None,
+                        fill,
+                    ),
+                }),
+                None => match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            None,
+                            Some(ram_records),
+                            None,
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        None,
+                        Some(ram_records),
+                        None,
+                        fill,
+                    ),
+                },
+            },
+        }),
+        None => match registers {
+            Some(registers) => registers.with_chunk_writers(|registers| match ram_access {
+                Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            Some(ram_access),
+                            None,
+                            Some(registers),
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        Some(ram_access),
+                        None,
+                        Some(registers),
+                        fill,
+                    ),
+                }),
+                None => match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            None,
+                            None,
+                            Some(registers),
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        None,
+                        None,
+                        Some(registers),
+                        fill,
+                    ),
+                },
+            }),
+            None => match ram_access {
+                Some(ram_access) => ram_access.with_chunk_writers(|ram_access| match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(
+                            instruction,
+                            Some(bytecode),
+                            Some(ram_access),
+                            None,
+                            None,
+                            fill,
+                        )
+                    }),
+                    None => run_stage1_owner_chunks(
+                        instruction,
+                        None,
+                        Some(ram_access),
+                        None,
+                        None,
+                        fill,
+                    ),
+                }),
+                None => match bytecode {
+                    Some(bytecode) => bytecode.with_chunk_writers(|bytecode| {
+                        run_stage1_owner_chunks(instruction, Some(bytecode), None, None, None, fill)
+                    }),
+                    None => run_stage1_owner_chunks(instruction, None, None, None, None, fill),
+                },
+            },
+        },
+    })
+}
+
 /// Extended-node evaluations of
 /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
 /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
@@ -511,7 +1082,1306 @@ impl OptimizedOuterUniskip {
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_spartan_outer_uniskip(
+    context: &SolinasMetal,
+    config: SpartanOuterUniskipConfig,
+    session: &mut ProofSession,
+    log_t: usize,
+    tau: &[AkitaField],
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+) -> Result<(), KernelError<AkitaField>> {
+    if tau.len() != log_t + 2 {
+        return Err(KernelError::InvariantViolation {
+            reason: "Spartan outer tau must carry log_t + 2 challenges",
+        });
+    }
+    let cycles = 1usize << log_t;
+    let rows = BundleStore::<SpartanOuterRow>::resolve(witness, cycles)?;
+    let (tau_low, _) = tau.split_at(log_t + 1);
+    let split = tau_low.len() / 2;
+    let (out_point, in_point) = tau_low.split_at(split);
+    let e_out = EqPolynomial::<AkitaField>::evals(out_point, None);
+    let e_in = EqPolynomial::<AkitaField>::evals(in_point, None);
+    let (extended, resident) = {
+        let explicit_rows = rows.explicit_rows();
+        let resident = {
+            let _span = tracing::info_span!("MetalSpartanOuterUniskip::row_handoff").entered();
+            match session.take::<SpartanOuterUniskipRows>() {
+                Some(resident)
+                    if resident.len() == cycles && resident.explicit_rows() == explicit_rows =>
+                {
+                    resident
+                }
+                _ => prepare_metal_spartan_outer_rows(context, &rows, cycles)?,
+            }
+        };
+        let compact_rows_storage_id = resident.instruction_input_allocation_identity();
+        let residual_rows_storage_id = resident.allocation_identity();
+        let _handoff = tracing::info_span!(
+            "MetalInstructionInput::compact_rows_stage1_handoff",
+            compact_rows_storage_id,
+            residual_rows_storage_id,
+            resident_rows = cycles,
+            explicit_rows,
+            compact_row_bytes = 48,
+            residual_row_bytes = 112,
+            residual_allocations = 1,
+            full_domain_copy_bytes = 0,
+            full_domain_copy_dispatches = 0,
+            host_repack_rows = 0,
+        )
+        .entered();
+        let invocation = context
+            .prepare_spartan_outer_uniskip_with_rows(&resident, &e_in, &e_out, config)
+            .map_err(metal_outer_error)?;
+        {
+            let dispatch_span = tracing::info_span!(
+                "MetalSpartanOuterUniskip::dispatch",
+                gpu_active_ns = tracing::field::Empty,
+            );
+            let _dispatch = dispatch_span.enter();
+            let gpu_active = invocation.execute_timed().map_err(metal_outer_error)?;
+            let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
+            let _ = dispatch_span.record("gpu_active_ns", gpu_active_ns);
+        }
+        let output = invocation.read_output().map_err(metal_outer_error)?;
+        drop(invocation);
+        (output, resident)
+    };
+    session.park(resident);
+    let mut t1_values = vec![AkitaField::zero(); EXTENDED_SIZE];
+    for ((position, _), value) in extension_coefficients().iter().zip(extended) {
+        t1_values[*position] = value;
+    }
+    session.park(SpartanOuterCarry {
+        log_t,
+        tau: tau.to_vec(),
+        rows,
+        t1_values,
+    });
+    Ok(())
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn take_metal_spartan_outer_tau(
+    session: &mut ProofSession,
+    expected_log_t: usize,
+) -> Result<Vec<AkitaField>, KernelError<AkitaField>> {
+    let carry =
+        session
+            .take::<SpartanOuterCarry<AkitaField>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Metal outer remainder found no uni-skip carry",
+            })?;
+    if carry.log_t != expected_log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "Metal outer remainder carry disagrees with relation geometry",
+        });
+    }
+    Ok(carry.tau)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_spartan_outer_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
+    let rows = BundleStore::<SpartanOuterRow>::resolve(witness, cycles)?;
+    prepare_metal_spartan_outer_rows(context, &rows, cycles)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Debug)]
+pub(crate) enum MetalSpartanDenseRowsError {
+    Kernel(KernelError<AkitaField>),
+    Metal(MetalError),
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl MetalSpartanDenseRowsError {
+    pub(crate) fn is_capacity_error(&self) -> bool {
+        matches!(self, Self::Metal(error) if error.is_capacity_error())
+    }
+
+    pub(crate) fn into_kernel_error(self) -> KernelError<AkitaField> {
+        match self {
+            Self::Kernel(error) => error,
+            Self::Metal(error) => metal_outer_error(error),
+        }
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn stage1_owner_rows_span(
+    cycles: usize,
+    explicit_rows: usize,
+    witness_row_extractions: usize,
+) -> tracing::Span {
+    tracing::info_span!(
+        "MetalInstructionInput::compact_rows_prepare",
+        source_kind = "owned_random_access",
+        witness_row_extractions,
+        padding_rows_bulk_filled = cycles - explicit_rows,
+        residual_rows_written = cycles,
+        compact_rows_written = cycles,
+        compact_row_bytes = 48,
+        residual_row_bytes = 112,
+        compact_allocations = 1,
+        residual_allocations = 1,
+        full_row_allocations = 0,
+        full_domain_copy_bytes = 0,
+        full_domain_copy_dispatches = 0,
+        host_repack_rows = 0,
+        compact_rows_storage_id = tracing::field::Empty,
+        residual_rows_storage_id = tracing::field::Empty,
+        resident_rows = cycles,
+        explicit_rows,
+    )
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn bytecode_stage1_topology_span(enabled: bool, physical_rows: usize) -> tracing::Span {
+    tracing::info_span!(
+        "MetalBytecodeReadRafAddress::fused_topology_prepare",
+        enabled,
+        physical_rows,
+        chunk_rows = INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+    )
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn bytecode_stage1_topology_publish_span(enabled: bool, physical_rows: usize) -> tracing::Span {
+    tracing::info_span!(
+        "MetalBytecodeReadRafAddress::fused_topology_publish",
+        enabled,
+        physical_rows,
+        chunk_rows = INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+        chunks = tracing::field::Empty,
+        descriptors = tracing::field::Empty,
+        descriptor_elements = tracing::field::Empty,
+        descriptor_bytes = tracing::field::Empty,
+        descriptor_storage_id = tracing::field::Empty,
+        pivots = tracing::field::Empty,
+        pivot_elements = tracing::field::Empty,
+        pivot_bytes = tracing::field::Empty,
+        pivot_storage_id = tracing::field::Empty,
+        chunk_offset_elements = tracing::field::Empty,
+        chunk_offset_bytes = tracing::field::Empty,
+        chunk_offset_storage_id = tracing::field::Empty,
+        work_items = tracing::field::Empty,
+        work_item_elements = tracing::field::Empty,
+        work_item_bytes = tracing::field::Empty,
+        work_item_storage_id = tracing::field::Empty,
+        address_offset_elements = tracing::field::Empty,
+        address_offset_bytes = tracing::field::Empty,
+        address_offset_storage_id = tracing::field::Empty,
+        max_descriptors_per_chunk = tracing::field::Empty,
+        max_pivots_per_chunk = tracing::field::Empty,
+        first_push_pc = tracing::field::Empty,
+        source_generation = tracing::field::Empty,
+        source_completion_serial = tracing::field::Empty,
+        source_rows_storage_id = tracing::field::Empty,
+        source_claim_storage_id = tracing::field::Empty,
+        topology_completion_serial = tracing::field::Empty,
+        shared_source_row_scans = tracing::field::Empty,
+        additional_source_row_scans = tracing::field::Empty,
+        extra_source_scans = tracing::field::Empty,
+        source_windows = tracing::field::Empty,
+        member_upload_bytes = tracing::field::Empty,
+        complete_overwrite = tracing::field::Empty,
+        covered_rows = tracing::field::Empty,
+    )
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn record_bytecode_stage1_topology_span(
+    source: &InstructionReadRafStage1Owner,
+    topology: Option<&BytecodeAddressStage1TopologyOwner>,
+    physical_rows: usize,
+) {
+    let span = bytecode_stage1_topology_publish_span(topology.is_some(), physical_rows);
+    let source = source.receipt();
+    let _ = span.record("source_generation", source.source_generation());
+    let _ = span.record("source_completion_serial", source.completion_serial());
+    let _ = span.record("source_rows_storage_id", source.row_allocation_identity());
+    let _ = span.record(
+        "source_claim_storage_id",
+        source.claim_allocation_identity(),
+    );
+    let _ = span.record("source_windows", source.rows());
+    let _ = span.record("shared_source_row_scans", 1usize);
+    let _ = span.record("additional_source_row_scans", 0usize);
+    let _ = span.record("extra_source_scans", 0usize);
+    let _ = span.record("member_upload_bytes", 0usize);
+    let Some(topology) = topology else {
+        for field in [
+            "chunks",
+            "descriptors",
+            "descriptor_elements",
+            "descriptor_bytes",
+            "descriptor_storage_id",
+            "pivots",
+            "pivot_elements",
+            "pivot_bytes",
+            "pivot_storage_id",
+            "chunk_offset_elements",
+            "chunk_offset_bytes",
+            "chunk_offset_storage_id",
+            "work_items",
+            "work_item_elements",
+            "work_item_bytes",
+            "work_item_storage_id",
+            "address_offset_elements",
+            "address_offset_bytes",
+            "address_offset_storage_id",
+            "max_descriptors_per_chunk",
+            "max_pivots_per_chunk",
+            "first_push_pc",
+            "topology_completion_serial",
+            "covered_rows",
+        ] {
+            let _ = span.record(field, 0usize);
+        }
+        let _ = span.record("complete_overwrite", false);
+        let _entered = span.enter();
+        return;
+    };
+    let receipt = topology.receipt();
+    let values = [
+        ("chunks", receipt.chunks()),
+        ("descriptors", receipt.descriptors()),
+        ("descriptor_elements", receipt.descriptor_elements()),
+        ("descriptor_bytes", receipt.descriptor_bytes()),
+        (
+            "descriptor_storage_id",
+            receipt.descriptor_allocation_identity(),
+        ),
+        ("pivots", receipt.pivots()),
+        ("pivot_elements", receipt.pivot_elements()),
+        ("pivot_bytes", receipt.pivot_bytes()),
+        ("pivot_storage_id", receipt.pivot_allocation_identity()),
+        ("chunk_offset_elements", receipt.chunk_offset_elements()),
+        ("chunk_offset_bytes", receipt.chunk_offset_bytes()),
+        (
+            "chunk_offset_storage_id",
+            receipt.chunk_offset_allocation_identity(),
+        ),
+        ("work_items", receipt.work_items()),
+        ("work_item_elements", receipt.work_items()),
+        ("work_item_bytes", receipt.work_item_bytes()),
+        (
+            "work_item_storage_id",
+            receipt.work_item_allocation_identity(),
+        ),
+        ("address_offset_elements", receipt.address_offset_elements()),
+        ("address_offset_bytes", receipt.address_offset_bytes()),
+        (
+            "address_offset_storage_id",
+            receipt.address_offset_allocation_identity(),
+        ),
+        (
+            "max_descriptors_per_chunk",
+            receipt.max_descriptors_per_chunk(),
+        ),
+        ("max_pivots_per_chunk", receipt.max_pivots_per_chunk()),
+        ("first_push_pc", receipt.first_push_pc()),
+        (
+            "topology_completion_serial",
+            receipt.completion_serial() as usize,
+        ),
+        ("covered_rows", receipt.covered_rows()),
+    ];
+    for (field, value) in values {
+        let _ = span.record(field, value);
+    }
+    let _ = span.record("complete_overwrite", receipt.complete_overwrite());
+    let _entered = span.enter();
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) struct InstructionReadRafStage1Ready {
+    pub(crate) owner: InstructionReadRafStage1Owner,
+    pub(crate) bytecode_topology: Option<BytecodeAddressStage1TopologyOwner>,
+    pub(crate) registers_read_write: Option<RegistersReadWriteStage1Source>,
+    pub(crate) registers_val: Option<RegistersValInstructionSourceRequest>,
+    pub(crate) ram_access: Option<RamAccessCollection>,
+    pub(crate) ram_read_write_records: Option<RamReadWriteRecordCollection>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+type Stage1OwnerPreparedRows = (SpartanOuterUniskipRows, InstructionReadRafStage1Ready);
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+type ShiftStage1OwnerPreparedRows = (
+    SpartanOuterUniskipRows,
+    SpartanShiftResidentRows,
+    InstructionReadRafStage1Ready,
+);
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage-1 admission selects each optional resident owner independently"
+)]
+pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+    prepare_bytecode_carrier: bool,
+    prepare_registers_read_write: bool,
+    prepare_registers_val: bool,
+    prepare_ram_access: bool,
+    prepare_ram_read_write_records: bool,
+) -> Result<Stage1OwnerPreparedRows, MetalSpartanDenseRowsError> {
+    let owned = witness
+        .owned_rows()
+        .filter(|rows| cycles <= rows.cycles())
+        .ok_or(MetalSpartanDenseRowsError::Kernel(
+            KernelError::InvariantViolation {
+                reason: "InstructionReadRAF Stage-1 ownership requires a random-access witness",
+            },
+        ))?;
+    let explicit_rows = owned.physical_rows().min(cycles);
+    let access = owned;
+    let padding = Stage1PaddingRows::new(&access, explicit_rows, cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let span = stage1_owner_rows_span(
+        cycles,
+        explicit_rows,
+        padding.source_window_count(explicit_rows),
+    );
+    let _entered = span.enter();
+    let topology_span = bytecode_stage1_topology_span(prepare_bytecode_carrier, explicit_rows);
+    let _topology_entered = topology_span.enter();
+    let mut source = context
+        .prepare_instruction_read_raf_stage1_storage(cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let mut bytecode_topology = prepare_bytecode_carrier
+        .then(|| context.prepare_bytecode_address_stage1_topology_storage(cycles, explicit_rows))
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let mut ram_access = prepare_ram_access
+        .then(|| RamAccessCollectionStorage::new(cycles, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let mut ram_read_write_records = prepare_ram_read_write_records
+        .then(|| {
+            RamReadWriteRecordCollectionStorage::new(
+                cycles,
+                INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+                (cycles.ilog2() as usize).min(RAM_READ_WRITE_CYCLE_TILE_LOG2),
+            )
+        })
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let mut registers_read_write = prepare_registers_read_write
+        .then(|| context.prepare_registers_read_write_stage1_storage(cycles))
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let outer_rows = context
+        .prepare_spartan_outer_uniskip_rows_with_fill(
+            cycles,
+            |instruction_input, successor, cold| {
+                with_stage1_owner_chunks(
+                    &mut source,
+                    bytecode_topology.as_mut(),
+                    ram_access.as_mut(),
+                    ram_read_write_records.as_mut(),
+                    registers_read_write.as_mut(),
+                    |owner_chunks| {
+                        let fill_chunk =
+                            |chunk: usize,
+                             instruction_input: &mut [InstructionInputRow],
+                             successor: &mut [SpartanOuterUniskipSuccessorRow],
+                             cold: &mut [SpartanOuterUniskipColdRow],
+                             owner: &mut Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_>,
+                             bytecode_scratch: &mut BytecodeAddressStage1TopologyScratch|
+                             -> Result<(), MetalError> {
+                                if instruction_input.len() != owner.len()
+                                    || successor.len() != owner.len()
+                                    || cold.len() != owner.len()
+                                {
+                                    return Err(MetalError::InvalidInstructionReadRafGrouped(
+                                        "Stage-1 owner chunks disagree on row count".to_owned(),
+                                    ));
+                                }
+                                let chunk_start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+                                let parts = stage1_chunk_parts(
+                                    chunk_start,
+                                    owner.len(),
+                                    explicit_rows,
+                                    cycles,
+                                );
+                                for offset in 0..parts.physical {
+                                    let row_index = chunk_start + offset;
+                                    let projected: Stage1ProjectionRow =
+                                        access.window(row_index).map_err(|error| {
+                                            MetalError::SpartanOuterRowExtraction {
+                                                row: row_index,
+                                                message: error.to_string(),
+                                            }
+                                        })?;
+                                    let (input, residual_row) =
+                                        SpartanOuterUniskipRow::from_spartan_outer(
+                                            &projected.outer,
+                                        )
+                                        .split();
+                                    let (successor_row, cold_row) = residual_row.partition();
+                                    instruction_input[offset] = input.with_register_indices(
+                                        projected.register_indices[0],
+                                        projected.register_indices[1],
+                                        projected.register_write.map(|(index, _, _)| index),
+                                    )?;
+                                    successor[offset] = successor_row;
+                                    cold[offset] = cold_row;
+                                    owner.push(
+                                        row_index,
+                                        explicit_rows,
+                                        projected.instruction,
+                                        projected.ram_access,
+                                        projected.register_indices,
+                                        projected.register_write,
+                                        bytecode_scratch,
+                                    )?;
+                                }
+                                let mut padding_start = parts.physical;
+                                if parts.regular_padding != 0 {
+                                    let regular = padding.regular.ok_or_else(|| {
+                                        MetalError::InvalidInstructionReadRafGrouped(
+                                            "regular Stage-1 padding template is missing"
+                                                .to_owned(),
+                                        )
+                                    })?;
+                                    fill_stage1_outer_padding(
+                                        instruction_input,
+                                        successor,
+                                        cold,
+                                        padding_start,
+                                        parts.regular_padding,
+                                        &regular,
+                                    );
+                                    owner.fill_padding(&regular, parts.regular_padding)?;
+                                    padding_start += parts.regular_padding;
+                                }
+                                if parts.terminal_padding != 0 {
+                                    let terminal = padding.terminal.ok_or_else(|| {
+                                        MetalError::InvalidInstructionReadRafGrouped(
+                                            "terminal Stage-1 padding template is missing"
+                                                .to_owned(),
+                                        )
+                                    })?;
+                                    fill_stage1_outer_padding(
+                                        instruction_input,
+                                        successor,
+                                        cold,
+                                        padding_start,
+                                        parts.terminal_padding,
+                                        &terminal,
+                                    );
+                                    owner.fill_padding(&terminal, parts.terminal_padding)?;
+                                }
+                                owner.finish(bytecode_scratch)
+                            };
+                        #[cfg(feature = "parallel")]
+                    instruction_input
+                        .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                        .zip(successor.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                        .zip(cold.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                        .zip(owner_chunks.par_iter_mut())
+                        .enumerate()
+                        .try_for_each_init(
+                            BytecodeAddressStage1TopologyScratch::new,
+                            |scratch,
+                             (chunk, (((instruction_input, successor), cold), owner))| {
+                                fill_chunk(
+                                    chunk,
+                                    instruction_input,
+                                    successor,
+                                    cold,
+                                    owner,
+                                    scratch,
+                                )
+                            },
+                        )?;
+                        #[cfg(not(feature = "parallel"))]
+                        {
+                            let mut scratch = BytecodeAddressStage1TopologyScratch::new();
+                            for (chunk, (((instruction_input, successor), cold), owner)) in
+                                instruction_input
+                                    .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                                    .zip(
+                                        successor
+                                            .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
+                                    )
+                                    .zip(cold.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                    .zip(owner_chunks.iter_mut())
+                                    .enumerate()
+                            {
+                                fill_chunk(
+                                    chunk,
+                                    instruction_input,
+                                    successor,
+                                    cold,
+                                    owner,
+                                    &mut scratch,
+                                )?;
+                            }
+                        }
+                        Ok(())
+                    },
+                )
+            },
+        )
+        .map_err(MetalSpartanDenseRowsError::Metal)?
+        .with_explicit_rows(explicit_rows)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let owner = source.seal().map_err(MetalSpartanDenseRowsError::Metal)?;
+    let registers_read_write = registers_read_write
+        .map(|storage| {
+            storage.seal(
+                outer_rows.clone_instruction_input_rows(),
+                &owner,
+                explicit_rows,
+            )
+        })
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let source_storage_ids = [
+        outer_rows.instruction_input_allocation_identity(),
+        outer_rows.allocation_identity(),
+    ];
+    let source_storage_bytes = [
+        instruction_input_row_bytes(cycles).map_err(MetalSpartanDenseRowsError::Metal)?,
+        spartan_outer_uniskip_successor_row_bytes(cycles)
+            .map_err(MetalSpartanDenseRowsError::Metal)?,
+    ];
+    let bytecode_topology = bytecode_topology
+        .map(|topology| topology.seal(&owner))
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let ram_access = ram_access
+        .map(RamAccessCollectionStorage::seal)
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let ram_read_write_records = ram_read_write_records
+        .map(RamReadWriteRecordCollectionStorage::seal)
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let registers_val = prepare_registers_val
+        .then(|| {
+            context.prepare_registers_val_instruction_source_request(
+                cycles,
+                explicit_rows,
+                source_storage_ids[0],
+                source_storage_bytes[0],
+                source_storage_ids[1],
+                source_storage_bytes[1],
+                owner.receipt(),
+            )
+        })
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    record_bytecode_stage1_topology_span(&owner, bytecode_topology.as_ref(), explicit_rows);
+    let prepared = InstructionReadRafStage1Ready {
+        owner,
+        bytecode_topology,
+        registers_read_write,
+        registers_val,
+        ram_access,
+        ram_read_write_records,
+    };
+    let _ = span.record(
+        "compact_rows_storage_id",
+        outer_rows.instruction_input_allocation_identity(),
+    );
+    let _ = span.record("residual_rows_storage_id", outer_rows.allocation_identity());
+    Ok((outer_rows, prepared))
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<(SpartanOuterUniskipRows, SpartanShiftResidentRows), MetalSpartanDenseRowsError> {
+    context
+        .validate_spartan_outer_uniskip_shift_rows_capacity(cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let rows = BundleStore::<SpartanOuterRow>::resolve(witness, cycles)
+        .map_err(MetalSpartanDenseRowsError::Kernel)?;
+    let access = rows.access();
+    let explicit_rows = rows.explicit_rows();
+    let source_kind = rows.production_source_kind();
+    let host_repack_rows = rows.host_repack_rows();
+    let span = tracing::info_span!(
+        "MetalInstructionInput::compact_rows_prepare",
+        source_kind,
+        witness_row_extractions = cycles,
+        residual_rows_written = cycles,
+        compact_rows_written = cycles,
+        compact_row_bytes = 48,
+        residual_row_bytes = 112,
+        compact_allocations = 1,
+        residual_allocations = 1,
+        full_row_allocations = 0,
+        full_domain_copy_bytes = 0,
+        full_domain_copy_dispatches = 0,
+        host_repack_rows,
+        compact_rows_storage_id = tracing::field::Empty,
+        residual_rows_storage_id = tracing::field::Empty,
+        resident_rows = cycles,
+        explicit_rows,
+    );
+    let _entered = span.enter();
+    let (outer_rows, shift_rows) = context
+        .prepare_spartan_outer_uniskip_rows_with_shift_fill(
+            cycles,
+            |instruction_input, successor, cold, unexpanded_pc, pc, flags| {
+                #[cfg(feature = "parallel")]
+                {
+                    instruction_input
+                        .par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD)
+                        .zip(successor.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
+                        .zip(cold.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
+                        .zip(unexpanded_pc.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
+                        .zip(pc.par_chunks_mut(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
+                        .zip(flags.par_iter_mut())
+                        .enumerate()
+                        .try_for_each(
+                            |(
+                                word_index,
+                                (
+                                    ((((instruction_input, successor), cold), unexpanded_pc), pc),
+                                    flags,
+                                ),
+                            )|
+                             -> Result<(), MetalError> {
+                                let mut packed_flags = SpartanShiftFlagWord::default();
+                                for offset in 0..instruction_input.len() {
+                                    let row_index =
+                                        word_index * SPARTAN_SHIFT_FLAG_ROWS_PER_WORD + offset;
+                                    let row = access.row(row_index).map_err(|error| {
+                                        MetalError::SpartanOuterRowExtraction {
+                                            row: row_index,
+                                            message: error.to_string(),
+                                        }
+                                    })?;
+                                    let (input, residual) =
+                                        SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                                    let (successor_row, cold_row) = residual.partition();
+                                    instruction_input[offset] = input;
+                                    successor[offset] = successor_row;
+                                    cold[offset] = cold_row;
+                                    write_metal_spartan_shift_row(
+                                        &row,
+                                        offset,
+                                        &mut unexpanded_pc[offset],
+                                        &mut pc[offset],
+                                        &mut packed_flags,
+                                    );
+                                }
+                                *flags = packed_flags;
+                                Ok(())
+                            },
+                        )?;
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    flags.fill(SpartanShiftFlagWord::default());
+                    for row_index in 0..cycles {
+                        let row = access.row(row_index).map_err(|error| {
+                            MetalError::SpartanOuterRowExtraction {
+                                row: row_index,
+                                message: error.to_string(),
+                            }
+                        })?;
+                        let (input, residual) =
+                            SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                        let (successor_row, cold_row) = residual.partition();
+                        instruction_input[row_index] = input;
+                        successor[row_index] = successor_row;
+                        cold[row_index] = cold_row;
+                        write_metal_spartan_shift_row(
+                            &row,
+                            row_index % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
+                            &mut unexpanded_pc[row_index],
+                            &mut pc[row_index],
+                            &mut flags[row_index / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD],
+                        );
+                    }
+                }
+                Ok(())
+            },
+        )
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let prepared = (
+        outer_rows
+            .with_explicit_rows(explicit_rows)
+            .map_err(MetalSpartanDenseRowsError::Metal)?,
+        shift_rows,
+    );
+    let _ = span.record(
+        "compact_rows_storage_id",
+        prepared.0.instruction_input_allocation_identity(),
+    );
+    let _ = span.record("residual_rows_storage_id", prepared.0.allocation_identity());
+    Ok(prepared)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage-1 admission selects each optional resident owner independently"
+)]
+pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+    prepare_bytecode_carrier: bool,
+    prepare_registers_read_write: bool,
+    prepare_registers_val: bool,
+    prepare_ram_access: bool,
+    prepare_ram_read_write_records: bool,
+) -> Result<ShiftStage1OwnerPreparedRows, MetalSpartanDenseRowsError> {
+    context
+        .validate_spartan_outer_uniskip_shift_rows_capacity(cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let owned = witness
+        .owned_rows()
+        .filter(|rows| cycles <= rows.cycles())
+        .ok_or(MetalSpartanDenseRowsError::Kernel(
+            KernelError::InvariantViolation {
+                reason: "InstructionReadRAF Stage-1 ownership requires a random-access witness",
+            },
+        ))?;
+    let explicit_rows = owned.physical_rows().min(cycles);
+    let access = owned;
+    let padding = Stage1PaddingRows::new(&access, explicit_rows, cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let span = stage1_owner_rows_span(
+        cycles,
+        explicit_rows,
+        padding.source_window_count(explicit_rows),
+    );
+    let _entered = span.enter();
+    let topology_span = bytecode_stage1_topology_span(prepare_bytecode_carrier, explicit_rows);
+    let _topology_entered = topology_span.enter();
+    let mut source = context
+        .prepare_instruction_read_raf_stage1_storage(cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let mut bytecode_topology = prepare_bytecode_carrier
+        .then(|| context.prepare_bytecode_address_stage1_topology_storage(cycles, explicit_rows))
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let mut ram_access = prepare_ram_access
+        .then(|| RamAccessCollectionStorage::new(cycles, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let mut ram_read_write_records = prepare_ram_read_write_records
+        .then(|| {
+            RamReadWriteRecordCollectionStorage::new(
+                cycles,
+                INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+                (cycles.ilog2() as usize).min(RAM_READ_WRITE_CYCLE_TILE_LOG2),
+            )
+        })
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let mut registers_read_write = prepare_registers_read_write
+        .then(|| context.prepare_registers_read_write_stage1_storage(cycles))
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let (outer_rows, shift_rows) = context
+        .prepare_spartan_outer_uniskip_rows_with_shift_fill(
+            cycles,
+            |instruction_input, successor, cold, unexpanded_pc, pc, flags| {
+                with_stage1_owner_chunks(
+                    &mut source,
+                    bytecode_topology.as_mut(),
+                    ram_access.as_mut(),
+                    ram_read_write_records.as_mut(),
+                    registers_read_write.as_mut(),
+                    |owner_chunks| {
+                        let fill_chunk =
+                            |chunk: usize,
+                             instruction_input: &mut [InstructionInputRow],
+                             successor: &mut [SpartanOuterUniskipSuccessorRow],
+                             cold: &mut [SpartanOuterUniskipColdRow],
+                             unexpanded_pc: &mut [u64],
+                             pc: &mut [u64],
+                             flags: &mut [SpartanShiftFlagWord],
+                             owner: &mut Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_>,
+                             bytecode_scratch: &mut BytecodeAddressStage1TopologyScratch|
+                             -> Result<(), MetalError> {
+                                if instruction_input.len() != owner.len()
+                                    || successor.len() != owner.len()
+                                    || cold.len() != owner.len()
+                                    || unexpanded_pc.len() != owner.len()
+                                    || pc.len() != owner.len()
+                                    || flags.len() != owner.len() / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD
+                                {
+                                    return Err(MetalError::InvalidInstructionReadRafGrouped(
+                                        "Stage-1 owner/Shift chunks disagree on row count"
+                                            .to_owned(),
+                                    ));
+                                }
+                                flags.fill(SpartanShiftFlagWord::default());
+                                let chunk_start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+                                let parts = stage1_chunk_parts(
+                                    chunk_start,
+                                    owner.len(),
+                                    explicit_rows,
+                                    cycles,
+                                );
+                                for offset in 0..parts.physical {
+                                    let row_index = chunk_start + offset;
+                                    let projected: Stage1ProjectionRow =
+                                        access.window(row_index).map_err(|error| {
+                                            MetalError::SpartanOuterRowExtraction {
+                                                row: row_index,
+                                                message: error.to_string(),
+                                            }
+                                        })?;
+                                    let (input, residual_row) =
+                                        SpartanOuterUniskipRow::from_spartan_outer(
+                                            &projected.outer,
+                                        )
+                                        .split();
+                                    let (successor_row, cold_row) = residual_row.partition();
+                                    instruction_input[offset] = input.with_register_indices(
+                                        projected.register_indices[0],
+                                        projected.register_indices[1],
+                                        projected.register_write.map(|(index, _, _)| index),
+                                    )?;
+                                    successor[offset] = successor_row;
+                                    cold[offset] = cold_row;
+                                    write_metal_spartan_shift_row(
+                                        &projected.outer,
+                                        offset % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
+                                        &mut unexpanded_pc[offset],
+                                        &mut pc[offset],
+                                        &mut flags[offset / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD],
+                                    );
+                                    owner.push(
+                                        row_index,
+                                        explicit_rows,
+                                        projected.instruction,
+                                        projected.ram_access,
+                                        projected.register_indices,
+                                        projected.register_write,
+                                        bytecode_scratch,
+                                    )?;
+                                }
+                                let mut padding_start = parts.physical;
+                                if parts.regular_padding != 0 {
+                                    let regular = padding.regular.ok_or_else(|| {
+                                        MetalError::InvalidInstructionReadRafGrouped(
+                                            "regular Stage-1 padding template is missing"
+                                                .to_owned(),
+                                        )
+                                    })?;
+                                    fill_stage1_outer_padding(
+                                        instruction_input,
+                                        successor,
+                                        cold,
+                                        padding_start,
+                                        parts.regular_padding,
+                                        &regular,
+                                    );
+                                    fill_stage1_shift_padding(
+                                        unexpanded_pc,
+                                        pc,
+                                        flags,
+                                        padding_start,
+                                        parts.regular_padding,
+                                        &regular,
+                                    );
+                                    owner.fill_padding(&regular, parts.regular_padding)?;
+                                    padding_start += parts.regular_padding;
+                                }
+                                if parts.terminal_padding != 0 {
+                                    let terminal = padding.terminal.ok_or_else(|| {
+                                        MetalError::InvalidInstructionReadRafGrouped(
+                                            "terminal Stage-1 padding template is missing"
+                                                .to_owned(),
+                                        )
+                                    })?;
+                                    fill_stage1_outer_padding(
+                                        instruction_input,
+                                        successor,
+                                        cold,
+                                        padding_start,
+                                        parts.terminal_padding,
+                                        &terminal,
+                                    );
+                                    fill_stage1_shift_padding(
+                                        unexpanded_pc,
+                                        pc,
+                                        flags,
+                                        padding_start,
+                                        parts.terminal_padding,
+                                        &terminal,
+                                    );
+                                    owner.fill_padding(&terminal, parts.terminal_padding)?;
+                                }
+                                owner.finish(bytecode_scratch)
+                            };
+                        let flags_per_chunk = INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS
+                            / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
+                        #[cfg(feature = "parallel")]
+                        instruction_input
+                            .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                            .zip(successor.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                            .zip(cold.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                            .zip(
+                                unexpanded_pc
+                                    .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
+                            )
+                            .zip(pc.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                            .zip(flags.par_chunks_mut(flags_per_chunk))
+                            .zip(owner_chunks.par_iter_mut())
+                            .enumerate()
+                            .try_for_each_init(
+                                BytecodeAddressStage1TopologyScratch::new,
+                                |bytecode_scratch,
+                                 (
+                                    chunk,
+                                    (
+                                        (
+                                            (
+                                                (
+                                                    ((instruction_input, successor), cold),
+                                                    unexpanded_pc,
+                                                ),
+                                                pc,
+                                            ),
+                                            flags,
+                                        ),
+                                        owner,
+                                    ),
+                                )| {
+                                    fill_chunk(
+                                        chunk,
+                                        instruction_input,
+                                        successor,
+                                        cold,
+                                        unexpanded_pc,
+                                        pc,
+                                        flags,
+                                        owner,
+                                        bytecode_scratch,
+                                    )
+                                },
+                            )?;
+                        #[cfg(not(feature = "parallel"))]
+                        {
+                            let mut bytecode_scratch = BytecodeAddressStage1TopologyScratch::new();
+                            for (
+                                chunk,
+                                (
+                                    (
+                                        (
+                                            (((instruction_input, successor), cold), unexpanded_pc),
+                                            pc,
+                                        ),
+                                        flags,
+                                    ),
+                                    owner,
+                                ),
+                            ) in instruction_input
+                                .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                                .zip(successor.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(cold.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(
+                                    unexpanded_pc
+                                        .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
+                                )
+                                .zip(pc.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(flags.chunks_mut(flags_per_chunk))
+                                .zip(owner_chunks.iter_mut())
+                                .enumerate()
+                            {
+                                fill_chunk(
+                                    chunk,
+                                    instruction_input,
+                                    successor,
+                                    cold,
+                                    unexpanded_pc,
+                                    pc,
+                                    flags,
+                                    owner,
+                                    &mut bytecode_scratch,
+                                )?;
+                            }
+                        }
+                        Ok(())
+                    },
+                )
+            },
+        )
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let outer_rows = outer_rows
+        .with_explicit_rows(explicit_rows)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let owner = source.seal().map_err(MetalSpartanDenseRowsError::Metal)?;
+    let registers_read_write = registers_read_write
+        .map(|storage| {
+            storage.seal(
+                outer_rows.clone_instruction_input_rows(),
+                &owner,
+                explicit_rows,
+            )
+        })
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let source_storage_ids = [
+        outer_rows.instruction_input_allocation_identity(),
+        outer_rows.allocation_identity(),
+    ];
+    let source_storage_bytes = [
+        instruction_input_row_bytes(cycles).map_err(MetalSpartanDenseRowsError::Metal)?,
+        spartan_outer_uniskip_successor_row_bytes(cycles)
+            .map_err(MetalSpartanDenseRowsError::Metal)?,
+    ];
+    let bytecode_topology = bytecode_topology
+        .map(|topology| topology.seal(&owner))
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let ram_access = ram_access
+        .map(RamAccessCollectionStorage::seal)
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let ram_read_write_records = ram_read_write_records
+        .map(RamReadWriteRecordCollectionStorage::seal)
+        .transpose()
+        .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
+    let registers_val = prepare_registers_val
+        .then(|| {
+            context.prepare_registers_val_instruction_source_request(
+                cycles,
+                explicit_rows,
+                source_storage_ids[0],
+                source_storage_bytes[0],
+                source_storage_ids[1],
+                source_storage_bytes[1],
+                owner.receipt(),
+            )
+        })
+        .transpose()
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    record_bytecode_stage1_topology_span(&owner, bytecode_topology.as_ref(), explicit_rows);
+    let prepared = InstructionReadRafStage1Ready {
+        owner,
+        bytecode_topology,
+        registers_read_write,
+        registers_val,
+        ram_access,
+        ram_read_write_records,
+    };
+    let _ = span.record(
+        "compact_rows_storage_id",
+        outer_rows.instruction_input_allocation_identity(),
+    );
+    let _ = span.record("residual_rows_storage_id", outer_rows.allocation_identity());
+    Ok((outer_rows, shift_rows, prepared))
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn write_metal_spartan_shift_row(
+    row: &SpartanOuterRow,
+    bit: usize,
+    unexpanded_pc: &mut u64,
+    pc: &mut u64,
+    flags: &mut SpartanShiftFlagWord,
+) {
+    *unexpanded_pc = row.unexpanded_pc.0;
+    *pc = row.pc.0;
+    let mask = 1u32 << bit;
+    flags.is_virtual |= u32::from(row.virtual_instruction.0) * mask;
+    flags.is_first_in_sequence |= u32::from(row.is_first_in_sequence.0) * mask;
+    flags.is_noop |= u32::from(row.is_noop.0) * mask;
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_instruction_input_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<InstructionInputRows, KernelError<AkitaField>> {
+    let rows = BundleStore::<SpartanOuterRow>::resolve(witness, cycles)?;
+    let access = rows.access();
+    let explicit_rows = rows.explicit_rows();
+    let source_kind = rows.production_source_kind();
+    let host_repack_rows = rows.host_repack_rows();
+    let span = tracing::info_span!(
+        "MetalInstructionInput::compact_rows_prepare",
+        source_kind,
+        witness_row_extractions = cycles,
+        residual_rows_written = 0,
+        compact_rows_written = cycles,
+        compact_row_bytes = 48,
+        residual_row_bytes = 0,
+        compact_allocations = 1,
+        residual_allocations = 0,
+        full_row_allocations = 0,
+        full_domain_copy_bytes = 0,
+        full_domain_copy_dispatches = 0,
+        host_repack_rows,
+        compact_rows_storage_id = tracing::field::Empty,
+        residual_rows_storage_id = 0,
+        resident_rows = cycles,
+        explicit_rows,
+    );
+    let _entered = span.enter();
+    let prepared = context
+        .prepare_instruction_input_rows_with_fill(cycles, |destination| {
+            #[cfg(feature = "parallel")]
+            {
+                destination.par_iter_mut().enumerate().try_for_each(
+                    |(row_index, destination)| -> Result<(), MetalError> {
+                        let row = access.row(row_index).map_err(|error| {
+                            MetalError::SpartanOuterRowExtraction {
+                                row: row_index,
+                                message: error.to_string(),
+                            }
+                        })?;
+                        *destination = InstructionInputRow::from_spartan_outer(&row);
+                        Ok(())
+                    },
+                )?;
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                for (row_index, destination) in destination.iter_mut().enumerate() {
+                    let row = access.row(row_index).map_err(|error| {
+                        MetalError::SpartanOuterRowExtraction {
+                            row: row_index,
+                            message: error.to_string(),
+                        }
+                    })?;
+                    *destination = InstructionInputRow::from_spartan_outer(&row);
+                }
+            }
+            Ok(())
+        })
+        .map_err(metal_outer_error)?;
+    let _ = span.record("compact_rows_storage_id", prepared.allocation_identity());
+    Ok(prepared)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn prepare_metal_spartan_outer_rows(
+    context: &SolinasMetal,
+    rows: &BundleStore<SpartanOuterRow>,
+    cycles: usize,
+) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
+    let access = rows.access();
+    let explicit_rows = rows.explicit_rows();
+    let source_kind = rows.production_source_kind();
+    let host_repack_rows = rows.host_repack_rows();
+    let span = tracing::info_span!(
+        "MetalInstructionInput::compact_rows_prepare",
+        source_kind,
+        witness_row_extractions = cycles,
+        residual_rows_written = cycles,
+        compact_rows_written = cycles,
+        compact_row_bytes = 48,
+        residual_row_bytes = 112,
+        compact_allocations = 1,
+        residual_allocations = 1,
+        full_row_allocations = 0,
+        full_domain_copy_bytes = 0,
+        full_domain_copy_dispatches = 0,
+        host_repack_rows,
+        compact_rows_storage_id = tracing::field::Empty,
+        residual_rows_storage_id = tracing::field::Empty,
+        resident_rows = cycles,
+        explicit_rows,
+    );
+    let _entered = span.enter();
+    let prepared = context
+        .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |instruction_input, successor, cold| {
+            #[cfg(feature = "parallel")]
+            {
+                instruction_input
+                    .par_iter_mut()
+                    .zip(successor.par_iter_mut())
+                    .zip(cold.par_iter_mut())
+                    .enumerate()
+                    .try_for_each(
+                        |(row_index, ((instruction_input, successor), cold))| -> Result<(), MetalError> {
+                            let row = access.row(row_index).map_err(|error| {
+                                MetalError::SpartanOuterRowExtraction {
+                                    row: row_index,
+                                    message: error.to_string(),
+                                }
+                            })?;
+                            let (input, residual) =
+                                SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                            let (successor_row, cold_row) = residual.partition();
+                            *instruction_input = input;
+                            *successor = successor_row;
+                            *cold = cold_row;
+                            Ok(())
+                        },
+                    )?;
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                for (row_index, ((instruction_input, successor), cold)) in instruction_input
+                    .iter_mut()
+                    .zip(successor)
+                    .zip(cold)
+                    .enumerate()
+                {
+                    let row = access.row(row_index).map_err(|error| {
+                        MetalError::SpartanOuterRowExtraction {
+                            row: row_index,
+                            message: error.to_string(),
+                        }
+                    })?;
+                    let (input, residual) =
+                        SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                    let (successor_row, cold_row) = residual.partition();
+                    *instruction_input = input;
+                    *successor = successor_row;
+                    *cold = cold_row;
+                }
+            }
+            Ok(())
+        })
+        .map_err(metal_outer_error)?
+        .with_explicit_rows(explicit_rows)
+        .map_err(metal_outer_error)?;
+    let _ = span.record(
+        "compact_rows_storage_id",
+        prepared.instruction_input_allocation_identity(),
+    );
+    let _ = span.record("residual_rows_storage_id", prepared.allocation_identity());
+    Ok(prepared)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn metal_outer_error(error: MetalError) -> KernelError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    }
+    .into()
+}
+
 impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
+    fn prepare_witness(
+        &self,
+        session: &mut ProofSession,
+        log_t: usize,
+        witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<(), KernelError<F>> {
+        prepare_instruction_input_rows(session, witness, 1usize << log_t)
+    }
+
     #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::prepare")]
     fn prepare(
         &self,
@@ -529,6 +2399,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
         &self,
         session: &mut ProofSession,
         _late_tau: &[F],
+        _known_values: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let carry =
             session
@@ -1028,7 +2899,12 @@ mod tests {
         outer_remainder_input_values_from_uniskip_output, OuterRemainderInputClaims,
     };
     use jolt_witness::testing::with_sample_backend;
-    use jolt_witness::witnesses::ToField;
+    use jolt_witness::witnesses::{
+        Imm, InstructionFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+        NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc,
+        Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
+        RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, ToField, UnexpandedPc,
+    };
     use jolt_witness::{BundleSource, FixedBackend, JoltWitnessOracle, PolynomialEncoding, Shape};
 
     use super::*;
@@ -1132,6 +3008,9 @@ mod tests {
                     next_is_first_in_sequence: NextIsFirstInSequence(bit()),
                     lookup_output: LookupOutput(next()),
                     should_jump: ShouldJump(bit()),
+                    branch_flag: InstructionFlag(bit()),
+                    is_noop: InstructionFlag(bit()),
+                    next_is_noop: NextIsNoop(bit()),
                     add_operands: OpFlag(bit()),
                     subtract_operands: OpFlag(bit()),
                     multiply_operands: OpFlag(bit()),
@@ -1146,6 +3025,10 @@ mod tests {
                     is_compressed: OpFlag(bit()),
                     is_first_in_sequence: OpFlag(bit()),
                     is_last_in_sequence: OpFlag(bit()),
+                    left_operand_is_rs1: InstructionFlag(bit()),
+                    left_operand_is_pc: InstructionFlag(bit()),
+                    right_operand_is_rs2: InstructionFlag(bit()),
+                    right_operand_is_imm: InstructionFlag(bit()),
                 }
             })
             .collect()
@@ -1218,6 +3101,7 @@ mod tests {
                 &ReferenceBackend,
                 &mut reference_session,
                 &[],
+                &[],
             )
             .unwrap();
 
@@ -1228,6 +3112,7 @@ mod tests {
             <OptimizedOuterUniskip as UniskipKernel<Fr, OuterRemainder<Fr>>>::first_round_poly(
                 &OptimizedOuterUniskip,
                 &mut optimized_session,
+                &[],
                 &[],
             )
             .unwrap();
@@ -1344,6 +3229,7 @@ mod tests {
                     &ReferenceBackend,
                     &mut reference_session,
                     &[],
+                    &[],
                 )
                 .unwrap();
 
@@ -1360,7 +3246,7 @@ mod tests {
                 Fr,
                 OuterRemainder<Fr>,
             >>::first_round_poly(
-                &OptimizedOuterUniskip, &mut optimized_session, &[]
+                &OptimizedOuterUniskip, &mut optimized_session, &[], &[]
             )
             .unwrap();
             assert_eq!(optimized_uniskip, reference_uniskip);

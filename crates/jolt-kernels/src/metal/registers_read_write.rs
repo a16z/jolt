@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -634,6 +634,7 @@ mod tests {
         ReadWriteDimensions, REGISTER_ADDRESS_BITS,
     };
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
+    use jolt_field::Ring as _;
     use jolt_poly::Polynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage4::registers_read_write_checking::{

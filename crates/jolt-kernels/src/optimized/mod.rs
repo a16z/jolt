@@ -48,12 +48,12 @@ pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
-mod ram_trace;
+pub(crate) mod ram_trace;
 pub mod ram_val_check;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;
-mod rw_matrix;
+pub(crate) mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
@@ -128,7 +128,7 @@ where
             Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
 
         self.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
-        self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
+        self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle::default());
         self.hamming_weight_claim_reduction = Box::new(OptimizedHammingWeightClaimReduction);
         self.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
 
@@ -154,6 +154,8 @@ where
     }
 }
 
+#[cfg(test)]
+pub(crate) mod harness;
 #[cfg(test)]
 pub(crate) mod parity;
 #[cfg(test)]

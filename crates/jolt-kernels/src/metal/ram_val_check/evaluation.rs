@@ -5,7 +5,10 @@ use jolt_claims::protocols::jolt::geometry::ram::RamValCheckInit;
 use jolt_claims::protocols::jolt::relations::ram::{RamValCheckChallenges, RamValCheckInputClaims};
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_claims::OutputClaims as _;
-use jolt_field::{AkitaField, FixedBytes, FromPrimitiveInt, TranscriptChallenge};
+use jolt_field::{Field as _, One as _, Zero as _};
+use jolt_field::{
+    FixedBytes, FromPrimitiveInt, Prime128OffsetA7F7 as AkitaField, TranscriptChallenge,
+};
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;

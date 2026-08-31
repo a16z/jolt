@@ -6,7 +6,7 @@
 
 use std::{ffi::c_void, mem::size_of, slice};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use metal::{
     objc::rc::autoreleasepool, Buffer, ComputePipelineState, FunctionConstantValues, MTLDataType,
     MTLResourceOptions, MTLSize,
@@ -1025,7 +1025,8 @@ const _: () = assert!(size_of::<MaterializeParams>() == 16);
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "test assertions")]
 mod tests {
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
+    use jolt_field::Zero as _;
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
     use super::*;

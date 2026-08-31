@@ -191,6 +191,8 @@ impl OutputFormat {
 pub enum BackendKind {
     Reference,
     Optimized,
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Metal,
 }
 
 impl BackendKind {
@@ -202,6 +204,8 @@ impl BackendKind {
         match self {
             Self::Reference => "reference",
             Self::Optimized => "optimized",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Self::Metal => "metal",
         }
     }
 
@@ -212,6 +216,8 @@ impl BackendKind {
         match self {
             Self::Reference => "",
             Self::Optimized => "_optimized",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Self::Metal => "_metal",
         }
     }
 }
@@ -730,6 +736,10 @@ fn prove_workload(
     let backend = match backend {
         BackendKind::Reference => crate::akita::JoltAkitaBackend::reference(),
         BackendKind::Optimized => crate::akita::JoltAkitaBackend::optimized(),
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        BackendKind::Metal => {
+            crate::akita::JoltAkitaBackend::metal().expect("the Metal backend must initialize")
+        }
     };
 
     let memory_layout = program_preprocessing.memory_layout.clone();

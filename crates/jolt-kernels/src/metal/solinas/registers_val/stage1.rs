@@ -196,7 +196,8 @@ impl allocative::Allocative for RegistersValInstructionSourceLease {
 #[expect(clippy::panic, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{AkitaField, FromPrimitiveInt};
+    use jolt_field::Zero as _;
+    use jolt_field::{FromPrimitiveInt, Prime128OffsetA7F7 as AkitaField};
 
     use crate::metal::solinas::{
         BooleanityRow, RegistersValFirstMessageConfig, RegistersValTransitionConfig,

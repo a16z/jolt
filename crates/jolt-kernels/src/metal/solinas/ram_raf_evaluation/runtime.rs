@@ -1,6 +1,6 @@
 use std::{mem::size_of, slice, time::Duration};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
     ComputePipelineState, MTLResourceOptions, MTLSize, NSRange,
@@ -716,6 +716,7 @@ impl RamRafSegmentedSequence {
         self.source.storage_id()
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn execute_timed(&self) -> Result<RamRafObservation, MetalError> {
         let command = self.submit_command();
         self.complete(command)

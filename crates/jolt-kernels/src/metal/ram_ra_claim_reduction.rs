@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaClaimReductionPublic};
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::{One as _, Zero as _};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -654,6 +655,7 @@ fn kernel_error(error: impl ToString) -> SumcheckKernelError<AkitaField> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
+    use jolt_field::Ring as _;
     use std::sync::Arc;
 
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;

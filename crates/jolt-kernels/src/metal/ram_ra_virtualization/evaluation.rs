@@ -4,7 +4,8 @@ use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks
 use jolt_claims::protocols::jolt::geometry::ram::RamRaVirtualizationDimensions;
 use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationInputClaims;
 use jolt_claims::{NoChallenges, OutputClaims as _};
-use jolt_field::{AkitaField, FixedBytes, TranscriptChallenge};
+use jolt_field::{Field as _, One as _, Zero as _};
+use jolt_field::{FixedBytes, Prime128OffsetA7F7 as AkitaField, TranscriptChallenge};
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;

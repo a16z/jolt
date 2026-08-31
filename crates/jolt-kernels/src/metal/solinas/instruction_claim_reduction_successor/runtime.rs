@@ -4,7 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::{Field as _, One as _};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 use metal::{objc::rc::autoreleasepool, Buffer, CommandBuffer, MTLSize};
 
@@ -722,7 +723,8 @@ type ProductInstructionInitialResult = (
 )]
 mod tests {
     use super::ProductInstructionRoundService;
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
+    use jolt_field::{Ring as _, Zero as _};
     use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial};
     use metal::Buffer;
 

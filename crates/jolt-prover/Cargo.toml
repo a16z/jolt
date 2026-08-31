@@ -27,6 +27,9 @@ akita = [
   "jolt-field/solinas",
   "jolt-kernels/akita",
 ]
+# Apple GPU commitment and PIOP kernels for the packed protocol. The proof
+# shape and transcript are identical to the `akita` feature.
+metal = ["akita", "jolt-akita/metal", "jolt-kernels/metal"]
 # Compile-time ZK mode: committed sumcheck recorders, hiding witness
 # commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.

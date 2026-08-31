@@ -3,6 +3,8 @@
 use std::sync::Arc;
 
 use jolt_field::Field;
+#[cfg(test)]
+use jolt_field::{One as _, Zero as _};
 use thiserror::Error;
 
 use super::owner::RamCycleFamilyOwner;
@@ -517,7 +519,8 @@ pub enum RamHammingError {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
+    use jolt_field::Ring as _;
 
     use super::super::owner::{OwnerConfig, RamAccessRecord, RamIncrementRecord};
     use super::*;

@@ -1,6 +1,7 @@
 use std::{ffi::c_void, mem::size_of, ops::Deref, slice};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
@@ -1487,9 +1488,10 @@ const _: () = assert!(std::mem::align_of::<InstructionInputRow>() == 16);
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, reason = "test module")]
 mod tests {
+    use jolt_field::{Ring as _, Zero as _};
     use std::{mem::size_of, slice};
 
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
     use super::{

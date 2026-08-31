@@ -4,7 +4,7 @@
 //! performed by the shader specialized for `2^128 - C`; host callers supply
 //! canonical values for the selected offset.
 
-use jolt_field::FixedBytes;
+use jolt_field::{CanonicalBytes, CanonicalEncoding};
 use metal::MTLCommandBufferStatus;
 use thiserror::Error;
 
@@ -105,8 +105,7 @@ pub(crate) use instruction_input::{
     instruction_input_sequence_storage_bytes, instruction_input_weight_capacities,
     InstructionInputSequenceStorage, PendingInstructionInputPrimer,
     INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS, INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
-    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS, REGISTER_RD_INDEX_SHIFT, REGISTER_RS1_INDEX_SHIFT,
-    REGISTER_RS2_INDEX_SHIFT,
+    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
 };
 pub use instruction_input::{
     InstructionInputRow, InstructionInputRows, InstructionInputSequence,
@@ -138,7 +137,7 @@ pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRegistersClaimCarrier,
     OuterRegistersClaimCarrierReceipt, OuterRemainderSequenceStorage,
-    OuterRemainderStorageEvalStats, PendingOuterRegistersClaimCarrier,
+    PendingOuterRegistersClaimCarrier,
 };
 pub use outer_remainder::{
     OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
@@ -176,14 +175,12 @@ pub use ram_raf_evaluation::{
 };
 pub(crate) use ram_read_write::{
     RamRafSegmentedAddressPlane, RamReadWriteDispatchTiming, RamReadWriteFinish,
-    RamReadWritePreparationTiming, RamReadWriteSequence, SparseCycleProduct,
-    RAM_READ_WRITE_CYCLE_TILE_LOG2,
+    RamReadWriteSequence, SparseCycleProduct, RAM_READ_WRITE_CYCLE_TILE_LOG2,
 };
 pub(crate) use ram_val_sequence::RamValSequence;
 pub(crate) use registers_read_write::{
-    PendingRegistersReadWriteStage1Pipelines, RegistersReadWriteCycleObservation,
-    RegistersReadWriteStage1ChunkWriter, RegistersReadWriteStage1Source,
-    RegistersReadWriteStage1Storage,
+    PendingRegistersReadWriteStage1Pipelines, RegistersReadWriteStage1ChunkWriter,
+    RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,
 };
 pub(crate) use registers_val::PendingRegistersValFirstMessage;
 pub use registers_val::{
@@ -247,12 +244,15 @@ impl Fp128 {
         offset != 0 && self.to_u128() <= u128::MAX - offset as u128
     }
 
-    pub fn from_jolt_field<F: FixedBytes<16>>(value: &F) -> Self {
-        Self::from_u128(u128::from_le_bytes(value.to_bytes_array()))
+    pub fn from_jolt_field<F: CanonicalBytes>(value: &F) -> Self {
+        debug_assert_eq!(F::NUM_BYTES, 16);
+        let mut bytes = [0u8; 16];
+        value.to_bytes_le(&mut bytes);
+        Self::from_u128(u128::from_le_bytes(bytes))
     }
 
-    pub fn into_jolt_field<F: FixedBytes<16>>(self) -> F {
-        F::from_bytes_array(&self.to_u128().to_le_bytes())
+    pub fn into_jolt_field<F: CanonicalEncoding>(self) -> F {
+        F::from_bytes_le_reduced(&self.to_u128().to_le_bytes())
     }
 }
 

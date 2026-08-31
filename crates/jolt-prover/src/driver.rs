@@ -143,8 +143,8 @@ impl<F, K, SR, SF> ProveRounds<F> for SpannedRounds<Box<K>, SR, SF>
 where
     F: JoltField,
     K: ProveRounds<F> + ?Sized,
-    SR: Fn() -> tracing::Span,
-    SF: Fn() -> tracing::Span,
+    SR: Fn() -> tracing::Span + Send,
+    SF: Fn() -> tracing::Span + Send,
 {
     fn num_rounds(&self) -> usize {
         self.inner.num_rounds()

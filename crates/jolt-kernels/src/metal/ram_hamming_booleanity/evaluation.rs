@@ -2,7 +2,8 @@ use std::{cell::OnceCell, mem::size_of, sync::Arc, time::Duration, time::Instant
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_claims::OutputClaims as _;
-use jolt_field::{AkitaField, FixedBytes, TranscriptChallenge};
+use jolt_field::{Field as _, One as _, Zero as _};
+use jolt_field::{FixedBytes, Prime128OffsetA7F7 as AkitaField, TranscriptChallenge};
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::{
     RamHammingBooleanity, RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,

@@ -25,7 +25,7 @@ use crate::{KernelError, ProofSession};
 /// it types the slot to the remainder relation the parked state becomes, so
 /// the two uni-skip fronts are distinct [`JoltBackend`](crate::JoltBackend)
 /// fields.
-pub trait UniskipKernel<F, R>
+pub trait UniskipKernel<F, R>: Sync
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
@@ -33,6 +33,17 @@ where
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
+    /// Materializes transcript-independent witness state before challenges are
+    /// drawn. Backends without reusable preparation leave this as a no-op.
+    fn prepare_witness(
+        &self,
+        _session: &mut ProofSession,
+        _log_t: usize,
+        _witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<(), KernelError<F>> {
+        Ok(())
+    }
+
     /// Compute the uni-skip first-round state and park it in the session
     /// under a backend-private key.
     fn prepare(
@@ -50,5 +61,6 @@ where
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        known_values: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>>;
 }

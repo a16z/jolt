@@ -12,6 +12,8 @@ use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use std::{collections::HashMap, sync::Mutex};
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
@@ -36,9 +38,93 @@ fn split_commit_output(
     (output.committed_group, output.hint)
 }
 
+#[derive(Clone, Default)]
+pub struct TraceCommitmentBackend {
+    kind: TraceCommitmentBackendKind,
+}
+
+#[derive(Clone, Default)]
+enum TraceCommitmentBackendKind {
+    #[default]
+    Cpu,
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    MetalRequired(RequiredMetalTraceCommitment),
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone)]
+struct RequiredMetalTraceCommitment {
+    backend: akita_metal::MetalBackend,
+    prepared: Arc<Mutex<HashMap<usize, Arc<akita_metal::MetalPreparedSetup>>>>,
+}
+
+impl std::fmt::Debug for TraceCommitmentBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TraceCommitmentBackend")
+            .field("mode", &self.mode_name())
+            .finish()
+    }
+}
+
+impl TraceCommitmentBackend {
+    pub fn cpu() -> Self {
+        Self::default()
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub fn metal_required() -> Result<Self, OpeningsError> {
+        let backend =
+            akita_metal::MetalBackend::new(akita_metal::MetalExecutionPolicy::RequireMetal)
+                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+        Ok(Self {
+            kind: TraceCommitmentBackendKind::MetalRequired(RequiredMetalTraceCommitment {
+                backend,
+                prepared: Arc::new(Mutex::new(HashMap::new())),
+            }),
+        })
+    }
+
+    pub fn mode_name(&self) -> &'static str {
+        match &self.kind {
+            TraceCommitmentBackendKind::Cpu => "cpu",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            TraceCommitmentBackendKind::MetalRequired(_) => "metal-required-for-qualified-shapes",
+        }
+    }
+
+    pub const fn shape_is_metal_qualified(one_hot_k: usize, num_vars: usize) -> bool {
+        one_hot_k == AKITA_ONE_HOT_K256 && matches!(num_vars, 38..=41)
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl RequiredMetalTraceCommitment {
+    fn prepared_setup(
+        &self,
+        setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>,
+    ) -> Result<Arc<akita_metal::MetalPreparedSetup>, OpeningsError> {
+        let key = Arc::as_ptr(&setup.expanded) as usize;
+        let mut prepared = self.prepared.lock().map_err(|_| {
+            OpeningsError::InvalidSetup("Akita Metal prepared-setup cache is poisoned".to_string())
+        })?;
+        if let Some(cached) = prepared.get(&key) {
+            return Ok(cached.clone());
+        }
+        let value = Arc::new(
+            self.backend
+                .prepare_setup(setup)
+                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?,
+        );
+        drop(prepared.insert(key, value.clone()));
+        Ok(value)
+    }
+}
+
 /// Prover seam for committing the packed trace directly from selected one-hot rows.
 pub trait TraceOneHotCommitment: CommitmentScheme {
     fn commit_trace_one_hot(
+        backend: &TraceCommitmentBackend,
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
         column_capacity: usize,
@@ -214,6 +300,7 @@ impl AkitaScheme {
     /// Commits the prefix-packed trace without constructing padded per-column
     /// index vectors or Akita's generic one-hot block representation.
     pub fn commit_trace_one_hot(
+        backend: &TraceCommitmentBackend,
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
         column_capacity: usize,
@@ -234,46 +321,24 @@ impl AkitaScheme {
         .map_err(commit_failed)?;
         let num_vars = RootPolyMeta::num_vars(&source);
         Self::validate_commit_shape(setup, num_vars, 1)?;
-        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
-        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let (backend_commitment, backend_hint) =
-            with_backend_pool(|| match (setup.one_hot_k(), profiles.as_ref()) {
-                (AKITA_ONE_HOT_K16, None) => {
-                    AkitaOneHotK16BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                        GroupContext::scheduler_without_precommitted_groups(),
-                    )
-                }
-                (AKITA_ONE_HOT_K16, Some(profiles)) => {
-                    AkitaOneHotK16BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                        GroupContext::scheduler_with_precommitted_groups(profiles),
-                    )
-                }
-                (AKITA_ONE_HOT_K256, None) => {
-                    AkitaOneHotK256BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                        GroupContext::scheduler_without_precommitted_groups(),
-                    )
-                }
-                (AKITA_ONE_HOT_K256, Some(profiles)) => {
-                    AkitaOneHotK256BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                        GroupContext::scheduler_with_precommitted_groups(profiles),
-                    )
-                }
-                _ => unreachable!("the one-hot setup geometry was validated during setup"),
-            })
-            .map(split_commit_output)
-            .map_err(commit_failed)?;
+        let (backend_commitment, backend_hint) = match &backend.kind {
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            TraceCommitmentBackendKind::MetalRequired(metal)
+                if TraceCommitmentBackend::shape_is_metal_qualified(
+                    setup.one_hot_k(),
+                    num_vars,
+                ) =>
+            {
+                Self::commit_trace_one_hot_metal(setup, &source, profiles.as_ref(), metal)?
+            }
+            TraceCommitmentBackendKind::Cpu => {
+                Self::commit_trace_one_hot_cpu(setup, &source, profiles.as_ref())?
+            }
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            TraceCommitmentBackendKind::MetalRequired(_) => {
+                Self::commit_trace_one_hot_cpu(setup, &source, profiles.as_ref())?
+            }
+        };
         Self::package_commitment(
             layout_digest,
             num_vars,
@@ -281,6 +346,95 @@ impl AkitaScheme {
             backend_hint,
             AkitaHintPolynomials::TraceOneHot(source),
         )
+    }
+
+    fn commit_trace_one_hot_cpu(
+        setup: &AkitaProverSetup,
+        source: &TracePackedOneHot,
+        profiles: Option<&PrecommittedGroupProfiles>,
+    ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
+        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        with_backend_pool(|| match (setup.one_hot_k(), profiles) {
+            (AKITA_ONE_HOT_K16, None) => {
+                AkitaOneHotK16BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
+                    backend_prover_setup,
+                    std::slice::from_ref(source),
+                    &stack,
+                    GroupContext::scheduler_without_precommitted_groups(),
+                )
+            }
+            (AKITA_ONE_HOT_K16, Some(profiles)) => {
+                AkitaOneHotK16BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
+                    backend_prover_setup,
+                    std::slice::from_ref(source),
+                    &stack,
+                    GroupContext::scheduler_with_precommitted_groups(profiles),
+                )
+            }
+            (AKITA_ONE_HOT_K256, None) => {
+                AkitaOneHotK256BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
+                    backend_prover_setup,
+                    std::slice::from_ref(source),
+                    &stack,
+                    GroupContext::scheduler_without_precommitted_groups(),
+                )
+            }
+            (AKITA_ONE_HOT_K256, Some(profiles)) => {
+                AkitaOneHotK256BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
+                    backend_prover_setup,
+                    std::slice::from_ref(source),
+                    &stack,
+                    GroupContext::scheduler_with_precommitted_groups(profiles),
+                )
+            }
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn commit_trace_one_hot_metal(
+        setup: &AkitaProverSetup,
+        source: &TracePackedOneHot,
+        profiles: Option<&PrecommittedGroupProfiles>,
+        metal: &RequiredMetalTraceCommitment,
+    ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
+        let (backend_prover_setup, _) = setup.one_hot_backend()?;
+        let setup_owner = setup
+            .one_hot_backend_prover_setup
+            .as_ref()
+            .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
+        let prepared = metal.prepared_setup(setup_owner)?;
+        let stack = akita_prover::UniformProverStack::uniform(
+            &metal.backend,
+            prepared.as_ref(),
+            backend_prover_setup.expanded.as_ref(),
+        )
+        .map_err(akita_error)?;
+        with_backend_pool(|| match profiles {
+            None => AkitaOneHotK256BackendScheme::commit::<
+                TracePackedOneHot,
+                akita_metal::MetalBackend,
+            >(
+                backend_prover_setup,
+                std::slice::from_ref(source),
+                &stack,
+                GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            Some(profiles) => AkitaOneHotK256BackendScheme::commit::<
+                TracePackedOneHot,
+                akita_metal::MetalBackend,
+            >(
+                backend_prover_setup,
+                std::slice::from_ref(source),
+                &stack,
+                GroupContext::scheduler_with_precommitted_groups(profiles),
+            ),
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)
     }
 
     fn commit_one_hot_backend(
@@ -463,6 +617,7 @@ impl AkitaScheme {
 
 impl TraceOneHotCommitment for AkitaScheme {
     fn commit_trace_one_hot(
+        backend: &TraceCommitmentBackend,
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
         column_capacity: usize,
@@ -470,6 +625,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         precommitted_hints: &[&Self::OpeningHint],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
         Self::commit_trace_one_hot(
+            backend,
             setup,
             layout_digest,
             column_capacity,

@@ -1,6 +1,6 @@
 use std::{mem::size_of, slice, time::Duration};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::EqPolynomial;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
@@ -161,7 +161,7 @@ pub(crate) struct RegistersClaimAliasFoldObservation {
 }
 
 impl SolinasMetal {
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(feature = "test-utils")]
     pub(crate) fn prepare_test_registers_claim_resident_rd_plane(
         &self,
         rows: usize,

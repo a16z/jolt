@@ -4,7 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
     ComputePipelineState, MTLResourceOptions, MTLSize,
@@ -1382,7 +1383,7 @@ impl InstructionClaimSequence {
         identities
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn read_current_state(&self) -> Result<Vec<AkitaField>, MetalError> {
         if matches!(
             self.phase,

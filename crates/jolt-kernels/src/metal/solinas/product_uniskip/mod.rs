@@ -3,7 +3,10 @@
 use std::mem::{align_of, size_of};
 
 use jolt_field::signed::{S128, S192, S256};
-use jolt_field::{AkitaField, Field, SignedProductAccumulator as _, WithSignedProductAccumulator};
+#[cfg(any(test, feature = "test-utils"))]
+use jolt_field::Field;
+use jolt_field::Zero as _;
+use jolt_field::{Accumulator as _, Prime128OffsetA7F7 as AkitaField, WithAccumulator};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use thiserror::Error;
@@ -43,10 +46,8 @@ pub fn evaluate_product_uniskip_extensions_cpu(
 ) -> Result<ProductUniskipExtendedNodes<AkitaField>, ProductUniskipShapeError> {
     let _ = ProductUniskipBlockParams::new(rows.len(), e_in.len(), e_out.len())?;
     let block = |x_out: usize| {
-        let mut accumulators: [
-            <AkitaField as WithSignedProductAccumulator>::SignedProductAccumulator;
-            PRODUCT_UNISKIP_EXTENDED_NODES
-        ] = Default::default();
+        let mut accumulators: [<AkitaField as WithAccumulator>::SignedProductAccumulator;
+            PRODUCT_UNISKIP_EXTENDED_NODES] = Default::default();
         for (x_in, &weight) in e_in.iter().enumerate() {
             let row = rows[x_out * e_in.len() + x_in];
             for (accumulator, coefficients) in accumulators
@@ -232,7 +233,8 @@ pub mod reference {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests use fixed valid shapes")]
 mod tests {
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
+    use jolt_field::{One as _, Ring as _};
 
     use super::*;
 

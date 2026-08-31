@@ -3,6 +3,7 @@ use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
     MTLResourceOptions, MTLSize,
@@ -24,8 +25,8 @@ pub(crate) use scatter::{
 };
 
 pub(crate) const INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS: usize = 1 << 12;
-pub(crate) const INSTRUCTION_READ_RAF_TABLES: usize = 40;
-pub(crate) const INSTRUCTION_READ_RAF_SEGMENTS: usize = 82;
+pub(crate) const INSTRUCTION_READ_RAF_TABLES: usize = LookupTableKind::<RISCV_XLEN>::COUNT;
+pub(crate) const INSTRUCTION_READ_RAF_SEGMENTS: usize = 2 * INSTRUCTION_READ_RAF_TABLES + 2;
 const MAX_ROWS: usize = 1 << 28;
 const SOURCE_PRIMER_PIPELINE: &str = "solinas_instruction_read_raf_source_primer";
 const SOURCE_PRIMER_PAGE_BYTES: usize = 16 * 1024;

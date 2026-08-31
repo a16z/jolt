@@ -4,6 +4,8 @@
 
 use core::marker::PhantomData;
 use std::sync::Arc;
+#[cfg(feature = "parallel")]
+use std::sync::OnceLock;
 
 use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
@@ -16,6 +18,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use crate::ram_access::{RamAccessRecord, RamAccessTape, MAX_RETAINED_RAM_ACCESSES};
 use crate::{KernelError, ProofSession};
 
 /// Streaming extraction window.
@@ -354,11 +357,8 @@ pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u32], r_cycle: &[F], ram_k:
 }
 
 #[cfg(test)]
-#[expect(clippy::panic, reason = "test module")]
+#[expect(clippy::unwrap_used, reason = "tests use fixed valid fixtures")]
 mod tests {
-    use jolt_field::Fr;
-    use jolt_witness::testing::with_sample_backend;
-
     use super::*;
 
     #[test]
@@ -378,7 +378,193 @@ mod tests {
                     got: 2,
                     ..
                 }
-            ));
-        });
+                Ok(())
+            })
+            .unwrap();
+        let actual = storage.seal().unwrap();
+
+        assert_eq!(actual.columns.addresses, expected.addresses);
+        assert_eq!(
+            actual.columns.active_cycle_bound,
+            expected.active_cycle_bound
+        );
+        assert_eq!(actual.values.pre_values, expected.pre_values);
+        assert_eq!(actual.values.post_values, expected.post_values);
+        assert_eq!(actual.activity.cycles, expected.ram_increment_cycles);
+        assert_eq!(actual.activity.increments, expected.ram_increments);
+        assert_eq!(actual.tape.access_count(), expected.access_count);
+        assert_eq!(actual.tape.records(), expected.access_records.as_deref());
+        assert_eq!(
+            actual.tape.increment_compatible(),
+            expected.increment_compatible
+        );
+        assert_eq!(actual.tape.ram_ra_compatible(), expected.ram_ra_compatible);
+        assert_eq!(actual.tape.hamming_exact(), expected.hamming_exact);
+        assert_eq!(
+            actual.columns.required_address_domain,
+            expected.required_address_domain
+        );
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn co_produced_record_collection_matches_stream_collection() {
+        let rows = [
+            bundle(None, 0, 0, 0, false),
+            bundle(Some(3), 7, 7, 0, true),
+            bundle(Some(5), 9, 12, 3, true),
+            bundle(None, 0, 0, 0, false),
+            bundle(Some(3), 7, 2, -5, true),
+            bundle(None, 0, 0, 0, false),
+            bundle(None, 0, 0, 0, false),
+            bundle(None, 0, 0, 0, false),
+        ];
+        let mut expected = collector();
+        expected.consume(&rows);
+
+        let mut storage = RamReadWriteRecordCollectionStorage::new(rows.len(), 4, 3).unwrap();
+        storage
+            .with_chunk_writers(|writers| -> Result<(), RamAccessCollectionError> {
+                for (chunk, writer) in writers.iter_mut().enumerate() {
+                    let start = chunk * 4;
+                    if chunk == 1 {
+                        writer.push(rows[start])?;
+                        writer.fill_repeated(rows[start + 1], 3)?;
+                    } else {
+                        for &row in &rows[start..start + writer.len()] {
+                            writer.push(row)?;
+                        }
+                    }
+                    writer.finish()?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let actual = storage.seal().unwrap();
+        let records = actual
+            .records
+            .chunks
+            .iter()
+            .flat_map(AlignedRamReadWriteRecordArena::records)
+            .copied()
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual.columns.addresses, expected.addresses);
+        assert_eq!(
+            actual.columns.active_cycle_bound,
+            expected.active_cycle_bound
+        );
+        assert_eq!(
+            actual.columns.required_address_domain,
+            expected.required_address_domain
+        );
+        assert_eq!(records, expected.access_records.unwrap());
+        assert_eq!(actual.records.address_count(), 8);
+        assert_eq!(actual.records.tile_log(), 3);
+        let mut address_counts = vec![0u32; 8];
+        let mut tile_counts = vec![0u32; 1];
+        for census in actual.records.worker_census() {
+            for (total, count) in address_counts.iter_mut().zip(census.address_counts()) {
+                *total += count;
+            }
+            for (total, count) in tile_counts.iter_mut().zip(census.tile_counts()) {
+                *total += count;
+            }
+        }
+        assert_eq!(address_counts, &[0, 0, 0, 2, 0, 1, 0, 0]);
+        assert_eq!(tile_counts, &[3]);
+        assert_eq!(
+            actual
+                .records
+                .worker_census()
+                .iter()
+                .map(|census| (census.accesses(), census.first_cycle(), census.last_cycle()))
+                .collect::<Vec<_>>(),
+            vec![(2, Some(1), Some(2)), (1, Some(4), Some(4))]
+        );
+        assert_eq!(actual.tape.access_count(), expected.access_count);
+        assert_eq!(
+            actual.tape.increment_compatible(),
+            expected.increment_compatible
+        );
+        assert_eq!(actual.tape.ram_ra_compatible(), expected.ram_ra_compatible);
+        assert_eq!(actual.tape.hamming_exact(), expected.hamming_exact);
+        assert!(actual.tape.records().is_none());
+    }
+
+    #[test]
+    fn certificates_distinguish_raw_zero_and_failed_remap() {
+        let mut raw_zero = collector();
+        raw_zero.consume(&[bundle(None, 2, 9, 7, false)]);
+        assert!(raw_zero.ram_ra_compatible);
+        assert!(raw_zero.hamming_exact);
+        assert!(!raw_zero.increment_compatible);
+        assert_eq!(raw_zero.access_count, 0);
+        assert_eq!(raw_zero.ram_increment_cycles, vec![0]);
+        assert_eq!(raw_zero.ram_increments, vec![7]);
+
+        let mut failed_remap = collector();
+        failed_remap.consume(&[bundle(None, 4, 4, 0, true)]);
+        assert!(!failed_remap.ram_ra_compatible);
+        assert!(!failed_remap.hamming_exact);
+        assert!(failed_remap.increment_compatible);
+
+        let mut mapped_zero = collector();
+        mapped_zero.consume(&[bundle(Some(0), 5, 5, 0, true)]);
+        assert!(mapped_zero.ram_ra_compatible);
+        assert!(mapped_zero.hamming_exact);
+        assert!(mapped_zero.increment_compatible);
+        assert_eq!(mapped_zero.access_records.unwrap()[0].address, 0);
+
+        let mut missing_hamming = collector();
+        missing_hamming.consume(&[bundle(Some(0), 5, 5, 0, false)]);
+        assert!(missing_hamming.ram_ra_compatible);
+        assert!(!missing_hamming.hamming_exact);
+    }
+
+    #[test]
+    fn sparse_retention_is_complete_at_cap_and_absent_above_it() {
+        let row = bundle(Some(1), 0, 0, 0, true);
+        let mut at_cap = collector();
+        feed(&mut at_cap, row, MAX_RETAINED_RAM_ACCESSES);
+        assert_eq!(at_cap.access_count, MAX_RETAINED_RAM_ACCESSES);
+        assert_eq!(
+            at_cap.access_records.as_ref().map(Vec::len),
+            Some(MAX_RETAINED_RAM_ACCESSES)
+        );
+
+        let mut above_cap = collector();
+        feed(&mut above_cap, row, MAX_RETAINED_RAM_ACCESSES + 1);
+        assert_eq!(above_cap.access_count, MAX_RETAINED_RAM_ACCESSES + 1);
+        assert!(above_cap.access_records.is_none());
+    }
+
+    #[test]
+    fn address_domain_certificate_is_built_during_collection() {
+        let mut collected = collector();
+        collected.consume(&[
+            bundle(None, 0, 0, 0, false),
+            bundle(Some(7), 0, 0, 0, true),
+            bundle(Some(3), 0, 0, 0, true),
+        ]);
+        assert_eq!(collected.active_cycle_bound, 3);
+        assert_eq!(collected.required_address_domain, 8);
+
+        let columns = RamAccessColumns {
+            addresses: collected.addresses,
+            active_cycle_bound: collected.active_cycle_bound,
+            required_address_domain: collected.required_address_domain,
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            ram_ra_sparse: RamRaSparseLayout::build(2, collected.ram_ra_records),
+        };
+        assert!(columns.validate_addresses::<jolt_field::Fr>(8).is_ok());
+        assert!(columns.validate_addresses::<jolt_field::Fr>(7).is_err());
+        assert_eq!(
+            columns
+                .validated_addresses::<jolt_field::Fr>(8)
+                .unwrap()
+                .as_slice(),
+            &[NO_ACCESS, 7, 3]
+        );
     }
 }

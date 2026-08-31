@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
-use jolt_field::AkitaField;
+use jolt_field::One as _;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::EqPolynomial;
 use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
@@ -526,6 +527,7 @@ const _: () = assert!(size_of::<RootBindParams>() == 16);
 mod tests {
     use super::*;
     use crate::metal::solinas::BooleanityRow;
+    use jolt_field::{Ring as _, Zero as _};
 
     fn field(value: u64) -> AkitaField {
         AkitaField::from_u64(value)

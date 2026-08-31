@@ -2,7 +2,7 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{RoundScheduler, TwoLaneRounds};
 

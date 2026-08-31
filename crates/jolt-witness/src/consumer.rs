@@ -140,6 +140,13 @@ pub trait RowSource {
     fn random_access(&self) -> Option<RandomAccessRows> {
         None
     }
+
+    /// Returns an owned random-access view when the source keeps its rows in
+    /// memory. Accelerator backends use this to retain the trace across proof
+    /// stages without materializing a second copy.
+    fn owned_rows(&self) -> Option<RandomAccessRows> {
+        self.random_access()
+    }
 }
 
 /// Shared random access to compact rows and their extraction context.
@@ -177,6 +184,11 @@ impl RandomAccessRows {
     /// Padded cycle-domain size.
     pub fn cycles(&self) -> usize {
         self.cycles
+    }
+
+    /// Number of non-padding rows physically present in the trace.
+    pub fn physical_rows(&self) -> usize {
+        self.rows.len()
     }
 
     /// Extracts one bundle with padding and one-row lookahead semantics.

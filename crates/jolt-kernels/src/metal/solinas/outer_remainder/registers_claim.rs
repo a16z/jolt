@@ -3,7 +3,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use metal::{foreign_types::ForeignType, Buffer};
 
 use super::super::{registers_claim_reduction::RegistersClaimLinearComponents, Fp128, MetalError};

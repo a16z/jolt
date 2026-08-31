@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
-use jolt_field::{AkitaField, CanonicalU64};
+use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7 as AkitaField};
 use jolt_witness::JoltWitnessPlane;
 
 use super::solinas::ram_cycle_family::{
@@ -156,7 +156,7 @@ pub(super) fn shared_ram_cycle_family_owner(
     let final_memory = final_memory
         .iter()
         .map(|value| {
-            value.to_canonical_u64_checked().ok_or_else(|| {
+            value.to_u64_checked().ok_or_else(|| {
                 owner_error("RAM final memory is not canonically representable as u64")
             })
         })

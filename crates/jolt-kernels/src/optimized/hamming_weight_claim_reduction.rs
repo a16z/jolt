@@ -36,7 +36,9 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
-use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
+use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
+    HammingWeightClaimReduction, HammingWeightClaimReductionChallenges,
+};
 #[cfg(feature = "akita")]
 use jolt_witness::witnesses::BalancedIncColumn;
 use jolt_witness::witnesses::RaChunkSelector;
@@ -81,6 +83,47 @@ impl FamilySelectors {
             #[cfg(feature = "akita")]
             balanced_inc: Vec::new(),
         })
+    }
+
+    fn len(&self) -> usize {
+        self.instruction.len() + self.bytecode.len() + self.ram.len() + {
+            #[cfg(feature = "akita")]
+            {
+                self.balanced_inc.len()
+            }
+            #[cfg(not(feature = "akita"))]
+            {
+                0
+            }
+        }
+    }
+
+    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+    fn metal_selectors(&self) -> Vec<crate::metal::solinas::BooleanitySelector> {
+        use crate::metal::solinas::BooleanitySelector;
+
+        self.instruction
+            .iter()
+            .map(|selector| BooleanitySelector::Lookup {
+                shift: selector.shift() as u32,
+            })
+            .chain(
+                self.bytecode
+                    .iter()
+                    .map(|selector| BooleanitySelector::Bytecode {
+                        shift: selector.shift() as u32,
+                    }),
+            )
+            .chain(self.ram.iter().map(|selector| BooleanitySelector::Ram {
+                shift: selector.shift() as u32,
+            }))
+            .chain(self.balanced_inc.iter().map(|column| match column {
+                BalancedIncColumn::Digit { width, index } => BooleanitySelector::FusedInc {
+                    shift: (width * index) as u32,
+                },
+                BalancedIncColumn::Carry { .. } => BooleanitySelector::FusedIncMsb,
+            }))
+            .collect()
     }
 }
 
@@ -154,6 +197,267 @@ fn pushforwards<F: JoltField>(
     #[cfg(not(feature = "parallel"))]
     {
         accumulate(0..rows.len())
+    }
+}
+
+pub(crate) struct HammingWeightPreparePlan<F: JoltField> {
+    rounds: usize,
+    reference_cycle: Vec<F>,
+    selectors: FamilySelectors,
+    k_chunk: usize,
+    weight_tables: Vec<Polynomial<F>>,
+    output_openings: Vec<JoltOpeningId>,
+    instruction_and_bytecode: usize,
+    ra_polynomials: usize,
+}
+
+impl<F: JoltField> HammingWeightPreparePlan<F> {
+    pub(crate) fn new(
+        relation: &HammingWeightClaimReduction<F>,
+        challenges: &HammingWeightClaimReductionChallenges<F>,
+    ) -> Result<Self, KernelError<F>> {
+        let dimensions = relation.dimensions();
+        let layout = dimensions.layout;
+        let r_address = relation.r_address();
+        let virtualization_points = relation.virtualization_points();
+        if r_address.len() != dimensions.log_k_chunk
+            || virtualization_points.len() != layout.total()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "hamming reduction reference point shapes disagree with the layout",
+            });
+        }
+        let k_chunk = 1usize << dimensions.log_k_chunk;
+        let selectors = FamilySelectors::new(
+            (layout.instruction(), layout.bytecode(), layout.ram()),
+            dimensions.log_k_chunk,
+        )?;
+        #[cfg(feature = "akita")]
+        let mut selectors = selectors;
+        #[cfg(feature = "akita")]
+        {
+            selectors
+                .balanced_inc
+                .extend((0..dimensions.chunking().chunk_count()).map(|index| {
+                    BalancedIncColumn::Digit {
+                        width: dimensions.log_k_chunk,
+                        index,
+                    }
+                }));
+            selectors.balanced_inc.push(BalancedIncColumn::Carry {
+                width: dimensions.log_k_chunk,
+            });
+        }
+
+        #[cfg(not(feature = "akita"))]
+        let gamma_powers = gamma_powers(challenges.gamma, 3 * layout.total());
+        let eq_bool = eq_table(r_address);
+        #[cfg(not(feature = "akita"))]
+        let weight_tables: Vec<Polynomial<F>> = virtualization_points
+            .iter()
+            .enumerate()
+            .map(|(i, point)| {
+                if point.len() != dimensions.log_k_chunk {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "hamming virtualization point has the wrong variable count",
+                    });
+                }
+                let eq_virt = eq_table(point);
+                Ok(Polynomial::new(
+                    (0..k_chunk)
+                        .map(|k| {
+                            gamma_powers[3 * i]
+                                + gamma_powers[3 * i + 1] * eq_bool[k]
+                                + gamma_powers[3 * i + 2] * eq_virt[k]
+                        })
+                        .collect(),
+                ))
+            })
+            .collect::<Result<_, _>>()?;
+
+        #[cfg(feature = "akita")]
+        let weight_tables: Vec<Polynomial<F>> = {
+            let chunk_count = dimensions.chunking().chunk_count();
+            let ra_terms = layout
+                .polynomials()
+                .map(|polynomial| match polynomial {
+                    JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => 2,
+                    JoltRaPolynomial::Ram(_) => 3,
+                })
+                .sum::<usize>();
+            let decode_power = ra_terms + chunk_count + 1;
+            let gamma_powers = gamma_powers(challenges.gamma, decode_power + 1);
+            let at_digit_zero = |point: &[F]| {
+                point
+                    .iter()
+                    .fold(F::one(), |acc, coordinate| acc * (F::one() - *coordinate))
+            };
+            let eq_bool_digit_zero = at_digit_zero(r_address);
+            let mut weights = Vec::with_capacity(layout.total() + chunk_count + 1);
+            let mut power = 0;
+            for (i, polynomial) in layout.polynomials().enumerate() {
+                let point = &virtualization_points[i];
+                if point.len() != dimensions.log_k_chunk {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "hamming virtualization point has the wrong variable count",
+                    });
+                }
+                let eq_virt = eq_table(point);
+                match polynomial {
+                    JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
+                        let eq_virt_digit_zero = at_digit_zero(point);
+                        weights.push(Polynomial::new(
+                            (0..k_chunk)
+                                .map(|k| {
+                                    gamma_powers[power] * (eq_bool[k] - eq_bool_digit_zero)
+                                        + gamma_powers[power + 1]
+                                            * (eq_virt[k] - eq_virt_digit_zero)
+                                })
+                                .collect(),
+                        ));
+                        power += 2;
+                    }
+                    JoltRaPolynomial::Ram(_) => {
+                        weights.push(Polynomial::new(
+                            (0..k_chunk)
+                                .map(|k| {
+                                    gamma_powers[power]
+                                        + gamma_powers[power + 1] * eq_bool[k]
+                                        + gamma_powers[power + 2] * eq_virt[k]
+                                })
+                                .collect(),
+                        ));
+                        power += 3;
+                    }
+                }
+            }
+            debug_assert_eq!(power, ra_terms);
+            let balanced_values = (0..k_chunk)
+                .map(|row| balanced_inc_value(&boolean_point_msb::<F>(dimensions.log_k_chunk, row)))
+                .collect::<Vec<_>>();
+            for index in 0..chunk_count {
+                let offset = ra_terms + index;
+                let decode_scale =
+                    gamma_powers[decode_power] * dimensions.chunking().place_value::<F>(index);
+                weights.push(Polynomial::new(
+                    (0..k_chunk)
+                        .map(|k| {
+                            gamma_powers[offset] * (eq_bool[k] - eq_bool_digit_zero)
+                                + decode_scale * balanced_values[k]
+                        })
+                        .collect(),
+                ));
+            }
+            let carry_offset = ra_terms + chunk_count;
+            let decode_scale = gamma_powers[decode_power] * F::pow2(64);
+            weights.push(Polynomial::new(
+                (0..k_chunk)
+                    .map(|k| {
+                        gamma_powers[carry_offset] * (eq_bool[k] - eq_bool_digit_zero)
+                            + decode_scale * balanced_values[k]
+                    })
+                    .collect(),
+            ));
+            weights
+        };
+
+        let output_openings: Vec<JoltOpeningId> = layout
+            .openings(JoltRelationId::HammingWeightClaimReduction)
+            .collect();
+        #[cfg(feature = "akita")]
+        let mut output_openings = output_openings;
+        #[cfg(feature = "akita")]
+        {
+            output_openings.extend(
+                (0..dimensions.chunking().chunk_count()).map(reduced_balanced_inc_digit_opening),
+            );
+            output_openings.push(reduced_balanced_inc_carry_opening());
+        }
+        debug_assert_eq!(selectors.len(), weight_tables.len());
+        debug_assert_eq!(selectors.len(), output_openings.len());
+
+        Ok(Self {
+            rounds: relation.rounds(),
+            reference_cycle: relation.r_cycle().to_vec(),
+            selectors,
+            k_chunk,
+            weight_tables,
+            output_openings,
+            instruction_and_bytecode: layout.instruction() + layout.bytecode(),
+            ra_polynomials: layout.total(),
+        })
+    }
+
+    pub(crate) fn reference_cycle(&self) -> &[F] {
+        &self.reference_cycle
+    }
+
+    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+    pub(crate) fn metal_selectors(&self) -> Vec<crate::metal::solinas::BooleanitySelector> {
+        self.selectors.metal_selectors()
+    }
+
+    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+    pub(crate) fn finish_flat(
+        self,
+        flat_g_evals: Vec<F>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
+    {
+        let expected = self
+            .selectors
+            .len()
+            .checked_mul(self.k_chunk)
+            .ok_or_else(|| KernelError::InvalidGeometry {
+                reason: "Hamming-weight pushforward mass count overflows usize".to_owned(),
+            })?;
+        if flat_g_evals.len() != expected {
+            return Err(KernelError::TableSizeMismatch {
+                table: "Metal Hamming-weight pushforward masses".to_owned(),
+                expected,
+                got: flat_g_evals.len(),
+            });
+        }
+        let g_evals = flat_g_evals
+            .chunks_exact(self.k_chunk)
+            .map(<[F]>::to_vec)
+            .collect();
+        self.finish(g_evals)
+    }
+
+    fn finish(
+        self,
+        mut g_evals: Vec<Vec<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
+    {
+        if g_evals.len() != self.selectors.len() {
+            return Err(KernelError::TableSizeMismatch {
+                table: "Hamming-weight pushforward table count".to_owned(),
+                expected: self.selectors.len(),
+                got: g_evals.len(),
+            });
+        }
+        for (index, table) in g_evals.iter().enumerate() {
+            if table.len() != self.k_chunk {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("Hamming-weight pushforward table {index}"),
+                    expected: self.k_chunk,
+                    got: table.len(),
+                });
+            }
+        }
+        #[cfg(feature = "akita")]
+        for (index, table) in g_evals.iter_mut().enumerate() {
+            if index < self.instruction_and_bytecode || index >= self.ra_polynomials {
+                table[0] = F::zero();
+            }
+        }
+        let g_tables = g_evals.into_iter().map(Polynomial::new).collect();
+        Ok(Box::new(HammingWeightKernel {
+            progress: RoundProgress::new(self.rounds),
+            g_tables,
+            weight_tables: self.weight_tables,
+            output_openings: self.output_openings,
+        }))
     }
 }
 

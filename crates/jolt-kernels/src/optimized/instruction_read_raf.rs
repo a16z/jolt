@@ -37,10 +37,18 @@
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::{
+    AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, AddressRafScanRow,
+    BooleanityRow, BooleanityRows, Fp128, InstructionReadRafStage1Lease, MetalError,
+    Product5Sequence, Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
+};
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_field::{Accumulator, JoltField};
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::{SuffixEval, Suffixes};
@@ -81,6 +89,7 @@ const _: () = assert!(
 /// packed fused-inc sources used by later one-hot kernels. The lookup index
 /// is split into native limbs and the PC/table/flags share one word, keeping
 /// the retained row at 40 bytes in Akita mode.
+#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct InstructionCycleRow {
@@ -100,8 +109,17 @@ const PACKED_TABLE_SHIFT: u32 = PACKED_PC_BITS;
 const PACKED_RAF_SHIFT: u32 = PACKED_TABLE_SHIFT + PACKED_TABLE_BITS;
 #[cfg(feature = "akita")]
 const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
+const INSTRUCTION_READ_RAF_TOPOLOGY_RANK_HIGH_BIT: u8 = 1 << 6;
 
-const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
+const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < PACKED_TABLE_MASK as usize);
+
+pub(crate) const fn canonical_instruction_read_raf_claim(claim: u8) -> u8 {
+    claim & !INSTRUCTION_READ_RAF_TOPOLOGY_RANK_HIGH_BIT
+}
+
+pub(crate) const fn instruction_read_raf_claim_table_plus_one(claim: u8) -> u8 {
+    canonical_instruction_read_raf_claim(claim) & PACKED_TABLE_MASK as u8
+}
 
 impl InstructionCycleRow {
     pub(crate) fn new(
@@ -115,11 +133,15 @@ impl InstructionCycleRow {
         debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
         #[cfg(feature = "akita")]
         debug_assert!(fused_inc.0.unsigned_abs() <= u64::MAX as u128);
-        let pc = bytecode_pc as u64;
-        assert!(pc <= PACKED_PC_MASK, "bytecode PC exceeds packed row");
+        assert!(
+            bytecode_pc < PACKED_PC_MASK as usize,
+            "bytecode PC exceeds packed row"
+        );
+        let pc_plus_one = bytecode_pc as u64 + 1;
         let table_plus_one = table_index.map_or(0, |index| index as u64 + 1);
-        let packed_pc_and_flags =
-            pc | (table_plus_one << PACKED_TABLE_SHIFT) | (u64::from(raf_flag) << PACKED_RAF_SHIFT);
+        let packed_pc_and_flags = pc_plus_one
+            | (table_plus_one << PACKED_TABLE_SHIFT)
+            | (u64::from(raf_flag) << PACKED_RAF_SHIFT);
         #[cfg(feature = "akita")]
         let packed_pc_and_flags =
             packed_pc_and_flags | (u64::from(fused_inc.0 < 0) << PACKED_INC_SIGN_SHIFT);
@@ -138,6 +160,12 @@ impl InstructionCycleRow {
         u128::from(self.lookup_index_lo) | (u128::from(self.lookup_index_hi) << 64)
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn metal_booleanity_rows(rows: &[Self]) -> &[BooleanityRow] {
+        // SAFETY: both repr(C) row types are five u64 words in the same order.
+        unsafe { std::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) }
+    }
+
     #[inline]
     pub(crate) fn table_index(&self) -> Option<usize> {
         let table_plus_one =
@@ -147,7 +175,12 @@ impl InstructionCycleRow {
 
     #[inline]
     pub(crate) fn bytecode_pc(&self) -> usize {
-        (self.packed_pc_and_flags & PACKED_PC_MASK) as usize
+        ((self.packed_pc_and_flags & PACKED_PC_MASK) - 1) as usize
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mapped_pc(&self) -> Option<usize> {
+        Some(self.bytecode_pc())
     }
 
     #[inline]
@@ -257,6 +290,14 @@ impl InstructionCycleRow {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn collect_instruction_cycle_rows<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
+    InstructionCycleRow::collect(witness, cycles)
+}
+
 /// The collected stage-5 rows, parked in the [`ProofSession`] for the
 /// stage-6b instruction RA virtualization kernel (its committed one-hot
 /// chunks are chunks of the same per-cycle lookup index) and the
@@ -345,6 +386,32 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_instruction_read_raf(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    inputs: ProverInputs<'_, AkitaField, InstructionReadRaf<AkitaField>>,
+    external_address_phases: bool,
+) -> Result<OptimizedInstructionReadRafKernel<AkitaField>, KernelError<AkitaField>> {
+    let dimensions = inputs.relation.dimensions();
+    let rows = Arc::new(InstructionCycleRow::collect(
+        witness,
+        1 << dimensions.log_t(),
+    )?);
+    if witness.random_access().is_some() {
+        session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+    } else {
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
+    }
+    OptimizedInstructionReadRafKernel::new_inner(
+        dimensions,
+        &inputs.points.lookup_output,
+        rows,
+        inputs.challenges.gamma,
+        external_address_phases,
+    )
+}
+
 /// One RAF prefix–suffix decomposition — same shape and binding as the
 /// reference kernel's.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -429,6 +496,8 @@ enum CycleTables<F: JoltField> {
         combined_val: Polynomial<F>,
         ra: Vec<Polynomial<F>>,
     },
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Offloaded,
 }
 
 /// Everything the pending-base evaluations need beyond the kernel's own
@@ -561,8 +630,10 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
     /// handoff so the full 40 B rows can free — the final flag walk needs
     /// only this byte per cycle.
-    claim_columns: Vec<u8>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    claim_columns: InstructionReadRafClaimColumns,
     progress: RoundProgress,
+    external_address_phases: bool,
 }
 
 fn build_cycle_buckets<F: JoltField>(
@@ -669,6 +740,16 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
+        Self::new_inner(dimensions, r_reduction, rows, gamma, false)
+    }
+
+    fn new_inner(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[F],
+        rows: Arc<Vec<InstructionCycleRow>>,
+        gamma: F,
+        external_address_phases: bool,
+    ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
         let log_t = dimensions.log_t();
         if address_bits != 2 * RISCV_XLEN {
@@ -742,10 +823,13 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             phase_challenges: Vec::new(),
             cycle_challenges: Vec::new(),
             cycle: None,
-            claim_columns: Vec::new(),
+            claim_columns: InstructionReadRafClaimColumns::Uninitialized,
             progress: RoundProgress::new(dimensions.sumcheck_rounds()),
+            external_address_phases,
         };
-        kernel.init_phase(0);
+        if !external_address_phases {
+            kernel.init_phase(0);
+        }
         Ok(kernel)
     }
 
@@ -913,6 +997,93 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.phase_challenges.clear();
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn install_address_phase(
+        &mut self,
+        phase: usize,
+        raf: RafSums<F>,
+        suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
+    ) {
+        let suffix_len = self.suffix_len(phase);
+        let q_shift_half: Vec<F> = raf
+            .shift_half
+            .iter()
+            .map(|value| value.mul_pow_2(suffix_len / 2))
+            .collect();
+        let q_shift_full: Vec<F> = raf
+            .shift_full
+            .iter()
+            .map(|value| value.mul_pow_2(suffix_len))
+            .collect();
+
+        let identity_prefix: Vec<F> = (0..CHUNK_SIZE)
+            .map(|x| self.raf_identity.checkpoint.mul_pow_2(CHUNK_LEN) + F::from_u64(x as u64))
+            .collect();
+        let (left_prefix, right_prefix): (Vec<F>, Vec<F>) = (0..CHUNK_SIZE)
+            .map(|x| {
+                let (left, right) = LookupBits::new(x as u128, CHUNK_LEN).uninterleave();
+                (
+                    self.raf_left.checkpoint.mul_pow_2(CHUNK_LEN / 2)
+                        + F::from_u64(u64::from(left)),
+                    self.raf_right.checkpoint.mul_pow_2(CHUNK_LEN / 2)
+                        + F::from_u64(u64::from(right)),
+                )
+            })
+            .unzip();
+        self.raf_left.prefix = Polynomial::new(left_prefix);
+        self.raf_left.q_shift = Polynomial::new(q_shift_half.clone());
+        self.raf_left.q_value = Polynomial::new(raf.left);
+        self.raf_right.prefix = Polynomial::new(right_prefix);
+        self.raf_right.q_shift = Polynomial::new(q_shift_half);
+        self.raf_right.q_value = Polynomial::new(raf.right);
+        self.raf_identity.prefix = Polynomial::new(identity_prefix);
+        self.raf_identity.q_shift = Polynomial::new(q_shift_full);
+        self.raf_identity.q_value = Polynomial::new(raf.identity);
+
+        if CANONICAL_INSTRUCTION_ADDRESS {
+            let chunk_upper_bits = (self.address_bits() / 2)
+                .saturating_sub(phase * CHUNK_LEN)
+                .min(CHUNK_LEN);
+            let checkpoint = self.raf_upper_all_ones.checkpoint;
+            let upper_prefix: Vec<F> = (0..CHUNK_SIZE)
+                .map(|x| {
+                    if chunk_upper_bits == 0
+                        || (x >> (CHUNK_LEN - chunk_upper_bits)) == (1 << chunk_upper_bits) - 1
+                    {
+                        checkpoint
+                    } else {
+                        F::zero()
+                    }
+                })
+                .collect();
+            self.raf_upper_all_ones.prefix = Polynomial::new(upper_prefix);
+            self.raf_upper_all_ones.q_shift = Polynomial::new(raf.upper_all_ones);
+            self.raf_upper_all_ones.q_value = Polynomial::new(vec![F::zero(); CHUNK_SIZE]);
+        }
+
+        self.suffix_tables = suffix_tables;
+        let checkpoints = self.prefix_checkpoints.as_slice();
+        let prefix_indices = self.prefix_indices.as_slice();
+        self.prefix_tables = map_indices(prefix_indices.len(), |position| {
+            let index = prefix_indices[position];
+            let prefix = &ALL_PREFIXES[index];
+            Polynomial::new(
+                (0..CHUNK_SIZE)
+                    .map(|x| {
+                        prefix
+                            .evaluate::<F>(
+                                checkpoints,
+                                LookupBits::new(x as u128, CHUNK_LEN),
+                                suffix_len,
+                            )
+                            .value()
+                    })
+                    .collect(),
+            )
+        });
+        self.phase_challenges.clear();
+    }
+
     /// Read-checking suffix accumulators for the phase, per present table:
     /// tables in parallel, each over parallel bucket chunks, suffixes
     /// classified once (`One` adds, {0,1}-valued adds conditionally, general
@@ -1076,6 +1247,12 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .cycle
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let claim_columns =
+            self.claim_columns
+                .as_slice()
+                .ok_or(SumcheckError::MissingEvaluationSource {
+                    kind: "instruction read-RAF claim columns",
+                })?;
         let factors = 1 + self.dimensions.num_virtual_ra_polys();
 
         struct Scratch<F: JoltField> {
@@ -1118,8 +1295,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         // First cycle round: same pair math over the bases —
                         // the values a dense materialization would hold.
                         {
-                            let lo = e_in * self.pending_combined_base(pending, 2 * row);
-                            let hi = e_in * self.pending_combined_base(pending, 2 * row + 1);
+                            let lo =
+                                e_in * Self::pending_combined_base(pending, claim_columns, 2 * row);
+                            let hi = e_in
+                                * Self::pending_combined_base(pending, claim_columns, 2 * row + 1);
                             scratch.evals[0] = hi;
                             scratch.steps[0] = hi - lo;
                         }
@@ -1131,6 +1310,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                             scratch.steps[1 + i] = hi - lo;
                         }
                     }
+                    #[cfg(all(feature = "metal", target_os = "macos"))]
+                    CycleTables::Offloaded => return,
                 }
                 accumulate_product_grid(&mut scratch.evals, &scratch.steps, &mut scratch.lanes);
             },
@@ -1155,7 +1336,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     /// Handoff at the address/cycle boundary — same collapse as the
     /// reference, with parallel materialization and a Gruen-split eq factor
     /// instead of a dense `T`-sized eq table.
-    fn init_cycle_rounds(&mut self) {
+    fn init_cycle_rounds(&mut self) -> Result<(), SumcheckError<F>> {
         let gamma_sqr = self.gamma * self.gamma;
         let empty_bits = LookupBits::new(0, 0);
         let table_values: Vec<F> = LookupTableKind::<RISCV_XLEN>::iter()
@@ -1180,18 +1361,31 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
 
         // Snap the packed output-claim facts first: past this handoff the
         // final flag walk reads one byte per cycle, not the 40 B row.
-        let rows = self.rows.as_slice();
         const {
             assert!(
-                LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
+                LookupTableKind::<RISCV_XLEN>::COUNT < 0x3f,
                 "table indices must fit the packed claim byte"
             );
         }
-        self.claim_columns = map_indices(rows.len(), |j| {
-            let row = &rows[j];
-            let table = row.table_index().map_or(0, |index| index as u8 + 1);
-            table | (u8::from(row.raf_flag()) << 7)
-        });
+        match &self.claim_columns {
+            InstructionReadRafClaimColumns::Uninitialized => {
+                let rows = self.rows.as_slice();
+                self.claim_columns =
+                    InstructionReadRafClaimColumns::Owned(map_indices(rows.len(), |j| {
+                        let row = &rows[j];
+                        let table = row.table_index().map_or(0, |index| index as u8 + 1);
+                        table | (u8::from(row.raf_flag()) << 7)
+                    }));
+            }
+            InstructionReadRafClaimColumns::Owned(_) => {}
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            InstructionReadRafClaimColumns::Stage1(_) => {}
+        }
+        if self.claim_columns.len() != 1usize << self.dimensions.log_t() {
+            return Err(SumcheckError::MissingEvaluationSource {
+                kind: "instruction read-RAF claim columns",
+            });
+        }
 
         // The tables stay pending: the first cycle message evaluates these
         // bases per row, and the first cycle bind materializes half-domain
@@ -1214,13 +1408,14 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
         self.buckets = Vec::new();
+        Ok(())
     }
 
     /// The pending combined-value base at cycle `j` (packed-byte lookup).
     #[inline]
-    fn pending_combined_base(&self, pending: &PendingCycleTables<F>, j: usize) -> F {
-        let packed = self.claim_columns[j];
-        let table_value = match packed & 0x7f {
+    fn pending_combined_base(pending: &PendingCycleTables<F>, claim_columns: &[u8], j: usize) -> F {
+        let packed = canonical_instruction_read_raf_claim(claim_columns[j]);
+        let table_value = match instruction_read_raf_claim_table_plus_one(packed) {
             0 => F::zero(),
             table => pending.table_values[usize::from(table) - 1],
         };
@@ -1293,12 +1488,28 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 }
 
                 if phase + 1 < self.phases() {
-                    self.init_phase(phase + 1);
+                    if !self.external_address_phases {
+                        self.init_phase(phase + 1);
+                    }
                 } else {
-                    self.init_cycle_rounds();
+                    self.init_cycle_rounds()?;
                 }
             }
         } else {
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            if self.claim_columns.is_stage1()
+                && self
+                    .cycle
+                    .as_ref()
+                    .is_some_and(|cycle| matches!(cycle.tables, CycleTables::Pending(_)))
+            {
+                return Err(SumcheckError::ComputeBackend {
+                    backend: "metal",
+                    message:
+                        "resident Stage-1 first cycle bind requires the retained address sequence"
+                            .to_owned(),
+                });
+            }
             let pending = {
                 let cycle = self
                     .cycle
@@ -1322,6 +1533,13 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         }
                         None
                     }
+                    #[cfg(all(feature = "metal", target_os = "macos"))]
+                    CycleTables::Offloaded => {
+                        return Err(SumcheckError::ComputeBackend {
+                            backend: "metal",
+                            message: "CPU bind requires resident cycle tables".to_owned(),
+                        });
+                    }
                 }
             };
             if let Some(pending) = pending {
@@ -1329,10 +1547,15 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 // straight from the bases under this challenge — the same
                 // values a full-T materialization would bind to, without
                 // the full-T tables ever existing.
-                let half = self.claim_columns.len() / 2;
+                let claim_columns = self.claim_columns.as_slice().ok_or(
+                    SumcheckError::MissingEvaluationSource {
+                        kind: "instruction read-RAF claim columns",
+                    },
+                )?;
+                let half = claim_columns.len() / 2;
                 let combined_val: Vec<F> = map_indices(half, |position| {
-                    let lo = self.pending_combined_base(&pending, 2 * position);
-                    let hi = self.pending_combined_base(&pending, 2 * position + 1);
+                    let lo = Self::pending_combined_base(&pending, claim_columns, 2 * position);
+                    let hi = Self::pending_combined_base(&pending, claim_columns, 2 * position + 1);
                     lo + challenge * (hi - lo)
                 });
                 let ra_count = self.dimensions.num_virtual_ra_polys();
@@ -1359,6 +1582,473 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         }
         self.progress.advance();
         Ok(())
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl OptimizedInstructionReadRafKernel<AkitaField> {
+    pub(crate) fn new_metal_resident(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[AkitaField],
+        claims: InstructionReadRafStage1Lease,
+        gamma: AkitaField,
+    ) -> Result<Self, KernelError<AkitaField>> {
+        let address_bits = dimensions.instruction_address_bits();
+        let log_t = dimensions.log_t();
+        let ra_count = dimensions.num_virtual_ra_polys();
+        if address_bits != 2 * RISCV_XLEN {
+            return Err(KernelError::Unsupported {
+                reason: "instruction read-RAF supports only the 2·XLEN interleaved-operand address width",
+            });
+        }
+        if !address_bits.is_multiple_of(ra_count)
+            || !(address_bits / ra_count).is_multiple_of(CHUNK_LEN)
+        {
+            return Err(KernelError::Unsupported {
+                reason: "virtual RA chunk width must be a multiple of the phase width",
+            });
+        }
+        if ra_count + 1 != PRODUCT5_FACTORS {
+            return Err(KernelError::Unsupported {
+                reason: "resident instruction read-RAF requires the four-RA Product5 geometry",
+            });
+        }
+        if log_t >= 32 {
+            return Err(KernelError::Unsupported {
+                reason: "resident instruction read-RAF cycle indices are u32",
+            });
+        }
+        if r_reduction.len() != log_t {
+            return Err(KernelError::TableSizeMismatch {
+                table: "instruction claim-reduction point".to_owned(),
+                expected: log_t,
+                got: r_reduction.len(),
+            });
+        }
+        let rows = 1usize << log_t;
+        if claims.receipt().rows() != rows || claims.claim_slice().len() != rows {
+            return Err(KernelError::TableSizeMismatch {
+                table: "resident instruction read-RAF claims".to_owned(),
+                expected: rows,
+                got: claims.claim_slice().len(),
+            });
+        }
+
+        Ok(Self {
+            dimensions,
+            gamma,
+            r_reduction: r_reduction.to_vec(),
+            rows: Arc::new(Vec::new()),
+            buckets: Vec::new(),
+            u_evals: Vec::new(),
+            prefix_checkpoints: ALL_PREFIXES
+                .iter()
+                .map(|prefix| prefix.default_checkpoint::<AkitaField>())
+                .collect(),
+            prefix_indices: (0..ALL_PREFIXES.len()).collect(),
+            prefix_tables: Vec::new(),
+            suffix_tables: Vec::new(),
+            raf_left: RafDecomposition::empty(),
+            raf_right: RafDecomposition::empty(),
+            raf_identity: RafDecomposition::empty(),
+            raf_upper_all_ones: RafDecomposition::empty_product(),
+            v_tables: Vec::new(),
+            phase_challenges: Vec::new(),
+            cycle_challenges: Vec::new(),
+            cycle: None,
+            claim_columns: InstructionReadRafClaimColumns::Stage1(claims),
+            progress: RoundProgress::new(dimensions.sumcheck_rounds()),
+            external_address_phases: true,
+        })
+    }
+
+    pub(crate) fn metal_prepare_booleanity_rows(
+        &self,
+        context: &SolinasMetal,
+    ) -> Result<BooleanityRows, MetalError> {
+        if self.claim_columns.is_stage1() {
+            return Err(MetalError::InvalidInstructionReadRafGrouped(
+                "resident Stage-1 rows must be borrowed from their owner".to_owned(),
+            ));
+        }
+        context.prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&self.rows))
+    }
+
+    pub(crate) fn metal_prepare_address_sequence(
+        &mut self,
+        context: &SolinasMetal,
+        config: AddressPhaseSequenceConfig,
+    ) -> Result<AddressPhaseSequence, SumcheckError<AkitaField>> {
+        if self.claim_columns.is_stage1() {
+            return Err(metal_state_error(
+                "resident Stage-1 state requires prebuilt grouped planes",
+            ));
+        }
+        if !self.external_address_phases || self.progress.bound() != 0 {
+            return Err(metal_state_error(
+                "resident address handoff requires an unbound external address state",
+            ));
+        }
+        let sequence = context
+            .prepare_address_phase_sequence_from_buckets(
+                self.rows.len(),
+                &self.buckets,
+                config,
+                |index| {
+                    let row = &self.rows[index];
+                    (
+                        AddressRafScanRow::new_with_table(
+                            row.lookup_index(),
+                            row.table_index(),
+                            row.raf_flag(),
+                        ),
+                        Fp128::from_jolt_field(&self.u_evals[index]),
+                    )
+                },
+            )
+            .map_err(metal_sumcheck_error)?;
+        self.u_evals = Vec::new();
+        self.buckets = Vec::new();
+        Ok(sequence)
+    }
+
+    pub(crate) fn metal_address_phase_request(
+        &self,
+    ) -> Result<(u32, Option<[Fp128; CHUNK_SIZE]>), SumcheckError<AkitaField>> {
+        if !self.external_address_phases
+            || self.progress.bound() >= self.address_bits()
+            || !self.progress.bound().is_multiple_of(CHUNK_LEN)
+        {
+            return Err(metal_state_error(
+                "resident address phase requested outside a phase boundary",
+            ));
+        }
+        let phase = self.progress.bound() / CHUNK_LEN;
+        let previous = if phase == 0 {
+            None
+        } else {
+            let table = self.v_tables.get(phase - 1).ok_or_else(|| {
+                metal_state_error("resident address condensation table is absent")
+            })?;
+            if table.len() != CHUNK_SIZE {
+                return Err(metal_state_error(
+                    "resident address condensation table has the wrong length",
+                ));
+            }
+            Some(std::array::from_fn(|index| {
+                Fp128::from_jolt_field(&table[index])
+            }))
+        };
+        Ok((self.suffix_len(phase) as u32, previous))
+    }
+
+    pub(crate) fn metal_install_address_phase(
+        &mut self,
+        sums: AddressPhaseSums,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        if !self.external_address_phases
+            || self.progress.bound() >= self.address_bits()
+            || !self.progress.bound().is_multiple_of(CHUNK_LEN)
+        {
+            return Err(metal_state_error(
+                "resident address output arrived outside a phase boundary",
+            ));
+        }
+        let convert = |values: &[Fp128]| {
+            values
+                .iter()
+                .copied()
+                .map(Fp128::into_jolt_field::<AkitaField>)
+                .collect::<Vec<_>>()
+        };
+        let raf = RafSums {
+            shift_half: convert(sums.raf().shift_half()),
+            left: convert(sums.raf().left()),
+            right: convert(sums.raf().right()),
+            shift_full: convert(sums.raf().shift_full()),
+            identity: convert(sums.raf().identity()),
+            upper_all_ones: convert(sums.raf().upper_all_ones()),
+        };
+        let mut suffix_tables = Vec::with_capacity(LookupTableKind::<RISCV_XLEN>::COUNT);
+        for table in LookupTableKind::<RISCV_XLEN>::iter() {
+            let flat = sums
+                .suffix()
+                .table(table.index())
+                .ok_or_else(|| metal_state_error("resident address suffix table is absent"))?;
+            let polynomials = flat
+                .chunks_exact(CHUNK_SIZE)
+                .map(|coefficients| Polynomial::new(convert(coefficients)))
+                .collect();
+            suffix_tables.push((table, polynomials));
+        }
+        self.install_address_phase(self.progress.bound() / CHUNK_LEN, raf, suffix_tables);
+        Ok(())
+    }
+
+    pub(crate) fn metal_address_active(&self) -> bool {
+        self.external_address_phases && self.progress.bound() < self.address_bits()
+    }
+
+    pub(crate) fn metal_address_phase_pending(&self) -> bool {
+        self.metal_address_active() && self.progress.bound().is_multiple_of(CHUNK_LEN)
+    }
+
+    pub(crate) fn metal_bind_address(
+        &mut self,
+        challenge: AkitaField,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        if !self.metal_address_active() {
+            return Err(metal_state_error(
+                "resident address bind requested after the address rounds",
+            ));
+        }
+        self.bind(challenge)
+    }
+
+    pub(crate) fn metal_address_message(
+        &self,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        if !self.metal_address_active() {
+            return Err(metal_state_error(
+                "resident address message requested after the address rounds",
+            ));
+        }
+        Ok(self.address_message(previous_claim))
+    }
+
+    pub(crate) fn metal_resident_cycle_message(
+        &self,
+        sequence: &mut AddressPhaseSequence,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let CycleTables::Pending(pending) = &cycle.tables else {
+            return Err(metal_state_error(
+                "resident first cycle message requires pending tables",
+            ));
+        };
+        let q_evals = sequence
+            .cycle_message(
+                &self.v_tables,
+                &pending.table_values,
+                pending.raf_interleaved,
+                pending.raf_identity,
+                cycle.gruen.e_in_current(),
+                cycle.gruen.e_out_current(),
+            )
+            .map_err(metal_sumcheck_error)?;
+        Ok(cycle.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+    }
+
+    pub(crate) fn metal_resident_cycle_available(&self) -> bool {
+        self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
+    }
+
+    pub(crate) fn metal_offload_resident_bind(
+        &mut self,
+        challenge: AkitaField,
+        sequence: AddressPhaseSequence,
+        config: Product5SequenceConfig,
+    ) -> Result<(Product5Sequence, [AkitaField; PRODUCT5_FACTORS]), SumcheckError<AkitaField>> {
+        let pending = {
+            let cycle = self
+                .cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+            cycle.gruen.bind(challenge);
+            let tables = core::mem::replace(&mut cycle.tables, CycleTables::Offloaded);
+            let CycleTables::Pending(pending) = tables else {
+                return Err(metal_state_error(
+                    "resident cycle handoff requires pending tables",
+                ));
+            };
+            pending
+        };
+        self.cycle_challenges.push(challenge);
+        self.progress.advance();
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let result = sequence
+            .fused_cycle_transition(
+                &self.v_tables,
+                &pending.table_values,
+                pending.raf_interleaved,
+                pending.raf_identity,
+                challenge,
+                cycle.gruen.e_in_current(),
+                cycle.gruen.e_out_current(),
+                config,
+            )
+            .map_err(metal_sumcheck_error)?;
+        self.rows = Arc::new(Vec::new());
+        self.v_tables = Vec::new();
+        Ok(result)
+    }
+
+    pub(crate) fn metal_handoff_available(&self, cutoff: usize) -> bool {
+        self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
+            && !self.claim_columns.is_stage1()
+            && self.claim_columns.len() / 2 > cutoff
+            && self
+                .cycle
+                .as_ref()
+                .is_some_and(|cycle| matches!(cycle.tables, CycleTables::Pending(_)))
+    }
+
+    pub(crate) fn metal_offload_pending_bind(
+        &mut self,
+        challenge: AkitaField,
+        context: &SolinasMetal,
+        config: Product5SequenceConfig,
+    ) -> Result<Product5Sequence, SumcheckError<AkitaField>> {
+        if self.claim_columns.is_stage1() {
+            return Err(metal_state_error(
+                "resident Stage-1 state cannot use the CPU pending-table handoff",
+            ));
+        }
+        let (pending, e_in, e_out) = {
+            let cycle = self
+                .cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+            cycle.gruen.bind(challenge);
+            let tables = core::mem::replace(&mut cycle.tables, CycleTables::Offloaded);
+            let CycleTables::Pending(pending) = tables else {
+                return Err(metal_state_error(
+                    "dense-cycle handoff requires pending CPU tables",
+                ));
+            };
+            (
+                pending,
+                cycle.gruen.e_in_current().to_vec(),
+                cycle.gruen.e_out_current().to_vec(),
+            )
+        };
+
+        let claim_columns = self
+            .claim_columns
+            .as_slice()
+            .ok_or_else(|| metal_state_error("cycle claim columns are absent"))?;
+        let elements = claim_columns.len() / 2;
+        let sequence = context
+            .prepare_product5_sequence_from_fn(elements, &e_in, &e_out, config, |index| {
+                let factor = index / elements;
+                let position = index % elements;
+                let source = 2 * position;
+                let (lo, hi) = if factor == 0 {
+                    (
+                        Self::pending_combined_base(&pending, claim_columns, source),
+                        Self::pending_combined_base(&pending, claim_columns, source + 1),
+                    )
+                } else {
+                    (
+                        self.pending_ra_base(factor - 1, source),
+                        self.pending_ra_base(factor - 1, source + 1),
+                    )
+                };
+                lo + challenge * (hi - lo)
+            })
+            .map_err(metal_sumcheck_error)?;
+
+        self.rows = Arc::new(Vec::new());
+        self.v_tables = Vec::new();
+        self.cycle_challenges.push(challenge);
+        self.progress.advance();
+        Ok(sequence)
+    }
+
+    pub(crate) fn metal_bind_offloaded(
+        &mut self,
+        challenge: AkitaField,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        if !matches!(cycle.tables, CycleTables::Offloaded) {
+            return Err(metal_state_error(
+                "device bind requires offloaded cycle tables",
+            ));
+        }
+        cycle.gruen.bind(challenge);
+        self.cycle_challenges.push(challenge);
+        self.progress.advance();
+        Ok(())
+    }
+
+    pub(crate) fn metal_cycle_weights(
+        &self,
+    ) -> Result<(&[AkitaField], &[AkitaField]), SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        Ok((cycle.gruen.e_in_current(), cycle.gruen.e_out_current()))
+    }
+
+    pub(crate) fn metal_cycle_message(
+        &self,
+        q_evals: &[AkitaField; PRODUCT5_FACTORS],
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        if !matches!(cycle.tables, CycleTables::Offloaded) {
+            return Err(metal_state_error(
+                "device message requires offloaded cycle tables",
+            ));
+        }
+        Ok(cycle.gruen.gruen_poly_from_evals(q_evals, previous_claim))
+    }
+
+    pub(crate) fn metal_restore_dense(
+        &mut self,
+        tables: [Vec<AkitaField>; PRODUCT5_FACTORS],
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        if !matches!(cycle.tables, CycleTables::Offloaded) {
+            return Err(metal_state_error(
+                "device readback requires offloaded cycle tables",
+            ));
+        }
+        let [combined_val, ra_0, ra_1, ra_2, ra_3] = tables;
+        cycle.tables = CycleTables::Dense {
+            combined_val: Polynomial::new(combined_val),
+            ra: vec![
+                Polynomial::new(ra_0),
+                Polynomial::new(ra_1),
+                Polynomial::new(ra_2),
+                Polynomial::new(ra_3),
+            ],
+        };
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn metal_sumcheck_error(error: MetalError) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn metal_state_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: message.into(),
     }
 }
 
@@ -1410,13 +2100,24 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         let r_cycle: Vec<F> = self.cycle_challenges.iter().rev().copied().collect();
         let eq_cycle = TensorEqTable::<F>::new(&r_cycle);
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
-        let claim_columns = self.claim_columns.as_slice();
+        let claim_columns =
+            self.claim_columns
+                .as_slice()
+                .ok_or(SumcheckKernelError::InvariantViolation {
+                    reason: "instruction read-RAF claim columns are absent",
+                })?;
+        if claim_columns.len() != 1usize << self.dimensions.log_t() {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "instruction read-RAF claim columns have the wrong length",
+            });
+        }
         let (lookup_table_flags, instruction_raf_flag) = eq_cycle.par_fold_out_in(
             || vec![F::Accumulator::default(); num_tables + 1],
             |accumulators, row_index, _x_in, e_in| {
-                let packed = claim_columns[row_index];
-                if packed & 0x7f != 0 {
-                    accumulators[usize::from(packed & 0x7f) - 1].add(e_in);
+                let packed = canonical_instruction_read_raf_claim(claim_columns[row_index]);
+                let table_plus_one = instruction_read_raf_claim_table_plus_one(packed);
+                if table_plus_one != 0 {
+                    accumulators[usize::from(table_plus_one) - 1].add(e_in);
                 }
                 if packed & 0x80 != 0 {
                     accumulators[num_tables].add(e_in);

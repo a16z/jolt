@@ -7,7 +7,7 @@ pub use runtime::*;
 
 use std::mem::{align_of, size_of};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use thiserror::Error;
 
@@ -142,7 +142,7 @@ pub struct RegistersClaimPartialQHandoff<F> {
     components: RegistersClaimLinearComponents<F>,
 }
 
-impl<F: Field> RegistersClaimPartialQHandoff<F> {
+impl<F: JoltField> RegistersClaimPartialQHandoff<F> {
     pub fn new(
         geometry: RegistersClaimGeometry,
         generation: u64,
@@ -233,7 +233,7 @@ pub struct RegistersClaimAliasSnapshot<F> {
     pub rs2_value: Vec<F>,
 }
 
-impl<F: Field> RegistersClaimAliasSnapshot<F> {
+impl<F: JoltField> RegistersClaimAliasSnapshot<F> {
     pub fn new(
         geometry: RegistersClaimGeometry,
         prefix_challenges: Vec<F>,
@@ -277,7 +277,7 @@ impl<F: Field> RegistersClaimAliasSnapshot<F> {
     }
 }
 
-pub fn combine_linear_components<F: Field>(
+pub fn combine_linear_components<F: JoltField>(
     components: &RegistersClaimLinearComponents<F>,
     gamma: F,
 ) -> Result<Vec<F>, RegistersClaimOracleError> {
@@ -297,7 +297,7 @@ pub fn combine_linear_components<F: Field>(
         .collect())
 }
 
-pub fn bind_table<F: Field>(
+pub fn bind_table<F: JoltField>(
     table: &mut Vec<F>,
     challenge: F,
 ) -> Result<(), RegistersClaimOracleError> {
@@ -315,11 +315,11 @@ pub fn bind_table<F: Field>(
     Ok(())
 }
 
-pub fn output_combination<F: Field>(outputs: RegistersClaimOutputs<F>, gamma: F) -> F {
+pub fn output_combination<F: JoltField>(outputs: RegistersClaimOutputs<F>, gamma: F) -> F {
     outputs.rd_write_value + gamma * outputs.rs1_value + gamma * gamma * outputs.rs2_value
 }
 
-pub fn verifier_output_term<F: Field>(
+pub fn verifier_output_term<F: JoltField>(
     tau: &[F],
     bound_challenges: &[F],
     outputs: RegistersClaimOutputs<F>,

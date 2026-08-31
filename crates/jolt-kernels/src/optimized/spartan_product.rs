@@ -241,6 +241,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUni
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        _known_values: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -706,6 +707,7 @@ mod tests {
                 &ReferenceBackend,
                 &mut reference_session,
                 &[tau_high],
+                &[],
             )
             .unwrap();
 
@@ -722,6 +724,7 @@ mod tests {
                 &OptimizedProductUniskip,
                 &mut optimized_session,
                 &[tau_high],
+                &[],
             )
             .unwrap();
         assert_eq!(
@@ -838,6 +841,7 @@ mod tests {
                     &ReferenceBackend,
                     &mut reference_session,
                     &[tau_high],
+                    &[],
                 )
                 .unwrap();
 
@@ -857,6 +861,7 @@ mod tests {
                 &OptimizedProductUniskip,
                 &mut optimized_session,
                 &[tau_high],
+                &[],
             )
             .unwrap();
             assert_eq!(optimized_uniskip, reference_uniskip);

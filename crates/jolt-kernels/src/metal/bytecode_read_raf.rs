@@ -1,4 +1,5 @@
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -573,6 +574,7 @@ fn bytecode_prepare_can_fallback(error: &MetalError) -> bool {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal bytecode parity setup")]
 mod tests {
+    use jolt_field::{One as _, Ring as _};
     use std::num::NonZeroUsize;
 
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
@@ -661,7 +663,7 @@ mod tests {
                     0,
                     None,
                     false,
-                    Some(if index == 0 { 4 } else { index }),
+                    if index == 0 { 4 } else { index },
                     None,
                     FusedInc(0),
                 )

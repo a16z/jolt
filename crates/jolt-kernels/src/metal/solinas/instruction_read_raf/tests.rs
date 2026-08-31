@@ -21,7 +21,7 @@ fn stage1_source_byte_ledgers_are_exact() {
     );
     assert_eq!(
         instruction_read_raf_stage1_count_bytes(1 << 26).unwrap(),
-        5_373_952
+        6_815_744
     );
     assert_eq!(
         instruction_read_raf_stage1_device_bytes(1 << 27).unwrap(),
@@ -29,7 +29,7 @@ fn stage1_source_byte_ledgers_are_exact() {
     );
     assert_eq!(
         instruction_read_raf_stage1_count_bytes(1 << 27).unwrap(),
-        10_747_904
+        13_631_488
     );
 }
 
@@ -53,13 +53,21 @@ fn physical_count_rank_is_table_major_then_none() {
     );
     assert_eq!(
         instruction_read_raf_claim_and_count_rank(0, false),
-        Some((0, 80))
+        Some((0, 102))
     );
     assert_eq!(
         instruction_read_raf_claim_and_count_rank(0, true),
-        Some((128, 81))
+        Some((128, 103))
     );
-    assert_eq!(instruction_read_raf_claim_and_count_rank(41, false), None);
+    assert_eq!(
+        instruction_read_raf_claim_and_count_rank(51, false),
+        Some((51, 100))
+    );
+    assert_eq!(
+        instruction_read_raf_claim_and_count_rank(51, true),
+        Some((179, 101))
+    );
+    assert_eq!(instruction_read_raf_claim_and_count_rank(52, false), None);
 }
 
 #[test]

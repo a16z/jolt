@@ -1,6 +1,7 @@
 use std::{cell::Cell, mem::size_of, slice, time::Duration};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use jolt_poly::EqPolynomial;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
@@ -579,7 +580,7 @@ const _: () = assert!(size_of::<Params>() == 40);
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_field::{AkitaField, FromPrimitiveInt};
+    use jolt_field::{FromPrimitiveInt, Prime128OffsetA7F7 as AkitaField, Zero as _};
 
     use super::{
         balanced_bias, BooleanityAddressPushforwardConfig, BooleanitySelector, SolinasMetal, BINS,

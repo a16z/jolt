@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 
 #[cfg(test)]
 use super::Fp128;
@@ -13,7 +14,7 @@ pub(super) const SOURCE: &str = include_str!("shader.metal");
 
 pub(crate) use runtime::{
     RamRafSegmentedAddressPlane, RamReadWriteDispatchTiming, RamReadWriteFinish,
-    RamReadWritePreparationTiming, RamReadWriteSequence,
+    RamReadWriteSequence,
 };
 
 pub const RAM_READ_WRITE_ADDRESS_PIPELINE: &str = "solinas_ram_read_write_address";
@@ -229,7 +230,7 @@ fn fp128_lerp(low: Fp128, high: Fp128, challenge: AkitaField) -> AkitaField {
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::FromPrimitiveInt;
+    use jolt_field::{FromPrimitiveInt, One as _};
 
     use super::*;
 

@@ -99,6 +99,8 @@ impl<F: JoltField> WaState<F> {
                 table.evals()[0]
             }
             Self::Indices { .. } => unreachable!("bound at least once before extraction"),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Self::Offloaded => unreachable!("offloaded registers WA was not restored"),
         }
     }
 }

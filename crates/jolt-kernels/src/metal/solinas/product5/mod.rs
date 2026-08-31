@@ -1,6 +1,6 @@
 use std::{mem::size_of, slice};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

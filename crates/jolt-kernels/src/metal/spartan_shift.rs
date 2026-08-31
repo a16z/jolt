@@ -1,7 +1,7 @@
 use std::mem;
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::{EqPlusOnePrefixSuffix, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{

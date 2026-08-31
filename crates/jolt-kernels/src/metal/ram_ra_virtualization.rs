@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -542,6 +542,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationInputClaims;
     use jolt_claims::NoChallenges;
+    use jolt_field::Ring as _;
     use jolt_poly::EqPolynomial;
 
     use super::*;

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::{One as _, Zero as _};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -558,6 +559,7 @@ fn kernel_error(error: impl ToString) -> SumcheckKernelError<AkitaField> {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::NoChallenges;
+    use jolt_field::Ring as _;
     use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
 
     use super::*;

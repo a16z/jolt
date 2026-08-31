@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::EqPolynomial;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, MTLResourceOptions, MTLSize,

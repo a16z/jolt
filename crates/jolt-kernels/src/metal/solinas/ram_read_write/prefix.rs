@@ -1,4 +1,5 @@
-use jolt_field::{AkitaField, FromPrimitiveInt};
+use jolt_field::{One as _, Zero as _};
+use jolt_field::{Prime128OffsetA7F7 as AkitaField, Ring};
 
 use crate::ram_access::RamAccessRecord;
 

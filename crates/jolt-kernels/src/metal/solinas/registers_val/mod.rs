@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
@@ -1188,6 +1188,7 @@ const _: () = assert!(size_of::<ReductionParams>() == 16);
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal parity setup")]
 mod tests {
+    use jolt_field::{Ring as _, Zero as _};
     use jolt_poly::{BindingOrder, Polynomial};
 
     use super::*;

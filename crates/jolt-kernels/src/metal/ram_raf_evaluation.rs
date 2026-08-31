@@ -8,7 +8,7 @@ use std::{
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamRafEvaluationPublic,
 };
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -774,6 +774,7 @@ mod tests {
         RamRafEvaluationInputClaims, RamReadWriteChallenges, RamReadWriteInputClaims,
     };
     use jolt_claims::NoChallenges;
+    use jolt_field::{Ring as _, Zero as _};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 

@@ -23,7 +23,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersClaimReductionPublic};
-use jolt_field::{AdditiveAccumulator, AkitaField, RingAccumulator, WithAccumulator};
+use jolt_field::{Accumulator, Prime128OffsetA7F7 as AkitaField, WithAccumulator};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{

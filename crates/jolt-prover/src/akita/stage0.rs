@@ -17,6 +17,7 @@ use jolt_verifier::{
 use jolt_witness::JoltWitnessPlane;
 
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
+use super::JoltAkitaBackend;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Outputs retained for later prover stages.
@@ -34,6 +35,7 @@ where
 /// Validate inputs, commit the packed objects, and seed the transcript.
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
+    backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
@@ -209,6 +211,7 @@ where
                 .map(|(_, _, hint)| *hint)
                 .collect::<Vec<_>>();
             let committed = PCS::commit_trace_one_hot(
+                &backend.trace_commitment,
                 &preprocessing.pcs_setup,
                 preprocessing.pcs_setup.default_layout_digest(),
                 plan.packing().slot_capacity(),

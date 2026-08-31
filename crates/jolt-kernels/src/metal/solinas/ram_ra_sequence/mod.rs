@@ -1,6 +1,7 @@
 use std::{ffi::c_void, mem::size_of, slice, sync::Arc};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use metal::{
     objc::rc::autoreleasepool, Buffer, ComputePipelineState, FunctionConstantValues, MTLDataType,
     MTLResourceOptions, MTLSize,

@@ -1,4 +1,4 @@
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(feature = "test-utils")]
 use std::{mem::size_of, slice};
 use std::{mem::MaybeUninit, sync::Arc};
 
@@ -7,7 +7,11 @@ use metal::{Buffer, MTLResourceOptions};
 use super::super::{
     BooleanityRows, InstructionInputRows, InstructionReadRafStage1Owner, MetalError, SolinasMetal,
 };
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(feature = "test-utils")]
+use crate::metal::solinas::instruction_input::{
+    REGISTER_RD_INDEX_SHIFT, REGISTER_RS1_INDEX_SHIFT, REGISTER_RS2_INDEX_SHIFT,
+};
+#[cfg(feature = "test-utils")]
 use crate::optimized::registers_read_write::PackedRegisterCycleRow;
 
 pub(crate) const REGISTERS_READ_WRITE_STAGE1_CHUNK_ROWS: usize = 1 << 12;
@@ -246,12 +250,12 @@ impl RegistersReadWriteStage1Source {
         }
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(feature = "test-utils")]
     pub(crate) fn device_sidecar_bytes(&self) -> usize {
         self.0.rd_indices.length() as usize
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
+    #[cfg(feature = "test-utils")]
     pub(crate) fn decode_row(
         &self,
         row: usize,
@@ -280,8 +284,8 @@ impl RegistersReadWriteStage1Source {
             let plus_one = ((flags >> shift) & 0xff) as u8;
             plus_one.checked_sub(1)
         };
-        let rs1 = decode(super::super::REGISTER_RS1_INDEX_SHIFT);
-        let rs2 = decode(super::super::REGISTER_RS2_INDEX_SHIFT);
+        let rs1 = decode(REGISTER_RS1_INDEX_SHIFT);
+        let rs2 = decode(REGISTER_RS2_INDEX_SHIFT);
         let metadata = instruction_read_raf[3 * view.cycles + row];
         // SAFETY: sealing validates the one-byte-per-cycle sidecar length.
         let rd_indices = unsafe {
@@ -291,8 +295,7 @@ impl RegistersReadWriteStage1Source {
             )
         };
         let rd = (rd_indices[row] != u8::MAX).then_some(rd_indices[row]);
-        let encoded_rd =
-            (((flags >> super::super::REGISTER_RD_INDEX_SHIFT) & 0xff) as u8).checked_sub(1);
+        let encoded_rd = (((flags >> REGISTER_RD_INDEX_SHIFT) & 0xff) as u8).checked_sub(1);
         if rd != encoded_rd {
             return None;
         }
