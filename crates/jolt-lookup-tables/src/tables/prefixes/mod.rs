@@ -24,6 +24,7 @@ pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
+pub mod offset_scale;
 pub mod or;
 pub mod overflow_bits_zero;
 pub mod pow2;
@@ -36,6 +37,7 @@ pub mod right_operand_msb;
 pub mod right_operand_w;
 pub mod right_shift;
 pub mod right_shift_w;
+pub mod shift_data;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
@@ -174,6 +176,12 @@ pub enum Prefixes {
     Pow2OffsetB,
     Pow2OffsetH,
     AlignAddr,
+    ShiftDataB,
+    ShiftDataH,
+    ShiftDataW,
+    OffsetScaleB,
+    OffsetScaleH,
+    OffsetScaleW,
     XorRotL1Acc,
     XorRotL1Straddle,
     XorRotL1Wrap,
@@ -245,6 +253,12 @@ macro_rules! dispatch_prefix {
             Prefixes::Pow2OffsetB => Pow2OffsetPrefix::<0>::$method($($args),*),
             Prefixes::Pow2OffsetH => Pow2OffsetPrefix::<1>::$method($($args),*),
             Prefixes::AlignAddr => AlignAddrPrefix::$method($($args),*),
+            Prefixes::ShiftDataB => shift_data::ShiftDataPrefix::<1>::$method($($args),*),
+            Prefixes::ShiftDataH => shift_data::ShiftDataPrefix::<2>::$method($($args),*),
+            Prefixes::ShiftDataW => shift_data::ShiftDataPrefix::<4>::$method($($args),*),
+            Prefixes::OffsetScaleB => offset_scale::OffsetScalePrefix::<1>::$method($($args),*),
+            Prefixes::OffsetScaleH => offset_scale::OffsetScalePrefix::<2>::$method($($args),*),
+            Prefixes::OffsetScaleW => offset_scale::OffsetScalePrefix::<4>::$method($($args),*),
             Prefixes::XorRotL1Acc => xor_rotl1::XorRotL1AccPrefix::$method($($args),*),
             Prefixes::XorRotL1Straddle => xor_rotl1::XorRotL1StraddlePrefix::$method($($args),*),
             Prefixes::XorRotL1Wrap => xor_rotl1::XorRotL1WrapPrefix::$method($($args),*),

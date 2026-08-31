@@ -132,6 +132,10 @@ const SUPPORTED: &[&str] = &[
     "WindowMaskB",
     "WindowMaskH",
     "AlignAddr",
+    // Byte-addressable Tier 0 (fused narrow stores):
+    "ShiftDataB",
+    "ShiftDataH",
+    "ShiftDataW",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -777,6 +781,9 @@ difftests! {
     diff_align_addr => |r| alu_ri(r, kind_by_name("VirtualAlignAddr"), false);
     diff_pext_signed => |r| alu_rr(r, kind_by_name("VirtualPextSigned"));
     diff_pext => |r| alu_rr(r, kind_by_name("VirtualPext"));
+    diff_shift_data_b => |r| alu_rr(r, kind_by_name("VirtualShiftDataB"));
+    diff_shift_data_h => |r| alu_rr(r, kind_by_name("VirtualShiftDataH"));
+    diff_shift_data_w => |r| alu_rr(r, kind_by_name("VirtualShiftDataW"));
 }
 
 /// Every supported kind has a differential test above; this pins the count
@@ -785,5 +792,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 85);
+    assert_eq!(SUPPORTED.len(), 88);
 }

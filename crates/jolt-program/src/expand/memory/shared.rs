@@ -474,15 +474,16 @@ pub(in crate::expand) fn expand_amo_post64(
     Ok(())
 }
 
-/// Lowers `SB`/`SH` by replacing a narrow lane inside an aligned doubleword.
+/// Lowers a narrow store (`SB`/`SH`/`SW`) via a fused read-modify-write.
 ///
-/// The helper optionally emits the source instruction's alignment assertion,
-/// loads the containing doubleword, builds a byte/halfword mask shifted to the
-/// selected lane, merges the low bits of `rs2`, and writes the whole
-/// doubleword back.
+/// The containing doubleword is loaded, the addressed lane is cleared with the
+/// window mask (`ANDN`) and replaced by the store data shifted into position
+/// (`ShiftData`); the lane bits are disjoint from the cleared doubleword, so a
+/// plain `ADD` merges them before the `SD` writes the doubleword back.
 pub(in crate::expand) fn expand_narrow_store(
     instruction: &SourceInstructionRow,
-    mask: i128,
+    window_mask: SourceInstructionKind,
+    shift_data: SourceInstructionKind,
     alignment: Option<SourceInstructionKind>,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
@@ -490,59 +491,31 @@ pub(in crate::expand) fn expand_narrow_store(
     let v1 = asm.allocate()?;
     let v2 = asm.allocate()?;
     let v3 = asm.allocate()?;
+    let base = reg(rs1(instruction)?);
+    let source = reg(rs2(instruction)?);
+    let offset = instruction.operands.imm;
+    let formatted_offset = format_i_imm(offset);
 
     if let Some(alignment) = alignment {
-        // `SH` requires halfword alignment; `SB` passes `None`.
-        asm.emit_address(alignment, reg(rs1(instruction)?), instruction.operands.imm);
+        // `SH`/`SW` assert alignment; `SB` passes `None`. The asserts also
+        // guarantee the offset bits the window-mask and shift-data tables do
+        // not read are zero.
+        asm.emit_address(alignment, base, offset);
     }
-    asm.emit_i(
-        SourceInstructionKind::ADDI,
-        v0.operand(),
-        reg(rs1(instruction)?),
-        format_i_imm(instruction.operands.imm),
-    );
-    asm.emit_i(
-        SourceInstructionKind::ANDI,
-        v1.operand(),
-        v0.operand(),
-        format_i_imm(-8),
-    );
-    asm.emit_i(SourceInstructionKind::LD, v2.operand(), v1.operand(), 0);
-    asm.emit_i(SourceInstructionKind::SLLI, v3.operand(), v0.operand(), 3);
-    asm.emit_u(SourceInstructionKind::LUI, v0.operand(), mask);
-    // As in the word-store and AMO paths, masked-XOR replacement updates only
-    // the selected narrow lane.
-    asm.emit_r(
-        SourceInstructionKind::SLL,
-        v0.operand(),
-        v0.operand(),
-        v3.operand(),
-    );
-    asm.emit_r(
-        SourceInstructionKind::SLL,
-        v3.operand(),
-        reg(rs2(instruction)?),
-        v3.operand(),
-    );
-    asm.emit_r(
-        SourceInstructionKind::XOR,
-        v3.operand(),
-        v2.operand(),
-        v3.operand(),
-    );
-    asm.emit_r(
-        SourceInstructionKind::AND,
-        v3.operand(),
-        v3.operand(),
-        v0.operand(),
-    );
-    asm.emit_r(
-        SourceInstructionKind::XOR,
-        v2.operand(),
-        v2.operand(),
-        v3.operand(),
-    );
-    asm.emit_s(SourceInstructionKind::SD, v1.operand(), v2.operand(), 0);
+    jolt_asm!(asm, {
+        addi v0, base, formatted_offset;
+        andi v1, v0, format_i_imm(-8);
+        ld v2, v1, 0;
+    });
+    // v3 = mask of the addressed lane.
+    asm.emit_i(window_mask, v3.operand(), v0.operand(), 0);
+    jolt_asm!(asm, { andn v2, v2, v3; });
+    // v3 = store data shifted into the lane.
+    asm.emit_r(shift_data, v3.operand(), source, v0.operand());
+    jolt_asm!(asm, {
+        add v2, v2, v3;
+        sd v1, v2, 0;
+    });
     asm.release_many([v0, v1, v2, v3]);
 
     asm.finalize()

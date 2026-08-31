@@ -609,6 +609,18 @@ impl Accumulator for WideAccumulator {
             }
         }
     }
+
+    /// One Barrett round beats the default's `from_u64` conversion plus a
+    /// full 4×4 limb product.
+    #[inline(always)]
+    fn fmadd_u64(&mut self, value: Fr, scalar: u64) {
+        self.add(Fr(mul_u64(value.0, scalar)));
+    }
+
+    #[inline(always)]
+    fn fmadd_u128(&mut self, value: Fr, scalar: u128) {
+        self.add(Fr(mul_u128(value.0, scalar)));
+    }
 }
 
 #[cfg(test)]

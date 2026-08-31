@@ -25,10 +25,9 @@ pub const ONE_HOT_TRACE_K16_CAPACITY: usize = 64;
 /// Fixed selector capacity of the packed trace polynomial at K=256.
 pub const ONE_HOT_TRACE_K256_CAPACITY: usize = 32;
 
-/// Minimum physical arity of an auxiliary commitment object (advice bytes,
-/// program bytecode/image). Akita's dense DP planner admits no fold schedule
-/// below 2^13 coefficients for these single-polynomial groups, so byte-sized
-/// advice regions (an 11-variable cell domain) would fail setup outright; one
+/// Minimum physical arity of an auxiliary commitment object (advice words,
+/// program bytecode/image). Akita's dense DP planner admits no fold
+/// schedule below 2^13 coefficients for these single-polynomial groups; one
 /// variable of headroom over the current floor absorbs upstream repricing.
 /// [`PrefixPackedObjectPlan::new`] pads slot capacity — never column arity —
 /// up to this bound, so claim reduction is unchanged. Like any unused slot,
@@ -41,8 +40,8 @@ pub const MIN_AUXILIARY_PACKED_NUM_VARS: usize = 14;
 /// `Ra` families, balanced increment chunks, and signed carry as semantic
 /// columns of one packed polynomial. Instruction, bytecode, and increment
 /// columns omit row zero; RAM commits every row.
-/// Advice byte columns are their own commitment objects
-/// ([`advice_bytes_packing_plan`]).
+/// Advice word columns are their own commitment objects
+/// ([`advice_packing_plan`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OneHotTraceShape {
     pub ra_layout: JoltRaPolynomialLayout,
@@ -145,17 +144,35 @@ pub fn precommitted_packing_plan(
     })
 }
 
-/// Single-column advice-byte layout.
-pub fn advice_bytes_packing_plan(
+pub const ADVICE_MIN_PHYSICAL_VARS: usize = 14;
+pub const ADVICE_MAX_PHYSICAL_VARS: usize = 34;
+
+/// Single-column advice-word layout, padded through empty prefix slots
+/// when its logical arity is below Akita's dense schedule floor.
+pub fn advice_packing_plan(
     kind: JoltAdviceKind,
     word_vars: usize,
 ) -> Result<PrefixPackedObjectPlan, LatticeGeometryError> {
-    Ok(PrefixPackedObjectPlan::new(
-        b"advice-bytes",
-        vec![(
-            JoltCommittedPolynomial::advice_bytes(kind),
-            word_byte_num_vars(word_vars),
-        )],
+    let physical_vars = word_vars.max(ADVICE_MIN_PHYSICAL_VARS);
+    if physical_vars > ADVICE_MAX_PHYSICAL_VARS {
+        return Err(OpeningsError::InvalidSetup(format!(
+            "advice physical arity {physical_vars} is outside the supported {}..={} range",
+            ADVICE_MIN_PHYSICAL_VARS, ADVICE_MAX_PHYSICAL_VARS
+        ))
+        .into());
+    }
+    let selector_vars = physical_vars - word_vars;
+    let slot_capacity = 1usize.checked_shl(selector_vars as u32).ok_or_else(|| {
+        OpeningsError::InvalidSetup("advice slot capacity exceeds usize".to_owned())
+    })?;
+    let polynomial = match kind {
+        JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
+        JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
+    };
+    Ok(PrefixPackedObjectPlan::new_with_slot_capacity(
+        b"advice-dense-words-v2",
+        vec![(polynomial, word_vars)],
+        slot_capacity,
     )?)
 }
 
@@ -208,6 +225,15 @@ impl PrefixPackedObjectPlan {
         domain: &[u8],
         columns: Vec<(JoltCommittedPolynomial, usize)>,
     ) -> Result<Self, OpeningsError> {
+        let slot_capacity = columns.len().next_power_of_two();
+        Self::new_with_slot_capacity(domain, columns, slot_capacity)
+    }
+
+    fn new_with_slot_capacity(
+        domain: &[u8],
+        columns: Vec<(JoltCommittedPolynomial, usize)>,
+        slot_capacity: usize,
+    ) -> Result<Self, OpeningsError> {
         if columns.is_empty() {
             return Err(OpeningsError::InvalidSetup(
                 "prefix-packed object requires at least one column".to_string(),
@@ -222,9 +248,8 @@ impl PrefixPackedObjectPlan {
                     "prefix-packed object requires at least one column".to_string(),
                 )
             })?;
-        let slot_capacity = columns
-            .len()
-            .next_power_of_two()
+        let slot_capacity = slot_capacity
+            .max(columns.len().next_power_of_two())
             .max(1usize << MIN_AUXILIARY_PACKED_NUM_VARS.saturating_sub(packed_logical_num_vars));
         let ids = columns.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         let packing = PrefixPackedLayout::new(packed_logical_num_vars, slot_capacity, ids)?;
@@ -360,8 +385,6 @@ fn append_auxiliary_id(
     id: JoltCommittedPolynomial,
 ) -> Result<(), OpeningsError> {
     let (tag, index, secondary) = match id {
-        JoltCommittedPolynomial::TrustedAdviceBytes => (0u8, 0usize, 0usize),
-        JoltCommittedPolynomial::UntrustedAdviceBytes => (1, 0, 0),
         JoltCommittedPolynomial::BytecodeRegisterSelector { chunk, lane } => {
             let lane = match lane {
                 BytecodeRegisterLane::Rs1 => 0,
@@ -377,6 +400,8 @@ fn append_auxiliary_id(
         JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk } => (7, chunk, 0),
         JoltCommittedPolynomial::BytecodeImmBytes { chunk } => (8, chunk, 0),
         JoltCommittedPolynomial::ProgramImageBytes => (9, 0, 0),
+        JoltCommittedPolynomial::TrustedAdvice => (10, 0, 0),
+        JoltCommittedPolynomial::UntrustedAdvice => (11, 0, 0),
         other => {
             return Err(OpeningsError::InvalidSetup(format!(
                 "non-auxiliary polynomial {other:?} in auxiliary packed layout"
@@ -429,38 +454,46 @@ mod tests {
     }
 
     #[test]
-    fn advice_bytes_packing_is_the_identity_layout() {
+    fn advice_packing_uses_the_schedule_floor() {
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
-            let plan = advice_bytes_packing_plan(kind, 4).unwrap();
+            let id = match kind {
+                JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
+                JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
+            };
+            let plan = advice_packing_plan(kind, 9).unwrap();
             assert_eq!(plan.packing().ids().len(), 1);
-            assert_eq!(plan.packing().selector_num_vars(), 0);
-            assert_eq!(plan.packing().logical_num_vars(), 8 + 3 + 4);
-            assert_eq!(
-                plan.logical_num_vars(JoltCommittedPolynomial::advice_bytes(kind)),
-                Some(8 + 3 + 4)
-            );
+            assert_eq!(plan.packing().ids(), &[id]);
+            assert_eq!(plan.packing().selector_num_vars(), 5);
+            assert_eq!(plan.packing().logical_num_vars(), 9);
+            assert_eq!(plan.packing().packed_num_vars(), 14);
+            assert_eq!(plan.packing().slot_capacity(), 32);
+            assert_eq!(plan.logical_num_vars(id), Some(9));
+
+            let large = advice_packing_plan(kind, 20).unwrap();
+            assert_eq!(large.packing().selector_num_vars(), 0);
+            assert_eq!(large.packing().packed_num_vars(), 20);
+            assert_eq!(large.packing().slot_capacity(), 1);
         }
     }
 
     #[test]
     fn tiny_auxiliary_objects_pad_slot_capacity_to_the_planner_floor() {
-        // A single 64-bit word of advice: the 11-variable cell domain alone
-        // is below the dense planner floor, so the plan widens capacity.
+        // A one-coefficient advice polynomial is below the planner
+        // floor, so the plan widens its otherwise-empty selector capacity.
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
-            let plan = advice_bytes_packing_plan(kind, 0).unwrap();
+            let plan = advice_packing_plan(kind, 0).unwrap();
             assert_eq!(plan.packing().ids().len(), 1);
-            assert_eq!(plan.packing().logical_num_vars(), 8 + 3);
-            assert_eq!(plan.packing().slot_capacity(), 8);
+            assert_eq!(plan.packing().logical_num_vars(), 0);
+            assert_eq!(plan.packing().slot_capacity(), 1 << 14);
             assert_eq!(
                 plan.packing().packed_num_vars(),
                 MIN_AUXILIARY_PACKED_NUM_VARS
             );
         }
 
-        // One variable below the floor (a 32-byte advice region), capacity
-        // doubles to reach it.
-        let plan = advice_bytes_packing_plan(JoltAdviceKind::Untrusted, 2).unwrap();
-        assert_eq!(plan.packing().logical_num_vars(), 8 + 3 + 2);
+        // One variable below the floor, capacity doubles to reach it.
+        let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 13).unwrap();
+        assert_eq!(plan.packing().logical_num_vars(), 13);
         assert_eq!(plan.packing().slot_capacity(), 2);
         assert_eq!(
             plan.packing().packed_num_vars(),
@@ -468,7 +501,7 @@ mod tests {
         );
 
         // At the floor exactly, capacity stays a single slot.
-        let plan = advice_bytes_packing_plan(JoltAdviceKind::Trusted, 3).unwrap();
+        let plan = advice_packing_plan(JoltAdviceKind::Trusted, 14).unwrap();
         assert_eq!(plan.packing().slot_capacity(), 1);
         assert_eq!(
             plan.packing().packed_num_vars(),
@@ -494,8 +527,8 @@ mod tests {
     fn padded_capacity_claims_reduce_to_the_slot_zero_embedding() {
         use jolt_field::{Fr, Ring};
 
-        let plan = advice_bytes_packing_plan(JoltAdviceKind::Untrusted, 0).unwrap();
-        let id = JoltCommittedPolynomial::UntrustedAdviceBytes;
+        let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 9).unwrap();
+        let id = JoltCommittedPolynomial::UntrustedAdvice;
         let point = (0..plan.packing().logical_num_vars())
             .map(|index| Fr::from_u64(index as u64 + 3))
             .collect::<Vec<_>>();

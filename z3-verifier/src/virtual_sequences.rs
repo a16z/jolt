@@ -67,6 +67,9 @@ use tracer::{
         virtual_pext_signed::VirtualPextSigned,
         virtual_pow2::VirtualPow2,
         virtual_pow2_w::VirtualPow2W,
+        virtual_shift_data_b::VirtualShiftDataB,
+        virtual_shift_data_h::VirtualShiftDataH,
+        virtual_shift_data_w::VirtualShiftDataW,
         virtual_shift_right_bitmask::VirtualShiftRightBitmask,
         virtual_sign_extend_word::VirtualSignExtendWord,
         virtual_sra::VirtualSRA,
@@ -470,6 +473,35 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let shift = offset * cpu.bv_u64(half_bits);
             let half_mask = cpu.bv_u64((1u64 << half_bits) - 1);
             cpu.x[operands.rd as usize] = half_mask.bvshl(shift);
+        }
+        Instruction::VirtualShiftDataB(VirtualShiftDataB { operands, .. }) => {
+            // One of 8 lanes of bv_bits/8 bits each; scales with the reduced
+            // solver widths.
+            let byte_bits = (cpu.bv_bits / 8) as u64;
+            let data = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((1u64 << byte_bits) - 1);
+            let ea = cpu.x[operands.rs2 as usize].clone();
+            let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
+            let shift = offset * cpu.bv_u64(byte_bits);
+            cpu.x[operands.rd as usize] = data.bvshl(shift);
+        }
+        Instruction::VirtualShiftDataH(VirtualShiftDataH { operands, .. }) => {
+            // One of 4 lanes of bv_bits/4 bits each.
+            let half_bits = (cpu.bv_bits / 4) as u64;
+            let data = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((1u64 << half_bits) - 1);
+            let ea = cpu.x[operands.rs2 as usize].clone();
+            let offset = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2);
+            let shift = offset * cpu.bv_u64(half_bits);
+            cpu.x[operands.rd as usize] = data.bvshl(shift);
+        }
+        Instruction::VirtualShiftDataW(VirtualShiftDataW { operands, .. }) => {
+            // One of 2 lanes of bv_bits/2 bits each.
+            let word_bits = cpu.word_bits as u64;
+            let data = cpu.x[operands.rs1 as usize].clone()
+                & cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
+            let ea = cpu.x[operands.rs2 as usize].clone();
+            let offset = ea.extract(2, 2).zero_ext(cpu.bv_bits - 1);
+            let shift = offset * cpu.bv_u64(word_bits);
+            cpu.x[operands.rd as usize] = data.bvshl(shift);
         }
         Instruction::VirtualPext(VirtualPext { operands, .. }) => {
             // Zero-extending extract via shift-left then logical shift-right:

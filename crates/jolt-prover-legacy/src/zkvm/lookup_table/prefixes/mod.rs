@@ -5,6 +5,7 @@ use crate::{
 use allocative::Allocative;
 use lsb::LsbPrefix;
 use num_derive::FromPrimitive;
+use offset_scale::OffsetScalePrefix;
 use pow2::Pow2Prefix;
 use pow2_offset::Pow2OffsetPrefix;
 use pow2_w::Pow2WPrefix;
@@ -12,6 +13,7 @@ use rayon::prelude::*;
 use rev8w::Rev8WPrefix;
 use right_shift::RightShiftPrefix;
 use right_shift_w::RightShiftWPrefix;
+use shift_data::ShiftDataPrefix;
 use sign_extension::SignExtensionPrefix;
 use sign_extension_right_operand::SignExtensionRightOperandPrefix;
 use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
@@ -71,6 +73,7 @@ pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
+pub mod offset_scale;
 pub mod or;
 pub mod overflow_bits_zero;
 pub mod pow2;
@@ -83,6 +86,7 @@ pub mod right_operand;
 pub mod right_operand_w;
 pub mod right_shift;
 pub mod right_shift_w;
+pub mod shift_data;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
@@ -197,6 +201,12 @@ pub enum Prefixes {
     SrlwSext,
     Pow2OffsetB,
     Pow2OffsetH,
+    ShiftDataB,
+    ShiftDataH,
+    ShiftDataW,
+    OffsetScaleB,
+    OffsetScaleH,
+    OffsetScaleW,
     AlignAddr,
     XorRotL1Acc,
     XorRotL1Straddle,
@@ -356,6 +366,24 @@ impl Prefixes {
             }
             Prefixes::Pow2OffsetH => {
                 Pow2OffsetPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataB => {
+                ShiftDataPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataH => {
+                ShiftDataPrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataW => {
+                ShiftDataPrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleB => {
+                OffsetScalePrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleH => {
+                OffsetScalePrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleW => {
+                OffsetScalePrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
         };
@@ -724,6 +752,48 @@ impl Prefixes {
                 suffix_len,
             ),
             Prefixes::Pow2OffsetH => Pow2OffsetPrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ShiftDataB => ShiftDataPrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ShiftDataH => ShiftDataPrefix::<XLEN, 2>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ShiftDataW => ShiftDataPrefix::<XLEN, 4>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleB => OffsetScalePrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleH => OffsetScalePrefix::<XLEN, 2>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleW => OffsetScalePrefix::<XLEN, 4>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
                 r_y,
