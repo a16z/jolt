@@ -643,6 +643,7 @@ pub struct AkitaProverHint {
     pub(crate) commitment: AkitaCommitment,
     pub(crate) backend: Option<(AkitaBackendCommitment, AkitaBackendHint)>,
     pub(crate) polynomials: AkitaHintPolynomials,
+    pub(crate) trace_backend: Option<crate::scheme::TraceCommitmentBackend>,
 }
 
 /// Backend representation of the committed polynomials, produced at commit

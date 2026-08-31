@@ -2578,6 +2578,41 @@ where
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize>
+    SubringCoefficientPackingBatchKernel<
+        TracePackedOneHotBatchView<'_, D>,
+        AkitaField,
+        AkitaField,
+        D,
+    > for akita_metal::MetalBackend
+{
+    #[tracing::instrument(skip_all, name = "TracePackedOneHot::coefficient_packing_metal")]
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotBatchView<'_, D>,
+        plan: SubringCoefficientPackingPlan<'_, AkitaField>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<AkitaField>>, AkitaError> {
+        let trace = source.source();
+        let selectors = trace.rows.packed_selectors().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "Metal trace opening requires resident packed selectors".to_string(),
+            )
+        })?;
+        let packed = akita_metal::PackedOneHotCommitView::new_with_active_zero_rows(
+            trace.one_hot_k,
+            trace.column_capacity,
+            trace.num_columns,
+            selectors.row_major(),
+            selectors.active_zero_rows(),
+            selectors.zero_column_mask(),
+        )?;
+        self.packed_onehot_coefficient_packing::<D>(packed, plan.point)
+            .map(|partials| vec![partials])
+    }
+}
+
 impl<const D: usize> RootCommitKernel<GroupedRootView<'_, D>, AkitaField, D> for CpuBackend {
     fn commit_inner_group(
         &self,
@@ -2894,6 +2929,47 @@ where
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize>
+    SubringCoefficientPackingBatchKernel<GroupedRootBatchView<'_, D>, AkitaField, AkitaField, D>
+    for akita_metal::MetalBackend
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: GroupedRootBatchView<'_, D>,
+        plan: SubringCoefficientPackingPlan<'_, AkitaField>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<AkitaField>>, AkitaError> {
+        if matches!(source.sources.first(), Some(GroupedRootSource::Trace(_))) {
+            let trace = source
+                .sources
+                .iter()
+                .map(|source| match source {
+                    GroupedRootSource::Trace(polys) => Ok(grouped_singleton(polys)),
+                    GroupedRootSource::Dense(_) | GroupedRootSource::OneHot(_) => {
+                        Err(AkitaError::InvalidInput(
+                            "grouped root coefficient-packing groups must be representation-homogeneous"
+                                .to_string(),
+                        ))
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let view =
+                <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&trace)?;
+            return SubringCoefficientPackingBatchKernel::<
+                TracePackedOneHotBatchView<'_, D>,
+                AkitaField,
+                AkitaField,
+                D,
+            >::coefficient_packing_partials_batch(self, None, view, plan);
+        }
+
+        self.record_opening_cpu_fallback(1)
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        CpuBackend::DEFAULT.coefficient_packing_partials_batch(None, source, plan)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests assert valid kernel geometry")]
@@ -3062,6 +3138,91 @@ mod tests {
             .remove(0);
 
         assert_eq!(metal_witness.inner_rows, cpu_witness.inner_rows);
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_trace_coefficient_packing_matches_cpu_with_selected_zero() {
+        const D: usize = 512;
+        const K: usize = 16;
+        const ROWS: usize = 2048;
+        const COLUMNS: usize = 2;
+        const CAPACITY: usize = 4;
+        const POSITIONS: usize = 64;
+
+        let mut row_major = (0..ROWS * COLUMNS)
+            .map(|index| ((index * 19 + 7) % (K - 1) + 1) as u8)
+            .collect::<Vec<_>>();
+        let mut active_zero_rows = vec![0u64; ROWS / u64::BITS as usize];
+        for row in (0..ROWS).step_by(11) {
+            row_major[row * COLUMNS] = 0;
+            active_zero_rows[row / u64::BITS as usize] |= 1u64 << (row % u64::BITS as usize);
+        }
+        let source = TracePackedOneHot::new(
+            K,
+            D,
+            CAPACITY,
+            Arc::new(ResidentTestRows {
+                columns: COLUMNS,
+                row_major,
+                active_zero_rows,
+                zero_column_mask: 1,
+            }),
+        )
+        .unwrap();
+        let source_num_vars = RootPolyMeta::num_vars(&source);
+        let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(1, D, 64).unwrap();
+        let public_point = (0..source_num_vars)
+            .map(|index| AkitaField::from_u64((index + 3) as u64))
+            .collect::<Vec<_>>();
+        let point = akita_types::PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            akita_types::BasisMode::Lagrange,
+            RootPolyShape::<AkitaField, D>::num_ring_elems(&source),
+            POSITIONS,
+            source_num_vars,
+            &public_point,
+        )
+        .unwrap();
+        let plan = SubringCoefficientPackingPlan { point: &point };
+        let sources = [&source];
+
+        let cpu_view =
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&sources)
+                .unwrap();
+        let expected = <CpuBackend as SubringCoefficientPackingBatchKernel<
+            TracePackedOneHotBatchView<'_, D>,
+            AkitaField,
+            AkitaField,
+            D,
+        >>::coefficient_packing_partials_batch(
+            &CpuBackend::DEFAULT, None, cpu_view, plan
+        )
+        .unwrap();
+
+        let metal = akita_metal::MetalBackend::new(akita_metal::MetalExecutionPolicy::RequireMetal)
+            .unwrap();
+        metal.begin_opening_metrics().unwrap();
+        let metal_view =
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&sources)
+                .unwrap();
+        let actual = <akita_metal::MetalBackend as SubringCoefficientPackingBatchKernel<
+            TracePackedOneHotBatchView<'_, D>,
+            AkitaField,
+            AkitaField,
+            D,
+        >>::coefficient_packing_partials_batch(&metal, None, metal_view, plan)
+        .unwrap();
+
+        assert_eq!(actual, expected);
+        assert_eq!(
+            metal
+                .last_opening_metrics()
+                .unwrap()
+                .unwrap()
+                .cpu_fallback_calls,
+            0
+        );
     }
 
     fn assert_ring_mapping<const D: usize>(
