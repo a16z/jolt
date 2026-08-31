@@ -1,7 +1,7 @@
 use std::{mem::size_of, slice};
 
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
-use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
+use jolt_lookup_tables::{tables::Suffixes, LookupTableKind, XLEN as RISCV_XLEN};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
     MTLResourceOptions, MTLSize,
@@ -37,6 +37,68 @@ const CYCLE_PHASES: usize = 16;
 const CYCLE_PHASE_ELEMENTS: usize = CYCLE_PHASES * ADDRESS_RAF_BINS;
 const CYCLE_THREADS_PER_THREADGROUP: usize = 128;
 const CYCLE_BIND_THREADS_PER_THREADGROUP: usize = 256;
+
+// Stable shader ABI. Do not pass `Suffixes as u8`: Jolt may reorder the host
+// enum when lookup tables change, while released Metal kernels keep their
+// opcode layout.
+const fn metal_suffix_kind(suffix: Suffixes) -> u8 {
+    match suffix {
+        Suffixes::One => 0,
+        Suffixes::And => 1,
+        Suffixes::AndNot => 2,
+        Suffixes::Xor => 3,
+        Suffixes::Or => 4,
+        Suffixes::RightOperand => 5,
+        Suffixes::RightOperandW => 6,
+        Suffixes::UpperWord => 9,
+        Suffixes::LowerWord => 10,
+        Suffixes::LowerHalfWord => 11,
+        Suffixes::LessThan => 12,
+        Suffixes::GreaterThan => 13,
+        Suffixes::Eq => 14,
+        Suffixes::LeftOperandIsZero => 15,
+        Suffixes::RightOperandIsZero => 16,
+        Suffixes::Lsb => 17,
+        Suffixes::DivByZero => 18,
+        Suffixes::Pow2 => 19,
+        Suffixes::Pow2W => 20,
+        Suffixes::Rev8W => 21,
+        Suffixes::RightShiftPadding => 22,
+        Suffixes::RightShift => 23,
+        Suffixes::RightShiftHelper => 24,
+        Suffixes::SignExtension => 25,
+        Suffixes::LeftShift => 26,
+        Suffixes::TwoLsb => 27,
+        Suffixes::SignExtensionUpperHalf => 28,
+        Suffixes::SignExtensionRightOperand => 29,
+        Suffixes::RightShiftW => 30,
+        Suffixes::RightShiftWHelper => 31,
+        Suffixes::LeftShiftWHelper => 32,
+        Suffixes::LeftShiftW => 33,
+        Suffixes::OverflowBitsZero => 34,
+        Suffixes::XorRot16 => 35,
+        Suffixes::XorRot24 => 36,
+        Suffixes::XorRot32 => 37,
+        Suffixes::XorRot63 => 38,
+        Suffixes::XorRotW16 => 39,
+        Suffixes::XorRotW12 => 40,
+        Suffixes::XorRotW8 => 41,
+        Suffixes::XorRotW7 => 42,
+        Suffixes::Pow2OffsetW => 43,
+        Suffixes::Pext => 44,
+        Suffixes::PextHelper => 45,
+        Suffixes::WindowSign => 46,
+        Suffixes::WindowSignPow2 => 47,
+        Suffixes::XorRotW22 => 48,
+        Suffixes::XorRotW19 => 49,
+        Suffixes::XorRotW6 => 50,
+        Suffixes::SignExtensionW => 51,
+        Suffixes::X31Y0 => 52,
+        Suffixes::Pow2OffsetB => 53,
+        Suffixes::Pow2OffsetH => 54,
+        Suffixes::AlignAddr => 55,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AddressPhaseSequenceConfig {
@@ -306,7 +368,7 @@ impl SolinasMetal {
                 });
             }
             for (suffix, kind) in suffixes.iter().enumerate() {
-                suffix_kinds[table_index * SUFFIX_MAX_SUFFIXES + suffix] = *kind as u8;
+                suffix_kinds[table_index * SUFFIX_MAX_SUFFIXES + suffix] = metal_suffix_kind(*kind);
             }
             suffix_counts.push(suffixes.len() as u8);
             table_offsets.push(table_offsets.last().copied().unwrap_or(0) + suffixes.len());
@@ -1530,3 +1592,77 @@ const _: () = assert!(size_of::<SuffixTable>() == 16);
 const _: () = assert!(size_of::<AddressLookup>() == 16);
 const _: () = assert!(size_of::<CycleParams>() == 16);
 const _: () = assert!(size_of::<CycleReductionParams>() == 16);
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::expect_used, reason = "test setup fails loudly")]
+
+    use jolt_field::FromPrimitiveInt as _;
+    use jolt_lookup_tables::LookupBits;
+
+    use super::*;
+
+    #[test]
+    fn latest_suffix_abi_matches_host_at_every_address_phase() {
+        let tables: Vec<_> = LookupTableKind::<RISCV_XLEN>::iter().collect();
+        let lookups = [
+            0,
+            u128::MAX,
+            0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
+            0xa55a_3cc3_f00f_6996_9669_0ff0_c33c_5aa5,
+        ];
+        let logical_rows = tables.len() * lookups.len();
+        let rows = logical_rows.next_power_of_two();
+        let mut buckets = vec![Vec::new(); tables.len()];
+        let mut sources = Vec::with_capacity(rows);
+        for table in &tables {
+            for (sample, lookup) in lookups.iter().copied().enumerate() {
+                let row = sources.len();
+                buckets[table.index()].push(row as u32);
+                sources.push((
+                    AddressRafScanRow::new_with_table(lookup, Some(table.index()), false),
+                    Fp128::from_jolt_field(&AkitaField::from_u64((sample + 1) as u64)),
+                ));
+            }
+        }
+        sources.resize(rows, (AddressRafScanRow::new(0, false), Fp128::ONE));
+
+        let context = SolinasMetal::for_akita().expect("Metal context should compile");
+        let mut sequence = context
+            .prepare_address_phase_sequence_from_buckets(
+                rows,
+                &buckets,
+                AddressPhaseSequenceConfig::default(),
+                |row| sources[row],
+            )
+            .expect("address sequence should prepare");
+
+        for suffix_len in (0..=120u32).step_by(8) {
+            let sums = sequence
+                .phase(suffix_len, None)
+                .expect("address phase should execute");
+            for table in &tables {
+                let actual = sums
+                    .suffix()
+                    .table(table.index())
+                    .expect("table output should exist");
+                let suffixes = table.suffixes();
+                let mut expected = vec![AkitaField::from_u64(0); actual.len()];
+                for (sample, lookup) in lookups.iter().copied().enumerate() {
+                    let chunk = ((lookup >> suffix_len) as usize) & (ADDRESS_SUFFIX_BINS - 1);
+                    let bits = LookupBits::new(lookup, suffix_len as usize);
+                    let weight = AkitaField::from_u64((sample + 1) as u64);
+                    for (index, suffix) in suffixes.iter().enumerate() {
+                        expected[index * ADDRESS_SUFFIX_BINS + chunk] +=
+                            weight * AkitaField::from_u64(suffix.suffix_mle(bits));
+                    }
+                }
+                let expected: Vec<_> = expected.iter().map(Fp128::from_jolt_field).collect();
+                assert_eq!(
+                    actual, expected,
+                    "suffix mismatch for table {table:?} at suffix_len={suffix_len}"
+                );
+            }
+        }
+    }
+}
