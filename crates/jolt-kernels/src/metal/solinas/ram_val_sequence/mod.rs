@@ -6,7 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::{One as _, Zero as _};
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use metal::{
     objc::rc::autoreleasepool, Buffer, CommandBuffer, CommandQueue, ComputePipelineState,

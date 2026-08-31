@@ -1,6 +1,9 @@
 #![expect(clippy::unwrap_used, reason = "tests use checked fixtures")]
 
-use jolt_field::AkitaField;
+use std::mem::size_of;
+
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::{Ring as _, Zero as _};
 
 use super::{
     carrier::AddressMajorShape,
@@ -10,7 +13,7 @@ use super::{
 };
 use crate::metal::solinas::{
     BooleanityRow, InstructionReadRafCompatibilityScatterConfig, MetalError, SolinasMetal,
-    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, INSTRUCTION_READ_RAF_SEGMENTS,
 };
 
 #[derive(Clone, Copy)]
@@ -34,9 +37,9 @@ fn tables(shape: AddressMajorShape) -> (Vec<Vec<AkitaField>>, Vec<Vec<AkitaField
                 .map(|inner| {
                     let delta = (17 * stage + 5 * inner + 1) as u128;
                     if (stage + inner).is_multiple_of(3) {
-                        AkitaField::from_canonical_u128(MODULUS - delta)
+                        AkitaField::from_u128(MODULUS - delta)
                     } else {
-                        AkitaField::from_canonical_u128((1_u128 << 127) + delta)
+                        AkitaField::from_u128((1_u128 << 127) + delta)
                     }
                 })
                 .collect()
@@ -48,9 +51,9 @@ fn tables(shape: AddressMajorShape) -> (Vec<Vec<AkitaField>>, Vec<Vec<AkitaField
                 .map(|outer| {
                     let delta = (19 * stage + 7 * outer + 3) as u128;
                     if (stage + outer).is_multiple_of(2) {
-                        AkitaField::from_canonical_u128(MODULUS - delta)
+                        AkitaField::from_u128(MODULUS - delta)
                     } else {
-                        AkitaField::from_canonical_u128((1_u128 << 126) + delta)
+                        AkitaField::from_u128((1_u128 << 126) + delta)
                     }
                 })
                 .collect()
@@ -202,7 +205,11 @@ fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
     let fused = planes.receipt().bytecode().unwrap();
     assert_eq!(fused.physical_rows(), physical_rows);
     assert_eq!(fused.max_pivots_per_chunk(), 15);
-    let descriptor_capacity = ((fused.threadgroup_memory_limit_bytes() - 336 - 32) / 16 * 2)
+    let count_bytes = (INSTRUCTION_READ_RAF_SEGMENTS * size_of::<u32>()).div_ceil(16) * 16;
+    let pivot_bytes = (15 * size_of::<u16>()).div_ceil(16) * 16;
+    let descriptor_capacity =
+        ((fused.threadgroup_memory_limit_bytes() - count_bytes as u64 - pivot_bytes as u64) / 16
+            * 2)
         .saturating_sub(1)
         .min(4096) as usize;
     assert_eq!(

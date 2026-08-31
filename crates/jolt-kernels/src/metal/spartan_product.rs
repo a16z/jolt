@@ -14,7 +14,8 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{InputClaims as _, OutputClaims as _};
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
@@ -1694,6 +1695,7 @@ impl SumcheckKernel<AkitaField> for MetalProductRemainderKernel {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
     use jolt_claims::NoChallenges;
+    use jolt_field::{One as _, Ring as _};
     use jolt_verifier::stages::stage2::product_remainder::{
         product_remainder_input_values_from_uniskip_output, ProductRemainderInputClaims,
     };

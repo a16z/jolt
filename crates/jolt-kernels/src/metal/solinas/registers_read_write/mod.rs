@@ -1,3 +1,4 @@
+#[cfg(feature = "test-utils")]
 pub(crate) mod runtime;
 mod sequence;
 mod stage1;
@@ -12,7 +13,7 @@ pub(super) const SOURCE: &str = concat!(
 
 pub(crate) use sequence::{
     PendingRegistersReadWriteStage1Pipelines, RegistersReadWriteCycleFinish,
-    RegistersReadWriteCycleObservation, RegistersReadWriteCycleSequence,
+    RegistersReadWriteCycleSequence,
 };
 pub(crate) use stage1::{
     RegistersReadWriteStage1ChunkWriter, RegistersReadWriteStage1Source,
@@ -69,6 +70,7 @@ pub const REGISTERS_READ_WRITE_SOURCE_PRIMER_PIPELINE: &str =
     "solinas_registers_read_write_source_primer";
 pub const REGISTERS_READ_WRITE_REDUCTION_PIPELINE: &str = "solinas_ram_read_write_reduce";
 pub const REGISTERS_READ_WRITE_THREADS: usize = 256;
+#[cfg(feature = "test-utils")]
 pub const REGISTERS_READ_WRITE_PAIRS_PER_GROUP: usize = REGISTERS_READ_WRITE_THREADS;
 pub const REGISTERS_READ_WRITE_SIMD_WIDTH: usize = 32;
 pub const REGISTERS_READ_WRITE_THREADGROUP_BYTES_MAX: u64 = 16 * 1024;

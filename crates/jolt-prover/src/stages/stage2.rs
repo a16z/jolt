@@ -18,7 +18,10 @@ use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{
+    JoltBackend, PrepareKernel, ProofSession, Stage2ProductInstructionPrefetch,
+    Stage5InstructionReadRafPrefetch,
+};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 #[cfg(feature = "zk")]
@@ -39,6 +42,7 @@ use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_from_upstream};
+use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
 use jolt_verifier::stages::uniskip::draw_spartan_product_tau_high;
 use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
@@ -107,11 +111,16 @@ where
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =
         uniskip_relation.input_claim(&uniskip_inputs, &NoChallenges::default())?;
+    let known_values = [
+        uniskip_inputs.product,
+        uniskip_inputs.should_branch,
+        uniskip_inputs.should_jump,
+    ];
     let uniskip_poly =
         tracing::info_span!("SpartanProductUniskip::first_round_poly").in_scope(|| {
             backend
                 .spartan_product_uniskip
-                .first_round_poly(session, &[tau_high])
+                .first_round_poly(session, &[tau_high], &known_values)
         })?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
@@ -154,6 +163,15 @@ where
     // Both batch gammas, then the RAM output-check address reference point (the
     // last member's `draw_challenges` override) — the verifier's exact schedule.
     let challenges = sumchecks.draw_challenges(transcript)?;
+    session.park(Stage2ProductInstructionPrefetch {
+        instruction_gamma: challenges.instruction_claim_reduction.gamma,
+    });
+    <JoltBackend<F, PCS> as PrepareKernel<F, ProductRemainder<F>>>::prefetch_relation(
+        backend,
+        session,
+        &sumchecks.product_remainder,
+    )?;
+    let _ = session.take::<Stage2ProductInstructionPrefetch<F>>();
 
     let input_points = sumchecks.empty_input_points();
     let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim);
@@ -174,6 +192,16 @@ where
     let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
     #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof;
+
+    <JoltBackend<F, PCS> as PrepareKernel<F, RegistersReadWriteChecking<F>>>::prefetch(
+        backend, session,
+    )?;
+    session.park(Stage5InstructionReadRafPrefetch {
+        lookup_output_point: proved
+            .output_points
+            .instruction_claim_reduction_point()
+            .to_vec(),
+    });
 
     Ok(Stage2ProverOutput {
         uniskip_proof: proved_uniskip.proof,

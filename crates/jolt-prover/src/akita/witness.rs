@@ -198,6 +198,14 @@ impl TraceOneHotRows for PackedTraceRows {
         selected_rows.copy_from_slice(&self.selected_rows[start..start + selected_rows.len()]);
     }
 
+    fn packed_selectors(&self) -> Option<jolt_akita::TracePackedSelectors<'_>> {
+        Some(jolt_akita::TracePackedSelectors::new(
+            &self.selected_rows,
+            &self.ram_active_rows,
+            self.ram_digit_zero_mask,
+        ))
+    }
+
     fn committed_digit_zero_mask(&self, row: usize) -> u64 {
         let active = self.ram_active_rows[row / u64::BITS as usize]
             & (1u64 << (row % u64::BITS as usize))

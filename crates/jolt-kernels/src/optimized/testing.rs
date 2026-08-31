@@ -19,8 +19,8 @@ use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
-    RegisterWrite, TraceOutput, TraceRow,
+    JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
+    RegisterState, RegisterWrite, TraceOutput, TraceRow,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -92,6 +92,24 @@ pub(crate) fn with_ram_fixture_init<R>(
     init_words: Vec<u64>,
     ops: Vec<RamOp>,
     f: impl FnOnce(&dyn JoltWitnessPlane<Fr>) -> R,
+) -> R {
+    with_ram_fixture_init_backend(shape, init_words, ops, |backend| f(backend))
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn with_ram_fixture_backend<R>(
+    shape: FixtureShape,
+    ops: Vec<RamOp>,
+    f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
+) -> R {
+    with_ram_fixture_init_backend(shape, Vec::new(), ops, f)
+}
+
+fn with_ram_fixture_init_backend<R>(
+    shape: FixtureShape,
+    init_words: Vec<u64>,
+    ops: Vec<RamOp>,
+    f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
 ) -> R {
     assert!(ops.len() < 1usize << shape.log_t, "script too long");
     assert!(
@@ -225,6 +243,20 @@ pub(crate) fn with_ram_fixture_init<R>(
             }
         })
         .collect();
+    let final_memory = MemoryImage {
+        bytes: state
+            .iter()
+            .enumerate()
+            .flat_map(|(word, value)| {
+                value
+                    .to_le_bytes()
+                    .into_iter()
+                    .enumerate()
+                    .filter(|&(_, byte)| byte != 0)
+                    .map(move |(byte, value)| (BASE_ADDRESS + 8 * word as u64 + byte as u64, value))
+            })
+            .collect(),
+    };
 
     let device = JoltDevice {
         memory_layout,
@@ -242,7 +274,7 @@ pub(crate) fn with_ram_fixture_init<R>(
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), device, None, None),
+        TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory), None),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)

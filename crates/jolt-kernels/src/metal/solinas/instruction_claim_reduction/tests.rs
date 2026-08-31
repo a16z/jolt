@@ -1,7 +1,8 @@
 use core::mem::{align_of, size_of};
 
 use crate::optimized::instruction_claim_reduction::InstructionOperandRow;
-use jolt_field::{AkitaField, FromPrimitiveInt};
+use jolt_field::{FromPrimitiveInt, Prime128OffsetA7F7 as AkitaField};
+use jolt_field::{One as _, Zero as _};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 
 use super::*;

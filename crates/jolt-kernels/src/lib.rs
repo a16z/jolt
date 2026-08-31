@@ -39,13 +39,20 @@ mod commitment;
 pub mod committed_program;
 mod error;
 mod kernel;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub mod metal;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+mod ram_access;
 pub mod reference;
 pub mod uniskip;
 
-pub use backend::{BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession};
+pub use backend::{
+    BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession,
+    Stage2ProductInstructionPrefetch, Stage5InstructionReadRafPrefetch,
+};
 pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;

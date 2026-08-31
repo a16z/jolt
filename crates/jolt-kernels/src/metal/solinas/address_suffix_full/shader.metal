@@ -1,5 +1,5 @@
 #define ADDRESS_SUFFIX_FULL_BINS 256u
-#define ADDRESS_SUFFIX_FULL_MAX_SUFFIXES 4u
+#define ADDRESS_SUFFIX_FULL_MAX_SUFFIXES 5u
 #define ADDRESS_SUFFIX_FULL_WORDS 5u
 #define ADDRESS_SUFFIX_FULL_FIELDS (ADDRESS_SUFFIX_FULL_BINS * ADDRESS_SUFFIX_FULL_MAX_SUFFIXES)
 
@@ -300,18 +300,18 @@ kernel void solinas_address_suffix_full_finalize(
     device const AddressSuffixFullTable* tables [[buffer(1)]],
     device SolinasFp128* output [[buffer(2)]],
     uint table [[threadgroup_position_in_grid]],
-    uint tid [[thread_index_in_threadgroup]])
+    uint tid [[thread_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
 {
     AddressSuffixFullTable descriptor = tables[table];
     uint fields = descriptor.suffix_count * ADDRESS_SUFFIX_FULL_BINS;
-    if (tid >= fields) {
-        return;
+    for (uint field = tid; field < fields; field += threads) {
+        SolinasFp128 sum = solinas_zero();
+        for (uint job = descriptor.job_start; job < descriptor.job_end; job++) {
+            sum = solinas_add(sum, partials[job * ADDRESS_SUFFIX_FULL_FIELDS + field]);
+        }
+        uint suffix = field / ADDRESS_SUFFIX_FULL_BINS;
+        uint chunk = field & (ADDRESS_SUFFIX_FULL_BINS - 1);
+        output[(descriptor.output_start + suffix) * ADDRESS_SUFFIX_FULL_BINS + chunk] = sum;
     }
-    SolinasFp128 sum = solinas_zero();
-    for (uint job = descriptor.job_start; job < descriptor.job_end; job++) {
-        sum = solinas_add(sum, partials[job * ADDRESS_SUFFIX_FULL_FIELDS + tid]);
-    }
-    uint suffix = tid / ADDRESS_SUFFIX_FULL_BINS;
-    uint chunk = tid & (ADDRESS_SUFFIX_FULL_BINS - 1);
-    output[(descriptor.output_start + suffix) * ADDRESS_SUFFIX_FULL_BINS + chunk] = sum;
 }

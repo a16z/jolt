@@ -1,6 +1,6 @@
 use std::{slice, time::Duration};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
     MTLResourceOptions, NSRange,
@@ -13,8 +13,8 @@ use super::{
         OUTER_REMAINDER_A_LOOKUP_FIELDS,
     },
     plan::{
-        field_bytes, opening_output_count, opening_threadgroup_memory_lengths, storage_geometry,
-        validate_opening_threadgroup_memory, SIMD_WIDTH,
+        field_bytes, opening_output_count, storage_geometry, validate_opening_threadgroup_memory,
+        SIMD_WIDTH,
     },
     registers_claim::{carrier_geometry, RegistersClaimCarrierGeometry},
     shader::{
@@ -43,6 +43,7 @@ pub(super) struct PipelineSetLimits {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(feature = "test-utils")]
 pub(crate) struct OuterRemainderStorageEvalStats {
     pub(crate) borrowed_state_b: bool,
     pub(crate) initialized_bytes: u64,
@@ -136,6 +137,13 @@ impl Buffers {
 
 enum StateBSource {
     Owned,
+    #[cfg_attr(
+        not(feature = "test-utils"),
+        expect(
+            dead_code,
+            reason = "borrowed storage is exposed by the evaluation API"
+        )
+    )]
     Borrowed(Buffer),
     Deferred,
 }
@@ -156,6 +164,13 @@ pub(super) struct Storage {
     pub(super) dense_bytes: u64,
     pub(super) owned_bytes: u64,
     borrowed_state_b: bool,
+    #[cfg_attr(
+        not(feature = "test-utils"),
+        expect(
+            dead_code,
+            reason = "initialization telemetry is exposed by the evaluation API"
+        )
+    )]
     initialization: StorageInitializationStats,
 }
 

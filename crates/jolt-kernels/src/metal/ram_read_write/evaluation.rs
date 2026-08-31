@@ -5,7 +5,8 @@ use std::{
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::OutputClaims as _;
-use jolt_field::{AkitaField, CanonicalU64, FixedBytes, TranscriptChallenge};
+use jolt_field::{CanonicalU64, FixedBytes, Prime128OffsetA7F7 as AkitaField, TranscriptChallenge};
+use jolt_field::{Field as _, One as _, Zero as _};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial};
 use jolt_sumcheck::ProveRounds;
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;

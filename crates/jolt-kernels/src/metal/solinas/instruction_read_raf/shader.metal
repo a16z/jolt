@@ -1,8 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
 
-constant uint INSTRUCTION_READ_RAF_TABLES = 40u;
-constant uint INSTRUCTION_READ_RAF_SEGMENTS = 82u;
+constant uint INSTRUCTION_READ_RAF_TABLES = 51u;
+constant uint INSTRUCTION_READ_RAF_SEGMENTS = 104u;
 constant uint INSTRUCTION_READ_RAF_CHUNK_ROWS = 4096u;
 
 constant uint INSTRUCTION_READ_RAF_STATUS_GEOMETRY = 1u << 0;

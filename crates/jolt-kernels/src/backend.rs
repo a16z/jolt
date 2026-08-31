@@ -104,6 +104,20 @@ where
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
+    /// Starts optional work that can overlap host setup before `prepare`.
+    fn prefetch(&self, _session: &mut ProofSession) -> Result<(), KernelError<F>> {
+        Ok(())
+    }
+
+    /// Starts optional relation-dependent work before member preparation.
+    fn prefetch_relation(
+        &self,
+        session: &mut ProofSession,
+        _relation: &R,
+    ) -> Result<(), KernelError<F>> {
+        self.prefetch(session)
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -188,23 +202,23 @@ where
 /// attribute the cross-stage carries — the dominant retained memory — rather
 /// than an opaque `Box<dyn Any>`.
 #[cfg(feature = "allocative")]
-pub trait MaybeAllocative: allocative::Allocative {}
+pub trait MaybeAllocative: allocative::Allocative + Send {}
 #[cfg(feature = "allocative")]
-impl<T: allocative::Allocative + ?Sized> MaybeAllocative for T {}
+impl<T: allocative::Allocative + Send + ?Sized> MaybeAllocative for T {}
 /// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
 /// is on, vacuous otherwise.
 #[cfg(not(feature = "allocative"))]
-pub trait MaybeAllocative {}
+pub trait MaybeAllocative: Send {}
 #[cfg(not(feature = "allocative"))]
-impl<T: ?Sized> MaybeAllocative for T {}
+impl<T: Send + ?Sized> MaybeAllocative for T {}
 
 /// One session entry: the erased value plus, under the `allocative` feature,
 /// a monomorphized visitor captured at insertion — where the concrete type
 /// is still known — so heap flamegraphs can see through the `dyn Any`.
 struct Carry {
-    value: Box<dyn Any>,
+    value: Box<dyn Any + Send>,
     #[cfg(feature = "allocative")]
-    visit: fn(&dyn Any, &mut allocative::Visitor<'_>),
+    visit: fn(&(dyn Any + Send), &mut allocative::Visitor<'_>),
 }
 
 impl Carry {
@@ -221,7 +235,7 @@ impl Carry {
 /// label in the rendered flamegraph).
 #[cfg(feature = "allocative")]
 fn visit_carry<T: Any + allocative::Allocative>(
-    value: &dyn Any,
+    value: &(dyn Any + Send),
     visitor: &mut allocative::Visitor<'_>,
 ) {
     if let Some(value) = value.downcast_ref::<T>() {
@@ -289,6 +303,33 @@ pub(crate) fn visit_scalar_pairs<T>(
 #[derive(Default)]
 pub struct ProofSession {
     state: HashMap<TypeId, Carry>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Stage2ProductInstructionPrefetch<F> {
+    pub instruction_gamma: F,
+}
+
+#[cfg(feature = "allocative")]
+impl<F> allocative::Allocative for Stage2ProductInstructionPrefetch<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit();
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Stage5InstructionReadRafPrefetch<F> {
+    pub lookup_output_point: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F> allocative::Allocative for Stage5InstructionReadRafPrefetch<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.visit_simple(
+            allocative::Key::new("lookup_output_point"),
+            self.lookup_output_point.capacity() * std::mem::size_of::<F>(),
+        );
+    }
 }
 
 impl ProofSession {

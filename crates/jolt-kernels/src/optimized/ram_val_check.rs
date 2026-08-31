@@ -66,36 +66,46 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamValCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let log_t = relation.trace_dimensions().log_t();
-        let ram_log_k = relation.ram_log_k();
-        let ram_val_point: &[F] = &inputs.points.ram_val;
-        if ram_val_point.len() != ram_log_k + log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "RAM value-check input point has the wrong variable count",
-            });
-        }
-        let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
-
-        let columns = RamAccessColumns::shared(session, witness, log_t)?;
-        columns.validate_addresses(1usize << ram_log_k)?;
-
-        let inc_table: Vec<F> = witness.oracle_table(ram_inc_val_check().polynomial_id())?;
-        if inc_table.len() != 1usize << log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{:?}", ram_inc_val_check()),
-                expected: 1usize << log_t,
-                got: inc_table.len(),
-            });
-        }
-
-        Ok(Box::new(RamValCheckKernel {
-            progress: RoundProgress::new(log_t),
-            inc: Polynomial::new(inc_table),
-            ra: LazyFoldedRa::new(vec![eq_table(r_address)], RamAddressIndices { columns }),
-            lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
-        }))
+        Ok(Box::new(prepare_optimized_ram_val_check(
+            session, witness, inputs,
+        )?))
     }
+}
+
+pub(crate) fn prepare_optimized_ram_val_check<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, RamValCheck<F>>,
+) -> Result<RamValCheckKernel<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let log_t = relation.trace_dimensions().log_t();
+    let ram_log_k = relation.ram_log_k();
+    let ram_val_point: &[F] = &inputs.points.ram_val;
+    if ram_val_point.len() != ram_log_k + log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "RAM value-check input point has the wrong variable count",
+        });
+    }
+    let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
+
+    let columns = RamAccessColumns::shared(session, witness, log_t)?;
+    columns.validate_addresses(1usize << ram_log_k)?;
+
+    let inc_table: Vec<F> = witness.oracle_table(ram_inc_val_check().polynomial_id())?;
+    if inc_table.len() != 1usize << log_t {
+        return Err(KernelError::TableSizeMismatch {
+            table: format!("{:?}", ram_inc_val_check()),
+            expected: 1usize << log_t,
+            got: inc_table.len(),
+        });
+    }
+
+    Ok(RamValCheckKernel {
+        progress: RoundProgress::new(log_t),
+        inc: Polynomial::new(inc_table),
+        ra: LazyFoldedRa::new(vec![eq_table(r_address)], RamAddressIndices { columns }),
+        lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
+    })
 }
 
 #[cfg_attr(
@@ -103,7 +113,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     derive(allocative::Allocative),
     allocative(bound = "F: JoltField")
 )]
-struct RamValCheckKernel<F: JoltField> {
+pub(crate) struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: Polynomial<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,

@@ -1,6 +1,6 @@
 use std::{mem::size_of, slice};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
 use super::{
@@ -508,6 +508,7 @@ const _: () = assert!(size_of::<Params>() == 16);
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
     use super::*;
+    use jolt_field::{One as _, Ring as _, Zero as _};
 
     fn field(value: u64) -> AkitaField {
         AkitaField::from_u64(value)

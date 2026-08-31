@@ -66,6 +66,31 @@ pub struct InstructionInputRow {
     pub imm: Imm,
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct PreparedInstructionInputRows {
+    rows: Vec<InstructionInputRow>,
+}
+
+impl PreparedInstructionInputRows {
+    pub(crate) const fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn into_rows(self) -> Vec<InstructionInputRow> {
+        self.rows
+    }
+}
+
+pub(crate) fn prepare_instruction_input_rows<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    trace_elements: usize,
+) -> Result<(), KernelError<F>> {
+    let rows = collect_rows(witness, trace_elements)?;
+    session.park(PreparedInstructionInputRows { rows });
+    Ok(())
+}
+
 impl InstructionInputRow {
     /// The row's values as field elements, in table order — exactly the
     /// entries the dense tables hold (same `ToField` conversions as the
@@ -91,12 +116,21 @@ pub struct OptimizedInstructionInput;
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
-        let rows: Vec<InstructionInputRow> = collect_rows(witness, 1usize << r_product.len())?;
+        let trace_elements = 1usize << r_product.len();
+        let rows = match session.take::<PreparedInstructionInputRows>() {
+            Some(prepared) if prepared.len() == trace_elements => prepared.into_rows(),
+            Some(_) => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "prepared InstructionInput row count disagrees with the relation",
+                });
+            }
+            None => collect_rows(witness, trace_elements)?,
+        };
         Ok(Box::new(OptimizedInstructionInputKernel::new(
             r_product,
             rows,
@@ -118,6 +152,8 @@ enum InputState<F: JoltField> {
         Vec<InstructionInputRow>,
     ),
     Dense(Vec<Polynomial<F>>),
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Offloaded,
 }
 
 #[cfg_attr(
@@ -168,6 +204,17 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
             bind_scratch: Vec::new(),
         })
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn new_offloaded(r_product: &[F], gamma: F) -> Self {
+        Self {
+            progress: RoundProgress::new(r_product.len()),
+            gamma,
+            state: InputState::Offloaded,
+            gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
+            bind_scratch: Vec::new(),
+        }
     }
 
     /// The first round's `q` evaluations over the native rows: per pair and
@@ -287,6 +334,12 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         let mut q_evals = match &self.state {
             InputState::Native(rows) => self.native_q_evals(rows),
             InputState::Dense(tables) => self.dense_q_evals(tables),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            InputState::Offloaded => {
+                return Err(instruction_input_state_error(
+                    "CPU message requested while instruction input is resident on Metal",
+                ));
+            }
         };
 
         self.gruen
@@ -325,17 +378,149 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                     table.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
                 }
             }
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            InputState::Offloaded => unreachable!("offloaded instruction input binds on Metal"),
         }
         self.progress.advance();
     }
 
     /// The eight fully bound table values, table order.
-    fn final_values(&self) -> [F; NUM_TABLES] {
+    fn final_values(&self) -> Option<[F; NUM_TABLES]> {
         match &self.state {
             // Bindless extraction happens only for `log_t = 0` geometries.
-            InputState::Native(rows) => rows[0].field_values(),
-            InputState::Dense(tables) => core::array::from_fn(|i| tables[i].evals()[0]),
+            InputState::Native(rows) => Some(rows[0].field_values()),
+            InputState::Dense(tables) => Some(core::array::from_fn(|i| tables[i].evals()[0])),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            InputState::Offloaded => None,
         }
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<F: JoltField> OptimizedInstructionInputKernel<F> {
+    pub(crate) fn metal_copy_dense_tables(
+        &self,
+        table_ids: [usize; 2],
+        expected_rounds_bound: usize,
+        expected_elements: usize,
+    ) -> Result<[Vec<F>; 2], SumcheckError<F>> {
+        if self.progress.bound() != expected_rounds_bound {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot has the wrong bind count",
+            ));
+        }
+        let InputState::Dense(tables) = &self.state else {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot requires host dense tables",
+            ));
+        };
+        if table_ids
+            .iter()
+            .any(|&table| table >= tables.len() || tables[table].len() != expected_elements)
+        {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot has the wrong table geometry",
+            ));
+        }
+        Ok(table_ids.map(|table| tables[table].evals().to_vec()))
+    }
+
+    pub(crate) fn metal_weights(&self) -> Result<(&[F], &[F]), SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal weights requested after instruction input returned to the CPU",
+            ));
+        }
+        Ok((self.gruen.e_in_current(), self.gruen.e_out_current()))
+    }
+
+    pub(crate) fn metal_bind_offloaded(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal bind requested after instruction input returned to the CPU",
+            ));
+        }
+        if self.progress.bound() >= self.progress.total() {
+            return Err(instruction_input_state_error(
+                "instruction input received more binds than cycle variables",
+            ));
+        }
+        self.gruen.bind(challenge);
+        self.progress.advance();
+        Ok(())
+    }
+
+    pub(crate) fn metal_message(
+        &self,
+        q_coefficients: [F; 3],
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal message supplied after instruction input returned to the CPU",
+            ));
+        }
+        let [q_at_0, q_at_1, q_quadratic] = q_coefficients;
+        let twice_quadratic = q_quadratic + q_quadratic;
+        let q_at_2 = q_at_1 + q_at_1 - q_at_0 + twice_quadratic;
+        let q_at_3 = q_at_2 + q_at_1 - q_at_0 + twice_quadratic + twice_quadratic;
+        let mut q_evals = [q_at_0, q_at_1, q_at_2, q_at_3];
+        self.gruen
+            .checked_round_poly(&mut q_evals, previous_claim, round)
+    }
+
+    pub(crate) fn metal_restore_dense(
+        &mut self,
+        flat_tables: &[F],
+        elements: usize,
+    ) -> Result<(), SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "instruction input dense tables restored more than once",
+            ));
+        }
+        if elements == 0
+            || !elements.is_power_of_two()
+            || self.progress.bound() > self.progress.total()
+        {
+            return Err(instruction_input_state_error(
+                "invalid instruction input dense-tail geometry",
+            ));
+        }
+        let expected_elements = 1usize
+            .checked_shl((self.progress.total() - self.progress.bound()) as u32)
+            .ok_or_else(|| {
+                instruction_input_state_error("instruction input table length overflow")
+            })?;
+        if elements != expected_elements {
+            return Err(instruction_input_state_error(format!(
+                "instruction input dense tail has {elements} elements per table; expected {expected_elements}"
+            )));
+        }
+        let expected_values = NUM_TABLES.checked_mul(elements).ok_or_else(|| {
+            instruction_input_state_error("instruction input readback length overflow")
+        })?;
+        if flat_tables.len() != expected_values {
+            return Err(instruction_input_state_error(format!(
+                "instruction input dense tail has {} values; expected {expected_values}",
+                flat_tables.len()
+            )));
+        }
+        self.state = InputState::Dense(
+            flat_tables
+                .chunks_exact(elements)
+                .map(|values| Polynomial::new(values.to_vec()))
+                .collect(),
+        );
+        Ok(())
+    }
+}
+
+fn instruction_input_state_error<F: JoltField>(message: impl Into<String>) -> SumcheckError<F> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: message.into(),
     }
 }
 
@@ -371,7 +556,10 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
     ) -> Result<InstructionInputOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
         let [left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm] =
-            self.final_values();
+            self.final_values()
+                .ok_or(SumcheckKernelError::InvariantViolation {
+                    reason: "instruction input output requested before Metal state was restored",
+                })?;
         Ok(InstructionInputOutputClaims {
             left_operand_is_rs1,
             rs1_value,

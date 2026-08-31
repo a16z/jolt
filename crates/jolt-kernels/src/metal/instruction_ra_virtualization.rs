@@ -1,5 +1,6 @@
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationChallenges;
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::{
     SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims, SumcheckOutputPoints,

@@ -1,4 +1,5 @@
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Ring as _;
 use std::sync::Arc;
 
 use super::*;

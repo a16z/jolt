@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use jolt_field::{AkitaField, Field};
+use jolt_field::{Field, Prime128OffsetA7F7 as AkitaField};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer, CommandQueue,
     ComputePipelineState, MTLResourceOptions, MTLSize, NSRange,
@@ -2678,6 +2678,7 @@ mod tests {
     use super::super::product_uniskip::evaluate_product_uniskip_extensions_cpu;
     use super::super::SpartanOuterUniskipRow;
     use super::*;
+    use jolt_field::{Ring as _, Zero as _};
 
     fn native_width_boundary_row(index: usize) -> ProductRemainderRow {
         let u32_max = u64::from(u32::MAX);

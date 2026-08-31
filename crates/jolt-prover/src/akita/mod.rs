@@ -8,7 +8,8 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
 use jolt_kernels::{JoltBackend, KernelSlots, PrepareKernel, ProofSession, ReferenceBackend};
 use jolt_openings::{
-    CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
+    CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, OpeningsError,
+    TransparentObjectSetup,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltProof;
@@ -50,6 +51,7 @@ where
 {
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
+    trace_commitment: jolt_akita::TraceCommitmentBackend,
     pub bytecode_reconstruction: Box<dyn PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>>,
     pub program_image_reconstruction:
         Box<dyn PrepareKernel<F, ProgramImageReconstructionInstance<F>>>,
@@ -106,6 +108,7 @@ where
     /// reference reconstruction kernels.
     pub fn reference() -> Self {
         Self {
+            trace_commitment: jolt_akita::TraceCommitmentBackend::cpu(),
             bytecode_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             program_image_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             base: JoltBackend {
@@ -178,6 +181,35 @@ where
     /// contract as [`JoltBackend::begin_proof`].
     pub fn begin_proof(&self) -> ProofSession {
         ProofSession::default()
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Debug, thiserror::Error)]
+pub enum JoltAkitaMetalError {
+    #[error("Jolt PIOP Metal backend initialization failed: {0}")]
+    Piop(#[from] jolt_kernels::metal::solinas::MetalError),
+    #[error("Akita commitment Metal backend initialization failed: {0}")]
+    Commitment(#[from] OpeningsError),
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<PCS> JoltAkitaBackend<jolt_akita::AkitaField, PCS>
+where
+    PCS: CommitmentScheme<Field = jolt_akita::AkitaField>,
+{
+    pub fn with_metal_compute(
+        mut self,
+        metal: &jolt_kernels::metal::MetalBackend,
+    ) -> Result<Self, OpeningsError> {
+        self.base = self.base.with_metal_compute(metal);
+        self.trace_commitment = jolt_akita::TraceCommitmentBackend::metal_required()?;
+        Ok(self)
+    }
+
+    pub fn metal() -> Result<Self, JoltAkitaMetalError> {
+        let metal = jolt_kernels::metal::MetalBackend::production()?;
+        Ok(Self::optimized().with_metal_compute(&metal)?)
     }
 }
 

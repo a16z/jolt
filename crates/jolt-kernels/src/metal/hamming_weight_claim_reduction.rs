@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
@@ -268,11 +268,11 @@ fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_claims::protocols::jolt::lattice::relations::hamming_weight::LatticeHammingWeightClaimReductionDimensions;
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
+    use jolt_field::{Ring as _, Zero as _};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReduction, HammingWeightClaimReductionChallenges,
-        HammingWeightClaimReductionInputClaims,
+        HammingWeightClaimReductionDimensions, HammingWeightClaimReductionInputClaims,
     };
 
     use super::*;
@@ -344,7 +344,7 @@ mod tests {
     fn prepare_matches_optimized_cpu_and_consumes_resident_rows() {
         let log_t = 10;
         with_booleanity_backend(log_t, 8, |witness, base_dimensions| {
-            let dimensions = LatticeHammingWeightClaimReductionDimensions::new(
+            let dimensions = HammingWeightClaimReductionDimensions::new(
                 base_dimensions.layout,
                 base_dimensions.log_k_chunk,
             )
@@ -356,7 +356,6 @@ mod tests {
                 (0..dimensions.layout.total())
                     .map(|index| point(700 + index as u64, dimensions.log_k_chunk))
                     .collect(),
-                Some(AkitaField::from_u64(17)),
             );
             let challenges = HammingWeightClaimReductionChallenges {
                 gamma: AkitaField::from_u64(23),
@@ -393,7 +392,7 @@ mod tests {
     #[test]
     fn production_plan_uses_the_specialized_selector_schedule() {
         let layout = JoltRaPolynomialLayout::new(16, 2, 2).unwrap();
-        let dimensions = LatticeHammingWeightClaimReductionDimensions::new(layout, 8).unwrap();
+        let dimensions = HammingWeightClaimReductionDimensions::new(layout, 8).unwrap();
         let relation = HammingWeightClaimReduction::new(
             dimensions,
             point(300, 10),
@@ -401,7 +400,6 @@ mod tests {
             (0..layout.total())
                 .map(|index| point(700 + index as u64, 8))
                 .collect(),
-            Some(AkitaField::from_u64(17)),
         );
         let plan = HammingWeightPreparePlan::new(
             &relation,
@@ -432,7 +430,7 @@ mod tests {
     fn cpu_fallbacks_match_and_consume_resident_rows() {
         let log_t = 10;
         with_booleanity_backend(log_t, 8, |witness, base_dimensions| {
-            let dimensions = LatticeHammingWeightClaimReductionDimensions::new(
+            let dimensions = HammingWeightClaimReductionDimensions::new(
                 base_dimensions.layout,
                 base_dimensions.log_k_chunk,
             )
@@ -444,7 +442,6 @@ mod tests {
                 (0..dimensions.layout.total())
                     .map(|index| point(700 + index as u64, dimensions.log_k_chunk))
                     .collect(),
-                Some(AkitaField::from_u64(17)),
             );
             let challenges = HammingWeightClaimReductionChallenges {
                 gamma: AkitaField::from_u64(23),

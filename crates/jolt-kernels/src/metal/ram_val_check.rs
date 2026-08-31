@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -405,6 +405,7 @@ fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
     reason = "Metal parity test setup"
 )]
 mod tests {
+    use jolt_field::{Ring as _, Zero as _};
     use std::sync::Arc;
 
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;

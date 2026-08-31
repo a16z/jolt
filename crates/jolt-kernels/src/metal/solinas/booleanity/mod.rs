@@ -4,7 +4,8 @@ use super::{
     buffer_from_slice, encode_column_reductions, set_inline_bytes, validate_completed_command,
     Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
     MTLResourceOptions, MTLSize,

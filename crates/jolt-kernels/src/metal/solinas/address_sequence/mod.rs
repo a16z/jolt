@@ -1,6 +1,6 @@
 use std::{mem::size_of, slice};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
@@ -21,7 +21,7 @@ use super::{
 const RAF_KEYS: usize = 2 * ADDRESS_RAF_BINS;
 const RAF_PARTIAL_LANES: usize = 3;
 const RAF_FIELDS: usize = RAF_KEYS * RAF_PARTIAL_LANES;
-const SUFFIX_MAX_SUFFIXES: usize = 4;
+const SUFFIX_MAX_SUFFIXES: usize = 5;
 const SUFFIX_FIELDS: usize = SUFFIX_MAX_SUFFIXES * ADDRESS_SUFFIX_BINS;
 const ACCUMULATOR_WORDS: usize = 5;
 const SIMD_WIDTH: usize = 32;
@@ -215,6 +215,7 @@ pub struct AddressPhaseSequence {
     table_offsets: Vec<usize>,
     rows_per_threadgroup: usize,
     threads_per_threadgroup: usize,
+    suffix_finalize_threads_per_threadgroup: usize,
     cycle_threads_per_threadgroup: usize,
     cycle_bind_threads_per_threadgroup: usize,
     cycle_e_in_capacity: usize,
@@ -614,7 +615,11 @@ impl SolinasMetal {
             }
         }
         let suffix_finalize_limits = Self::limits(&suffix_finalize_pipeline);
-        if suffix_finalize_limits.max_total_threads_per_threadgroup < SUFFIX_FIELDS {
+        let suffix_finalize_threads_per_threadgroup = SUFFIX_FIELDS
+            .min(suffix_finalize_limits.max_total_threads_per_threadgroup)
+            / suffix_finalize_limits.thread_execution_width
+            * suffix_finalize_limits.thread_execution_width;
+        if suffix_finalize_threads_per_threadgroup == 0 {
             return Err(MetalError::InvalidThreadgroupWidth {
                 requested: SUFFIX_FIELDS,
                 execution_width: suffix_finalize_limits.thread_execution_width,
@@ -777,6 +782,7 @@ impl SolinasMetal {
             table_offsets,
             rows_per_threadgroup: config.rows_per_threadgroup,
             threads_per_threadgroup,
+            suffix_finalize_threads_per_threadgroup,
             cycle_threads_per_threadgroup,
             cycle_bind_threads_per_threadgroup,
             cycle_e_in_capacity,
@@ -926,7 +932,7 @@ impl AddressPhaseSequence {
                     depth: 1,
                 },
                 MTLSize {
-                    width: SUFFIX_FIELDS as u64,
+                    width: self.suffix_finalize_threads_per_threadgroup as u64,
                     height: 1,
                     depth: 1,
                 },

@@ -37,8 +37,6 @@ pub use instruction_claim_reduction::InstructionClaimReductionMetalConfig;
 pub use instruction_input::{InstructionInputDenseStorageMode, InstructionInputMetalConfig};
 pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 pub use instruction_read_raf::InstructionReadRafMetalConfig;
-#[cfg(test)]
-pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
 pub use ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
 #[cfg(feature = "test-utils")]
 pub use ram_hamming_booleanity::{

@@ -1,6 +1,7 @@
 use std::{mem::size_of, slice, time::Duration};
 
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::{Ring as _, Zero as _};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer, MTLSize,
 };
@@ -149,7 +150,7 @@ fn first_b_coefficients(
 fn second_b_coefficients(
     lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
 ) -> [AkitaField; OUTER_REMAINDER_SECOND_B_FIELDS] {
-    let two_pow_64 = AkitaField::from_canonical_u128(1_u128 << 64);
+    let two_pow_64 = AkitaField::from_u128(1_u128 << 64);
     [
         lagrange[0],
         -lagrange[0],

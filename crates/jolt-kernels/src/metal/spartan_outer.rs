@@ -7,7 +7,8 @@ use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZ
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
 use jolt_claims::{InputClaims as _, OutputClaims as _};
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::{One as _, Zero as _};
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
@@ -1728,6 +1729,7 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::{NoChallenges, OutputClaims as _};
+    use jolt_field::{One as _, Ring as _, Zero as _};
     use jolt_poly::lagrange::centered_lagrange_kernel;
     use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
@@ -1756,7 +1758,7 @@ mod tests {
     };
     use crate::uniskip::UniskipKernel;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
     use jolt_poly::EqPolynomial;
 
     fn variable_field_value(row: &SpartanOuterRow, index: usize) -> AkitaField {

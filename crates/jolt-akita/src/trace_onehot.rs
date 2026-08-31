@@ -273,10 +273,48 @@ impl K16FourRowShiftGroups {
 ///
 /// `fill_row` must overwrite all of `selected_rows`. Byte zero means no committed
 /// entry unless [`TraceOneHotRows::committed_digit_zero_mask`] marks the column.
+#[derive(Clone, Copy, Debug)]
+pub struct TracePackedSelectors<'a> {
+    row_major: &'a [u8],
+    active_zero_rows: &'a [u64],
+    zero_column_mask: u64,
+}
+
+impl<'a> TracePackedSelectors<'a> {
+    #[must_use]
+    pub fn new(row_major: &'a [u8], active_zero_rows: &'a [u64], zero_column_mask: u64) -> Self {
+        Self {
+            row_major,
+            active_zero_rows,
+            zero_column_mask,
+        }
+    }
+
+    #[must_use]
+    pub fn row_major(self) -> &'a [u8] {
+        self.row_major
+    }
+
+    #[must_use]
+    pub fn active_zero_rows(self) -> &'a [u64] {
+        self.active_zero_rows
+    }
+
+    #[must_use]
+    pub fn zero_column_mask(self) -> u64 {
+        self.zero_column_mask
+    }
+}
+
 pub trait TraceOneHotRows: Send + Sync + 'static {
     fn num_rows(&self) -> usize;
     fn num_columns(&self) -> usize;
     fn fill_row(&self, row: usize, selected_rows: &mut [u8]);
+
+    /// Borrows a resident row-major representation when the source has one.
+    fn packed_selectors(&self) -> Option<TracePackedSelectors<'_>> {
+        None
+    }
 
     /// Bit `i` is set when column `i` commits row zero in this trace row.
     fn committed_digit_zero_mask(&self, _row: usize) -> u64 {
@@ -2409,6 +2447,46 @@ impl<const D: usize> RootCommitKernel<TracePackedOneHotView<'_, D>, AkitaField, 
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize> RootCommitKernel<TracePackedOneHotView<'_, D>, AkitaField, D>
+    for akita_metal::MetalBackend
+{
+    fn commit_inner_group(
+        &self,
+        prepared: &Self::PreparedSetup,
+        sources: Vec<TracePackedOneHotView<'_, D>>,
+        plan: CommitInnerPlan,
+    ) -> Result<Vec<CommitInnerWitness<AkitaField>>, AkitaError> {
+        let [view] = sources.as_slice() else {
+            return Err(AkitaError::InvalidInput(format!(
+                "Metal trace commitment requires one physical source, got {}",
+                sources.len()
+            )));
+        };
+        let source = view.source();
+        let Some(selectors) = source.rows.packed_selectors() else {
+            let cpu = self.cpu_backend();
+            return commit_packed::<D>(&cpu, prepared.cpu_prepared(), source, plan)
+                .map(|witness| vec![witness]);
+        };
+        if D != 512 {
+            let cpu = self.cpu_backend();
+            return commit_packed::<D>(&cpu, prepared.cpu_prepared(), source, plan)
+                .map(|witness| vec![witness]);
+        }
+        let packed = akita_metal::PackedOneHotCommitView::new_with_active_zero_rows(
+            source.one_hot_k,
+            source.column_capacity,
+            source.num_columns,
+            selectors.row_major(),
+            selectors.active_zero_rows(),
+            selectors.zero_column_mask(),
+        )?;
+        self.commit_packed_onehot::<D>(prepared, packed, plan)
+            .map(|witness| vec![witness])
+    }
+}
+
 impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField, D> for CpuBackend {
     fn evaluate_and_fold(
         &self,
@@ -2858,6 +2936,132 @@ mod tests {
                 .filter(|&column| self.selected_row(row, column) == 0)
                 .map_or(0, |column| 1u64 << column)
         }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    struct ResidentTestRows {
+        columns: usize,
+        row_major: Vec<u8>,
+        active_zero_rows: Vec<u64>,
+        zero_column_mask: u64,
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    impl TraceOneHotRows for ResidentTestRows {
+        fn num_rows(&self) -> usize {
+            self.row_major.len() / self.columns
+        }
+
+        fn num_columns(&self) -> usize {
+            self.columns
+        }
+
+        fn fill_row(&self, row: usize, selected_rows: &mut [u8]) {
+            let start = row * self.columns;
+            selected_rows.copy_from_slice(&self.row_major[start..start + self.columns]);
+        }
+
+        fn packed_selectors(&self) -> Option<TracePackedSelectors<'_>> {
+            Some(TracePackedSelectors::new(
+                &self.row_major,
+                &self.active_zero_rows,
+                self.zero_column_mask,
+            ))
+        }
+
+        fn committed_digit_zero_mask(&self, row: usize) -> u64 {
+            let active = self.active_zero_rows[row / u64::BITS as usize]
+                & (1u64 << (row % u64::BITS as usize))
+                != 0;
+            if active {
+                self.zero_column_mask
+            } else {
+                0
+            }
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_root_commit_matches_the_cpu_trace_kernel() {
+        use akita_types::SetupMatrixCapacity;
+
+        const D: usize = 512;
+        const K: usize = 256;
+        const ROWS: usize = 4096;
+        const COLUMNS: usize = 5;
+        const CAPACITY: usize = 32;
+        const POSITIONS: usize = 64;
+
+        let row_major = (0..ROWS * COLUMNS)
+            .map(|index| {
+                if index.is_multiple_of(97) {
+                    ((index.wrapping_mul(73) % 255) + 1) as u8
+                } else {
+                    0
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut active_zero_rows = vec![0u64; ROWS / u64::BITS as usize];
+        for row in (0..ROWS).step_by(11) {
+            active_zero_rows[row / u64::BITS as usize] |= 1u64 << (row % u64::BITS as usize);
+        }
+        let source = TracePackedOneHot::new(
+            K,
+            D,
+            CAPACITY,
+            Arc::new(ResidentTestRows {
+                columns: COLUMNS,
+                row_major,
+                active_zero_rows,
+                zero_column_mask: 1,
+            }),
+        )
+        .unwrap();
+        let plan = CommitInnerPlan {
+            n_a: 1,
+            num_positions_per_block: POSITIONS,
+            num_digits_inner: 1,
+            log_basis_inner: 3,
+        };
+        let setup = akita_prover::AkitaProverSetup::<AkitaField>::generate_with_capacity(
+            RootPolyMeta::num_vars(&source),
+            1,
+            SetupMatrixCapacity {
+                num_field_elements: POSITIONS * D,
+            },
+        )
+        .unwrap();
+
+        let cpu = CpuBackend::DEFAULT;
+        let cpu_prepared = cpu.prepare_setup(&setup).unwrap();
+        let cpu_view =
+            <TracePackedOneHot as RootCommitSource<AkitaField, D>>::commit_view(&source).unwrap();
+        let cpu_witness = <CpuBackend as RootCommitKernel<_, AkitaField, D>>::commit_inner_group(
+            &cpu,
+            &cpu_prepared,
+            vec![cpu_view],
+            plan,
+        )
+        .unwrap()
+        .remove(0);
+
+        let metal = akita_metal::MetalBackend::new(akita_metal::MetalExecutionPolicy::RequireMetal)
+            .unwrap();
+        let metal_prepared = metal.prepare_setup(&setup).unwrap();
+        let metal_view =
+            <TracePackedOneHot as RootCommitSource<AkitaField, D>>::commit_view(&source).unwrap();
+        let metal_witness =
+            <akita_metal::MetalBackend as RootCommitKernel<_, AkitaField, D>>::commit_inner_group(
+                &metal,
+                &metal_prepared,
+                vec![metal_view],
+                plan,
+            )
+            .unwrap()
+            .remove(0);
+
+        assert_eq!(metal_witness.inner_rows, cpu_witness.inner_rows);
     }
 
     fn assert_ring_mapping<const D: usize>(

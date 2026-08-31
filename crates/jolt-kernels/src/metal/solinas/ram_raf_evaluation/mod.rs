@@ -2,7 +2,7 @@
 
 use std::mem::{align_of, size_of};
 
-use jolt_field::Field;
+use jolt_field::{Field, JoltField};
 use jolt_poly::EqPolynomial;
 use thiserror::Error;
 
@@ -404,7 +404,7 @@ impl RamRafDeviceLimits {
 }
 
 /// Builds the two small big-endian equality tables; it never materializes `T` fields.
-pub fn split_equality<F: Field>(point: &[F]) -> Result<(Vec<F>, Vec<F>), RamRafError> {
+pub fn split_equality<F: JoltField>(point: &[F]) -> Result<(Vec<F>, Vec<F>), RamRafError> {
     if point.len() < RAM_RAF_INNER_LOG2 {
         return Err(RamRafError::PointTooShort { got: point.len() });
     }
@@ -700,7 +700,8 @@ fn shader_count(label: &'static str, value: usize) -> Result<u32, RamRafError> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tail property test setup")]
 mod tests {
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
+    use jolt_field::Ring as _;
 
     use super::*;
 

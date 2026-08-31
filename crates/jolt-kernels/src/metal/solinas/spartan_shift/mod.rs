@@ -2,7 +2,7 @@
 
 use std::mem::{align_of, size_of};
 
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
 use thiserror::Error;
 
@@ -718,14 +718,14 @@ pub struct SpartanShiftOutputs<F> {
 }
 
 /// Mixed shader multiplier order: `gamma`, `gamma^2`, `gamma^3`.
-pub fn mixed_gamma_multipliers<F: Field>(gamma: F) -> [F; 3] {
+pub fn mixed_gamma_multipliers<F: JoltField>(gamma: F) -> [F; 3] {
     let powers = gamma_powers(gamma);
     [powers[1], powers[2], powers[3]]
 }
 
 /// Mixed shader weight order: `eq(r_outer_hi)` followed by
 /// `gamma^4 * eq(r_product_hi)`.
-pub fn mixed_high_weights<F: Field>(
+pub fn mixed_high_weights<F: JoltField>(
     geometry: SpartanShiftGeometry,
     r_outer: &[F],
     r_product: &[F],
@@ -748,7 +748,7 @@ pub fn mixed_high_weights<F: Field>(
     reason = "the low index addresses all four output tables"
 )]
 #[cfg(test)]
-pub(crate) fn build_prefix_reference<F: Field>(
+pub(crate) fn build_prefix_reference<F: JoltField>(
     geometry: SpartanShiftGeometry,
     planes: SpartanShiftNativePlanes<'_>,
     r_outer: &[F],
@@ -785,7 +785,7 @@ pub(crate) fn build_prefix_reference<F: Field>(
     })
 }
 
-fn prefix_round_endpoints<F: Field>(
+fn prefix_round_endpoints<F: JoltField>(
     tables: &SpartanShiftPrefixTables<F>,
 ) -> Result<[F; 2], SpartanShiftOracleError> {
     let length = tables.p[0].len();
@@ -815,7 +815,7 @@ fn prefix_round_endpoints<F: Field>(
     Ok(endpoints.map(F::Accumulator::reduce))
 }
 
-pub fn prefix_round<F: Field>(
+pub fn prefix_round<F: JoltField>(
     previous_claim: F,
     tables: &SpartanShiftPrefixTables<F>,
 ) -> Result<UnivariatePoly<F>, SpartanShiftOracleError> {
@@ -826,7 +826,7 @@ pub fn prefix_round<F: Field>(
     ))
 }
 
-pub fn bind_prefix_tables<F: Field>(
+pub fn bind_prefix_tables<F: JoltField>(
     tables: &mut SpartanShiftPrefixTables<F>,
     challenge: F,
 ) -> Result<(), SpartanShiftOracleError> {
@@ -837,7 +837,7 @@ pub fn bind_prefix_tables<F: Field>(
 }
 
 #[cfg(test)]
-fn fold_native_prefix<F: Field>(
+fn fold_native_prefix<F: JoltField>(
     geometry: SpartanShiftGeometry,
     planes: SpartanShiftNativePlanes<'_>,
     prefix_challenges: &[F],
@@ -872,7 +872,7 @@ fn fold_native_prefix<F: Field>(
     Ok(outputs)
 }
 
-pub fn build_dense_state<F: Field>(
+pub fn build_dense_state<F: JoltField>(
     geometry: SpartanShiftGeometry,
     outputs: SpartanShiftOutputs<Vec<F>>,
     r_outer: &[F],
@@ -905,7 +905,7 @@ pub fn build_dense_state<F: Field>(
     })
 }
 
-fn dense_round_endpoints<F: Field>(
+fn dense_round_endpoints<F: JoltField>(
     state: &SpartanShiftDenseState<F>,
     gamma: F,
 ) -> Result<[F; 2], SpartanShiftOracleError> {
@@ -938,7 +938,7 @@ fn dense_round_endpoints<F: Field>(
     Ok(endpoints.map(F::Accumulator::reduce))
 }
 
-pub fn dense_round<F: Field>(
+pub fn dense_round<F: JoltField>(
     previous_claim: F,
     state: &SpartanShiftDenseState<F>,
     gamma: F,
@@ -950,7 +950,7 @@ pub fn dense_round<F: Field>(
     ))
 }
 
-pub fn bind_dense_state<F: Field>(
+pub fn bind_dense_state<F: JoltField>(
     state: &mut SpartanShiftDenseState<F>,
     challenge: F,
 ) -> Result<(), SpartanShiftOracleError> {
@@ -968,7 +968,7 @@ pub fn bind_dense_state<F: Field>(
     Ok(())
 }
 
-pub fn final_outputs<F: Field>(
+pub fn final_outputs<F: JoltField>(
     state: &SpartanShiftDenseState<F>,
 ) -> Result<SpartanShiftOutputs<F>, SpartanShiftOracleError> {
     validate_dense_lengths(state, 1)?;
@@ -982,7 +982,7 @@ pub fn final_outputs<F: Field>(
 }
 
 #[cfg(test)]
-fn validate_oracle_inputs<F: Field>(
+fn validate_oracle_inputs<F: JoltField>(
     geometry: SpartanShiftGeometry,
     planes: SpartanShiftNativePlanes<'_>,
     r_outer: &[F],
@@ -1003,7 +1003,7 @@ fn validate_oracle_inputs<F: Field>(
     Ok(())
 }
 
-fn split_point<F: Field>(
+fn split_point<F: JoltField>(
     geometry: SpartanShiftGeometry,
     point: &[F],
 ) -> Result<(&[F], &[F]), SpartanShiftOracleError> {
@@ -1017,7 +1017,7 @@ fn split_point<F: Field>(
     Ok(point.split_at(geometry.suffix_vars))
 }
 
-pub fn prefix_fold_weights<F: Field>(
+pub fn prefix_fold_weights<F: JoltField>(
     geometry: SpartanShiftGeometry,
     challenges: &[F],
 ) -> Result<Vec<F>, SpartanShiftOracleError> {
@@ -1031,7 +1031,7 @@ pub fn prefix_fold_weights<F: Field>(
     Ok(EqPolynomial::<F>::evals(&point, None))
 }
 
-fn partially_bound_eq_plus_one<F: Field>(
+fn partially_bound_eq_plus_one<F: JoltField>(
     geometry: SpartanShiftGeometry,
     point: &[F],
     prefix_challenges: &[F],
@@ -1056,7 +1056,7 @@ fn partially_bound_eq_plus_one<F: Field>(
 }
 
 #[cfg(test)]
-fn outer_value<F: Field>(row: SpartanShiftNativeRow, gamma_powers: [F; 5]) -> F {
+fn outer_value<F: JoltField>(row: SpartanShiftNativeRow, gamma_powers: [F; 5]) -> F {
     let mut value = F::from_u64(row.unexpanded_pc) + gamma_powers[1] * F::from_u64(row.pc);
     if row.is_virtual {
         value += gamma_powers[2];
@@ -1068,7 +1068,7 @@ fn outer_value<F: Field>(row: SpartanShiftNativeRow, gamma_powers: [F; 5]) -> F 
 }
 
 #[cfg(test)]
-fn product_value<F: Field>(row: SpartanShiftNativeRow, gamma_four: F) -> F {
+fn product_value<F: JoltField>(row: SpartanShiftNativeRow, gamma_four: F) -> F {
     if row.is_noop {
         F::zero()
     } else {
@@ -1076,7 +1076,7 @@ fn product_value<F: Field>(row: SpartanShiftNativeRow, gamma_four: F) -> F {
     }
 }
 
-fn gamma_powers<F: Field>(gamma: F) -> [F; 5] {
+fn gamma_powers<F: JoltField>(gamma: F) -> [F; 5] {
     let mut powers = [F::one(); 5];
     for index in 1..5 {
         powers[index] = powers[index - 1] * gamma;
@@ -1084,12 +1084,15 @@ fn gamma_powers<F: Field>(gamma: F) -> [F; 5] {
     powers
 }
 
-fn extend_pair<F: Field>(table: &[F], pair: usize, t: F) -> F {
+fn extend_pair<F: JoltField>(table: &[F], pair: usize, t: F) -> F {
     let low = table[2 * pair];
     low + t * (table[2 * pair + 1] - low)
 }
 
-fn bind_table<F: Field>(table: &mut Vec<F>, challenge: F) -> Result<(), SpartanShiftOracleError> {
+fn bind_table<F: JoltField>(
+    table: &mut Vec<F>,
+    challenge: F,
+) -> Result<(), SpartanShiftOracleError> {
     if table.len() < 2 || !table.len().is_power_of_two() {
         return Err(SpartanShiftOracleError::InvalidRoundLength(table.len()));
     }
@@ -1102,7 +1105,7 @@ fn bind_table<F: Field>(table: &mut Vec<F>, challenge: F) -> Result<(), SpartanS
     Ok(())
 }
 
-fn validate_dense_lengths<F: Field>(
+fn validate_dense_lengths<F: JoltField>(
     state: &SpartanShiftDenseState<F>,
     expected: usize,
 ) -> Result<(), SpartanShiftOracleError> {
@@ -1244,7 +1247,8 @@ fn checked_sum(_name: &'static str, values: &[usize]) -> Result<usize, SpartanSh
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_field::AkitaField;
+    use jolt_field::Prime128OffsetA7F7 as AkitaField;
+    use jolt_field::Ring as _;
 
     use super::*;
 

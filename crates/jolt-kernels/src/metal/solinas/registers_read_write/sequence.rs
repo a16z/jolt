@@ -8,12 +8,14 @@ use std::{
 };
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::{Field as _, One as _, Zero as _};
 use jolt_poly::EqPolynomial;
+#[cfg(any(test, feature = "test-utils"))]
+use metal::{foreign_types::ForeignType, CommandBuffer};
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer, CommandQueue,
-    ComputePipelineState, FunctionConstantValues, MTLDataType, MTLResourceOptions, MTLSize,
-    NSRange,
+    objc::rc::autoreleasepool, Buffer, CommandQueue, ComputePipelineState, FunctionConstantValues,
+    MTLDataType, MTLResourceOptions, MTLSize, NSRange,
 };
 
 use super::{
@@ -44,9 +46,11 @@ use super::{
 };
 use crate::metal::solinas::registers_claim_reduction::RegistersClaimResidentRdPlane;
 use crate::metal::solinas::runtime::PooledPrivateBuffer;
+#[cfg(feature = "test-utils")]
+use crate::metal::solinas::PipelineLimits;
 use crate::metal::solinas::{
     completed_command_gpu_time, encode_column_reductions, set_inline_bytes, Fp128, MetalError,
-    PipelineLimits, RegistersReadWriteStage1Source, SolinasMetal,
+    RegistersReadWriteStage1Source, SolinasMetal,
 };
 use crate::optimized::registers_read_write::{
     AlignedCompactRegisterIndices, AlignedPackedRegisterRows, BoundRegisterCycleRoot,
@@ -67,9 +71,13 @@ const DIRECT_COOPERATIVE_WORK_ITEMS_PER_GROUP: usize = REGISTERS_READ_WRITE_THRE
 const STATE_TILE_BLOCKS: usize = REGISTERS_READ_WRITE_THREADS;
 const PRIVATE_PAYLOAD_POOL_THRESHOLD_BYTES: u64 = 1;
 const PRIVATE_PAYLOAD_POOL_CAP_BYTES: u64 = 32 * 1024 * 1024 * 1024;
+#[cfg(any(test, feature = "test-utils"))]
 const SOURCE_PRIMER_PAGE_BYTES: usize = 16 * 1024;
+#[cfg(any(test, feature = "test-utils"))]
 const SOURCE_PRIMER_THREADS_PER_THREADGROUP: usize = 256;
+#[cfg(any(test, feature = "test-utils"))]
 const SOURCE_PRIMER_THREADGROUPS: usize = 256;
+#[cfg(any(test, feature = "test-utils"))]
 const SOURCE_PRIMER_THREADS: usize =
     SOURCE_PRIMER_THREADS_PER_THREADGROUP * SOURCE_PRIMER_THREADGROUPS;
 
@@ -357,16 +365,22 @@ pub(crate) struct PendingRegistersReadWriteStage1Pipelines {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) struct RegistersReadWriteSourcePrimerObservation {
     pub(crate) pages: usize,
     pub(crate) read_bytes: usize,
+    #[cfg(feature = "test-utils")]
     pub(crate) output_bytes: usize,
+    #[cfg(feature = "test-utils")]
     pub(crate) total_wall: Duration,
+    #[cfg(feature = "test-utils")]
     pub(crate) join_wall: Duration,
+    #[cfg(feature = "test-utils")]
     pub(crate) gpu_active: Duration,
 }
 
 #[must_use = "the resident-source primer must be joined before the source is consumed"]
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) struct PendingRegistersReadWriteSourcePrimer {
     sources: [Buffer; 3],
     source_identities: [usize; 3],
@@ -375,6 +389,7 @@ pub(crate) struct PendingRegistersReadWriteSourcePrimer {
     _queue: CommandQueue,
     pages: usize,
     read_bytes: usize,
+    #[cfg(feature = "test-utils")]
     started: Instant,
 }
 
@@ -385,7 +400,7 @@ impl allocative::Allocative for PendingRegistersReadWriteStage1Pipelines {
     }
 }
 
-#[cfg(feature = "allocative")]
+#[cfg(all(feature = "allocative", any(test, feature = "test-utils")))]
 impl allocative::Allocative for PendingRegistersReadWriteSourcePrimer {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         visitor.enter_self_sized::<Self>().exit();
@@ -400,6 +415,7 @@ impl Drop for PendingRegistersReadWriteStage1Pipelines {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl Drop for PendingRegistersReadWriteSourcePrimer {
     fn drop(&mut self) {
         if let Some(command) = &self.command {
@@ -426,7 +442,9 @@ impl PendingRegistersReadWriteStage1Pipelines {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl PendingRegistersReadWriteSourcePrimer {
+    #[cfg(feature = "test-utils")]
     pub(crate) fn join(mut self) -> Result<RegistersReadWriteSourcePrimerObservation, MetalError> {
         self.complete()
     }
@@ -449,17 +467,25 @@ impl PendingRegistersReadWriteSourcePrimer {
             .ok_or(MetalError::InvalidRegistersReadWriteState(
                 "registers read-write source-primer command was already joined",
             ))?;
+        #[cfg(feature = "test-utils")]
         let join_started = Instant::now();
         command.wait_until_completed();
+        #[cfg(feature = "test-utils")]
         let join_wall = join_started.elapsed();
+        #[cfg(feature = "test-utils")]
         let total_wall = self.started.elapsed();
+        #[cfg(feature = "test-utils")]
         let gpu_active = completed_command_gpu_time(&command)?;
         Ok(RegistersReadWriteSourcePrimerObservation {
             pages: self.pages,
             read_bytes: self.read_bytes,
+            #[cfg(feature = "test-utils")]
             output_bytes: self.checksums.length() as usize,
+            #[cfg(feature = "test-utils")]
             total_wall,
+            #[cfg(feature = "test-utils")]
             join_wall,
+            #[cfg(feature = "test-utils")]
             gpu_active,
         })
     }
@@ -494,6 +520,7 @@ pub(crate) struct RegistersReadWriteCycleObservation {
     pub(crate) gpu_active: Duration,
     pub(crate) prefill_gpu_active: Duration,
     pub(crate) allocation: Duration,
+    #[cfg(feature = "test-utils")]
     pub(crate) live_entries: usize,
     pub(crate) resident_bytes: usize,
     pub(crate) peak_transition_bytes: usize,
@@ -600,6 +627,7 @@ pub(crate) struct RegistersReadWriteCycleSequence {
     rs1_weights: Option<Vec<AkitaField>>,
     gamma: AkitaField,
     threads: usize,
+    #[cfg(feature = "test-utils")]
     limits: PipelineLimits,
     private_buffer_pool_epoch: u64,
 }
@@ -765,6 +793,7 @@ impl SolinasMetal {
         Ok(())
     }
 
+    #[cfg(feature = "test-utils")]
     pub(crate) fn submit_registers_read_write_source_primer(
         &self,
         source: &RegistersReadWriteStage1Source,
@@ -793,6 +822,7 @@ impl SolinasMetal {
         )
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     fn submit_registers_read_write_source_primer_buffers(
         &self,
         sources: [Buffer; 3],
@@ -848,7 +878,7 @@ impl SolinasMetal {
             .new_buffer(checksum_bytes, MTLResourceOptions::StorageModeShared);
         let queue = self.device.new_command_queue();
         let command = queue.new_command_buffer().to_owned();
-        let started = autoreleasepool(|| {
+        let _started = autoreleasepool(|| {
             let encoder = command.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&pipeline);
             for (index, source) in sources.iter().enumerate() {
@@ -882,7 +912,8 @@ impl SolinasMetal {
             _queue: queue,
             pages,
             read_bytes,
-            started,
+            #[cfg(feature = "test-utils")]
+            started: _started,
         })
     }
 
@@ -1435,6 +1466,7 @@ impl SolinasMetal {
             rs1_weights: uses_operand_carry(log_t).then(|| vec![AkitaField::one()]),
             gamma,
             threads,
+            #[cfg(feature = "test-utils")]
             limits,
             private_buffer_pool_epoch,
         })
@@ -1776,6 +1808,7 @@ impl RegistersReadWriteCycleSequence {
             gpu_active,
             prefill_gpu_active: Duration::ZERO,
             allocation,
+            #[cfg(feature = "test-utils")]
             live_entries: 0,
             resident_bytes,
             peak_transition_bytes: resident_bytes,
@@ -2125,6 +2158,7 @@ impl RegistersReadWriteCycleSequence {
                 gpu_active,
                 prefill_gpu_active: Duration::ZERO,
                 allocation,
+                #[cfg(feature = "test-utils")]
                 live_entries: 0,
                 resident_bytes,
                 peak_transition_bytes: peak_transition_bytes.max(resident_bytes),
@@ -2198,6 +2232,7 @@ impl RegistersReadWriteCycleSequence {
                 gpu_active,
                 prefill_gpu_active,
                 allocation,
+                #[cfg(feature = "test-utils")]
                 live_entries: 0,
                 resident_bytes,
                 peak_transition_bytes: peak_transition_bytes.max(resident_bytes),
@@ -2446,6 +2481,7 @@ impl RegistersReadWriteCycleSequence {
             gpu_active,
             prefill_gpu_active,
             allocation,
+            #[cfg(feature = "test-utils")]
             live_entries: 0,
             resident_bytes,
             peak_transition_bytes,
@@ -2753,10 +2789,12 @@ impl RegistersReadWriteCycleSequence {
         Ok((combined_claim, carried_rs1_claim))
     }
 
+    #[cfg(feature = "test-utils")]
     pub(crate) const fn limits(&self) -> PipelineLimits {
         self.limits
     }
 
+    #[cfg(feature = "test-utils")]
     pub(crate) const fn threads(&self) -> usize {
         self.threads
     }
@@ -4508,7 +4546,11 @@ fn checked_u64(value: usize) -> Result<u64, MetalError> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "Metal source-primer oracle setup")]
+#[expect(
+    clippy::items_after_test_module,
+    clippy::unwrap_used,
+    reason = "Metal source-primer oracle setup"
+)]
 mod tests {
     use super::*;
     use crate::metal::solinas::buffer_from_slice;

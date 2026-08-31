@@ -2,7 +2,8 @@ use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
 
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
@@ -730,16 +731,6 @@ impl MetalInstructionReadRafKernel {
             kernel.address_sequence = Some(Box::new(sequence));
         }
         Ok(kernel)
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn metal_rounds(&self) -> usize {
-        self.metal_rounds
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn metal_address_phases(&self) -> usize {
-        self.metal_address_phases
     }
 
     fn install_next_address_phase(&mut self) -> Result<(), SumcheckError<AkitaField>> {

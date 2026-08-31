@@ -2,7 +2,8 @@ use std::mem::size_of;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
-use jolt_field::AkitaField;
+use jolt_field::Prime128OffsetA7F7 as AkitaField;
+use jolt_field::Zero as _;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -279,6 +280,13 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
 }
 
 impl MetalBackend {
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            clippy::unused_self,
+            reason = "test builds record backend dispatch counters"
+        )
+    )]
     fn finish_metal_registers_val_prepare(
         &self,
         invocation: RegistersValFirstMessageInvocation,
@@ -614,6 +622,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_claims::NoChallenges;
+    use jolt_field::{One as _, Ring as _};
     use jolt_poly::Polynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage5::registers_val_evaluation::{

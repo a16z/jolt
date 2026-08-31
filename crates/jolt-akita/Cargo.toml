@@ -8,6 +8,10 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 [lints]
 workspace = true
 
+[features]
+default = []
+metal = ["dep:akita-metal"]
+
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
@@ -29,6 +33,9 @@ jolt-transcript.workspace = true
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+akita-metal = { workspace = true, optional = true, features = ["parallel"] }
 
 [dev-dependencies]
 criterion = { workspace = true }
