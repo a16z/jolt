@@ -186,6 +186,9 @@ macro_rules! for_each_instruction_kind {
                 VirtualWindowMaskB => WindowMaskB => "jolt.virtual.windowmaskb",
                 VirtualWindowMaskH => WindowMaskH => "jolt.virtual.windowmaskh",
                 VirtualAlignAddr => AlignAddr => "jolt.virtual.alignaddr",
+                VirtualShiftDataB => ShiftDataB => "jolt.virtual.shiftdatab",
+                VirtualShiftDataH => ShiftDataH => "jolt.virtual.shiftdatah",
+                VirtualShiftDataW => ShiftDataW => "jolt.virtual.shiftdataw",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -297,7 +300,9 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualPext => Pext => (0x009b, "jolt.virtual.pext"),
                 VirtualWindowMaskB => WindowMaskB => (0x009c, "jolt.virtual.windowmaskb"),
                 VirtualWindowMaskH => WindowMaskH => (0x009d, "jolt.virtual.windowmaskh"),
-                // 0x009e-0x00a0 are reserved by the narrow-store slice (ShiftDataB/H/W).
+                VirtualShiftDataB => ShiftDataB => (0x009e, "jolt.virtual.shiftdatab"),
+                VirtualShiftDataH => ShiftDataH => (0x009f, "jolt.virtual.shiftdatah"),
+                VirtualShiftDataW => ShiftDataW => (0x00a0, "jolt.virtual.shiftdataw"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

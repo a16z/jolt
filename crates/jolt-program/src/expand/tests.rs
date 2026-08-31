@@ -502,6 +502,9 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // began taking the immediate directly, and again when the fused-load
     // virtual opcodes moved to 0x009a-0x009d after the W-shift tags took
     // 0x0091-0x0099 (kinds serialize as tags, so renumbering shifts hashes).
+    // A further 27 (SB/SH/SW, 8 each, plus 3 SCW) were re-baselined when the
+    // narrow stores moved to the window-mask + ANDN + shift-data sequences
+    // at tags 0x009e-0x00a0.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a
