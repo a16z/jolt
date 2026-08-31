@@ -8,8 +8,8 @@ use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_pcs::AkitaError;
 use akita_schedules::ResolvedScheduleRow;
 use akita_types::{
-    canonical_proof_shape, CompressionChainPlan, GroupCommitPhaseParams, OpeningClaimsLayout,
-    OpeningScheduleSelection, PolynomialGroupLayout,
+    canonical_proof_shape, CompressionChainPlan, FoldSchedule, GroupCommitPhaseParams,
+    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
 };
 use jolt_field::Zero;
 use jolt_openings::OpeningsError;
@@ -299,7 +299,7 @@ fn field_elem_bytes() -> usize {
 
 fn validate_proof_shape(
     shape: &AkitaBackendProofShape,
-    schedule: &akita_types::FoldSchedule,
+    schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), OpeningsError> {
     let expected = canonical_proof_shape(schedule, layout, AkitaConfig::EXT_DEGREE)

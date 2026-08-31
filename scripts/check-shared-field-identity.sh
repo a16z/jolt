@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Shared-field identity check for the post-cutover workspace.
 #
-# After the Akita cutover (Jolt #1684 landed the rebuilt `jolt-field` as the
-# single shared field crate; Akita #307 rebound Akita onto it and deleted
-# `akita-field`), the workspace must resolve exactly one `jolt-field` package
+# The shared-field cutover chain is Jolt #1810 (rebuilt `jolt-field`), Akita
+# #447 (Akita rebound onto it and deleted `akita-field`), and this PR, Jolt
+# #1796 (downstream completion). The workspace must resolve exactly one `jolt-field` package
 # identity — the workspace path, unified with Akita's Git pin via the
 # `[patch]` table in the root manifest — and no `akita-field` identity at
 # all: the crate no longer exists, so any occurrence means a stale pre-cutover

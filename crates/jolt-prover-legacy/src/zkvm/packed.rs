@@ -34,7 +34,7 @@ use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, GroupOpeningClaim,
     PrecommittedClaim, PrefixPackedClaims, TransparentObjectSetup,
 };
-use jolt_poly::Polynomial;
+use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{
@@ -413,7 +413,7 @@ fn open_prefix_object<P>(
     transcript: &mut AkitaTranscript,
 ) -> Result<<AkitaScheme as VerifierCommitmentScheme>::Proof, VerifierError>
 where
-    P: jolt_poly::MultilinearPoly<AkitaField> + ?Sized,
+    P: MultilinearPoly<AkitaField> + ?Sized,
 {
     let physical = plan
         .packing()
@@ -2597,7 +2597,6 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 mod advice_object_tests {
     use super::*;
     use jolt_field::Zero;
-    use jolt_poly::MultilinearPoly;
 
     /// A couple of bytes of advice must stay provable: without the packing
     /// plan's capacity padding, the zero-variable dense domain of a one-word

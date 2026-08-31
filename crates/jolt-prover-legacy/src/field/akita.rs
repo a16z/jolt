@@ -1,8 +1,8 @@
 //! `JoltField` implementation for the Akita fp128 field
 //! (`p = 2^128 - 2^32 + 22537`, a pseudo-Mersenne prime).
 //!
-//! Since the Akita cutover (Akita #307 on top of Jolt #1684) the Akita field
-//! type IS the shared `jolt_field::Fp128` at Akita's modulus
+//! The shared-field cutover chain (Jolt #1810, Akita #447, and this PR,
+//! Jolt #1796) makes the Akita field type the shared `jolt_field::Fp128` at Akita's modulus
 //! (`Prime128OffsetA7F7`), so this module no longer bridges two field
 //! implementations. `AkitaFp128` survives as a newtype for orphan-rule
 //! reasons only: this crate's legacy `JoltField` supertraits include foreign
@@ -23,14 +23,14 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use ark_std::rand::Rng;
-use jolt_field::{CanonicalEncoding, Field as SharedField, Ring};
+use jolt_field::{CanonicalEncoding, Field as SharedField, Prime128OffsetA7F7, Ring};
 use num_traits::{One, Zero};
 use std::fmt;
 use std::io::{Read, Write};
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-pub type AkitaField = jolt_field::Prime128OffsetA7F7;
+pub type AkitaField = Prime128OffsetA7F7;
 
 /// The Akita fp128 base field, wrapped so it can implement `JoltField`.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
