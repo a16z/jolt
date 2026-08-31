@@ -97,8 +97,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
             });
         }
         let cycles = 1usize << log_t;
-        // A slice-backed witness serves an owning handle — the value vector
-        // never exists; every pass re-extracts its windows on the fly.
+        // Slice-backed witnesses re-extract rows without retaining a vector.
         let values = BundleStore::<RegisterValuesRow>::resolve(witness, cycles)?;
         let access = values.access();
 
@@ -196,8 +195,7 @@ struct ClaimReductionKernel<F: JoltField> {
     /// The full `τ_low` point (big-endian) the summand's eq factor fixes.
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
-    /// Raw per-cycle `u64` values (window-served when slice-backed), kept
-    /// for the phase-2 regeneration.
+    /// Raw values kept for phase-2 regeneration.
     values: BundleStore<RegisterValuesRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
@@ -243,8 +241,7 @@ impl<F: JoltField> ClaimReductionKernel<F> {
         #[cfg(not(feature = "parallel"))]
         let folds: Vec<[F; 3]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
-        // The raw values only feed this regeneration; drop any retained
-        // vector (an owning handle holds nothing kernel-sized).
+        // Release retained raw values after regeneration.
         self.values = BundleStore::Retained(Vec::new());
 
         let (tau_hi, tau_lo) = self.tau.split_at(self.log_t / 2);

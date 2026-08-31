@@ -1,30 +1,13 @@
-//! Optimized increment claim-reduction (stage 6b) kernel, byte-parity twin of
-//! [`crate::reference::inc_claim_reduction`].
+//! Optimized increment claim reduction (stage 6b).
 //!
-//! Ported legacy technique
-//! (`jolt-prover-legacy/src/zkvm/claim_reductions/increments.rs`):
-//! **paired-eq fusion** — the four upstream eq leaves enter the summand
-//! linearly per increment column, so they collapse into two combined tables
+//! The four eq leaves collapse into two tables:
 //!
 //! `A(j) = eq(r_ram_rw, j) + γ·eq(r_ram_val, j)`
 //! `B(j) = γ²·eq(s_reg_rw, j) + γ³·eq(s_reg_val, j)`
 //!
-//! and the summand is `A·RamInc + B·RdInc`: two fused multiplies per point
-//! with field-identical round messages. Memory shape (none of the four dense
-//! `T`-length field tables the naive port materializes ever exists):
-//!
-//! - `A` and `B` are served from [`PairedEq`] split tables (~4·√T each): each
-//!   eq term factors as `hi[j_hi]·lo[j_lo]`, low-to-high binding touches only
-//!   the `j_lo` tensor factor, and the exhausted lo scalar folds into the hi
-//!   table (the [`super::support::SplitLt`] argument, per term).
-//! - The `RamInc`/`RdInc` columns are read straight from the typed trace
-//!   rows for the first round — the same single-sourced extractors behind
-//!   `oracle_table`, so the values are identical — and the dense bound
-//!   tables (T/2 field elements) appear only at the first bind (the
-//!   stage-5 registers val-evaluation deferral, taken one round further).
-//!
-//! Eval-at-1 recovery and rayon walks as per the [`crate::optimized`]
-//! module docs.
+//! The summand is `A·RamInc + B·RdInc`. [`PairedEq`] stores `A` and `B` in
+//! split tables. Increment columns stay in trace rows until the first bind,
+//! avoiding four `T`-length eq tables and two `T`-length increment tables.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
@@ -52,8 +35,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Stage-6b increment claim reduction: `PrepareKernel` front of the
-/// optimized kernel.
+/// Stage-6b increment claim reduction.
 pub struct OptimizedIncClaimReduction;
 
 /// The two committed increment columns of one cycle.
@@ -105,8 +87,7 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
         );
 
         let incs = if relation.rounds() == 0 {
-            // Single-cycle domain: no bind ever happens, so serve the
-            // (one-entry) dense tables from prepare.
+            // No bind occurs on a single-cycle domain.
             let dense = |id: JoltOpeningId| witness.oracle_table(id.polynomial_id());
             IncState::Dense {
                 ram: Polynomial::new(dense(ram_inc_reduced())?),
@@ -125,15 +106,8 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
     }
 }
 
-/// `s₁·eq(p₁, ·) + s₂·eq(p₂, ·)` served from four ~√T split tables and bound
-/// low-to-high; the scales ride in the hi tables.
-///
-/// Big-endian index `j = j_hi ‖ j_lo`: each term factors as
-/// `hi[j_hi]·lo[j_lo]`, adjacent low-to-high pairs share `j_hi`, and binding
-/// acts linearly on the `j_lo` tensor factor — so served values equal the
-/// dense combined table bound identically (the [`super::support::SplitLt`]
-/// argument, applied per term). Once the lo variables are exhausted the lo
-/// scalars fold into one dense hi-sized table.
+/// `s₁·eq(p₁, ·) + s₂·eq(p₂, ·)` in four ~√T split tables.
+/// Binding folds the exhausted low scalars into one dense high table.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -158,8 +132,7 @@ impl<F: JoltField> PairedEq<F> {
         debug_assert_eq!(p1.len(), p2.len());
         let mid = p1.len() / 2;
         if mid == 0 {
-            // 0 or 1 variables: the dense combined table is at most two
-            // entries.
+            // At most two entries for zero or one variable.
             let mut table = scaled_eq_table(p1, s1);
             for (acc, term) in table.iter_mut().zip(scaled_eq_table(p2, s2)) {
                 *acc += term;
@@ -208,8 +181,7 @@ impl<F: JoltField> PairedEq<F> {
                     lo.truncate(half);
                 }
                 if half == 1 {
-                    // Lo variables exhausted: fold the lo scalars into the
-                    // hi tables and continue densely.
+                    // Fold exhausted low scalars into the high tables.
                     let (s1, s2) = (lo1[0], lo2[0]);
                     let dense: Vec<F> = hi1
                         .iter()
@@ -231,9 +203,7 @@ impl<F: JoltField> PairedEq<F> {
     }
 }
 
-/// The increment columns' lifecycle: typed trace rows until the first bind
-/// (the full-length dense field tables never exist), dense bound tables
-/// afterwards.
+/// Trace rows before the first bind; dense bound tables afterward.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -279,9 +249,7 @@ impl<F: JoltField> IncKernel<F> {
         Ok(())
     }
 
-    /// The first bind over the typed rows: promotes and combines each
-    /// vertical pair directly into the bound dense tables — the same values
-    /// the dense-table bind produces, without the full-length tables.
+    /// Binds trace-row pairs directly into half-length field tables.
     fn materialize_bound(
         &self,
         challenge: F,
@@ -321,8 +289,7 @@ impl<F: JoltField> IncKernel<F> {
         Ok((Polynomial::new(ram), Polynomial::new(rd)))
     }
 
-    /// The summand's evaluations at `t ∈ {0, 2}` for group `y`, from the
-    /// increment columns' `(lo, hi)` pairs.
+    /// Summand evaluations at `t ∈ {0, 2}` for group `y`.
     #[inline]
     fn group_evals(&self, y: usize, ram: (F, F), rd: (F, F)) -> [F; 2] {
         let (a_lo, a_hi) = self.ram_weights.pair(y);
@@ -426,8 +393,7 @@ impl<F: JoltField> SumcheckKernel<F> for IncKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel over the sample backend: dense
-/// committed increment columns with live register and RAM activity.
+/// Byte parity with the reference kernel on the sample backend.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

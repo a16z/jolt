@@ -11,9 +11,8 @@
 //!   no-access cycles), so the address-folded value is a single eq-table
 //!   lookup — `ra_i(r_chunk_i, j) = eq_table_i[chunk_i(address_j)]`, zero
 //!   when the cycle makes no access. `T` lookups per chunk, no grid.
-//! - **Session-carried address column**: the per-cycle addresses come from
-//!   [`SharedRamAddresses::shared`] — one typed trace walk shared with the
-//!   whole optimized RAM family across the proof session.
+//! - **Shared address column**: [`SharedRamAddresses::shared`] supplies one
+//!   address column to the optimized RAM kernels.
 //! - **Gruen split-eq factoring**: `eq(r_cycle, ·)` is never materialized or
 //!   bound; each round emits `s(t) = ℓ(t) · Σ_y E(y) · Π_i ra_i(t, y)` at
 //!   the naive prover's `t = 0..=degree` sample points through the same
@@ -77,10 +76,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
         }
 
         let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        // This is the RAM family's last consumer (booleanity, the only other
-        // 6b reader, prepares earlier and holds its own Arc): remove the
-        // session's copy so the column frees at the lazy fold's
-        // materialization instead of living to the end of the proof.
+        // Last RAM consumer: release the session's address handle.
         let _ = session.take::<SharedRamAddresses>();
         super::ram_trace::validate_addresses(&addresses, 1usize << ram_reduced_address.len())?;
 
@@ -105,8 +101,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
     }
 }
 
-/// Lazy-RA index source: chunk `i` of the per-cycle remapped RAM address,
-/// cold on no-access cycles, off the session-shared address column.
+/// Address chunk `i`, absent on no-access cycles.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
     addresses: Arc<Vec<u64>>,
@@ -171,9 +166,7 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                 )
             },
             |(acc, evals, steps), row, _x_in, e_in| {
-                // `ram_k == 1` commits no RA polynomials; the empty committed
-                // product is 1 (the reference tier's fold over an empty chunk
-                // set), so q(t) degenerates to Σ_y E(y).
+                // With no committed RA polynomials, the product is one.
                 if num_committed == 0 {
                     for value in acc.iter_mut() {
                         *value += e_in;
@@ -439,15 +432,7 @@ mod tests {
         );
     }
 
-    /// `ram_k = 1` commits ZERO RA polynomials (`log_k = 0` → no committed
-    /// chunks): the summand's committed product is the empty product 1, so
-    /// the round messages degenerate to `ℓ(t) · Σ_y E(y)`. The round loop
-    /// used to index out of bounds here (`evals[0]` of an empty vector); it
-    /// now stays in lockstep with the reference kernel through every round
-    /// and the output claims — and the geometry then fails CLOSED at the
-    /// driver's derived-table validation on BOTH kernels, because the
-    /// verifier relation recovers `r_cycle` for `EqCycle` from the first RA
-    /// opening point and there is none.
+    /// Covers the empty committed-RA product when `ram_k = 1`.
     #[test]
     fn zero_committed_chunks_prove_in_parity_and_fail_closed() {
         let seed = 443;

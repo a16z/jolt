@@ -1,29 +1,10 @@
-//! Optimized instruction input-virtualization (stage 3) kernel.
+//! Optimized instruction input virtualization (stage 3).
 //!
-//! The summand is
-//! `eq(r_product, j) · ((is_rs2·rs2 + is_imm·imm) + γ·(is_rs1·rs1 + is_pc·upc))(j)`
-//! — degree 3, with the eq weight factored out via `GruenSplitEqPolynomial`:
-//! each round emits `s(t) = ℓ(t) · Σ_y E_out·E_in · q(t, y)` at the naive
-//! prover's `t = 0..=3` sample points through the same `from_evals`
-//! constructor — byte-identical round polynomials and output claims, with no
-//! `T`-sized eq table materialized or bound.
+//! `GruenSplitEqPolynomial` factors the eq term out of
+//! `eq(r_product, j) · ((is_rs2·rs2 + is_imm·imm) + γ·(is_rs1·rs1 + is_pc·upc))(j)`.
 //!
-//! The eight operand/flag columns stay **native scalars** through round 0
-//! (served from a [`BundleStore`] — a slice-backed witness re-extracts
-//! windows on the fly, so no retained row vector): the round-0 `q(t, y)`
-//! runs on an exact integer pipeline — flag and u64 lanes extend linearly
-//! over `t` as `i64`/`i128`, the `i128` immediate lane through small
-//! Lagrange coefficients into `S256` (`imm(t)·f(t) = f(t)(1−t)·e₀ +
-//! f(t)t·e₁`, coefficients ≤ 12) — folded into the field through the
-//! signed-product accumulator. The field is a ring homomorphism from the
-//! integers, so every `q(t, y)` equals the dense-table computation exactly.
-//! The first bind materializes the eight dense tables directly at `T/2`
-//! (one scatter pass over the rows — deferring further re-runs the window
-//! extraction per round and costs wall).
-//!
-//! The bound eq factor is pinned to the verifier's scalar path by
-//! [`validate_derived_tables`](crate::SumcheckKernel::validate_derived_tables)
-//! (Gruen scalar vs `derive_output_term(EqProduct)`).
+//! Round 0 evaluates native integer rows. The first bind materializes all
+//! eight columns at `T/2`. The bound eq scalar is checked against the verifier.
 
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
@@ -53,9 +34,7 @@ const NUM_TABLES: usize = 8;
 
 use crate::mem::purge_staging;
 
-/// Rounds bound before the late-tail purge that returns the halving dense
-/// tables' freed generations (large enough to sit in the allocator's
-/// large-block cache until then).
+/// Bind count that triggers the late allocator purge.
 const LATE_PURGE_ROUNDS: usize = 8;
 
 /// The parallel scatter grain of the `T/2` table materialization.
@@ -80,9 +59,7 @@ pub struct InstructionInputRow {
 }
 
 impl InstructionInputRow {
-    /// The row's values as field elements, in table order — exactly the
-    /// entries the dense tables hold (same `ToField` conversions as the
-    /// oracle walk).
+    /// Field values in table order.
     #[inline]
     fn field_values<F: JoltField>(&self) -> [F; NUM_TABLES] {
         [
@@ -118,8 +95,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
     }
 }
 
-/// The column state: native rows through round 0, eight dense `T/2` tables
-/// after the first bind.
+/// Native rows through round 0; eight dense tables afterward.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -149,8 +125,7 @@ fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     }
 }
 
-/// `(value at t = 0, step)` of the pair's linear extension, as exact
-/// integers.
+/// Exact `(value at t = 0, step)` for a linear extension.
 #[inline]
 fn ext_u64(even: u64, odd: u64) -> (i128, i128) {
     (i128::from(even), i128::from(odd) - i128::from(even))
@@ -185,12 +160,8 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         })
     }
 
-    /// The first round's `q` evaluations over the native rows: per pair and
-    /// sample point, `left`/`right` are exact integers folded into the field
-    /// through the signed-product accumulator; `Σ e_in·right + γ·Σ e_in·left`
-    /// equals the dense per-point evaluation by distributivity. The manual
-    /// `e_out`/`e_in` fold replicates `GruenSplitEqPolynomial::
-    /// par_fold_out_in` with row-extraction fallibility.
+    /// First-round `q` evaluations over native rows.
+    /// The manual fold permits fallible row extraction.
     fn native_q_evals(
         &self,
         rows: &BundleStore<InstructionInputRow>,
@@ -220,17 +191,14 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 let imm_even = S192::from_i128(even.imm.0);
                 let imm_odd = S192::from_i128(odd.imm.0);
                 for t in 0..POINTS as i64 {
-                    // Flag lanes stay tiny (|f(t)| ≤ 3); u64 lanes fit i128
-                    // (|v(t)| < 2^67); products < 2^70.
+                    // |f(t)| ≤ 3; |v(t)| < 2^67; products < 2^70.
                     let f_rs1 = is_rs1 + t * is_rs1_m;
                     let f_pc = is_pc + t * is_pc_m;
                     let f_rs2 = is_rs2 + t * is_rs2_m;
                     let f_imm = is_imm + t * is_imm_m;
                     let left = i128::from(f_rs1) * (rs1 + i128::from(t) * rs1_m)
                         + i128::from(f_pc) * (upc + i128::from(t) * upc_m);
-                    // `f(t)·imm(t) = f(t)(1−t)·e₀ + f(t)t·e₁`: coefficients
-                    // ≤ 12, so the products stay under 2^131 inside `S256`
-                    // even for full-range `i128` immediates.
+                    // Lagrange coefficients are ≤ 12; products fit `S256`.
                     let mut right =
                         S256::from_i128(i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m));
                     S64::from_i64(f_imm * (1 - t)).fmadd_trunc::<3, 4>(&imm_even, &mut right);
@@ -329,10 +297,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    /// The first bind's direct-to-half-size materialization: entry `y` of
-    /// each table is the once-bound value `even_y + r₀·(odd_y − even_y)`
-    /// recombined from the rows — exactly the low-to-high bind of the
-    /// (never materialized) full tables.
+    /// Materializes the first bind directly at half size.
     fn materialize_half(
         rows: &BundleStore<InstructionInputRow>,
         challenge: F,
@@ -347,8 +312,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }))
         };
 
-        // One pass over the rows scatters into all eight tables at once —
-        // the window extraction is the expensive half of the walk.
+        // Fill all eight tables in one row pass.
         let mut tables: [Vec<F>; NUM_TABLES] =
             core::array::from_fn(|_| unsafe_allocate_zero_vec(half));
         #[cfg(feature = "parallel")]
@@ -401,24 +365,18 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                     Self::materialize_half(rows, challenge, 1 << (self.progress.total() - 1))
                         .map_err(row_extraction_error)?;
                 self.state = InputState::Dense(tables);
-                // Return the pages freed by the retained-rows drop (and the
-                // prepare staging) before the dense rounds stack on top.
+                // Return row and preparation pages before dense rounds.
                 purge_staging(self.progress.total());
             }
             InputState::Dense(tables) => {
-                // In place: eight T/2-sized tables bound out of place
-                // stranded a dead half-size generation each per round —
-                // ~8 GiB of freed large blocks at 2^26, the stage-3 resident
-                // spike that set the whole-prove peak.
+                // In-place binds avoid eight dead half-size generations.
                 for table in tables.iter_mut() {
                     table.bind_low_to_high_in_place(challenge);
                     if table.capacity() >= 8 * table.len().max(1) {
                         table.shrink_to_fit();
                     }
                 }
-                // One late-tail purge still returns the shrink tails and any
-                // co-member's freed large blocks once the live tables are
-                // small.
+                // Return shrink tails once the live tables are small.
                 if self.progress.bound() + 1 == LATE_PURGE_ROUNDS {
                     purge_staging(self.progress.total());
                 }
@@ -431,7 +389,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     /// The eight fully bound table values, table order.
     fn final_values(&self) -> Result<[F; NUM_TABLES], WitnessError> {
         match &self.state {
-            // Bindless extraction happens only for `log_t = 0` geometries.
+            // Only for `log_t = 0`.
             InputState::Native(rows) => Ok(rows.access().row(0)?.field_values()),
             InputState::Dense(tables) => Ok(core::array::from_fn(|i| tables[i].evals()[0])),
         }
@@ -485,9 +443,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         })
     }
 
-    /// Pin the fully-bound Gruen scalar to the verifier's
-    /// `derive_output_term(EqProduct)`, exactly as the naive tier's
-    /// materialized eq table is pinned.
+    /// Check the bound Gruen scalar against the verifier.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -551,9 +507,7 @@ mod tests {
 
     fn assert_parity(log_t: usize, seed: u64) {
         let mut state = seed;
-        // Native rows with Boolean flags, full-range u64 values, and signed
-        // immediates spanning the i128 lane (including a negative one wider
-        // than u64 — the S256 Lagrange path).
+        // Covers full-width values and signed immediates.
         let rows: Vec<InstructionInputRow> = (0..1usize << log_t)
             .map(|index| {
                 let raw = splitmix(&mut state);
@@ -630,7 +584,7 @@ mod tests {
         )
         .unwrap();
 
-        // True input claim: the full hypercube sum of the summand.
+        // Direct hypercube sum.
         let eq = eq_table(&r_product);
         let mut claim = fr(0);
         for j in 0..1usize << log_t {
@@ -680,14 +634,13 @@ mod tests {
 
     #[test]
     fn parity_single_round() {
-        // log_t = 1: fully bound while native (the deferred first bind).
+        // Fully bound during the deferred first bind.
         assert_parity(1, 4242);
     }
 
     #[test]
     fn parity_two_rounds() {
-        // log_t = 2: the tables materialize at length 1 inside
-        // `finish_rounds`, straight from the native rows.
+        // Materializes length-one tables in `finish_rounds`.
         assert_parity(2, 1717);
     }
 }

@@ -935,7 +935,7 @@ mod muldiv {
                 &stage0.commitments,
                 None,
                 None,
-                &stage0.hints,
+                stage0.hints.as_slice(),
                 &stage6b.clear_output,
                 &stage7.clear_output,
                 witness.as_ref(),

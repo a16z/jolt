@@ -303,7 +303,7 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
-    /// One allocator purge at the first shrink (see [`Self::bind`]).
+    /// Whether the first-shrink purge ran.
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -435,10 +435,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.left.bind_low_to_high_in_place(challenge);
         self.right.bind_low_to_high_in_place(challenge);
-        // Return the vacated tails once they dominate the allocations, with
-        // one allocator purge at the first shrink so the multi-GiB freed
-        // pages leave the resident set mid-stage (the spartan-outer
-        // precedent). Allocator-only: no transcript value is touched.
+        // Shrink dominant tails; purge once after the first shrink.
         if self.left.capacity() >= 8 * self.left.len().max(1) {
             self.left.shrink_to_fit();
             self.right.shrink_to_fit();

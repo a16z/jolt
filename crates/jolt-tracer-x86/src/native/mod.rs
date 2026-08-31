@@ -294,10 +294,7 @@ struct RecordRunOutput {
 }
 
 impl Observation {
-    /// Rebuild `TraceRow`s from the static bytecode plus the recorded dynamic
-    /// values. Generated code cannot construct the packed `TraceRow` directly
-    /// (its constructor enforces the final memory-row contract), so this is
-    /// the seam between the two.
+    /// Combines static bytecode with recorded values into validated rows.
     fn reassemble_rows(
         bytecode: &[JoltInstructionRow],
         observations: &[Self],

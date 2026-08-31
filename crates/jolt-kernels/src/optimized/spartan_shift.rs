@@ -93,8 +93,7 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
             });
         }
         let cycles = 1usize << log_t;
-        // A slice-backed witness serves an owning handle — the row vector
-        // never exists; every pass re-extracts its windows on the fly.
+        // Slice-backed witnesses re-extract rows without retaining a vector.
         let rows = BundleStore::<SpartanShiftRow>::resolve(witness, cycles)?;
         let access = rows.access();
 
@@ -236,8 +235,7 @@ struct ShiftKernel<F: JoltField> {
     r_outer: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_product: Vec<F>,
-    /// Raw per-cycle values (window-served when slice-backed), kept for the
-    /// phase-2 regeneration.
+    /// Raw values kept for phase-2 regeneration.
     rows: BundleStore<SpartanShiftRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
@@ -298,8 +296,7 @@ impl<F: JoltField> ShiftKernel<F> {
         #[cfg(not(feature = "parallel"))]
         let folds: Vec<[F; 5]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
-        // The raw values only feed this regeneration; drop any retained
-        // vector (an owning handle holds nothing kernel-sized).
+        // Release retained raw values after regeneration.
         self.rows = BundleStore::Retained(Vec::new());
 
         let recombine = |point: &[F]| -> Vec<F> {

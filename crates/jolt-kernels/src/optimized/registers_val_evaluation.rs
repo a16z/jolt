@@ -13,14 +13,8 @@
 //!   indices and the K-sized eq table — the `K × T` grid is never
 //!   materialized, and the reference's prepare-time `address_fold` over it is
 //!   gone. The dense bound vector (T/2) appears only at the first bind.
-//! - **Rows-until-first-bind increments** (the stage-6b increment
-//!   claim-reduction pattern): round 0 reads `RdInc` straight off the typed
-//!   trace rows — the same single-sourced extractor behind `oracle_table`,
-//!   so the values are identical — and the dense bound table (T/2 field
-//!   elements) appears only at the first bind. The full `T`-sized field
-//!   table never exists, and the member is tail-aligned in the stage-5
-//!   batch, so nothing sits resident across the instruction kernel's
-//!   address/cycle handoff (the stage's peak moment).
+//! - **Rows-until-first-bind increments**: round 0 reads `RdInc` from typed
+//!   rows; the first bind creates a dense `T/2` table.
 //! - **Split LT** ([`SplitLt`], legacy `LtPolynomial`): `LT(j, r_cycle)` is
 //!   served from three ~√T tables instead of a dense `T`-sized one.
 //! - **Eval-at-{0,2,3} sampling** with the engine hint supplying s(1)
@@ -55,9 +49,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The write-address column: hot indices plus the address eq table until the
-/// first bind, a dense bound table afterwards. The `K × T` grid never exists,
-/// and the low-to-high dense binds shed capacity as the table halves.
+/// Address indices before the first bind; a dense table afterward.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -176,9 +168,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
     }
 }
 
-/// The increment column's lifecycle: typed trace rows until the first bind
-/// (the full-length dense field table never exists), a dense bound table
-/// afterwards.
+/// Trace rows before the first bind; a dense table afterward.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -218,10 +208,7 @@ impl<F: JoltField> ValEvaluationKernel<F> {
         match &mut self.inc {
             IncState::Dense(inc) => inc.bind_with_order(challenge, BindingOrder::LowToHigh),
             IncState::Rows(store) => {
-                // First bind over the typed rows: promotes and combines each
-                // vertical pair directly into the bound dense table — the
-                // same values the dense-table bind produces, without the
-                // full-length table.
+                // Bind row pairs directly into a half-length field table.
                 debug_assert_eq!(self.progress.bound(), 0);
                 let half = (1usize << self.progress.total()) / 2;
                 let access = store.access();
@@ -263,11 +250,8 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
             self.bind(challenge)?;
         }
 
-        // The triple-product evaluations at t = 0, 2, 3; s(1) comes from the
-        // engine hint. Identical arithmetic in both increment states — only
-        // the `(inc_0, inc_1)` pair sourcing differs: round 0 reads the
-        // typed rows fallibly, so it hand-rolls the shared walk; bound
-        // rounds ride `triple_product_round_evals`.
+        // Evaluate at 0, 2, 3; the engine supplies s(1).
+        // Round 0 reads rows fallibly; later rounds read the dense table.
         let evals = match &self.inc {
             IncState::Rows(store) => {
                 debug_assert_eq!(self.progress.bound(), 0);

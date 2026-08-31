@@ -1,32 +1,8 @@
-//! Optimized instruction claim-reduction (stage 2) kernel.
+//! Optimized instruction claim reduction (stage 2).
 //!
-//! The summand is `eq(τ_low, j) · (o₁ + γ·o₂ + γ²·o₃ + γ³·o₄ + γ⁴·o₅)(j)`
-//! over the five instruction-lookup operand tables. The reference tier
-//! interprets the relation expression through the naive prover (per-point
-//! `BTreeMap` leaf resolution, five dense bound tables, a materialized and
-//! bound `T`-sized eq table). This kernel:
-//!
-//! - binds a single γ-combined table `C(j) = Σ_i γ^i·o_i(j)` — the operands
-//!   enter the summand linearly, so every round message over `C` equals the
-//!   five-table computation exactly (distributivity; binding is linear), at
-//!   a fifth of the table memory (the combine pass over the rows runs
-//!   exactly once, at construction — deferring it to the rounds re-runs the
-//!   per-row combine and costs wall);
-//! - serves the per-cycle operands from a [`BundleStore`] (a slice-backed
-//!   witness re-extracts windows on the fly — no retained row vector) and
-//!   recovers the five individual output claims post hoc: each bound value
-//!   is the operand's multilinear evaluation at the bound point, one
-//!   split-eq-weighted walk over the native rows (the spartan-outer
-//!   `claimed_inputs` technique) — never five bound field tables;
-//! - factors the eq weight out via `GruenSplitEqPolynomial` — the round
-//!   message is `s(t) = ℓ(t) · Σ_y E_out·E_in · combo(t, y)` at the naive
-//!   prover's `t ∈ {0, 1, 2}` sample points, and no eq table is ever
-//!   materialized or bound.
-//!
-//! The bound eq factor is pinned to the verifier's scalar path by
-//! [`validate_derived_tables`](crate::SumcheckKernel::validate_derived_tables)
-//! (Gruen scalar vs `derive_output_term(EqSpartan)`), exactly as the naive
-//! tier's materialized table is.
+//! Combines five operands into `C(j) = Σ_i γ^i·o_i(j)` and binds only `C`.
+//! Gruen factoring avoids a dense eq table. One split-eq row walk recovers
+//! the five output claims at the bound point.
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
@@ -103,13 +79,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     }
 }
 
-/// The γ-combination coefficients for the construction-time combine pass.
-///
-/// The combine runs on the native scalars through the wide accumulator
-/// — one 4×1 fused multiply per u64 limb and a single reduction, no
-/// per-operand Montgomery conversion. The wide lanes split limb-wise
-/// against `2^64`-shifted coefficient copies, the signed lane folds its
-/// sign into the coefficient: exactly `Σ_i γ^i·F(o_i)` by distributivity.
+/// Coefficients for combining native scalar limbs in one wide accumulation.
 struct CombineCoefficients<F> {
     gamma_powers: [F; NUM_TABLES],
     right_lookup_hi: F,
@@ -173,8 +143,7 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
     /// table (the summand is linear in the five operands).
     combined: Polynomial<F>,
-    /// Native per-cycle operand values, served from the witness when
-    /// slice-backed (nothing retained), for the post-hoc output-claim walk.
+    /// Native rows used to recover individual output claims.
     rows: BundleStore<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
@@ -198,8 +167,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             }
         }
         let coefficients = CombineCoefficients::new(gamma);
-        // One combine pass over the rows at construction — the rounds only
-        // ever read/bind the table.
+        // Build once; rounds only bind this table.
         let combined: Vec<F> = {
             let access = rows.access();
             let coefficients = &coefficients;
@@ -316,9 +284,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
-        // In place: the out-of-place low-to-high bind reallocates a fresh
-        // half-size table every round, stranding a geometric series of dead
-        // generations in the allocator between the stage's purges.
+        // Avoid a fresh half-size table each round.
         self.combined.bind_low_to_high_in_place(challenge);
         if self.combined.capacity() >= 8 * self.combined.len().max(1) {
             self.combined.shrink_to_fit();

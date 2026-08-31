@@ -54,11 +54,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The phase state machine: round 0 straight off the access columns (the
-/// sparse entry vector is first materialized — already bound, at most
-/// ⌈N/2⌉ + spill entries — by the first bind), remaining cycle rounds on the
-/// cycle-major matrix, address rounds on the address-major matrix, then the
-/// fully bound values. `None` only transiently inside a transition.
+/// Raw columns, cycle matrix, address matrix, then bound values.
+/// The first bind creates the first sparse entry vector at half size.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -114,10 +111,7 @@ impl<F: JoltField> Phase<F> {
     }
 }
 
-/// Cycle binds completed before the late-tail purge that returns the
-/// halving matrix/inc generations' freed pages (the instruction_read_raf
-/// precedent — each cycle bind reallocates, stranding the previous
-/// generation in the allocator's freed-large-block cache).
+/// Cycle bind that triggers the late allocator purge.
 const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
 
 impl<F: JoltField> RamReadWriteKernel<F> {
@@ -126,9 +120,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
         if round < self.log_t {
             if matches!(self.phase, Some(Phase::Round0 { .. })) {
-                // The first bind materializes the already-bound matrix
-                // straight off the access columns and frees the value
-                // columns (the full-size entry vector never exists).
+                // Create the first matrix already bound at half size.
                 let Some(Phase::Round0 { columns, mut gruen }) = self.phase.take() else {
                     return Err(Phase::error());
                 };
@@ -143,9 +135,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 matrix.bind(r);
                 gruen.bind(r);
             }
-            // In place: the out-of-place low-to-high bind reallocates a
-            // fresh half-size table every round (see the instruction
-            // claim-reduction kernel's rationale).
+            // Avoid a fresh half-size increment table each round.
             self.inc.bind_low_to_high_in_place(r);
             if self.inc.capacity() >= 8 * self.inc.len().max(1) {
                 self.inc.shrink_to_fit();
@@ -162,15 +152,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                     self.finalize()?;
                 }
             }
-            // Mid-stage retention purges (allocator-only): the first bind
-            // frees the T-sized pre/post value columns (plus the stage
-            // head's staging), the reallocating matrix/inc binds strand a
-            // geometric series of dead generations returned by one
-            // late-tail purge, and the cycle→address handoff frees the
-            // merged cycle matrix along with everything the tail-aligned
-            // co-members freed since. Without these the dead pages sit in
-            // the allocator's freed-large-block cache until the stage
-            // boundary.
+            // Purge after raw columns, late bind tails, and the cycle matrix.
             if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round == self.log_t - 1 {
                 crate::mem::purge_staging(self.log_t);
             }
@@ -356,8 +338,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
                 reason: "RAM read-write checking geometry is inconsistent",
             });
         }
-        // The sparse matrix packs cycle/address indices as u32
-        // (rw_matrix.rs); fail closed rather than truncate.
+        // Sparse matrix indices are u32.
         if log_t > 32 || log_k > 32 {
             return Err(KernelError::Unsupported {
                 reason: "optimized RAM read-write checking packs indices as u32 \

@@ -27,8 +27,7 @@ use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 /// One explicit matrix entry while cycle variables bind (row-major order).
 /// `prev_val`/`next_val` stay raw `u64`s: cycle binding always starts from
 /// the unbound trace, so implicit neighbors are unbound memory values.
-/// Indices are `u32` (the prepare guards `log_T`, `log_K` ≤ 32); the merge
-/// predicates and `/2` pairing are order-isomorphic under the narrowing.
+/// Indices are u32; prepare rejects larger domains.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CycleMajorEntry<F> {
     /// Cycle index; in `[0, T)` before binding.
@@ -355,10 +354,7 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     }
 }
 
-/// The round-0 entry of `cycle`, reconstructed from the access columns:
-/// `val = F(prev_val)`, `ra = 1` — exactly the values the materialized
-/// entry vector held, so the round-0 message and bind are value-identical
-/// without the vector ever existing.
+/// Reconstructs a round-0 entry from the access columns.
 #[inline]
 fn round0_entry<F: JoltField>(
     columns: &RamAccessColumns,
@@ -378,11 +374,7 @@ fn round0_entry<F: JoltField>(
     })
 }
 
-/// [`CycleMajorMatrix::quadratic_coefficients`] for round 0, straight off
-/// the access columns. Every row holds at most one entry (a cycle accesses
-/// at most one address), so a pair group is just the two optional per-cycle
-/// entries; groups with no access contribute nothing, exactly like the
-/// absent groups of the sparse iteration.
+/// Round-0 quadratic coefficients read directly from access columns.
 pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
     columns: &RamAccessColumns,
     eq_head: impl Fn(usize) -> F + Sync,
@@ -426,10 +418,8 @@ pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
     }
 }
 
-/// The round-0 [`CycleMajorMatrix::bind`], materializing the bound matrix
-/// straight off the access columns — the first entry vector to exist is the
-/// bind's OUTPUT. Entry order matches the sparse merge exactly: pairs in
-/// cycle order, a differing-col pair's two lone-side outputs in col order.
+/// First bind, producing the first entry vector at half size.
+/// Entries remain ordered by cycle, then column.
 pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> CycleMajorMatrix<F> {
     let pairs = columns.addresses.len() / 2;
     let per_pair = |pair: usize| -> [Option<CycleMajorEntry<F>>; 2] {

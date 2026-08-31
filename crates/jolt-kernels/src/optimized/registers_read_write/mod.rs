@@ -1,63 +1,14 @@
-//! The optimized registers read/write-checking (stage 4) kernel: the legacy
-//! prover's sparse-matrix algorithm behind the `PrepareKernel` seam.
+//! Optimized register read/write check (stage 4).
 //!
-//! Byte-parity contract: identical round polynomials and output claims to the
-//! reference kernel (`reference/registers_read_write.rs`), which sums the
-//! summand over dense `2^(log_K + log_T)` register-major tables. This kernel
-//! computes the same polynomials from the sparse structure of the one-hot
-//! grids — field arithmetic is exact, so algebraic refactorings (eq
-//! factoring, γ-combined ra, deferred-reduction accumulation) preserve every
-//! wire byte.
+//! Stores at most three sparse entries per cycle and combines reads as
+//! `ra = γ·rs1_ra + γ²·rs2_ra`. Gruen factoring handles cycle rounds;
+//! address rounds use three dense `K`-sized arrays.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/registers/read_write_checking.rs` and
-//! `subprotocols/read_write_matrix/{cycle_major,registers}.rs`:
+//! [`SeedEntry`] omits the round-0 field value. The first challenge is held
+//! without materializing `T/2`; the second bind creates the `T/4` indexed SoA
+//! layout. Coefficients stay as LUT indices until the `u16` domain saturates.
 //!
-//! - **Sparse cycle-major matrix**: `rd_wa`/`rs1_ra`/`rs2_ra`/`Val` are
-//!   represented by ≤ 3 entries per cycle (the touched registers) instead of
-//!   three dense `K × T` grids. Between touches a register's value is
-//!   constant, so a missing merge partner is inferred from its neighbor's
-//!   raw `prev_val`/`next_val` (a constant slice binds to itself).
-//! - **γ-combined read coefficient**: one `ra = γ·rs1_ra + γ²·rs2_ra` column
-//!   per entry (exact by distributivity).
-//! - **Gruen split-eq factoring** for the cycle rounds:
-//!   `s(t) = l(t) · Σ_z E_out·E_in·inner(t, z)` via
-//!   [`GruenSplitEqPolynomial::gruen_poly_deg_3`].
-//! - **Small fixed K**: after the cycle rounds the state collapses to three
-//!   `K = 2^REGISTER_ADDRESS_BITS` dense arrays plus two scalars (bound eq,
-//!   bound inc); address rounds cost O(K).
-//! - **Direct one-hot claims at extraction**: `rs1_ra(r)`/`rs2_ra(r)` are
-//!   computed straight from the per-cycle indices with a 2-way split-eq walk
-//!   (legacy's `compute_rs2_ra_claim`, applied to both operands — no γ⁻¹).
-//!
-//! - **u16 coefficient lookup table** (legacy's `OneHotCoeffLookupTable`):
-//!   entries carry `u16` indices into small ra/wa value tables instead of two
-//!   field elements through the first four cycle rounds. The tables square on
-//!   each bind (all `b + r·(a − b)` pairs) and the entries combine indices,
-//!   so every looked-up value equals the field element the direct
-//!   representation would hold; entries deref to field coefficients when one
-//!   more squaring would overflow the `u16` index domain. The indexed
-//!   generation is stored SoA — an aligned `Vec<F>` value column plus a
-//!   packed 25-byte `IndexedMeta` column, 57 bytes per entry instead of the
-//!   64-byte AoS layout — exactly where the largest post-seed generation
-//!   lives.
-//! - **Implicit round-0 `Val`** (`SeedEntry`): before any bind the `Val`
-//!   coefficient is always `F::from_u64(prev_val)`, so the seed layout drops
-//!   the field element entirely — 24 bytes per entry exactly where the entry
-//!   count peaks (≤ 3·T, the prover-wide resident maximum). The first bind
-//!   materializes `val` with the same `F::from_u64` + bind ops the eager
-//!   layout applied, so every bound value is bit-identical.
-//! - **Fused first two cycle binds** (`SparseEntries::SeedBound`): the
-//!   first bind stores its challenge and nothing else; round 1 and the
-//!   second bind rebuild the would-be `T/2` intermediates per 4-row group in
-//!   per-thread scratch through the canonical seed bind, so the first
-//!   materialized generation is the SoA indexed layout at `T/4`. Values are
-//!   the sequential path's by construction (the same two bind levels,
-//!   composed); the cost is recomputing the level-1 binds once for the
-//!   round-1 message and once for the transition.
-//!
-//! Like the reference kernel, only the default read-write config (phase 1 =
-//! all cycle rounds, phase 2 = 0) is supported.
+//! Only the default read-write config is supported.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
 use jolt_field::{Accumulator, JoltField};
@@ -275,12 +226,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
             self.inc_scalar = self.inc.final_scalar();
         }
 
-        // The generation-freeing binds strand the previous entry generation
-        // (24-byte seed entries plus the raw rd_inc column on the fused
-        // second bind, the SoA indexed columns at LUT saturation) in the
-        // allocator's freed-large-block cache — dead multi-GiB pages that
-        // would otherwise stay resident until the stage boundary. Purge
-        // exactly there.
+        // Return replaced entry generations immediately.
         if layout_transitioned {
             crate::mem::purge_staging(self.log_t);
         }

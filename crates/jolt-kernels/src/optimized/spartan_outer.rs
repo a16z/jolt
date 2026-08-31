@@ -27,9 +27,8 @@
 //!   joint `(cycle ‖ stream)` domain and the first round's endpoints are
 //!   produced by one pass over the typed rows
 //!   (`OuterLinearStage::fused_materialise_polynomials_round_zero`).
-//! - **In-place binding**: `Az`/`Bz` bind low-to-high in place (no swap
-//!   buffer), shrinking their allocations as the live prefix collapses; the
-//!   35 input tables are never bound at all.
+//! - **In-place binding**: `Az`/`Bz` bind without swap buffers; the 35 input
+//!   tables are never bound.
 //! - **Post-hoc opening evaluation**: the 35 produced opening claims come
 //!   from one final eq-weighted walk over the typed rows
 //!   (`R1CSEval::compute_claimed_inputs`), not from binding 35 polynomials
@@ -608,11 +607,10 @@ struct DerivedWeights<F> {
     allocative(bound = "F: JoltField")
 )]
 struct OuterRemainderKernel<F: JoltField> {
-    /// `(Az, Bz)` over the joint domain, folded in place per bind.
+    /// `(Az, Bz)` over the joint domain.
     az: Polynomial<F>,
     bz: Polynomial<F>,
-    /// Whether the mid-stage allocator purge has run (once, at the first
-    /// shrink past the capacity threshold).
+    /// Whether the first-shrink purge ran.
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     /// Round-0 endpoints, fused into the materialization pass.
@@ -762,15 +760,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.az.bind_low_to_high_in_place(challenge);
         self.bz.bind_low_to_high_in_place(challenge);
-        // Return the vacated tails once they dominate the allocations, with
-        // one allocator purge at the first shrink so the multi-GiB freed
-        // pages leave the resident set mid-stage. Allocator-only: no
-        // transcript value is touched.
+        // Shrink dominant tails; purge once after the first shrink.
         if self.az.capacity() >= 8 * self.az.len().max(1) {
             self.az.shrink_to_fit();
             self.bz.shrink_to_fit();
-            // `rounds = log_t + 1` (joint cycle‖stream domain): strict
-            // comparison keeps the threshold's log_t semantics.
+            // `rounds = log_t + 1`; compare against log_t.
             if !self.purged && self.challenges.total() > PURGE_MIN_LOG_T {
                 self.purged = true;
                 let _ = crate::mem::release_retained_memory();

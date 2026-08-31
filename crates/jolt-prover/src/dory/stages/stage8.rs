@@ -80,7 +80,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     commitments: &JoltCommitments<PCS::Output>,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    hints: impl IntoHints<(JoltCommittedPolynomial, PCS::OpeningHint)>,
+    hints: impl Into<Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
@@ -231,11 +231,9 @@ where
             .joint_opening
             .prepare(session, witness, &order, &precommitted_tables, grid)
     })?;
-    // Reorder by move, not clone: the stage-0 hints have no consumer after
-    // this stage, and `combine_hints` takes them by value — cloning here
-    // double-held every row commitment through the whole batch opening.
+    // Move stage-0 hints; cloning would retain every row commitment.
     let mut hint_by_id: BTreeMap<JoltCommittedPolynomial, PCS::OpeningHint> =
-        hints.into_hints().into_iter().collect();
+        hints.into().into_iter().collect();
     let ordered_hints: Vec<PCS::OpeningHint> = order
         .iter()
         .map(|polynomial| {
@@ -255,12 +253,7 @@ where
     // joint evaluation and blind for BlindFold.
     #[cfg(not(feature = "zk"))]
     {
-        // In the transparent arm each view's tier-1 fold is its last read
-        // (the Dory reduce consumes the folded vector; `evaluate` is a
-        // hiding-mode-only call). Wrap every view fold-once so the shared
-        // trace columns (~64 B/cycle) free mid-open instead of living
-        // through the whole ~PCS reduce, and the last fold returns the
-        // freed pages to the OS.
+        // Drop each view after its final tier-1 fold; purge after the last.
         let polynomials: Vec<FoldOnce<F>> = FoldOnce::wrap(polynomials);
         let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
             &preprocessing.pcs_setup,
@@ -307,37 +300,8 @@ where
     }
 }
 
-/// Borrowed-or-owned hint carrier: the prover moves its stage-0 hints in
-/// (they have no consumer after stage 8, and cloning double-held every row
-/// commitment through the batch opening) while borrowing callers — the
-/// byte_diff ratchet — keep compiling and pay the clone.
-pub trait IntoHints<H> {
-    fn into_hints(self) -> Vec<H>;
-}
-
-impl<H> IntoHints<H> for Vec<H> {
-    fn into_hints(self) -> Vec<H> {
-        self
-    }
-}
-
-impl<H: Clone> IntoHints<H> for &Vec<H> {
-    fn into_hints(self) -> Vec<H> {
-        self.clone()
-    }
-}
-
-/// A fold-once opening view for the transparent batch arm: `fold_rows`
-/// consumes the inner view (its tier-1 fold is the last read on the
-/// transparent path — the Dory reduce works on the folded vector, and
-/// `evaluate` is hiding-mode-only), so the backing allocations — one Arc
-/// each on the shared per-cycle trace columns — free the moment their fold
-/// completes rather than at stage end. The last fold out asks the allocator
-/// to return the freed pages. Allocator/lifetime-only: the folded values
-/// are untouched.
-///
-/// Fail-closed: any access to the inner view after its fold (nothing on the
-/// transparent batch path does this) panics rather than serving stale data.
+/// Transparent opening view consumed by `fold_rows`.
+/// The last fold purges freed backing columns; post-fold reads panic.
 #[cfg(not(feature = "zk"))]
 struct FoldOnce<F: JoltField> {
     inner: Mutex<Option<Box<dyn MultilinearPoly<F>>>>,
@@ -399,8 +363,7 @@ impl<F: JoltField> MultilinearPoly<F> for FoldOnce<F> {
                 .take()
                 .expect("fold-once opening view folded twice");
             poly.fold_rows(left, sigma)
-            // `poly` drops here: the view and (last Arc out) the shared
-            // trace columns free mid-open.
+            // Drop the view and its shared-column handles here.
         };
         if self.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
             let _ = jolt_kernels::mem::release_retained_memory();

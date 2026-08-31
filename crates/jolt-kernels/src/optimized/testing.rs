@@ -165,8 +165,7 @@ pub(crate) fn with_ram_fixture_init<R>(
             post: 1,
         });
     }
-    // RAM traffic rides on contract-valid final LD/SD rows: a read's rd
-    // receives the loaded value, a write's rs2 carries the stored value.
+    // Build RAM traffic as valid final LD/SD rows.
     let mut rd_value = 0;
     let rows: Vec<TraceRow> = script
         .into_iter()

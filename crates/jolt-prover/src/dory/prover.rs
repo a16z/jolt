@@ -47,12 +47,8 @@ use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-/// Per-stage heap snapshots for the profile harness: inert unless the
-/// harness opted in via `jolt_profiling::set_flamegraph_prefix`. The stage's
-/// clear-output carrier is recovered by downcast to the concrete BN254
-/// field (the only production field), so `prove` needs no `Allocative`
-/// bound on `F`; the proof session is visited shallowly (its carries are
-/// `Box<dyn Any>` — see the `ProofSession` impl in `jolt-kernels`).
+/// Write a profile-only heap snapshot. Downcasting avoids an `Allocative`
+/// bound on the generic prover field.
 #[cfg(feature = "allocative")]
 fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn Any) {
     use jolt_field::Fr;
@@ -85,19 +81,7 @@ fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn Any) {
 #[cfg(not(feature = "allocative"))]
 fn stage_flamegraph(_stage: &str, _session: &ProofSession, _output: &dyn Any) {}
 
-/// Return freed-but-retained allocator pages to the OS at a stage boundary
-/// (see [`jolt_kernels::mem::release_retained_memory`]).
-///
-/// WHY every boundary: at 2^25 cycles the stage 1–5 frees otherwise sit in
-/// the allocator's large-region cache (~16 GiB of the 31.7 GiB peak RSS on
-/// macOS) and only get flushed near stage 6a; purging at each boundary clips
-/// that plateau (31.6 → 27.6 GiB peak). Every-stage beats sparser boundary
-/// sets because the stage-0/1 purges also drop ~5 GiB of trace-Vec realloc
-/// slack retained from setup, and a purge where nothing is retained costs
-/// microseconds. Boundary-only: mid-stage allocation behavior is untouched,
-/// so the total cost is ~0.7 s of vm_deallocate per 2^25 prove plus the next
-/// stage re-faulting pages the allocator would have reused (<1% wall). To
-/// tune, filter on the stage label here.
+/// Purge allocator-retained pages after a stage drops its temporaries.
 fn stage_boundary(stage: &str) {
     let _span = tracing::info_span!("release_retained_memory", stage).entered();
     let _ = jolt_kernels::mem::release_retained_memory();

@@ -1,7 +1,5 @@
-//! The sparse cycle-major entry machinery: u16 coefficient LUTs, the
-//! round-dependent entry layouts (24-byte seed, SoA-split indexed, direct
-//! field), the in-place/fused bind walks, and the quadratic round walks.
-//! Representation and algorithm contracts live on the items themselves.
+//! Sparse register entries: compact round-specific layouts, in-place binds,
+//! and quadratic round evaluation.
 
 use core::{cmp::Ordering, mem::MaybeUninit};
 
@@ -13,21 +11,15 @@ use rayon::prelude::*;
 
 use super::rows::RegisterCycleRow;
 
-/// Growing lookup table of the possible values of one one-hot coefficient
-/// column (the legacy `OneHotCoeffLookupTable`). Seeded with the column's
-/// initial coefficient values; on each cycle bind the table squares — entry
-/// `(a ≪ bits) | b` holds `b + r·(a − b)` — so a `u16` per matrix entry keeps
-/// addressing its bound coefficient until one more squaring would overflow
-/// the index domain.
+/// Bound one-hot coefficient values indexed by `u16`. Each bind squares the
+/// table: `(a ≪ bits) | b` maps to `b + r·(a − b)`.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
     allocative(bound = "F")
 )]
 pub(super) struct CoeffLut<F> {
-    /// Power-of-two length; index 0 is always zero (zero seeds stay zero
-    /// under `b + r·(a − b)`), which is what lets an absent merge partner
-    /// keep index arithmetic pure.
+    /// Power-of-two table with zero fixed at index 0.
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) values: Vec<F>,
 }
@@ -51,9 +43,7 @@ impl<F: JoltField> CoeffLut<F> {
         self.values.len() * self.values.len() > Self::MAX_VALUES
     }
 
-    /// Square the table with `r`: the same pair combination
-    /// `even + r·(odd − even)` the direct field representation applies, over
-    /// every (odd, even) value pair.
+    /// Apply `even + r·(odd − even)` to every value pair.
     pub(super) fn bind(&mut self, r: F) {
         debug_assert!(!self.saturated());
         let n = self.values.len();
@@ -95,10 +85,7 @@ fn mul_01_optimized<F: JoltField>(left: F, right: F) -> F {
     }
 }
 
-/// One-hot coefficient storage: either a direct field value or a `u16` index
-/// into a [`CoeffLut`]. Both compute identical field values — the lookup
-/// table pre-binds every possible value, the index arithmetic just selects —
-/// so switching representations is memory-shape only, never wire-visible.
+/// One-hot coefficient stored directly or as a [`CoeffLut`] index.
 pub(super) trait OneHotCoeff<F: JoltField>: Copy + Send + Sync + 'static {
     /// Bind a vertically adjacent pair with `r`; a missing side is an
     /// implicit zero coefficient.
@@ -138,16 +125,14 @@ impl<F: JoltField> OneHotCoeff<F> for F {
     }
 }
 
-/// A `u16` index into a [`CoeffLut`] (newtype: a bare `u16` would collide
-/// with the blanket field-value impl under coherence).
+/// Newtype avoids overlap with the blanket field-value implementation.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct LutIndex(pub(super) u16);
 
 impl<F: JoltField> OneHotCoeff<F> for LutIndex {
     #[inline]
     fn bind(even: Option<Self>, odd: Option<Self>, _r: F, lut: &CoeffLut<F>) -> Self {
-        // The table itself binds with `r` separately; index 0 is the zero
-        // value, so an absent side combines as index 0.
+        // The table binds separately; index 0 represents an absent side.
         let bits = lut.bits();
         debug_assert!(bits <= 8, "coefficient LUT bound past u16 saturation");
         match (even, odd) {
@@ -180,45 +165,31 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
     }
 }
 
-/// Row/column addressing shared by the entry layouts, so the pair-merge
-/// machinery is written once.
+/// Row/column access shared by all entry layouts.
 pub(super) trait Cell: Copy + Send + Sync + 'static {
     fn row(&self) -> usize;
     fn col(&self) -> u8;
 }
 
-/// The non-value fields of one indexed-layout entry: the SoA twin of
-/// `SparseEntry<F, LutIndex>` minus `val`, which lives in an index-parallel
-/// (and 8-aligned) `Vec<F>` column. Packed: 25 bytes instead of 32, so the
-/// split stores 57 bytes per entry against the 64-byte AoS layout across the
-/// second-largest generation of the stage. `row` narrows to `u32` — indexed
-/// rows are bound cycle indices, and [`CollectRegisterEntries::collect`]
-/// rejects cycle counts past the u32 domain up front.
+/// Packed SoA metadata: 25 bytes instead of the aligned layout's 32.
+/// `row` fits `u32` because [`CollectRegisterEntries::collect`] rejects wider
+/// domains.
 ///
-/// WARNING: packed fields are read/written by value only (unaligned loads,
-/// free on the targets we care about); taking a reference to one is a
-/// compile error, so keep accesses copy-shaped.
+/// WARNING: copy packed fields by value; references may be unaligned.
 ///
 /// [`CollectRegisterEntries::collect`]: super::rows::CollectRegisterEntries::collect
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 pub(super) struct IndexedMeta {
-    /// Register value just before this entry's row slice.
     pub(super) prev_val: u64,
-    /// Register value just after this entry's row slice.
     pub(super) next_val: u64,
-    /// Cycle-domain row index.
     pub(super) row: u32,
-    /// Bound `γ·rs1_ra + γ²·rs2_ra` LUT index.
     pub(super) ra: u16,
-    /// Bound `rd_wa` LUT index.
     pub(super) wa: u16,
-    /// Register index.
     pub(super) col: u8,
 }
 
-/// The SoA split only pays if the meta column actually shrinks — its size is
-/// load-bearing.
+/// Pin the packed metadata size.
 const _: () = assert!(size_of::<IndexedMeta>() == 25);
 
 impl Cell for IndexedMeta {
@@ -233,15 +204,13 @@ impl Cell for IndexedMeta {
     }
 }
 
-/// Borrowed view of one row slice of the SoA indexed columns
-/// (index-parallel `vals`/`metas`).
+/// Index-parallel value and metadata slices.
 type SoaRow<'a, F> = (&'a [F], &'a [IndexedMeta]);
 
 /// One block's uninitialized output span across both SoA columns.
 type SoaSpareBlock<'a, F> = (&'a mut [MaybeUninit<F>], &'a mut [MaybeUninit<IndexedMeta>]);
 
-/// Reassemble the working entry at `i` — pure representation change, the
-/// field values are the stored ones.
+/// Reassemble indexed entry `i`.
 #[inline]
 pub(super) fn load_indexed<F: JoltField>(
     (vals, metas): SoaRow<'_, F>,
@@ -289,9 +258,7 @@ fn split_soa_pair_group<'a, F>(
     )
 }
 
-/// Column-merge two vertically adjacent SoA rows, visiting every merged cell
-/// as the reassembled working pair in column order — the SoA twin of
-/// [`merge_bind`] (a missing side is an untouched slice, exactly as there).
+/// Merge adjacent SoA rows in column order.
 #[inline]
 fn merge_soa<F: JoltField>(
     evens: SoaRow<'_, F>,
@@ -326,15 +293,12 @@ fn merge_soa<F: JoltField>(
     }
 }
 
-/// A sparse matrix cell in one of the round-dependent layouts, bound
-/// pairwise against the coefficient LUTs.
+/// Pairwise operations shared by each sparse-entry layout.
 pub(super) trait MatrixEntry<F: JoltField>: Cell {
     /// The layout after one cycle bind (the seed layout materializes `val`).
     type Bound: Cell;
 
-    /// Bind two vertically adjacent cells (rows `2j`/`2j+1`, same column)
-    /// with `r`. A missing side is an untouched slice: its `Val` is the
-    /// neighbor's raw boundary value and its `ra`/`wa` are zero.
+    /// Bind adjacent rows; a missing side has zero `ra`/`wa`.
     fn bind(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -355,36 +319,23 @@ pub(super) trait MatrixEntry<F: JoltField>: Cell {
     );
 }
 
-/// The round-0 entry layout: [`RegisterCycleRow::entries`]' output before any
-/// bind. The `Val` coefficient is implicit — at construction it is always
-/// `F::from_u64(prev_val)` (a read's value, or a write's pre-value; folding
-/// rd into a read entry keeps the read's value) — so the entry is 24 bytes
-/// instead of 64 exactly where the entry count peaks (≤ 3·T, the stage's
-/// resident maximum). The first bind materializes `val` with the same
-/// `F::from_u64` + bind ops the eager layout applied, so every bound value
-/// is bit-identical.
+/// Round-0 entry. `val = F::from_u64(prev_val)` stays implicit until the
+/// first bind, cutting the peak layout from 64 to 24 bytes.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SeedEntry {
-    /// Register value just before this entry's cycle.
     pub(super) prev_val: u64,
-    /// Register value just after this entry's cycle.
     pub(super) next_val: u64,
-    /// The cycle. `u32`: [`CollectRegisterEntries::collect`] rejects wider
-    /// domains.
+    /// `u32` is safe because collection rejects wider domains.
     ///
     /// [`CollectRegisterEntries::collect`]: super::rows::CollectRegisterEntries::collect
     pub(super) row: u32,
-    /// Seed `γ·rs1_ra + γ²·rs2_ra` index ([`RA_ZERO`]–[`RA_BOTH`]); `u8`
-    /// (widened to [`LutIndex`] at the first bind) to keep the seed at 24
-    /// bytes.
+    /// Seed `γ·rs1_ra + γ²·rs2_ra` index.
     pub(super) ra: u8,
-    /// Seed `rd_wa` index ([`WA_ZERO`]/[`WA_HOT`]).
     pub(super) wa: u8,
-    /// Register index.
     pub(super) col: u8,
 }
 
-/// The seed layout is the peak-memory shape — its size is load-bearing.
+/// Pin the peak layout size.
 const _: () = assert!(size_of::<SeedEntry>() == 24);
 
 impl SeedEntry {
@@ -452,9 +403,7 @@ impl<F: JoltField> MatrixEntry<F> for SeedEntry {
                 }
             }
             (None, Some(odd)) => {
-                // The eager layout's inferred even side is `from_u64(odd.prev_val)`
-                // — exactly odd's implicit val — so `odd.val − even_val` is the
-                // canonical zero and the bind collapses to the constant.
+                // The missing even side equals odd's implicit boundary value.
                 SparseEntry {
                     val: F::from_u64(odd.prev_val),
                     ra: coeff_bind(None, Some(odd.ra()), r, ra_lut),
@@ -502,9 +451,7 @@ impl<F: JoltField> MatrixEntry<F> for SeedEntry {
                 acc[1].fmadd(wa[1], val_m + inc_evals[1]);
             }
             (None, Some(odd)) => {
-                // The even side has zero ra/wa, so the t = 0 term vanishes;
-                // odd's implicit val equals `from_u64(odd.prev_val)`, so the
-                // eager layout's `val_m` here is the canonical zero.
+                // Missing even coefficients make the t=0 term zero.
                 let ra = coeff_evals(None, Some(odd.ra()), ra_lut);
                 let wa = coeff_evals(None, Some(odd.wa()), wa_lut);
                 acc[1].fmadd(ra[1], F::zero());
@@ -515,30 +462,16 @@ impl<F: JoltField> MatrixEntry<F> for SeedEntry {
     }
 }
 
-/// One non-zero cell of the conceptual `K × T` register matrices: the bound
-/// `Val` coefficient plus the γ-combined read and write coefficients of one
-/// touched register slice, with the coefficient representation `C` chosen by
-/// the round (indices while the LUTs can grow, field values after).
-///
-/// `prev_val`/`next_val` stay raw `u64`s: a register is constant between
-/// touches, and a constant slice's bound coefficient is the constant itself,
-/// so the values neighboring this entry's slice never need field form until
-/// they participate in a merge.
+/// Nonzero register-matrix cell. `C` is a LUT index until saturation, then a
+/// field value; boundary values stay raw until merged.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SparseEntry<F, C> {
-    /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     pub(super) val: F,
-    /// Register value just before this entry's row slice.
     pub(super) prev_val: u64,
-    /// Register value just after this entry's row slice.
     pub(super) next_val: u64,
-    /// Cycle-domain row index (before binding: the cycle).
     pub(super) row: usize,
-    /// Bound `γ·rs1_ra + γ²·rs2_ra` coefficient.
     pub(super) ra: C,
-    /// Bound `rd_wa` coefficient.
     pub(super) wa: C,
-    /// Register index.
     pub(super) col: u8,
 }
 
@@ -634,7 +567,7 @@ impl<F: JoltField, C: OneHotCoeff<F>> MatrixEntry<F> for SparseEntry<F, C> {
                 acc[1].fmadd(wa[1], val_m + inc_evals[1]);
             }
             (None, Some(odd)) => {
-                // The even side has zero ra/wa, so the t = 0 term vanishes.
+                // Missing even coefficients make the t=0 term zero.
                 let ra = C::eval_pair(None, Some(odd.ra), ra_lut);
                 let wa = C::eval_pair(None, Some(odd.wa), wa_lut);
                 let val_m = odd.val - F::from_u64(odd.prev_val);
@@ -656,12 +589,7 @@ const WA_ZERO: u8 = 0;
 const WA_HOT: u8 = 1;
 
 impl RegisterCycleRow {
-    /// The entry count [`Self::entries`] will produce for one cycle — the
-    /// counting pass's cheap twin (kept adjacent so the merge rules stay in
-    /// sync: rs2 folds into rs1's entry, rd into either read's). Option-typed
-    /// comparisons mirror the write twin's scan of emitted columns exactly, so
-    /// no sentinel value can collide with a raw index (`rd == rs2` with a folded
-    /// rs2 implies `rs2 == rs1`, which the `rd == rs1` test already catches).
+    /// Count distinct touched registers without constructing entries.
     #[cfg(feature = "parallel")]
     pub(super) fn entry_count(&self) -> usize {
         let rs1 = self.rs1.map(|(register, _)| register);
@@ -677,9 +605,7 @@ impl RegisterCycleRow {
         count
     }
 
-    /// Build the (sorted-by-column) sparse entries of one cycle as seed-table
-    /// indices. Returns the filled prefix length (0–3). The `Val` coefficient
-    /// is implicit in `prev_val` — see [`SeedEntry`].
+    /// Build up to three column-sorted seed entries.
     pub(super) fn entries(&self, row: u32) -> ([SeedEntry; 3], usize) {
         let empty = SeedEntry {
             ra: RA_ZERO,
@@ -732,14 +658,12 @@ impl RegisterCycleRow {
             }
         }
 
-        // Sort by column; len ≤ 3.
         out[..len].sort_unstable_by_key(|entry| entry.col);
         (out, len)
     }
 }
 
-/// Merged length of two adjacent sorted-by-column rows (a bind dry run —
-/// the count is value-independent).
+/// Output length of merging two column-sorted rows.
 fn merge_count<E: Cell>(evens: &[E], odds: &[E]) -> usize {
     let mut i = 0;
     let mut j = 0;
@@ -758,8 +682,7 @@ fn merge_count<E: Cell>(evens: &[E], odds: &[E]) -> usize {
     produced + (evens.len() - i) + (odds.len() - j)
 }
 
-/// Merge-bind two adjacent sorted-by-column rows, emitting the bound entries
-/// to `sink` in column order.
+/// Merge-bind adjacent column-sorted rows.
 #[inline]
 fn merge_bind<E: Cell, B>(
     evens: &[E],
@@ -798,17 +721,13 @@ fn merge_bind<E: Cell, B>(
     }
 }
 
-/// Split a row-pair group (entries sharing `row / 2`) into its even and odd
-/// rows. Entries are sorted by `(row, col)`, so the evens form the prefix.
+/// Split a sorted row-pair group into even and odd rows.
 fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
     let odd_start = group.partition_point(|entry| entry.row() % 2 == 0);
     group.split_at(odd_start)
 }
 
-/// The sparse entries in their round-dependent representation: the 24-byte
-/// seed layout with implicit `Val` at round 0 (the peak-memory window), then
-/// SoA-split `u16` LUT indices while the tables can still square (through
-/// the fourth cycle round), direct field values after.
+/// Sparse-entry layout: compact seed, indexed SoA, then direct field values.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -821,20 +740,13 @@ pub(super) enum SparseEntries<F: JoltField> {
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
     },
-    /// The first cycle bind received, nothing materialized: the 24-byte seed
-    /// entries carry both early rounds. Round 1 and the second bind rebuild
-    /// the would-be `T/2` intermediates per 4-row group in per-thread
-    /// scratch (the canonical [`SeedEntry`] bind against the pre-square
-    /// `seed_*` tables), and the squared tables serve their value lookups —
-    /// the full-size intermediate generation the two sequential binds would
-    /// materialize between them never exists.
+    /// First challenge retained; round 1 rebuilds intermediates per 4-row
+    /// group instead of storing a `T/2` generation.
     SeedBound {
         #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         entries: Vec<SeedEntry>,
-        /// Pre-square tables: the level-1 combine bits.
         seed_ra_lut: CoeffLut<F>,
         seed_wa_lut: CoeffLut<F>,
-        /// Squared-once tables: the intermediates' value domain.
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
         #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -854,14 +766,8 @@ pub(super) enum SparseEntries<F: JoltField> {
     ),
 }
 
-/// The `rd_inc` column in its round-dependent representation (the RAM
-/// value-check kernel's pattern). Round 0 serves `inc(j)` straight from the
-/// raw signed deltas collected alongside the seed entries — the oracle's
-/// exact `F::from_i128` op — and round 1 serves the composed pair
-/// `lo + r1·(hi − lo)` from the same deltas, so the dense bound column only
-/// materializes at `T/4` on the second bind. Neither the `T`- nor the
-/// `T/2`-sized field table ever exists; the raw column (16 B/cycle, exactly
-/// a `T/2` field table's footprint) covers both early rounds.
+/// `rd_inc` stays raw through round 1; the second bind materializes `T/4`
+/// field values directly.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -877,8 +783,7 @@ pub(super) enum IncColumn<F: JoltField> {
     Bound(Polynomial<F>),
 }
 
-/// The composed first-bind value `inc(y)` on the half domain: the exact
-/// `lo + r·(hi − lo)` op the eager `T/2` materialization applied.
+/// First-bind value at half-domain index `y`.
 #[inline]
 fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
     let lo = F::from_i128(raw[2 * y]);
@@ -887,11 +792,7 @@ fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
 }
 
 impl<F: JoltField> IncColumn<F> {
-    /// Bind one cycle variable. The first bind is free (round 1 serves the
-    /// composed pairs straight from the raw deltas); the second materializes
-    /// directly at `T/4`, each level the same pair op `lo + r·(hi − lo)` as
-    /// `Polynomial::bind_with_order` (the RAM value-check kernel's exact
-    /// pattern, composed one round deeper).
+    /// Retain the first challenge; materialize directly at `T/4` on the next.
     pub(super) fn bind(&mut self, r: F) {
         if let IncColumn::Bound(inc) = self {
             inc.bind_with_order(r, BindingOrder::LowToHigh);
@@ -916,7 +817,7 @@ impl<F: JoltField> IncColumn<F> {
         };
     }
 
-    /// The fully cycle-bound `rd_inc` scalar at the cycle→address transition.
+    /// Fully bound `rd_inc`.
     pub(super) fn final_scalar(&self) -> F {
         match self {
             IncColumn::Bound(inc) => inc.evals()[0],
@@ -928,12 +829,7 @@ impl<F: JoltField> IncColumn<F> {
     }
 }
 
-/// Pair-aligned block decomposition: fixed-size blocks advanced to the next
-/// merge-group edge (`row >> pair_bits`; 1 for row pairs, 2 for the fused
-/// 4-row groups), so no merge group straddles a block. Per-group metadata
-/// (one length pair and two slice splits per group — tens of millions of
-/// groups in the early rounds, built on the walking thread) collapses to a
-/// handful of per-block counts.
+/// Block boundaries advanced so no `row >> pair_bits` group is split.
 fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec<usize> {
     const BLOCK_TARGET: usize = 1 << 14;
     let len = entries.len();
@@ -957,21 +853,10 @@ fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec<usize> {
     bounds
 }
 
-/// Bind one cycle variable in place: same-layout rounds write each merge
-/// group's bound entries back into the input allocation at a write cursor,
-/// then compact the per-block runs left and truncate. The entry vector is
-/// the stage's largest allocation — the fresh output vector the out-of-place
-/// path allocates every round is what set the prover's stage-4 peak.
+/// Bind and compact entries within pair-aligned blocks.
 ///
-/// Safety of the forward cursor: a merged pair produces at most one entry
-/// per input entry ([`merge_count`] ≤ `evens.len() + odds.len()`), so each
-/// block's write cursor never overtakes its read position, and entry order
-/// is preserved by construction (groups are visited in order, merges keep
-/// column order). Within one group the output may reach into the group's own
-/// unread cells (an unpaired odd merges ahead of a later even), so a group
-/// binds straight into the vacated prefix only when its whole output span
-/// provably ends before the group — the common case once merges have opened
-/// a gap — and stages through a small scratch otherwise.
+/// Writes stay behind unread groups because merging never grows a group.
+/// A group uses scratch until its output fits entirely in the vacated prefix.
 pub(super) fn bind_sparse_entries_in_place<E>(
     entries: &mut Vec<E>,
     bind: impl Fn(Option<&E>, Option<&E>) -> E + Sync,
@@ -1035,8 +920,7 @@ pub(super) fn bind_sparse_entries_in_place<E>(
             .collect()
     };
 
-    // Left-compact the per-block runs; dest ≤ src throughout because every
-    // run fits its own block.
+    // Each compacted run stays within its original block.
     let mut total = counts[0];
     for block in 1..blocks {
         let src = bounds[block];
@@ -1048,10 +932,7 @@ pub(super) fn bind_sparse_entries_in_place<E>(
     entries.truncate(total);
 }
 
-/// In-place cycle bind of the SoA indexed columns — the SoA twin of
-/// [`bind_sparse_entries_in_place`]: same pair-aligned blocks, same forward
-/// write cursor (moved in lockstep across both columns, so the safety
-/// argument there carries over verbatim), same left-compaction.
+/// [`bind_sparse_entries_in_place`] for index-parallel SoA columns.
 pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
     vals: &mut Vec<F>,
     metas: &mut Vec<IndexedMeta>,
@@ -1156,8 +1037,7 @@ pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
             .collect()
     };
 
-    // Left-compact the per-block runs of both columns; dest ≤ src throughout
-    // because every run fits its own block.
+    // Compact both columns in lockstep.
     let mut total = counts[0];
     for block in 1..blocks {
         let src = bounds[block];
@@ -1171,10 +1051,7 @@ pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
     metas.truncate(total);
 }
 
-/// The Indexed → Direct layout transition from the SoA columns: dereference
-/// each side's LUT indices during the merge and bind as direct field
-/// coefficients — the exact deref-then-bind values of the AoS path, sized by
-/// the same dry-run count pass.
+/// Merge-bind indexed SoA entries directly into field entries.
 pub(super) fn bind_indexed_to_direct<F: JoltField>(
     vals: &[F],
     metas: &[IndexedMeta],
@@ -1254,9 +1131,7 @@ pub(super) fn bind_indexed_to_direct<F: JoltField>(
     bound
 }
 
-/// Column-merge one vertical pair group and accumulate every merged cell's
-/// `[t = 0, t = ∞]` contributions to the quadratic inner factor — the shared
-/// inner loop of the AoS walk and the fused round-1 recompute.
+/// Accumulate one row pair's `[q(0), q(∞)]` terms.
 fn accumulate_pair_group<F, E>(
     evens: &[E],
     odds: &[E],
@@ -1302,9 +1177,7 @@ fn accumulate_pair_group<F, E>(
     }
 }
 
-/// The cycle-round quadratic inner factor `[q(0), leading coefficient]` over
-/// the sparse entries in either coefficient representation — the summand
-/// values are representation-independent by construction.
+/// Cycle-round `[q(0), leading coefficient]` over sparse entries.
 pub(super) fn sparse_quadratic<F, E>(
     entries: &[E],
     ra_lut: &CoeffLut<F>,
@@ -1365,9 +1238,7 @@ where
     }
 }
 
-/// [`sparse_quadratic`] over the SoA indexed columns: identical grouping and
-/// accumulation order (pair groups reassembled through [`merge_soa`]), so
-/// every summand matches the AoS walk bit-for-bit.
+/// [`sparse_quadratic`] for indexed SoA columns.
 pub(super) fn sparse_quadratic_soa<F: JoltField>(
     vals: &[F],
     metas: &[IndexedMeta],
@@ -1445,8 +1316,7 @@ pub(super) fn sparse_quadratic_soa<F: JoltField>(
     }
 }
 
-/// Per-thread scratch for the fused paths: the two intermediate rows of one
-/// 4-row group (each ≤ `K` entries).
+/// Per-thread intermediate rows for one 4-row group.
 type FusedScratch<F> = (Vec<SparseEntry<F, LutIndex>>, Vec<SparseEntry<F, LutIndex>>);
 
 fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
@@ -1456,10 +1326,7 @@ fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
     )
 }
 
-/// Rebuild one 4-row group's two `T/2`-domain intermediate rows: each half
-/// pair merge-binds with `r1` through the canonical [`SeedEntry`] bind
-/// against the pre-square tables — entry for entry what the sequential
-/// first bind materialized at full size.
+/// Rebuild one 4-row group's two first-bind intermediates.
 #[inline]
 fn fused_intermediates<F: JoltField>(
     group: &[SeedEntry],
@@ -1481,11 +1348,7 @@ fn fused_intermediates<F: JoltField>(
     merge_bind(evens, odds, &bind, |entry| scratch.1.push(entry));
 }
 
-/// The round-1 quadratic inner factor served straight from the seed
-/// entries: [`sparse_quadratic`]'s walk over the `T/2`-domain intermediates,
-/// which are rebuilt per 4-row group in per-thread scratch instead of read
-/// from a materialized generation. Same pair groups, same merge order, same
-/// accumulation — every summand is the sequential path's value.
+/// Round-1 quadratic with first-bind rows rebuilt in per-thread scratch.
 #[expect(
     clippy::too_many_arguments,
     reason = "mirrors sparse_quadratic plus the two table generations"
@@ -1555,12 +1418,7 @@ pub(super) fn sparse_quadratic_fused<F: JoltField>(
     }
 }
 
-/// The fused Seed → Indexed transition: one pass merges every 4-row group —
-/// the two half-pair merge-binds with `r1`, then the level-2 merge-bind with
-/// `r2` — straight into the SoA columns at a quarter of the cycle domain.
-/// Identical values by construction (both levels are the canonical binds
-/// the sequential rounds applied); only the full-size intermediate
-/// generation between them disappears.
+/// Fuse two seed binds into quarter-domain indexed SoA columns.
 pub(super) fn bind_seed_entries_fused<F: JoltField>(
     entries: &[SeedEntry],
     seed_ra_lut: &CoeffLut<F>,
@@ -1570,15 +1428,13 @@ pub(super) fn bind_seed_entries_fused<F: JoltField>(
     r1: F,
     r2: F,
 ) -> (Vec<F>, Vec<IndexedMeta>) {
-    // The count pass's u128 column bitmap is exact only while the register
-    // domain fits it.
+    // One bit per register column.
     const _: () = assert!(REGISTER_ADDRESS_BITS <= 7);
     let group_predicate = |a: &SeedEntry, b: &SeedEntry| a.row() / 4 == b.row() / 4;
     let bounds = pair_aligned_bounds(entries, 2);
     let blocks = bounds.len() - 1;
 
-    // Count pass: a merged 4-row group emits one entry per distinct column
-    // (each level's merge unions its sides' column sets).
+    // Each 4-row group emits one entry per distinct column.
     let count_block = |block: usize| -> usize {
         entries[bounds[block]..bounds[block + 1]]
             .chunk_by(group_predicate)
@@ -1646,11 +1502,8 @@ pub(super) fn bind_seed_entries_fused<F: JoltField>(
             .for_each(|item| fill_block(&mut scratch, item));
     }
 
-    // SAFETY: the count pass sized every block's output span exactly (each
-    // 4-row group emits exactly its distinct-column count, which the
-    // two-level merge reproduces), the spans partition both spare capacities
-    // up to `bound_length`, and the merge writes each slot of both columns
-    // exactly once.
+    // SAFETY: exact per-block counts partition both spare capacities; the
+    // merge initializes every slot once.
     unsafe {
         vals.set_len(bound_length);
         metas.set_len(bound_length);
@@ -1659,16 +1512,12 @@ pub(super) fn bind_seed_entries_fused<F: JoltField>(
 }
 
 impl<F: JoltField> SparseEntries<F> {
-    /// A placeholder table for the direct representation, which ignores it.
+    /// Empty LUT for direct coefficients.
     pub(super) fn unused_lut() -> CoeffLut<F> {
         CoeffLut { values: Vec::new() }
     }
 
-    /// The cycle-round quadratic inner factor `[q(0), leading coefficient]`
-    /// over the remaining sparse rows. Raw `inc` serves rounds 0 (plain
-    /// deltas) and 1 (composed pairs); `from_i128` per element is the
-    /// oracle's exact op and the field composition is the exact bind op, so
-    /// the pair evals match the dense table's in either representation.
+    /// Cycle-round quadratic for the current entry and increment layouts.
     pub(super) fn quadratic(&self, e_in: &[F], e_out: &[F], inc: &IncColumn<F>) -> [F; 2] {
         match (self, inc) {
             (
@@ -1682,10 +1531,7 @@ impl<F: JoltField> SparseEntries<F> {
                 let inc_0 = F::from_i128(raw[2 * z]);
                 [inc_0, F::from_i128(raw[2 * z + 1]) - inc_0]
             }),
-            // Round 1: both columns still raw — entries rebuild the composed
-            // intermediates per 4-row group, inc composes its first-bind
-            // pairs; every served value is exactly what the eager `T/2`
-            // materializations held.
+            // Round 1 rebuilds both first-bind intermediates per 4-row group.
             (
                 Self::SeedBound {
                     entries,
@@ -1737,13 +1583,8 @@ impl<F: JoltField> SparseEntries<F> {
         }
     }
 
-    /// Bind one cycle variable. Returns whether this bind freed an entry
-    /// generation (the fused SeedBound→Indexed transition or Indexed→Direct)
-    /// — the rounds whose fresh output vector strands the previous multi-GiB
-    /// generation in the allocator's cache.
+    /// Bind once; return whether a full entry generation was replaced.
     pub(super) fn bind(&mut self, r: F) -> bool {
-        // Same-layout rounds bind in place — the entry vector is reused, not
-        // reallocated.
         match self {
             Self::Indexed {
                 vals,
@@ -1767,10 +1608,7 @@ impl<F: JoltField> SparseEntries<F> {
         }
         let state = std::mem::replace(self, Self::Direct(Vec::new()));
         let (next, freed_generation) = match state {
-            // The first bind is deferred: nothing materializes — the seed
-            // entries serve round 1 through the per-group intermediate
-            // rebuild, so only the squared tables (and the pre-square ones,
-            // for the level-1 combine bits) are prepared here.
+            // First bind retains seeds and prepares both LUT levels.
             Self::Seed {
                 entries,
                 ra_lut,
@@ -1792,10 +1630,7 @@ impl<F: JoltField> SparseEntries<F> {
                     false,
                 )
             }
-            // The second bind fuses both levels: the indexed layout
-            // materializes `val` directly at a quarter of the cycle domain;
-            // the tables then square (again) so the combined indices address
-            // the twice-bound values.
+            // Second bind materializes quarter-domain indexed columns.
             Self::SeedBound {
                 entries,
                 seed_ra_lut,
@@ -1826,11 +1661,7 @@ impl<F: JoltField> SparseEntries<F> {
                     true,
                 )
             }
-            // One more table squaring would overflow the u16 index domain
-            // (after the third cycle bind under the seed sizes), so move to
-            // direct field coefficients: dereference during the merge — the
-            // exact deref-then-bind values, without the dense dereferenced
-            // copy that used to double this round's transient.
+            // Dereference during the bind before the LUT index overflows.
             Self::Indexed {
                 vals,
                 metas,
@@ -1846,8 +1677,7 @@ impl<F: JoltField> SparseEntries<F> {
         freed_generation
     }
 
-    /// Scatter the fully cycle-bound single row into K-sized dense
-    /// `(ra, wa, val)` arrays — the cycle→address transition state.
+    /// Scatter the final cycle row into dense `(ra, wa, val)` arrays.
     pub(super) fn into_dense(self, k: usize) -> (Vec<F>, Vec<F>, Vec<F>) {
         let mut ra = vec![F::zero(); k];
         let mut wa = vec![F::zero(); k];
@@ -1856,8 +1686,7 @@ impl<F: JoltField> SparseEntries<F> {
             Self::Seed { .. } => {
                 unreachable!("prepare requires log_t ≥ 1, so a cycle bind precedes the collapse")
             }
-            // log_t = 1: the single cycle bind is still pending — merge rows
-            // {0, 1} with it on the way into the dense arrays.
+            // At log_t=1, apply the retained challenge during conversion.
             Self::SeedBound {
                 entries,
                 seed_ra_lut,

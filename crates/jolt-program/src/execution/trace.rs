@@ -307,8 +307,7 @@ impl TraceRowMeta {
     }
 }
 
-/// Cached `Load`/`Store` circuit-flag bits: the row class selecting the
-/// meaning of the four aliased value slots.
+/// Cached row class selecting the slot layout.
 const IS_LOAD: u16 = 1 << CircuitFlags::Load as u16;
 const IS_STORE: u16 = 1 << CircuitFlags::Store as u16;
 
@@ -317,28 +316,15 @@ const VSR_NONE: u16 = u16::MAX;
 /// Operand-id byte sentinel for an absent (`None`) operand.
 const OPERAND_NONE: u8 = u8::MAX;
 
-/// One execution cycle, packed to 64 bytes.
-///
-/// The unpacked view (48-byte [`JoltInstructionRow`] + 80-byte
-/// [`RegisterState`] + 32-byte [`RamAccess`]) collapses losslessly for final
-/// Jolt rows: the instruction half stores kind tag, address, sign/magnitude
-/// immediate, operand ids, and the sequence/compression metadata that fully
-/// determine the row's circuit flags; the dynamic half stores four value
-/// slots aliased by the row's `Load`/`Store` class, per the final memory-row
-/// contract (`specs/proof-trace-row-layout.md`):
+/// One execution cycle packed to 64 bytes. Four value slots use the final
+/// memory-row layout (`specs/proof-trace-row-layout.md`):
 ///
 /// - non-memory: `rs1`, `rs2`, `rd_pre`, `rd_post` (RAM values must be zero);
 /// - load: `rs1`, `ram_address`, `rd_pre`, `rd_post` (= the RAM value; no rs2);
 /// - store: `rs1`, `rs2` (= RAM post), `ram_pre`, `ram_address` (no rd).
 ///
-/// The trace vector is resident for the entire prove, so this packing is
-/// load-bearing for prover peak memory. Recorded register ids are stored
-/// separately from instruction operand ids, so both [`TraceRow::registers`]
-/// and [`TraceRow::instruction`] round-trip exactly.
-///
-/// WARNING: construction is fail-closed — [`TraceRow::new`] panics on rows
-/// that violate the memory-row contract (it would otherwise silently corrupt
-/// aliased columns). The tracer only emits contract-satisfying final rows.
+/// Recorded register ids stay separate from instruction operand ids.
+/// [`TraceRow::new`] rejects rows that violate the slot contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(feature = "field-inline"), derive(Copy))]
 #[cfg_attr(
@@ -347,29 +333,21 @@ const OPERAND_NONE: u8 = u8::MAX;
 )]
 #[repr(C)]
 pub struct TraceRow {
-    /// Class-aliased value slots; see the type docs.
     slots: [u64; 4],
-    /// Source RV64 instruction address.
     address: u64,
-    /// Magnitude of the immediate; sign is carried in `meta`.
+    /// Immediate magnitude; `meta` stores its sign.
     imm_abs: u64,
-    /// Cached circuit flags (a pure function of kind, `vsr`, `is_compressed`,
-    /// `is_first_in_sequence` — all stored, so this is derived state; caching
-    /// keeps per-flag witness extraction a bit test).
+    /// Cached from the stored instruction metadata for fast witness extraction.
     circuit_flags: u16,
-    /// Final Jolt instruction tag (stable identity).
     kind_tag: u16,
-    /// `virtual_sequence_remaining`, or [`VSR_NONE`].
     virtual_sequence_remaining: u16,
-    /// Cached instruction flags (a pure function of kind).
     instruction_flags: u8,
-    /// Presence bits, RAM tag, immediate sign.
     meta: TraceRowMeta,
-    /// Recorded register ids, valid iff the matching presence bit is set.
+    /// Valid when the matching `meta` bit is set.
     rs1_register: u8,
     rs2_register: u8,
     rd_register: u8,
-    /// Instruction operand ids, or [`OPERAND_NONE`].
+    /// Instruction operand ids; [`OPERAND_NONE`] means absent.
     rs1_operand: u8,
     rs2_operand: u8,
     rd_operand: u8,
@@ -409,8 +387,7 @@ fn checked_operand_id(kind: JoltInstructionKind, id: Option<u8>) -> u8 {
 }
 
 impl TraceRow {
-    /// Packs one cycle. Panics if the row violates the final memory-row
-    /// contract (fail-closed; see the type docs).
+    /// Pack one cycle, rejecting invalid slot aliases.
     pub fn new(
         instruction: JoltInstructionRow,
         registers: RegisterState,
@@ -419,9 +396,7 @@ impl TraceRow {
         let kind = instruction.instruction_kind;
         let (circuit_flags, instruction_flags) = match JoltInstruction::try_from(instruction) {
             Ok(instruction) => (instruction.circuit_flags(), instruction.instruction_flags()),
-            // Fail closed like the rest of the constructor: a source-only kind
-            // has no flag semantics, and caching empty flags would yield
-            // well-formed-but-wrong flag witnesses downstream.
+            // Source-only kinds have no flag semantics to cache.
             Err(_) => contract_violation(kind, "instruction kind has no JoltInstruction lowering"),
         };
         let is_load = circuit_flags.get(CircuitFlags::Load);
@@ -514,8 +489,7 @@ impl TraceRow {
         Self::new(instruction, RegisterState::default(), RamAccess::NoOp)
     }
 
-    /// The final Jolt instruction row, reconstructed exactly from the packed
-    /// instruction half.
+    /// Reconstruct the instruction row.
     #[inline]
     pub fn instruction(&self) -> JoltInstructionRow {
         #[inline]
@@ -540,8 +514,7 @@ impl TraceRow {
         }
     }
 
-    /// The row's cached circuit flags (identical to deriving them from
-    /// [`TraceRow::instruction`]; see the field docs).
+    /// Cached circuit flags.
     #[inline]
     pub fn circuit_flags(&self) -> CircuitFlagSet {
         CircuitFlagSet::from_bits(self.circuit_flags)
@@ -553,7 +526,7 @@ impl TraceRow {
         InstructionFlagSet::from_bits(self.instruction_flags)
     }
 
-    /// The row's final instruction kind, without reconstructing the full row.
+    /// Final instruction kind without reconstructing the row.
     #[inline]
     #[expect(clippy::expect_used, reason = "the tag is stored from a valid kind")]
     pub fn instruction_kind(&self) -> JoltInstructionKind {
@@ -600,8 +573,7 @@ impl TraceRow {
 
     #[inline]
     pub fn rs2_read(&self) -> Option<RegisterRead> {
-        // Loads have no rs2 (checked at construction), so slot 1 never needs
-        // disambiguation here.
+        // Loads cannot reach this path with rs2 present.
         self.meta.rs2_present().then_some(RegisterRead {
             register: self.rs2_register,
             value: self.slots[1],
@@ -610,7 +582,6 @@ impl TraceRow {
 
     #[inline]
     pub fn rd_write(&self) -> Option<RegisterWrite> {
-        // Stores have no rd (checked at construction).
         self.meta.rd_present().then_some(RegisterWrite {
             register: self.rd_register,
             pre_value: self.slots[2],
@@ -782,11 +753,7 @@ mod tests {
         }
     }
 
-    /// The pack/unpack codec must be exact on contract-satisfying rows:
-    /// every field, presence vs absence, and the enum variant itself
-    /// round-trip — a `Write` with `post == pre` must not collapse into a
-    /// `Read`, and `Some` of a zero-valued access must not collapse into
-    /// absence.
+    /// Preserve presence and RAM variants even when values coincide.
     #[test]
     fn non_memory_state_round_trips_exactly() {
         let register_states = [
@@ -816,8 +783,7 @@ mod tests {
                 }),
             },
         ];
-        // Zero-valued RAM accesses on non-memory rows are representable and
-        // must keep their variant.
+        // Zero-valued accesses must keep their variant.
         let ram_accesses = [
             RamAccess::NoOp,
             RamAccess::Read(RamRead {
@@ -921,9 +887,7 @@ mod tests {
         assert_eq!(JoltCycle::ram_write_value(&row), Some(stored));
     }
 
-    /// The cached flag sets must equal the sets derived from the
-    /// reconstructed instruction (they are the same derivation, cached at
-    /// construction).
+    /// Cached flags match instruction-derived flags.
     #[test]
     fn cached_flags_match_the_derivation() {
         let mut source = instruction(
@@ -945,9 +909,7 @@ mod tests {
         }
     }
 
-    /// `instruction()` must reconstruct the exact `JoltInstructionRow`,
-    /// including sequence/compression metadata and operand ids that differ
-    /// from the recorded register state.
+    /// Instruction operands remain independent of recorded register state.
     #[test]
     fn instruction_reconstruction_is_exact() {
         let mut source = instruction(
@@ -982,9 +944,7 @@ mod tests {
         assert_eq!(row.rs1_read().unwrap().register, 200);
     }
 
-    /// `TraceRow::default()` must stay semantically identical to the
-    /// canonical padding row: NoOp instruction, no register activity, RAM
-    /// no-op.
+    /// Default is the canonical padding row.
     #[test]
     fn default_row_is_the_canonical_padding_row() {
         let row = TraceRow::default();

@@ -1,29 +1,9 @@
-//! The optimized RAM value-check (stage 4) kernel.
+//! Optimized RAM value check (stage 4).
 //!
-//! The summand is `inc(j) · ra(j) · (LT(j, r_cycle) + γ)` over the cycle
-//! domain. Techniques ported from `jolt-prover-legacy/src/zkvm/ram/
-//! val_evaluation.rs` (the same shape as the optimized registers
-//! value-evaluation kernel):
-//!
-//! - **Lazy one-hot `ra`** ([`LazyFoldedRa`]): rounds 0–3 serve
-//!   `ra(j) = eq(r_address)[addresses[j]]` straight from the session-shared
-//!   RAM access columns and the `K`-sized eq table — the `(K × T)` grid and
-//!   the reference's dense `T`-sized address fold are never materialized;
-//!   a dense vector first appears at `T/16`.
-//! - **Split LT with γ folded in** ([`SplitLt`]): `LT(j, r_cycle) + γ` is
-//!   served from three `~√T` tables instead of a dense `T`-sized one.
-//! - **Eval-at-{0,2,3} sampling** with the engine hint supplying `s(1)`.
-//! - **Deferred-reduction accumulation** of the triple products.
-//! - **Lazy `inc`** ([`IncColumn`]): round 0 derives
-//!   `inc(j) = F::from_i128(post − pre)` straight from a kernel-local
-//!   pre/post value view (one value-only trace walk; the address column is
-//!   the session-shared Arc) — the same op the witness oracle applies per
-//!   row, so the values are bit-identical — and round 1 serves the composed
-//!   first-bind pairs `lo + r1·(hi − lo)` from the same view, so the dense
-//!   bound column only materializes at `T/4` on the second bind. Neither
-//!   the `T`- nor the `T/2`-sized field table ever exists; the raw columns
-//!   (16 B/cycle, exactly a `T/2` field table's footprint) cover both early
-//!   rounds.
+//! Summand: `inc(j) · ra(j) · (LT(j, r_cycle) + γ)`.
+//! [`LazyFoldedRa`] delays the dense `ra` table to `T/16`; [`SplitLt`] stores
+//! `LT + γ` in ~√T space. [`IncColumn`] derives `inc` from raw trace values
+//! for two rounds, then materializes at `T/4`.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_field::JoltField;
@@ -47,8 +27,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Lazy-RA index source over the full remapped RAM address (a single
-/// `K`-ary selector), cold on no-access cycles.
+/// Remapped RAM address index, absent on no-access cycles.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
     addresses: Arc<Vec<u64>>,
@@ -88,9 +67,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         }
         let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
 
-        // One value-only trace walk: the address column is the session-shared
-        // Arc (parked at stage 2), so only pre/post are collected here — and
-        // they die with the kernel's first cycle bind, not with the session.
+        // Reuse stage 2 addresses; collect only the short-lived values.
         let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
         super::ram_trace::validate_addresses(&columns.addresses, 1usize << ram_log_k)?;
         let addresses = Arc::clone(&columns.addresses);
@@ -104,15 +81,8 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
-/// The `inc` column in its round-dependent representation. Round 0 serves
-/// `inc(j)` straight from the kernel-local access columns, round 1 the
-/// composed first-bind pairs from the same columns; the second bind
-/// materializes the dense bound column at `T/4` and frees them.
-///
-/// The derivation is exact for every row kind: the witness oracle's `RamInc`
-/// is `F::from_i128(post − pre)` for writes and `F::from_i128(0)` otherwise,
-/// and the columns carry `post == pre` on reads and zeros on no-ops, so
-/// [`raw_inc`] reproduces the oracle's field values bit-for-bit.
+/// Raw trace values for two rounds; a dense `T/4` table afterward.
+/// Reads have `post == pre`, and no-ops are zero, matching `RamInc`.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -128,7 +98,7 @@ enum IncColumn<F: JoltField> {
     Bound(Polynomial<F>),
 }
 
-/// `inc(j)` from the raw columns — the witness oracle's exact op.
+/// `inc(j)` from raw trace values.
 #[inline]
 fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
     F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
@@ -144,8 +114,7 @@ fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
     }
 }
 
-/// The composed first-bind value `inc(y)` on the half domain: the exact
-/// `lo + r·(hi − lo)` op the eager `T/2` materialization applied.
+/// First-bind `inc(y)` on the half domain.
 #[inline]
 fn raw_bound_inc<F: JoltField>(columns: &RamAccessColumns, r1: F, y: usize) -> F {
     let lo = raw_inc::<F>(columns, 2 * y);
@@ -177,15 +146,12 @@ impl<F: JoltField> RamValCheckKernel<F> {
                 post_values: Vec::new(),
             });
             self.inc = match std::mem::replace(&mut self.inc, placeholder) {
-                // The first bind is free: round 1 serves the composed
-                // pairs straight from the raw columns.
+                // Round 1 reads bound pairs from the raw columns.
                 IncColumn::Raw(columns) => IncColumn::RawBound {
                     columns,
                     r1: challenge,
                 },
-                // Materialize the second bind directly at `T/4`, each
-                // level the same pair op `lo + r·(hi − lo)` as
-                // `Polynomial::bind_with_order`.
+                // Materialize the second bind directly at `T/4`.
                 IncColumn::RawBound { columns, r1 } => {
                     let quarter = columns.addresses.len() / 4;
                     let pair = |z: usize| {
@@ -206,10 +172,7 @@ impl<F: JoltField> RamValCheckKernel<F> {
         self.ra.bind(challenge);
         self.lt.bind(challenge);
         self.progress.advance();
-        // The second bind frees the T-sized pre/post value columns; this
-        // member is tail-aligned, so that happens rounds after the sibling
-        // register kernel's transition purges — the dead pages would sit in
-        // the allocator's freed-large-block cache until the stage boundary.
+        // Return freed `T`-sized columns before the stage boundary.
         if freed_columns {
             crate::mem::purge_staging(self.progress.total());
         }
@@ -231,9 +194,7 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
             self.bind(challenge);
         }
 
-        // Monomorphized per inc source: no per-element representation branch
-        // in the accumulate loop (each arm instantiates the shared sampler
-        // with its own inc closure).
+        // Each arm keeps representation branches outside the inner loop.
         let ra = |y: usize| self.ra.lo_hi(0, y);
         let lt = |y: usize| self.lt.pair(y);
         let evals = match &self.inc {
@@ -277,25 +238,23 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamValCheckOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        // The advice cells are dual-role: never bound here, their wire output
-        // value is the consumed input claim read back (the naive tier's echo).
+        // Advice outputs echo their input claims; they are not bound here.
         Ok(RamValCheckOutputClaims {
             untrusted_advice: inputs.untrusted_advice,
             trusted_advice: inputs.trusted_advice,
             program_image: inputs.program_image,
             ram_ra: self.ra.final_values()[0],
             ram_inc: match &self.inc {
-                // Raw only when log_t = 0 (no cycle rounds at all).
+                // Only when log_t = 0.
                 IncColumn::Raw(columns) => raw_inc(columns, 0),
-                // RawBound only when log_t = 1 (one composed pair).
+                // Only when log_t = 1.
                 IncColumn::RawBound { columns, r1 } => raw_bound_inc(columns, *r1, 0),
                 IncColumn::Bound(inc) => inc.evals()[0],
             },
         })
     }
 
-    /// Pin the split-LT tables to the verifier's scalar path: the fully bound
-    /// `LT + γ` value must equal `derive_output_term(LtCyclePlusGamma)`.
+    /// Check the bound split-LT value against the verifier's scalar path.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -389,8 +348,7 @@ mod tests {
             )
             .unwrap();
 
-            // The independently folded true input claim:
-            // `Σ_j inc(j) · ra_folded(j) · (LT(j, r_cycle) + γ)`.
+            // Independent input claim: `Σ inc · ra_folded · (LT + γ)`.
             let ra_folded =
                 address_fold::<Fr>(witness, ram_ra_val_check(), shape.log_t, &r_address).unwrap();
             let inc: Vec<Fr> = witness

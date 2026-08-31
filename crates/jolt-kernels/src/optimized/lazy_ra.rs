@@ -168,12 +168,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
                     let dense = Self::Dense(materialize(&tables, &source, width * 2));
-                    // The switch frees the branch tables and the index
-                    // source — often the last Arc holder of a shared
-                    // multi-hundred-MiB compact column (lookup indices, PC
-                    // rows, RAM addresses). Return those pages before the
-                    // batch's remaining dense materializations stack on
-                    // top of them (the stage-6b resident high-water).
+                    // Return branch tables and the final shared index handle.
                     drop(tables);
                     drop(source);
                     crate::mem::purge_staging(log_t);

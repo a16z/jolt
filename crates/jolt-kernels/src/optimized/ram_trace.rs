@@ -1,18 +1,6 @@
-//! The shared RAM access columns: one typed trace walk serving every
-//! RAM-family kernel in this backend, parked in the [`ProofSession`] so the
-//! stage-2 kernel's walk is reused by stages 4, 5 and 6b.
-//!
-//! The columns are the sparse view of the `(K × T)` RAM grids: per cycle,
-//! the remapped word address (or a no-access sentinel) plus the pre- and
-//! post-access word values. `ra(k, j)` is 1 exactly at `(addresses[j], j)`;
-//! `val(k, j)` walks from the initial state through the writes.
-//!
-//! Lifetime split: only the stage-2 read-write kernel consumes the value
-//! columns (its `prepare` builds the cycle-major matrix and `val_init` from
-//! them), so [`RamAccessColumns`] owns them by value and they free with that
-//! `prepare`. The address column serves five kernels across stages 2–6b and
-//! is the only session-parked carry ([`SharedRamAddresses`]) — 8 B/cycle
-//! instead of 24 across the prover's peak window.
+//! Sparse per-cycle RAM addresses and values shared across RAM kernels.
+//! [`SharedRamAddresses`] survives stages 2–6b; [`RamAccessColumns`] owns the
+//! stage-2-only values.
 
 use core::marker::PhantomData;
 use std::sync::Arc;
@@ -32,13 +20,10 @@ use rayon::prelude::*;
 
 use crate::{KernelError, ProofSession};
 
-/// The row-window size of the streaming column splits below (matches
-/// `support::collect_rows`: wide enough to amortize the per-chunk rayon
-/// extraction dispatch).
+/// Streaming extraction window.
 const SPLIT_CHUNK: usize = 1 << 16;
 
-/// The index-parallel split's scatter grain (the whole-range collectors'
-/// load-balance tradeoff).
+/// Parallel scatter grain.
 #[cfg(feature = "parallel")]
 const PAR_CHUNK: usize = 1 << 14;
 
@@ -63,25 +48,20 @@ struct RamAddressBundle {
     address: RemappedRamAddress,
 }
 
-/// The session-parked per-cycle remapped-address column (stage 2 → 6b).
-/// [`NO_ACCESS`] when the cycle makes no remappable RAM access (no-ops and
-/// address 0).
+/// Session-shared remapped addresses; [`NO_ACCESS`] marks absent accesses.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedRamAddresses(
     #[cfg_attr(feature = "allocative", allocative(visit = visit_shared_addresses))]
     pub(crate)  Arc<Vec<u64>>,
 );
 
-/// Bytes of the shared address column, attributed once at the session park.
 #[cfg(feature = "allocative")]
 fn visit_shared_addresses(addresses: &Arc<Vec<u64>>, visitor: &mut Visitor<'_>) {
     jolt_poly::visit_scalars(addresses.as_ref(), visitor);
 }
 
 impl SharedRamAddresses {
-    /// The session-shared address column: collected on first request
-    /// (whichever RAM kernel prepares first), cloned out as an [`Arc`]
-    /// afterwards.
+    /// Collect once, then return shared references.
     #[expect(
         clippy::expect_used,
         reason = "the entry is parked by this function right above the read"
@@ -105,10 +85,7 @@ impl SharedRamAddresses {
                 .expect("RAM address column parked above")
                 .0,
         );
-        // Five kernels across stages 2–6b reclaim this column by type alone;
-        // a wrong-domain reclaim means OOB indexing or a silently wrong RA
-        // claim from a prefix-covering table, so hard-error like the
-        // `PcRow::shared` twin instead of a release-compiled-out assert.
+        // Reuse by type must not cross trace domains.
         if addresses.len() != 1usize << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: "session-shared RAM address column".to_owned(),
@@ -120,9 +97,7 @@ impl SharedRamAddresses {
     }
 }
 
-/// Collect per-cycle `u64` columns straight into SoA form: index-parallel
-/// scatter for slice-backed sources, streaming windows otherwise. `split` is
-/// pure per row, so column values and order match a bundle collect + split.
+/// Collect SoA columns by parallel scatter or ordered streaming.
 fn collect_split_columns<F: JoltField, B, const N: usize>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
@@ -166,8 +141,7 @@ where
     Ok(consumers.0.columns)
 }
 
-/// The index-parallel split: rows scatter straight into their offsets of
-/// every column's spare capacity (chunked so extraction load-balances).
+/// Scatter rows directly into column spare capacity.
 #[cfg(feature = "parallel")]
 fn collect_split_columns_par<F: JoltField, B, const N: usize>(
     access: &RandomAccessRows,
@@ -221,9 +195,7 @@ where
     if let Some(failure) = error.take() {
         return Err(failure.into());
     }
-    // SAFETY: the error latch is empty, so every chunk ran to completion and
-    // initialized its whole span of all N columns (the views partition each
-    // column's first `cycles` spare slots exactly).
+    // SAFETY: successful chunks initialized every slot in each disjoint span.
     unsafe {
         for column in &mut columns {
             column.set_len(cycles);
@@ -232,38 +204,27 @@ where
     Ok(columns)
 }
 
-/// The stage-2 full access view: the shared address column plus the pre-
-/// and post-access value columns, owned by (and freed with) the stage-2
-/// read-write `prepare` — their only consumer.
+/// Stage-2 address and value columns.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamAccessColumns {
-    /// The session-shared address column, attributed to the session park
-    /// (not here).
+    /// Accounted at the session park.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pub addresses: Arc<Vec<u64>>,
-    /// Pre-access word value per cycle (a read's value, a write's pre-value);
-    /// 0 on no-access cycles.
+    /// Pre-access value, or zero without an access.
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
     pub post_values: Vec<u64>,
 }
 
 impl RamAccessColumns {
-    /// Collect the full three-column view, sharing the address column with
-    /// the session: one fused walk when the column is not parked yet, a
-    /// value-only walk when it is.
+    /// Collect values and reuse or create the shared address column.
     pub fn collect_full<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
-        // Both walks split rows straight into the SoA columns — a
-        // whole-trace bundle staging vector would co-reside with the columns
-        // (24-32 B/cycle transiently, at the stage-4 batch's resident peak).
-        // Column values and order are unchanged: the split is pure per row,
-        // scattered index-parallel for slice-backed sources and concatenated
-        // in cycle order by the streaming fallback.
+        // Direct SoA collection avoids a whole-trace staging vector.
         if session.state::<SharedRamAddresses>().is_some() {
             let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
             let (pre_values, post_values) =
@@ -294,15 +255,10 @@ impl RamAccessColumns {
         })
     }
 
-    /// Reconstruct the initial RAM state from the trace and the final-state
-    /// oracle: an accessed address's initial value is its first access's
-    /// pre-value; a never-accessed address's value never changes, so its
-    /// final value IS its initial value.
+    /// Recover initial values from each address's first access; untouched
+    /// addresses retain their final value.
     ///
-    /// WARNING: this is the honest-prover data path — it relies on the trace
-    /// being consistent with the final memory image (exactly what the RAM
-    /// val/output sumchecks prove). A dishonest witness diverges here and
-    /// fails the engine's round checks loudly.
+    /// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
     pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
         let mut val_init = val_final;
         let mut seen = vec![false; val_init.len()];
@@ -320,8 +276,7 @@ impl RamAccessColumns {
     }
 }
 
-/// Bounds-check every accessed address against the proof's `K`, matching
-/// the grid materializers' fail-loud contract.
+/// Reject addresses outside the proof's RAM domain.
 pub(crate) fn validate_addresses<F: JoltField>(
     addresses: &[u64],
     ram_k: usize,
@@ -337,10 +292,7 @@ pub(crate) fn validate_addresses<F: JoltField>(
     Ok(())
 }
 
-/// The address-eq fold of the one-hot `ra` grid:
-/// `out[j] = Σ_k eq(r_address, k) · ra(k, j) = eq_address[addresses[j]]`
-/// (0 on no-access cycles). Reproduces `views::address_fold` of the dense
-/// grid without materializing it.
+/// Address fold: `out[j] = eq_address[addresses[j]]`, or zero without access.
 pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u64], eq_address: &[F]) -> Vec<F> {
     addresses
         .iter()
@@ -354,17 +306,12 @@ pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u64], eq_address: &[F]) 
         .collect()
 }
 
-/// Rows of eq staging materialized per chunk by [`fold_cycles`] — bounded
-/// co-residency (32 MiB of `F`) instead of the full `T`-sized eq table.
+/// Eq rows staged per cycle-fold chunk.
 const FOLD_CYCLES_CHUNK: usize = 1 << 20;
 
-/// The cycle-eq fold of the one-hot `ra` grid:
+/// Cycle fold of the one-hot `ra` grid:
 /// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
-/// Reproduces `views::cycle_fold` of the dense grid without materializing
-/// it — or the `T`-sized eq table: eq values come chunk-by-chunk from the
-/// `e_hi ⊗ e_lo` split tensor (`eq(r, j) = eq(r_hi, j_hi) · eq(r_lo, j_lo)`,
-/// an exact-field product of the same factors as the dense table's entries),
-/// and each chunk folds serially in the same ascending-`j` order.
+/// Eq values are generated in chunks from `e_hi ⊗ e_lo`.
 pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u64], r_cycle: &[F], ram_k: usize) -> Vec<F> {
     let mid = r_cycle.len() / 2;
     let (r_hi, r_lo) = r_cycle.split_at(mid);

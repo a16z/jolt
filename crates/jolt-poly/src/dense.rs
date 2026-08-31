@@ -273,10 +273,7 @@ impl<F: JoltField> Polynomial<F> {
         self.num_vars -= 1;
     }
 
-    /// Binds the LSB variable in place — same semantics as
-    /// `bind_with_order(scalar, BindingOrder::LowToHigh)` with no swap buffer
-    /// or fresh output allocation, so a stage never keeps rotating tables or
-    /// dead half-size generations resident.
+    /// Binds the LSB variable in place without another buffer.
     #[inline]
     pub fn bind_low_to_high_in_place(&mut self, scalar: F) {
         assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
@@ -284,9 +281,7 @@ impl<F: JoltField> Polynomial<F> {
         self.num_vars -= 1;
     }
 
-    /// The allocated capacity of the evaluation vector — in-place binds
-    /// truncate without releasing, so callers decide when the vacated tail
-    /// dominates and [`shrink_to_fit`](Self::shrink_to_fit) pays off.
+    /// Allocated evaluation capacity.
     #[inline]
     pub fn capacity(&self) -> usize {
         self.evals.capacity()
@@ -610,17 +605,10 @@ impl<F: JoltField> Neg for Polynomial<F> {
     }
 }
 
-/// Bind the LSB variable in place: `v[j] = v[2j] + r·(v[2j+1] − v[2j])`,
-/// written back into the input allocation — no swap buffer, no fresh output
-/// vector.
+/// In-place LSB bind: `v[j] = v[2j] + r·(v[2j+1] − v[2j])`.
 ///
-/// Safety of the aliasing: outputs are produced in ascending power-of-two
-/// levels `[e/2, e)`, each reading exactly `[e, 2e)`. Level `e` writes only
-/// below every index it reads, and all previously written outputs lie in
-/// `[0, e/2)` — strictly below its read window — so every read still sees
-/// the original value. Output 0 (reading indices 0 and 1) goes first, before
-/// level 2 overwrites index 1. Each level splits the buffer into disjoint
-/// `dst`/`src` slices, so the parallel path needs no `unsafe`.
+/// Each power-of-two level writes below its read window. Earlier outputs lie
+/// below later reads, and each level splits into disjoint `dst` and `src`.
 pub fn bind_low_to_high_in_place<F: JoltField>(evals: &mut Vec<F>, challenge: F) {
     debug_assert!(evals.len().is_power_of_two());
     let half = evals.len() / 2;
