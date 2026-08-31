@@ -219,23 +219,34 @@ impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
                 reason: "CUDA registers read-write could not normalize its opening point",
             })?;
         let shards = self.rs2_windows.len();
+        let tasks: Vec<DeviceTask<'_, F, CudaError>> = self
+            .rs2_windows
+            .iter()
+            .map(|(ordinal, indices, window)| {
+                let ordinal = *ordinal;
+                let point = &point;
+                let task: DeviceTask<'_, F, CudaError> = Box::new(move || {
+                    let device = context_for(ordinal).ok_or(CudaError::InvariantViolation {
+                        reason: "a registers read-write rs2 window names an absent device",
+                    })?;
+                    rs2_claim::rs2_ra_claim_window(
+                        device,
+                        indices,
+                        window.len,
+                        &point.r_address,
+                        &point.r_cycle,
+                        ordinal,
+                        shards,
+                    )
+                });
+                task
+            })
+            .collect();
         let mut rs2_ra = F::zero();
-        for (ordinal, indices, window) in &self.rs2_windows {
-            let device = context_for(*ordinal).ok_or(SumcheckKernelError::InvariantViolation {
-                reason: "a registers read-write rs2 window names an absent device",
-            })?;
-            rs2_ra += rs2_claim::rs2_ra_claim_window(
-                device,
-                indices,
-                window.len,
-                &point.r_address,
-                &point.r_cycle,
-                *ordinal,
-                shards,
-            )
-            .map_err(|_| SumcheckKernelError::InvariantViolation {
-                reason: "CUDA registers read-write rs2 claim failed",
-            })?;
+        for part in fan_out(tasks).map_err(|_| SumcheckKernelError::InvariantViolation {
+            reason: "CUDA registers read-write rs2 claim failed",
+        })? {
+            rs2_ra += part;
         }
         let gamma_inverse =
             self.gamma
