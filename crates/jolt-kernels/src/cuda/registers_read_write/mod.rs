@@ -15,8 +15,8 @@ use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec};
-use crate::cuda::common::devices::{witness_windows, CycleWindow};
-use crate::cuda::common::error::backend;
+use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
+use crate::cuda::common::error::{backend, CudaError};
 use crate::cuda::common::read_write_matrix::{CycleShard, ShardedReadWriteMatrix};
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
@@ -26,6 +26,11 @@ use crate::{
 pub(crate) mod device_rows;
 pub(crate) mod rs2_claim;
 pub(crate) mod witness;
+
+type PreparedShard<F> = (
+    CycleShard<F>,
+    (usize, cudarc::driver::CudaSlice<u32>, CycleWindow),
+);
 
 pub struct RegistersReadWriteKernel<F: Field> {
     context: &'static CudaKernelContext,
@@ -290,38 +295,59 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
         let cycles = 1usize << log_t;
         let windows = witness_windows(cycles);
         let shards = windows.len();
-        let mut cycle_shards = Vec::with_capacity(shards);
-        let mut rs2_windows = Vec::with_capacity(shards);
+        let mut resident = Vec::with_capacity(shards);
         for (ordinal, window) in windows.iter().enumerate() {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a registers read-write window names an absent device",
             })?;
             let (trace, atoms) =
                 session_window_residency(device, session, witness, cycles, window)?;
-            let rows =
-                device_rows::DeviceRegisterRows::from_device(device, &trace, &atoms, window.len)?;
-            let matrix = rows.matrix(device, device_gamma)?;
-            let inc = rows.inc(device)?;
-            rs2_windows.push((
-                ordinal,
-                rows.into_rs2_address(),
-                CycleWindow {
-                    start: window.start,
-                    len: window.len,
-                },
-            ));
-            cycle_shards.push(CycleShard {
-                ordinal,
-                matrix,
-                inc,
-                eq: DeviceSplitEq::new_window(
-                    device,
-                    r_cycle,
-                    BindingOrder::LowToHigh,
-                    ordinal,
-                    shards,
-                )?,
-            });
+            resident.push((ordinal, device, trace, atoms));
+        }
+
+        let tasks: Vec<DeviceTask<'_, PreparedShard<F>, CudaError>> = resident
+            .into_iter()
+            .zip(windows.iter())
+            .map(|((ordinal, device, trace, atoms), window)| {
+                let task: DeviceTask<'_, PreparedShard<F>, CudaError> = Box::new(move || {
+                    let rows = device_rows::DeviceRegisterRows::from_device(
+                        device, &trace, &atoms, window.len,
+                    )?;
+                    let matrix = rows.matrix(device, device_gamma)?;
+                    let inc = rows.inc(device)?;
+                    let eq = DeviceSplitEq::new_window(
+                        device,
+                        r_cycle,
+                        BindingOrder::LowToHigh,
+                        ordinal,
+                        shards,
+                    )?;
+                    Ok((
+                        CycleShard {
+                            ordinal,
+                            matrix,
+                            inc,
+                            eq,
+                        },
+                        (
+                            ordinal,
+                            rows.into_rs2_address(),
+                            CycleWindow {
+                                start: window.start,
+                                len: window.len,
+                            },
+                        ),
+                    ))
+                });
+                task
+            })
+            .collect();
+
+        let mut cycle_shards = Vec::with_capacity(shards);
+        let mut rs2_windows = Vec::with_capacity(shards);
+        for (shard, rs2) in fan_out(tasks)? {
+            cycle_shards.push(shard);
+            rs2_windows.push(rs2);
         }
 
         Ok(Box::new(RegistersReadWriteKernel {

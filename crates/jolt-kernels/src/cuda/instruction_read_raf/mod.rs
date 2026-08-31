@@ -60,6 +60,12 @@ pub(crate) struct RowShard {
     pub(crate) cycles: usize,
 }
 
+type PreparedWindow = (
+    RowShard,
+    AddressShard,
+    [bool; LookupTableKind::<RISCV_XLEN>::COUNT],
+);
+
 pub struct DeviceInstructionReadRaf<F: Field> {
     device: Option<DeviceAddressPhase>,
     cycle: Option<DeviceCycleRounds>,
@@ -297,9 +303,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
 
         let windows = witness_windows(cycles);
         let shards = windows.len();
-        let mut row_shards = Vec::with_capacity(shards);
-        let mut address_shards = Vec::with_capacity(shards);
-        let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
+        let mut resident = Vec::with_capacity(shards);
         for (ordinal, window) in windows.iter().enumerate() {
             let shard = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "an instruction read-RAF cycle window names an absent device",
@@ -308,45 +312,73 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             let limbs =
                 device_trace_columns::<F>(shard, session, witness, cycles, window, [1, 0, 0], 0)?
                     .lookup;
-            let flags = trace
-                .flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)
-                .map_err(|_| unsupported())?;
-            let table_index = shard.download_u32(&atoms.table_index)?;
-            for &index in table_index
-                .get(..window.len)
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "an instruction read-RAF window has fewer table slots than cycles",
-                })?
-            {
-                if index != NO_TABLE {
-                    *used
-                        .get_mut(index as usize)
-                        .ok_or(KernelError::InvariantViolation {
-                            reason: "a stage-5 row selects an unknown lookup table",
-                        })? = true;
-                }
+            resident.push((ordinal, shard, trace, atoms, limbs));
+        }
+
+        let reduction: &[Fr] = &r_reduction;
+        let tasks: Vec<DeviceTask<'_, PreparedWindow, KernelError<F>>> = resident
+            .into_iter()
+            .zip(windows.iter())
+            .map(|((ordinal, shard, trace, atoms, limbs), window)| {
+                let task: DeviceTask<'_, PreparedWindow, KernelError<F>> =
+                    Box::new(move || {
+                        let flags = trace
+                            .flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)
+                            .map_err(|_| unsupported())?;
+                        let table_index = shard.download_u32(&atoms.table_index)?;
+                        let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
+                        for &index in table_index
+                            .get(..window.len)
+                            .ok_or(KernelError::InvariantViolation {
+                            reason:
+                                "an instruction read-RAF window has fewer table slots than cycles",
+                        })? {
+                            if index != NO_TABLE {
+                                *used.get_mut(index as usize).ok_or(
+                                    KernelError::InvariantViolation {
+                                        reason: "a stage-5 row selects an unknown lookup table",
+                                    },
+                                )? = true;
+                            }
+                        }
+                        let rows = Arc::new(
+                            DeviceRows::from_device_columns(
+                                limbs,
+                                shard.clone_u32(&atoms.table_index)?,
+                                flags,
+                                window.len,
+                            )
+                            .map_err(|_| unsupported())?,
+                        );
+                        Ok((
+                            RowShard {
+                                ordinal,
+                                rows: Arc::clone(&rows),
+                                cycles: window.len,
+                            },
+                            AddressShard {
+                                ordinal,
+                                rows,
+                                u_evals: shard
+                                    .eq_evals_shard(reduction, ordinal, shards)
+                                    .map_err(|_| unsupported())?,
+                            },
+                            used,
+                        ))
+                    });
+                task
+            })
+            .collect();
+
+        let mut row_shards = Vec::with_capacity(shards);
+        let mut address_shards = Vec::with_capacity(shards);
+        let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
+        for (row, address, window_used) in fan_out(tasks)? {
+            row_shards.push(row);
+            address_shards.push(address);
+            for (slot, hit) in used.iter_mut().zip(window_used) {
+                *slot |= hit;
             }
-            let rows = Arc::new(
-                DeviceRows::from_device_columns(
-                    limbs,
-                    shard.clone_u32(&atoms.table_index)?,
-                    flags,
-                    window.len,
-                )
-                .map_err(|_| unsupported())?,
-            );
-            row_shards.push(RowShard {
-                ordinal,
-                rows: Arc::clone(&rows),
-                cycles: window.len,
-            });
-            address_shards.push(AddressShard {
-                ordinal,
-                rows,
-                u_evals: shard
-                    .eq_evals_shard(&r_reduction, ordinal, shards)
-                    .map_err(|_| unsupported())?,
-            });
         }
 
         let device = DeviceAddressPhase::with_shards(context, address_shards, &used, ADDRESS_BITS)
