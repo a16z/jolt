@@ -522,6 +522,61 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     failed.is_empty()
 }
 
+#[cfg(feature = "cuda")]
+const DEVICE_MEMORY_INTERVAL_VARIABLE: &str = "JOLT_CUDA_MEM_INTERVAL_MS";
+
+#[cfg(feature = "cuda")]
+struct DeviceMemorySampler {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(feature = "cuda")]
+impl DeviceMemorySampler {
+    fn start() -> Self {
+        let interval = Duration::from_millis(
+            std::env::var(DEVICE_MEMORY_INTERVAL_VARIABLE)
+                .ok()
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .unwrap_or(10)
+                .max(1),
+        );
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let handle = std::thread::Builder::new()
+            .name("cuda-mem-sampler".to_string())
+            .spawn(move || {
+                let mib = |used: &[usize], ordinal: usize| {
+                    used.get(ordinal).copied().unwrap_or(0) as f64 / (1024.0 * 1024.0)
+                };
+                while !flag.load(std::sync::atomic::Ordering::Acquire) {
+                    let used = jolt_kernels::cuda::device_memory_used();
+                    tracing::debug!(
+                        counters.device0_mib = mib(&used, 0),
+                        counters.device1_mib = mib(&used, 1),
+                        counters.device2_mib = mib(&used, 2),
+                        counters.device3_mib = mib(&used, 3),
+                        counters.device_mib_total =
+                            used.iter().sum::<usize>() as f64 / (1024.0 * 1024.0),
+                    );
+                    std::thread::sleep(interval);
+                }
+            })
+            .ok();
+        Self { stop, handle }
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl Drop for DeviceMemorySampler {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn measure_prove<PCS, W>(
     backend: &JoltBackend<Fr, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, Pedersen<Bn254G1>>,
@@ -648,6 +703,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         && legacy_preprocessing.generators.g2_vec.len() >= setup_width)
         .then(|| DoryProverSetup(legacy_preprocessing.generators.clone()));
 
+    #[cfg(feature = "cuda")]
+    let device_memory = DeviceMemorySampler::start();
     let (duration, proof_size) = match backend {
         BackendKind::Reference | BackendKind::Optimized => {
             let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
@@ -686,6 +743,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             )
         }
     };
+    #[cfg(feature = "cuda")]
+    drop(device_memory);
     #[cfg(feature = "cuda")]
     let transfers = jolt_kernels::cuda::xfer_stats::snapshot();
 
