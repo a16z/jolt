@@ -45,7 +45,16 @@ use crate::adapters::{
     AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::scheme::validate_precommitted_order;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::scheme::TraceCommitmentBackend;
 use crate::trace_onehot::GroupedRootSource;
+
+type GroupedTraceOpening<'a> = SelectedProverOpeningData<
+    'a,
+    AkitaField,
+    PreparedProverGroup<'a, GroupedRootSource>,
+    AkitaField,
+>;
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
 /// opening protocol.
@@ -201,6 +210,80 @@ where
     Ok((akita_transcript, bridge))
 }
 
+fn prove_grouped_trace_cpu(
+    setup: &AkitaProverSetup,
+    opening: GroupedTraceOpening<'_>,
+    akita_transcript: &mut AkitaTranscript<AkitaField>,
+) -> Result<AkitaBackendProof, OpeningsError> {
+    let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+    let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+    let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
+    with_backend_pool(|| match setup.one_hot_k() {
+        AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_prove(
+            backend_prover_setup,
+            opening,
+            &releasing_stack,
+            akita_transcript,
+            BasisMode::Lagrange,
+        ),
+        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_prove(
+            backend_prover_setup,
+            opening,
+            &releasing_stack,
+            akita_transcript,
+            BasisMode::Lagrange,
+        ),
+        _ => unreachable!("one-hot K was validated by setup"),
+    })
+    .map_err(prove_failed)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn prove_grouped_trace_metal(
+    setup: &AkitaProverSetup,
+    opening: GroupedTraceOpening<'_>,
+    metal: &crate::scheme::RequiredMetalTraceCommitment,
+    akita_transcript: &mut AkitaTranscript<AkitaField>,
+) -> Result<AkitaBackendProof, OpeningsError> {
+    let (backend_prover_setup, cpu_prepared) = setup.one_hot_backend()?;
+    let setup_owner = setup
+        .one_hot_backend_prover_setup
+        .as_ref()
+        .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
+    let prepared = metal.prepared_setup(setup_owner)?;
+    let stack = akita_prover::ProverComputeStack::new(
+        (&CpuBackend::DEFAULT, cpu_prepared),
+        (&metal.backend, prepared.as_ref()),
+        (&CpuBackend::DEFAULT, cpu_prepared),
+        (&CpuBackend::DEFAULT, cpu_prepared),
+        backend_prover_setup.expanded.as_ref(),
+    )
+    .map_err(akita_error)?;
+    let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
+    metal
+        .backend
+        .begin_opening_metrics()
+        .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+    with_backend_pool(|| match setup.one_hot_k() {
+        AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_prove_with_stack(
+            backend_prover_setup,
+            opening,
+            &releasing_stack,
+            akita_transcript,
+            BasisMode::Lagrange,
+        ),
+        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_prove_with_stack(
+            backend_prover_setup,
+            opening,
+            &releasing_stack,
+            akita_transcript,
+            BasisMode::Lagrange,
+        ),
+        _ => unreachable!("one-hot K was validated by setup"),
+    })
+    .map_err(prove_failed)
+}
+
 impl AkitaNativeBatching {
     pub(crate) fn prove_trace_batch<T>(
         setup: &AkitaProverSetup,
@@ -212,6 +295,8 @@ impl AkitaNativeBatching {
     where
         T: Transcript<Challenge = AkitaField>,
     {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let trace_backend = main_hint.trace_backend.clone();
         let precommitted_claims = precommitted
             .iter()
             .map(|(entry, _)| entry.clone())
@@ -319,27 +404,20 @@ impl AkitaNativeBatching {
             &precommitted_claims,
             &main,
         )?;
-        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
-        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
-        let backend_proof = with_backend_pool(|| match setup.one_hot_k() {
-            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_prove(
-                backend_prover_setup,
-                opening,
-                &releasing_stack,
-                &mut akita_transcript,
-                BasisMode::Lagrange,
-            ),
-            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_prove(
-                backend_prover_setup,
-                opening,
-                &releasing_stack,
-                &mut akita_transcript,
-                BasisMode::Lagrange,
-            ),
-            _ => unreachable!("one-hot K was validated by setup"),
-        })
-        .map_err(prove_failed)?;
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let backend_proof = match trace_backend.as_ref().and_then(|backend| {
+            TraceCommitmentBackend::opening_shape_is_metal_qualified(
+                setup.one_hot_k(),
+                main.commitment.num_vars,
+            )
+            .then(|| backend.required_metal())
+            .flatten()
+        }) {
+            Some(metal) => prove_grouped_trace_metal(setup, opening, metal, &mut akita_transcript)?,
+            None => prove_grouped_trace_cpu(setup, opening, &mut akita_transcript)?,
+        };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let backend_proof = prove_grouped_trace_cpu(setup, opening, &mut akita_transcript)?;
         let proof = AkitaBatchProof {
             statement_bridge,
             serialized_schedule_selection: serialize_akita(&selection)?,

@@ -53,8 +53,8 @@ enum TraceCommitmentBackendKind {
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 #[derive(Clone)]
-struct RequiredMetalTraceCommitment {
-    backend: akita_metal::MetalBackend,
+pub(crate) struct RequiredMetalTraceCommitment {
+    pub(crate) backend: akita_metal::MetalBackend,
     prepared: Arc<Mutex<HashMap<usize, Arc<akita_metal::MetalPreparedSetup>>>>,
 }
 
@@ -96,11 +96,30 @@ impl TraceCommitmentBackend {
     pub const fn shape_is_metal_qualified(one_hot_k: usize, num_vars: usize) -> bool {
         one_hot_k == AKITA_ONE_HOT_K256 && matches!(num_vars, 38..=41)
     }
+
+    pub(crate) const fn opening_shape_is_metal_qualified(
+        one_hot_k: usize,
+        num_vars: usize,
+    ) -> bool {
+        match one_hot_k {
+            AKITA_ONE_HOT_K16 => matches!(num_vars, 34..=38),
+            AKITA_ONE_HOT_K256 => matches!(num_vars, 37..=41),
+            _ => false,
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn required_metal(&self) -> Option<&RequiredMetalTraceCommitment> {
+        match &self.kind {
+            TraceCommitmentBackendKind::MetalRequired(metal) => Some(metal),
+            TraceCommitmentBackendKind::Cpu => None,
+        }
+    }
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl RequiredMetalTraceCommitment {
-    fn prepared_setup(
+    pub(crate) fn prepared_setup(
         &self,
         setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>,
     ) -> Result<Arc<akita_metal::MetalPreparedSetup>, OpeningsError> {
@@ -339,13 +358,15 @@ impl AkitaScheme {
                 Self::commit_trace_one_hot_cpu(setup, &source, profiles.as_ref())?
             }
         };
-        Self::package_commitment(
+        let (commitment, mut hint) = Self::package_commitment(
             layout_digest,
             num_vars,
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::TraceOneHot(source),
-        )
+        )?;
+        hint.trace_backend = Some(backend.clone());
+        Ok((commitment, hint))
     }
 
     fn commit_trace_one_hot_cpu(
@@ -583,6 +604,7 @@ impl AkitaScheme {
                 commitment,
                 backend: Some((backend_commitment, backend_hint)),
                 polynomials,
+                trace_backend: None,
             },
         ))
     }
