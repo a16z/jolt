@@ -294,17 +294,17 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# Akita PR #447 is merged; keep the closing Jolt cutover on its immutable upstream revision.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2d1ab310c8edcf1bef8218fe38e8d6acd5977fe7", default-features = false }
+# Temporary Akita #450 hotfix pin; restore the official immutable revision before Jolt merges.
+akita-algebra = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-config = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-error = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-pcs = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-prover = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-planner = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-schedules = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-challenges = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-transcript = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
+akita-types = { git = "https://github.com/quangvdao/akita.git", rev = "dac0b5df393f10390d9d36b18e768e6b124002cb", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
