@@ -42,6 +42,7 @@ pub use common::device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
 pub use common::error::CudaError;
 pub use common::lt_poly::DeviceLtPolynomial;
 pub use common::msm::{AffineLimbs, DeviceSegments, JacobianLimbs, SegmentMode};
+pub use common::one_hot_fold::{DeviceOneHotColumns, FoldTuning, LANES, SHARED_BUDGET};
 pub use common::xfer_stats;
 pub use dory::CudaDoryScheme;
 pub use instruction_read_raf::address_driver::DeviceAddressPhase;

@@ -20,7 +20,7 @@ pub const SHARED_BUDGET: usize = 32 * 1024;
 
 pub const CYCLES_PER_THREAD: usize = 32;
 
-pub const POLYS_PER_BLOCK: usize = 1;
+pub const POLYS_PER_BLOCK: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldTuning {
@@ -134,8 +134,16 @@ impl OneHotShards {
                                 reason: "a one-hot cycle-fold window has no columns",
                             })?;
                     let eq = context.eq_evals_shard(point, ordinal, shards)?;
-                    tracing::info_span!("cuda_one_hot_fold_window", device = ordinal)
-                        .in_scope(|| columns.fold_cycles_with_eq(context, &eq, tuning))
+                    tracing::info_span!(
+                        "cuda_one_hot_fold_window",
+                        device = ordinal,
+                        addresses = columns.addresses(),
+                        polys = columns.polys(),
+                        cycles = columns.cycles,
+                        shared =
+                            columns.addresses() * LANES * size_of::<u64>() <= tuning.shared_budget,
+                    )
+                    .in_scope(|| columns.fold_cycles_with_eq(context, &eq, tuning))
                 });
                 task
             })
@@ -164,7 +172,6 @@ impl OneHotShards {
 }
 
 impl DeviceOneHotColumns {
-    #[cfg(test)]
     pub fn new(
         context: &CudaKernelContext,
         lookup: &[u64],
@@ -201,7 +208,7 @@ impl DeviceOneHotColumns {
         )
     }
 
-    pub fn from_device(
+    pub(crate) fn from_device(
         columns: DeviceTraceColumns,
         families: [usize; 3],
         chunk_bits: usize,

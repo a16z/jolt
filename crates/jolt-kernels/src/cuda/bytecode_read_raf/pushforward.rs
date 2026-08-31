@@ -30,6 +30,7 @@ pub struct PushforwardInputs<'a, F: Field> {
 }
 
 impl DeviceBytecodePushforward {
+    #[tracing::instrument(skip_all, name = "brap_pushforward")]
     pub fn new<F: Field>(
         context: &CudaKernelContext,
         shards: &OneHotShards,

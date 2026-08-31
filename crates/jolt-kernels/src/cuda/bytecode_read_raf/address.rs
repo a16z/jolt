@@ -129,6 +129,7 @@ fn device_bytecode_pc_words<F: Field>(
     Ok(trace.narrow_u64_column(&columns.bytecode_pc, addresses as u64)?)
 }
 
+#[tracing::instrument(skip_all, name = "brap_pc_shards")]
 fn bytecode_pc_shards<F: Field>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
@@ -197,17 +198,19 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend 
 
         let program = witness.program_preprocessing();
         let stage_gammas = inputs.challenges.stage_gamma_powers();
-        let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
-            bytecode: &program.bytecode.bytecode,
-            register_read_write_point: &relation.register_read_write_point()
-                [..REGISTER_ADDRESS_BITS],
-            register_val_evaluation_point: &relation.register_val_evaluation_point()
-                [..REGISTER_ADDRESS_BITS],
-            stage1_gammas: &stage_gammas[0],
-            stage2_gammas: &stage_gammas[1],
-            stage3_gammas: &stage_gammas[2],
-            stage4_gammas: &stage_gammas[3],
-            stage5_gammas: &stage_gammas[4],
+        let stage_values = tracing::info_span!("brap_stage_values").in_scope(|| {
+            read_raf_stage_values(BytecodeReadRafStageValueInputs {
+                bytecode: &program.bytecode.bytecode,
+                register_read_write_point: &relation.register_read_write_point()
+                    [..REGISTER_ADDRESS_BITS],
+                register_val_evaluation_point: &relation.register_val_evaluation_point()
+                    [..REGISTER_ADDRESS_BITS],
+                stage1_gammas: &stage_gammas[0],
+                stage2_gammas: &stage_gammas[1],
+                stage3_gammas: &stage_gammas[2],
+                stage4_gammas: &stage_gammas[3],
+                stage5_gammas: &stage_gammas[4],
+            })
         });
         if stage_values.len() != addresses {
             return Err(KernelError::TableSizeMismatch {
