@@ -24,6 +24,7 @@ mod lower_half_word;
 mod lower_word;
 mod lsb;
 mod lt;
+mod offset_scale;
 mod one;
 mod or;
 mod overflow_bits_zero;
@@ -43,6 +44,7 @@ mod right_shift_helper;
 mod right_shift_padding;
 mod right_shift_w;
 mod right_shift_w_helper;
+mod shift_data;
 mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
@@ -70,6 +72,7 @@ use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use lsb::LsbSuffix;
 use lt::LessThanSuffix;
+use offset_scale::OffsetScaleSuffix;
 use one::OneSuffix;
 use or::OrSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
@@ -92,6 +95,7 @@ use right_shift_helper::RightShiftHelperSuffix;
 use right_shift_padding::RightShiftPaddingSuffix;
 use right_shift_w::RightShiftWSuffix;
 use right_shift_w_helper::RightShiftWHelperSuffix;
+use shift_data::ShiftDataSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
@@ -181,6 +185,12 @@ pub enum Suffixes {
     Pow2OffsetB,
     Pow2OffsetH,
     AlignAddr,
+    ShiftDataB,
+    ShiftDataH,
+    ShiftDataW,
+    OffsetScaleB,
+    OffsetScaleH,
+    OffsetScaleW,
 }
 
 /// Total number of suffix variants.
@@ -266,6 +276,12 @@ impl Suffixes {
             Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
             Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
             Suffixes::AlignAddr => AlignAddrSuffix::suffix_mle(b),
+            Suffixes::ShiftDataB => ShiftDataSuffix::<1>::suffix_mle(b),
+            Suffixes::ShiftDataH => ShiftDataSuffix::<2>::suffix_mle(b),
+            Suffixes::ShiftDataW => ShiftDataSuffix::<4>::suffix_mle(b),
+            Suffixes::OffsetScaleB => OffsetScaleSuffix::<1>::suffix_mle(b),
+            Suffixes::OffsetScaleH => OffsetScaleSuffix::<2>::suffix_mle(b),
+            Suffixes::OffsetScaleW => OffsetScaleSuffix::<4>::suffix_mle(b),
         }
     }
 
