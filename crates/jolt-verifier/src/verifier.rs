@@ -166,11 +166,9 @@ where
     Ok(())
 }
 
-/// The Akita verification path: the same stage spine, with the reconstruction
-/// phase producing auxiliary leaves, a random-selector opening of the
-/// prefix-packed OneHotTrace polynomial, and separate packed openings for
-/// auxiliary objects in place of the homomorphic RLC batch. No homomorphism
-/// bounds and no ZK tail.
+/// The Akita verification path: the same stage spine, with a random-selector
+/// reduction of the packed trace and one native opening for the trace, advice,
+/// and committed-program objects. No homomorphism bounds and no ZK tail.
 #[cfg(feature = "akita")]
 pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,

@@ -32,10 +32,9 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     #[cfg(feature = "akita")]
     pub direct_program: DirectProgramObjects<PCS>,
     /// The trace order the chunk commitments' coefficient grids were built
-    /// under at preprocessing time (legacy couples the two through one
-    /// process-global layout). Stage 0 rejects a proof config whose order
-    /// disagrees — the chunk tables stages 6b/8 rebuild would transpose
-    /// against the absorbed commitments and fail only at verification.
+    /// under at preprocessing time. Stage 0 rejects a proof config whose
+    /// order disagrees because the reduction point would address the
+    /// committed grid in the wrong order.
     pub trace_order: TracePolynomialOrder,
 }
 

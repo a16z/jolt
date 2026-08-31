@@ -527,11 +527,8 @@ mod advice {
                 .as_ref()
                 .map(|object| akita::witness::AdviceObject {
                     plan: object.plan.clone(),
-                    polynomial: object.polynomial.clone(),
                     commitment: object.commitment.clone(),
                     hint: object.hint.clone(),
-                    setup: object.setup.clone(),
-                    word_vars: object.words.len().ilog2() as usize,
                 });
 
         let backend = akita::JoltAkitaBackend::optimized();
@@ -673,11 +670,8 @@ mod advice {
         };
         let modular_trusted_object = akita::witness::AdviceObject {
             plan: trusted_object.plan.clone(),
-            polynomial: trusted_object.polynomial.clone(),
             commitment: trusted_object.commitment.clone(),
             hint: trusted_object.hint.clone(),
-            setup: trusted_object.setup.clone(),
-            word_vars: trusted_object.words.len().ilog2() as usize,
         };
 
         let backend = akita::JoltAkitaBackend::optimized();

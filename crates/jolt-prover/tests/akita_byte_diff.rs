@@ -4,9 +4,9 @@
 //! preprocessing artifacts; the modular proof must equal legacy's
 //! wire-for-wire (structural equality on the shared `AkitaJoltProof` wire
 //! types) and verify end-to-end. Every module is a whole-proof ratchet with
-//! component-wise asserts — the packed proof's per-stage sumcheck fields,
-//! the reconstruction proof, and the split joint opening already give
-//! stage-level granularity when bytes diverge. The stage-granular
+//! component-wise asserts; the packed proof's per-stage sumcheck fields and
+//! native grouped opening already give stage-level granularity when bytes
+//! diverge. The stage-granular
 //! verifier-replay ratchet (`byte_diff::muldiv` style, per-stage prove +
 //! legacy verifier replay of stage-boundary transcript states) lands once
 //! the port exposes per-stage packed drivers.
@@ -461,11 +461,8 @@ mod advice_consumer {
         };
         let modular_trusted_object = akita::witness::AdviceObject {
             plan: trusted_object.plan.clone(),
-            polynomial: trusted_object.polynomial.clone(),
             commitment: trusted_object.commitment.clone(),
             hint: trusted_object.hint.clone(),
-            setup: trusted_object.setup.clone(),
-            word_vars: trusted_object.words.len().ilog2() as usize,
         };
 
         for backend in [
@@ -523,8 +520,8 @@ mod committed_muldiv {
         committed_muldiv_matches_legacy(1);
     }
 
-    /// The multi-chunk arm: the bytecode splits across two chunk lanes of
-    /// the precommitted packing, exercising the chunked reconstruction.
+    /// The multi-chunk arm: the bytecode splits across two objects in the
+    /// precommitted packing.
     #[test]
     fn prover_matches_legacy_on_committed_muldiv_akita_two_chunks() {
         committed_muldiv_matches_legacy(2);

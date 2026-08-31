@@ -11,13 +11,12 @@
 > **Advice update:** The byte-one-hot trusted/untrusted advice design in this
 > document is historical. The active protocol commits dense word advice and
 > directly opens the final `AdviceClaimReduction` claims; both advice objects
-> are precommitted groups of one joint Akita opening, in the canonical order
-> `[UntrustedAdvice, TrustedAdvice, OneHotTrace]`. The old advice IDs remain
-> only as positional-codec tombstones. One-hot trace and committed-program
-> reconstruction remain active. See
+> are precommitted groups of one joint Akita opening. The old advice IDs
+> remain only as positional-codec tombstones. See
 > [a16z/jolt#1798](https://github.com/a16z/jolt/pull/1798)
 > for the current advice format, batch-opening flow, and preprocessing-time
-> schedule provisioning design.
+> schedule provisioning design. One-hot trace digit-zero reduction and direct
+> committed-program openings remain active.
 
 ## Purpose
 
@@ -235,9 +234,10 @@ C + 2 + A
 ```
 
 That is `C` chunks, one image, one main trace, and `A` advice objects. The
-maximum supported shape is `C = 256`, `A = 2`: 260 total
-groups/polynomials. The registered-row cap is 256; a K=256 family with 32 final
-arities and four advice-presence cases reaches 128 rows for one preprocessing.
+largest admitted shape is `C = 256`, `A = 2`: 260 total
+groups/polynomials. One setup plans only its final arity, so at most four rows
+cover the reachable advice-presence cases. The 128-row bound applies to one
+provisioning request, not to the process cache.
 
 ## Protocol Invariants
 
@@ -260,7 +260,7 @@ Required gates include:
 - committed-program e2e tests with one and two bytecode chunks;
 - modular/legacy byte-parity tests with one and two chunks;
 - reordered direct-role and trace-order mismatch rejection;
-- 128-row provisioning and 260-group setup-capacity tests;
+- 128-row provisioning and 260-group verifier shape tests;
 - Akita catalog regeneration and Fiat-Shamir inventory checks;
 - standard and ZK Dory suites, confirming the protocol change is Akita-only.
 

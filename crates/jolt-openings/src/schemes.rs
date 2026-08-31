@@ -144,6 +144,12 @@ pub trait TransparentObjectSetup: CommitmentScheme {
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Reuses an object's backend setup for another layout at the same arity.
+    fn retag_transparent_object_setup(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 }
 
 /// C = Σ s_i · C_i.

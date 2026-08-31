@@ -1,6 +1,6 @@
 //! E2e smoke test for the profile harness: one in-process fibonacci run
 //! must emit both telemetry artifacts, the summary must parse through the
-//! strict schema structs, and every taxonomy-v1 label that fires on all
+//! strict schema structs, and every taxonomy-v2 label that fires on all
 //! proves must be present in the trace — so a silent span rename fails CI
 //! rather than drifting.
 //!
@@ -77,7 +77,7 @@ fn profile_run_emits_conformant_artifacts() {
     let summary: ProfileSummary =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
 
-    // Every always-present taxonomy-v1 label fired, for the mode this
+    // Every always-present taxonomy-v2 label fired, for the mode this
     // prover was compiled in — the `zk` feature swaps the uni-skip and
     // stage-8 opening seams for their committed siblings, and the `akita`
     // feature swaps the commitment seams for the packed set. (The advice
@@ -100,7 +100,8 @@ fn profile_run_emits_conformant_artifacts() {
         .collect();
     assert!(
         missing.is_empty(),
-        "missing taxonomy-v1 labels: {missing:?}"
+        "missing taxonomy-v{} labels: {missing:?}",
+        taxonomy::TAXONOMY_VERSION
     );
 
     // Headline summary sanity: root present with a positive wall time and

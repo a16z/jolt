@@ -8,8 +8,7 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_packing_plan, precommitted_packing_plan, OneHotTraceShape, PrecommittedPackingShape,
-    PrefixPackedObjectPlan,
+    advice_packing_plan, committed_program_packing_plan, OneHotTraceShape, PrefixPackedObjectPlan,
 };
 use jolt_claims::protocols::jolt::lattice::strategy::{
     OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
@@ -86,14 +85,12 @@ where
     Ok(())
 }
 
-fn validate_precommitted_metadata<C, S>(
+fn validate_precommitted_metadata<C>(
     commitment: &C,
-    setup: &S,
     plan: &PrefixPackedObjectPlan,
 ) -> Result<(), VerifierError>
 where
     C: OneHotTraceCommitmentMetadata,
-    S: OneHotTraceSetupMetadata,
 {
     if commitment.is_one_hot_backend() {
         return Err(batch_failed(
@@ -101,19 +98,17 @@ where
         ));
     }
     let packed_num_vars = plan.packing().packed_num_vars();
-    if commitment.layout_digest() != plan.layout_digest()
-        || setup.default_layout_digest() != plan.layout_digest()
-    {
+    if commitment.layout_digest() != plan.layout_digest() {
         return Err(batch_failed(
-            "precommitted commitment/setup has a noncanonical layout digest",
+            "precommitted commitment has a noncanonical layout digest",
         ));
     }
-    if commitment.num_vars() != packed_num_vars || setup.max_num_vars() != packed_num_vars {
+    if commitment.num_vars() != packed_num_vars {
         return Err(batch_failed(format!(
-            "precommitted commitment/setup arity must equal canonical packed arity {packed_num_vars}"
+            "precommitted commitment arity must equal canonical packed arity {packed_num_vars}"
         )));
     }
-    if commitment.poly_count() != 1 || setup.max_num_polys_per_commitment_group() != 1 {
+    if commitment.poly_count() != 1 {
         return Err(batch_failed(
             "precommitted prefix-packed objects must contain one physical polynomial",
         ));
@@ -121,12 +116,10 @@ where
     Ok(())
 }
 
-/// One resolved commitment object: its canonical packing plus the borrowed
-/// commitment and shape-exact setup the final PCS opening runs against.
+/// One resolved commitment object and its canonical packing.
 struct ResolvedObject<'a, PCS: CommitmentScheme> {
     plan: PrefixPackedObjectPlan,
     commitment: &'a PCS::Output,
-    setup: &'a PCS::VerifierSetup,
 }
 
 fn reduce_object<PCS, T>(
@@ -147,14 +140,12 @@ where
         .map_err(batch_failed)
 }
 
-/// Resolve one advice object's packing/commitment/setup triple, or `None`
-/// when the reduction schedule says the kind is absent. A setup may exist for
-/// an absent per-proof object because preprocessing is capacity-derived.
+/// Resolve one advice object's packing and commitment, or `None` when the
+/// reduction schedule says the kind is absent.
 fn advice_object<'a, PCS: CommitmentScheme>(
     present: bool,
     leaf: Option<&EvaluationClaim<PCS::Field>>,
     commitment: Option<&'a PCS::Output>,
-    setup: Option<&'a PCS::VerifierSetup>,
     kind: JoltAdviceKind,
 ) -> Result<Option<ResolvedObject<'a, PCS>>, VerifierError> {
     if !present {
@@ -165,22 +156,18 @@ fn advice_object<'a, PCS: CommitmentScheme>(
         }
         return Ok(None);
     }
-    let (Some(leaf), Some(commitment), Some(setup)) = (leaf, commitment, setup) else {
+    let (Some(leaf), Some(commitment)) = (leaf, commitment) else {
         return Err(batch_failed(format!(
-            "{kind:?} advice object without a final claim, commitment, or setup"
+            "{kind:?} advice object without a final claim or commitment"
         )));
     };
     let plan = advice_packing_plan(kind, leaf.point.len()).map_err(batch_failed)?;
-    Ok(Some(ResolvedObject {
-        plan,
-        commitment,
-        setup,
-    }))
+    Ok(Some(ResolvedObject { plan, commitment }))
 }
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "the per-object commitments and their preprocessing setups, resolved here in one place"
+    reason = "the stage inputs are passed separately by the verifier driver"
 )]
 pub fn verify<PCS, VC, T>(
     formula_dimensions: &JoltFormulaDimensions,
@@ -202,10 +189,7 @@ where
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    // Per-object packings, commitments, and setups in canonical object order:
-    // `OneHotTrace` is one prefix-packed polynomial, followed
-    // by the optional precommitted objects. The shared layout is the
-    // same one the prover committed under.
+    // Precommitted objects precede the OneHotTrace group in canonical role order.
     // Optional objects join exactly when their direct final reductions exist;
     // presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
@@ -235,25 +219,23 @@ where
         schedule.untrusted_advice.is_some(),
         leaves.get(&JoltCommittedPolynomial::UntrustedAdvice),
         untrusted_advice_commitment,
-        preprocessing.untrusted_advice_setup.as_ref(),
         JoltAdviceKind::Untrusted,
     )?;
     let trusted = advice_object::<PCS>(
         schedule.trusted_advice.is_some(),
         leaves.get(&JoltCommittedPolynomial::TrustedAdvice),
         trusted_advice_commitment,
-        preprocessing.trusted_advice_setup.as_ref(),
         JoltAdviceKind::Trusted,
     )?;
 
     let untrusted_claim = if let Some(object) = untrusted.as_ref() {
-        validate_precommitted_metadata(object.commitment, object.setup, &object.plan)?;
+        validate_precommitted_metadata(object.commitment, &object.plan)?;
         Some(reduce_object(object, &leaves, transcript)?)
     } else {
         None
     };
     let trusted_claim = if let Some(object) = trusted.as_ref() {
-        validate_precommitted_metadata(object.commitment, object.setup, &object.plan)?;
+        validate_precommitted_metadata(object.commitment, &object.plan)?;
         Some(reduce_object(object, &leaves, transcript)?)
     } else {
         None
@@ -262,31 +244,12 @@ where
     let committed = preprocessing.program.committed();
     let program_plan = committed
         .map(|committed| {
-            let bytecode_len = preprocessing.program.bytecode_len();
-            if !bytecode_len.is_multiple_of(committed.bytecode_chunk_count()) {
-                return Err(batch_failed(
-                    "bytecode chunk count does not divide bytecode length",
-                ));
-            }
-            let chunk_rows = bytecode_len
-                .checked_div(committed.bytecode_chunk_count())
-                .ok_or_else(|| batch_failed("direct bytecode chunk count must be nonzero"))?;
-            if !chunk_rows.is_power_of_two() {
-                return Err(batch_failed(
-                    "direct bytecode chunk row count must be a power of two",
-                ));
-            }
-            let image_words = preprocessing
-                .program
-                .program_image_len_words()
-                .next_power_of_two()
-                .max(2);
-            precommitted_packing_plan(&PrecommittedPackingShape {
-                bytecode_chunks: committed.bytecode_chunk_count(),
-                log_bytecode_rows: crate::num::ilog2(chunk_rows),
-                trace_order: committed.trace_order,
-                program_image_log_words: Some(crate::num::ilog2(image_words)),
-            })
+            committed_program_packing_plan(
+                preprocessing.program.bytecode_len(),
+                committed.bytecode_chunk_count(),
+                preprocessing.program.program_image_len_words(),
+                committed.trace_order,
+            )
             .map_err(batch_failed)
         })
         .transpose()?;
@@ -294,11 +257,9 @@ where
         .as_ref()
         .map(|plan| plan.objects().cloned().collect::<Vec<_>>())
         .unwrap_or_default();
-    if committed.map_or(0, |program| program.direct_program_commitments.len()) != plans.len()
-        || preprocessing.direct_program_setups.len() != plans.len()
-    {
+    if committed.map_or(0, |program| program.direct_program_commitments.len()) != plans.len() {
         return Err(batch_failed(
-            "direct committed-program commitments/setups do not match the canonical plan",
+            "direct committed-program commitments do not match the canonical plan",
         ));
     }
 
@@ -323,17 +284,9 @@ where
     }
 
     if let Some(committed) = committed {
-        for ((plan, commitment), setup) in plans
-            .into_iter()
-            .zip(&committed.direct_program_commitments)
-            .zip(&preprocessing.direct_program_setups)
-        {
-            let object: ResolvedObject<'_, PCS> = ResolvedObject {
-                plan,
-                commitment,
-                setup,
-            };
-            validate_precommitted_metadata(object.commitment, object.setup, &object.plan)?;
+        for (plan, commitment) in plans.into_iter().zip(&committed.direct_program_commitments) {
+            let object: ResolvedObject<'_, PCS> = ResolvedObject { plan, commitment };
+            validate_precommitted_metadata(object.commitment, &object.plan)?;
             let physical = reduce_object(&object, &leaves, transcript)?;
             precommitted.push(PrecommittedClaim::new(
                 object.plan.precommitted_role(),

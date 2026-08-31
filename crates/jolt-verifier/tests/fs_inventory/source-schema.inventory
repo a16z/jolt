@@ -49,12 +49,9 @@ jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.memory_layout
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.meta
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.program_image_commitment
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.trace_order
-jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.direct_program_setups
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.pcs_setup
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.preprocessing_digest
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.program
-jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.trusted_advice_setup
-jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.untrusted_advice_setup
 jolt-verifier::preprocessing.rs::JoltVerifierPreprocessing.vc_setup
 jolt-verifier::preprocessing.rs::ProgramPreprocessing::Committed.0
 jolt-verifier::preprocessing.rs::ProgramPreprocessing::Full.0

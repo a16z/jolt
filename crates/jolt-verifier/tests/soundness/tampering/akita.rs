@@ -8,8 +8,7 @@
 //!   ([`for_each_scalar_mut`]) fully destructures every aggregate, so a future
 //!   claim wire cannot be added without failing to compile until it is covered.
 //! - A byte-level commitment sweep ([`every_commitment_wire_rejects_perturbation`]):
-//!   every serde leaf of the `OneHotTrace` (and untrusted-advice) commitment objects
-//!   — layout digest, declared dimensions, backend flavor, backend bytes — is
+//!   every serde leaf of each trace, advice, and direct-program commitment is
 //!   perturbed; a deserialization failure or a verifier rejection both count.
 //! - Proof-shape tampers ([`akita_proof_shape_tampers_reject`],
 //!   [`akita_advice_commitment_presence_rejects`]): a swapped phase proof,
@@ -623,14 +622,13 @@ fn perturb_leaf(value: &mut serde_json::Value, path: &str) {
     }
 }
 
-/// Perturb every serde leaf of `commitment` one at a time; a mutation that no
-/// longer deserializes is rejected at the boundary (the strongest rejection),
-/// otherwise the rebuilt proof must fail to verify.
+/// Perturb every serde leaf of `commitment` one at a time. A mutation that no
+/// longer deserializes is rejected at the boundary; otherwise verification
+/// must fail.
 fn sweep_commitment(
-    case: &AkitaFixtureCase,
     commitment: &AkitaCommitment,
     minimum_leaves: usize,
-    rebuild: impl Fn(AkitaCommitment) -> AkitaJoltProof,
+    mut verify: impl FnMut(AkitaCommitment) -> Result<(), jolt_verifier::VerifierError>,
 ) {
     let value = serde_json::to_value(commitment).expect("commitment serializes");
     let mut paths = Vec::new();
@@ -645,14 +643,13 @@ fn sweep_commitment(
         perturb_leaf(&mut mutated, &path);
         match serde_json::from_value::<AkitaCommitment>(mutated) {
             Err(_) => {}
-            Ok(commitment) => assert_rejects(case.verify_proof(&rebuild(commitment))),
+            Ok(commitment) => assert_rejects(verify(commitment)),
         }
     }
 }
 
-/// Every commitment-object wire — the `OneHotTrace` layout digest, declared
-/// dimensions, backend flavor, and backend bytes, plus the untrusted-advice
-/// object when present — rejects a leaf-level perturbation.
+/// Every trace, advice, and direct-program commitment rejects a leaf-level
+/// perturbation.
 #[test]
 fn every_commitment_wire_rejects_perturbation() {
     for case in [
@@ -660,19 +657,54 @@ fn every_commitment_wire_rejects_perturbation() {
         akita_advice_case(),
         akita_committed_muldiv_case(),
     ] {
-        sweep_commitment(case, &case.proof.commitments, 6, |commitment| {
+        sweep_commitment(&case.proof.commitments, 6, |commitment| {
             let mut proof = case.proof.clone();
             proof.commitments = commitment;
-            proof
+            case.verify_proof(&proof)
         });
     }
 
     let advice = akita_advice_case();
     if let Some(untrusted) = &advice.proof.untrusted_advice_commitment {
-        sweep_commitment(advice, untrusted, 6, |commitment| {
+        sweep_commitment(untrusted, 6, |commitment| {
             let mut proof = advice.proof.clone();
             proof.untrusted_advice_commitment = Some(commitment);
-            proof
+            advice.verify_proof(&proof)
+        });
+    }
+    if let Some(trusted) = &advice.trusted_advice_commitment {
+        sweep_commitment(trusted, 6, |commitment| {
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                &advice.preprocessing,
+                &advice.public_io,
+                &advice.proof,
+                Some(&commitment),
+            )
+        });
+    }
+
+    let committed = akita_committed_muldiv_case();
+    let ProgramPreprocessing::Committed(program) = &committed.preprocessing.program else {
+        panic!("committed fixture must carry committed preprocessing");
+    };
+    for (index, original) in program
+        .direct_program_commitments
+        .iter()
+        .cloned()
+        .enumerate()
+    {
+        sweep_commitment(&original, 6, |commitment| {
+            let mut preprocessing = committed.preprocessing.clone();
+            let ProgramPreprocessing::Committed(program) = &mut preprocessing.program else {
+                panic!("committed fixture must carry committed preprocessing");
+            };
+            program.direct_program_commitments[index] = commitment;
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                &preprocessing,
+                &committed.public_io,
+                &committed.proof,
+                None,
+            )
         });
     }
 }

@@ -14,7 +14,8 @@ use jolt_openings::{
 use jolt_poly::eq_index_msb;
 
 use super::super::geometry::claim_reductions::bytecode::{
-    committed_lane_vars, MAX_COMMITTED_BYTECODE_CHUNK_COUNT,
+    committed_lane_vars, is_valid_committed_bytecode_chunking_for_len,
+    MAX_COMMITTED_BYTECODE_CHUNK_COUNT,
 };
 use super::super::geometry::ra::JoltRaPolynomialLayout;
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
@@ -169,6 +170,35 @@ pub fn precommitted_packing_plan(
     Ok(PrecommittedPackingPlan {
         bytecode_chunks,
         program_image,
+    })
+}
+
+/// Derives the direct committed-program layout from public program metadata.
+pub fn committed_program_packing_plan(
+    bytecode_len: usize,
+    bytecode_chunks: usize,
+    program_image_len_words: usize,
+    trace_order: TracePolynomialOrder,
+) -> Result<PrecommittedPackingPlan, LatticeGeometryError> {
+    if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, bytecode_chunks) {
+        return Err(OpeningsError::InvalidSetup(format!(
+            "invalid direct bytecode chunking: {bytecode_chunks} chunks over {bytecode_len} rows"
+        ))
+        .into());
+    }
+    let padded_image_words = program_image_len_words
+        .checked_next_power_of_two()
+        .ok_or_else(|| {
+            OpeningsError::InvalidSetup(
+                "direct program-image word count exceeds the supported range".to_owned(),
+            )
+        })?
+        .max(2);
+    precommitted_packing_plan(&PrecommittedPackingShape {
+        bytecode_chunks,
+        log_bytecode_rows: (bytecode_len / bytecode_chunks).ilog2() as usize,
+        trace_order,
+        program_image_log_words: Some(padded_image_words.ilog2() as usize),
     })
 }
 
@@ -598,6 +628,31 @@ mod tests {
         assert_eq!(role.transcript_index(), None);
         assert_eq!(image.packing().logical_num_vars(), 10);
         assert_eq!(image.packing().packed_num_vars(), 14);
+    }
+
+    #[test]
+    fn committed_program_plan_derives_padding_and_chunk_rows() {
+        let plan =
+            committed_program_packing_plan(128, 2, 513, TracePolynomialOrder::CycleMajor).unwrap();
+        assert_eq!(plan.bytecode_chunks().len(), 2);
+        assert_eq!(
+            plan.bytecode_chunks()[0].packing().logical_num_vars(),
+            committed_lane_vars() + 6
+        );
+        assert_eq!(
+            plan.program_image()
+                .unwrap()
+                .logical_num_vars(JoltCommittedPolynomial::ProgramImageInit),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn committed_program_plan_rejects_invalid_public_dimensions() {
+        assert!(
+            committed_program_packing_plan(128, 3, 2, TracePolynomialOrder::CycleMajor).is_err()
+        );
+        assert!(committed_program_packing_plan(0, 1, 2, TracePolynomialOrder::CycleMajor).is_err());
     }
 
     #[test]

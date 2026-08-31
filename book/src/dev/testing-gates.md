@@ -47,10 +47,11 @@ Never regenerate it merely to make CI pass.
 
 Committed-program Akita preprocessing must provision one native grouped
 opening for every direct bytecode chunk, the program image, optional advice,
-and the main trace. The maximum supported statement has 256 chunks plus the
+and the main trace. The largest admitted statement has 256 chunks plus the
 image, two advice objects, and the trace: 260 groups/polynomials. The schedule
-registry must also cover the K=256 worst case of 32 final arities across four
-advice-presence combinations (128 rows) without exceeding its 256-row cap.
+registry plans only the setup's final arity, with at most four rows for the
+reachable advice-presence combinations. Its 128-row bound applies to one
+provisioning request, not to the process cache.
 
 Run the focused committed-program and byte-parity gates with:
 
@@ -69,6 +70,6 @@ cargo nextest run -p jolt-akita --run-ignored all \
   -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
 ```
 
-Failures at the 128-row or 260-group boundary are protocol-capacity failures.
-Do not work around them by lowering the public 256-chunk limit or selecting a
-different committed-program encoding.
+Failures at the 128-row or 260-group shape limit are protocol-capacity
+failures. Do not work around them by lowering the public 256-chunk limit or
+selecting a different committed-program encoding.

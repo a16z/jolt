@@ -19,7 +19,10 @@
 //! proofs use the same transcript object as the stage provers: one digest
 //! engine, with no state conversions or mirrored transcript interaction.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use jolt_akita::{AkitaSetupParams, PrecommittedScheduleParams};
@@ -28,8 +31,8 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
 };
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::{
-    advice_packing_plan, precommitted_packing_plan, OneHotTraceLayoutPlan, OneHotTraceShape,
-    PrecommittedPackingShape, PrefixPackedObjectPlan, ONE_HOT_TRACE_LAYOUT,
+    advice_packing_plan, committed_program_packing_plan, OneHotTraceLayoutPlan, OneHotTraceShape,
+    PrefixPackedObjectPlan, ONE_HOT_TRACE_LAYOUT,
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_openings::{
@@ -440,7 +443,7 @@ pub fn provision_precommitted_schedules(
     max_trusted_advice_bytes: usize,
     direct_program_physical_vars: &[usize],
     one_hot_k: usize,
-    max_final_num_vars: usize,
+    final_num_vars: usize,
 ) -> Result<(), VerifierError> {
     let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
         .then(|| advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes))
@@ -453,7 +456,7 @@ pub fn provision_precommitted_schedules(
         trusted_physical_vars,
         direct_program_physical_vars,
         one_hot_k,
-        max_final_num_vars,
+        final_num_vars,
     )
     .map(|_| ())
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
@@ -572,18 +575,16 @@ pub fn commit_direct_program(
         bytecode_len.is_multiple_of(bytecode_chunk_count),
         "bytecode chunk count must divide bytecode length"
     );
-    let log_bytecode_rows = (bytecode_len / bytecode_chunk_count).log_2();
     let image_words_padded = program.committed_program_image_num_words(memory_layout);
     let image_words =
         crate::zkvm::program::build_program_image_words_padded(program, image_words_padded);
-    let shape = PrecommittedPackingShape {
-        bytecode_chunks: bytecode_chunk_count,
-        log_bytecode_rows,
-        trace_order: TracePolynomialOrder::CycleMajor,
-        program_image_log_words: Some(image_words_padded.log_2()),
-    };
-    let plan =
-        precommitted_packing_plan(&shape).map_err(|error| commit_failed(error.to_string()))?;
+    let plan = committed_program_packing_plan(
+        bytecode_len,
+        bytecode_chunk_count,
+        program.program_image_len_words(),
+        TracePolynomialOrder::CycleMajor,
+    )
+    .map_err(|error| commit_failed(error.to_string()))?;
     let mut chunks =
         crate::zkvm::bytecode::chunks::build_committed_bytecode_chunk_coeffs_with_layout::<
             AkitaFp128,
@@ -594,6 +595,7 @@ pub fn commit_direct_program(
         )
         .into_iter()
         .map(|chunk| chunk.into_iter().map(|value| value.0).collect::<Vec<_>>());
+    let mut setups = HashMap::new();
     let objects = plan
         .objects()
         .map(|object_plan| {
@@ -616,14 +618,23 @@ pub fn commit_direct_program(
                 AkitaField::default(),
             );
             let witness = Polynomial::new(evaluations);
-            let (setup, _verifier_setup) = transparent_object_setup(
-                object_plan.packing().packed_num_vars(),
-                object_plan.layout_digest(),
-            )
-            .map_err(|error| commit_failed(error.to_string()))?;
+            let physical_vars = object_plan.packing().packed_num_vars();
+            let setup = if let Some(setup) = setups.get(&physical_vars) {
+                <AkitaScheme as TransparentObjectSetup>::retag_transparent_object_setup(
+                    setup,
+                    object_plan.layout_digest(),
+                )
+                .map_err(|error| commit_failed(error.to_string()))?
+                .0
+            } else {
+                transparent_object_setup(physical_vars, object_plan.layout_digest())
+                    .map_err(|error| commit_failed(error.to_string()))?
+                    .0
+            };
             let (commitment, hint) =
                 <AkitaScheme as VerifierCommitmentScheme>::commit(&witness, &setup)
                     .map_err(|error| commit_failed(error.to_string()))?;
+            let _ = setups.entry(physical_vars).or_insert_with(|| setup.clone());
             Ok(DirectProgramObject {
                 plan: object_plan.clone(),
                 commitment,
@@ -704,9 +715,7 @@ pub type AkitaPackedProver<'a> =
 impl AkitaPackedProver<'_> {
     /// Akita setup parameters sized to the physical `OneHotTrace` polynomial.
     ///
-    /// Provisions this program's grouped trusted-advice rows first: setup
-    /// sizing folds them into the matrix capacity, so they must be installed
-    /// before the setup this describes is built.
+    /// Provisions this proof's grouped precommit rows before setup sizing.
     #[expect(
         clippy::expect_used,
         reason = "consistent with the canonical-layout expects below; a program whose \
@@ -728,18 +737,12 @@ impl AkitaPackedProver<'_> {
         let direct_program_physical_vars = if self.preprocessing.is_committed_mode() {
             let bytecode_len = self.preprocessing.shared.bytecode_size();
             let chunk_count = self.preprocessing.shared.bytecode_chunk_count;
-            let packing = precommitted_packing_plan(&PrecommittedPackingShape {
-                bytecode_chunks: chunk_count,
-                log_bytecode_rows: (bytecode_len / chunk_count).log_2(),
-                trace_order: TracePolynomialOrder::CycleMajor,
-                program_image_log_words: Some(
-                    self.preprocessing
-                        .shared
-                        .program
-                        .committed_program_image_num_words(&self.program_io.memory_layout)
-                        .log_2(),
-                ),
-            })
+            let packing = committed_program_packing_plan(
+                bytecode_len,
+                chunk_count,
+                self.preprocessing.shared.program.program_image_len_words(),
+                TracePolynomialOrder::CycleMajor,
+            )
             .expect("canonical direct program layout must exist");
             packing
                 .objects()
@@ -752,16 +755,6 @@ impl AkitaPackedProver<'_> {
             || max_untrusted_advice_bytes > 0
             || !direct_program_physical_vars.is_empty();
         let precommitted_schedule = if has_precommitted {
-            // The trace this prove uses may be shorter than the program's
-            // padded ceiling, but preprocessing must cover every arity a proof
-            // of this program can select, so sweep up to the ceiling's arity.
-            let max_final_num_vars = ONE_HOT_TRACE_LAYOUT
-                .setup_shape(&OneHotTraceShape {
-                    log_t: self.preprocessing.shared.max_padded_trace_length.log_2(),
-                    ..one_hot_trace_shape
-                })
-                .expect("the padded-ceiling OneHotTrace layout must exist")
-                .num_vars;
             let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
                 .then(|| {
                     advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes)
@@ -778,7 +771,7 @@ impl AkitaPackedProver<'_> {
                 PrecommittedScheduleParams::new(
                     untrusted_physical_vars,
                     trusted_physical_vars,
-                    max_final_num_vars,
+                    shape.num_vars,
                 )
                 .with_direct_program_physical_arities(direct_program_physical_vars.clone()),
             )
@@ -1769,23 +1762,17 @@ pub fn akita_verifier_preprocessing(
         }
     };
     let one_hot_k = akita_verifier_setup.one_hot_k();
-    let akita_verifier_max_final_num_vars = akita_verifier_setup.max_num_vars();
+    let akita_verifier_final_num_vars = akita_verifier_setup.max_num_vars();
     let layout = &preprocessing.shared.memory_layout;
     let direct_program_plan = preprocessing.shared.program.is_committed().then(|| {
         let bytecode_len = preprocessing.shared.bytecode_size();
         let bytecode_chunk_count = preprocessing.shared.bytecode_chunk_count;
-        precommitted_packing_plan(&PrecommittedPackingShape {
-            bytecode_chunks: bytecode_chunk_count,
-            log_bytecode_rows: (bytecode_len / bytecode_chunk_count).log_2(),
-            trace_order: TracePolynomialOrder::CycleMajor,
-            program_image_log_words: Some(
-                preprocessing
-                    .shared
-                    .program
-                    .committed_program_image_num_words(layout)
-                    .log_2(),
-            ),
-        })
+        committed_program_packing_plan(
+            bytecode_len,
+            bytecode_chunk_count,
+            preprocessing.shared.program.program_image_len_words(),
+            TracePolynomialOrder::CycleMajor,
+        )
         .expect("the canonical precommitted packing plan must exist")
     });
     let direct_program_physical_vars = direct_program_plan
@@ -1801,46 +1788,16 @@ pub fn akita_verifier_preprocessing(
         layout.max_trusted_advice_size as usize,
         &direct_program_physical_vars,
         one_hot_k,
-        akita_verifier_max_final_num_vars,
+        akita_verifier_final_num_vars,
     )
     .expect("precommitted grouped schedules must provision for the verifier");
 
-    let mut verifier_preprocessing = JoltVerifierPreprocessing::new(
+    JoltVerifierPreprocessing::new(
         program,
         preprocessing.shared.digest(),
         akita_verifier_setup,
         None,
-    );
-    let advice_setup = |kind: JoltAdviceKind, max_bytes: usize| {
-        (max_bytes > 0).then(|| {
-            let word_vars = (max_bytes / 8).next_power_of_two().log_2();
-            let plan = advice_packing_plan(kind, word_vars)
-                .expect("the canonical advice layout must derive");
-            let (_, verifier_setup) =
-                transparent_object_setup(plan.packing().packed_num_vars(), plan.layout_digest())
-                    .expect("the transparent advice-shape setup must derive");
-            verifier_setup
-        })
-    };
-    verifier_preprocessing.untrusted_advice_setup = advice_setup(
-        JoltAdviceKind::Untrusted,
-        layout.max_untrusted_advice_size as usize,
-    );
-    verifier_preprocessing.trusted_advice_setup = advice_setup(
-        JoltAdviceKind::Trusted,
-        layout.max_trusted_advice_size as usize,
-    );
-    if let Some(plan) = direct_program_plan {
-        verifier_preprocessing.direct_program_setups = plan
-            .objects()
-            .map(|object| {
-                transparent_object_setup(object.packing().packed_num_vars(), object.layout_digest())
-                    .expect("the transparent program-shape setup must derive")
-                    .1
-            })
-            .collect();
-    }
-    verifier_preprocessing
+    )
 }
 
 #[cfg(all(test, feature = "host"))]

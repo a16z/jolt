@@ -919,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn verifier_shape_accepts_the_260_group_boundary() {
+    fn verifier_shape_enforces_the_260_group_limit() {
         let layout_digest = [9; 32];
         let mut setup = AkitaVerifierSetup {
             max_num_vars: 34,

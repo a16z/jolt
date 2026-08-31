@@ -761,6 +761,22 @@ impl TransparentObjectSetup for AkitaScheme {
     ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
         Self::setup(AkitaSetupParams::dense_only(num_vars, 1, layout_digest))
     }
+
+    fn retag_transparent_object_setup(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+    ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
+        let _ = setup.dense_backend()?;
+        if setup.max_num_polys_per_commitment_group() != 1 || setup.max_total_batch_polys() != 1 {
+            return Err(invalid_batch(
+                "a transparent object setup must admit one polynomial",
+            ));
+        }
+        let mut retagged = setup.clone();
+        retagged.verifier.default_layout_digest = layout_digest;
+        let verifier = retagged.verifier.clone();
+        Ok((retagged, verifier))
+    }
 }
 
 impl ZkOpeningScheme for AkitaScheme {
@@ -896,6 +912,26 @@ mod tests {
         let mut k_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
         append_verifier_setup(&mut k_transcript, &changed_k, AkitaBackendFlavor::Dense);
         assert_ne!(digest_transcript.state(), k_transcript.state());
+    }
+
+    #[test]
+    fn transparent_object_setup_reuses_backend_for_a_new_layout() {
+        let (base, _) =
+            <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(14, [3; 32]).unwrap();
+        let (retagged, verifier) =
+            <AkitaScheme as TransparentObjectSetup>::retag_transparent_object_setup(&base, [4; 32])
+                .unwrap();
+
+        assert!(Arc::ptr_eq(
+            base.backend_prover_setup.as_ref().unwrap(),
+            retagged.backend_prover_setup.as_ref().unwrap()
+        ));
+        assert!(Arc::ptr_eq(
+            base.prepared_backend_setup.as_ref().unwrap(),
+            retagged.prepared_backend_setup.as_ref().unwrap()
+        ));
+        assert_eq!(retagged.default_layout_digest(), [4; 32]);
+        assert_eq!(verifier.default_layout_digest(), [4; 32]);
     }
 
     fn one_hot_roundtrip(one_hot_k: usize) {

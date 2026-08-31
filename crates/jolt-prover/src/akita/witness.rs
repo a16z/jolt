@@ -1,21 +1,19 @@
 //! Prover-side packed (Akita) witness assembly: the `OneHotTrace` columns
 //! from the witness plane's typed rows, the advice word objects, the
-//! direct bounded-dense committed-program objects, and the shape-only
-//! stand-ins the native openings take.
+//! direct bounded-dense committed-program objects.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use jolt_akita::TraceOneHotRows;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_packing_plan, precommitted_packing_plan, PrecommittedPackingShape,
-    PrefixPackedObjectPlan,
+    advice_packing_plan, committed_program_packing_plan, PrefixPackedObjectPlan,
 };
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::{JoltField, Ring};
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
-use jolt_poly::{MultilinearPoly, Polynomial};
+use jolt_poly::Polynomial;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::witnesses::{
     BalancedIncColumn, BytecodePc, FusedInc, LookupIndex, RaChunkSelector, RemappedRamAddress,
@@ -26,99 +24,6 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use crate::ProverError;
-
-/// Sparse unit-valued multilinear polynomial: value `1` at each listed
-/// position, `0` everywhere else — the witness form of a packed one-hot
-/// commitment. The union of one-hot columns scattered into prefix slots is
-/// exactly a set of unit positions over the packed domain, so it advertises
-/// the `MultilinearPoly` unit-sparse contract (`is_one_hot`/`for_each_one`)
-/// without `OneHotPolynomial`'s per-row structure.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SparseUnitPolynomial<F> {
-    num_vars: usize,
-    one_positions: Vec<usize>,
-    _field: core::marker::PhantomData<F>,
-}
-
-impl<F: JoltField> SparseUnitPolynomial<F> {
-    /// Sorts the positions ascending once here — the invariant
-    /// `for_each_row`'s row scan and `for_each_one`'s yield order rely on.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a position lies outside the `2^num_vars` domain.
-    #[must_use]
-    pub fn new(num_vars: usize, mut one_positions: Vec<usize>) -> Self {
-        assert!(
-            one_positions
-                .iter()
-                .all(|position| position >> num_vars == 0),
-            "one position outside the 2^{num_vars} domain"
-        );
-        one_positions.sort_unstable();
-        Self {
-            num_vars,
-            one_positions,
-            _field: core::marker::PhantomData,
-        }
-    }
-
-    #[must_use]
-    pub fn one_positions(&self) -> &[usize] {
-        &self.one_positions
-    }
-}
-
-impl<F: JoltField> MultilinearPoly<F> for SparseUnitPolynomial<F> {
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    fn evaluate(&self, point: &[F]) -> F {
-        assert_eq!(point.len(), self.num_vars);
-        self.one_positions
-            .iter()
-            .map(|position| {
-                point.iter().enumerate().fold(F::one(), |acc, (bit, r)| {
-                    // Big-endian: point[0] is the most significant bit.
-                    if (position >> (self.num_vars - 1 - bit)) & 1 == 1 {
-                        acc * *r
-                    } else {
-                        acc * (F::one() - *r)
-                    }
-                })
-            })
-            .sum()
-    }
-
-    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
-        let row_len = 1usize << sigma;
-        let num_rows = 1usize << (self.num_vars - sigma);
-        let mut row = vec![F::zero(); row_len];
-        let mut next = self.one_positions.iter().peekable();
-        for row_index in 0..num_rows {
-            row.fill(F::zero());
-            while let Some(&&position) = next.peek() {
-                if position >> sigma != row_index {
-                    break;
-                }
-                row[position & (row_len - 1)] = F::one();
-                let _ = next.next();
-            }
-            f(row_index, &row);
-        }
-    }
-
-    fn is_one_hot(&self) -> bool {
-        true
-    }
-
-    fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
-        for position in &self.one_positions {
-            f(*position);
-        }
-    }
-}
 
 /// The per-cycle sources every `OneHotTrace` column derives from: the
 /// instruction's lookup index, the mapped bytecode PC, the remapped RAM word
@@ -349,11 +254,8 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
 /// schedule floor exceeds the logical word arity.
 pub struct AdviceObject<PCS: CommitmentScheme> {
     pub plan: PrefixPackedObjectPlan,
-    pub polynomial: Polynomial<PCS::Field>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
-    pub setup: PCS::ProverSetup,
-    pub word_vars: usize,
 }
 
 /// Builds the canonical zero-padded advice-word commitment. The setup
@@ -382,11 +284,8 @@ where
     let (commitment, hint) = PCS::commit(&polynomial, &setup).map_err(commit_failed)?;
     Ok(AdviceObject {
         plan,
-        polynomial,
         commitment,
         hint,
-        setup,
-        word_vars,
     })
 }
 
@@ -426,26 +325,14 @@ where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
     let bytecode_len = program.bytecode.bytecode.len();
-    if bytecode_chunk_count == 0 || !bytecode_len.is_multiple_of(bytecode_chunk_count) {
-        return Err(ProverError::InvariantViolation {
-            reason: "bytecode chunk count must divide bytecode length",
-        });
-    }
-    let chunk_rows = bytecode_len / bytecode_chunk_count;
-    if !chunk_rows.is_power_of_two() {
-        return Err(ProverError::InvariantViolation {
-            reason: "bytecode chunk row count must be a power of two",
-        });
-    }
-    let log_bytecode_rows = chunk_rows.ilog2() as usize;
     let image_words = program_image_words_padded(program);
-    let shape = PrecommittedPackingShape {
-        bytecode_chunks: bytecode_chunk_count,
-        log_bytecode_rows,
+    let plan = committed_program_packing_plan(
+        bytecode_len,
+        bytecode_chunk_count,
+        program.ram.bytecode_words.len(),
         trace_order,
-        program_image_log_words: Some(image_words.len().ilog2() as usize),
-    };
-    let plan = precommitted_packing_plan(&shape).map_err(commit_failed)?;
+    )
+    .map_err(commit_failed)?;
     let mut chunk_coeffs = jolt_kernels::committed_program::build_committed_bytecode_chunk_coeffs(
         &program.bytecode.bytecode,
         bytecode_chunk_count,
@@ -453,6 +340,7 @@ where
     )
     .map_err(commit_failed)?
     .into_iter();
+    let mut setups = HashMap::<usize, PCS::ProverSetup>::new();
     let objects = plan
         .objects()
         .map(|object_plan| {
@@ -478,12 +366,18 @@ where
                 PCS::Field::default(),
             );
             let witness = Polynomial::new(evaluations);
-            let (setup, _verifier_setup) = PCS::transparent_object_setup(
-                object_plan.packing().packed_num_vars(),
-                object_plan.layout_digest(),
-            )
-            .map_err(commit_failed)?;
+            let physical_vars = object_plan.packing().packed_num_vars();
+            let setup = if let Some(setup) = setups.get(&physical_vars) {
+                PCS::retag_transparent_object_setup(setup, object_plan.layout_digest())
+                    .map_err(commit_failed)?
+                    .0
+            } else {
+                PCS::transparent_object_setup(physical_vars, object_plan.layout_digest())
+                    .map_err(commit_failed)?
+                    .0
+            };
             let (commitment, hint) = PCS::commit(&witness, &setup).map_err(commit_failed)?;
+            let _ = setups.entry(physical_vars).or_insert_with(|| setup.clone());
             Ok(DirectProgramObject {
                 plan: object_plan.clone(),
                 commitment,

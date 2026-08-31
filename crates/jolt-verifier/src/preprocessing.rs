@@ -172,17 +172,9 @@ where
     pub program: ProgramPreprocessing<PCS>,
     pub preprocessing_digest: [u8; 32],
     /// The main PCS setup: every per-polynomial opening on the homomorphic
-    /// build, the `OneHotTrace` object on the `akita` build (whose remaining
-    /// objects carry their own shape-exact setups below).
+    /// build, or the complete grouped opening on the `akita` build.
     pub pcs_setup: PCS::VerifierSetup,
     pub vc_setup: Option<VC::Setup>,
-    #[cfg(feature = "akita")]
-    pub untrusted_advice_setup: Option<PCS::VerifierSetup>,
-    #[cfg(feature = "akita")]
-    pub trusted_advice_setup: Option<PCS::VerifierSetup>,
-    /// Committed-program mode: setups matching `direct_program_commitments`.
-    #[cfg(feature = "akita")]
-    pub direct_program_setups: Vec<PCS::VerifierSetup>,
 }
 
 impl<PCS, VC> JoltVerifierPreprocessing<PCS, VC>
@@ -201,12 +193,6 @@ where
             preprocessing_digest,
             pcs_setup,
             vc_setup,
-            #[cfg(feature = "akita")]
-            untrusted_advice_setup: None,
-            #[cfg(feature = "akita")]
-            trusted_advice_setup: None,
-            #[cfg(feature = "akita")]
-            direct_program_setups: Vec::new(),
         }
     }
 }

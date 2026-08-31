@@ -647,8 +647,7 @@ mod packed {
     use jolt_verifier::stages::stage7::outputs::Stage7OutputClaims;
     use spartan::outer_uniskip_opening;
 
-    /// The packed (akita) analog of the base clear-claims projection: the
-    /// base stage payloads plus the reconstruction phase cells, with the
+    /// The packed (akita) analog of the base clear-claims projection, with the
     /// lattice stage-6b/7 shapes (the read-raf carries the fused-inc opening;
     /// booleanity carries the increment columns; there is no stage-6b inc
     /// slot).

@@ -64,8 +64,8 @@ impl<'a, F, T> PrecommittedFinalSource<'a, F, T> {
 /// clear values off the stage-7 output claims) or the stage 6b cycle phase (points
 /// off `stage6_points`, clear values off the stage-6b output claims). In ZK every
 /// opening claim stays committed (`None`) and only points are read; in clear mode a
-/// source requires both its point and its value. The walk order — trusted advice,
-/// untrusted advice, bytecode chunks, program image — fixes stage 8's anchor order.
+/// source requires both its point and its value. Stage 8 indexes these openings by
+/// polynomial before emitting groups in canonical role order.
 pub fn precommitted_final_openings<F: JoltField>(
     schedule: &PrecommittedSchedule,
     stage7_points: &Stage7OutputPoints<F>,

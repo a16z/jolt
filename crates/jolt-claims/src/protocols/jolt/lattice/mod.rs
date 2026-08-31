@@ -38,9 +38,10 @@ pub use geometry::{
 };
 pub mod strategy;
 pub use packing::{
-    advice_packing_plan, one_hot_trace_columns, precommitted_packing_plan, OneHotTraceShape,
-    PrecommittedPackingPlan, PrecommittedPackingShape, PrefixPackedObjectPlan,
-    ADVICE_MAX_PHYSICAL_VARS, ADVICE_MIN_PHYSICAL_VARS, DIRECT_PROGRAM_MAX_PHYSICAL_VARS,
+    advice_packing_plan, committed_program_packing_plan, one_hot_trace_columns,
+    precommitted_packing_plan, OneHotTraceShape, PrecommittedPackingPlan, PrecommittedPackingShape,
+    PrefixPackedObjectPlan, ADVICE_MAX_PHYSICAL_VARS, ADVICE_MIN_PHYSICAL_VARS,
+    DIRECT_PROGRAM_MAX_PHYSICAL_VARS,
 };
 pub use strategy::{
     OneHotTraceColumnRanges, OneHotTraceLayout, OneHotTraceLayoutPlan, OneHotTraceSetupShape,

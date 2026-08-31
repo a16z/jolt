@@ -51,7 +51,7 @@ impl AkitaFixtureCase {
     }
 }
 
-/// The muldiv case: one `OneHotTrace` commitment object, no auxiliary objects.
+/// The muldiv case: one `OneHotTrace` commitment object and no precommitted objects.
 pub fn akita_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_muldiv)
