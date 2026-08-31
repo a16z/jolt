@@ -29,8 +29,8 @@ pub enum CommitmentConfig {
     /// Per-polynomial commitments, RLC batch opening (requires additive
     /// homomorphism).
     Homomorphic,
-    /// Packed one-hot witnesses per commitment object, reduction-sumcheck
-    /// batch opening (no homomorphism required).
+    /// Packed one-hot trace and dense advice commitments with heterogeneous
+    /// Akita opening and verification.
     Packed,
 }
 

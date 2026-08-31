@@ -212,11 +212,11 @@ mod support {
         assert_eq!(
             proof.stages.reconstruction_sumcheck_proof,
             legacy_proof.stages.reconstruction_sumcheck_proof,
-            "reconstruction bytes diverged (the auxiliary advice/bytecode/image settlement)",
+            "reconstruction bytes diverged (the bytecode/image settlement)",
         );
         assert_eq!(
-            proof.joint_opening_proof.one_hot_trace, legacy_proof.joint_opening_proof.one_hot_trace,
-            "the native same-point OneHotTrace opening diverged from legacy",
+            proof.joint_opening_proof.main_batch, legacy_proof.joint_opening_proof.main_batch,
+            "the heterogeneous advice/OneHotTrace opening diverged from legacy",
         );
         assert_eq!(
             proof.joint_opening_proof.auxiliary, legacy_proof.joint_opening_proof.auxiliary,
@@ -371,7 +371,7 @@ mod advice_consumer {
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::packed::{
-        akita_verifier_preprocessing, commit_trusted_advice_one_hot, AkitaField, AkitaPackedProver,
+        akita_verifier_preprocessing, commit_trusted_advice, AkitaField, AkitaPackedProver,
         AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
     };
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -384,7 +384,7 @@ mod advice_consumer {
 
     /// Prove the advice-consumer guest (trusted AND untrusted advice) over
     /// the packed stack with both provers — three commitment objects
-    /// (`OneHotTrace`, `UntrustedAdviceOneHot`, `TrustedAdviceOneHot`), the
+    /// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`), the
     /// trusted object committed once at preprocessing time and shared by
     /// both sides; assert wire-for-wire equality and verify the modular
     /// proof against the trusted commitment.
@@ -405,7 +405,7 @@ mod advice_consumer {
             support::MAX_PADDED_TRACE_LENGTH,
         );
         let legacy_preprocessing = LegacyProverPreprocessing::new(shared);
-        let trusted_object = commit_trusted_advice_one_hot(
+        let trusted_object = commit_trusted_advice(
             &trusted_advice,
             guest.io_device.memory_layout.max_trusted_advice_size as usize,
         )
@@ -437,13 +437,6 @@ mod advice_consumer {
         // --- Modular side: trace independently with the advice inputs,
         // prove with an independently precommitted trusted object (its
         // commitment must land byte-identical to legacy's).
-        let modular_trusted = jolt_prover::akita::witness::commit_advice_one_hot::<AkitaScheme>(
-            jolt_claims::protocols::jolt::JoltAdviceKind::Trusted,
-            &trusted_advice,
-            guest.io_device.memory_layout.max_trusted_advice_size as usize,
-        )
-        .expect("modular trusted advice object must commit");
-        assert_eq!(modular_trusted.commitment, trusted_commitment);
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let program_preprocessing = verifier_preprocessing
@@ -475,6 +468,14 @@ mod advice_consumer {
             pcs_setup: object_setup,
             committed_program: None,
         };
+        let modular_trusted_object = akita::witness::AdviceObject {
+            plan: trusted_object.plan.clone(),
+            polynomial: trusted_object.polynomial.clone(),
+            commitment: trusted_object.commitment.clone(),
+            hint: trusted_object.hint.clone(),
+            setup: trusted_object.setup.clone(),
+            word_vars: trusted_object.words.len().ilog2() as usize,
+        };
 
         for backend in [
             akita::JoltAkitaBackend::reference(),
@@ -484,7 +485,7 @@ mod advice_consumer {
                 &backend,
                 &prover_preprocessing,
                 &config,
-                Some(&modular_trusted),
+                Some(&modular_trusted_object),
                 &witness,
                 &public_io,
             )

@@ -169,12 +169,6 @@ pub enum SumcheckId {
     /// Lattice/packed mode: the fused-inc virtualization phase between
     /// stage 5 and the stage-6 address phase.
     /// Lattice/packed mode: aligns the fused increment with stage 6b.
-    /// Lattice/packed mode: the untrusted-advice byte reconstruction of the
-    /// stage-8 reconstruction phase.
-    UntrustedAdviceReconstruction,
-    /// Lattice/packed mode: the trusted-advice byte reconstruction of the
-    /// stage-8 reconstruction phase.
-    TrustedAdviceReconstruction,
     /// Lattice/packed mode: the bytecode chunk reconstruction of the
     /// stage-8 reconstruction phase.
     BytecodeChunkReconstruction,
