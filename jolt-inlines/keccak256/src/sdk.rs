@@ -311,7 +311,7 @@ pub unsafe fn keccak256_absorb_permute(state: *mut u64, block: *const u8) {
 /// - The two memory regions must not overlap.
 pub unsafe fn keccak256_absorb_permute(state: *mut u64, block: *const u8) {
     let state = &mut *state.cast::<[u64; 25]>();
-    let block = &*block.cast::<[u64; crate::RATE_IN_U64]>();
+    let block = &*block.cast::<[u64; RATE_IN_U64]>();
     for (lane, block_lane) in state.iter_mut().zip(block) {
         *lane ^= u64::from_le(*block_lane);
     }

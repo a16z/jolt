@@ -4,7 +4,10 @@
 //! single 24-lane cycle in place, leaving one rotated lane in a temporary
 //! register until χ consumes it. D[3] and D[4] reuse dead C registers.
 
-use crate::{NUM_LANES, RATE_IN_U64};
+use crate::{
+    INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME,
+    KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, NUM_LANES, RATE_IN_U64,
+};
 use jolt_inlines_sdk::host::{
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
     InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice,
@@ -236,10 +239,10 @@ pub struct Keccak256Permutation;
 impl InlineOp for Keccak256Permutation {
     type Advice = NoAdvice;
 
-    const OPCODE: u32 = crate::INLINE_OPCODE;
-    const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
-    const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
-    const NAME: &'static str = crate::KECCAK256_NAME;
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_NAME;
 
     fn build_sequence(
         asm: InlineExpansionBuilder,
@@ -254,10 +257,10 @@ pub struct Keccak256AbsorbPermutation;
 impl InlineOp for Keccak256AbsorbPermutation {
     type Advice = NoAdvice;
 
-    const OPCODE: u32 = crate::INLINE_OPCODE;
-    const FUNCT3: u32 = crate::KECCAK256_ABSORB_PERMUTE_FUNCT3;
-    const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
-    const NAME: &'static str = crate::KECCAK256_ABSORB_PERMUTE_NAME;
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_ABSORB_PERMUTE_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_ABSORB_PERMUTE_NAME;
 
     fn build_sequence(
         asm: InlineExpansionBuilder,

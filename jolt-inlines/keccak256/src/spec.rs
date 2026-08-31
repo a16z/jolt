@@ -5,7 +5,7 @@ use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 use crate::exec::execute_keccak_f;
 use crate::sequence_builder::{Keccak256AbsorbPermutation, Keccak256Permutation};
 use crate::test_constants::TestVectors;
-use crate::{Keccak256State, NUM_LANES};
+use crate::{Keccak256State, NUM_LANES, RATE_IN_BYTES, RATE_IN_U64};
 
 impl InlineReference for Keccak256Permutation {
     type Input = Keccak256State;
@@ -44,7 +44,7 @@ impl InlineSpec for Keccak256Permutation {
 }
 
 impl InlineReference for Keccak256AbsorbPermutation {
-    type Input = (Keccak256State, [u64; crate::RATE_IN_U64]);
+    type Input = (Keccak256State, [u64; RATE_IN_U64]);
     type Output = Keccak256State;
 
     fn reference((state, block): &Self::Input) -> Self::Output {
@@ -60,8 +60,8 @@ impl InlineReference for Keccak256AbsorbPermutation {
 impl InlineSpec for Keccak256AbsorbPermutation {
     fn edge_cases() -> impl IntoIterator<Item = Self::Input> {
         [
-            ([0; NUM_LANES], [0; crate::RATE_IN_U64]),
-            ([u64::MAX; NUM_LANES], [u64::MAX; crate::RATE_IN_U64]),
+            ([0; NUM_LANES], [0; RATE_IN_U64]),
+            ([u64::MAX; NUM_LANES], [u64::MAX; RATE_IN_U64]),
         ]
     }
 
@@ -74,7 +74,7 @@ impl InlineSpec for Keccak256AbsorbPermutation {
 
     fn harness() -> InlineTestHarness {
         InlineTestHarness::new(InlineMemoryLayout::single_input(
-            crate::RATE_IN_BYTES,
+            RATE_IN_BYTES,
             NUM_LANES * size_of::<u64>(),
         ))
     }

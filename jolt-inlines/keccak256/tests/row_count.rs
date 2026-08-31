@@ -7,18 +7,22 @@
 
 use std::collections::BTreeMap;
 
+use jolt_inlines_keccak256::{
+    INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT3, KECCAK256_FUNCT7,
+    KECCAK256_NAME,
+};
 use tracer::utils::inline_test_harness::InlineTestHarness;
 use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
 #[test]
 fn count_keccak256_rows() {
     // Force inline registration (inventory) by touching the crate.
-    let _ = jolt_inlines_keccak256::KECCAK256_NAME;
+    let _ = KECCAK256_NAME;
 
     let instr = InlineTestHarness::create_default_instruction(
-        jolt_inlines_keccak256::INLINE_OPCODE,
-        jolt_inlines_keccak256::KECCAK256_FUNCT3,
-        jolt_inlines_keccak256::KECCAK256_FUNCT7,
+        INLINE_OPCODE,
+        KECCAK256_FUNCT3,
+        KECCAK256_FUNCT7,
     );
     let sequence = instr.inline_sequence(&VirtualRegisterAllocator::default());
 
@@ -47,9 +51,9 @@ fn count_keccak256_rows() {
     );
 
     let absorb_instr = InlineTestHarness::create_default_instruction(
-        jolt_inlines_keccak256::INLINE_OPCODE,
-        jolt_inlines_keccak256::KECCAK256_ABSORB_PERMUTE_FUNCT3,
-        jolt_inlines_keccak256::KECCAK256_FUNCT7,
+        INLINE_OPCODE,
+        KECCAK256_ABSORB_PERMUTE_FUNCT3,
+        KECCAK256_FUNCT7,
     );
     let absorb_sequence = absorb_instr.inline_sequence(&VirtualRegisterAllocator::default());
     // The fused entry adds 17 block LD + 17 XOR rows to the permutation.

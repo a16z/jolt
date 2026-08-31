@@ -1,6 +1,7 @@
 use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
+use crate::XLEN;
 
 use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
@@ -20,7 +21,7 @@ fn evaluate_state<F: JoltField>(
     let (x, y) = b.uninterleave();
     let x = u64::from(x);
     let y = u64::from(y);
-    let first_phase = suffix_pairs + phase_pairs == crate::XLEN;
+    let first_phase = suffix_pairs + phase_pairs == XLEN;
 
     let mut acc = if first_phase {
         let y_top = (y >> (phase_pairs - 1)) & 1;

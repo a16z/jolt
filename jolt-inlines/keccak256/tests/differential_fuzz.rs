@@ -11,7 +11,13 @@
 //! the soundness gate runs one million iterations for each inline entry point.
 #![cfg(feature = "host")]
 
+use jolt_inlines_keccak256::{
+    Keccak256, INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME,
+    KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, RATE_IN_BYTES, RATE_IN_U64,
+};
+use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
+use tiny_keccak::Keccak;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 fn fuzz_iters(default: usize) -> usize {
@@ -23,9 +29,9 @@ fn fuzz_iters(default: usize) -> usize {
 
 #[test]
 fn fuzz_inline_sequence_vs_tiny_keccak() {
-    let _ = jolt_inlines_keccak256::KECCAK256_NAME;
+    let _ = KECCAK256_NAME;
     let iters = fuzz_iters(2_000);
-    let mut rng = rand::rngs::StdRng::seed_from_u64(0xECCA_C001);
+    let mut rng = StdRng::seed_from_u64(0xECCA_C001);
 
     for i in 0..iters {
         let mut state = [0u64; 25];
@@ -37,9 +43,9 @@ fn fuzz_inline_sequence_vs_tiny_keccak() {
         harness.setup_registers();
         harness.load_state64(&state);
         harness.execute_inline(InlineTestHarness::create_default_instruction(
-            jolt_inlines_keccak256::INLINE_OPCODE,
-            jolt_inlines_keccak256::KECCAK256_FUNCT3,
-            jolt_inlines_keccak256::KECCAK256_FUNCT7,
+            INLINE_OPCODE,
+            KECCAK256_FUNCT3,
+            KECCAK256_FUNCT7,
         ));
         let actual = harness.read_output64(25);
 
@@ -52,13 +58,13 @@ fn fuzz_inline_sequence_vs_tiny_keccak() {
 
 #[test]
 fn fuzz_absorb_permute_inline_vs_tiny_keccak() {
-    let _ = jolt_inlines_keccak256::KECCAK256_ABSORB_PERMUTE_NAME;
+    let _ = KECCAK256_ABSORB_PERMUTE_NAME;
     let iters = fuzz_iters(2_000);
-    let mut rng = rand::rngs::StdRng::seed_from_u64(0xAB50_BB01);
+    let mut rng = StdRng::seed_from_u64(0xAB50_BB01);
 
     for i in 0..iters {
         let mut state = [0u64; 25];
-        let mut block = [0u64; jolt_inlines_keccak256::RATE_IN_U64];
+        let mut block = [0u64; RATE_IN_U64];
         for lane in &mut state {
             *lane = rng.next_u64();
         }
@@ -66,17 +72,15 @@ fn fuzz_absorb_permute_inline_vs_tiny_keccak() {
             *lane = rng.next_u64();
         }
 
-        let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(
-            jolt_inlines_keccak256::RATE_IN_BYTES,
-            200,
-        ));
+        let mut harness =
+            InlineTestHarness::new(InlineMemoryLayout::single_input(RATE_IN_BYTES, 200));
         harness.setup_registers();
         harness.load_state64(&state);
         harness.load_input64(&block);
         harness.execute_inline(InlineTestHarness::create_default_instruction(
-            jolt_inlines_keccak256::INLINE_OPCODE,
-            jolt_inlines_keccak256::KECCAK256_ABSORB_PERMUTE_FUNCT3,
-            jolt_inlines_keccak256::KECCAK256_FUNCT7,
+            INLINE_OPCODE,
+            KECCAK256_ABSORB_PERMUTE_FUNCT3,
+            KECCAK256_FUNCT7,
         ));
         let actual = harness.read_output64(25);
 
@@ -94,7 +98,7 @@ fn fuzz_digest_vs_tiny_keccak() {
     use tiny_keccak::Hasher;
 
     let iters = fuzz_iters(2_000);
-    let mut rng = rand::rngs::StdRng::seed_from_u64(0xD16E57);
+    let mut rng = StdRng::seed_from_u64(0xD16E57);
 
     for i in 0..iters {
         // Cover empty inputs, sub-rate, rate-straddling, and multi-block sizes.
@@ -107,9 +111,9 @@ fn fuzz_digest_vs_tiny_keccak() {
         let mut input = vec![0u8; len];
         rng.fill_bytes(&mut input);
 
-        let actual = jolt_inlines_keccak256::Keccak256::digest(&input);
+        let actual = Keccak256::digest(&input);
 
-        let mut reference = tiny_keccak::Keccak::v256();
+        let mut reference = Keccak::v256();
         reference.update(&input);
         let mut expected = [0u8; 32];
         reference.finalize(&mut expected);
