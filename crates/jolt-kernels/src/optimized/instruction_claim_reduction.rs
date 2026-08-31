@@ -391,7 +391,7 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::{NaiveSumcheckProver, ProverInputs, SumcheckKernel};
 
-    use super::{InstructionOperandRow, OptimizedInstructionClaimReductionKernel};
+    use super::{BundleStore, InstructionOperandRow, OptimizedInstructionClaimReductionKernel};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -482,7 +482,7 @@ mod tests {
 
         let mut optimized = OptimizedInstructionClaimReductionKernel::new(
             &tau_low,
-            crate::optimized::support::BundleStore::Retained(rows),
+            BundleStore::Retained(rows),
             gamma,
         )
         .unwrap();

@@ -487,7 +487,7 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::{NaiveSumcheckProver, ProverInputs, SumcheckKernel};
 
-    use super::{InstructionInputRow, OptimizedInstructionInputKernel};
+    use super::{BundleStore, InstructionInputRow, OptimizedInstructionInputKernel};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -577,12 +577,9 @@ mod tests {
         )
         .unwrap();
 
-        let mut optimized = OptimizedInstructionInputKernel::new(
-            &r_product,
-            crate::optimized::support::BundleStore::Retained(rows),
-            gamma,
-        )
-        .unwrap();
+        let mut optimized =
+            OptimizedInstructionInputKernel::new(&r_product, BundleStore::Retained(rows), gamma)
+                .unwrap();
 
         // Direct hypercube sum.
         let eq = eq_table(&r_product);
