@@ -1,5 +1,43 @@
 #define RWM_MAX_COEFFS 2
 
+extern "C" __global__ void rwm_square_lut_kernel(const u64 *__restrict__ values, unsigned int values_len,
+                                                const u64 *__restrict__ challenge,
+                                                u64 *__restrict__ out) {
+    unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= values_len * values_len) return;
+    u64 r[LIMBS], odd[LIMBS], even[LIMBS], diff[LIMBS], scaled[LIMBS], bound[LIMBS];
+    load4(challenge, r);
+    load4(values + (unsigned long long)(index / values_len) * LIMBS, odd);
+    load4(values + (unsigned long long)(index % values_len) * LIMBS, even);
+    fr_sub(odd, even, diff);
+    fr_mul(r, diff, scaled);
+    fr_add(even, scaled, bound);
+    store4(out + (unsigned long long)index * LIMBS, bound);
+}
+
+extern "C" __global__ void rwm_deref_coeffs_kernel(const unsigned short *__restrict__ coeff_index,
+                                                  const u64 *__restrict__ lut_0,
+                                                  const u64 *__restrict__ lut_1,
+                                                  unsigned int slots, u64 *__restrict__ out) {
+    unsigned int slot = blockIdx.x * blockDim.x + threadIdx.x;
+    if (slot >= slots) return;
+    const u64 *lut = (slot % RWM_MAX_COEFFS) ? lut_1 : lut_0;
+    u64 value[LIMBS];
+    load4(lut + (unsigned long long)coeff_index[slot] * LIMBS, value);
+    store4(out + (unsigned long long)slot * LIMBS, value);
+}
+
+__device__ __forceinline__ void rwm_load_coeff(const u64 *__restrict__ coeffs,
+                                              const unsigned short *__restrict__ coeff_index,
+                                              const u64 *__restrict__ lut, unsigned int indexed,
+                                              unsigned long long slot, u64 *out) {
+    if (indexed) {
+        load4(lut + (unsigned long long)coeff_index[slot] * LIMBS, out);
+    } else {
+        load4(coeffs + slot * LIMBS, out);
+    }
+}
+
 extern "C" __global__ void rwm_segment_flags_kernel(const unsigned int *__restrict__ rows,
                                                    unsigned int entries,
                                                    unsigned int *__restrict__ flags) {
@@ -69,12 +107,15 @@ extern "C" __global__ void rwm_merge_kernel(
     const unsigned int *__restrict__ cols, const u64 *__restrict__ val_coeff,
     const u64 *__restrict__ prev_val, const u64 *__restrict__ next_val,
     const u64 *__restrict__ coeffs, unsigned int coeff_width,
+    const unsigned short *__restrict__ coeff_index, unsigned int indexed,
+    unsigned int lut_bits_0, unsigned int lut_bits_1,
     const unsigned int *__restrict__ seg_start, const unsigned int *__restrict__ seg_even_end,
     const unsigned int *__restrict__ seg_end, const unsigned int *__restrict__ seg_pair,
     const unsigned int *__restrict__ offsets, unsigned int segments,
     const u64 *__restrict__ challenge, unsigned int *__restrict__ out_rows,
     unsigned int *__restrict__ out_cols, u64 *__restrict__ out_val,
-    u64 *__restrict__ out_prev, u64 *__restrict__ out_next, u64 *__restrict__ out_coeffs) {
+    u64 *__restrict__ out_prev, u64 *__restrict__ out_next, u64 *__restrict__ out_coeffs,
+    unsigned short *__restrict__ out_coeff_index) {
     unsigned int seg = blockIdx.x * blockDim.x + threadIdx.x;
     if (seg >= segments) return;
 
@@ -140,6 +181,16 @@ extern "C" __global__ void rwm_merge_kernel(
         out_next[k] = next_out;
 
         for (unsigned int lane = 0; lane < coeff_width; lane++) {
+            if (indexed) {
+                unsigned int bits = lane ? lut_bits_1 : lut_bits_0;
+                unsigned short even_index =
+                    take_even ? coeff_index[(unsigned long long)i * coeff_width + lane] : 0;
+                unsigned short odd_index =
+                    take_odd ? coeff_index[(unsigned long long)j * coeff_width + lane] : 0;
+                out_coeff_index[(unsigned long long)k * coeff_width + lane] =
+                    (unsigned short)((unsigned int)odd_index << bits) | even_index;
+                continue;
+            }
             u64 bound[LIMBS];
             if (take_even && take_odd) {
                 u64 e[LIMBS], o[LIMBS], d[LIMBS], s[LIMBS];
@@ -171,6 +222,8 @@ extern "C" __global__ void rwm_message_kernel(
     const unsigned int *__restrict__ cols, const u64 *__restrict__ val_coeff,
     const u64 *__restrict__ prev_val, const u64 *__restrict__ next_val,
     const u64 *__restrict__ coeffs, unsigned int coeff_width,
+    const unsigned short *__restrict__ coeff_index, unsigned int indexed,
+    const u64 *__restrict__ lut_0, const u64 *__restrict__ lut_1,
     const unsigned int *__restrict__ seg_start, const unsigned int *__restrict__ seg_even_end,
     const unsigned int *__restrict__ seg_end, const unsigned int *__restrict__ seg_pair,
     unsigned int segments, const u64 *__restrict__ inc, const u64 *__restrict__ e_in,
@@ -192,6 +245,8 @@ extern "C" __global__ void rwm_message_kernel(
         unsigned int pair = seg_pair[seg];
         unsigned int ra_lane = 0;
         unsigned int wa_lane = (coeff_width > 1) ? 1 : 0;
+        const u64 *ra_lut = lut_0;
+        const u64 *wa_lut = wa_lane ? lut_1 : lut_0;
 
         u64 inc_0[LIMBS], inc_inf[LIMBS];
         load4(inc + (unsigned long long)(2 * pair) * LIMBS, inc_0);
@@ -234,12 +289,16 @@ extern "C" __global__ void rwm_message_kernel(
                 fr_sub(odd_val, even_val, val_inf);
 
                 u64 e[LIMBS], o[LIMBS];
-                load4(coeffs + ((unsigned long long)i * coeff_width + ra_lane) * LIMBS, e);
-                load4(coeffs + ((unsigned long long)j * coeff_width + ra_lane) * LIMBS, o);
+                rwm_load_coeff(coeffs, coeff_index, ra_lut, indexed,
+                              (unsigned long long)i * coeff_width + ra_lane, e);
+                rwm_load_coeff(coeffs, coeff_index, ra_lut, indexed,
+                              (unsigned long long)j * coeff_width + ra_lane, o);
                 for (int l = 0; l < LIMBS; l++) ra_0[l] = e[l];
                 fr_sub(o, e, ra_inf);
-                load4(coeffs + ((unsigned long long)i * coeff_width + wa_lane) * LIMBS, e);
-                load4(coeffs + ((unsigned long long)j * coeff_width + wa_lane) * LIMBS, o);
+                rwm_load_coeff(coeffs, coeff_index, wa_lut, indexed,
+                              (unsigned long long)i * coeff_width + wa_lane, e);
+                rwm_load_coeff(coeffs, coeff_index, wa_lut, indexed,
+                              (unsigned long long)j * coeff_width + wa_lane, o);
                 for (int l = 0; l < LIMBS; l++) wa_0[l] = e[l];
                 fr_sub(o, e, wa_inf);
             } else if (take_even) {
@@ -252,10 +311,12 @@ extern "C" __global__ void rwm_message_kernel(
 
                 u64 zero[LIMBS] = {0, 0, 0, 0};
                 u64 e[LIMBS];
-                load4(coeffs + ((unsigned long long)i * coeff_width + ra_lane) * LIMBS, e);
+                rwm_load_coeff(coeffs, coeff_index, ra_lut, indexed,
+                              (unsigned long long)i * coeff_width + ra_lane, e);
                 for (int l = 0; l < LIMBS; l++) ra_0[l] = e[l];
                 fr_sub(zero, e, ra_inf);
-                load4(coeffs + ((unsigned long long)i * coeff_width + wa_lane) * LIMBS, e);
+                rwm_load_coeff(coeffs, coeff_index, wa_lut, indexed,
+                              (unsigned long long)i * coeff_width + wa_lane, e);
                 for (int l = 0; l < LIMBS; l++) wa_0[l] = e[l];
                 fr_sub(zero, e, wa_inf);
             } else {
@@ -270,8 +331,10 @@ extern "C" __global__ void rwm_message_kernel(
                     ra_0[l] = 0;
                     wa_0[l] = 0;
                 }
-                load4(coeffs + ((unsigned long long)j * coeff_width + ra_lane) * LIMBS, ra_inf);
-                load4(coeffs + ((unsigned long long)j * coeff_width + wa_lane) * LIMBS, wa_inf);
+                rwm_load_coeff(coeffs, coeff_index, ra_lut, indexed,
+                              (unsigned long long)j * coeff_width + ra_lane, ra_inf);
+                rwm_load_coeff(coeffs, coeff_index, wa_lut, indexed,
+                              (unsigned long long)j * coeff_width + wa_lane, wa_inf);
             }
 
             if (coeff_width == 1) {

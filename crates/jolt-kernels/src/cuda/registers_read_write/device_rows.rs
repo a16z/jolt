@@ -12,9 +12,19 @@ use crate::cuda::common::device::DeviceFrVec;
 use crate::cuda::common::error::CudaError;
 #[cfg(test)]
 use crate::cuda::common::ra_poly::COLD;
-use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
+use crate::cuda::common::read_write_matrix::{CoeffTables, DeviceCoeffs, DeviceReadWriteMatrix};
 
 const COEFF_WIDTH: usize = 2;
+
+pub(crate) fn register_coeff_tables(gamma: Fr) -> CoeffTables {
+    let gamma_sq = gamma * gamma;
+    CoeffTables {
+        values: [
+            vec![Fr::from_u64(0), gamma, gamma_sq, gamma + gamma_sq],
+            vec![Fr::from_u64(0), Fr::from_u64(1)],
+        ],
+    }
+}
 
 fn witness_error(_error: jolt_witness::WitnessError) -> CudaError {
     CudaError::InvariantViolation {
@@ -159,8 +169,7 @@ impl DeviceRegisterRows {
         let mut out_val = context.alloc(entries)?;
         let mut out_prev = context.alloc_u64(entries)?;
         let mut out_next = context.alloc_u64(entries)?;
-        let mut out_coeffs = context.alloc(entries * COEFF_WIDTH)?;
-        let device_gamma = context.upload(&[gamma])?;
+        let mut out_coeff_index = context.alloc_u16_unset(entries * COEFF_WIDTH)?;
 
         let mut builder = context.stream().launch_builder(context.reg_scatter());
         let _ = builder.arg(&self.rs1_address);
@@ -172,34 +181,39 @@ impl DeviceRegisterRows {
         let _ = builder.arg(&self.rd_post_value);
         let _ = builder.arg(&offsets);
         let _ = builder.arg(&cycles);
-        let _ = builder.arg(device_gamma.limbs());
         let _ = builder.arg(&mut out_rows);
         let _ = builder.arg(&mut out_cols);
         let _ = builder.arg(out_val.limbs_mut());
         let _ = builder.arg(&mut out_prev);
         let _ = builder.arg(&mut out_next);
-        let _ = builder.arg(out_coeffs.limbs_mut());
-        // SAFETY: thread `j < cycles` reads the seven per-cycle arrays at `j`,
-        // `offsets[j]`, and the single-element `gamma`. It writes
+        let _ = builder.arg(&mut out_coeff_index);
+        // SAFETY: thread `j < cycles` reads the seven per-cycle arrays at `j` and
+        // `offsets[j]`. It writes
         // `counts[j] = reg_build_slots(..)` slots starting at `offsets[j]` in each
         // `out_*` buffer — the SAME count the scan was built from, because both
         // kernels call `reg_build_slots`. `offsets` is that scan and `entries` its
         // total, so the per-cycle ranges are disjoint and inside every buffer.
-        // `out_coeffs` is indexed `(k + i) * 2 + lane` over `entries * 2` elements.
+        // `out_coeff_index` is indexed `(k + i) * 2 + lane` over `entries * 2`
+        // elements, and each value is a `ra_kind`/`wa_flag` that `reg_build_slots`
+        // confines to the length of the lane's table.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(cycles)) }?;
         context.stream().synchronize()?;
 
-        Ok(DeviceReadWriteMatrix::from_device_parts(
+        DeviceReadWriteMatrix::from_device_parts(
+            context,
             out_rows,
             out_cols,
             out_val,
             out_prev,
             out_next,
-            out_coeffs,
+            DeviceCoeffs::Indexed {
+                index: out_coeff_index,
+                luts: DeviceReadWriteMatrix::upload_luts(context, &register_coeff_tables(gamma))?,
+            },
             context.upload(&[Fr::from_u64(0)])?,
             COEFF_WIDTH,
             entries,
-        ))
+        )
     }
 
     pub fn inc(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {

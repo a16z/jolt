@@ -17,18 +17,18 @@ use super::rows::RegisterCycleRow;
 /// `(a ≪ bits) | b` holds `b + r·(a − b)` — so a `u16` per matrix entry keeps
 /// addressing its bound coefficient until one more squaring would overflow
 /// the index domain.
-pub(super) struct CoeffLut<F> {
+pub(crate) struct CoeffLut<F> {
     /// Power-of-two length; index 0 is always zero (zero seeds stay zero
     /// under `b + r·(a − b)`), which is what lets an absent merge partner
     /// keep index arithmetic pure.
-    pub(super) values: Vec<F>,
+    pub(crate) values: Vec<F>,
 }
 
 impl<F: Field> CoeffLut<F> {
     /// One-past the largest table an entry's `u16` index can address.
     const MAX_VALUES: usize = 1 << 16;
 
-    pub(super) fn new(values: Vec<F>) -> Self {
+    pub(crate) fn new(values: Vec<F>) -> Self {
         debug_assert!(values.len().is_power_of_two());
         debug_assert!(values[0] == F::zero());
         Self { values }
@@ -46,7 +46,7 @@ impl<F: Field> CoeffLut<F> {
     /// Square the table with `r`: the same pair combination
     /// `even + r·(odd − even)` the direct field representation applies, over
     /// every (odd, even) value pair.
-    fn bind(&mut self, r: F) {
+    pub(crate) fn bind(&mut self, r: F) {
         debug_assert!(!self.saturated());
         let n = self.values.len();
         let old = &self.values;

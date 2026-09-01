@@ -10,7 +10,7 @@ use crate::cuda::common::device::DeviceFrVec;
 use crate::cuda::common::error::CudaError;
 #[cfg(test)]
 use crate::cuda::common::ra_poly::COLD;
-use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
+use crate::cuda::common::read_write_matrix::{DeviceCoeffs, DeviceReadWriteMatrix};
 
 pub struct DeviceRamRows {
     address: CudaSlice<u32>,
@@ -148,17 +148,18 @@ impl DeviceRamRows {
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(cycles)) }?;
         context.stream().synchronize()?;
 
-        Ok(DeviceReadWriteMatrix::from_device_parts(
+        DeviceReadWriteMatrix::from_device_parts(
+            context,
             out_rows,
             out_cols,
             out_val,
             out_prev,
             out_next,
-            out_coeffs,
+            DeviceCoeffs::Direct(out_coeffs),
             context.upload(&[wa_scale])?,
             1,
             entries,
-        ))
+        )
     }
 
     pub fn inc(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {

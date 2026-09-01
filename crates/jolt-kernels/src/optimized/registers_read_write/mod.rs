@@ -63,7 +63,7 @@ use crate::{
 };
 
 mod rows;
-mod sparse;
+pub(crate) mod sparse;
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::panic, reason = "test support module")]
 pub(crate) mod test_support;

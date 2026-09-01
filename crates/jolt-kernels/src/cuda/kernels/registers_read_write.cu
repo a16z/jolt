@@ -118,9 +118,9 @@ extern "C" __global__ void reg_scatter_kernel(
     const unsigned int *__restrict__ rs2_address, const u64 *__restrict__ rs2_value,
     const unsigned int *__restrict__ rd_address, const u64 *__restrict__ rd_pre_value,
     const u64 *__restrict__ rd_post_value, const unsigned int *__restrict__ offsets,
-    unsigned int cycles, const u64 *__restrict__ gamma, unsigned int *__restrict__ out_rows,
+    unsigned int cycles, unsigned int *__restrict__ out_rows,
     unsigned int *__restrict__ out_cols, u64 *__restrict__ out_val, u64 *__restrict__ out_prev,
-    u64 *__restrict__ out_next, u64 *__restrict__ out_coeffs) {
+    u64 *__restrict__ out_next, unsigned short *__restrict__ out_coeff_index) {
     unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j >= cycles) return;
 
@@ -131,12 +131,6 @@ extern "C" __global__ void reg_scatter_kernel(
                         rd_address[j], rd_pre_value[j], rd_post_value[j], col, value, prev,
                         next, ra_kind, wa_flag);
     if (len == 0) return;
-
-    u64 g[LIMBS], g_sq[LIMBS], both[LIMBS], one[LIMBS], zero[LIMBS] = {0, 0, 0, 0};
-    load4(gamma, g);
-    fr_mul(g, g, g_sq);
-    fr_add(g, g_sq, both);
-    load4(FR_ONE, one);
 
     unsigned int k = offsets[j];
     for (unsigned int i = 0; i < len; i++) {
@@ -150,16 +144,7 @@ extern "C" __global__ void reg_scatter_kernel(
         fr_to_mont(raw, val);
         store4(out_val + (unsigned long long)(k + i) * LIMBS, val);
 
-        const u64 *ra = zero;
-        if (ra_kind[i] == REG_RA_GAMMA) {
-            ra = g;
-        } else if (ra_kind[i] == REG_RA_GAMMA_SQ) {
-            ra = g_sq;
-        } else if (ra_kind[i] == REG_RA_BOTH) {
-            ra = both;
-        }
-        store4(out_coeffs + ((unsigned long long)(k + i) * 2 + 0) * LIMBS, ra);
-        store4(out_coeffs + ((unsigned long long)(k + i) * 2 + 1) * LIMBS,
-               wa_flag[i] ? one : zero);
+        out_coeff_index[(unsigned long long)(k + i) * 2 + 0] = (unsigned short)ra_kind[i];
+        out_coeff_index[(unsigned long long)(k + i) * 2 + 1] = (unsigned short)wa_flag[i];
     }
 }

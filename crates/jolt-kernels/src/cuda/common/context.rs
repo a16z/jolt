@@ -82,6 +82,8 @@ pub struct CudaKernelContext {
     rwm_count: CudaFunction,
     rwm_merge: CudaFunction,
     rwm_message: CudaFunction,
+    rwm_square_lut: CudaFunction,
+    rwm_deref_coeffs: CudaFunction,
     rs2_claim: CudaFunction,
     amm_segment_flags: CudaFunction,
     amm_segment_bounds: CudaFunction,
@@ -260,6 +262,8 @@ impl CudaKernelContext {
             rwm_count: module.load_function("rwm_count_kernel")?,
             rwm_merge: module.load_function("rwm_merge_kernel")?,
             rwm_message: module.load_function("rwm_message_kernel")?,
+            rwm_square_lut: module.load_function("rwm_square_lut_kernel")?,
+            rwm_deref_coeffs: module.load_function("rwm_deref_coeffs_kernel")?,
             rs2_claim: module.load_function("rs2_claim_kernel")?,
             amm_segment_flags: module.load_function("amm_segment_flags_kernel")?,
             amm_segment_bounds: module.load_function("amm_segment_bounds_kernel")?,
@@ -467,6 +471,22 @@ impl CudaKernelContext {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
         })
+    }
+
+    pub(crate) fn upload_u16_slice(&self, values: &[u16]) -> Result<CudaSlice<u16>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    pub(crate) fn download_u16(&self, buffer: &CudaSlice<u16>) -> Result<Vec<u16>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u16>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
+    }
+
+    pub(crate) fn alloc_u16_unset(&self, len: usize) -> Result<CudaSlice<u16>, CudaError> {
+        self.alloc_unset::<u16>(len)
     }
 
     pub(crate) fn download_u8(&self, buffer: &CudaSlice<u8>) -> Result<Vec<u8>, CudaError> {
@@ -1112,6 +1132,14 @@ impl CudaKernelContext {
 
     pub(crate) const fn rwm_merge(&self) -> &CudaFunction {
         &self.rwm_merge
+    }
+
+    pub(crate) const fn rwm_square_lut(&self) -> &CudaFunction {
+        &self.rwm_square_lut
+    }
+
+    pub(crate) const fn rwm_deref_coeffs(&self) -> &CudaFunction {
+        &self.rwm_deref_coeffs
     }
 
     pub(crate) const fn rwm_message(&self) -> &CudaFunction {
