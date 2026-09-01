@@ -114,7 +114,8 @@ impl DeviceCoeffLut {
         // `values[index % len]` — both `< len` — plus the single-element
         // challenge, and writes only `out[index]` of `len * len` elements.
         // Input and output are distinct allocations.
-        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(values_len * values_len)) }?;
+        let _ =
+            unsafe { builder.launch(CudaKernelContext::launch_config(values_len * values_len)) }?;
         context.stream().synchronize()?;
         Ok(Self { values: out })
     }
@@ -1170,10 +1171,7 @@ mod tests {
                     val_coeff: Fr::from_u64(prev_val),
                     prev_val,
                     next_val,
-                    coeffs: [
-                        tables.values[0][ra as usize],
-                        tables.values[1][wa as usize],
-                    ],
+                    coeffs: [tables.values[0][ra as usize], tables.values[1][wa as usize]],
                 });
                 indexed.push(LutEntry {
                     row,
