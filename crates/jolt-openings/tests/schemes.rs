@@ -160,29 +160,28 @@ fn homomorphic_batch_opening_roundtrip_zk() {
     let commitments = zk_commitments(&polynomials);
 
     let mut prover_transcript = Blake2bTranscript::new(b"batch-zk");
-    let (proof, hiding_commitment, _blind) =
-        <HomomorphicTestBatch as ZkBatchOpeningScheme>::prove_batch_zk(
-            &(),
-            point.clone(),
-            commitments.clone(),
-            sources(&polynomials),
-            unit_hints(polynomials.len()),
-            evaluations(&polynomials, &point),
-            &mut prover_transcript,
-        )
-        .expect("ZK batch proof should be produced");
+    let opening = <HomomorphicTestBatch as ZkBatchOpeningScheme>::prove_batch_zk(
+        &(),
+        point.clone(),
+        commitments.clone(),
+        sources(&polynomials),
+        unit_hints(polynomials.len()),
+        evaluations(&polynomials, &point),
+        &mut prover_transcript,
+    )
+    .expect("ZK batch proof should be produced");
 
     let mut verifier_transcript = Blake2bTranscript::new(b"batch-zk");
     let verifier_hiding = <HomomorphicTestBatch as ZkBatchOpeningScheme>::verify_batch_zk(
         &(),
         point,
         commitments,
-        &proof,
+        &opening.proof,
         &mut verifier_transcript,
     )
     .expect("ZK batch proof should verify");
 
-    assert_eq!(verifier_hiding, hiding_commitment);
+    assert_eq!(verifier_hiding, opening.hiding_commitment);
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 

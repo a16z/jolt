@@ -1,7 +1,6 @@
 use jolt_inlines_sdk::host::{
-    instruction::andn::ANDN,
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
+    InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice, SourceKind,
     Value::{self, Imm, Reg},
 };
 
@@ -24,7 +23,7 @@ pub const K: [u64; 64] = [
 
 /// Builds assembly sequence for SHA256 compression
 /// Expects A..H to be in RAM at location rs1..rs1+8 (also where output is written)
-/// Expects input words to be in RAM at location rs2..rs2+16
+/// Expects a big-endian input block in RAM at location rs2..rs2+64
 /// Output will be written to rs1..rs1+8
 struct Sha256SequenceBuilder {
     asm: InlineExpansionBuilder,
@@ -56,7 +55,6 @@ impl Sha256SequenceBuilder {
                 iv.push(asm.allocate_for_inline()?);
             }
         }
-
         Ok(Sha256SequenceBuilder {
             asm,
             round: 0,
@@ -83,14 +81,16 @@ impl Sha256SequenceBuilder {
             });
         }
         // Load input words into message registers
-        (0..8).for_each(|i| {
-            self.asm.load_paired_u32_dirty(
-                self.operands.rs2,
-                (i as i64) * 8,
-                *self.message[i * 2],
-                *self.message[i * 2 + 1],
-            );
-        });
+        for i in 0..8 {
+            let lo = *self.message[i * 2];
+            let hi = *self.message[i * 2 + 1];
+            self.asm
+                .emit_ld(Kind::LD, lo, self.operands.rs2, (i as i64) * 8);
+            // VirtualRev8W is FormatT (rd, rs1, no rs2): emit an I-shaped row so the
+            // bytecode operands (rs2 = None, imm = 0) match the tracer's format.
+            self.asm.emit_i(Kind::VIRTUAL_REV8_W, lo, lo, 0);
+            self.asm.emit_i(SourceKind::SRLI, hi, lo, 32);
+        }
         // Run 64 rounds
         for _ in 0..64 {
             self.round()?;
@@ -275,7 +275,7 @@ impl Sha256SequenceBuilder {
         // ANDN computes rs1 & !rs2, so andn(G, E) gives G & !E = !E & G
         match (rs1, rs3) {
             (Reg(r1), Reg(r3)) => {
-                self.asm.emit_r::<ANDN>(rd, r3, r1);
+                self.asm.emit_r(Kind::ANDN, rd, r3, r1);
                 let neg_e_and_g = Reg(rd);
                 self.asm.xor(e_and_f, neg_e_and_g, rd)
             }
@@ -298,31 +298,62 @@ impl Sha256SequenceBuilder {
 
     /// Sigma_0 function of SHA256 compression function: Σ₀(x) = ROTR²(x) ⊕ ROTR¹³(x) ⊕ ROTR²²(x)
     fn sha_sigma_0(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
-        let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 2, 13, rd, ss);
-        let rotri_22 = self.asm.rotri32(rs1, 22, ss);
-        self.asm.xor(rotri_xor, rotri_22, rd)
+        match rs1 {
+            Reg(rs1) => {
+                self.asm.rotri32(Reg(rs1), 11, ss);
+                self.asm.emit_r(Kind::VirtualXORROTW12, rd, rs1, ss);
+                self.asm.emit_r(Kind::VirtualXORROTW22, rd, rs1, rd);
+                Reg(rd)
+            }
+            Imm(value) => {
+                let value = value as u32;
+                Imm(
+                    (value.rotate_right(2) ^ value.rotate_right(13) ^ value.rotate_right(22))
+                        as u64,
+                )
+            }
+        }
     }
 
     /// Sigma_1 function of SHA256 compression function: Σ₁(x) = ROTR⁶(x) ⊕ ROTR¹¹(x) ⊕ ROTR²⁵(x)
     fn sha_sigma_1(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
-        let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 6, 11, rd, ss);
-        let rotri_25 = self.asm.rotri32(rs1, 25, ss);
-        self.asm.xor(rotri_xor, rotri_25, rd)
+        match rs1 {
+            Reg(rs1) => {
+                self.asm.rotri32(Reg(rs1), 18, ss);
+                self.asm.emit_r(Kind::VirtualXORROTW19, rd, rs1, ss);
+                self.asm.emit_r(Kind::VirtualXORROTW6, rd, rs1, rd);
+                Reg(rd)
+            }
+            Imm(value) => {
+                let value = value as u32;
+                Imm(
+                    (value.rotate_right(6) ^ value.rotate_right(11) ^ value.rotate_right(25))
+                        as u64,
+                )
+            }
+        }
     }
 
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: u8, rd: u8, ss: u8) {
-        self.asm.rotri_xor_rotri32(Reg(rs1), 7, 18, rd, ss);
-        self.asm.srli(Reg(rs1), 3, ss);
+        self.asm.rotri32(Reg(rs1), 11, ss);
+        self.asm.emit_r(Kind::VirtualXORROTW7, rd, rs1, ss);
+        self.word_shr(rs1, 3, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
     }
 
     /// sigma_1 for word computation: σ₁(x) = ROTR¹⁷(x) ⊕ ROTR¹⁹(x) ⊕ SHR¹⁰(x)
     fn sha_word_sigma_1(&mut self, rs1: u8, rd: u8, ss: u8) {
-        // We don't need to do Imm shenanigans here since words are always in registers
-        self.asm.rotri_xor_rotri32(Reg(rs1), 17, 19, rd, ss);
-        self.asm.srli(Reg(rs1), 10, ss);
+        self.asm.rotri32(Reg(rs1), 30, ss);
+        self.asm.emit_r(Kind::VirtualXORROTW19, rd, rs1, ss);
+        self.word_shr(rs1, 10, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
+    }
+
+    fn word_shr(&mut self, rs1: u8, shift: u32, rd: u8) {
+        let rotated = self.asm.rotri32(Reg(rs1), shift, rd);
+        let mask = (1u64 << (32 - shift)) - 1;
+        self.asm.and(rotated, Imm(mask), rd);
     }
 }
 

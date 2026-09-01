@@ -1,6 +1,6 @@
 //! RAM RAF-evaluation symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::{
@@ -13,6 +13,7 @@ use crate::{constant, derived, opening, InputClaims, OutputClaims};
 /// The produced RAM RAF `ram_ra` opening, sharing the single RAF opening point.
 /// Generic over the opening cell (`F` for the serialized wire value, `Vec<F>` for
 /// the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -67,11 +68,11 @@ impl SymbolicSumcheck for RafEvaluation {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         constant(F::pow2(self.shape.phase3_cycle_rounds())) * opening(ram_address_spartan())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(RamRafEvaluationPublic::UnmapAddress) * opening(ram_ra_raf_evaluation())
     }
 }
@@ -81,7 +82,7 @@ impl SymbolicSumcheck for RafEvaluation {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltDerivedId, ReadWriteDimensions};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 4, 2, 1)

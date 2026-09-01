@@ -1,16 +1,21 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
 
 use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
-/// `P_b = 2^(8·(y mod 8 & (8−EIGHTHS)))` over bound bits: 1 until the final
-/// phase (the interleaved offset bits of `y` sit in the last 5 index bits),
-/// then the offset scale of the second operand.
+/// `P_b = 2^((XLEN/8)·(y mod 8 & (8−EIGHTHS)))` over the bits the prefix
+/// owns: the offset scale of the second operand. The offset bits y_0..y_2 sit
+/// at even index positions 0/2/4.
+///
+/// Phase-boundary-agnostic: the scale is a product of per-bit factors
+/// `1 + (2^((XLEN/8)·2^i) − 1)·y_i`, so each side supplies exactly the bits
+/// it owns (the suffix carries partial factors for offset bits below the
+/// boundary).
 ///
 /// Raw-index counterpart: [`super::pow2_offset::Pow2OffsetPrefix`] (same
-/// three scale values over a single-operand index).
+/// scale values over a single-operand index).
 pub enum OffsetScalePrefix<const EIGHTHS: usize> {}
 
 impl<const EIGHTHS: usize> OffsetScalePrefix<EIGHTHS> {
@@ -26,22 +31,30 @@ impl<const EIGHTHS: usize> OffsetScalePrefix<EIGHTHS> {
     };
 }
 
-impl<F: Field, const EIGHTHS: usize> SparseDensePrefix<F> for OffsetScalePrefix<EIGHTHS> {
+impl<F: JoltField, const EIGHTHS: usize> SparseDensePrefix<F> for OffsetScalePrefix<EIGHTHS> {
     fn default_checkpoint() -> F {
         F::one()
     }
 
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
-        // The offset bits of y (interleaved index bits 0/2/4) stay in the
-        // suffix until the final phase; this pairing with the suffix's
-        // `b.len() < 6` guard assumes phase boundaries never fall inside the
-        // low six index bits.
-        debug_assert!(suffix_len == 0 || suffix_len >= 6);
-        if suffix_len != 0 {
+        if suffix_len > 4 {
+            // All offset bits are in the suffix, which supplies the factor.
             return F::one();
         }
-        let (_, yb) = b.uninterleave();
-        let offset = u64::from(yb) & Self::OFFSET_MASK;
-        checkpoints[Self::VARIANT] * F::from_u64(1u64 << ((XLEN / 8) as u64 * offset))
+        let bits: u128 = b.into();
+        let mut value = checkpoints[Self::VARIANT];
+        for i in 0..3 {
+            if (Self::OFFSET_MASK >> i) & 1 == 0 {
+                continue;
+            }
+            let pos = 2 * i;
+            if pos >= suffix_len
+                && pos < suffix_len + b.len()
+                && (bits >> (pos - suffix_len)) & 1 == 1
+            {
+                value *= F::from_u128(1u128 << ((XLEN / 8) << i));
+            }
+        }
+        value
     }
 }

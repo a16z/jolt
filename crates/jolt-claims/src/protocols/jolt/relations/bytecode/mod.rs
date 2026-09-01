@@ -7,6 +7,7 @@ use crate::{InputClaims, OutputClaims};
 
 /// The cycle-phase produced openings: the per-chunk committed `BytecodeRa` claims,
 /// all sharing the `r_address ++ r_cycle` opening point.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

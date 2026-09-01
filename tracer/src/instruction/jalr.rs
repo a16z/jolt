@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
-use crate::instruction::format::{normalize_imm, NormalizedOperands};
+use crate::instruction::format::normalize_imm;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(
@@ -23,7 +23,7 @@ impl JALR {
         if self.operands.rd != 0 {
             // Skip returns (rd=0) and non-standard link registers
             if self.operands.rd == 1 {
-                cpu.track_call(self.address, NormalizedOperands::from(self.operands));
+                cpu.track_call(self.address);
             }
             cpu.write_register(self.operands.rd as usize, tmp);
         }

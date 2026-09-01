@@ -284,8 +284,13 @@ impl BatchedSumcheck {
 
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
+            let poly_degree = batched_univariate_poly.coeffs.len() - 1;
 
-            transcript.append_commitment(b"sumcheck_commitment", &commitment);
+            transcript.append_commitment_with_count(
+                b"sumcheck_commitment",
+                poly_degree as u64,
+                &commitment,
+            );
 
             let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
@@ -305,7 +310,7 @@ impl BatchedSumcheck {
             }
 
             round_commitments_g1.push(commitment);
-            poly_degrees.push(batched_univariate_poly.coeffs.len() - 1);
+            poly_degrees.push(poly_degree);
             poly_coeffs.push(batched_univariate_poly.coeffs.clone());
             blinding_factors.push(blinding);
         }
@@ -725,8 +730,12 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
         }
 
         let mut r: Vec<F::Challenge> = Vec::new();
-        for commitment in &self.round_commitments {
-            transcript.append_commitment(b"sumcheck_commitment", commitment);
+        for (commitment, &degree) in self.round_commitments.iter().zip(&self.poly_degrees) {
+            transcript.append_commitment_with_count(
+                b"sumcheck_commitment",
+                degree as u64,
+                commitment,
+            );
             let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
         }

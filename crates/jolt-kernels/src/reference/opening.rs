@@ -7,20 +7,27 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::MultilinearPoly;
-use jolt_witness::JoltWitnessOracle;
+use jolt_utils::unsafe_allocate_zero_vec;
+use jolt_witness::JoltWitnessPlane;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::views::dense_view;
 use crate::commitment::CommitmentGrid;
 use crate::opening::JointOpeningPolynomials;
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
-impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
+impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
+    // The backend-neutral `JointOpeningPolynomials::prepare` span lives at
+    // the stage-8 call boundary (`crates/jolt-prover/src/stages/stage8.rs`),
+    // so every implementation inherits it — see the taxonomy's kernel-seam
+    // contract.
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltWitnessOracle<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
@@ -51,9 +58,9 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
                         address_major_embed(&table, grid, polynomial)?
                     }
                     _ => {
-                        let mut table = table;
-                        table.resize(domain, F::zero());
-                        table
+                        let mut embedded: Vec<F> = unsafe_allocate_zero_vec(domain);
+                        embedded[..table.len()].copy_from_slice(&table);
+                        embedded
                     }
                 };
                 Ok(Box::new(embedded) as Box<dyn MultilinearPoly<F>>)
@@ -66,7 +73,7 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
 /// a one-hot table's native `k · T + t` view permutes to `t · cycle_stride +
 /// k · one_hot_stride`; a dense (per-cycle) table sits at each cycle block's
 /// address slot zero.
-fn address_major_embed<F: Field>(
+fn address_major_embed<F: JoltField>(
     table: &[F],
     grid: CommitmentGrid,
     polynomial: JoltCommittedPolynomial,
@@ -74,7 +81,11 @@ fn address_major_embed<F: Field>(
     let cycles = 1usize << grid.log_t;
     let cycle_stride = grid.cycle_stride();
     let one_hot_stride = grid.one_hot_stride();
-    let mut embedded = vec![F::zero(); 1usize << grid.total_vars];
+    // `2^total_vars = cycles · cycle_stride`, so the grid splits exactly into
+    // per-cycle blocks and each block's writes stay inside it
+    // (`k · one_hot_stride < cycle_stride`) — the scatters below run as
+    // disjoint per-block gathers.
+    let mut embedded: Vec<F> = unsafe_allocate_zero_vec(1usize << grid.total_vars);
     match polynomial {
         JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
             if table.len() > cycles {
@@ -84,6 +95,12 @@ fn address_major_embed<F: Field>(
                     got: table.len(),
                 });
             }
+            #[cfg(feature = "parallel")]
+            embedded
+                .par_chunks_mut(cycle_stride)
+                .zip(table.par_iter())
+                .for_each(|(block, value)| block[0] = *value);
+            #[cfg(not(feature = "parallel"))]
             for (cycle, value) in table.iter().enumerate() {
                 embedded[cycle * cycle_stride] = *value;
             }
@@ -102,11 +119,21 @@ fn address_major_embed<F: Field>(
                 });
             }
             let one_hot_k = table.len() / cycles;
-            for k in 0..one_hot_k {
-                for cycle in 0..cycles {
-                    embedded[cycle * cycle_stride + k * one_hot_stride] = table[k * cycles + cycle];
+            let fill_block = |cycle: usize, block: &mut [F]| {
+                for k in 0..one_hot_k {
+                    block[k * one_hot_stride] = table[k * cycles + cycle];
                 }
-            }
+            };
+            #[cfg(feature = "parallel")]
+            embedded
+                .par_chunks_mut(cycle_stride)
+                .enumerate()
+                .for_each(|(cycle, block)| fill_block(cycle, block));
+            #[cfg(not(feature = "parallel"))]
+            embedded
+                .chunks_mut(cycle_stride)
+                .enumerate()
+                .for_each(|(cycle, block)| fill_block(cycle, block));
         }
         _ => {
             return Err(KernelError::InvariantViolation {
@@ -120,7 +147,7 @@ fn address_major_embed<F: Field>(
 /// Embed an advice polynomial's balanced matrix into the grid matrix's
 /// top-left block: advice coefficient `row · 2^σ_a + col` lands at grid index
 /// `row · 2^σ_main + col`.
-fn block_embed<F: Field>(
+fn block_embed<F: JoltField>(
     table: &[F],
     grid: CommitmentGrid,
     polynomial: JoltCommittedPolynomial,
@@ -134,13 +161,24 @@ fn block_embed<F: Field>(
     }
     let advice_vars = table.len().ilog2() as usize;
     let sigma_advice = advice_vars.div_ceil(2);
-    let column_mask = (1usize << sigma_advice) - 1;
     let sigma_main = grid.total_vars.div_ceil(2);
-    let mut embedded = vec![F::zero(); 1usize << grid.total_vars];
-    for (index, value) in table.iter().enumerate() {
-        let row = index >> sigma_advice;
-        let column = index & column_mask;
-        embedded[(row << sigma_main) | column] = *value;
-    }
+    let mut embedded: Vec<F> = unsafe_allocate_zero_vec(1usize << grid.total_vars);
+    // Row-block copies: advice row `r` (width `2^σ_a`, `σ_a ≤ σ_main` since
+    // the caller checked `table.len() ≤ 2^total_vars`) lands at the head of
+    // grid row `r`.
+    #[cfg(feature = "parallel")]
+    embedded
+        .par_chunks_mut(1usize << sigma_main)
+        .zip(table.par_chunks(1usize << sigma_advice))
+        .for_each(|(grid_row, advice_row)| {
+            grid_row[..advice_row.len()].copy_from_slice(advice_row);
+        });
+    #[cfg(not(feature = "parallel"))]
+    embedded
+        .chunks_mut(1usize << sigma_main)
+        .zip(table.chunks(1usize << sigma_advice))
+        .for_each(|(grid_row, advice_row)| {
+            grid_row[..advice_row.len()].copy_from_slice(advice_row);
+        });
     Ok(embedded)
 }

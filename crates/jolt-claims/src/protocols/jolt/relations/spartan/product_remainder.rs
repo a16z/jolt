@@ -1,6 +1,6 @@
 //! Spartan product remainder symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,7 @@ use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 /// the opening cell (`F` for the serialized wire value, `Vec<F>` for the derived
 /// opening point). Field declaration order is the canonical Fiat-Shamir order
 /// (single-sourced via [`OutputClaims::canonical_order`]).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -86,11 +87,11 @@ impl SymbolicSumcheck for ProductRemainder {
         PRODUCT_REMAINDER_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(product_uniskip_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let left = product_weight(0) * opening(left_instruction_input_product())
             + product_weight(1) * opening(lookup_output_product())
             + product_weight(2) * opening(jump_flag_product());
@@ -106,7 +107,7 @@ impl SymbolicSumcheck for ProductRemainder {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn product_remainder_evaluates_like_core_formula() {

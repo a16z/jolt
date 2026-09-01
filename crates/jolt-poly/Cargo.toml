@@ -12,7 +12,9 @@ categories = ["cryptography", "mathematics"]
 workspace = true
 
 [dependencies]
+allocative = { workspace = true, optional = true }
 jolt-field = { workspace = true }
+jolt-utils = { workspace = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
 rayon = { workspace = true, optional = true }
@@ -36,3 +38,5 @@ ignored = ["rand"]
 [features]
 default = ["parallel"]
 parallel = ["rayon"]
+# Heap visitation of this crate's tables for the profile harness.
+allocative = ["dep:allocative"]

@@ -1,11 +1,12 @@
 //! Prover-side Akita witness assembly. `OneHotTrace` contains the uniform
-//! row-major one-hot columns derived from the execution trace; auxiliary program/advice objects retain
-//! sparse prefix-packed representations.
+//! row-major one-hot columns derived from the execution trace; program objects
+//! retain sparse prefix-packed representations.
 
 use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
-pub use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
+use jolt_claims::protocols::jolt::lattice::PrefixPackedObjectPlan;
+pub use jolt_claims::protocols::jolt::lattice::FUSED_INC_BITS;
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
-use jolt_openings::PrefixPacking;
+use jolt_poly::OneHotPolynomial;
 use jolt_riscv::JoltInstructionRow;
 
 use crate::field::JoltField;
@@ -15,6 +16,40 @@ use crate::zkvm::instruction::{
 };
 use crate::zkvm::lookup_table::LookupTables;
 use common::constants::XLEN;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DigitZeroRow {
+    Committed,
+    Virtualized,
+}
+
+/// Packs equal-length semantic columns into prefix slots and pads unused
+/// slots with zero rows. A virtualized digit-zero row is omitted from the
+/// physical polynomial; a committed column retains row zero.
+pub fn pack_one_hot_columns(
+    k: usize,
+    slot_capacity: usize,
+    columns: Vec<(Vec<Option<u8>>, DigitZeroRow)>,
+) -> OneHotPolynomial {
+    assert!(slot_capacity.is_power_of_two());
+    assert!(!columns.is_empty() && columns.len() <= slot_capacity);
+    let rows = columns[0].0.len();
+    assert!(columns.iter().all(|(column, _)| column.len() == rows));
+
+    let mut indices = Vec::with_capacity(slot_capacity * rows);
+    for (column, digit_zero_row) in columns {
+        indices.extend(column.into_iter().map(|row| match row {
+            Some(0) if digit_zero_row == DigitZeroRow::Virtualized => None,
+            None => None,
+            Some(row) => {
+                assert!((row as usize) < k);
+                Some(row)
+            }
+        }));
+    }
+    indices.resize(slot_capacity * rows, None);
+    OneHotPolynomial::new(k, indices)
+}
 
 /// Sparse unit-valued multilinear polynomial: value `1` at each listed
 /// position, `0` everywhere else — the witness form of a packed one-hot
@@ -29,7 +64,7 @@ pub struct SparseUnitPolynomial<F> {
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: jolt_field::Field> SparseUnitPolynomial<F> {
+impl<F: jolt_field::JoltField> SparseUnitPolynomial<F> {
     /// Sorts the positions ascending once here — the invariant
     /// `for_each_row`'s row scan and `for_each_one`'s yield order rely on.
     /// Duplicates are neither deduplicated nor rejected.
@@ -59,7 +94,7 @@ impl<F: jolt_field::Field> SparseUnitPolynomial<F> {
     }
 }
 
-impl<F: jolt_field::Field> jolt_poly::MultilinearPoly<F> for SparseUnitPolynomial<F> {
+impl<F: jolt_field::JoltField> jolt_poly::MultilinearPoly<F> for SparseUnitPolynomial<F> {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -158,31 +193,39 @@ impl FusedIncValue {
         (Self { delta }, store)
     }
 
-    /// The shifted unsigned encoding `2^64 + delta`: the MSB and low-64-bit
-    /// chunks. Padding (`delta = 0`) encodes as MSB hot with every chunk at
-    /// hot lane zero.
-    fn shifted(self) -> u128 {
-        debug_assert!(self.delta.unsigned_abs() < 1u128 << UNSIGNED_INC_BITS);
-        (self.delta + (1i128 << UNSIGNED_INC_BITS)) as u128
+    fn balanced_bias(width: usize) -> i128 {
+        debug_assert!(width > 0 && FUSED_INC_BITS.is_multiple_of(width));
+        let radix = 1i128 << width;
+        (radix / 2) * (((1i128 << FUSED_INC_BITS) - 1) / (radix - 1))
     }
 
-    pub fn msb(self) -> bool {
-        self.shifted() >> UNSIGNED_INC_BITS == 1
+    fn biased_for_balanced_digits(self, width: usize) -> i128 {
+        debug_assert!(self.delta.unsigned_abs() < 1u128 << FUSED_INC_BITS);
+        self.delta + Self::balanced_bias(width)
     }
 
-    /// Chunk hot lane from a plain bit width (the shared-final-point invariant
-    /// fixes `width == log_k_chunk`).
-    pub fn chunk_hot_lane_bits(self, width: usize, index: usize) -> usize {
-        let low = self.shifted() & ((1u128 << UNSIGNED_INC_BITS) - 1);
-        ((low >> (width * index)) & ((1u128 << width) - 1)) as usize
+    /// The centered radix-`2^width` digit encoded modulo the radix.
+    pub fn balanced_digit_row(self, width: usize, index: usize) -> usize {
+        let radix = 1i128 << width;
+        let mask = radix - 1;
+        let standard_digit = (self.biased_for_balanced_digits(width) >> (width * index)) & mask;
+        ((standard_digit + radix / 2) & mask) as usize
+    }
+
+    /// The signed carry above bit 63, encoded modulo the chunk radix.
+    pub fn balanced_carry_row(self, width: usize) -> usize {
+        let radix = 1i128 << width;
+        let carry = self.biased_for_balanced_digits(width) >> FUSED_INC_BITS;
+        debug_assert!((-1..=1).contains(&carry));
+        carry.rem_euclid(radix) as usize
     }
 }
 
 /// Scatters the precommitted `ProgramOneHot` sub-columns (per-chunk bytecode lanes
 /// and the program image) into one-positions of the packed precommitted
-/// witness, per the canonical `precommitted_packing` slots. Row domain per
+/// witness, per the canonical `precommitted_packing_plan` slots. Row domain per
 /// chunk is `2^log_bytecode_rows` (bytecode rows, zero-padded); byte
-/// one-hot columns encode padding as hot_lane-0 hot (never all-zero), the
+/// one-hot columns encode padding with row zero selected (never all-zero), the
 /// selector/flag columns leave padding rows empty.
 ///
 /// The imm lane decomposes `F::from_i128(imm)`'s canonical little-endian
@@ -191,7 +234,7 @@ impl FusedIncValue {
 /// byte reconstruction and the base lane agree exactly (including negative
 /// immediates, which wrap to `p − |imm|`).
 pub fn assemble_precommitted_witness<F: JoltField>(
-    packing: &PrefixPacking<JoltCommittedPolynomial>,
+    plan: &PrefixPackedObjectPlan,
     instructions: &[JoltInstructionRow],
     log_bytecode_rows: usize,
     imm_byte_width: usize,
@@ -220,7 +263,12 @@ pub fn assemble_precommitted_witness<F: JoltField>(
     };
 
     let mut one_positions = Vec::new();
-    for (column, slot) in packing {
+    let packed_index = |column: &JoltCommittedPolynomial, local: usize| {
+        plan.packing()
+            .packed_index(column, local)
+            .map_err(|error| error.to_string())
+    };
+    for column in plan.packing().ids() {
         match column {
             JoltCommittedPolynomial::BytecodeRegisterSelector { chunk, lane } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
@@ -230,23 +278,24 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                         BytecodeRegisterLane::Rd => instruction.operands.rd,
                     };
                     if let Some(register) = register {
-                        one_positions.push(
-                            slot.packed_index(((register as usize) << log_bytecode_rows) | row),
-                        );
+                        one_positions.push(packed_index(
+                            column,
+                            ((register as usize) << log_bytecode_rows) | row,
+                        )?);
                     }
                 }
             }
             JoltCommittedPolynomial::BytecodeCircuitFlag { chunk, flag } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if instruction.circuit_flags()[*flag] {
-                        one_positions.push(slot.packed_index(row));
+                        one_positions.push(packed_index(column, row)?);
                     }
                 }
             }
             JoltCommittedPolynomial::BytecodeInstructionFlag { chunk, flag } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if instruction.instruction_flags()[*flag] {
-                        one_positions.push(slot.packed_index(row));
+                        one_positions.push(packed_index(column, row)?);
                     }
                 }
             }
@@ -254,7 +303,8 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if let Some(table) = InstructionLookup::<XLEN>::lookup_table(instruction) {
                         let index = LookupTables::<XLEN>::enum_index(&table);
-                        one_positions.push(slot.packed_index((index << log_bytecode_rows) | row));
+                        one_positions
+                            .push(packed_index(column, (index << log_bytecode_rows) | row)?);
                     }
                 }
             }
@@ -262,7 +312,7 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if !InterleavedBitsMarker::is_interleaved_operands(&instruction.circuit_flags())
                     {
-                        one_positions.push(slot.packed_index(row));
+                        one_positions.push(packed_index(column, row)?);
                     }
                 }
             }
@@ -274,9 +324,10 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                         let byte = instructions.get(row).map_or(0, |instruction| {
                             ((instruction.address as u64) >> (8 * limb)) as u8
                         }) as usize;
-                        one_positions.push(slot.packed_index(
+                        one_positions.push(packed_index(
+                            column,
                             (((byte << limb_bits) | limb) << log_bytecode_rows) | row,
-                        ));
+                        )?);
                     }
                 }
             }
@@ -288,17 +339,22 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                         None => vec![0u8; imm_byte_width],
                     };
                     for (limb, byte) in bytes.into_iter().enumerate() {
-                        one_positions.push(slot.packed_index(
+                        one_positions.push(packed_index(
+                            column,
                             ((((byte as usize) << imm_limb_bits) | limb) << log_bytecode_rows)
                                 | row,
-                        ));
+                        )?);
                     }
                 }
             }
             JoltCommittedPolynomial::ProgramImageBytes => {
                 let words = program_image_words
                     .ok_or_else(|| "program image words missing for ProgramOneHot".to_string())?;
-                let word_vars = slot.num_vars - 8 - WORD_BYTES.log_2();
+                let word_vars = plan
+                    .logical_num_vars(*column)
+                    .ok_or_else(|| "ProgramImageBytes logical arity missing".to_string())?
+                    - 8
+                    - WORD_BYTES.log_2();
                 let limb_bits = WORD_BYTES.log_2();
                 debug_assert!(words.len() <= 1 << word_vars);
                 for limb in 0..WORD_BYTES {
@@ -307,9 +363,10 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                             .get(word_index)
                             .map_or(0, |word| (word >> (8 * limb)) as u8)
                             as usize;
-                        one_positions.push(slot.packed_index(
+                        one_positions.push(packed_index(
+                            column,
                             (((byte << limb_bits) | limb) << word_vars) | word_index,
-                        ));
+                        )?);
                     }
                 }
             }
@@ -327,52 +384,92 @@ pub fn assemble_precommitted_witness<F: JoltField>(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_claims::protocols::jolt::lattice::UnsignedIncChunking;
+    use jolt_claims::protocols::jolt::lattice::BalancedIncChunking;
 
-    const LOG_K_CHUNK: usize = 8;
+    #[test]
+    fn physical_one_hot_prefix_order_matches_selector_reduction() {
+        use jolt_field::{Fr, Ring};
+        use jolt_poly::{eq_index_msb, MultilinearPoly};
 
-    fn chunking() -> UnsignedIncChunking {
-        UnsignedIncChunking::new(LOG_K_CHUNK).unwrap()
-    }
+        let columns = vec![
+            (vec![Some(0), Some(2)], DigitZeroRow::Virtualized),
+            (vec![Some(0), None], DigitZeroRow::Committed),
+        ];
+        let packed = pack_one_hot_columns(4, 4, columns);
+        assert_eq!(
+            packed.indices(),
+            [None, Some(2), Some(0), None, None, None, None, None]
+        );
 
-    fn fused_trace() -> Vec<FusedIncValue> {
-        [7i128, -3, 0, (1 << 40) + 5, -(1 << 63), 1, -1, 0]
-            .into_iter()
-            .map(|delta| FusedIncValue { delta })
-            .collect()
+        let selector = [Fr::from_u64(3), Fr::from_u64(5)];
+        let logical = [Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
+        let first = OneHotPolynomial::new(4, vec![None, Some(2)]).evaluate(&logical);
+        let second = OneHotPolynomial::new(4, vec![Some(0), None]).evaluate(&logical);
+        let expected = eq_index_msb(&selector, 0) * first + eq_index_msb(&selector, 1) * second;
+        let point = [selector.as_slice(), logical.as_slice()].concat();
+        assert_eq!(packed.evaluate(&point), expected);
     }
 
     #[test]
-    fn chunks_and_msb_reconstruct_the_shifted_fused_increment() {
-        let encoding = chunking();
-        for (cycle, inc) in fused_trace().iter().enumerate() {
-            let mut reconstructed = 0u128;
-            for index in 0..encoding.chunk_count() {
-                let hot = inc.chunk_hot_lane_bits(encoding.chunk_width(), index);
-                assert!(hot < 1 << encoding.chunk_width(), "cycle {cycle}");
-                reconstructed |= (hot as u128) << (encoding.chunk_width() * index);
+    fn balanced_chunks_and_carry_reconstruct_the_fused_increment() {
+        let values = [
+            -(1i128 << 64) + 1,
+            -(1i128 << 63),
+            -129,
+            -128,
+            -127,
+            -1,
+            0,
+            1,
+            127,
+            128,
+            129,
+            (1i128 << 63) - 1,
+            (1i128 << 64) - 1,
+        ];
+        for width in [4, 8] {
+            let chunking = BalancedIncChunking::new(width).unwrap();
+            let radix = 1i128 << width;
+            for delta in values {
+                let inc = FusedIncValue { delta };
+                let digits = (0..chunking.chunk_count()).map(|index| {
+                    let row = inc.balanced_digit_row(width, index) as i128;
+                    if row < radix / 2 {
+                        row
+                    } else {
+                        row - radix
+                    }
+                });
+                let carry_row = inc.balanced_carry_row(width) as i128;
+                let carry = if carry_row < radix / 2 {
+                    carry_row
+                } else {
+                    carry_row - radix
+                };
+                let reconstructed = digits
+                    .enumerate()
+                    .fold(0, |sum, (index, digit)| sum + (digit << (width * index)))
+                    + (carry << FUSED_INC_BITS);
+                assert_eq!(reconstructed, delta, "width={width}, delta={delta}");
             }
-            reconstructed |= u128::from(inc.msb()) << UNSIGNED_INC_BITS;
-            assert_eq!(
-                reconstructed as i128 - (1i128 << UNSIGNED_INC_BITS),
-                inc.delta,
-                "cycle {cycle}"
-            );
         }
     }
 
     #[test]
-    fn padding_cycles_encode_msb_hot_and_zero_digits() {
-        let padding = FusedIncValue { delta: 0 };
-        assert!(padding.msb());
-        for index in 0..chunking().chunk_count() {
-            assert_eq!(padding.chunk_hot_lane_bits(LOG_K_CHUNK, index), 0);
+    fn zero_fused_increment_uses_digit_zero_for_every_column() {
+        let inc = FusedIncValue { delta: 0 };
+        for width in [4, 8, 16, 32] {
+            let chunking = BalancedIncChunking::new(width).unwrap();
+            for index in 0..chunking.chunk_count() {
+                assert_eq!(inc.balanced_digit_row(width, index), 0);
+            }
+            assert_eq!(inc.balanced_carry_row(width), 0);
         }
     }
 
     #[test]
     fn sparse_unit_positions_sort_ascending_on_construction() {
-        use jolt_field::{Fr, FromPrimitiveInt};
+        use jolt_field::{Fr, Ring};
         use jolt_poly::MultilinearPoly;
 
         let poly = SparseUnitPolynomial::<Fr>::new(4, vec![9, 2, 11, 0, 2]);
@@ -402,9 +499,11 @@ mod precommitted_tests {
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
         committed_lane_vars, BYTECODE_LANE_LAYOUT,
     };
-    use jolt_claims::protocols::jolt::lattice::{precommitted_packing, PrecommittedPackingShape};
+    use jolt_claims::protocols::jolt::lattice::{
+        precommitted_packing_plan, PrecommittedPackingShape,
+    };
     use jolt_field::Fr as ClaimsFr;
-    use jolt_field::FromPrimitiveInt;
+    use jolt_field::Ring;
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
 
     fn row(
@@ -526,10 +625,11 @@ mod precommitted_tests {
             imm_byte_width: IMM_BYTES,
             program_image_log_words: Some(1),
         };
-        let packing = precommitted_packing(&shape).unwrap();
+        let packing = precommitted_packing_plan(&shape).unwrap();
+        let bytecode = packing.bytecode();
         let program_image_words = [0xdeadbeefu64, 0x0102030405060708];
         let one_positions = assemble_precommitted_witness::<Fr>(
-            &packing,
+            bytecode,
             &instructions,
             LOG_ROWS,
             IMM_BYTES,
@@ -553,15 +653,17 @@ mod precommitted_tests {
         let eq_lane = jolt_poly::EqPolynomial::<ClaimsFr>::evals(&lane_point, None);
         let eq_row = jolt_poly::EqPolynomial::<ClaimsFr>::evals(&row_point, None);
         let mut reconstructed = ClaimsFr::from_u64(0);
-        for (column, slot) in &packing {
-            if matches!(column, JoltCommittedPolynomial::ProgramImageBytes) {
-                continue;
-            }
-            let cells = 1usize << (slot.num_vars - LOG_ROWS);
+        for column in bytecode.packing().ids() {
+            let num_vars = bytecode.logical_num_vars(*column).unwrap();
+            let cells = 1usize << (num_vars - LOG_ROWS);
             for cell in 0..cells {
-                let weight = cell_weight(&eq_lane, column, cell, LOG_ROWS, slot.num_vars);
+                let weight = cell_weight(&eq_lane, column, cell, LOG_ROWS, num_vars);
                 for (r, eq) in eq_row.iter().enumerate() {
-                    if witness.contains(&slot.packed_index((cell << LOG_ROWS) | r)) {
+                    let position = bytecode
+                        .packing()
+                        .packed_index(column, (cell << LOG_ROWS) | r)
+                        .unwrap();
+                    if witness.contains(&position) {
                         reconstructed += weight * *eq;
                     }
                 }

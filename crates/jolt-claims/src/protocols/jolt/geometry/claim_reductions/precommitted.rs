@@ -8,7 +8,7 @@
 //! `zkvm/claim_reductions/precommitted.rs`, with the Dory globals
 //! (`main_k`, `main_t`, layout, configured column count) parameter-passed.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::JoltFormulaPointError;
@@ -68,14 +68,14 @@ pub trait PrecommittedReductionLayout {
         self.precommitted().reduction_dimensions()
     }
 
-    fn cycle_phase_opening_point<F: Field>(
+    fn cycle_phase_opening_point<F: JoltField>(
         &self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
         self.precommitted().cycle_phase_opening_point(challenges)
     }
 
-    fn cycle_phase_variable_challenges<F: Field>(
+    fn cycle_phase_variable_challenges<F: JoltField>(
         &self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -83,7 +83,7 @@ pub trait PrecommittedReductionLayout {
             .cycle_phase_variable_challenges(challenges)
     }
 
-    fn address_phase_opening_point<F: Field>(
+    fn address_phase_opening_point<F: JoltField>(
         &self,
         cycle_var_challenges: &[F],
         challenges: &[F],
@@ -320,11 +320,11 @@ impl PrecommittedClaimReduction {
     /// rounds. This is the cycle-only counterpart of
     /// [`precommitted_skip_round_scale`], used when the reduction finishes in
     /// the cycle phase.
-    pub fn cycle_phase_skip_scale<F: Field>(&self) -> F {
+    pub fn cycle_phase_skip_scale<F: JoltField>(&self) -> F {
         skip_round_scale(self.cycle_phase_total_rounds - self.cycle_phase_rounds.len())
     }
 
-    fn cycle_challenge_for_round<F: Field>(
+    fn cycle_challenge_for_round<F: JoltField>(
         &self,
         cycle_var_challenges: &[F],
         round: usize,
@@ -343,7 +343,7 @@ impl PrecommittedClaimReduction {
 
     /// Cycle-phase challenges this polynomial actively binds, in ascending
     /// round order. The verifier carries these into the address phase.
-    pub fn cycle_phase_variable_challenges<F: Field>(
+    pub fn cycle_phase_variable_challenges<F: JoltField>(
         &self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -361,7 +361,7 @@ impl PrecommittedClaimReduction {
     }
 
     /// Big-endian opening point cached at the cycle-phase handoff.
-    pub fn cycle_phase_opening_point<F: Field>(
+    pub fn cycle_phase_opening_point<F: JoltField>(
         &self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -373,7 +373,7 @@ impl PrecommittedClaimReduction {
     /// Big-endian permutation-ordered point for a reduction that completes in
     /// the cycle phase. Errors if the polynomial still has active
     /// address-phase rounds.
-    pub fn cycle_phase_permuted_opening_point<F: Field>(
+    pub fn cycle_phase_permuted_opening_point<F: JoltField>(
         &self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -410,7 +410,7 @@ impl PrecommittedClaimReduction {
     /// `*_at_opening_point` helpers.
     ///
     /// [`cycle_phase_permuted_opening_point`]: Self::cycle_phase_permuted_opening_point
-    pub fn cycle_phase_permuted_from_opening_point<F: Field>(
+    pub fn cycle_phase_permuted_from_opening_point<F: JoltField>(
         &self,
         opening_point: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -440,7 +440,7 @@ impl PrecommittedClaimReduction {
     /// Big-endian final opening point in Dory opening-round order, assembled
     /// from the recorded cycle-phase challenges and the address-phase
     /// sumcheck challenges.
-    pub fn address_phase_opening_point<F: Field>(
+    pub fn address_phase_opening_point<F: JoltField>(
         &self,
         cycle_var_challenges: &[F],
         challenges: &[F],
@@ -474,13 +474,13 @@ impl PrecommittedClaimReduction {
 /// The `(1/2)^gap` factor contributed by all rounds (cycle and address) this
 /// polynomial skips across both phases. Used for the final output claim when
 /// the reduction completes in the address phase.
-pub fn precommitted_skip_round_scale<F: Field>(precommitted: &PrecommittedClaimReduction) -> F {
+pub fn precommitted_skip_round_scale<F: JoltField>(precommitted: &PrecommittedClaimReduction) -> F {
     let gap = (precommitted.cycle_phase_total_rounds - precommitted.cycle_phase_rounds.len())
         + (precommitted.address_phase_total_rounds - precommitted.address_phase_rounds.len());
     skip_round_scale(gap)
 }
 
-fn skip_round_scale<F: Field>(gap: usize) -> F {
+fn skip_round_scale<F: JoltField>(gap: usize) -> F {
     if gap == 0 {
         return F::one();
     }
@@ -494,7 +494,7 @@ mod tests {
 
     use super::*;
     use crate::protocols::jolt::geometry::dimensions::TracePolynomialOrder;
-    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_field::{Field, Fr, Ring};
 
     #[test]
     fn cycle_skip_scale_counts_inactive_cycle_rounds() {

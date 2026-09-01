@@ -115,6 +115,11 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
         }
     }
 
+    // Boundary RSS sampling for the `prove_stage*` spans — the same layer the
+    // modular harness installs, so per-stage memory tables line up.
+    #[cfg(not(target_arch = "wasm32"))]
+    layers.push(jolt_profiling::StageMemoryLayer.boxed());
+
     tracing_subscriber::registry().with(layers).init();
 
     #[cfg(feature = "monitor")]
@@ -132,6 +137,19 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
     guards
 }
 
+/// The run's memory footprint: the kernel-maintained peak RSS headline plus
+/// the per-stage boundary table the [`jolt_profiling::StageMemoryLayer`]
+/// collected.
+fn report_memory(context: &str) {
+    if let Some(peak) = jolt_profiling::peak_rss_bytes() {
+        println!(
+            "{context}: Peak RSS {}",
+            jolt_profiling::format_memory_size(peak as f64 / jolt_profiling::BYTES_PER_GIB),
+        );
+    }
+    jolt_profiling::report_stage_memory();
+}
+
 fn trace(args: ProfileArgs) {
     let bench_name = normalize_bench_name(&args.name.to_string());
     let timestamp = Local::now().format("%Y%m%d-%H%M");
@@ -144,6 +162,7 @@ fn trace(args: ProfileArgs) {
             tracing::info!("Bench Complete");
         });
     }
+    report_memory(&bench_name);
 }
 
 fn run_benchmark(args: BenchmarkArgs) {
@@ -169,4 +188,5 @@ fn run_benchmark(args: BenchmarkArgs) {
             tracing::info!("Benchmark Complete");
         });
     }
+    report_memory(&format!("{bench_name} (2^{scale})"));
 }

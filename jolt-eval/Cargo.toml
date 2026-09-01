@@ -9,6 +9,7 @@ jolt-verifier = { workspace = true }
 jolt-dory = { workspace = true }
 jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
+jolt-tracer-x86 = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
 jolt-transcript = { workspace = true, features = [
@@ -39,13 +40,21 @@ tempfile = "3"
 
 rust-code-analysis = "0.0.25"
 
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 
 jolt-eval-macros = { path = "macros" }
 
+# Peak RSS via getrusage; linux reads /proc/self/status instead.
+[target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 criterion = { workspace = true }
+iai-callgrind.workspace = true
+iai-callgrind-runner.workspace = true
+jolt-poly.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"
@@ -87,6 +96,19 @@ harness = false
 name = "prover_time_sha2_chain"
 harness = false
 
+[[bench]]
+name = "eq_evals"
+path = "benches/callgrind/eq_evals.rs"
+harness = false
+
+[[bench]]
+name = "trace_gen_fibonacci"
+harness = false
+
+[[bench]]
+name = "trace_gen_sha2_chain"
+harness = false
+
 [[bin]]
 name = "measure-objectives"
 path = "bin/measure_objectives.rs"
@@ -98,3 +120,7 @@ path = "bin/optimize.rs"
 [[bin]]
 name = "redteam"
 path = "bin/redteam.rs"
+
+[[bin]]
+name = "trace-gen-baseline"
+path = "bin/trace_gen_baseline.rs"

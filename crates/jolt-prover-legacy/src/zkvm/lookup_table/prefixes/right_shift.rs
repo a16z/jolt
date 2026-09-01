@@ -1,6 +1,9 @@
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     utils::lookup_bits::LookupBits,
+    zkvm::lookup_table::suffixes::{
+        pext::PextSuffix, pext_helper::PextHelperSuffix, SparseDenseSuffix,
+    },
 };
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
@@ -34,19 +37,12 @@ impl<F: JoltField> SparseDensePrefix<F> for RightShiftPrefix {
         }
         // Faithful form of the per-round recurrence at binary points
         //   result = result·(1+y_i) + x_i·y_i,
-        // i.e. result·2^popcount(y) + pext(x, y). Valid for any mask shape;
-        // for contiguous masks 1..10..0 it agrees with the previous
-        // leading-ones/trailing-zeros shortcut.
-        let (x, y) = b.uninterleave();
-        let (x_val, y_val) = (u64::from(x), u64::from(y));
-        let mut pext = 0u64;
-        for i in (0..y.len()).rev() {
-            if (y_val >> i) & 1 == 1 {
-                pext = (pext << 1) | ((x_val >> i) & 1);
-            }
-        }
-        result *= F::from_u64(1 << y_val.count_ones());
-        result += F::from_u64(pext);
+        // i.e. result·2^popcount(y) + pext(x, y). Valid for any mask shape.
+        // Evaluated through the Pext suffix pair: the RightShift prefix must
+        // stay bit-identical to those suffixes for PextSignedTable::combine
+        // to be sound, so there is one implementation, not two copies.
+        result *= F::from_u64(PextHelperSuffix::suffix_mle(b));
+        result += F::from_u64(PextSuffix::suffix_mle(b));
 
         result
     }

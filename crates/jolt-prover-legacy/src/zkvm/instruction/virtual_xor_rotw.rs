@@ -1,6 +1,9 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{
-    virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
+    virtual_xor_rotw::{
+        VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
+        VirtualXORROTW7, VirtualXORROTW8,
+    },
     RISCVCycle,
 };
 
@@ -77,6 +80,9 @@ impl_virtual_xor_rotw!(VirtualXORROTW16, 16);
 impl_virtual_xor_rotw!(VirtualXORROTW12, 12);
 impl_virtual_xor_rotw!(VirtualXORROTW8, 8);
 impl_virtual_xor_rotw!(VirtualXORROTW7, 7);
+impl_virtual_xor_rotw!(VirtualXORROTW22, 22);
+impl_virtual_xor_rotw!(VirtualXORROTW19, 19);
+impl_virtual_xor_rotw!(VirtualXORROTW6, 6);
 
 #[cfg(test)]
 mod test {
@@ -124,5 +130,35 @@ mod test {
     #[test]
     fn lookup_output_matches_trace_7() {
         lookup_output_matches_trace_test::<VirtualXORROTW7>();
+    }
+
+    #[test]
+    fn materialize_entry_22() {
+        materialize_entry_test::<Fr, VirtualXORROTW22>();
+    }
+
+    #[test]
+    fn materialize_entry_19() {
+        materialize_entry_test::<Fr, VirtualXORROTW19>();
+    }
+
+    #[test]
+    fn materialize_entry_6() {
+        materialize_entry_test::<Fr, VirtualXORROTW6>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_22() {
+        lookup_output_matches_trace_test::<VirtualXORROTW22>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_19() {
+        lookup_output_matches_trace_test::<VirtualXORROTW19>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_6() {
+        lookup_output_matches_trace_test::<VirtualXORROTW6>();
     }
 }

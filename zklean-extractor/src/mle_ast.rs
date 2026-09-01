@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::cmp::max;
 use std::collections::HashMap;
-use std::fmt::{self};
+use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
 
@@ -1408,6 +1408,10 @@ impl JoltField for MleAst {
             return challenge;
         }
         panic!("MleAst::from_bytes called without a pending challenge — PoseidonAstTranscript must call set_pending_challenge() before from_bytes()")
+    }
+
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self::from_bytes(bytes)
     }
 
     fn inverse(&self) -> Option<Self> {

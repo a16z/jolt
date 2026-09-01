@@ -7,12 +7,17 @@ const RATE_IN_BYTES: usize = 136;
 const RATE_IN_U64: usize = RATE_IN_BYTES / 8;
 const HASH_LEN: usize = 32;
 
+/// One 136-byte rate block, 8-byte aligned so it can be absorbed as u64 words
+/// without unaligned loads.
+#[repr(align(8))]
+struct AlignedBlock([u8; RATE_IN_BYTES]);
+
 /// Keccak-256 hasher state.
 pub struct Keccak256 {
     /// The 25-word (1600-bit) Keccak state.
     state: [u64; 25],
     /// Buffer for incomplete blocks.
-    buffer: [u8; RATE_IN_BYTES],
+    buffer: AlignedBlock,
     /// Number of bytes in the buffer.
     buffer_len: usize,
 }
@@ -23,7 +28,7 @@ impl Keccak256 {
     pub fn new() -> Self {
         Self {
             state: [0; 25],
-            buffer: [0; RATE_IN_BYTES],
+            buffer: AlignedBlock([0; RATE_IN_BYTES]),
             buffer_len: 0,
         }
     }
@@ -45,7 +50,7 @@ impl Keccak256 {
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     input.as_ptr(),
-                    self.buffer.as_mut_ptr().add(self.buffer_len),
+                    self.buffer.0.as_mut_ptr().add(self.buffer_len),
                     to_copy,
                 );
             }
@@ -63,7 +68,7 @@ impl Keccak256 {
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     input.as_ptr().add(offset),
-                    self.buffer.as_mut_ptr(),
+                    self.buffer.0.as_mut_ptr(),
                     RATE_IN_BYTES,
                 );
             }
@@ -78,7 +83,7 @@ impl Keccak256 {
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     input.as_ptr().add(offset),
-                    self.buffer.as_mut_ptr(),
+                    self.buffer.0.as_mut_ptr(),
                     remaining,
                 );
             }
@@ -91,19 +96,19 @@ impl Keccak256 {
     pub fn finalize(mut self) -> [u8; HASH_LEN] {
         // Pad the message. Keccak uses `0x01` padding.
         // If buffer_len == RATE_IN_BYTES-1 both markers land in the same byte (0x01 | 0x80 = 0x81)
-        self.buffer[self.buffer_len] = 0x01;
+        self.buffer.0[self.buffer_len] = 0x01;
 
         // Zero the remaining bytes (including the last byte if needed)
         if self.buffer_len + 1 < RATE_IN_BYTES {
             unsafe {
                 core::ptr::write_bytes(
-                    self.buffer.as_mut_ptr().add(self.buffer_len + 1),
+                    self.buffer.0.as_mut_ptr().add(self.buffer_len + 1),
                     0,
                     RATE_IN_BYTES - self.buffer_len - 1,
                 );
             }
         }
-        self.buffer[RATE_IN_BYTES - 1] |= 0x80;
+        self.buffer.0[RATE_IN_BYTES - 1] |= 0x80;
 
         self.absorb_buffer();
 
@@ -169,10 +174,12 @@ impl Keccak256 {
     /// Absorbs a full block from the internal buffer into the state.
     #[inline(always)]
     fn absorb_buffer(&mut self) {
+        // SAFETY: `AlignedBlock` is `repr(align(8))`, so the buffer supports
+        // aligned u64 loads; RATE_IN_U64 words cover exactly RATE_IN_BYTES.
         #[cfg(target_endian = "little")]
         unsafe {
             // On little-endian, directly XOR the buffer as u64 words
-            let buffer_words = self.buffer.as_ptr() as *const u64;
+            let buffer_words = self.buffer.0.as_ptr() as *const u64;
             for i in 0..RATE_IN_U64 {
                 self.state[i] ^= *buffer_words.add(i);
             }
@@ -182,7 +189,8 @@ impl Keccak256 {
         {
             // For big-endian, convert each word from little-endian bytes
             for i in 0..RATE_IN_U64 {
-                let word = u64::from_le_bytes(self.buffer[i * 8..(i + 1) * 8].try_into().unwrap());
+                let word =
+                    u64::from_le_bytes(self.buffer.0[i * 8..(i + 1) * 8].try_into().unwrap());
                 self.state[i] ^= word;
             }
         }
@@ -262,23 +270,27 @@ fn absorb_unaligned(state: &mut [u64; 25], block: &[u8]) {
 #[inline(always)]
 fn absorb_final(state: &mut [u64; 25], input: &[u8], len: usize) {
     // Build padded block and XOR into state
-    let mut block = [0u8; RATE_IN_BYTES];
+    let mut block = AlignedBlock([0u8; RATE_IN_BYTES]);
 
     if len > 0 {
+        // SAFETY: `len < RATE_IN_BYTES` (only the final partial block reaches
+        // here) and `input` holds at least `len` bytes.
         unsafe {
-            core::ptr::copy_nonoverlapping(input.as_ptr(), block.as_mut_ptr(), len);
+            core::ptr::copy_nonoverlapping(input.as_ptr(), block.0.as_mut_ptr(), len);
         }
     }
 
     // Keccak padding: 0x01 at end of data, 0x80 at end of block
-    block[len] = 0x01;
-    block[RATE_IN_BYTES - 1] |= 0x80;
+    block.0[len] = 0x01;
+    block.0[RATE_IN_BYTES - 1] |= 0x80;
 
     // XOR padded block into state
+    // SAFETY: `AlignedBlock` is `repr(align(8))`, so the block supports aligned
+    // u64 loads; RATE_IN_U64 words cover exactly RATE_IN_BYTES.
     #[cfg(target_endian = "little")]
     unsafe {
-        let block_words = block.as_ptr() as *const u64;
-        #[allow(clippy::needless_range_loop)]
+        let block_words = block.0.as_ptr() as *const u64;
+        #[expect(clippy::needless_range_loop)]
         for i in 0..RATE_IN_U64 {
             state[i] ^= *block_words.add(i);
         }
@@ -289,14 +301,14 @@ fn absorb_final(state: &mut [u64; 25], input: &[u8], len: usize) {
         for i in 0..RATE_IN_U64 {
             let offset = i * 8;
             let word = u64::from_le_bytes([
-                block[offset],
-                block[offset + 1],
-                block[offset + 2],
-                block[offset + 3],
-                block[offset + 4],
-                block[offset + 5],
-                block[offset + 6],
-                block[offset + 7],
+                block.0[offset],
+                block.0[offset + 1],
+                block.0[offset + 2],
+                block.0[offset + 3],
+                block.0[offset + 4],
+                block.0[offset + 5],
+                block.0[offset + 6],
+                block.0[offset + 7],
             ]);
             state[i] ^= word;
         }

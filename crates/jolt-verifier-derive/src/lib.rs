@@ -6,7 +6,7 @@
 //!
 //! ```ignore
 //! #[derive(SumcheckBatch)]
-//! struct Stage5Sumchecks<F: Field> {
+//! struct Stage5Sumchecks<F: JoltField> {
 //!     instruction_read_raf:     InstructionReadRaf<F>,
 //!     ram_ra_claim_reduction:   RamRaClaimReduction<F>,
 //!     registers_val_evaluation: RegistersValEvaluation<F>,
@@ -111,13 +111,103 @@
 //!
 //! See `specs/sumcheck-batch-derive.md`.
 
+// In the jolt-verifier runtime closure: stricter panic and unsafe discipline
+// than the workspace lints (specs/verifier-closure-lints.md).
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::indexing_slicing
+)]
+// wildcard_enum_match_arm is omitted: this crate matches foreign syn AST enums,
+// where wildcard fallbacks to Err/None are the correct, version-stable idiom.
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Fields, GenericArgument, GenericParam, Ident,
-    Meta, PathArguments, Token, Type,
+    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericArgument,
+    GenericParam, Ident, ItemFn, Meta, PathArguments, Token, Type,
 };
+
+/// Assign a verifier function's transcript operations to a Fiat-Shamir audit scope.
+///
+/// The annotation has no effect unless `jolt-verifier` is built with `fs-audit`.
+///
+/// ```ignore
+/// #[fs_scope(Stage3)]
+/// pub fn verify(...) -> Result<..., VerifierError> {
+///     // ...
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn fs_scope(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let scope = parse_macro_input!(attr as Ident);
+    let mut function = parse_macro_input!(item as ItemFn);
+
+    if let Err(error) = validate_fs_scope(&scope) {
+        return error.into_compile_error().into();
+    }
+
+    let guard = fs_scope_guard_statement(&scope);
+    function.block.stmts.insert(0, parse_quote!(#guard));
+    quote!(#function).into()
+}
+
+/// Assign the remainder of the current block to a Fiat-Shamir audit scope.
+///
+/// Use this when one verifier function contains multiple protocol regions:
+///
+/// ```ignore
+/// jolt_verifier_derive::fs_scope_guard!(BlindFold);
+/// ```
+#[proc_macro]
+pub fn fs_scope_guard(input: TokenStream) -> TokenStream {
+    let scope = parse_macro_input!(input as Ident);
+    if let Err(error) = validate_fs_scope(&scope) {
+        return error.into_compile_error().into();
+    }
+    fs_scope_guard_statement(&scope).into()
+}
+
+fn validate_fs_scope(scope: &Ident) -> syn::Result<()> {
+    let valid = matches!(
+        scope.to_string().as_str(),
+        "Preamble"
+            | "Commitments"
+            | "Stage1"
+            | "Stage2"
+            | "Stage3"
+            | "Stage4"
+            | "Stage5"
+            | "Stage6a"
+            | "Stage6b"
+            | "Stage7"
+            | "Reconstruction"
+            | "Stage8"
+            | "BlindFold"
+    );
+    if !valid {
+        return Err(syn::Error::new_spanned(
+            scope,
+            "unknown Fiat-Shamir verifier scope",
+        ));
+    }
+    Ok(())
+}
+
+fn fs_scope_guard_statement(scope: &Ident) -> TokenStream2 {
+    quote! {
+        #[cfg(feature = "fs-audit")]
+        let _fs_scope = crate::fs_audit::enter(crate::fs_audit::FsScope::#scope);
+    }
+}
 
 /// Generate a stage's aggregate claim types (`StageN{Input,Output}{Claims,Points}`
 /// / `StageNChallenges`) from a struct of `ConcreteSumcheck` instances. See the
@@ -1077,7 +1167,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     let driver_impl = quote! {
-        impl<#f: ::jolt_field::Field> #name<#f> {
+        impl<#f: ::jolt_field::JoltField> #name<#f> {
             #draw_challenges_method
 
             #begin_batch_method
@@ -1096,7 +1186,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // holds the wire *values* (`Inputs<F>` / `Outputs<F>`); `*Points` holds the
     // derived opening points (`Inputs<Vec<F>>` / `Outputs<Vec<F>>`). Only the
     // `OutputClaims` (values) aggregate is serialized (the wire form), so it alone
-    // derives serde. `F: Field` does not imply the serde traits, so the bounds are
+    // derives serde. `F: JoltField` does not imply the serde traits, so the bounds are
     // spelled explicitly (the workspace convention for claim structs), fully
     // qualified so call sites need no serde imports.
     let serialize_bound = format!("{f}: ::serde::Serialize");
@@ -1104,33 +1194,41 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #input_claims_name<#f: ::jolt_field::Field> {
+        #vis struct #input_claims_name<#f: ::jolt_field::JoltField> {
             #(#input_claims_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #input_points_name<#f: ::jolt_field::Field> {
+        #vis struct #input_points_name<#f: ::jolt_field::JoltField> {
             #(#input_points_fields,)*
         }
 
+        // The `allocative` cfg_attr resolves against the EXPANDING crate's
+        // feature set: any crate deriving `SumcheckBatch` with an
+        // `allocative` feature must make its members' claim structs
+        // `Allocative` under that feature (the profile harness's per-stage
+        // heap flamegraphs visit these aggregates).
         #[derive(Clone, Debug, PartialEq, Eq, ::serde::Serialize, ::serde::Deserialize)]
+        #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
         #[serde(bound(serialize = #serialize_bound, deserialize = #deserialize_bound))]
-        #vis struct #output_claims_name<#f: ::jolt_field::Field> {
+        #vis struct #output_claims_name<#f: ::jolt_field::JoltField> {
             #(#output_claims_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #output_points_name<#f: ::jolt_field::Field> {
+        #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+        #vis struct #output_points_name<#f: ::jolt_field::JoltField> {
             #(#output_points_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #challenges_name<#f: ::jolt_field::Field> {
+        #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+        #vis struct #challenges_name<#f: ::jolt_field::JoltField> {
             #(#challenge_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #batching_coefficients_name<#f: ::jolt_field::Field> {
+        #vis struct #batching_coefficients_name<#f: ::jolt_field::JoltField> {
             #(#batching_coefficient_fields,)*
         }
 

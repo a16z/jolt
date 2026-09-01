@@ -1,13 +1,7 @@
 use super::*;
-mod addiw;
-mod addw;
+use jolt_riscv::JoltInstructionKind as Kind;
+
 mod mulh;
 mod mulhsu;
-mod mulw;
-mod subw;
-pub(super) use addiw::expand_addiw;
-pub(super) use addw::expand_addw;
 pub(super) use mulh::expand_mulh;
 pub(super) use mulhsu::expand_mulhsu;
-pub(super) use mulw::expand_mulw;
-pub(super) use subw::expand_subw;

@@ -1,6 +1,7 @@
 #![cfg(test)]
 #![allow(non_upper_case_globals)]
 
+use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
 use jolt_prover_legacy::zkvm::{
     instruction::{
         CircuitFlags, Flags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
@@ -56,9 +57,10 @@ use tracer::instruction::{
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
     virtual_assert_word_alignment::VirtualAssertWordAlignment,
-    virtual_change_divisor::VirtualChangeDivisor,
     virtual_movsign::VirtualMovsign,
     virtual_muli::VirtualMULI,
+    virtual_muliw::VirtualMULIW,
+    virtual_negate_if::VirtualNegateIf,
     virtual_pow2::VirtualPow2,
     virtual_pow2_w::VirtualPow2W,
     virtual_pow2i::VirtualPow2I,
@@ -74,7 +76,7 @@ use tracer::instruction::{
     virtual_srli::VirtualSRLI,
     Instruction,
 };
-use z3::{ast::Int, SatResult, Solver};
+use z3::{ast::Int, Params, SatResult, Solver};
 
 #[derive(Clone, Debug)]
 struct JoltState<T = Int> {
@@ -420,7 +422,12 @@ impl JoltState<i64> {
 }
 
 fn do_test(name: &str, instr: &Instruction) {
+    let mut solver_params = Params::default();
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
+
     let mut solver = Solver::new();
+    solver.set_params(&solver_params);
 
     let r1 = JoltState::new("r1".to_string());
     r1.add_constraints(&mut solver);
@@ -459,7 +466,7 @@ fn do_test(name: &str, instr: &Instruction) {
             panic!("{}", msg.trim());
         }
         SatResult::Unsat => (),
-        SatResult::Unknown => panic!("Solver failed"),
+        SatResult::Unknown => panic!("Solver failed/timed out, result inconclusive"),
     }
 }
 
@@ -519,9 +526,10 @@ test_instruction_constraints!(VirtualAssertMulUNoOverflow, FormatB);
 test_instruction_constraints!(VirtualAssertValidDiv0, FormatB);
 test_instruction_constraints!(VirtualAssertValidUnsignedRemainder, FormatB);
 test_instruction_constraints!(VirtualAssertWordAlignment, FormatAssert);
-test_instruction_constraints!(VirtualChangeDivisor, FormatR);
+test_instruction_constraints!(VirtualNegateIf, FormatR);
 test_instruction_constraints!(VirtualMovsign, FormatI);
 test_instruction_constraints!(VirtualMULI, FormatI);
+test_instruction_constraints!(VirtualMULIW, FormatI);
 test_instruction_constraints!(VirtualPow2, FormatI);
 test_instruction_constraints!(VirtualPow2I, FormatJ);
 test_instruction_constraints!(VirtualPow2IW, FormatJ);

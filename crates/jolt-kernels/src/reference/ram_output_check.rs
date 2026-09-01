@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_witness::JoltWitnessPlane;
@@ -29,7 +29,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

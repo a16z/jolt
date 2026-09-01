@@ -1,9 +1,12 @@
 //! RAM virtual polynomials and memory-state reconstruction.
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackend<'_, T> {
-    pub(crate) fn materialize_ram_read_write_virtual<F: Field>(
+impl<T: TraceSource> TraceBackend<T> {
+    pub(crate) fn materialize_ram_read_write_virtual<F: JoltField>(
         &self,
         id: JoltVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
@@ -16,51 +19,45 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         }
     }
 
-    pub(crate) fn materialize_ram_val<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_ram_val<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
         let mut state = self.initial_ram_state()?;
-        let mut values = vec![F::zero(); addresses * cycles];
-        let mut trace = self.trace.trace.clone();
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(addresses * cycles);
 
         for cycle in 0..cycles {
             for (address, value) in state.iter().copied().enumerate() {
                 values[address * cycles + cycle] = F::from_u64(value);
             }
 
-            let Some(row) = trace.next_row() else {
+            let Some(row) = self.trace.trace.get(cycle) else {
                 continue;
             };
-            match row.ram_access {
-                RamAccess::Read(read) => {
-                    if let Some(address) = self.remapped_ram_address(read.address)? {
-                        values[address * cycles + cycle] = F::from_u64(read.value);
-                    }
+            if row.is_load() {
+                if let Some(address) = self.remapped_ram_address(row.ram_address())? {
+                    values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
                 }
-                RamAccess::Write(write) => {
-                    if let Some(address) = self.remapped_ram_address(write.address)? {
-                        values[address * cycles + cycle] = F::from_u64(write.pre_value);
-                        state[address] = write.post_value;
-                    }
+            } else if row.is_store() {
+                if let Some(address) = self.remapped_ram_address(row.ram_address())? {
+                    values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
+                    state[address] = row.ram_write_value();
                 }
-                RamAccess::NoOp => {}
             }
         }
 
         Ok(values)
     }
 
-    pub(crate) fn materialize_ram_ra<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_ram_ra<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
-        let mut values = vec![F::zero(); addresses * cycles];
-        let mut trace = self.trace.trace.clone();
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(addresses * cycles);
 
         for cycle in 0..cycles {
-            let Some(row) = trace.next_row() else {
+            let Some(row) = self.trace.trace.get(cycle) else {
                 continue;
             };
-            if let Some(raw_address) = ram_access_address(row.ram_access) {
+            if let Some(raw_address) = ram_access_address(row) {
                 if let Some(address) = self.remapped_ram_address(raw_address)? {
                     values[address * cycles + cycle] = F::one();
                 }
@@ -70,7 +67,12 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         Ok(values)
     }
 
-    pub(crate) fn materialize_ram_val_final<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_ram_val_final<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
+        #[cfg(feature = "parallel")]
+        return self
+            .final_ram_state()
+            .map(|state| state.into_par_iter().map(F::from_u64).collect());
+        #[cfg(not(feature = "parallel"))]
         self.final_ram_state()
             .map(|state| state.into_iter().map(F::from_u64).collect())
     }

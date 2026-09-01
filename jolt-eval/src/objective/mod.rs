@@ -1,8 +1,10 @@
+pub mod callgrind;
 pub mod code_quality;
 pub mod objective_fn;
 pub mod optimize;
 pub mod performance;
 pub mod synthesis;
+pub mod telemetry;
 
 use std::fmt;
 
@@ -205,10 +207,17 @@ impl PerformanceObjective {
 }
 
 /// Union of all known objectives — used as a type-safe HashMap key.
+///
+/// The `Telemetry` and `Callgrind` variants are string-keyed, parameterized
+/// families (parsed at runtime via [`OptimizationObjective::from_key`],
+/// interned to stay `Copy`), so they do not appear in [`all()`](Self::all) —
+/// only their curated [`objective_fn`] wrappers are enumerable.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OptimizationObjective {
     StaticAnalysis(StaticAnalysisObjective),
     Performance(PerformanceObjective),
+    Telemetry(telemetry::TelemetryObjective),
+    Callgrind(callgrind::CallgrindObjective),
 }
 
 // Re-export the const objective keys from their defining modules.
@@ -235,6 +244,8 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.name(),
             Self::Performance(p) => p.name(),
+            Self::Telemetry(t) => t.name(),
+            Self::Callgrind(c) => c.name(),
         }
     }
 
@@ -242,6 +253,8 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.units(),
             Self::Performance(p) => p.units(),
+            Self::Telemetry(t) => t.units(),
+            Self::Callgrind(c) => c.units(),
         }
     }
 
@@ -249,6 +262,8 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.description(),
             Self::Performance(p) => p.description(),
+            Self::Telemetry(t) => t.description(),
+            Self::Callgrind(c) => c.description(),
         }
     }
 
@@ -256,11 +271,41 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.diff_paths(),
             Self::Performance(p) => p.diff_paths(),
+            // The modular prover stack plus the leaf crates it orchestrates.
+            Self::Telemetry(_) => &["crates/"],
+            // The hot paths the callgrind benches exercise.
+            Self::Callgrind(_) => &["crates/jolt-poly/", "crates/jolt-kernels/"],
         }
     }
 
     pub fn is_perf(&self) -> bool {
         matches!(self, Self::Performance(_))
+    }
+
+    /// Parses a string-keyed objective (`telemetry:...` / `callgrind:...`).
+    /// Returns `None` for keys outside the two grammars, `Some(Err)` for a
+    /// malformed key inside them.
+    pub fn from_key(key: &str) -> Option<Result<Self, MeasurementError>> {
+        if key.starts_with("telemetry:") {
+            Some(telemetry::TelemetryObjective::parse(key).map(Self::Telemetry))
+        } else if key.starts_with("callgrind:") {
+            Some(callgrind::CallgrindObjective::parse(key).map(Self::Callgrind))
+        } else {
+            None
+        }
+    }
+
+    /// Measures a string-keyed objective in `work_dir` (subprocess-based; a
+    /// no-op error for the enumerable Criterion/static-analysis variants,
+    /// which their existing measurement paths own).
+    pub fn measure_keyed_in(&self, work_dir: &std::path::Path) -> Result<f64, MeasurementError> {
+        match self {
+            Self::Telemetry(t) => t.measure_in(work_dir),
+            Self::Callgrind(c) => c.measure_in(work_dir),
+            _ => Err(MeasurementError::new(
+                "not a string-keyed objective; measured via Criterion / static analysis",
+            )),
+        }
     }
 }
 

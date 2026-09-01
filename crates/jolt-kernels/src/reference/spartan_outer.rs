@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
@@ -38,8 +38,11 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 use jolt_witness::JoltWitnessPlane;
-
-impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
+impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
+    // The backend-neutral `SpartanOuterUniskip::*` spans live at the stage-1
+    // call boundary (`crates/jolt-prover/src/stages/stage1.rs`), so every
+    // `UniskipKernel` implementation inherits them — see the taxonomy's
+    // kernel-seam contract.
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -69,7 +72,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
 /// uni-skip slot parked and binds it into the batch member.
 pub struct ReferenceOuterRemainder;
 
-impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemainder {
+impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemainder {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -88,24 +91,35 @@ impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemainder {
 /// The shared stage-1 compute state: the 35 R1CS input tables, the
 /// per-constraint Az/Bz row-value tables, and `eq(τ_low, ·)` — everything the
 /// uni-skip polynomial and the remainder member both consume.
-pub struct SpartanOuterKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub struct SpartanOuterKernel<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     matrices: ConstraintMatrices<F>,
     /// Cycle-indexed R1CS input tables (big-endian cycle index), in the
     /// relation's variable order.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     input_tables: Vec<Vec<F>>,
     /// Per-constraint-row value tables over the cycle domain:
     /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]`.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     az_rows: Vec<Vec<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     bz_rows: Vec<Vec<F>>,
     /// eq(τ_low, ·) over the (cycle ∥ stream) index `j = (t << 1) | s`
     /// (τ_low[0] pairs the index MSB, so the stream bit pairs τ_low's last
     /// entry — legacy's convention).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     eq_table: Vec<F>,
 }
 
-impl<F: Field> SpartanOuterKernel<F> {
+impl<F: JoltField> SpartanOuterKernel<F> {
     /// Materialize the stage's compute state from the witness. `tau` is the
     /// stage's full challenge vector (`log_t + 2` entries).
     pub fn prepare(
@@ -286,7 +300,7 @@ impl<F: Field> SpartanOuterKernel<F> {
 
 /// Materialize the 35 R1CS input polynomials (cycle-indexed, big-endian) in
 /// the relation's variable order.
-fn materialize_input_tables<F: Field>(
+fn materialize_input_tables<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     dimensions: &SpartanOuterDimensions,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
@@ -300,7 +314,7 @@ fn materialize_input_tables<F: Field>(
 /// Per-constraint-row Az/Bz value tables over the cycle domain:
 /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]` with `z_t[0] = 1` and
 /// `z_t[1 + k] = input_tables[k][t]`.
-fn row_value_tables<F: Field>(
+fn row_value_tables<F: JoltField>(
     matrices: &ConstraintMatrices<F>,
     input_tables: &[Vec<F>],
 ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
@@ -329,7 +343,7 @@ fn row_value_tables<F: Field>(
 
 #[cfg(test)]
 mod orientation_probes {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
 
     /// Pin the composite orientation assumption: an `EqPolynomial` table

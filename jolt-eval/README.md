@@ -50,6 +50,71 @@ The motivation is twofold:
 
 Note: `prover_time_*` benchmarks are standalone Criterion bench targets (run via `cargo bench -p jolt-eval --bench <name>`). They are **not** included in `PerformanceObjective::all()` and are not tracked by the `optimize` or `measure-objectives` binaries.
 
+### Telemetry (modular prover summary.json)
+
+A string-keyed, parameterized objective family over the modular prover's
+telemetry pipeline (see `book/src/usage/profiling/zkvm_profiling.md`):
+measurement runs `cargo run --release -p jolt-prover --features profiling --
+profile --name <workload> --scale <scale> --format chrome` as a subprocess in
+the work dir and reads the metric from
+`benchmark-runs/latest_modular_{workload}_{scale}/summary.json` (through the
+symlink the profile harness flips to the newest successful run).
+Key grammar, pinned:
+
+```text
+telemetry:<workload>:<metric>
+<workload> ::= fibonacci | sha2-chain | sha3-chain | btreemap
+<metric>   ::= prover_time_s         (root-span duration, seconds)
+             | peak_rss_gib          (process-lifetime getrusage high-water mark)
+             | peak_memory_gib       (max over memory samples in the root span)
+             | total:<span-label>    (inclusive time summed over all instances, seconds)
+             | self:<span-label>     (exclusive time summed over all instances, seconds)
+             | heap:<snapshot>       (allocative mid-stage snapshot total, exact bytes)
+             | heap:<snapshot>:<root> (one root frame's bytes; root is verbatim, may contain ':')
+```
+
+Everything after the third colon is the **verbatim span label and may itself
+contain `:`** (e.g. `telemetry:sha2-chain:total:EqPolynomial::evals`), so an
+optimization agent can target any span it discovers in a trace without
+editing `jolt-eval`. Measurement uses each workload's scale from the
+normative table in `src/objective/telemetry.rs` (fibonacci 2^16, sha2-chain
+2^22, sha3-chain 2^22, btreemap 2^20). A key referencing a label absent from
+the summary is a **measurement error, never 0.0**. `heap:` metrics build the
+profile subprocess with the `allocative` feature automatically (the
+optimizer's shared per-workload run enables it when any sharer needs it) and
+report exact bytes; snapshot labels are the flamegraph names
+(`Stage2Batch_prepared`, …) and root frames are the kernel type names from
+the summary's `heap` section.
+
+```bash
+cargo run -p jolt-eval --bin measure-objectives -- \
+    --objective telemetry:fibonacci:prover_time_s
+```
+
+### Instruction counts (iai-callgrind, opt-in)
+
+Deterministic instruction-count objectives over the microbenchmarks in
+`benches/callgrind/` — the noise-free signal for optimizer accept/reject
+decisions. Key grammar: `callgrind:<bench-name>:instructions` (the `Ir`
+event kind, parsed from iai-callgrind's `--output-format=json`).
+
+Opt-in: requires Valgrind plus `cargo install iai-callgrind-runner`
+(version matching the workspace `iai-callgrind`); no CI job. Absent
+tooling produces a clear measurement error, never a silent zero.
+
+```bash
+# Run the bench directly
+cargo bench -p jolt-eval --bench eq_evals
+
+# Or measure as an objective
+cargo run -p jolt-eval --bin measure-objectives -- \
+    --objective callgrind:eq_evals:instructions
+```
+
+Callgrind bench targets keep an explicit `path = "benches/callgrind/..."`
+in `Cargo.toml`; `sync_targets.sh` regenerates those entries alongside the
+Criterion ones.
+
 ### Objective functions
 
 | Name | Inputs | Description |
@@ -60,6 +125,10 @@ Note: `prover_time_*` benchmarks are standalone Criterion bench targets (run via
 | `minimize_bind_low_to_high` | bind_parallel_low_to_high | Minimize LowToHigh binding time |
 | `minimize_bind_high_to_low` | bind_parallel_high_to_low | Minimize HighToLow binding time |
 | `minimize_naive_sort_time` | naive_sort_time | Minimize naive sort wall-clock time (e2e test target) |
+| `minimize_modular_prover_time` | telemetry:fibonacci:prover_time_s | Minimize modular-prover e2e time |
+| `minimize_modular_commit_time` | telemetry:fibonacci:total:commit_witness | Minimize witness commitment time |
+| `minimize_modular_round_loop_time` | telemetry:fibonacci:total:prove_batch | Minimize the batched sumcheck round loop |
+| `minimize_modular_stage_totals` | telemetry:fibonacci:total:prove_stage0..8 | Minimize the sum of per-stage inclusive totals |
 
 Custom composite objective functions can be defined as `ObjectiveFunction` structs:
 

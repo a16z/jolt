@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use akita_planner::write_family_module;
+use akita_planner::emit::emit_family_module;
 use jolt_akita::schedules::emit::family_specs;
 
 #[expect(
@@ -26,7 +26,7 @@ fn main() {
     );
     let only = args.next();
 
-    for family in family_specs(output_dir) {
+    for family in family_specs(output_dir).expect("every family must declare a valid contract") {
         if only
             .as_deref()
             .is_some_and(|only| !family.module_name.ends_with(only))
@@ -38,7 +38,19 @@ fn main() {
             family.module_name,
             family.keys.len()
         );
-        let path = write_family_module(&family).expect("table generation must succeed");
+        let path = family.output_dir.join(format!("{}.rs", family.module_name));
+        let source = emit_family_module(&family).expect("table generation must succeed");
+        std::fs::write(&path, source).expect("write generated table");
+        // The emitter's fixed import header is not rustfmt-stable; format the
+        // module so the checked-in file passes the workspace fmt check. The
+        // drift oracle compares schedule data only, so formatting is free.
+        let status = std::process::Command::new("rustfmt")
+            .arg("--edition")
+            .arg("2021")
+            .arg(&path)
+            .status()
+            .expect("rustfmt must be installed to emit checked-in tables");
+        assert!(status.success(), "rustfmt failed on {}", path.display());
         println!("wrote {}", path.display());
     }
 }

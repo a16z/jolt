@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 5 verification.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::SumcheckBatch;
@@ -20,14 +20,14 @@ use super::registers_val_evaluation::RegistersValEvaluation;
 /// absorbed into the transcript, which must match the prover's commitment order.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-pub struct Stage5Sumchecks<F: Field> {
+pub struct Stage5Sumchecks<F: JoltField> {
     pub instruction_read_raf: InstructionReadRaf<F>,
     pub ram_ra_claim_reduction: RamRaClaimReduction<F>,
     pub registers_val_evaluation: RegistersValEvaluation<F>,
 }
 
 /// The shared opening-point accessors over the point-only stage-5 aggregate.
-impl<F: Field> Stage5OutputPoints<F> {
+impl<F: JoltField> Stage5OutputPoints<F> {
     /// The instruction read-RAF cycle point (shared by the lookup-table-flag
     /// and RAF-flag openings).
     pub fn instruction_r_cycle(&self) -> &[F] {
@@ -52,7 +52,8 @@ impl<F: Field> Stage5OutputPoints<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage5ClearOutput<F: Field> {
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+pub struct Stage5ClearOutput<F: JoltField> {
     pub challenges: Stage5Challenges<F>,
     /// The produced stage-5 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
@@ -69,7 +70,7 @@ pub struct Stage5ClearOutput<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage5ZkOutput<F: Field, C> {
+pub struct Stage5ZkOutput<F: JoltField, C> {
     pub challenges: Stage5Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
@@ -87,12 +88,12 @@ pub struct Stage5ZkOutput<F: Field, C> {
 // consistency and output-claim commitments. Boxing the common clear variant to
 // shrink the rarer ZK one would add indirection to every clear-path access.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage5Output<F: Field, C> {
+pub enum Stage5Output<F: JoltField, C> {
     Clear(Stage5ClearOutput<F>),
     Zk(Stage5ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage5Output<F, C> {
+impl<F: JoltField, C> Stage5Output<F, C> {
     /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage5OutputPoints<F> {
         match self {
@@ -134,7 +135,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

@@ -7,11 +7,10 @@ pub enum Pow2OffsetBSuffix {}
 
 impl SparseDenseSuffix for Pow2OffsetBSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
-        if b.len() < 3 {
-            1
-        } else {
-            let bits: u128 = b.into();
-            1 << (8 * (bits & 7) as u32)
-        }
+        // The suffix owns index bits [0, b.len()); with fewer than 3 bits
+        // this is the partial factor for the offset bits it owns,
+        // and the Pow2Offset prefix supplies the rest.
+        let bits: u128 = b.into();
+        1 << (8 * (bits & 7) as u32)
     }
 }

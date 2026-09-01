@@ -1,7 +1,7 @@
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_riscv::instructions::WindowMaskH;
-use jolt_riscv::JoltCycle;
+use jolt_riscv::{JoltCycle, JoltInstructionRow};
 
 impl_lookup_table!(WindowMaskH, Some(WindowMaskH));
 
@@ -10,7 +10,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for WindowMaskH<C> {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
             self.0.rs1_val().unwrap_or(0) & mask,
-            Into::<jolt_riscv::JoltInstructionRow>::into(self.0.instruction())
+            Into::<JoltInstructionRow>::into(self.0.instruction())
                 .operands
                 .imm
                 & mask as i128,
@@ -41,28 +41,20 @@ mod tests {
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
         materialize_entry_test,
     };
+    use tracer::instruction::virtual_window_mask_h::VirtualWindowMaskH;
 
     #[test]
     fn materialize_entry_windowmaskh() {
-        materialize_entry_test!(
-            WindowMaskH,
-            tracer::instruction::virtual_window_mask_h::VirtualWindowMaskH
-        );
+        materialize_entry_test!(WindowMaskH, VirtualWindowMaskH);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_windowmaskh() {
-        instruction_inputs_match_constraint_test!(
-            WindowMaskH,
-            tracer::instruction::virtual_window_mask_h::VirtualWindowMaskH
-        );
+        instruction_inputs_match_constraint_test!(WindowMaskH, VirtualWindowMaskH);
     }
 
     #[test]
     fn lookup_output_matches_trace_windowmaskh() {
-        lookup_output_matches_trace_test!(
-            WindowMaskH,
-            tracer::instruction::virtual_window_mask_h::VirtualWindowMaskH
-        );
+        lookup_output_matches_trace_test!(WindowMaskH, VirtualWindowMaskH);
     }
 }

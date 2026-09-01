@@ -24,7 +24,7 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -33,7 +33,7 @@ use crate::VerifierError;
 
 /// Wire the consumed opening *values* from stage 2's product-remainder left/right
 /// instruction inputs. Takes the ZK-agnostic stage-2 output-claims aggregate.
-pub fn instruction_input_input_values_from_upstream<F: Field>(
+pub fn instruction_input_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> InstructionInputInputClaims<F> {
     let product_remainder = &stage2.product_remainder;
@@ -44,12 +44,12 @@ pub fn instruction_input_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct InstructionInput<F: Field> {
+pub struct InstructionInput<F: JoltField> {
     symbolic: relations::instruction::InputVirtualization,
     product_remainder_opening_point: Vec<F>,
 }
 
-impl<F: Field> InstructionInput<F> {
+impl<F: JoltField> InstructionInput<F> {
     pub fn new(trace_dimensions: TraceDimensions, product_remainder_opening_point: Vec<F>) -> Self {
         Self {
             symbolic: relations::instruction::InputVirtualization::new(trace_dimensions),
@@ -62,7 +62,7 @@ impl<F: Field> InstructionInput<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for InstructionInput<F> {
     type Symbolic = relations::instruction::InputVirtualization;
 
     fn symbolic(&self) -> &Self::Symbolic {

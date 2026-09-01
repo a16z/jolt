@@ -29,6 +29,30 @@ macro_rules! impl_jolt_group_wrapper {
             pub fn into_inner(self) -> $projective {
                 self.0
             }
+
+            /// Reinterprets a wrapper slice as a slice of the inner arkworks type.
+            #[inline(always)]
+            pub(crate) fn as_inner_slice(slice: &[Self]) -> &[$projective] {
+                // SAFETY: $wrapper is #[repr(transparent)] over $projective
+                // (size equality asserted at compile time above), so a slice of
+                // wrappers has the identical layout as a slice of inner values.
+                unsafe {
+                    ::std::slice::from_raw_parts(slice.as_ptr().cast::<$projective>(), slice.len())
+                }
+            }
+
+            /// Reinterprets a mutable wrapper slice as a slice of the inner arkworks type.
+            #[inline(always)]
+            pub(crate) fn as_inner_slice_mut(slice: &mut [Self]) -> &mut [$projective] {
+                // SAFETY: same repr(transparent) layout guarantee as `as_inner_slice`;
+                // the exclusive borrow is carried through unchanged.
+                unsafe {
+                    ::std::slice::from_raw_parts_mut(
+                        slice.as_mut_ptr().cast::<$projective>(),
+                        slice.len(),
+                    )
+                }
+            }
         }
 
         impl ::std::fmt::Debug for $wrapper {
@@ -38,6 +62,12 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
+        // WARNING: wrapping performs no on-curve or subgroup validation — the
+        // caller must supply a valid prime-order-subgroup point (relevant for
+        // G2, whose cofactor is non-trivial). This is a plumbing conversion
+        // for internally-constructed arkworks values; untrusted bytes must
+        // enter through serde `Deserialize` below, which validates via
+        // arkworks (`Validate::Yes`: on-curve + subgroup check).
         impl From<$projective> for $wrapper {
             #[inline(always)]
             fn from(inner: $projective) -> Self {
@@ -157,15 +187,21 @@ macro_rules! impl_jolt_group_wrapper {
             }
 
             #[inline]
-            fn scalar_mul<F: ::jolt_field::Field>(&self, scalar: &F) -> Self {
+            fn scalar_mul<F: ::jolt_field::JoltField>(&self, scalar: &F) -> Self {
                 Self(self.0 * super::field_to_fr(scalar))
             }
 
             #[inline]
-            fn msm<F: ::jolt_field::Field>(bases: &[Self], scalars: &[F]) -> Self {
+            fn msm<F: ::jolt_field::JoltField>(bases: &[Self], scalars: &[F]) -> Self {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
-                debug_assert_eq!(bases.len(), scalars.len());
+                // Arkworks' msm_bigint silently truncates to the shorter slice,
+                // producing a wrong group element instead of failing.
+                assert_eq!(
+                    bases.len(),
+                    scalars.len(),
+                    "msm: bases/scalars length mismatch"
+                );
                 let affines: Vec<$affine> = bases.iter().map(|b| b.0.into_affine()).collect();
                 let fr_scalars: Vec<::ark_bn254::Fr> =
                     scalars.iter().map(super::field_to_fr).collect();
@@ -197,7 +233,7 @@ use ark_bn254::Bn254 as ArkBn254;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField as _;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::PairingGroup;
 
@@ -248,16 +284,25 @@ impl PairingGroup for Bn254 {
     }
 }
 
-/// Converts a generic `Field` element to an arkworks `Fr` via serialization.
+/// Converts a generic `JoltField` element to an arkworks `Fr` via serialization.
 ///
-/// This is the bridge between jolt-field's backend-agnostic `Field` trait and
+/// This is the bridge between jolt-field's backend-agnostic `JoltField` trait and
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
+///
+/// WARNING: in release builds, values `>= Fr::MODULUS` are silently reduced
+/// mod r (`from_le_bytes_mod_order`). Callers must pass scalars from a field
+/// with modulus <= BN254 Fr — in practice jolt-field's `Fr` itself. Notably
+/// `jolt_field::Fq` (BN254 base field, larger modulus) implements `Field` and
+/// must NOT be used as a scalar here. A release-mode range check is
+/// deliberately omitted: this function sits in per-element MSM/GLV hot loops,
+/// and the scalar type is fixed at compile time by internal callers, not by
+/// untrusted input.
 ///
 /// In debug builds, asserts that the source value fits in the BN254 Fr modulus —
 /// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
 #[inline]
-pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
+pub(crate) fn field_to_fr<F: JoltField>(f: &F) -> ark_bn254::Fr {
     let mut bytes = vec![0u8; F::NUM_BYTES];
     f.to_bytes_le(&mut bytes);
     #[cfg(debug_assertions)]

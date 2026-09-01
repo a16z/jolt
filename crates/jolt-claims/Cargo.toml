@@ -11,10 +11,13 @@ workspace = true
 [features]
 default = []
 akita = []
+# Heap flamegraph visitation of the relation claim structs (profile harness).
+allocative = ["dep:allocative"]
 field-inline = []
 test-utils = []
 
 [dependencies]
+allocative = { workspace = true, optional = true }
 blake2.workspace = true
 derive_more.workspace = true
 jolt-claims-derive.workspace = true
@@ -23,5 +26,6 @@ jolt-lookup-tables.workspace = true
 jolt-poly.workspace = true
 jolt-openings.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
+jolt-utils.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true

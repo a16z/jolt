@@ -41,9 +41,24 @@
 //!
 //! - [`lagrange`]: Lagrange interpolation, integer-domain power sums, polynomial
 //!   multiplication, Newton-form interpolation over integer domains
-//! - [`math`]: Bit-manipulation utilities on `usize` via the `Math` trait (`pow2`, `log_2`)
-//! - [`thread`]: `drop_in_background_thread` (rayon) and `unsafe_allocate_zero_vec` (zero-init allocation)
 
+// In the jolt-verifier runtime closure: stricter panic and unsafe discipline
+// than the workspace lints (specs/verifier-closure-lints.md).
+#![deny(unsafe_op_in_unsafe_fn)]
+#![deny(
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
+
+#[cfg(feature = "allocative")]
+mod allocative_support;
 mod binding;
 mod compressed_univariate;
 mod dense;
@@ -52,15 +67,15 @@ mod eq_plus_one;
 mod identity;
 pub mod lagrange;
 mod lt;
-pub mod math;
 mod mle;
 mod multilinear;
 mod one_hot;
 mod point;
 mod split_eq;
-pub mod thread;
 mod univariate;
 
+#[cfg(feature = "allocative")]
+pub use allocative_support::{visit_scalar_rows, visit_scalars};
 pub use binding::BindingOrder;
 pub use compressed_univariate::CompressedPoly;
 pub use dense::Polynomial;

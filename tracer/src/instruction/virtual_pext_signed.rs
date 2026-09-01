@@ -20,28 +20,51 @@ impl VirtualPextSigned {
     }
 }
 
-/// Packs `x`'s bits at `y`'s set positions (MSB-first), then sign-extends by
-/// the extracted window's top bit: `pext(x, y) + σ·(2^64 − 2^popcount(y))`.
-pub(crate) fn pext_signed(x: u64, y: u64) -> u64 {
-    let mut pext = 0u64;
-    let mut sign = 0u64;
-    let mut pc = 0u32;
-    for i in (0..64).rev() {
-        if (y >> i) & 1 == 1 {
-            let x_i = (x >> i) & 1;
-            if pc == 0 {
-                sign = x_i;
-            }
-            pext = (pext << 1) | x_i;
-            pc += 1;
-        }
+/// `pext(x, y)`: packs `x`'s bits at `y`'s set positions toward bit 0,
+/// preserving order (the window's top bit lands at `popcount(y) − 1`).
+#[inline]
+pub(crate) fn pext(x: u64, y: u64) -> u64 {
+    if y == 0 {
+        return 0;
     }
-    let ext = if sign == 1 && pc < 64 {
-        u64::MAX << pc
+    let tz = y.trailing_zeros();
+    let normalized = y >> tz;
+    if normalized & normalized.wrapping_add(1) == 0 {
+        // Contiguous mask (every mask the window-mask instructions produce):
+        // extract is a shift plus truncate.
+        return (x >> tz) & normalized;
+    }
+    // General mask: gather one bit per set position, lowest first.
+    let mut bits = y;
+    let mut out = 0u64;
+    let mut k = 0;
+    while bits != 0 {
+        out |= ((x >> bits.trailing_zeros()) & 1) << k;
+        k += 1;
+        bits &= bits - 1;
+    }
+    out
+}
+
+/// Packs `x`'s bits at `y`'s set positions (MSB-first), then sign-extends by
+/// the extracted window's top bit: `pext(x, y) + σ·(2^64 − 2^popcount(y))`
+/// where `σ` is `x`'s bit at `y`'s most significant set bit. Same formulation
+/// as the lookup tables' `pext_signed` at `XLEN = 64`.
+pub(crate) fn pext_signed(x: u64, y: u64) -> u64 {
+    let pc = y.count_ones();
+    if pc == 0 {
+        return 0;
+    }
+    let pext = pext(x, y);
+    // σ: the window sign, x's bit at y's most significant set bit.
+    let sign = (x >> y.ilog2()) & 1;
+    // pext < 2^pc, so the sum never overflows 64 bits.
+    let ext = if sign == 1 {
+        ((1u128 << 64) - (1u128 << pc)) as u64
     } else {
         0
     };
-    pext | ext
+    pext + ext
 }
 
 impl RISCVTrace for VirtualPextSigned {}

@@ -1,6 +1,6 @@
 //! RAM `ra` claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::{
@@ -15,6 +15,7 @@ use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChal
 
 /// Produced RAM-RA reduced opening, generic over the opening cell (`F` for the
 /// serialized wire value, `Vec<F>` for the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -42,6 +43,7 @@ pub struct RamRaClaimReductionInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the RAM `ra` claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamRaClaimReductionChallenges<F> {
     #[challenge(RamRaClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -81,14 +83,14 @@ impl SymbolicSumcheck for RaClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(RamRaClaimReductionChallenge::Gamma);
         opening(ram_ra_raf_evaluation())
             + gamma.clone() * opening(ram_ra())
             + gamma.clone().pow(2) * opening(ram_ra_val_check())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(RamRaClaimReductionChallenge::Gamma);
         (derived(RamRaClaimReductionPublic::EqCycleRaf)
             + gamma.clone() * derived(RamRaClaimReductionPublic::EqCycleReadWrite)
@@ -102,7 +104,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ram::RamRaClaimReductionPublicValues;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

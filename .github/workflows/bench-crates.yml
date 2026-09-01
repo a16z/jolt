@@ -37,6 +37,7 @@ jobs:
           -p jolt-field
           -p jolt-poly
           -p jolt-transcript
+          --features jolt-field/solinas,jolt-field/asm
           --bench '*'
           -- --save-baseline main_run
 
@@ -51,7 +52,7 @@ jobs:
       # On PR: compare against baseline
       - name: Download baseline
         if: github.event_name == 'pull_request'
-        uses: dawidd6/action-download-artifact@v21
+        uses: dawidd6/action-download-artifact@v24
         with:
           name: criterion-baseline
           path: target/criterion/
@@ -67,6 +68,7 @@ jobs:
           -p jolt-field
           -p jolt-poly
           -p jolt-transcript
+          --features jolt-field/solinas,jolt-field/asm
           --bench '*'
           -- --save-baseline pr_run
 

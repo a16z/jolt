@@ -14,6 +14,7 @@ workspace = true
 [features]
 default = []
 test-utils = []
+parallel = ["dep:rayon", "jolt-utils/parallel"]
 field-inline = [
   "dep:rayon",
   "jolt-claims/field-inline",
@@ -23,14 +24,16 @@ field-inline = [
 ]
 
 [dependencies]
+common.workspace = true
 jolt-claims.workspace = true
 jolt-witness-derive.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-program.workspace = true
 jolt-riscv.workspace = true
+jolt-utils.workspace = true
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-common.workspace = true

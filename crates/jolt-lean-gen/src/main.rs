@@ -139,21 +139,8 @@ fn lean_instr(
     let imm = lean_imm(name, o.imm, imm_override);
 
     let args = match name {
-        "ADD"
-        | "SUB"
-        | "MUL"
-        | "MULHU"
-        | "MULHSU"
-        | "OR"
-        | "XOR"
-        | "AND"
-        | "SLT"
-        | "SLTU"
-        | "ANDN"
-        | "VirtualChangeDivisor"
-        | "VirtualChangeDivisorW"
-        | "VirtualSRL"
-        | "VirtualSRA" => format!("{rd} {rs1} {rs2}"),
+        "ADD" | "SUB" | "MUL" | "MULHU" | "MULHSU" | "OR" | "XOR" | "AND" | "SLT" | "SLTU"
+        | "ANDN" | "VirtualNegateIf" | "VirtualSRL" | "VirtualSRA" => format!("{rd} {rs1} {rs2}"),
         "ADDI" | "ANDI" | "ORI" | "XORI" | "SLTI" | "SLTIU" | "VirtualMULI" | "VirtualSRLI"
         | "VirtualSRAI" | "VirtualROTRI" | "VirtualROTRIW" => {
             format!("{rd} {rs1} {imm}")

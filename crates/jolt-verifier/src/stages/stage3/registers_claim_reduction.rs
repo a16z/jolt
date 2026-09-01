@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId, RegistersClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -29,7 +29,7 @@ use crate::VerifierError;
 
 /// Wire the consumed opening *values* from stage 1's outer sumcheck register
 /// values. Takes the ZK-agnostic stage-1 output-claims aggregate.
-pub fn registers_claim_reduction_input_values_from_upstream<F: Field>(
+pub fn registers_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
 ) -> RegistersClaimReductionInputClaims<F> {
     let outer = &stage1.outer_remainder;
@@ -41,12 +41,12 @@ pub fn registers_claim_reduction_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RegistersClaimReduction<F: Field> {
+pub struct RegistersClaimReduction<F: JoltField> {
     symbolic: relations::claim_reductions::registers::ClaimReduction,
     product_uniskip_tau_low: Vec<F>,
 }
 
-impl<F: Field> RegistersClaimReduction<F> {
+impl<F: JoltField> RegistersClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, product_uniskip_tau_low: Vec<F>) -> Self {
         Self {
             symbolic: relations::claim_reductions::registers::ClaimReduction::new(trace_dimensions),
@@ -59,7 +59,7 @@ impl<F: Field> RegistersClaimReduction<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
     type Symbolic = relations::claim_reductions::registers::ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {

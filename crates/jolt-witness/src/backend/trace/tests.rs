@@ -1,8 +1,16 @@
+#![cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::needless_update,
+        reason = "the default update initializes the field-inline-only trace field"
+    )
+)]
+
 use common::{
     constants::RAM_START_ADDRESS,
     jolt_device::{JoltDevice, MemoryConfig, MemoryLayout},
 };
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_program::{
     execution::{
         JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
@@ -11,9 +19,10 @@ use jolt_program::{
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{
-    CircuitFlags, InstructionFlags, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
-    RV64IMAC_JOLT,
+    CapturedState, CircuitFlags, InstructionFlags, JoltInstructionKind, JoltInstructionRow,
+    JoltTraceRow, NonMemoryState, NormalizedOperands, RV64IMAC_JOLT,
 };
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 
@@ -25,7 +34,7 @@ use crate::witnesses::{
 };
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
-fn preprocessing() -> JoltProgramPreprocessing {
+fn base_preprocessing() -> JoltProgramPreprocessing {
     let bytecode = BytecodePreprocessing {
         code_size: 32,
         ..Default::default()
@@ -41,18 +50,22 @@ fn preprocessing() -> JoltProgramPreprocessing {
     preprocessing
 }
 
-fn preprocessing_with_bytecode(bytecode: BytecodePreprocessing) -> JoltProgramPreprocessing {
-    JoltProgramPreprocessing {
-        bytecode,
-        ..preprocessing()
-    }
+fn preprocessing() -> Arc<JoltProgramPreprocessing> {
+    Arc::new(base_preprocessing())
 }
 
-fn preprocessing_with_memory_layout(memory_layout: MemoryLayout) -> JoltProgramPreprocessing {
-    JoltProgramPreprocessing {
+fn preprocessing_with_bytecode(bytecode: BytecodePreprocessing) -> Arc<JoltProgramPreprocessing> {
+    Arc::new(JoltProgramPreprocessing {
+        bytecode,
+        ..base_preprocessing()
+    })
+}
+
+fn preprocessing_with_memory_layout(memory_layout: MemoryLayout) -> Arc<JoltProgramPreprocessing> {
+    Arc::new(JoltProgramPreprocessing {
         memory_layout,
-        ..preprocessing()
-    }
+        ..base_preprocessing()
+    })
 }
 
 fn config() -> JoltVmWitnessConfig {
@@ -67,22 +80,22 @@ fn config() -> JoltVmWitnessConfig {
 }
 
 fn trace_output() -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), Default::default(), None)
+    TraceOutput::new(OwnedTrace::default(), Default::default(), None, None)
 }
 
 fn trace_output_with_rows(rows: Vec<TraceRow>) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::new(rows), Default::default(), None)
+    TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None)
 }
 
 fn trace_output_with_device(device: JoltDevice) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), device, None)
+    TraceOutput::new(OwnedTrace::default(), device, None, None)
 }
 
 fn trace_output_with_device_and_final_memory(
     device: JoltDevice,
     final_memory: MemoryImage,
 ) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), device, Some(final_memory))
+    TraceOutput::new(OwnedTrace::default(), device, Some(final_memory), None)
 }
 
 fn instruction(address: usize) -> JoltInstructionRow {
@@ -101,6 +114,25 @@ fn instruction(address: usize) -> JoltInstructionRow {
     }
 }
 
+fn memory_instruction(kind: JoltInstructionKind, address: usize) -> JoltInstructionRow {
+    let (rd, rs2) = if kind == JoltInstructionKind::LD {
+        (Some(1), None)
+    } else {
+        (None, Some(3))
+    };
+    JoltInstructionRow {
+        instruction_kind: kind,
+        address,
+        operands: NormalizedOperands {
+            rd,
+            rs1: Some(2),
+            rs2,
+            imm: 0,
+        },
+        ..Default::default()
+    }
+}
+
 fn compact_memory_layout() -> MemoryLayout {
     MemoryLayout::new(&MemoryConfig {
         max_input_size: 0,
@@ -114,17 +146,17 @@ fn compact_memory_layout() -> MemoryLayout {
 }
 
 fn shape(
-    witness: &TraceBackend<'_, OwnedTrace>,
+    witness: &TraceBackend<OwnedTrace>,
     id: impl Into<JoltPolynomialId>,
 ) -> Result<Shape, WitnessError> {
     witness.shape_of(id.into())
 }
 
 fn committed_table(
-    witness: &TraceBackend<'_, OwnedTrace>,
+    witness: &TraceBackend<OwnedTrace>,
     id: JoltCommittedPolynomial,
 ) -> Result<Vec<Fr>, WitnessError> {
-    <TraceBackend<'_, OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(
+    <TraceBackend<OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(
         witness,
         JoltPolynomialId::Committed(id),
     )
@@ -157,10 +189,10 @@ fn hot_addresses(table: &[Fr], cycles: usize) -> Vec<Option<usize>> {
 
 #[test]
 fn witness_keeps_jolt_program_execution_boundary() {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let config = config().retain_trace_rows(true);
+    let config = config();
 
     let witness = TraceBackend::new(config.clone(), inputs);
 
@@ -172,9 +204,54 @@ fn witness_keeps_jolt_program_execution_boundary() {
     );
 }
 
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn backend_shares_precompacted_trace_rows() {
+    let rows = Arc::new(vec![JoltTraceRow::default()]);
+    let trace = TraceOutput::new(Arc::clone(&rows), Default::default(), None, None);
+    let program = Arc::new(JoltProgram::default());
+    let preprocessing = preprocessing();
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace);
+
+    let backend = TraceBackend::<OwnedTrace>::from_compact(config(), inputs);
+
+    assert!(Arc::ptr_eq(&backend.trace.trace, &rows));
+}
+
+#[test]
+fn backend_rejects_physical_rows_beyond_cycle_domain() {
+    let program = Arc::new(JoltProgram::default());
+    let instruction = instruction(0x8000_0000);
+    let bytecode = BytecodePreprocessing::preprocess(
+        vec![instruction],
+        instruction.address as u64,
+        RV64IMAC_JOLT,
+    )
+    .unwrap();
+    let preprocessing = preprocessing_with_bytecode(bytecode);
+    let rows = vec![
+        TraceRow {
+            instruction,
+            ..Default::default()
+        },
+        TraceRow::default(),
+    ];
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
+
+    let error = match TraceBackend::try_new(config().with_log_t(0), inputs) {
+        Ok(_) => panic!("oversized trace was accepted"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        WitnessError::InvalidWitnessData { reason, .. }
+            if reason == "physical trace has 2 rows but the cycle domain has 1"
+    ));
+}
+
 #[test]
 fn committed_polynomial_order_uses_proof_payload_order() {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
     let witness = TraceBackend::new(
@@ -198,7 +275,7 @@ fn committed_polynomial_order_uses_proof_payload_order() {
 
 #[test]
 fn committed_oracle_descriptors_report_dimensions_and_encoding() {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
     let witness = TraceBackend::new(config().include_trusted_advice(true), inputs);
@@ -219,7 +296,7 @@ fn committed_oracle_descriptors_report_dimensions_and_encoding() {
 
 #[test]
 fn descriptors_reject_disabled_advice_and_out_of_range_ra() {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
     let witness = TraceBackend::new(config(), inputs);
@@ -240,7 +317,7 @@ fn descriptors_reject_disabled_advice_and_out_of_range_ra() {
 
 #[test]
 fn virtual_oracle_descriptors_report_stage1_trace_columns() -> Result<(), String> {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
@@ -263,14 +340,15 @@ fn virtual_oracle_descriptors_report_stage1_trace_columns() -> Result<(), String
 #[test]
 fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     let instruction_row = instruction(0x8000_0000);
+    let load_instruction = memory_instruction(JoltInstructionKind::LD, 0x8000_0004);
     let bytecode = BytecodePreprocessing::preprocess(
-        vec![instruction_row],
+        vec![instruction_row, load_instruction],
         instruction_row.address as u64,
         RV64IMAC_JOLT,
     )
     .map_err(|error| error.to_string())?;
     let preprocessing = preprocessing_with_bytecode(bytecode);
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let rows = vec![
         TraceRow {
             instruction: instruction_row,
@@ -286,6 +364,24 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
                 }),
                 ..Default::default()
             },
+            ram_access: RamAccess::NoOp,
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
+        },
+        TraceRow {
+            instruction: load_instruction,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: RAM_START_ADDRESS,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 7,
+                }),
+                ..Default::default()
+            },
             ram_access: RamAccess::Read(RamRead {
                 address: RAM_START_ADDRESS,
                 value: 7,
@@ -293,7 +389,6 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
             #[cfg(feature = "field-inline")]
             field_inline: None,
         },
-        TraceRow::default(),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
@@ -310,20 +405,20 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     )?;
     assert_virtual_values(&witness, JoltVirtualPolynomial::Product, &[15, 0, 0, 0])?;
     assert_virtual_values(&witness, JoltVirtualPolynomial::LookupOutput, &[8, 0, 0, 0])?;
-    assert_virtual_values(&witness, JoltVirtualPolynomial::PC, &[1, 0, 0, 0])?;
+    assert_virtual_values(&witness, JoltVirtualPolynomial::PC, &[1, 2, 0, 0])?;
     // The last cycle's missing successor counts as a no-op (the
     // product/shift-family convention; see the trace materialization).
-    assert_virtual_values(&witness, JoltVirtualPolynomial::NextIsNoop, &[1, 1, 1, 1])?;
+    assert_virtual_values(&witness, JoltVirtualPolynomial::NextIsNoop, &[0, 1, 1, 1])?;
     assert_virtual_values(
         &witness,
         JoltVirtualPolynomial::RamAddress,
-        &[RAM_START_ADDRESS, 0, 0, 0],
+        &[0, RAM_START_ADDRESS, 0, 0],
     )?;
-    assert_virtual_values(&witness, JoltVirtualPolynomial::RamReadValue, &[7, 0, 0, 0])?;
+    assert_virtual_values(&witness, JoltVirtualPolynomial::RamReadValue, &[0, 7, 0, 0])?;
     assert_virtual_values(
         &witness,
         JoltVirtualPolynomial::RamWriteValue,
-        &[7, 0, 0, 0],
+        &[0, 7, 0, 0],
     )?;
     assert_virtual_values(
         &witness,
@@ -340,12 +435,33 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
 
 #[test]
 fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), String> {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let memory_layout = compact_memory_layout();
     let access_address = memory_layout.stack_end;
-    let preprocessing = preprocessing_with_memory_layout(memory_layout);
+    let store = memory_instruction(JoltInstructionKind::SD, RAM_START_ADDRESS as usize);
+    let load = memory_instruction(JoltInstructionKind::LD, RAM_START_ADDRESS as usize + 4);
+    let bytecode =
+        BytecodePreprocessing::preprocess(vec![store, load], RAM_START_ADDRESS, RV64IMAC_JOLT)
+            .map_err(|error| error.to_string())?;
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode,
+        memory_layout,
+        ..base_preprocessing()
+    });
     let rows = vec![
         TraceRow {
+            instruction: store,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: access_address,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 3,
+                    value: 9,
+                }),
+                ..Default::default()
+            },
             ram_access: RamAccess::Write(RamWrite {
                 address: access_address,
                 pre_value: 3,
@@ -358,6 +474,19 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
             ..Default::default()
         },
         TraceRow {
+            instruction: load,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: access_address,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 9,
+                }),
+                ..Default::default()
+            },
             ram_access: RamAccess::Read(RamRead {
                 address: access_address,
                 value: 9,
@@ -386,11 +515,55 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
 
 #[test]
 fn register_read_write_virtual_views_materialize_address_major_state() -> Result<(), String> {
-    let program = JoltProgram::default();
-    let preprocessing = preprocessing();
+    let program = Arc::new(JoltProgram::default());
+    let first = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::ADDI,
+        address: RAM_START_ADDRESS as usize,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(0),
+            rs2: None,
+            imm: 5,
+        },
+        ..Default::default()
+    };
+    let second = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::ADDI,
+        address: RAM_START_ADDRESS as usize + 4,
+        operands: NormalizedOperands {
+            rd: Some(2),
+            rs1: Some(1),
+            rs2: None,
+            imm: 2,
+        },
+        ..Default::default()
+    };
+    let third = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::BEQ,
+        address: RAM_START_ADDRESS as usize + 8,
+        operands: NormalizedOperands {
+            rd: None,
+            rs1: Some(0),
+            rs2: Some(2),
+            imm: 4,
+        },
+        ..Default::default()
+    };
+    let bytecode = BytecodePreprocessing::preprocess(
+        vec![first, second, third],
+        RAM_START_ADDRESS,
+        RV64IMAC_JOLT,
+    )
+    .map_err(|error| error.to_string())?;
+    let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![
         TraceRow {
+            instruction: first,
             registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 0,
+                    value: 0,
+                }),
                 rd: Some(RegisterWrite {
                     register: 1,
                     pre_value: 0,
@@ -401,6 +574,7 @@ fn register_read_write_virtual_views_materialize_address_major_state() -> Result
             ..Default::default()
         },
         TraceRow {
+            instruction: second,
             registers: RegisterState {
                 rs1: Some(RegisterRead {
                     register: 1,
@@ -416,7 +590,12 @@ fn register_read_write_virtual_views_materialize_address_major_state() -> Result
             ..Default::default()
         },
         TraceRow {
+            instruction: third,
             registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 0,
+                    value: 0,
+                }),
                 rs2: Some(RegisterRead {
                     register: 2,
                     value: 7,
@@ -446,7 +625,7 @@ fn register_read_write_virtual_views_materialize_address_major_state() -> Result
 
 #[test]
 fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Result<(), String> {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let memory_layout = MemoryLayout::new(&MemoryConfig {
         max_input_size: 8,
         max_trusted_advice_size: 8,
@@ -490,8 +669,19 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
 #[test]
 fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
     let instruction_row = instruction(0x8000_0000);
+    let load_instruction = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::LD,
+        address: 0x8000_0004,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: None,
+            imm: 0,
+        },
+        ..Default::default()
+    };
     let bytecode = BytecodePreprocessing::preprocess(
-        vec![instruction_row],
+        vec![instruction_row, load_instruction],
         instruction_row.address as u64,
         RV64IMAC_JOLT,
     )
@@ -511,17 +701,39 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
             }),
             ..Default::default()
         },
-        ram_access: RamAccess::Read(RamRead {
-            address: RAM_START_ADDRESS,
-            value: 7,
-        }),
+        ram_access: RamAccess::NoOp,
         #[cfg(feature = "field-inline")]
         field_inline: None,
     };
-    let next = TraceRow::default();
-    let env = WitnessEnv {
-        preprocessing: &preprocessing,
-    };
+    let row = TraceBackend::<OwnedTrace>::compact_trace_row(&row, &preprocessing)
+        .map_err(|error| error.to_string())?;
+    let ram_row = TraceBackend::<OwnedTrace>::compact_trace_row(
+        &TraceRow {
+            instruction: load_instruction,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: RAM_START_ADDRESS,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 7,
+                }),
+                ..Default::default()
+            },
+            ram_access: RamAccess::Read(RamRead {
+                address: RAM_START_ADDRESS,
+                value: 7,
+            }),
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
+        },
+        &preprocessing,
+    )
+    .map_err(|error| error.to_string())?;
+    let next = JoltTraceRow::default();
+    let env = WitnessEnv::new(&preprocessing);
 
     assert_eq!(
         LeftInstructionInput::extract(&row, Some(&next), &env),
@@ -547,16 +759,16 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
     assert_eq!(Imm::extract(&row, Some(&next), &env), Ok(Imm(3)));
     assert_eq!(Rs1Value::extract(&row, Some(&next), &env), Ok(Rs1Value(5)));
     assert_eq!(
-        RamAddress::extract(&row, Some(&next), &env),
+        RamAddress::extract(&ram_row, Some(&next), &env),
         Ok(RamAddress(RAM_START_ADDRESS))
     );
     assert_eq!(
-        RamReadValue::extract(&row, Some(&next), &env),
+        RamReadValue::extract(&ram_row, Some(&next), &env),
         Ok(RamReadValue(7))
     );
     // Reads write back the read value.
     assert_eq!(
-        RamWriteValue::extract(&row, Some(&next), &env),
+        RamWriteValue::extract(&ram_row, Some(&next), &env),
         Ok(RamWriteValue(7))
     );
     assert_eq!(
@@ -578,14 +790,19 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
 #[test]
 fn lookahead_witnesses_pad_the_final_cycle() {
     let preprocessing = preprocessing();
-    let env = WitnessEnv {
-        preprocessing: &preprocessing,
-    };
-    let row = TraceRow {
-        instruction: instruction(0x8000_0000),
-        ..Default::default()
-    };
-    let noop_next = TraceRow::default();
+    let env = WitnessEnv::new(&preprocessing);
+    let row = JoltTraceRow::from_components(
+        CapturedState::NonMemory(NonMemoryState {
+            rs1_value: 0,
+            rs2_value: 0,
+            rd_pre_value: 0,
+            rd_write_value: 0,
+        }),
+        &instruction(0x8000_0000),
+        1,
+    )
+    .unwrap();
+    let noop_next = JoltTraceRow::default();
 
     // A missing successor counts as a no-op for the shift family, exactly
     // like a present no-op successor.
@@ -610,7 +827,7 @@ fn lookahead_witnesses_pad_the_final_cycle() {
 }
 
 fn assert_virtual_values(
-    witness: &TraceBackend<'_, OwnedTrace>,
+    witness: &TraceBackend<OwnedTrace>,
     id: JoltVirtualPolynomial,
     expected: &[u64],
 ) -> Result<(), String> {
@@ -625,10 +842,10 @@ fn assert_virtual_values(
 }
 
 fn materialized_virtual_view(
-    witness: &TraceBackend<'_, OwnedTrace>,
+    witness: &TraceBackend<OwnedTrace>,
     id: JoltVirtualPolynomial,
 ) -> Result<Vec<Fr>, String> {
-    <TraceBackend<'_, OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(
+    <TraceBackend<OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(
         witness,
         JoltPolynomialId::Virtual(id),
     )
@@ -637,10 +854,17 @@ fn materialized_virtual_view(
 
 #[test]
 fn rd_inc_materializes_register_write_deltas_and_padding() {
-    let program = JoltProgram::default();
-    let preprocessing = preprocessing();
+    let program = Arc::new(JoltProgram::default());
+    let first = instruction(RAM_START_ADDRESS as usize);
+    let mut second = instruction(RAM_START_ADDRESS as usize + 4);
+    second.operands.rd = Some(2);
+    let bytecode =
+        BytecodePreprocessing::preprocess(vec![first, second], RAM_START_ADDRESS, RV64IMAC_JOLT)
+            .unwrap();
+    let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![
         TraceRow {
+            instruction: first,
             registers: RegisterState {
                 rd: Some(RegisterWrite {
                     register: 1,
@@ -652,6 +876,7 @@ fn rd_inc_materializes_register_write_deltas_and_padding() {
             ..Default::default()
         },
         TraceRow {
+            instruction: second,
             registers: RegisterState {
                 rd: Some(RegisterWrite {
                     register: 2,
@@ -673,10 +898,27 @@ fn rd_inc_materializes_register_write_deltas_and_padding() {
 
 #[test]
 fn ram_inc_materializes_write_deltas_only() {
-    let program = JoltProgram::default();
-    let preprocessing = preprocessing();
+    let program = Arc::new(JoltProgram::default());
+    let store = memory_instruction(JoltInstructionKind::SD, RAM_START_ADDRESS as usize);
+    let load = memory_instruction(JoltInstructionKind::LD, RAM_START_ADDRESS as usize + 4);
+    let bytecode =
+        BytecodePreprocessing::preprocess(vec![store, load], RAM_START_ADDRESS, RV64IMAC_JOLT)
+            .unwrap();
+    let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![
         TraceRow {
+            instruction: store,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 10,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 3,
+                    value: 12,
+                }),
+                ..Default::default()
+            },
             ram_access: RamAccess::Write(RamWrite {
                 address: 10,
                 pre_value: 5,
@@ -685,6 +927,19 @@ fn ram_inc_materializes_write_deltas_only() {
             ..Default::default()
         },
         TraceRow {
+            instruction: load,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 10,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 12,
+                }),
+                ..Default::default()
+            },
             ram_access: RamAccess::Read(RamRead {
                 address: 10,
                 value: 12,
@@ -702,7 +957,7 @@ fn ram_inc_materializes_write_deltas_only() {
 
 #[test]
 fn bytecode_ra_materializes_pc_chunks_and_noop_padding() {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let first = instruction(RAM_START_ADDRESS as usize);
     let second = instruction(RAM_START_ADDRESS as usize + 4);
     let bytecode_result =
@@ -737,14 +992,34 @@ fn bytecode_ra_materializes_pc_chunks_and_noop_padding() {
 
 #[test]
 fn ram_ra_materializes_remapped_address_chunks_and_noop_padding() {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let memory_layout = compact_memory_layout();
     let access_address = memory_layout.stack_end;
     let remapped = memory_layout.remap_word_address(access_address);
     assert_eq!(remapped, Ok(Some(10)));
-    let preprocessing = preprocessing_with_memory_layout(memory_layout);
+    let load = memory_instruction(JoltInstructionKind::LD, RAM_START_ADDRESS as usize);
+    let bytecode =
+        BytecodePreprocessing::preprocess(vec![load], RAM_START_ADDRESS, RV64IMAC_JOLT).unwrap();
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode,
+        memory_layout,
+        ..base_preprocessing()
+    });
     let rows = vec![
         TraceRow {
+            instruction: load,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: access_address,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 12,
+                }),
+                ..Default::default()
+            },
             ram_access: RamAccess::Read(RamRead {
                 address: access_address,
                 value: 12,
@@ -765,10 +1040,13 @@ fn ram_ra_materializes_remapped_address_chunks_and_noop_padding() {
 
 #[test]
 fn instruction_ra_materializes_lookup_index_chunks_and_noop_padding() {
-    let program = JoltProgram::default();
-    let preprocessing = preprocessing();
+    let program = Arc::new(JoltProgram::default());
     let mut instruction_row = instruction(RAM_START_ADDRESS as usize);
     instruction_row.operands.imm = -1;
+    let bytecode =
+        BytecodePreprocessing::preprocess(vec![instruction_row], RAM_START_ADDRESS, RV64IMAC_JOLT)
+            .unwrap();
+    let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![TraceRow {
         instruction: instruction_row,
         registers: RegisterState {
@@ -792,7 +1070,7 @@ fn instruction_ra_materializes_lookup_index_chunks_and_noop_padding() {
 
 #[test]
 fn advice_packs_device_bytes_as_little_endian_words() {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let device = JoltDevice {
         trusted_advice: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
@@ -823,7 +1101,7 @@ fn advice_packs_device_bytes_as_little_endian_words() {
 
 #[test]
 fn advice_rejects_disabled_and_oversized_advice() {
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let device = JoltDevice {
         trusted_advice: vec![0; 65],
@@ -858,7 +1136,7 @@ fn excluded_ids_report_their_classification() {
     use super::oracle::{
         COMMITTED_PROGRAM_REASON, LATTICE_REASON, PROTOCOL_INTERMEDIATE_REASON, UNSERVED_REASON,
     };
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
     let witness = TraceBackend::new(config(), inputs);
@@ -866,7 +1144,7 @@ fn excluded_ids_report_their_classification() {
     let assert_reason = |id: JoltPolynomialId, reason: &'static str| {
         for result in [
             witness.shape_of(id).map(|_| ()),
-            <TraceBackend<'_, OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(&witness, id)
+            <TraceBackend<OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(&witness, id)
                 .map(|_| ()),
         ] {
             assert_eq!(
@@ -887,10 +1165,6 @@ fn excluded_ids_report_their_classification() {
         assert_reason(JoltPolynomialId::Committed(id), COMMITTED_PROGRAM_REASON);
     }
     for id in [
-        JoltCommittedPolynomial::UnsignedIncChunk(0),
-        JoltCommittedPolynomial::UnsignedIncMsb,
-        JoltCommittedPolynomial::TrustedAdviceBytes,
-        JoltCommittedPolynomial::UntrustedAdviceBytes,
         JoltCommittedPolynomial::BytecodeLookupSelector { chunk: 0 },
         JoltCommittedPolynomial::ProgramImageBytes,
     ] {
@@ -913,8 +1187,60 @@ fn excluded_ids_report_their_classification() {
     ] {
         assert_reason(JoltPolynomialId::Virtual(id), PROTOCOL_INTERMEDIATE_REASON);
     }
-    assert_reason(
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc),
-        LATTICE_REASON,
+}
+
+/// [`OwnedTrace`] with its slice accessor hidden.
+#[derive(Clone)]
+struct IteratorOnlyTrace(OwnedTrace);
+
+impl TraceSource for IteratorOnlyTrace {
+    fn next_row(&mut self) -> Option<TraceRow> {
+        self.0.next_row()
+    }
+}
+
+#[test]
+fn backend_rejects_iterator_only_trace_sources() {
+    let program = Arc::new(JoltProgram::default());
+    let preprocessing = preprocessing();
+    let iterator_inputs = JoltVmWitnessInputs::new(
+        &program,
+        &preprocessing,
+        TraceOutput::new(
+            IteratorOnlyTrace(OwnedTrace::default()),
+            Default::default(),
+            None,
+            None,
+        ),
+    );
+    assert!(matches!(
+        TraceBackend::try_new(config(), iterator_inputs),
+        Err(WitnessError::UnavailableView { .. })
+    ));
+}
+
+#[test]
+fn backend_drops_only_canonical_trailing_padding() {
+    let instruction_row = instruction(RAM_START_ADDRESS as usize);
+    let bytecode =
+        BytecodePreprocessing::preprocess(vec![instruction_row], RAM_START_ADDRESS, RV64IMAC_JOLT)
+            .unwrap();
+    let preprocessing = preprocessing_with_bytecode(bytecode);
+    let program = Arc::new(JoltProgram::default());
+    let rows = vec![
+        TraceRow {
+            instruction: instruction_row,
+            ..Default::default()
+        },
+        TraceRow::default(),
+        TraceRow::default(),
+    ];
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
+    let backend = TraceBackend::new(config().with_log_t(2), inputs);
+
+    assert_eq!(backend.trace.trace.len(), 1);
+    assert_eq!(
+        materialized_virtual_view(&backend, JoltVirtualPolynomial::NextIsNoop).unwrap(),
+        [1, 1, 1, 1].map(Fr::from_u64)
     );
 }

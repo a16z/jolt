@@ -19,12 +19,12 @@
 //! One sumcheck over the widest byte-lane `(byte ‖ place)` variables, row
 //! point fixed at `r_row`; the narrower legs bind only their own suffix
 //! rounds and the flag lanes none at all (mixed-count legs are precedented by the
-//! lattice booleanity's msb). Every leg is at most a product of two
+//! lattice booleanity's carry). Every leg is at most a product of two
 //! multilinears per bound variable, hence degree 2.
 
-use jolt_field::RingCore;
-use jolt_poly::math::Math;
+use jolt_field::Ring;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_utils::Math;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
@@ -56,6 +56,7 @@ pub struct BytecodeChunkReconstructionInputClaims<C> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeChunkReconstructionChallenges<F> {
     #[challenge(BytecodeChunkReconstructionChallenge::Gamma)]
     pub gamma: F,
@@ -69,6 +70,7 @@ pub struct BytecodeChunkReconstructionChallenges<F> {
 /// `#[derive(OutputClaims)]` `Vec` convention (single `usize` index) cannot
 /// express — the trait impl is hand-written below in the same
 /// field-declaration order the derive would use.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -144,7 +146,7 @@ impl<C> BytecodeChunkReconstructionOutputClaims<C> {
     }
 }
 
-impl<F: jolt_field::Field> OutputClaims<F> for BytecodeChunkReconstructionOutputClaims<F> {
+impl<F: jolt_field::JoltField> OutputClaims<F> for BytecodeChunkReconstructionOutputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         self.leaves().map(|(id, _)| id).collect()
     }
@@ -247,14 +249,14 @@ impl SymbolicSumcheck for BytecodeChunkReconstruction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(BytecodeChunkReconstructionChallenge::Gamma);
         (0..self.shape.chunks).fold(JoltExpr::zero(), |acc, chunk| {
             acc + gamma.clone().pow(chunk) * opening(final_bytecode_chunk_opening(chunk))
         })
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(BytecodeChunkReconstructionChallenge::Gamma);
         let layout = BYTECODE_LANE_LAYOUT;
         let mut output = JoltExpr::<F>::zero();
@@ -361,7 +363,7 @@ pub fn bytecode_imm_bytes_opening(chunk: usize) -> JoltOpeningId {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> BytecodeReconstructionDimensions {
         BytecodeReconstructionDimensions {

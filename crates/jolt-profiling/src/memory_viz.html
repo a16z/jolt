@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory timeline</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --rss: #256abf;
+    --rss-fill: rgba(42, 120, 214, 0.12);
+    --unattributed: rgba(137, 135, 129, 0.28);
+    --fam-ram: #2a78d6;
+    --fam-spartan: #eb6834;
+    --fam-instruction: #1baf7a;
+    --fam-registers: #eda100;
+    --fam-bytecode: #e87ba4;
+    --fam-booleanity: #008300;
+    --fam-reductions: #4a3aa7;
+    --fam-other: #e34948;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --rss: #5598e7;
+      --rss-fill: rgba(57, 135, 229, 0.16);
+      --unattributed: rgba(137, 135, 129, 0.32);
+      --fam-ram: #3987e5;
+      --fam-spartan: #d95926;
+      --fam-instruction: #199e70;
+      --fam-registers: #c98500;
+      --fam-bytecode: #d55181;
+      --fam-booleanity: #008300;
+      --fam-reductions: #9085e9;
+      --fam-other: #e66767;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 20px clamp(12px, 3vw, 40px) 48px;
+  }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; margin-bottom: 6px; }
+  header h1 { font-size: 19px; font-weight: 650; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 12px; color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px;
+  }
+  .stat { margin-left: auto; text-align: right; }
+  .stat .v { font-size: 26px; font-weight: 650; }
+  .stat .k { font-size: 11px; color: var(--text-muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 8px; font-size: 12px; color: var(--text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .sw.line { width: 14px; height: 2px; border-radius: 1px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 14px 8px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+  .hint { font-size: 12px; color: var(--text-muted); }
+  svg { display: block; }
+  svg text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--text-muted); }
+  svg .tick { font-variant-numeric: tabular-nums; }
+  .col-hit { cursor: pointer; }
+  .col-hit:focus { outline: none; }
+  .col-hit:focus .sel-ring, .col-hit.selected .sel-ring { stroke: var(--text-secondary); }
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 10; display: none; max-width: 440px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.18); padding: 8px 10px; font-size: 12px;
+  }
+  #tooltip .t { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }
+  #tooltip table { border-collapse: collapse; }
+  #tooltip td { padding: 1px 0; color: var(--text-secondary); }
+  #tooltip td.num { text-align: right; padding-left: 12px; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  #tooltip td.pct { text-align: right; padding-left: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  details { margin-top: 4px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); padding: 4px 0; }
+  table.data { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 6px; }
+  table.data th {
+    text-align: left; color: var(--text-muted); font-weight: 500;
+    border-bottom: 1px solid var(--grid); padding: 4px 10px 4px 0;
+  }
+  table.data td { padding: 3px 10px 3px 0; border-bottom: 1px solid var(--grid); color: var(--text-secondary); }
+  table.data td.num, table.data th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.data tr.snap td { color: var(--text-primary); font-weight: 600; }
+  table.data td .sw { margin-right: 6px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <div class="meta" id="meta"></div>
+  <div class="stat"><div class="v" id="peak"></div><div class="k">peak RSS (getrusage)</div></div>
+</header>
+<div class="legend" id="legend"></div>
+<div class="card">
+  <h2>Memory over time — RSS envelope, stage spans, and live-heap composition at each mid-stage snapshot</h2>
+  <svg id="timeline" role="img" aria-label="Memory timeline"></svg>
+  <p class="hint">Hover the RSS line or a snapshot column for values; click (or focus + Enter) a column to open its full-depth heap breakdown below. The gray cap on each column is RSS minus allocative-visited bytes: allocator retention plus unvisited allocations.</p>
+</div>
+<div class="card">
+  <h2 id="detail-title">Snapshot detail</h2>
+  <svg id="icicle"></svg>
+  <p class="hint" id="detail-hint"></p>
+</div>
+<details>
+  <summary>Table view — every snapshot, every root, exact bytes</summary>
+  <table class="data" id="table">
+    <thead><tr>
+      <th>snapshot</th><th>root</th><th>family</th>
+      <th class="num">bytes</th><th class="num">GiB</th><th class="num">% of snapshot</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</details>
+<div id="tooltip"></div>
+<script>
+const DATA = __DATA_JSON__;
+const GIB = 1073741824;
+
+/* ---------- family classification (fixed order = fixed hue slots) ---------- */
+const FAMILIES = [
+  ["ram",         "RAM"],
+  ["spartan",     "Spartan"],
+  ["instruction", "Instruction"],
+  ["registers",   "Registers"],
+  ["bytecode",    "Bytecode"],
+  ["booleanity",  "Booleanity"],
+  ["reductions",  "Reductions"],
+  ["other",       "Other"],
+];
+function familyOf(root) {
+  if (/Ram[A-Z]/.test(root)) return "ram";
+  if (/Spartan|OuterRemainder|ProductRemainder/.test(root)) return "spartan";
+  if (/Instruction/.test(root)) return "instruction";
+  if (/Registers/.test(root)) return "registers";
+  if (/Bytecode/.test(root)) return "bytecode";
+  if (/Booleanity/.test(root)) return "booleanity";
+  if (/Advice|ProgramImage|Precommitted|IncClaim|HammingWeight|Reduction/.test(root)) return "reductions";
+  return "other";
+}
+const famColor = f => getComputedStyle(document.documentElement).getPropertyValue(`--fam-${f}`).trim();
+
+/* Short display name: the relation inside NaiveSumcheckProver<F, Rel<..>>,
+   else the type's own last path segment. Full name lives in tooltips. */
+function displayName(root) {
+  const naive = root.indexOf("NaiveSumcheckProver<");
+  let name = root, naiveTag = "";
+  if (naive >= 0) {
+    const args = topLevelArgs(root.slice(naive + "NaiveSumcheckProver<".length, -0));
+    if (args.length >= 2) { name = args[1]; naiveTag = " (naive)"; }
+  }
+  const generic = name.indexOf("<");
+  if (generic >= 0) name = name.slice(0, generic);
+  const seg = name.split("::").pop().trim();
+  return seg + naiveTag;
+}
+function topLevelArgs(s) {
+  const args = []; let depth = 0, cur = "";
+  for (const ch of s) {
+    if (ch === "<") depth++;
+    if (ch === ">") { if (depth === 0) break; depth--; }
+    if (ch === "," && depth === 0) { args.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) args.push(cur.trim());
+  return args;
+}
+
+/* ---------- formatting ---------- */
+const fmtGiB = v => v >= 10 ? v.toFixed(1) : v >= 0.095 ? v.toFixed(2) : v >= 0.0001 ? (v * 1024).toFixed(1) + " MiB" : "<0.1 MiB";
+const gib = v => (typeof fmtGiB(v) === "string" && fmtGiB(v).includes("MiB")) ? fmtGiB(v) : fmtGiB(v) + " GiB";
+const fmtBytes = b => b.toLocaleString("en-US") + " B";
+const fmtS = t => t >= 10 ? t.toFixed(1) + " s" : t.toFixed(2) + " s";
+
+/* ---------- prepared data ---------- */
+const snapshots = DATA.snapshots
+  .filter(s => s.at_s != null)
+  .sort((a, b) => a.at_s - b.at_s)
+  .map(s => {
+    const perFam = new Map(FAMILIES.map(([f]) => [f, 0]));
+    for (const [root, bytes] of Object.entries(s.roots)) {
+      perFam.set(familyOf(root), perFam.get(familyOf(root)) + bytes);
+    }
+    return { ...s, perFam };
+  });
+const rss = DATA.rss;
+function rssAt(t) {
+  if (!rss.length) return 0;
+  let lo = 0, hi = rss.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; (rss[m][0] < t) ? lo = m + 1 : hi = m; }
+  if (lo === 0) return rss[0][1];
+  const [t0, v0] = rss[lo - 1], [t1, v1] = rss[lo];
+  return t1 === t0 ? v1 : v0 + (v1 - v0) * (t - t0) / (t1 - t0);
+}
+
+/* ---------- header, legend ---------- */
+document.getElementById("title").textContent = DATA.trace_name.replace(/\.json$/, "") + " — memory";
+document.title = document.getElementById("title").textContent;
+const meta = document.getElementById("meta");
+for (const chip of [
+  DATA.run.workload + " @ 2^" + DATA.run.scale_log2,
+  DATA.run.backend + " backend",
+  DATA.run.git_rev ? "rev " + DATA.run.git_rev : null,
+  fmtS(DATA.duration_s) + " prove",
+].filter(Boolean)) {
+  const el = document.createElement("span"); el.className = "chip"; el.textContent = chip; meta.appendChild(el);
+}
+document.getElementById("peak").textContent = DATA.peak_rss_gib != null ? DATA.peak_rss_gib.toFixed(2) + " GiB" : "–";
+const legend = document.getElementById("legend");
+const present = new Set(snapshots.flatMap(s => [...s.perFam].filter(([, b]) => b > 0).map(([f]) => f)));
+for (const [f, label] of FAMILIES) {
+  if (!present.has(f)) continue;
+  const el = document.createElement("span");
+  el.innerHTML = `<i class="sw" style="background:${famColor(f)}"></i>${label}`;
+  legend.appendChild(el);
+}
+legend.insertAdjacentHTML("beforeend",
+  `<span><i class="sw" style="background:var(--unattributed)"></i>unattributed (RSS − visited)</span>
+   <span><i class="sw line" style="background:var(--rss)"></i>RSS (sampled)</span>`);
+
+/* ---------- tooltip ---------- */
+const tip = document.getElementById("tooltip");
+function showTip(html, x, y) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.min(x + 14, window.innerWidth - r.width - 8) + "px";
+  tip.style.top = Math.min(y + 14, window.innerHeight - r.height - 8) + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+/* ---------- timeline ---------- */
+const svgNS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent) => {
+  const node = document.createElementNS(svgNS, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+};
+let selected = null;
+
+function renderTimeline() {
+  const svg = document.getElementById("timeline");
+  svg.textContent = "";
+  const W = svg.parentElement.clientWidth - 28, H = 340;
+  const m = { top: 26, right: 14, bottom: 30, left: 54 };
+  svg.setAttribute("width", W); svg.setAttribute("height", H);
+  const pw = W - m.left - m.right, ph = H - m.top - m.bottom;
+  const yMax = Math.max(...rss.map(p => p[1]), ...snapshots.map(s => s.total_bytes / GIB), 0.001) * 1.1;
+  const X = t => m.left + (t / DATA.duration_s) * pw;
+  const Y = v => m.top + ph - (v / yMax) * ph;
+
+  // Stage bands + labels (alternating wash), y grid, axes.
+  DATA.stages.forEach((s, i) => {
+    const x0 = X(s.start_s), x1 = X(s.end_s);
+    if (i % 2 === 0) el("rect", { x: x0, y: m.top, width: Math.max(x1 - x0, 0), height: ph, fill: "var(--grid)", opacity: 0.32 }, svg);
+    if (x1 - x0 > 34) {
+      const label = el("text", { x: (x0 + x1) / 2, y: m.top - 8, "text-anchor": "middle" }, svg);
+      label.textContent = s.label.replace("prove_", "");
+    }
+  });
+  const yTicks = 4;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = (yMax / yTicks) * i, y = Y(v);
+    el("line", { x1: m.left, x2: m.left + pw, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    const t = el("text", { x: m.left - 8, y: y + 4, "text-anchor": "end", class: "tick" }, svg);
+    t.textContent = v.toFixed(v >= 10 ? 0 : 1);
+  }
+  el("text", { x: m.left - 8, y: m.top - 10, "text-anchor": "end" }, svg).textContent = "GiB";
+  const xStep = niceStep(DATA.duration_s / 8);
+  for (let t = 0; t <= DATA.duration_s + 1e-9; t += xStep) {
+    const label = el("text", { x: X(t), y: H - 10, "text-anchor": "middle", class: "tick" }, svg);
+    label.textContent = t.toFixed(xStep < 1 ? 1 : 0) + "s";
+  }
+  el("line", { x1: m.left, x2: m.left + pw, y1: m.top + ph, y2: m.top + ph, stroke: "var(--baseline)", "stroke-width": 1 }, svg);
+
+  // RSS envelope: area + 2px line.
+  if (rss.length > 1) {
+    const pts = rss.map(([t, v]) => `${X(t)},${Y(v)}`).join(" ");
+    el("polygon", { points: `${X(rss[0][0])},${Y(0)} ${pts} ${X(rss[rss.length - 1][0])},${Y(0)}`, fill: "var(--rss-fill)" }, svg);
+    el("polyline", { points: pts, fill: "none", stroke: "var(--rss)", "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+  }
+
+  // Crosshair layer (below columns so column hover wins).
+  const cross = el("line", { x1: 0, x2: 0, y1: m.top, y2: m.top + ph, stroke: "var(--baseline)", "stroke-width": 1, visibility: "hidden" }, svg);
+  const hover = el("rect", { x: m.left, y: m.top, width: pw, height: ph, fill: "transparent" }, svg);
+  hover.addEventListener("mousemove", e => {
+    const rect = svg.getBoundingClientRect();
+    const t = ((e.clientX - rect.left) - m.left) / pw * DATA.duration_s;
+    if (t < 0 || t > DATA.duration_s) return;
+    cross.setAttribute("x1", X(t)); cross.setAttribute("x2", X(t));
+    cross.setAttribute("visibility", "visible");
+    const stage = DATA.stages.find(s => t >= s.start_s && t <= s.end_s);
+    showTip(`<div class="t">${fmtS(t)}${stage ? " · " + stage.label : ""}</div>
+      <table><tr><td>RSS</td><td class="num">${gib(rssAt(t))}</td></tr></table>`, e.clientX, e.clientY);
+  });
+  hover.addEventListener("mouseleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+
+  // Snapshot columns: stacked family segments + gray unattributed cap.
+  const colW = Math.max(10, Math.min(22, pw / Math.max(snapshots.length * 6, 1)));
+  for (const snap of snapshots) {
+    const xc = X(snap.at_s);
+    const group = el("g", { class: "col-hit", tabindex: 0, role: "button",
+      "aria-label": `${snap.label}: ${gib(snap.total_bytes / GIB)} live` }, svg);
+    let yCursor = Y(0);
+    const segs = [...snap.perFam].filter(([, b]) => b > 0);
+    segs.forEach(([fam, bytes], i) => {
+      const hSeg = Math.max((bytes / GIB / yMax) * ph, 1.25);
+      yCursor -= hSeg;
+      el("rect", { x: xc - colW / 2, y: yCursor, width: colW, height: Math.max(hSeg - (i < segs.length ? 1.5 : 0), 0.75),
+        rx: 0, fill: famColor(fam) }, group);
+      yCursor -= 0; /* 1.5px gap is carved out of the segment height above */
+    });
+    const liveTop = yCursor;
+    const rssHere = rssAt(snap.at_s);
+    const unattributed = Math.max(rssHere - snap.total_bytes / GIB, 0);
+    if (unattributed > 0.005) {
+      el("rect", { x: xc - colW / 2, y: Y(rssHere), width: colW, height: Math.max(liveTop - Y(rssHere) - 1.5, 0),
+        fill: "var(--unattributed)" }, group);
+    }
+    el("rect", { class: "sel-ring", x: xc - colW / 2 - 3, y: Y(rssHere) - 3, width: colW + 6,
+      height: Y(0) - Y(rssHere) + 6, fill: "none", stroke: "none", "stroke-width": 1.5, rx: 4 }, group);
+    // Generous hit area (>= 24px wide, full column height).
+    const hit = el("rect", { x: xc - Math.max(colW, 24) / 2, y: m.top, width: Math.max(colW, 24), height: ph, fill: "transparent" }, group);
+    const tipHtml = () => {
+      const rows = segs.slice().sort((a, b) => b[1] - a[1]).map(([fam, bytes]) =>
+        `<tr><td><i class="sw" style="background:${famColor(fam)}"></i>${FAMILIES.find(([f]) => f === fam)[1]}</td>
+         <td class="num">${gib(bytes / GIB)}</td><td class="pct">${(bytes / snap.total_bytes * 100).toFixed(1)}%</td></tr>`).join("");
+      return `<div class="t">${snap.label} · ${fmtS(snap.at_s)}</div>
+        <table>${rows}
+        <tr><td><i class="sw" style="background:var(--unattributed)"></i>unattributed</td>
+        <td class="num">${gib(unattributed)}</td><td class="pct"></td></tr>
+        <tr><td>live total</td><td class="num">${gib(snap.total_bytes / GIB)}</td>
+        <td class="pct">${fmtBytes(snap.total_bytes)}</td></tr></table>
+        <div class="hint">click for the full-depth breakdown</div>`;
+    };
+    hit.addEventListener("mousemove", e => { e.stopPropagation(); showTip(tipHtml(), e.clientX, e.clientY); });
+    hit.addEventListener("mouseleave", hideTip);
+    group.addEventListener("click", () => select(snap));
+    group.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(snap); } });
+    group.addEventListener("focus", () => {
+      const r = group.getBoundingClientRect();
+      showTip(tipHtml(), r.left + r.width / 2, r.top);
+    });
+    group.addEventListener("blur", hideTip);
+    if (selected && selected.label === snap.label) group.classList.add("selected");
+    snap._group = group;
+  }
+}
+function niceStep(raw) {
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const mult of [1, 2, 5, 10]) if (raw <= mult * mag) return mult * mag;
+  return 10 * mag;
+}
+
+/* ---------- icicle detail ---------- */
+function parseFolded(folded) {
+  const rootNode = { name: "", bytes: 0, children: new Map() };
+  for (const line of folded.split("\n")) {
+    const cut = line.lastIndexOf(" ");
+    if (cut < 0) continue;
+    const bytes = Number(line.slice(cut + 1));
+    if (!Number.isFinite(bytes)) continue;
+    let node = rootNode;
+    for (const seg of line.slice(0, cut).split(";")) {
+      if (!node.children.has(seg)) node.children.set(seg, { name: seg, bytes: 0, children: new Map() });
+      node = node.children.get(seg);
+    }
+    node.bytes += bytes;
+    let walk = rootNode;
+    for (const seg of line.slice(0, cut).split(";")) { walk = walk.children.get(seg); walk.total = (walk.total || 0) + bytes; }
+    rootNode.total = (rootNode.total || 0) + bytes;
+  }
+  return rootNode;
+}
+function select(snap) {
+  selected = snap;
+  document.querySelectorAll(".col-hit.selected").forEach(g => g.classList.remove("selected"));
+  if (snap._group) snap._group.classList.add("selected");
+  document.getElementById("detail-title").textContent =
+    `Snapshot detail — ${snap.label} at ${fmtS(snap.at_s)} · ${gib(snap.total_bytes / GIB)} live (${fmtBytes(snap.total_bytes)})`;
+  renderIcicle(snap);
+}
+function renderIcicle(snap) {
+  const svg = document.getElementById("icicle");
+  svg.textContent = "";
+  const tree = parseFolded(snap.folded);
+  if (!tree.total) {
+    document.getElementById("detail-hint").textContent = "No folded data for this snapshot.";
+    return;
+  }
+  const W = svg.parentElement.clientWidth - 28, rowH = 26;
+  const depthOf = node => node.children.size ? 1 + Math.max(...[...node.children.values()].map(depthOf)) : 0;
+  const depth = depthOf(tree);
+  svg.setAttribute("width", W); svg.setAttribute("height", depth * rowH + 2);
+  const place = (node, x0, x1, level, fam, fade) => {
+    const kids = [...node.children.values()].sort((a, b) => b.total - a.total);
+    let x = x0;
+    for (const kid of kids) {
+      const w = (kid.total / tree.total) * W;
+      const kidFam = level === 0 ? familyOf(kid.name) : fam;
+      const kidFade = level === 0 ? 1 : Math.max(fade - 0.18, 0.42);
+      const g = el("g", {}, svg);
+      el("rect", { x: x + 1, y: level * rowH + 1, width: Math.max(w - 2, 0.5), height: rowH - 4,
+        rx: 3, fill: famColor(kidFam), "fill-opacity": kidFade }, g);
+      if (w > 56) {
+        const label = el("text", { x: x + 7, y: level * rowH + rowH / 2 + 3 }, g);
+        label.textContent = displayName(kid.name);
+        label.setAttribute("fill", "var(--text-primary)");
+        // Trim to fit.
+        while (label.getComputedTextLength() > w - 14 && label.textContent.length > 3)
+          label.textContent = label.textContent.slice(0, -2) + "…";
+      }
+      const hit = el("rect", { x, y: level * rowH, width: Math.max(w, 2), height: rowH, fill: "transparent" }, g);
+      hit.addEventListener("mousemove", e => showTip(
+        `<div class="t">${kid.name}</div>
+         <table><tr><td>subtree</td><td class="num">${gib(kid.total / GIB)}</td><td class="pct">${fmtBytes(kid.total)}</td></tr>
+         <tr><td>share of snapshot</td><td class="num">${(kid.total / tree.total * 100).toFixed(2)}%</td><td class="pct"></td></tr></table>`,
+        e.clientX, e.clientY));
+      hit.addEventListener("mouseleave", hideTip);
+      place(kid, x, x + w, level + 1, kidFam, kidFade);
+      x += w;
+    }
+  };
+  place(tree, 0, W, 0, "other", 1);
+  document.getElementById("detail-hint").textContent =
+    "Width is share of the snapshot's live bytes; rows are depth in the ownership tree. Hover for exact bytes.";
+}
+
+/* ---------- table view ---------- */
+const tbody = document.querySelector("#table tbody");
+for (const snap of snapshots) {
+  const head = document.createElement("tr");
+  head.className = "snap";
+  head.innerHTML = `<td>${snap.label}</td><td>${fmtS(snap.at_s)}</td><td></td>
+    <td class="num">${fmtBytes(snap.total_bytes)}</td>
+    <td class="num">${(snap.total_bytes / GIB).toFixed(3)}</td><td class="num">100%</td>`;
+  tbody.appendChild(head);
+  for (const [root, bytes] of Object.entries(snap.roots).sort((a, b) => b[1] - a[1])) {
+    const fam = familyOf(root);
+    const row = document.createElement("tr");
+    row.innerHTML = `<td></td><td title="${root.replaceAll('"', "&quot;")}">${displayName(root)}</td>
+      <td><i class="sw" style="background:${famColor(fam)}"></i>${FAMILIES.find(([f]) => f === fam)[1]}</td>
+      <td class="num">${fmtBytes(bytes)}</td>
+      <td class="num">${(bytes / GIB).toFixed(3)}</td>
+      <td class="num">${(bytes / snap.total_bytes * 100).toFixed(1)}%</td>`;
+    tbody.appendChild(row);
+  }
+}
+
+/* ---------- boot ---------- */
+renderTimeline();
+if (snapshots.length) select(snapshots.reduce((a, b) => (b.total_bytes > a.total_bytes ? b : a)));
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { renderTimeline(); if (selected) renderIcicle(selected); }, 120);
+});
+</script>
+</body>
+</html>

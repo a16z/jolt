@@ -1,6 +1,6 @@
 //! Spartan shift symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,7 @@ use crate::{
 /// Produced Spartan shift openings (the shifted unexpanded-PC / PC / virtual /
 /// first-in-sequence / noop columns), all sharing the single shift opening point.
 /// Generic over the cell.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -57,6 +58,7 @@ pub struct SpartanShiftInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the Spartan shift sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct SpartanShiftChallenges<F> {
     #[challenge(SpartanShiftChallenge::Gamma)]
     pub gamma: F,
@@ -97,7 +99,7 @@ impl SymbolicSumcheck for Shift {
         SHIFT_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(SpartanShiftChallenge::Gamma);
         opening(next_unexpanded_pc_outer())
             + gamma.clone() * opening(next_pc_outer())
@@ -106,7 +108,7 @@ impl SymbolicSumcheck for Shift {
             + gamma.pow(4) * (JoltExpr::one() - opening(next_is_noop_product()))
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(SpartanShiftChallenge::Gamma);
         derived(SpartanShiftPublic::EqPlusOneOuter)
             * (opening(unexpanded_pc_shift())
@@ -123,7 +125,7 @@ impl SymbolicSumcheck for Shift {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn gamma_power(gamma: Fr, exponent: usize) -> Fr {
         let mut value = Fr::from_u64(1);

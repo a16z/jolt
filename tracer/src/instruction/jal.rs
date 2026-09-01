@@ -4,7 +4,6 @@ use super::{
     format::{format_j::FormatJ, normalize_imm},
     RISCVInstruction, RISCVTrace,
 };
-use crate::instruction::format::NormalizedOperands;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(
@@ -22,7 +21,7 @@ impl JAL {
         if self.operands.rd != 0 {
             if self.operands.rd == 1 {
                 // Track function call if we're saving a return address (rd != 0)
-                cpu.track_call(self.address, NormalizedOperands::from(self.operands));
+                cpu.track_call(self.address);
             }
             cpu.write_register(self.operands.rd as usize, cpu.sign_extend(cpu.pc as i64));
         }

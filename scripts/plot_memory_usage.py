@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Plot peak memory usage from Jolt zkVM benchmark perfetto traces."""
+"""Plot peak memory usage from the modular prover's summary.json artifacts.
+
+Each `jolt-prover profile --format chrome` run leaves a `summary.json` in
+its run directory (read through the `latest_*` links); this script reads
+the getrusage peak (`peak_rss_gib`, falling back to the sampled
+`root.peak_memory_gib`) and the run identity (`run.workload`,
+`run.scale_log2`) from each and plots peak memory vs scale.
+"""
 
 import json
 import os
@@ -37,70 +44,41 @@ NICE_NAMES = {
 }
 
 
-def extract_peak_memory_from_trace(trace_path):
-    """Extract peak memory usage (in GB) from a perfetto trace file.
+def read_summary_point(summary_path):
+    """Read (benchmark_name, scale, peak_memory_gib) from a summary.json.
 
-    Handles both raw traces (with monitor.rs events) and postprocessed traces
-    (with counter events). Returns the maximum value of memory_gb found.
+    Run identity comes from the summary's `run` metadata. Peak memory
+    prefers the process-lifetime getrusage high-water mark (`peak_rss_gib`),
+    falling back to the sampled prove-window peak (`root.peak_memory_gib`).
+    Returns None if identity or peak memory is missing.
     """
     try:
-        with open(trace_path, 'r') as f:
-            trace = json.load(f)
+        with open(summary_path, 'r') as f:
+            summary = json.load(f)
     except (json.JSONDecodeError, FileNotFoundError) as e:
-        print(f"Warning: Could not read {trace_path}: {e}", file=sys.stderr)
+        print(f"Warning: Could not read {summary_path}: {e}", file=sys.stderr)
         return None
 
-    events = trace if isinstance(trace, list) else trace.get("traceEvents", [])
-
-    max_memory = 0.0
-    memory_found = False
-
-    for event in events:
-        args = event.get("args", {})
-
-        # Check postprocessed format: counter events with memory_gb
-        if event.get("ph") == "C" and "memory_gb" in args:
-            memory_gb = float(args["memory_gb"])
-            max_memory = max(max_memory, memory_gb)
-            memory_found = True
-
-        # Check raw format: monitor.rs events with counters.memory_gb
-        elif 'monitor.rs' in event.get('name', '') and 'counters.memory_gb' in args:
-            memory_gb = float(args["counters.memory_gb"])
-            max_memory = max(max_memory, memory_gb)
-            memory_found = True
-
-    if not memory_found:
-        print(f"Warning: No memory_gb counter found in {trace_path}", file=sys.stderr)
+    run = summary.get("run") or {}
+    benchmark_name = run.get("workload")
+    scale = run.get("scale_log2")
+    if benchmark_name is None or scale is None:
+        print(f"Warning: no run identity in {summary_path}", file=sys.stderr)
         return None
 
-    return max_memory
-
-
-def parse_trace_filename(filename):
-    """Parse benchmark name and scale from trace filename.
-
-    Expected format: {benchmark}_{scale}.json
-    Returns: (benchmark_name, scale) or None if parsing fails
-    """
-    stem = Path(filename).stem
-    parts = stem.rsplit('_', 1)
-
-    if len(parts) == 2:
-        benchmark_name, scale_str = parts
-        try:
-            scale = int(scale_str)
-            return benchmark_name, scale
-        except ValueError:
-            pass
-
-    return None
+    peak = summary.get("peak_rss_gib")
+    if peak is None:
+        peak = (summary.get("root") or {}).get("peak_memory_gib")
+    if peak is None:
+        print(f"Warning: no peak memory in {summary_path}", file=sys.stderr)
+        return None
+    return benchmark_name, scale, peak
 
 
 def load_memory_data(traces_dir):
-    """Load peak memory usage data from all perfetto traces.
+    """Load peak memory usage data from all summary.json artifacts.
 
-    Returns: dict mapping benchmark_name -> list of (scale, peak_memory_gb)
+    Returns: dict mapping benchmark_name -> list of (scale, peak_memory_gib)
     """
     data = defaultdict(list)
     traces_dir = Path(traces_dir)
@@ -109,22 +87,18 @@ def load_memory_data(traces_dir):
         print(f"Error: Traces directory not found at {traces_dir}")
         return dict(data)
 
-    trace_files = sorted(traces_dir.glob("*.json"))
+    # One summary per (workload, scale): read through the latest_* links
+    # so superseded runs in timestamped directories are not double-counted.
+    summary_files = sorted(traces_dir.glob("latest_*/summary.json"))
 
-    if not trace_files:
-        print(f"Warning: No trace files found in {traces_dir}", file=sys.stderr)
+    if not summary_files:
+        print(f"Warning: No summary files found in {traces_dir}", file=sys.stderr)
         return dict(data)
 
-    for trace_file in trace_files:
-        parsed = parse_trace_filename(trace_file.name)
-        if not parsed:
-            print(f"Warning: Could not parse filename {trace_file.name}, skipping", file=sys.stderr)
-            continue
-
-        benchmark_name, scale = parsed
-        peak_memory = extract_peak_memory_from_trace(trace_file)
-
-        if peak_memory is not None:
+    for summary_file in summary_files:
+        point = read_summary_point(summary_file)
+        if point is not None:
+            benchmark_name, scale, peak_memory = point
             data[benchmark_name].append((scale, peak_memory))
 
     return dict(data)
@@ -170,7 +144,7 @@ def create_memory_plot(data, output_path):
             ticktext=labels,
             tickangle=45),
         yaxis=dict(
-            title="Peak Memory Usage (GB)",
+            title="Peak Memory Usage (GiB)",
             rangemode='tozero'),
         width=1200,
         height=800,
@@ -182,9 +156,9 @@ def create_memory_plot(data, output_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate memory usage plot from perfetto traces')
-    parser.add_argument('--traces-dir', default='benchmark-runs/perfetto_traces',
-                        help='Directory containing perfetto trace JSON files')
+        description='Generate memory usage plot from summary.json artifacts')
+    parser.add_argument('--traces-dir', default='benchmark-runs',
+                        help='Directory containing latest_*/summary.json artifacts')
     parser.add_argument('--output-dir', default='benchmark-runs',
                         help='Directory to save the output plot')
     parser.add_argument('--output-name', default='memory_usage_plot.html',
@@ -194,14 +168,13 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    print(f"Loading perfetto traces from {args.traces_dir}...")
+    print(f"Loading summary artifacts from {args.traces_dir}...")
     data = load_memory_data(args.traces_dir)
 
     if not data:
-        print("No memory data found in perfetto traces.")
-        print("\nMake sure to:")
-        print("  1. Run benchmarks with --format chrome to generate traces")
-        print("  2. Run postprocess_trace.py on the traces to convert counter events")
+        print("No memory data found in summary artifacts.")
+        print("\nRun `cargo run --release -p jolt-prover --features profiling -- "
+              "benchmark` (or `profile`) with --format chrome first.")
         return
 
     print(f"Loaded memory data for {len(data)} benchmark types")

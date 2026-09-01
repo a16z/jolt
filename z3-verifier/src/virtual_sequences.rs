@@ -66,10 +66,10 @@ use tracer::{
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
         virtual_assert_word_alignment::VirtualAssertWordAlignment,
-        virtual_change_divisor::VirtualChangeDivisor,
-        virtual_change_divisor_w::VirtualChangeDivisorW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
+        virtual_muliw::VirtualMULIW,
+        virtual_negate_if::VirtualNegateIf,
         virtual_pext::VirtualPext,
         virtual_pext_signed::VirtualPextSigned,
         virtual_pow2::VirtualPow2,
@@ -97,8 +97,8 @@ use z3::{
     Params, SatResult, Solver, Sort,
 };
 
-const _Z3_TIMEOUT_MS: u32 = 30_000;
-const Z3_RANDOM_SEED: u32 = 42;
+use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
+
 const DEFAULT_BV_BITS: u32 = 64;
 const BV_BITS_ENV: &str = "Z3_VERIFIER_BV_BITS";
 
@@ -321,6 +321,26 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 - rs2));
         }
+        Instruction::ADDW(ADDW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 + rs2)));
+        }
+        Instruction::ADDIW(ADDIW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 + imm)));
+        }
+        Instruction::SUBW(SUBW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 - rs2)));
+        }
+        Instruction::MULW(MULW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 * rs2)));
+        }
         Instruction::VirtualAssertEQ(VirtualAssertEQ { operands, .. }) => {
             let val1 = cpu.x[operands.rs1 as usize].clone();
             let val2 = cpu.x[operands.rs2 as usize].clone();
@@ -368,27 +388,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
             cpu.asserts.push(addr.extract(1, 0).eq(0))
         }
-        Instruction::VirtualChangeDivisor(VirtualChangeDivisor { operands, .. }) => {
+        Instruction::VirtualNegateIf(VirtualNegateIf { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
-            let dividend = rs1;
-            let divisor = rs2;
-            let min = SymbolicCpu::signed_min(cpu.bv_bits);
-            let ones = cpu.bv_ones();
-            cpu.x[operands.rd as usize] =
-                (dividend.eq(&min) & divisor.eq(&ones)).ite(&BV::from_u64(1, cpu.bv_bits), &divisor)
-        }
-        Instruction::VirtualChangeDivisorW(VirtualChangeDivisorW { operands, .. }) => {
-            let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let rs2 = cpu.x[operands.rs2 as usize].clone();
-            let dividend = rs1.extract(cpu.word_bits - 1, 0);
-            let divisor = rs2.extract(cpu.word_bits - 1, 0);
-            let word_min = SymbolicCpu::signed_min(cpu.word_bits);
-            let word_ones = BV::from_u64(u64::MAX, cpu.word_bits);
-            cpu.x[operands.rd as usize] = (dividend.eq(&word_min) & divisor.eq(&word_ones)).ite(
-                &BV::from_u64(1, cpu.bv_bits),
-                &divisor.sign_ext(cpu.bv_bits - cpu.word_bits),
-            )
+            let sign = rs1.extract(cpu.bv_bits - 1, cpu.bv_bits - 1);
+            cpu.x[operands.rd as usize] = sign.eq(1).ite(&rs2.bvneg(), &rs2)
         }
         Instruction::VirtualMovsign(VirtualMovsign { operands, .. }) => {
             let val = cpu.x[operands.rs1 as usize].clone();
@@ -570,6 +574,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let imm = scale_imm_u64(operands.imm, cpu);
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 * imm));
         }
+        Instruction::VirtualMULIW(VirtualMULIW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = scale_imm_u64(operands.imm, cpu);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 * imm)));
+        }
         Instruction::VirtualSRLI(VirtualSRLI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             // Bitmask immediate: compute trailing_zeros, then scale the shift amount
@@ -627,7 +636,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     RISCVCycle<I>: Into<Cycle>,
 {
     let mut solver_params = Params::default();
-    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();
@@ -699,7 +708,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
 
 fn test_consistency(instr: &Instruction) {
     let mut solver_params = Params::default();
-    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();

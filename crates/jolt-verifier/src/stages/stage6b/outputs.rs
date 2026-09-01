@@ -2,7 +2,7 @@
 //! verification.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::SumcheckBatch;
@@ -71,7 +71,7 @@ use super::ram_ra_virtualization::RamRaVirtualization;
     no_output_shape,
     crate = "crate"
 )]
-pub struct Stage6bSumchecks<F: Field> {
+pub struct Stage6bSumchecks<F: JoltField> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
@@ -96,7 +96,7 @@ pub struct Stage6bSumchecks<F: Field> {
 /// cells. The per-reduction `cycle_phase_variables` are recovered as
 /// `reverse(opening_point)` (see `cycle_phase_opening_point` in `jolt-claims`
 /// `claim_reductions::precommitted`).
-impl<F: Field> Stage6bOutputPoints<F> {
+impl<F: JoltField> Stage6bOutputPoints<F> {
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
@@ -104,7 +104,7 @@ impl<F: Field> Stage6bOutputPoints<F> {
         #[cfg(not(feature = "akita"))]
         let chunk_fallback = None;
         #[cfg(feature = "akita")]
-        let chunk_fallback = self.booleanity.unsigned_inc_chunks.first();
+        let chunk_fallback = self.booleanity.balanced_inc_digits.first();
         self.booleanity
             .instruction_ra
             .first()
@@ -190,6 +190,10 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// output claims. ZK-only, hence base-only (no zk protocol exists over the
     /// packed axis).
     #[cfg(not(feature = "akita"))]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "a sum of in-memory vector lengths and small constants cannot overflow usize"
+    )]
     pub fn point_count(&self) -> usize {
         self.bytecode_read_raf.bytecode_ra.len()
             + self.booleanity.instruction_ra.len()
@@ -211,7 +215,7 @@ impl<F: Field> Stage6bOutputPoints<F> {
     }
 }
 
-impl<F: Field> Stage6bOutputClaims<F> {
+impl<F: JoltField> Stage6bOutputClaims<F> {
     /// The consumed cycle-phase advice opening *value* for `kind` (the trusted /
     /// untrusted slot of that advice member), present only when the advice
     /// reduction ran a cycle phase. Read by stage 7's advice input wiring and stage
@@ -230,7 +234,7 @@ impl<F: Field> Stage6bOutputClaims<F> {
     }
 }
 
-fn reversed<F: Field>(point: &[F]) -> Vec<F> {
+fn reversed<F: JoltField>(point: &[F]) -> Vec<F> {
     point.iter().rev().copied().collect()
 }
 
@@ -238,7 +242,7 @@ fn reversed<F: Field>(point: &[F]) -> Vec<F> {
 /// instruction-RA and increment gammas, and (committed-program only) the bytecode
 /// claim-reduction `eta`. Kept as field names greppable from BlindFold.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6bCarriedChallenges<F: Field> {
+pub struct Stage6bCarriedChallenges<F: JoltField> {
     pub instruction_ra_gamma: F,
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
@@ -248,7 +252,8 @@ pub struct Stage6bCarriedChallenges<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6bClearOutput<F: Field> {
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+pub struct Stage6bClearOutput<F: JoltField> {
     /// The produced opening *values* (wire form); read by later stages and the
     /// Fiat-Shamir opening-claim encoder.
     pub output_values: Stage6bOutputClaims<F>,
@@ -264,7 +269,7 @@ pub struct Stage6bClearOutput<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6bZkOutput<F: Field, C> {
+pub struct Stage6bZkOutput<F: JoltField, C> {
     pub challenges: Stage6bCarriedChallenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
@@ -279,12 +284,12 @@ pub struct Stage6bZkOutput<F: Field, C> {
 // The clear variant carries the located opening claims read on the hot path; the
 // ZK variant carries committed consistency plus the point-only `output_points`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage6bOutput<F: Field, C> {
+pub enum Stage6bOutput<F: JoltField, C> {
     Clear(Stage6bClearOutput<F>),
     Zk(Stage6bZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage6bOutput<F, C> {
+impl<F: JoltField, C> Stage6bOutput<F, C> {
     /// The produced opening *points*, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage6bOutputPoints<F> {
         match self {
@@ -314,13 +319,14 @@ impl<F: Field, C> Stage6bOutput<F, C> {
 /// phases: the per-chunk weights over dropped address bits, the chunk-local
 /// cycle point, and the gamma-folded lane weights.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeReductionWeights<F: Field> {
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
+pub struct BytecodeReductionWeights<F: JoltField> {
     pub r_bc: Vec<F>,
     pub chunk_rbc_weights: Vec<F>,
     pub lane_weights: Vec<F>,
 }
 
-impl<F: Field> BytecodeReductionWeights<F> {
+impl<F: JoltField> BytecodeReductionWeights<F> {
     /// Borrow the weights as the jolt-claims `BytecodeOutputWeightInputs` the
     /// bytecode reduction's output-weight publics resolve against.
     pub(crate) fn as_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {

@@ -37,7 +37,7 @@ use jolt_claims::protocols::jolt::{
     PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use super::outputs::BytecodeReductionWeights;
 use crate::stages::relations::ConcreteSumcheck;
@@ -47,7 +47,7 @@ use crate::VerifierError;
 /// Wire the consumed RAM value-check trusted-advice opening *value* off the RAM
 /// value-check initial evaluation. Clear-only. Errors if the RAM value-check
 /// produced no trusted-advice contribution (the reduction runs only when it did).
-pub fn trusted_advice_cycle_phase_input_values_from_upstream<F: Field>(
+pub fn trusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
 ) -> Result<TrustedAdviceCyclePhaseInputClaims<F>, VerifierError> {
     let trusted = ram_val_check_init
@@ -60,7 +60,7 @@ pub fn trusted_advice_cycle_phase_input_values_from_upstream<F: Field>(
 }
 
 /// Wire the consumed RAM value-check untrusted-advice opening *value*. Clear-only.
-pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: Field>(
+pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
 ) -> Result<UntrustedAdviceCyclePhaseInputClaims<F>, VerifierError> {
     let untrusted = ram_val_check_init
@@ -76,7 +76,7 @@ pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: Field>(
 /// value-check initial evaluation — the clear-only reference the advice
 /// `FinalScale` terms read. `None` when the RAM value-check produced no
 /// contribution of this kind.
-pub fn advice_reference_point_from_upstream<F: Field>(
+pub fn advice_reference_point_from_upstream<F: JoltField>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
     kind: JoltAdviceKind,
 ) -> Option<Vec<F>> {
@@ -93,7 +93,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 #[derive(Clone)]
-pub struct TrustedAdviceCyclePhase<F: Field> {
+pub struct TrustedAdviceCyclePhase<F: JoltField> {
     symbolic: relations::claim_reductions::advice::TrustedCyclePhase,
     layout: AdviceClaimReductionLayout,
     /// The RAM address point of the staged advice opening from RAM value-check;
@@ -102,7 +102,7 @@ pub struct TrustedAdviceCyclePhase<F: Field> {
     reference_opening_point: Option<Vec<F>>,
 }
 
-impl<F: Field> TrustedAdviceCyclePhase<F> {
+impl<F: JoltField> TrustedAdviceCyclePhase<F> {
     pub fn new(
         layout: &AdviceClaimReductionLayout,
         reference_opening_point: Option<Vec<F>>,
@@ -127,7 +127,7 @@ impl<F: Field> TrustedAdviceCyclePhase<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
     type Symbolic = relations::claim_reductions::advice::TrustedCyclePhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -182,7 +182,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
 }
 
 #[derive(Clone)]
-pub struct UntrustedAdviceCyclePhase<F: Field> {
+pub struct UntrustedAdviceCyclePhase<F: JoltField> {
     symbolic: relations::claim_reductions::advice::UntrustedCyclePhase,
     layout: AdviceClaimReductionLayout,
     /// The RAM address point of the staged advice opening from RAM value-check;
@@ -191,7 +191,7 @@ pub struct UntrustedAdviceCyclePhase<F: Field> {
     reference_opening_point: Option<Vec<F>>,
 }
 
-impl<F: Field> UntrustedAdviceCyclePhase<F> {
+impl<F: JoltField> UntrustedAdviceCyclePhase<F> {
     pub fn new(
         layout: &AdviceClaimReductionLayout,
         reference_opening_point: Option<Vec<F>>,
@@ -216,7 +216,7 @@ impl<F: Field> UntrustedAdviceCyclePhase<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceCyclePhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for UntrustedAdviceCyclePhase<F> {
     type Symbolic = relations::claim_reductions::advice::UntrustedCyclePhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -270,7 +270,7 @@ impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceCyclePhase<F> {
 
 /// Wire the consumed RAM value-check program-image contribution *value*.
 /// Clear-only.
-pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: Field>(
+pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: JoltField>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
 ) -> Result<ProgramImageReductionCyclePhaseInputClaims<F>, VerifierError> {
     let (_, value) = ram_val_check_init
@@ -285,7 +285,7 @@ pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct ProgramImageReductionCyclePhase<F: Field> {
+pub struct ProgramImageReductionCyclePhase<F: JoltField> {
     symbolic: relations::claim_reductions::program_image::CyclePhase,
     layout: ProgramImageClaimReductionLayout,
     /// The RAM address component of the `RamVal` opening from RAM read-write
@@ -294,7 +294,7 @@ pub struct ProgramImageReductionCyclePhase<F: Field> {
     r_addr_rw: Vec<F>,
 }
 
-impl<F: Field> ProgramImageReductionCyclePhase<F> {
+impl<F: JoltField> ProgramImageReductionCyclePhase<F> {
     pub fn new(layout: &ProgramImageClaimReductionLayout, r_addr_rw: Vec<F>) -> Self {
         Self {
             symbolic: relations::claim_reductions::program_image::CyclePhase::new(
@@ -323,7 +323,7 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
     type Symbolic = relations::claim_reductions::program_image::CyclePhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -371,14 +371,14 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
 }
 
 #[derive(Clone)]
-pub struct BytecodeReductionCyclePhase<F: Field> {
+pub struct BytecodeReductionCyclePhase<F: JoltField> {
     symbolic: relations::claim_reductions::bytecode::CyclePhase,
     layout: BytecodeClaimReductionLayout,
     weights: BytecodeReductionWeights<F>,
     chunk_count: usize,
 }
 
-impl<F: Field> BytecodeReductionCyclePhase<F> {
+impl<F: JoltField> BytecodeReductionCyclePhase<F> {
     pub fn new(
         layout: &BytecodeClaimReductionLayout,
         weights: BytecodeReductionWeights<F>,
@@ -413,7 +413,7 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
 /// vectors into the public [`BytecodeReductionWeights`] (the per-chunk `r_bc`
 /// weights and the gamma-folded lane weights) consumed by the bytecode
 /// claim-reduction cycle and address phases.
-pub fn bytecode_reduction_weights<F: Field>(
+pub fn bytecode_reduction_weights<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     lane_inputs: BytecodeLaneWeightInputs<'_, F>,
     bytecode_r_address: &[F],
@@ -436,7 +436,7 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
     type Symbolic = relations::claim_reductions::bytecode::CyclePhase;
 
     fn symbolic(&self) -> &Self::Symbolic {

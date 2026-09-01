@@ -155,8 +155,10 @@ def create_size_plot(data, output_path):
 def main():
     parser = argparse.ArgumentParser(
         description='Generate benchmark plots from CSV data')
-    parser.add_argument('--csv', default='benchmark-runs/results/timings.csv',
-                        help='Path to the benchmark CSV file')
+    parser.add_argument('--csv',
+                        default='benchmark-runs/modular_timings.csv',
+                        help='Path to the benchmark CSV file '
+                             '(written by `jolt-prover benchmark`)')
     parser.add_argument('--output-dir', default='benchmark-runs',
                         help='Directory to save the output plots')
     parser.add_argument(
@@ -175,7 +177,8 @@ def main():
     data = load_data(args.csv)
     if not data:
         print(
-            "No data found in CSV file. Run ./scripts/jolt_benchmarks.sh to generate data.")  # noqa: E501
+            "No data found in CSV file. Run `cargo run --release -p jolt-prover "
+            "--features profiling -- benchmark` to generate data.")  # noqa: E501
         return
 
     print(f"Loaded {len(data)} benchmark types from CSV")

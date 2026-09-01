@@ -1,6 +1,6 @@
 //! Registers claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::registers::{
@@ -18,6 +18,7 @@ use crate::{
 /// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
 /// values reduced to the Spartan point), all sharing the single reduction opening
 /// point. Generic over the cell.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -48,6 +49,7 @@ pub struct RegistersClaimReductionInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the registers claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RegistersClaimReductionChallenges<F> {
     #[challenge(RegistersClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -87,7 +89,7 @@ impl SymbolicSumcheck for ClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(RegistersClaimReductionChallenge::Gamma);
 
         opening(rd_write_value_spartan())
@@ -95,7 +97,7 @@ impl SymbolicSumcheck for ClaimReduction {
             + gamma.clone().pow(2) * opening(rs2_value_spartan())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(RegistersClaimReductionChallenge::Gamma);
         let eq_spartan = derived(RegistersClaimReductionPublic::EqSpartan);
 
@@ -108,7 +110,7 @@ impl SymbolicSumcheck for ClaimReduction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

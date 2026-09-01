@@ -45,6 +45,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "tracer_backend_equivalence"
+path = "fuzz_targets/tracer_backend_equivalence.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "transcript_consistency_blake2b"
 path = "fuzz_targets/transcript_consistency_blake2b.rs"
 test = false

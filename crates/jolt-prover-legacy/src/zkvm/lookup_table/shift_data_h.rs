@@ -67,6 +67,7 @@ mod test {
     use super::ShiftDataHTable;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        prefix_suffix_test_with_phase_size,
     };
     use common::constants::XLEN;
 
@@ -83,5 +84,13 @@ mod test {
     #[test]
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, ShiftDataHTable<XLEN>>();
+    }
+
+    /// Two-round phases put boundaries inside the low six index bits,
+    /// exercising every placement of the lane and offset bits relative to
+    /// the phase window in the ShiftData/OffsetScale prefix/suffix pairs.
+    #[test]
+    fn prefix_suffix_small_phases() {
+        prefix_suffix_test_with_phase_size::<XLEN, Fr, ShiftDataHTable<XLEN>>(2, 20);
     }
 }

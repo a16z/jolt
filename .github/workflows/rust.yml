@@ -45,6 +45,39 @@ jobs:
       - name: taplo fmt --check
         run: taplo fmt --check
 
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history (blobs lazily fetched) so the diff-scoped rules can
+      # resolve an exact merge base; see scripts/check_style_invariants.py.
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: check style invariants
+        run: python3 scripts/check_style_invariants.py --base "origin/${{ github.base_ref || 'main' }}"
+
+  field-stack:
+    name: Shared field feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Require one jolt-field identity (bootstrap akita-field pin allowed)
+        run: scripts/check-shared-field-identity.sh
+      - name: Check no backend
+        run: cargo check -p jolt-field --no-default-features
+      - name: Check BN254 backend
+        run: cargo check -p jolt-field --no-default-features --features bn254
+      - name: Test Solinas backend
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas --cargo-quiet
+      - name: Test parallel Solinas backend
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas,parallel --cargo-quiet
+      - name: Check combined backends
+        run: cargo check -p jolt-field --no-default-features --features bn254,solinas
+
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -79,6 +112,26 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
       - name: cargo clippy -p jolt-prover-legacy --features akita
         run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
+      # The modular prover's packed (Akita) path: lint alone and with
+      # prover-fixtures so the acceptance suites keep compiling.
+      - name: cargo clippy -p jolt-prover --features akita
+        run: cargo clippy -p jolt-prover --all-targets --features akita
+      - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
+        run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
+      # The profiling feature gates the profile harness bin and smoke test.
+      # The smoke test cannot RUN in CI yet (reference-backend memory — see
+      # the NOTE above the legacy test jobs), but everything behind the
+      # feature must keep compiling. Lint it in both flamegraph modes.
+      - name: cargo clippy -p jolt-prover --features profiling
+        run: cargo clippy -p jolt-prover --all-targets --features profiling
+      - name: cargo clippy -p jolt-prover --features profiling,allocative
+        run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
+      # The packed profile harness: the same bin/smoke test driving
+      # akita::prove. Lint both flamegraph modes, like the Dory pair above.
+      - name: cargo clippy -p jolt-prover --features akita,profiling
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling
+      - name: cargo clippy -p jolt-prover --features akita,profiling,allocative
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,allocative
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
@@ -169,6 +222,78 @@ jobs:
       - name: Run jolt-prover-legacy tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
 
+  trace-equivalence:
+    runs-on: ubuntu-latest
+    name: Tracer serial/parallel equivalence
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      # Every parallel configuration must produce byte-identical output to the
+      # serial interpreter. The harness runs each configuration in a child
+      # process and compares within the run, so there are no committed hashes
+      # to re-record.
+      - name: Serial/parallel trace equivalence
+        run: cargo run --profile ci -p tracer --example trace_equivalence
+
+  x86-tracer:
+    runs-on: ubuntu-latest
+    name: x86 AOT tracer backend (native x86-64)
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      # Guest ELFs link ZeroOS, so building them needs its musl toolchain.
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      # The guest-dependent tests skip themselves without the CLI, so this
+      # install is what makes this job the backend's real coverage: it is the
+      # only place the differential and chunk-composition tests execute
+      # against native x86-64 hardware.
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Test jolt-tracer-x86
+        run: cargo nextest run --cargo-profile ci -p jolt-tracer-x86
+
   test-prover-zk:
     runs-on: ubuntu-latest
     name: Test jolt-prover-legacy (zk)
@@ -201,6 +326,15 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features zk
+      # The MODULAR prover's ZK acceptance suite: muldiv accept, tamper
+      # reject, advice, and committed-program e2es against the unmodified
+      # jolt-verifier ZK path — the PR's headline feature, otherwise
+      # uncovered (the crate-matrix job runs default features only).
+      - name: Run jolt-prover tests with zk feature
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zk
+      # The jolt-kernels unit suite in its zk flavor.
+      - name: Run jolt-kernels tests with zk feature
+        run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
 
   test-prover-akita:
     runs-on: ubuntu-latest
@@ -238,6 +372,19 @@ jobs:
       # Akita lattice PCS (the release-only perf harness stays ignored).
       - name: Run jolt-prover-legacy tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features akita
+      # The MODULAR packed-prover acceptance suites: the five e2e analogs
+      # (with live tampers) plus the four byte-diff ratchets asserting
+      # wire-for-wire equality with the legacy packed prover.
+      - name: Run jolt-prover tests with akita feature
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
+
+  # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
+  # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
+  # wired into CI yet. It proves through the reference backend, whose naive
+  # RAM kernels retain ~18 GiB regardless of trace length — past
+  # hosted-runner memory. Hook it up as a dedicated job (guest toolchain +
+  # jolt CLI install, mirroring the legacy test jobs above) once an
+  # optimized backend fits runner memory.
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest
@@ -274,13 +421,13 @@ jobs:
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
       # by fixtures the real packed prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
 
   typos:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: crate-ci/typos@v1.48.0
+      - uses: crate-ci/typos@v1.49.0
         with:
           files: .
 
@@ -426,6 +573,17 @@ jobs:
       - name: Test lookup table prover ABI
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
+      # jolt-witness's parallel feature is not a default, so the shard loop
+      # above tests only the serial paths; the shipped provers enable it
+      # (via jolt-kernels' default), so test the rayon fast paths directly.
+      - name: Test jolt-witness with parallel
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-witness --features test-utils,parallel --cargo-quiet
+      # Same non-default-parallel pattern: jolt-utils' latch/collector tests
+      # only exist behind its parallel feature.
+      - name: Test jolt-utils with parallel
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
@@ -452,6 +610,47 @@ jobs:
             echo "Shard result: ${{ needs.test-crates-shard.result }}"
             exit 1
           fi
+
+  # The byte-parity ratchet vs the legacy prover: every real byte_diff arm
+  # is behind jolt-prover's prover-fixtures feature (the default crate shard
+  # only discovers the ignored stub), so without this lane optimized
+  # proof/transcript divergence could merge green. Runs the whole
+  # prover-fixtures surface of jolt-prover: the stage-granular muldiv
+  # ratchet, the mode × trace-order whole-proof arms (both backends), the
+  # 2^17 chunk-boundary arm (slice-backed + forced chunk walk), and the
+  # {8, 32} wide one-hot geometry arm.
+  test-byte-parity:
+    runs-on: ubuntu-latest
+    name: Byte parity vs legacy prover
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run the jolt-prover byte-parity suite
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures --cargo-quiet
 
   test-akita-schedules:
     name: Akita schedule catalog drift
@@ -556,9 +755,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Run extractor tests
         working-directory: ./zklean-extractor
-        run: cargo test
+        run: cargo nextest run --cargo-quiet
 
   compile-extracted-lean:
     name: Compile extracted Lean

@@ -1,6 +1,6 @@
 //! Instruction RA-virtualization symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::instruction::{
@@ -14,6 +14,7 @@ use crate::protocols::jolt::{
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, InputClaims, OutputClaims, SumcheckChallenges};
 
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -35,6 +36,7 @@ pub struct InstructionRaVirtualizationInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the instruction RA-virtualization sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionRaVirtualizationChallenges<F> {
     #[challenge(InstructionRaVirtualizationChallenge::Gamma)]
     pub gamma: F,
@@ -74,12 +76,12 @@ impl SymbolicSumcheck for RaVirtualization {
         self.shape.num_committed_per_virtual() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(InstructionRaVirtualizationChallenge::Gamma);
         weighted_instruction_ra_sum(self.shape, gamma)
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(InstructionRaVirtualizationChallenge::Gamma);
         let eq_cycle = derived(InstructionRaVirtualizationPublic::EqCycle);
         let mut output = JoltExpr::zero();
@@ -101,7 +103,7 @@ mod tests {
         JoltChallengeId, JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltPolynomialId,
         JoltVirtualPolynomial,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn ra_virtualization_dimensions(
         num_virtual_ra_polys: usize,

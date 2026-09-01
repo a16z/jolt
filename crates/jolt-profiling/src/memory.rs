@@ -80,6 +80,38 @@ pub fn report_memory_usage() {
     }
 }
 
+/// Process-lifetime peak RSS in bytes, from `getrusage(RUSAGE_SELF)`.
+///
+/// The kernel-maintained high-water mark — unlike a sampling monitor it
+/// cannot miss short allocation spikes, so it is the headline memory number
+/// for benchmark runs. `ru_maxrss` is reported in bytes on macOS and
+/// kibibytes on Linux; normalized to bytes here. Returns `None` on
+/// non-unix targets or if the syscall fails.
+#[cfg(unix)]
+pub fn peak_rss_bytes() -> Option<u64> {
+    // SAFETY: getrusage writes a complete rusage struct into the provided
+    // storage on success (return value 0).
+    let usage = unsafe {
+        let mut usage: libc::rusage = std::mem::zeroed();
+        if libc::getrusage(libc::RUSAGE_SELF, &raw mut usage) != 0 {
+            return None;
+        }
+        usage
+    };
+    let raw = usage.ru_maxrss as u64;
+    Some(if cfg!(target_os = "macos") {
+        raw
+    } else {
+        raw * 1024
+    })
+}
+
+/// Process-lifetime peak RSS in bytes. Always `None` on non-unix targets.
+#[cfg(not(unix))]
+pub fn peak_rss_bytes() -> Option<u64> {
+    None
+}
+
 /// Logs the current physical memory usage at the point of call.
 pub fn print_current_memory_usage(label: &str) {
     if tracing::enabled!(tracing::Level::DEBUG) {

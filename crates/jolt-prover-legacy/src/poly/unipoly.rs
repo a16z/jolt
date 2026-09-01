@@ -9,9 +9,6 @@ use allocative::Allocative;
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 
-use super::multilinear_polynomial::MultilinearPolynomial;
-use crate::utils::small_scalar::SmallScalar;
-
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, PartialEq, Allocative)]
@@ -233,67 +230,6 @@ impl<F: JoltField> UniPoly<F> {
             }
         }
         eval
-    }
-
-    #[tracing::instrument(skip_all, name = "UniPoly::eval_as_univariate")]
-    pub fn eval_as_univariate(poly: &MultilinearPolynomial<F>, r: &F) -> F {
-        match poly {
-            MultilinearPolynomial::LargeScalars(poly) => {
-                let mut eval = poly.Z[0];
-                let mut power = *r;
-                for coeff in poly.evals_ref()[1..].iter() {
-                    eval += power * coeff;
-                    power *= *r;
-                }
-                eval
-            }
-            MultilinearPolynomial::U8Scalars(poly) => {
-                let mut eval = F::zero();
-                let mut power = F::one();
-                for coeff in poly.coeffs.iter() {
-                    eval += coeff.field_mul(power);
-                    power *= *r;
-                }
-                eval
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                let mut eval = F::zero();
-                let mut power = F::one();
-                for coeff in poly.coeffs.iter() {
-                    eval += coeff.field_mul(power);
-                    power *= *r;
-                }
-                eval
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                let mut eval = F::zero();
-                let mut power = F::one();
-                for coeff in poly.coeffs.iter() {
-                    eval += coeff.field_mul(power);
-                    power *= *r;
-                }
-                eval
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                let mut eval = F::zero();
-                let mut power = F::one();
-                for coeff in poly.coeffs.iter() {
-                    eval += coeff.field_mul(power);
-                    power *= *r;
-                }
-                eval
-            }
-            MultilinearPolynomial::I64Scalars(poly) => {
-                let mut eval = F::zero();
-                let mut power = F::one();
-                for coeff in poly.coeffs.iter() {
-                    eval += coeff.field_mul(power);
-                    power *= *r;
-                }
-                eval
-            }
-            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
-        }
     }
 
     pub fn compress(&self) -> CompressedUniPoly<F> {

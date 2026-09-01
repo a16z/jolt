@@ -1,5 +1,5 @@
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::{Field, RingAccumulator, WithAccumulator};
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
 use jolt_sumcheck::{CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
@@ -14,7 +14,7 @@ const INNER_SUMCHECK_DEGREE: usize = 2;
 const INNER_SUMCHECK_LABEL: &[u8] = b"inner_sumcheck_poly";
 
 #[derive(Clone, Copy, Debug)]
-pub struct BlindFoldWitness<'a, F: Field> {
+pub struct BlindFoldWitness<'a, F: JoltField> {
     pub rows: &'a [Vec<F>],
     pub blindings: &'a [F],
     pub eval_outputs: &'a [F],
@@ -23,7 +23,7 @@ pub struct BlindFoldWitness<'a, F: Field> {
 
 pub trait BlindFoldRowCommitter<F, VC>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     fn commit_rows(
@@ -126,10 +126,7 @@ where
         row_point: &[F],
         entry_point: &[F],
         name: &'static str,
-    ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>>
-    where
-        <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
-    {
+    ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>> {
         open_committed_rows::<F, VC>(setup, rows, blindings, row_point, entry_point, name)
     }
 }
@@ -139,7 +136,7 @@ pub struct DirectBlindFoldRowCommitter;
 
 impl<F, VC> BlindFoldRowCommitter<F, VC> for DirectBlindFoldRowCommitter
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     fn commit_rows(
@@ -161,12 +158,11 @@ pub fn prove<F, VC, T, R>(
     rng: &mut R,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
     R: RngCore,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let mut row_committer = DirectBlindFoldRowCommitter;
     prove_with_row_committer::<F, VC, T, R, DirectBlindFoldRowCommitter>(
@@ -188,21 +184,28 @@ pub fn prove_with_row_committer<F, VC, T, R, C>(
     row_committer: &mut C,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
     R: RngCore,
     C: BlindFoldRowCommitter<F, VC>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     validate_witness::<F, VC>(setup, protocol, witness)?;
 
     let auxiliary_range = protocol.dimensions.witness_rows.auxiliary.clone();
     let auxiliary_row_commitments = row_committer.commit_rows(
         setup,
-        &witness.rows[auxiliary_range.clone()],
-        &witness.blindings[auxiliary_range],
+        range_slice(
+            "auxiliary witness rows",
+            witness.rows,
+            auxiliary_range.clone(),
+        )?,
+        range_slice(
+            "auxiliary witness blindings",
+            witness.blindings,
+            auxiliary_range,
+        )?,
         "auxiliary witness rows",
     )?;
     let committed = protocol.committed_relaxed_instance(&auxiliary_row_commitments)?;
@@ -227,9 +230,20 @@ where
     let mut random_witness_blindings = (0..protocol.dimensions.witness.row_count)
         .map(|_| F::random(rng))
         .collect::<Vec<_>>();
-    for row in protocol.dimensions.witness_rows.padding.clone() {
-        random_witness_rows[row].fill(F::zero());
-        random_witness_blindings[row] = F::zero();
+    let padding_range = protocol.dimensions.witness_rows.padding.clone();
+    for row in range_slice_mut(
+        "padding witness rows",
+        &mut random_witness_rows,
+        padding_range.clone(),
+    )? {
+        row.fill(F::zero());
+    }
+    for blinding in range_slice_mut(
+        "padding witness blindings",
+        &mut random_witness_blindings,
+        padding_range,
+    )? {
+        *blinding = F::zero();
     }
 
     let random_eval_outputs = (0..protocol.eval_commitments.len())
@@ -239,6 +253,11 @@ where
         .map(|_| F::random(rng))
         .collect::<Vec<_>>();
     let final_coordinates = protocol.final_opening_witness_coordinates()?;
+    ensure_len(
+        "final opening bindings",
+        protocol.eval_commitments.len(),
+        final_coordinates.len(),
+    )?;
     let mut dedicated_rows = Vec::new();
     for coordinates in &final_coordinates {
         if let Some(coordinate) = coordinates.evaluation {
@@ -250,16 +269,27 @@ where
     }
     dedicated_rows.sort_unstable();
     dedicated_rows.dedup();
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "dedicated rows come from final-opening coordinates, range-checked against the witness grid in witness_coordinate"
+    )]
     for row in dedicated_rows {
         random_witness_rows[row].fill(F::zero());
         random_witness_blindings[row] = F::zero();
     }
-    for (index, coordinates) in final_coordinates.iter().enumerate() {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "final-opening coordinates are range-checked against the witness grid in witness_coordinate"
+    )]
+    for (coordinates, (&random_output, &random_blinding)) in final_coordinates
+        .iter()
+        .zip(random_eval_outputs.iter().zip(&random_eval_blindings))
+    {
         if let Some(coordinate) = coordinates.evaluation {
-            random_witness_rows[coordinate.row][coordinate.column] = random_eval_outputs[index];
+            random_witness_rows[coordinate.row][coordinate.column] = random_output;
         }
         if let Some(coordinate) = coordinates.blinding {
-            random_witness_rows[coordinate.row][coordinate.column] = random_eval_blindings[index];
+            random_witness_rows[coordinate.row][coordinate.column] = random_blinding;
         }
     }
 
@@ -284,20 +314,44 @@ where
     let auxiliary_range = protocol.dimensions.witness_rows.auxiliary.clone();
     let random_round_commitments = row_committer.commit_rows(
         setup,
-        &random_witness_rows[coefficient_range.clone()],
-        &random_witness_blindings[coefficient_range],
+        range_slice(
+            "random coefficient rows",
+            &random_witness_rows,
+            coefficient_range.clone(),
+        )?,
+        range_slice(
+            "random coefficient blindings",
+            &random_witness_blindings,
+            coefficient_range,
+        )?,
         "random coefficient rows",
     )?;
     let random_output_claim_row_commitments = row_committer.commit_rows(
         setup,
-        &random_witness_rows[output_claim_range.clone()],
-        &random_witness_blindings[output_claim_range],
+        range_slice(
+            "random output-claim rows",
+            &random_witness_rows,
+            output_claim_range.clone(),
+        )?,
+        range_slice(
+            "random output-claim blindings",
+            &random_witness_blindings,
+            output_claim_range,
+        )?,
         "random output-claim rows",
     )?;
     let random_auxiliary_row_commitments = row_committer.commit_rows(
         setup,
-        &random_witness_rows[auxiliary_range.clone()],
-        &random_witness_blindings[auxiliary_range],
+        range_slice(
+            "random auxiliary rows",
+            &random_witness_rows,
+            auxiliary_range.clone(),
+        )?,
+        range_slice(
+            "random auxiliary blindings",
+            &random_witness_blindings,
+            auxiliary_range,
+        )?,
         "random auxiliary rows",
     )?;
     let random_error_row_commitments = row_committer.commit_rows(
@@ -426,7 +480,11 @@ where
 
     let mut folded_eval_output_openings = Vec::new();
     let mut folded_eval_blinding_openings = Vec::new();
-    for (index, coordinates) in final_coordinates.iter().enumerate() {
+    for (index, (coordinates, (&folded_output, &folded_blinding))) in final_coordinates
+        .iter()
+        .zip(folded_eval_outputs.iter().zip(&folded_eval_blindings))
+        .enumerate()
+    {
         if let Some(coordinate) = coordinates.evaluation {
             let (opening, opened) = open_witness_coordinate::<F, VC, C>(
                 setup,
@@ -436,11 +494,11 @@ where
                 coordinate,
                 "folded eval output opening",
             )?;
-            if opened != folded_eval_outputs[index] {
+            if opened != folded_output {
                 return Err(ProverError::EvalWitnessMismatch {
                     kind: "output",
                     index,
-                    expected: folded_eval_outputs[index],
+                    expected: folded_output,
                     actual: opened,
                 });
             }
@@ -455,11 +513,11 @@ where
                 coordinate,
                 "folded eval blinding opening",
             )?;
-            if opened != folded_eval_blindings[index] {
+            if opened != folded_blinding {
                 return Err(ProverError::EvalWitnessMismatch {
                     kind: "blinding",
                     index,
-                    expected: folded_eval_blindings[index],
+                    expected: folded_blinding,
                     actual: opened,
                 });
             }
@@ -595,7 +653,7 @@ fn validate_witness<F, VC>(
     witness: BlindFoldWitness<'_, F>,
 ) -> Result<(), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     let _ = log2_power_of_two("witness row count", protocol.dimensions.witness.row_count)?;
@@ -643,7 +701,7 @@ fn ensure_row_capacity<F, VC>(
     row_len: usize,
 ) -> Result<(), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     let capacity = VC::capacity(setup);
@@ -664,7 +722,7 @@ fn commit_rows<F, VC>(
     name: &'static str,
 ) -> Result<Vec<VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     ensure_len(name, rows.len(), blindings.len())?;
@@ -694,9 +752,8 @@ fn open_committed_rows<F, VC>(
     name: &'static str,
 ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let row_count = basis_len_from_point_len("row point", row_point.len())?;
     ensure_len(name, row_count, rows.len())?;
@@ -728,7 +785,7 @@ fn basis_len_from_point_len<F>(
     point_len: usize,
 ) -> Result<usize, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if point_len >= usize::BITS as usize {
         return Err(ProverError::DimensionOverflow {
@@ -740,7 +797,7 @@ where
 }
 
 #[derive(Clone, Debug)]
-struct SumcheckTrace<F: Field> {
+struct SumcheckTrace<F: JoltField> {
     proof: CompressedSumcheckProof<F>,
     point: Vec<F>,
 }
@@ -754,7 +811,7 @@ fn prove_outer_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let num_vars = log2_power_of_two("outer folded R1CS sumcheck", error_values.len())?;
@@ -815,8 +872,9 @@ where
         }
 
         let round_poly = UnivariatePoly::from_evals(&evals);
-        let round_sum =
-            round_poly.coefficients()[0] + round_poly.coefficients().iter().copied().sum::<F>();
+        let coefficients = round_poly.coefficients();
+        let round_sum = coefficients.first().copied().unwrap_or_else(F::zero)
+            + coefficients.iter().copied().sum::<F>();
         if round_sum != running_sum {
             return Err(ProverError::SumcheckRoundClaimMismatch {
                 expected: running_sum,
@@ -863,7 +921,7 @@ fn prove_inner_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let witness_values = flatten(witness_rows);
@@ -896,8 +954,9 @@ where
         }
 
         let round_poly = UnivariatePoly::from_evals(&evals);
-        let round_sum =
-            round_poly.coefficients()[0] + round_poly.coefficients().iter().copied().sum::<F>();
+        let coefficients = round_poly.coefficients();
+        let round_sum = coefficients.first().copied().unwrap_or_else(F::zero)
+            + coefficients.iter().copied().sum::<F>();
         if round_sum != running_sum {
             return Err(ProverError::SumcheckRoundClaimMismatch {
                 expected: running_sum,
@@ -928,7 +987,7 @@ where
 
 fn matrix_vector_product<F>(rows: &[SparseRow<F>], vector: &[F]) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
 {
     rows.par_iter().map(|row| dot(row, vector)).collect()
 }
@@ -941,7 +1000,7 @@ fn linear_form_project_columns<F>(
     weights: [F; 3],
 ) -> Result<Vec<F>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if row_weights.len() < r1cs.num_constraints {
         return Err(ConstraintMatrixEvalError::RowWeightsLengthMismatch {
@@ -950,39 +1009,18 @@ where
         }
         .into());
     }
-    let end_col =
-        start_col
-            .checked_add(col_count)
-            .ok_or(ConstraintMatrixEvalError::ColumnRangeOverflow {
-                start: start_col,
-                count: col_count,
-            })?;
+    if start_col.checked_add(col_count).is_none() {
+        return Err(ConstraintMatrixEvalError::ColumnRangeOverflow {
+            start: start_col,
+            count: col_count,
+        }
+        .into());
+    }
 
     let mut projected = vec![F::zero(); col_count];
-    project_matrix_columns(
-        &mut projected,
-        &r1cs.a,
-        row_weights,
-        start_col,
-        end_col,
-        weights[0],
-    );
-    project_matrix_columns(
-        &mut projected,
-        &r1cs.b,
-        row_weights,
-        start_col,
-        end_col,
-        weights[1],
-    );
-    project_matrix_columns(
-        &mut projected,
-        &r1cs.c,
-        row_weights,
-        start_col,
-        end_col,
-        weights[2],
-    );
+    project_matrix_columns(&mut projected, &r1cs.a, row_weights, start_col, weights[0]);
+    project_matrix_columns(&mut projected, &r1cs.b, row_weights, start_col, weights[1]);
+    project_matrix_columns(&mut projected, &r1cs.c, row_weights, start_col, weights[2]);
     Ok(projected)
 }
 
@@ -991,10 +1029,9 @@ fn project_matrix_columns<F>(
     rows: &[SparseRow<F>],
     row_weights: &[F],
     start_col: usize,
-    end_col: usize,
     weight: F,
 ) where
-    F: Field,
+    F: JoltField,
 {
     if weight.is_zero() {
         return;
@@ -1002,8 +1039,11 @@ fn project_matrix_columns<F>(
     for (row, &row_weight) in rows.iter().zip(row_weights) {
         let scaled_weight = weight * row_weight;
         for &(column, coefficient) in row {
-            if (start_col..end_col).contains(&column) {
-                projected[column - start_col] += scaled_weight * coefficient;
+            if let Some(entry) = column
+                .checked_sub(start_col)
+                .and_then(|offset| projected.get_mut(offset))
+            {
+                *entry += scaled_weight * coefficient;
             }
         }
     }
@@ -1011,17 +1051,19 @@ fn project_matrix_columns<F>(
 
 fn abc_at_point<F>(r1cs: &ConstraintMatrices<F>, u: F, witness: &[F], point: &[F]) -> (F, F, F)
 where
-    F: Field,
+    F: JoltField,
 {
     let row_weights = EqPolynomial::<F>::evals(point, None);
     let z = z_vector(u, witness);
     let mut az = F::zero();
     let mut bz = F::zero();
     let mut cz = F::zero();
-    for (row_index, &row_weight) in row_weights.iter().enumerate().take(r1cs.num_constraints) {
-        az += row_weight * dot(&r1cs.a[row_index], &z);
-        bz += row_weight * dot(&r1cs.b[row_index], &z);
-        cz += row_weight * dot(&r1cs.c[row_index], &z);
+    for (((&row_weight, a_row), b_row), c_row) in
+        row_weights.iter().zip(&r1cs.a).zip(&r1cs.b).zip(&r1cs.c)
+    {
+        az += row_weight * dot(a_row, &z);
+        bz += row_weight * dot(b_row, &z);
+        cz += row_weight * dot(c_row, &z);
     }
     (az, bz, cz)
 }
@@ -1035,13 +1077,15 @@ fn open_witness_coordinate<F, VC, C>(
     name: &'static str,
 ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
     C: BlindFoldRowCommitter<F, VC>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let row_vars = log2_power_of_two("witness row count", witness_rows.len())?;
-    let entry_vars = log2_power_of_two("witness row length", witness_rows[0].len())?;
+    let entry_vars = log2_power_of_two(
+        "witness row length",
+        witness_rows.first().map_or(0, Vec::len),
+    )?;
     row_committer.open_rows(
         setup,
         witness_rows,
@@ -1106,7 +1150,7 @@ fn append_vector_opening<F, T>(
 
 fn random_rows<F, R>(row_count: usize, row_len: usize, rng: &mut R) -> Vec<Vec<F>>
 where
-    F: Field,
+    F: JoltField,
     R: RngCore,
 {
     (0..row_count)
@@ -1114,7 +1158,7 @@ where
         .collect()
 }
 
-fn zero_rows<F: Field>(row_count: usize, row_len: usize) -> Vec<Vec<F>> {
+fn zero_rows<F: JoltField>(row_count: usize, row_len: usize) -> Vec<Vec<F>> {
     vec![vec![F::zero(); row_len]; row_count]
 }
 
@@ -1124,7 +1168,7 @@ fn fold_rows<F>(
     challenge: F,
 ) -> Result<Vec<Vec<F>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     ensure_len("random witness rows", real.len(), random.len())?;
     let mut folded = Vec::with_capacity(real.len());
@@ -1154,7 +1198,7 @@ fn fold_scalars<F>(
     challenge: F,
 ) -> Result<Vec<F>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     ensure_len(name, real.len(), random.len())?;
     Ok(real
@@ -1171,7 +1215,7 @@ fn fold_error_rows<F>(
     challenge: F,
 ) -> Result<Vec<Vec<F>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     ensure_len("cross-term error rows", real.len(), cross.len())?;
     ensure_len("random error rows", real.len(), random.len())?;
@@ -1216,7 +1260,7 @@ fn fold_error_scalars<F>(
     challenge: F,
 ) -> Result<Vec<F>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     ensure_len(name, real.len(), cross.len())?;
     ensure_len(name, real.len(), random.len())?;
@@ -1237,7 +1281,7 @@ fn error_rows_for<F>(
     row_len: usize,
 ) -> Result<Vec<Vec<F>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let _ = log2_power_of_two("error row length", row_len)?;
     let target_len = row_count
@@ -1247,11 +1291,12 @@ where
             value: row_count,
         })?;
     let z = z_vector(u, witness);
-    let mut errors = (0..r1cs.num_constraints)
-        .map(|row_index| {
-            dot(&r1cs.a[row_index], &z) * dot(&r1cs.b[row_index], &z)
-                - u * dot(&r1cs.c[row_index], &z)
-        })
+    let mut errors = r1cs
+        .a
+        .iter()
+        .zip(&r1cs.b)
+        .zip(&r1cs.c)
+        .map(|((a_row, b_row), c_row)| dot(a_row, &z) * dot(b_row, &z) - u * dot(c_row, &z))
         .collect::<Vec<_>>();
     pad_to_len("error values", &mut errors, target_len)?;
     Ok(errors.chunks(row_len).map(<[F]>::to_vec).collect())
@@ -1267,7 +1312,7 @@ fn cross_term_error_rows_for<F>(
     row_len: usize,
 ) -> Result<Vec<Vec<F>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let _ = log2_power_of_two("error row length", row_len)?;
     let target_len = row_count
@@ -1278,12 +1323,16 @@ where
         })?;
     let real_z = z_vector(real_u, real_witness);
     let random_z = z_vector(random_u, random_witness);
-    let mut errors = (0..r1cs.num_constraints)
-        .map(|row_index| {
-            dot(&r1cs.a[row_index], &real_z) * dot(&r1cs.b[row_index], &random_z)
-                + dot(&r1cs.a[row_index], &random_z) * dot(&r1cs.b[row_index], &real_z)
-                - real_u * dot(&r1cs.c[row_index], &random_z)
-                - random_u * dot(&r1cs.c[row_index], &real_z)
+    let mut errors = r1cs
+        .a
+        .iter()
+        .zip(&r1cs.b)
+        .zip(&r1cs.c)
+        .map(|((a_row, b_row), c_row)| {
+            dot(a_row, &real_z) * dot(b_row, &random_z)
+                + dot(a_row, &random_z) * dot(b_row, &real_z)
+                - real_u * dot(c_row, &random_z)
+                - random_u * dot(c_row, &real_z)
         })
         .collect::<Vec<_>>();
     pad_to_len("cross-term error values", &mut errors, target_len)?;
@@ -1292,7 +1341,7 @@ where
 
 fn boolean_point<F>(index: usize, num_vars: usize) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
 {
     (0..num_vars)
         .map(|bit| {
@@ -1308,7 +1357,7 @@ fn pad_to_len<F>(
     target_len: usize,
 ) -> Result<(), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if values.len() > target_len {
         return Err(ProverError::LengthMismatch {
@@ -1323,7 +1372,7 @@ where
 
 fn z_vector<F>(u: F, witness: &[F]) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
 {
     let mut z = Vec::with_capacity(witness.len() + 1);
     z.push(u);
@@ -1331,9 +1380,13 @@ where
     z
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    reason = "sparse row columns are checked against num_vars at ConstraintMatrices construction and every caller builds z vectors covering at least num_vars entries"
+)]
 fn dot<F>(row: &[(usize, F)], witness: &[F]) -> F
 where
-    F: Field,
+    F: JoltField,
 {
     row.iter()
         .map(|&(column, coefficient)| coefficient * witness[column])
@@ -1342,14 +1395,50 @@ where
 
 fn flatten<F>(rows: &[Vec<F>]) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
 {
     rows.iter().flat_map(|row| row.iter().copied()).collect()
 }
 
+fn range_slice<'a, T, F>(
+    name: &'static str,
+    values: &'a [T],
+    range: std::ops::Range<usize>,
+) -> Result<&'a [T], ProverError<F>>
+where
+    F: JoltField,
+{
+    let actual = values.len();
+    values
+        .get(range.clone())
+        .ok_or(ProverError::LengthMismatch {
+            name,
+            expected: range.end,
+            actual,
+        })
+}
+
+fn range_slice_mut<'a, T, F>(
+    name: &'static str,
+    values: &'a mut [T],
+    range: std::ops::Range<usize>,
+) -> Result<&'a mut [T], ProverError<F>>
+where
+    F: JoltField,
+{
+    let actual = values.len();
+    values
+        .get_mut(range.clone())
+        .ok_or(ProverError::LengthMismatch {
+            name,
+            expected: range.end,
+            actual,
+        })
+}
+
 fn ensure_len<F>(name: &'static str, expected: usize, actual: usize) -> Result<(), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if expected != actual {
         return Err(ProverError::LengthMismatch {
@@ -1363,10 +1452,8 @@ where
 
 fn log2_power_of_two<F>(name: &'static str, value: usize) -> Result<usize, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
-    if value == 0 || !value.is_power_of_two() {
-        return Err(ProverError::InvalidPowerOfTwo { name, value });
-    }
-    Ok(value.trailing_zeros() as usize)
+    jolt_utils::checked_log2_power_of_two(value)
+        .ok_or(ProverError::InvalidPowerOfTwo { name, value })
 }

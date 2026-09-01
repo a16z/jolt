@@ -10,7 +10,7 @@ Jolt inlines are a unique optimization technique that replaces high-level operat
 
 **Custom Instructions**: Jolt enables the creation of custom instructions that can accelerate common operations. These custom instructions must have structured multilinear extension (MLE) polynomials, meaning that they can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html) for details on structured MLEs). By ensuring all custom instructions maintain this property, Jolt achieves the performance benefits of specialized operations without sacrificing the simplicity of its proof system. This is the core innovation that distinguishes Jolt inlines from traditional precompiles or simple assembly optimizations - we compress complex operations into lookup-friendly instructions that remain fully verifiable within the main zkVM, eliminating the need for complex glue logic or separate constraint systems.
 
-**Extended Register Set**: Inline sequences have access to additional virtual registers beyond the standard RISC-V register set (specifically registers 47--63, allocated via `allocate_for_inline()`). This expanded register space allows complex operations to maintain state in registers rather than memory, dramatically reducing load/store operations. See [virtual register layout](../architecture/registers.md#virtual-register-layout) for details.
+**Extended Register Set**: Inline sequences have access to additional virtual registers beyond the standard RISC-V register set (specifically registers 48--127, allocated via `allocate_for_inline()`). This expanded register space allows complex operations to maintain state in registers rather than memory, dramatically reducing load/store operations. See [virtual register layout](../architecture/registers.md#virtual-register-layout) for details.
 
 ## Example Usage
 
@@ -55,12 +55,14 @@ For advanced use cases, you can invoke inlines directly through inline assembly.
 - **funct7**: Identifies the type of operation (e.g., `0x00` for SHA2)
 - **funct3**: Identifies sub-instructions within that operation (e.g., `0x0` for SHA256, `0x1` for SHA256INIT)
 
+Both SHA-256 entries read a raw 64-byte block in SHA-256's big-endian byte order. A native-endian `[u32; 16]` has the wrong layout on little-endian guests.
+
 #### Jolt Core Inlines Reference
 
 | Inline        | Opcode | funct7 | funct3 | Description                                |
 | ------------- | ------ | ------ | ------ | ------------------------------------------ |
-| SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state    |
-| SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants |
+| SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state and big-endian input block    |
+| SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants and big-endian input block |
 | KECCAK256     | 0x0B   | 0x01   | 0x00   | Keccak-256 permutation                     |
 | BLAKE2B       | 0x0B   | 0x02   | 0x00   | BLAKE2b compression                        |
 | BLAKE3        | 0x0B   | 0x03   | 0x00   | BLAKE3 compression                         |
@@ -76,7 +78,7 @@ unsafe {
     // opcode=0x0B (core inline), funct3=0x0 (SHA256), funct7=0x00 (SHA2 family)
     core::arch::asm!(
         ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",
-        in(reg) input_ptr,  // Pointer to 16 u32 words
+        in(reg) input_ptr,  // Pointer to a big-endian 64-byte block
         in(reg) state_ptr,  // Pointer to 8 u32 words
         options(nostack)
     );
@@ -127,16 +129,16 @@ If verification fails, the proof becomes unsatisfiable. This is appropriate when
 
 ## Benchmarks
 
-The table below compares the performance of reference and inline implementations for each hash function, using identical 32KB inputs and the same API across both reference and inline implementations.
+The table below compares the performance of reference and inline implementations for each hash function, using identical 32 KiB inputs and the same API across both reference and inline implementations.
 
 | Hash Function | Implementation | Cycles | Cycles Per Byte (CPB) | Speedup |
 |--------------|----------------|----------------|----------------------|---------|
-| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 10,414,653     | 317.94               | -       |
-| SHA-256      | **Jolt Inline**     | **1,765,207**  | **53.89**            | **5.9×** |
-| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 2,556,519      | 78.04                | -       |
-| Keccak-256   | **Jolt Inline**     | **848,224**    | **25.89**            | **3.01×** |
-| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 968,562        | 29.57                | -       |
-| Blake2B      | **Jolt Inline**     | **340,787**    | **10.40**            | **2.85×** |
+| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 2,380,389      | 72.64                | -       |
+| SHA-256      | **Jolt Inline**     | **1,037,131**  | **31.65**            | **2.30×** |
+| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 1,938,499      | 59.16                | -       |
+| Keccak-256   | **Jolt Inline**     | **805,298**    | **24.58**            | **2.41×** |
+| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 820,496        | 25.04                | -       |
+| Blake2B      | **Jolt Inline**     | **304,185**    | **9.28**             | **2.70×** |
 
 *Note: Blake3 currently supports inputs up to 64 bytes. Full implementation for larger inputs is in development.*
 
@@ -152,9 +154,9 @@ The following table shows the data that can be proved by each of the Jolt inline
 
 | Hash Function | MacBook M4 Max (500 kHz) | Threadripper Pro 7975WX (1.5 MHz) |
 |--------------|---------------------|----------------------|
-| SHA-256 Inline | 9.1 KB/s | 27.1 KB/s |
-| Keccak-256 Inline | 18.8 KB/s | 56.1 KB/s |
-| Blake2B Inline | 47.1 KB/s | 139.1 KB/s |
+| SHA-256 Inline | 15.4 KiB/s | 46.3 KiB/s |
+| Keccak-256 Inline | 19.9 KiB/s | 59.6 KiB/s |
+| Blake2B Inline | 52.6 KiB/s | 157.8 KiB/s |
 
 
 ## Jolt CPU Advantages
@@ -163,7 +165,7 @@ The Jolt zkVM architecture provides several unique optimization opportunities th
 
 ### 1. Extended Virtual Registers
 
-Inline sequences have access to virtual registers beyond the standard RISC-V register set. Of the 32 virtual registers (registers 32--63), the first 8 (registers 32--39) are **reserved** for persistent state (LR/SC reservation addresses and M-mode CSRs) and 7 more (registers 40--46) are reserved for instruction-level virtual sequences. Inline sequences use registers 47--63 (up to 17 registers), allocated via `allocate_for_inline()`. See the [virtual register layout](../architecture/registers.md#virtual-register-layout) for the full map.
+Inline sequences have access to virtual registers beyond the standard RISC-V register set. Of the 96 virtual registers (registers 32--127), the first 8 (registers 32--39) are **reserved** for persistent state (LR/SC reservation addresses and M-mode CSRs) and 8 more (registers 40--47) are reserved for instruction-level virtual sequences. Inline sequences use registers 48--127 (up to 80 registers), allocated via `allocate_for_inline()`. See the [virtual register layout](../architecture/registers.md#virtual-register-layout) for the full map.
 
 This allows complex operations to maintain their working state in registers, eliminating hundreds of load/store operations that would otherwise be required. Importantly, this expanded register usage comes with virtually zero additional cost to the prover, making it an essentially "free" optimization from a proof generation perspective.
 
@@ -190,14 +192,14 @@ When creating user-defined inlines, you must adhere to these critical requiremen
 1. **Opcode Space**: Use opcode `0x2B` for user-defined inlines (`0x0B` is reserved for Jolt core inlines)
 
 2. **Virtual Register Management**:
-   - All inline virtual registers (registers 47--63) must be zeroed out at the end of the inline sequence
+   - All inline virtual registers (registers 48--127) must be zeroed out at the end of the inline sequence
    - Reserved registers (32--39) must not be modified by inlines; these hold persistent state (LR/SC reservations, CSRs)
-   - Instruction registers (40--46) are managed by `allocate()` for virtual sequences and must not be used by inlines
+   - Instruction registers (40--47) are managed by `allocate()` for virtual sequences and must not be used by inlines
    - This ensures clean state for subsequent operations
 
 3. **Register Preservation**:
    - Inlines cannot modify any of the real 32 RISC-V registers, including the destination register (`rd`)
-   - The inline must operate purely through memory operations and virtual registers (47--63)
+   - The inline must operate purely through memory operations and virtual registers (48--127)
 
 4. **Instruction Encoding**:
    - Use `funct7` to identify your operation type (must be unique among user-defined inlines)
@@ -219,7 +221,7 @@ A typical inline implementation consists of three main components:
 
 When designing your inline, consider:
 
-- **Register Allocation**: Maximize use of the 17 inline virtual registers (47--63) to minimize memory operations
+- **Register Allocation**: Use the 80 inline virtual registers (48--127) to minimize memory operations
 - **Custom Instructions**: Identify patterns that could benefit from custom instructions (creating custom user-defined instructions is not available at this time)
 - **Immediate Values**: Leverage 64-bit immediate values to reduce instruction count
 - **Memory Access Patterns**: Structure your algorithm to minimize load/store operations

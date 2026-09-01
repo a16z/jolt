@@ -17,6 +17,14 @@ pub trait ECField: Clone + PartialEq + core::fmt::Debug + Sized {
     fn div_assume_nonzero(&self, other: &Self) -> Self;
     fn to_u64_arr(&self) -> [u64; 4];
     fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Self::Error>;
+    /// # Invariants
+    /// `arr` must be canonical, i.e. in `[0, modulus)`. Reserved for compile-time
+    /// constants and values already reduced by an inline; every other caller must
+    /// use [`ECField::from_u64_arr`]. Non-canonical limbs violate the operand
+    /// contract of the field inlines: depending on the operation this aborts
+    /// host trace generation (`mulq_quotient_advice`'s quotient of two unreduced
+    /// 256-bit operands can exceed four limbs and trip its assert) or produces
+    /// an unprovable/incorrect trace. Never feed untrusted limbs here.
     fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self;
 }
 
@@ -32,10 +40,6 @@ pub trait CurveParams<F: ECField>: Clone {
     }
 
     fn curve_b() -> F;
-
-    /// When true, `double_and_add` checks for divisor == 0 (needed for grumpkin).
-    /// Secp256k1 can skip this check.
-    const DOUBLE_AND_ADD_DIVISOR_CHECK: bool = false;
 
     fn not_on_curve_error() -> Self::Error;
 }
@@ -64,6 +68,13 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
         }
     }
 
+    /// # Invariants
+    /// `(x, y)` must be on the curve (or `(0, 0)` for infinity) and both
+    /// coordinates canonical. Point arithmetic assumes both — an off-curve input
+    /// yields off-curve results with no error, so untrusted coordinates must go
+    /// through [`AffinePoint::new`] or [`AffinePoint::from_u64_arr`]. This
+    /// constructor exists for curve constants and for results of arithmetic that
+    /// is already known to stay on the curve.
     #[inline(always)]
     pub fn new_unchecked(x: F, y: F) -> Self {
         Self {
@@ -128,6 +139,9 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
         Self::new(x, y)
     }
 
+    /// # Invariants
+    /// Same contract as [`AffinePoint::new_unchecked`]: canonical coordinates of
+    /// a point that is already known to be on the curve.
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 8]) -> Self {
         let x = F::from_u64_arr_unchecked(&[arr[0], arr[1], arr[2], arr[3]]);
@@ -203,8 +217,12 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
                 .sub(&other.y)
                 .div_assume_nonzero(&other.x.sub(&self.x));
             let nx2 = other.x.sub(&ns.square());
+            // `divisor == x_self - x_{self+other}`, which vanishes exactly when
+            // `other == -2*self`, i.e. when `2*self + other` is the point at
+            // infinity. Every short Weierstrass curve needs this branch: without
+            // it the division below is by zero.
             let divisor = self.x.dbl().add(&nx2);
-            if C::DOUBLE_AND_ADD_DIVISOR_CHECK && divisor.is_zero() {
+            if divisor.is_zero() {
                 return Self::infinity();
             }
             let t = self.y.dbl().div_assume_nonzero(&divisor).add(&ns);

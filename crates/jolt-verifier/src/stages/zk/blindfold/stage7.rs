@@ -68,7 +68,11 @@ where
             stage: JoltRelationId::HammingWeightClaimReduction,
             reason: "Stage 6 booleanity produced no opening point".to_string(),
         })?;
-    let booleanity_r_address = &booleanity_opening[..hamming_dimensions.log_k_chunk];
+    let booleanity_r_address = point_prefix(
+        booleanity_opening,
+        hamming_dimensions.log_k_chunk,
+        JoltRelationId::HammingWeightClaimReduction,
+    )?;
     values.public(
         JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanity),
         try_eq_mle(&rho_rev, booleanity_r_address)

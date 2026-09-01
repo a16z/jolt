@@ -68,6 +68,9 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             8 => vec![Suffixes::One, Suffixes::XorRotW8],
             12 => vec![Suffixes::One, Suffixes::XorRotW12],
             16 => vec![Suffixes::One, Suffixes::XorRotW16],
+            22 => vec![Suffixes::One, Suffixes::XorRotW22],
+            19 => vec![Suffixes::One, Suffixes::XorRotW19],
+            6 => vec![Suffixes::One, Suffixes::XorRotW6],
             _ => unimplemented!(),
         }
     }
@@ -81,6 +84,9 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             8 => prefixes[Prefixes::XorRotW8] * one + xor_rot,
             12 => prefixes[Prefixes::XorRotW12] * one + xor_rot,
             16 => prefixes[Prefixes::XorRotW16] * one + xor_rot,
+            22 => prefixes[Prefixes::XorRotW22] * one + xor_rot,
+            19 => prefixes[Prefixes::XorRotW19] * one + xor_rot,
+            6 => prefixes[Prefixes::XorRotW6] * one + xor_rot,
             _ => unimplemented!(),
         }
     }
@@ -92,6 +98,7 @@ mod test {
 
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        prefix_suffix_test_with_phase_size,
     };
     use common::constants::XLEN;
 
@@ -101,6 +108,9 @@ mod test {
     type VirtualXORROTW8Table<const XLEN: usize> = VirtualXORROTWTable<XLEN, 8>;
     type VirtualXORROTW12Table<const XLEN: usize> = VirtualXORROTWTable<XLEN, 12>;
     type VirtualXORROTW16Table<const XLEN: usize> = VirtualXORROTWTable<XLEN, 16>;
+    type VirtualXORROTW22Table<const XLEN: usize> = VirtualXORROTWTable<XLEN, 22>;
+    type VirtualXORROTW19Table<const XLEN: usize> = VirtualXORROTWTable<XLEN, 19>;
+    type VirtualXORROTW6Table<const XLEN: usize> = VirtualXORROTWTable<XLEN, 6>;
 
     #[test]
     fn prefix_suffix_7() {
@@ -160,5 +170,53 @@ mod test {
     #[test]
     fn mle_random_16() {
         lookup_table_mle_random_test::<Fr, VirtualXORROTW16Table<XLEN>>();
+    }
+
+    #[test]
+    fn prefix_suffix_22() {
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTW22Table<XLEN>>();
+        prefix_suffix_test_with_phase_size::<XLEN, Fr, VirtualXORROTW22Table<XLEN>>(8, 300);
+    }
+
+    #[test]
+    fn mle_full_hypercube_22() {
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROTW22Table<8>>();
+    }
+
+    #[test]
+    fn mle_random_22() {
+        lookup_table_mle_random_test::<Fr, VirtualXORROTW22Table<XLEN>>();
+    }
+
+    #[test]
+    fn prefix_suffix_19() {
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTW19Table<XLEN>>();
+        prefix_suffix_test_with_phase_size::<XLEN, Fr, VirtualXORROTW19Table<XLEN>>(8, 300);
+    }
+
+    #[test]
+    fn mle_full_hypercube_19() {
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROTW19Table<8>>();
+    }
+
+    #[test]
+    fn mle_random_19() {
+        lookup_table_mle_random_test::<Fr, VirtualXORROTW19Table<XLEN>>();
+    }
+
+    #[test]
+    fn prefix_suffix_6() {
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTW6Table<XLEN>>();
+        prefix_suffix_test_with_phase_size::<XLEN, Fr, VirtualXORROTW6Table<XLEN>>(8, 300);
+    }
+
+    #[test]
+    fn mle_full_hypercube_6() {
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROTW6Table<8>>();
+    }
+
+    #[test]
+    fn mle_random_6() {
+        lookup_table_mle_random_test::<Fr, VirtualXORROTW6Table<XLEN>>();
     }
 }

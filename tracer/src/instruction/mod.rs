@@ -135,11 +135,10 @@ use virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use virtual_change_divisor::VirtualChangeDivisor;
-use virtual_change_divisor_w::VirtualChangeDivisorW;
-use virtual_lw::VirtualLW;
 use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
+use virtual_muliw::VirtualMULIW;
+use virtual_negate_if::VirtualNegateIf;
 use virtual_pext::VirtualPext;
 use virtual_pext_signed::VirtualPextSigned;
 use virtual_pow2::VirtualPow2;
@@ -153,18 +152,25 @@ use virtual_shift_data_b::VirtualShiftDataB;
 use virtual_shift_data_h::VirtualShiftDataH;
 use virtual_shift_data_w::VirtualShiftDataW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
+use virtual_shift_right_bitmask_w::VirtualShiftRightBitmaskW;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sign_extend_word::VirtualSignExtendWord;
 use virtual_sra::VirtualSRA;
 use virtual_srai::VirtualSRAI;
+use virtual_sraiw::VirtualSRAIW;
+use virtual_sraw::VirtualSRAW;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
-use virtual_sw::VirtualSW;
+use virtual_srliw::VirtualSRLIW;
+use virtual_srlw::VirtualSRLW;
 use virtual_window_mask_b::VirtualWindowMaskB;
 use virtual_window_mask_h::VirtualWindowMaskH;
 use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
-use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
+use virtual_xor_rotw::{
+    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
+    VirtualXORROTW7, VirtualXORROTW8,
+};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
@@ -181,20 +187,47 @@ pub mod format;
 
 pub use crate::utils::instruction_macros;
 
-pub(crate) fn fill_virtual_advice(sequence: &mut [Instruction], values: &[u64]) {
-    let mut filled = 0;
-    for instruction in sequence {
-        if let Instruction::VirtualAdvice(advice) = instruction {
-            let Some(value) = values.get(filled) else {
-                panic!("inline sequence did not contain enough virtual advice instructions");
-            };
-            advice.advice = *value;
-            filled += 1;
+/// Trace a multi-row instruction through its per-PC cached inline sequence.
+pub(crate) fn trace_inline_sequence(
+    source: &Instruction,
+    cpu: &mut Cpu,
+    trace: Option<&mut Vec<Cycle>>,
+) {
+    let mut trace = trace;
+    cpu.with_cached_inline_sequence(source, |cpu, rows| {
+        for instr in rows {
+            instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-    if filled != 0 && filled != values.len() {
-        panic!("inline sequence did not contain enough virtual advice instructions");
-    }
+    });
+}
+
+/// Like [`trace_inline_sequence`], but patches `values` into the sequence's
+/// `VirtualAdvice` rows (in order) before tracing them. The advice is written
+/// to per-execution copies of the rows; the cached template is not mutated.
+pub(crate) fn trace_inline_sequence_with_advice(
+    source: &Instruction,
+    cpu: &mut Cpu,
+    values: &[u64],
+    trace: Option<&mut Vec<Cycle>>,
+) {
+    let mut trace = trace;
+    cpu.with_cached_inline_sequence(source, |cpu, rows| {
+        let mut filled = 0;
+        for instr in rows {
+            let mut instr = *instr;
+            if let Instruction::VirtualAdvice(advice) = &mut instr {
+                let Some(value) = values.get(filled) else {
+                    panic!("inline sequence did not contain enough virtual advice instructions");
+                };
+                advice.advice = *value;
+                filled += 1;
+            }
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+        if filled != 0 && filled != values.len() {
+            panic!("inline sequence did not contain enough virtual advice instructions");
+        }
+    });
 }
 
 pub mod add;
@@ -304,12 +337,11 @@ pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
-pub mod virtual_lw;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_muliw;
+pub mod virtual_negate_if;
 pub mod virtual_pext;
 pub mod virtual_pext_signed;
 pub mod virtual_pow2;
@@ -323,13 +355,17 @@ pub mod virtual_shift_data_b;
 pub mod virtual_shift_data_h;
 pub mod virtual_shift_data_w;
 pub mod virtual_shift_right_bitmask;
+pub mod virtual_shift_right_bitmask_w;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend_word;
 pub mod virtual_sra;
 pub mod virtual_srai;
+pub mod virtual_sraiw;
+pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srli;
-pub mod virtual_sw;
+pub mod virtual_srliw;
+pub mod virtual_srlw;
 pub mod virtual_window_mask_b;
 pub mod virtual_window_mask_h;
 pub mod virtual_window_mask_w;
@@ -427,8 +463,13 @@ where
         self.execute(cpu, &mut cycle.ram_access);
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
-        if let Some(trace_vec) = trace {
-            trace_vec.push(cycle.into());
+        match trace {
+            Some(trace_vec) => trace_vec.push(cycle.into()),
+            // This is the single point every emitted row passes through, so
+            // counting row-suppressed executions here makes `trace_len`
+            // row-uniform across trace and execute modes (two-pass parallel
+            // tracing cuts chunks by row count during the execute pass).
+            None => cpu.trace_len += 1,
         }
     }
 }
@@ -437,7 +478,7 @@ macro_rules! define_rv64imac_enums {
     (
         instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
-        #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize, EnumIter)]
+        #[derive(Debug, IntoStaticStr, From, Clone, Copy, Serialize, Deserialize, EnumIter, PartialEq)]
         pub enum Instruction {
             /// No-operation instruction (address)
             NoOp,
@@ -607,11 +648,11 @@ macro_rules! define_rv64imac_enums {
         }
 
         impl Instruction {
-            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-                let source = self.source_instruction();
-                // Rewrite instructions with rd=x0 via inline_sequence so the
-                // constraint system never sees rd=x0.
-                if source.row().operands.rd == Some(0)
+            /// Whether tracing rewrites this instruction through its inline
+            /// sequence so the constraint system never sees rd=x0.
+            #[inline]
+            fn takes_rd0_expansion(&self) -> bool {
+                self.normalized_rd() == Some(0)
                     && !matches!(
                         self,
                         Instruction::SCW(_)
@@ -621,12 +662,16 @@ macro_rules! define_rv64imac_enums {
                             | Instruction::INLINE(_)
                     )
                     && !self.is_field_inline()
-                {
-                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator);
+            }
+
+            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+                if self.takes_rd0_expansion() {
                     let mut trace = trace;
-                    for instr in inline_sequence {
-                        instr.trace_raw(cpu, trace.as_deref_mut());
-                    }
+                    cpu.with_cached_inline_sequence(self, |cpu, rows| {
+                        for instr in rows {
+                            instr.trace_raw(cpu, trace.as_deref_mut());
+                        }
+                    });
                     return;
                 }
                 match self {
@@ -652,29 +697,34 @@ macro_rules! define_rv64imac_enums {
                 }
             }
 
+            /// Applies this instruction's state effects without emitting rows.
+            ///
+            /// Mirror of `trace(cpu, None)`: execute mode must leave the CPU
+            /// bit-identical to trace mode at every tick boundary, because
+            /// two-pass parallel tracing replays chunks from execute-mode
+            /// state. Instructions whose trace path walks a virtual-instruction
+            /// expansion (CSR mirrors in vr34–39, ecall/mret trap sequences,
+            /// advice-fed div/rem, vr40+ temp writes, rd=x0 rewrites) walk the
+            /// same cached expansion here with no sink; dispatching per arm as
+            /// `trace(…, None)` lets non-expanding instructions inline down to
+            /// their raw `execute`.
             pub fn execute(&self, cpu: &mut Cpu) {
+                if self.takes_rd0_expansion() {
+                    cpu.with_cached_inline_sequence(self, |cpu, rows| {
+                        for instr in rows {
+                            instr.trace_raw(cpu, None);
+                        }
+                    });
+                    return;
+                }
                 match self {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
                         $(#[$meta])*
-                        Instruction::$instr(instr) => {
-                            let mut cycle: RISCVCycle<$instr> = RISCVCycle {
-                                instruction: *instr,
-                                register_state: Default::default(),
-                                ram_access: Default::default(),
-                            };
-                            instr.execute(cpu, &mut cycle.ram_access);
-                        }
+                        Instruction::$instr(instr) => instr.trace(cpu, None),
                     )*
-                    Instruction::INLINE(instr) => {
-                        let mut cycle: RISCVCycle<INLINE> = RISCVCycle {
-                            instruction: *instr,
-                            register_state: Default::default(),
-                            ram_access: Default::default(),
-                        };
-                        instr.execute(cpu, &mut cycle.ram_access);
-                    }
+                    Instruction::INLINE(instr) => instr.trace(cpu, None),
                 }
             }
 
@@ -758,6 +808,35 @@ macro_rules! define_rv64imac_enums {
                         Instruction::$instr(instr) => instr.has_side_effects(),
                     )*
                     Instruction::INLINE(instr) => instr.has_side_effects(),
+                }
+            }
+
+            /// The normalized rd operand, without constructing a full
+            /// `SourceInstruction`. Matches `source_instruction().row().operands.rd`
+            /// (same `From<Format> for NormalizedOperands` conversions).
+            #[inline]
+            fn normalized_rd(&self) -> Option<u8> {
+                match self {
+                    Instruction::NoOp => None,
+                    Instruction::UNIMPL => None,
+                    $(
+                        $(#[$meta])*
+                        Instruction::$instr(instr) => NormalizedOperands::from(instr.operands).rd,
+                    )*
+                    Instruction::INLINE(inline) => NormalizedOperands::from(inline.operands).rd,
+                }
+            }
+
+            /// The memory address this instruction was decoded from.
+            pub fn address(&self) -> u64 {
+                match self {
+                    Instruction::NoOp => 0,
+                    Instruction::UNIMPL => 0,
+                    $(
+                        $(#[$meta])*
+                        Instruction::$instr(instr) => instr.address,
+                    )*
+                    Instruction::INLINE(instr) => instr.address,
                 }
             }
 
@@ -2035,7 +2114,7 @@ mod tests {
     #[test]
     fn source_only_tracer_conversion_does_not_fabricate_final_kind() {
         let source = SourceInstruction::new(
-            SourceInstructionKind::ADDW,
+            SourceInstructionKind::MULH,
             SourceInstructionRow {
                 address: 0x1234,
                 operands: NormalizedOperands {
@@ -2051,13 +2130,13 @@ mod tests {
 
         let instruction = Instruction::try_from_source_instruction(source).unwrap();
         assert!(instruction.try_jolt_instruction_row().is_err());
-        let Instruction::ADDW(addw) = instruction else {
-            panic!("expected ADDW tracer instruction");
+        let Instruction::MULH(mulh) = instruction else {
+            panic!("expected MULH tracer instruction");
         };
-        assert_eq!(addw.address, 0x1234);
-        assert_eq!(addw.virtual_sequence_remaining, None);
-        assert!(!addw.is_first_in_sequence);
-        assert!(addw.is_compressed);
+        assert_eq!(mulh.address, 0x1234);
+        assert_eq!(mulh.virtual_sequence_remaining, None);
+        assert!(!mulh.is_first_in_sequence);
+        assert!(mulh.is_compressed);
     }
 
     #[test]

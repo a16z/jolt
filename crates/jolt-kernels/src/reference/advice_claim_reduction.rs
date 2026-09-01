@@ -14,7 +14,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_ch
 use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedReductionLayout,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_witness::JoltWitnessOracle;
 
 use crate::ProverInputs;
@@ -30,7 +30,11 @@ use crate::precommitted_reduction::{
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
-impl<F: Field> AdviceOpeningEvaluation<F> for ReferenceBackend {
+impl<F: JoltField> AdviceOpeningEvaluation<F> for ReferenceBackend {
+    // The backend-neutral `AdviceOpeningEvaluation::evaluate` span lives at
+    // the stage-4 call boundary (`crates/jolt-prover/src/stages/stage4.rs`),
+    // so every implementation inherits it — see the taxonomy's kernel-seam
+    // contract.
     fn evaluate(
         &self,
         _session: &mut ProofSession,
@@ -48,7 +52,7 @@ impl<F: Field> AdviceOpeningEvaluation<F> for ReferenceBackend {
     }
 }
 
-impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -73,7 +77,7 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for ReferenceBackend
     }
 }
 
-impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -104,7 +108,7 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for ReferenceBacke
 /// The advice reduction's cycle-phase kernel: the advice polynomial as the
 /// value table and the eq table of the staged RAM value-check point, both
 /// permuted into Dory opening-round order.
-fn advice_reduction_kernel<F: Field, R>(
+fn advice_reduction_kernel<F: JoltField, R>(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
     r_val: &[F],
@@ -137,7 +141,7 @@ fn advice_reduction_kernel<F: Field, R>(
     CycleReductionKernel::new(reduction, value, eq, Vec::new())
 }
 
-fn advice_table<F: Field>(
+fn advice_table<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     kind: JoltAdviceKind,
     expected_vars: usize,

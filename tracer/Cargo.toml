@@ -65,9 +65,32 @@ clap.workspace = true
 common = { workspace = true, default-features = false }
 postcard.workspace = true
 addr2line.workspace = true
+rayon.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["strum"]
 
 [dev-dependencies]
 rand.workspace = true
+blake3.workspace = true
+# Linked by the trace_* example harnesses for inline inventory registration.
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+
+# Tracer regression harnesses (developer-invoked; not run by cargo test/bench;
+# trace_equivalence also runs in CI). Each file's header documents its gate.
+[[example]]
+name = "trace_bench"
+required-features = ["std"]
+
+[[example]]
+name = "trace_equivalence"
+required-features = ["std"]
+
+[[example]]
+name = "trace_lockstep"
+required-features = ["std"]
+
+[[example]]
+name = "trace_chunk_replay"
+required-features = ["std"]

@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProfileSummary",
+  "description": "The machine-queryable flush-time summary — the stable-schema artifact\n`jolt-eval` telemetry objectives and quick `jq` queries consume.",
+  "type": "object",
+  "properties": {
+    "counters": {
+      "description": "Per-counter sample statistics (`memory_gib`, `cpu_percent`, …).",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/CounterSummary"
+      }
+    },
+    "heap": {
+      "description": "Heap attribution from the allocative lane's mid-stage snapshots,\nkeyed by snapshot label (e.g. `Stage2Batch_prepared`). Empty unless\nthe run was profiled with the `allocative` feature. Exact bytes,\nparsed from the `.folded` snapshots in the run directory; full stack\ndetail stays in those files and renders in the run's `memory.html`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/HeapSnapshot"
+      },
+      "default": {}
+    },
+    "peak_rss_gib": {
+      "description": "Process-lifetime `getrusage` high-water mark, in GiB, sampled by the\nharness right after the workload — before the flush-time trace\nparse/rewrite can inflate it. Includes guest compile / tracer\nexecution, unlike `root.peak_memory_gib`.",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "root": {
+      "description": "`null` if the trace contains no root span (see\n[`taxonomy::ROOT_SPAN`]).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RootSummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "run": {
+      "$ref": "#/$defs/RunMetadata"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "spans": {
+      "description": "Per-label aggregates over every span instance on every thread.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/SpanAggregate"
+      }
+    },
+    "stages": {
+      "description": "Per-stage rollup in pipeline order (only stages present in the trace).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StageSummary"
+      }
+    },
+    "taxonomy_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "taxonomy_version",
+    "run",
+    "spans",
+    "stages",
+    "counters"
+  ],
+  "$defs": {
+    "CounterSummary": {
+      "type": "object",
+      "properties": {
+        "max": {
+          "type": "number",
+          "format": "double"
+        },
+        "mean": {
+          "type": "number",
+          "format": "double"
+        },
+        "samples": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "samples",
+        "max",
+        "mean"
+      ]
+    },
+    "HeapSnapshot": {
+      "description": "One allocative mid-stage snapshot's heap attribution.",
+      "type": "object",
+      "properties": {
+        "at_ns": {
+          "description": "When the snapshot fired, in ns since the root span opened — joined\nfrom the driver's `heap_snapshot` instant event. `null` when the\nevent or the root span is missing (e.g. traces from before the event\nexisted).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "roots": {
+          "description": "Live bytes per root frame — the top level of the folded stacks: the\nmember kernels' concrete type names (which name the relation) and\n`ProofSession`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "total_bytes": {
+          "description": "Total live bytes across every visited root at the snapshot.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "total_bytes",
+        "roots"
+      ]
+    },
+    "RootSummary": {
+      "type": "object",
+      "properties": {
+        "dark_time_fraction": {
+          "type": "number",
+          "format": "double"
+        },
+        "dark_time_ns": {
+          "description": "Root wallclock not covered by any depth-1 child span on the root\nthread.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string"
+        },
+        "peak_memory_gib": {
+          "description": "Max `memory_gib` sample inside the root span's interval.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "wall_time_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "wall_time_ns",
+        "dark_time_ns",
+        "dark_time_fraction"
+      ]
+    },
+    "RunMetadata": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "git_rev": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scale_log2": {
+          "description": "log2 of the padded trace length the workload was scaled to.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "timestamp_unix_secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "workload": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "workload",
+        "scale_log2",
+        "backend",
+        "timestamp_unix_secs"
+      ]
+    },
+    "SpanAggregate": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "Number of span instances with this label.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "self_ns": {
+          "description": "Exclusive time: inclusive minus same-thread children, summed over all\ninstances.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total_ns": {
+          "description": "Inclusive time summed over all instances (may exceed wallclock under\nparallelism).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "total_ns",
+        "self_ns"
+      ]
+    },
+    "StageSummary": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "peak_memory_gib": {
+          "description": "Max `memory_gib` sample inside the stage span's interval; `null` when\nthe stage closed between monitor samples.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "rss_close_gib": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "rss_delta_gib": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "rss_open_gib": {
+          "description": "Boundary RSS from [`StageMemoryRow`]: process RSS when the stage span\nopened / closed (retained growth, not within-stage peak).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "wall_time_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "wall_time_ns"
+      ]
+    }
+  }
+}

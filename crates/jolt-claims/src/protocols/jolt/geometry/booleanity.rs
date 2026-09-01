@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::{challenge, derived, opening};
 
@@ -31,7 +31,7 @@ impl BooleanityDimensions {
 
 pub(crate) fn booleanity_cycle_output<F>(dimensions: BooleanityDimensions) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     booleanity_output(booleanity_output_openings(dimensions.layout))
 }
@@ -41,7 +41,7 @@ where
 /// so the formula has one owner.
 pub(crate) fn booleanity_output<F>(openings: impl IntoIterator<Item = JoltOpeningId>) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let gamma = challenge(BooleanityChallenge::Gamma);
     let eq_address_cycle = derived(BooleanityPublic::EqAddressCycle);

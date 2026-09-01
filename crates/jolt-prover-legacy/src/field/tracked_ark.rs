@@ -406,6 +406,12 @@ impl JoltField for TrackedFr {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_bytes(bytes))
     }
 
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        TrackedFr(<ark_bn254::Fr as JoltField>::from_scalar_challenge_bytes(
+            bytes,
+        ))
+    }
+
     fn num_bits(&self) -> u32 {
         self.0.num_bits()
     }

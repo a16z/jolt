@@ -33,7 +33,7 @@ pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
 impl<D, F> Clone for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn clone(&self) -> Self {
         Self {
@@ -54,7 +54,7 @@ where
 impl<D, F> Default for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn default() -> Self {
         Self::new(b"")
@@ -64,7 +64,7 @@ where
 impl<D, F> std::fmt::Debug for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DigestTranscript")
@@ -77,7 +77,7 @@ where
 impl<D, F> DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     /// Raw multi-byte squeeze backing jolt-prover-legacy's challenge
     /// decoding, so its legacy `Transcript` vocabulary can drive this engine
@@ -96,20 +96,20 @@ where
     }
 
     fn challenge_bytes(&mut self, out: &mut [u8]) {
-        let mut remaining = out.len();
-        let mut offset = 0;
+        let mut out = &mut *out;
 
-        while remaining > 32 {
+        while out.len() > 32 {
             let mut chunk = [0u8; 32];
             self.challenge_bytes32(&mut chunk);
-            out[offset..offset + 32].copy_from_slice(&chunk);
-            offset += 32;
-            remaining -= 32;
+            let (head, tail) = std::mem::take(&mut out).split_at_mut(32);
+            head.copy_from_slice(&chunk);
+            out = tail;
         }
 
         let mut final_chunk = [0u8; 32];
         self.challenge_bytes32(&mut final_chunk);
-        out[offset..offset + remaining].copy_from_slice(&final_chunk[..remaining]);
+        let (src, _) = final_chunk.split_at(out.len());
+        out.copy_from_slice(src);
     }
 
     #[inline]
@@ -126,8 +126,10 @@ where
         #[cfg(test)]
         {
             if let Some(ref expected) = self.test_state.expected_state_history {
+                #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+                let expected_state = expected[self.n_rounds as usize];
                 assert_eq!(
-                    new_state, expected[self.n_rounds as usize],
+                    new_state, expected_state,
                     "Fiat-Shamir transcript mismatch at round {}",
                     self.n_rounds
                 );
@@ -140,7 +142,7 @@ where
 impl<D, F> Transcript for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,
-    F: jolt_field::TranscriptChallenge,
+    F: jolt_field::CanonicalEncoding,
 {
     type Challenge = F;
 
@@ -151,7 +153,8 @@ where
         );
 
         let mut padded = [0u8; MAX_LABEL_LEN];
-        padded[..label.len()].copy_from_slice(label);
+        let (head, _) = padded.split_at_mut(label.len());
+        head.copy_from_slice(label);
 
         let hash: [u8; 32] = D::new().chain_update(padded).finalize().into();
 

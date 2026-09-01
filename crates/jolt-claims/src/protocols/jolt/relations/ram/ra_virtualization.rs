@@ -1,6 +1,6 @@
 //! RAM `ra` virtualization symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::{
@@ -10,6 +10,7 @@ use crate::protocols::jolt::{JoltExpr, JoltRelationId, RamRaVirtualizationPublic
 use crate::SymbolicSumcheck;
 use crate::{derived, opening, InputClaims, OutputClaims};
 
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -62,11 +63,11 @@ impl SymbolicSumcheck for RaVirtualization {
         self.shape.num_committed_ra_polys() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(ram_ra_claim_reduction())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(RamRaVirtualizationPublic::EqCycle) * committed_ram_ra_product(self.shape)
     }
 }
@@ -76,7 +77,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ram::committed_ram_ra;
     use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn ra_virtualization_dimensions(committed_ra_polys: usize) -> RamRaVirtualizationDimensions {
         RamRaVirtualizationDimensions::new(5, committed_ra_polys)

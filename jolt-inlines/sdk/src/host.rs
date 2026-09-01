@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use crate::jolt_asm;
 pub use num_bigint::BigUint as NBigUint;
 use tracer::{
     instruction::inline::INLINE,
@@ -14,61 +15,14 @@ pub use jolt_program::expand::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
     InlineRegister, Value,
 };
-pub use tracer::emulator::cpu::Cpu;
+
+pub use jolt_riscv::{JoltInstructionKind as Kind, SourceInstructionKind as SourceKind};
 pub use tracer::instruction::format::format_inline::FormatInline;
-pub use tracer::instruction::inline::InlineRegistration;
+pub use tracer::instruction::inline::{InlineAdviceContext, InlineAdviceError, InlineRegistration};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
 pub use tracer::InlineExtension;
 
 pub type FieldElementLimbs = [u64; 4];
-
-pub mod instruction {
-    macro_rules! alias_instruction {
-        ($module:ident, $alias:ident, $target:ident) => {
-            pub mod $module {
-                pub use jolt_riscv::instructions::$target as $alias;
-            }
-        };
-    }
-
-    alias_instruction!(add, ADD, Add);
-    alias_instruction!(addi, ADDI, Addi);
-    alias_instruction!(and, AND, And);
-    alias_instruction!(andi, ANDI, AndI);
-    alias_instruction!(andn, ANDN, Andn);
-    alias_instruction!(ld, LD, Ld);
-    alias_instruction!(lui, LUI, Lui);
-    alias_instruction!(lw, LW, Lw);
-    alias_instruction!(mul, MUL, Mul);
-    alias_instruction!(mulhu, MULHU, MulHU);
-    alias_instruction!(or, OR, Or);
-    alias_instruction!(sd, SD, Sd);
-    alias_instruction!(slli, SLLI, SllI);
-    alias_instruction!(sltu, SLTU, SltU);
-    alias_instruction!(srli, SRLI, SrlI);
-    alias_instruction!(srliw, SRLIW, SrlIW);
-    alias_instruction!(sub, SUB, Sub);
-    alias_instruction!(virtual_advice, VirtualAdvice, VirtualAdvice);
-    alias_instruction!(virtual_assert_eq, VirtualAssertEQ, AssertEq);
-    alias_instruction!(virtual_assert_lte, VirtualAssertLTE, AssertLte);
-    pub mod virtual_xor_rot {
-        pub use jolt_riscv::instructions::VirtualXorRot16 as VirtualXORROT16;
-        pub use jolt_riscv::instructions::VirtualXorRot24 as VirtualXORROT24;
-        pub use jolt_riscv::instructions::VirtualXorRot32 as VirtualXORROT32;
-        pub use jolt_riscv::instructions::VirtualXorRot63 as VirtualXORROT63;
-    }
-    pub mod virtual_xor_rotw {
-        pub use jolt_riscv::instructions::VirtualXorRotW12 as VirtualXORROTW12;
-        pub use jolt_riscv::instructions::VirtualXorRotW16 as VirtualXORROTW16;
-        pub use jolt_riscv::instructions::VirtualXorRotW7 as VirtualXORROTW7;
-        pub use jolt_riscv::instructions::VirtualXorRotW8 as VirtualXORROTW8;
-    }
-    alias_instruction!(
-        virtual_zero_extend_word,
-        VirtualZeroExtendWord,
-        VirtualZeroExtendWord
-    );
-}
 
 /// Convert a slice of `u64` limbs (little-endian) to `NBigUint`.
 pub fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
@@ -98,13 +52,21 @@ pub enum MulqType {
     Div,
 }
 
-fn load_field_element_limbs(cpu: &mut Cpu, address: u64) -> FieldElementLimbs {
-    [
-        cpu.mmu.load_doubleword(address).unwrap().0,
-        cpu.mmu.load_doubleword(address + 8).unwrap().0,
-        cpu.mmu.load_doubleword(address + 16).unwrap().0,
-        cpu.mmu.load_doubleword(address + 24).unwrap().0,
-    ]
+/// Read four consecutive doublewords of guest memory (a 256-bit field
+/// element) starting at `address`, surfacing an invalid access as
+/// [`InlineAdviceError`] instead of panicking in the builder.
+pub fn load_field_element_limbs(
+    ctx: &mut dyn InlineAdviceContext,
+    address: u64,
+) -> Result<FieldElementLimbs, InlineAdviceError> {
+    let mut limbs = [0u64; 4];
+    for (i, limb) in limbs.iter_mut().enumerate() {
+        let address = address + 8 * i as u64;
+        *limb = ctx
+            .load_doubleword(address)
+            .ok_or(InlineAdviceError::InvalidLoad { address })?;
+    }
+    Ok(limbs)
 }
 
 fn nbiguint_to_field_limbs(n: &NBigUint) -> FieldElementLimbs {
@@ -117,17 +79,17 @@ fn nbiguint_to_field_limbs(n: &NBigUint) -> FieldElementLimbs {
 
 fn mulq_operands(
     operands: &FormatInline,
-    cpu: &mut Cpu,
+    ctx: &mut dyn InlineAdviceContext,
     op_type: &MulqType,
-) -> (FieldElementLimbs, FieldElementLimbs) {
-    let a_addr = cpu.x[operands.rs1 as usize] as u64;
-    let a = load_field_element_limbs(cpu, a_addr);
+) -> Result<(FieldElementLimbs, FieldElementLimbs), InlineAdviceError> {
+    let a_addr = ctx.register(operands.rs1 as usize);
+    let a = load_field_element_limbs(ctx, a_addr)?;
     let b_addr = match op_type {
         MulqType::Square => a_addr,
-        _ => cpu.x[operands.rs2 as usize] as u64,
+        _ => ctx.register(operands.rs2 as usize),
     };
-    let b = load_field_element_limbs(cpu, b_addr);
-    (a, b)
+    let b = load_field_element_limbs(ctx, b_addr)?;
+    Ok((a, b))
 }
 
 /// Shared quotient advice computation for modular multiply/square inlines.
@@ -136,20 +98,20 @@ fn mulq_operands(
 /// `w` such that `a * b = w * q + c`.
 pub fn mulq_quotient_advice(
     operands: &FormatInline,
-    cpu: &mut Cpu,
+    ctx: &mut dyn InlineAdviceContext,
     is_scalar_field: bool,
     op_type: &MulqType,
     modulus: impl Fn(bool) -> NBigUint,
-) -> QuotientAdvice {
+) -> Result<QuotientAdvice, InlineAdviceError> {
     assert!(
         !matches!(op_type, MulqType::Div),
         "division advice must use mulq_division_advice"
     );
-    let (a, b) = mulq_operands(operands, cpu, op_type);
+    let (a, b) = mulq_operands(operands, ctx, op_type)?;
     let quotient = (limbs_to_nbiguint(&a) * limbs_to_nbiguint(&b)) / modulus(is_scalar_field);
-    QuotientAdvice {
+    Ok(QuotientAdvice {
         quotient: nbiguint_to_field_limbs(&quotient),
-    }
+    })
 }
 
 /// Shared advice computation for modular division inlines.
@@ -157,20 +119,29 @@ pub fn mulq_quotient_advice(
 /// The returned `result` is `a / b`; `quotient` is `w` such that
 /// `b * result = w * q + a`. Runtime advice rows consume these values as
 /// `result[0], quotient[0], result[1], quotient[1], ...`.
+///
+/// WARNING: `field_inv_mul` is expected to panic when `b == 0`. For a nonzero
+/// dividend no advice satisfies `b * result == a mod q`, so the inline's
+/// `VirtualAssertEQ` rows would abort tracing anyway — panicking keeps the
+/// diagnostic. For `0 / 0` the identity IS satisfiable (`result = 0`, which is
+/// what the grumpkin advice returns); aborting there too is a deliberate
+/// policy, since a zero divisor is a guest bug either way. Callers must reject
+/// zero divisors before the inline (see `AffinePoint::double_and_add` and the
+/// `ecdsa_verify` input checks).
 pub fn mulq_division_advice(
     operands: &FormatInline,
-    cpu: &mut Cpu,
+    ctx: &mut dyn InlineAdviceContext,
     is_scalar_field: bool,
     modulus: impl Fn(bool) -> NBigUint,
     field_inv_mul: impl Fn(&FieldElementLimbs, &FieldElementLimbs) -> NBigUint,
-) -> ModularDivisionAdvice {
-    let (a, b) = mulq_operands(operands, cpu, &MulqType::Div);
+) -> Result<ModularDivisionAdvice, InlineAdviceError> {
+    let (a, b) = mulq_operands(operands, ctx, &MulqType::Div)?;
     let result = field_inv_mul(&b, &a);
     let quotient = (limbs_to_nbiguint(&b) * &result) / modulus(is_scalar_field);
-    ModularDivisionAdvice {
+    Ok(ModularDivisionAdvice {
         result: nbiguint_to_field_limbs(&result),
         quotient: nbiguint_to_field_limbs(&quotient),
-    }
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -301,13 +272,21 @@ pub trait InlineOp: Send + Sync {
     ///
     /// The returned values are consumed in order by `VirtualAdvice` rows emitted
     /// by `build_sequence`. Returning `NoAdvice` means the static recipe contains
-    /// no runtime-advice rows.
-    fn build_advice(_operands: FormatInline, _cpu: &mut Cpu) -> Self::Advice {
-        Self::Advice::default()
+    /// no runtime-advice rows. An error means the builder read invalid guest
+    /// state (advice builders dereference raw guest pointers from operand
+    /// registers); how it surfaces is the execution backend's choice.
+    fn build_advice(
+        _operands: FormatInline,
+        _ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Self::Advice, InlineAdviceError> {
+        Ok(Self::Advice::default())
     }
 
-    fn build_runtime_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        Self::build_advice(operands, cpu).into_runtime_advice()
+    fn build_runtime_advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Option<VecDeque<u64>>, InlineAdviceError> {
+        Ok(Self::build_advice(operands, ctx)?.into_runtime_advice())
     }
 }
 
@@ -355,23 +334,25 @@ pub trait InlineBuilderExt {
 
 impl InlineBuilderExt for InlineExpansionBuilder {
     fn load_u64_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
-        use instruction::ld::LD;
         for (i, register) in registers.iter().enumerate() {
-            self.emit_ld::<LD>(**register, base, offset_start + i as i64 * 8);
+            self.emit_ld(Kind::LD, **register, base, offset_start + i as i64 * 8);
         }
     }
 
     fn store_u64_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
-        use instruction::sd::SD;
         for (i, register) in registers.iter().enumerate() {
-            self.emit_s::<SD>(base, **register, offset_start + i as i64 * 8);
+            self.emit_s(Kind::SD, base, **register, offset_start + i as i64 * 8);
         }
     }
 
     fn load_u32_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
-        use instruction::lw::LW;
         for (i, register) in registers.iter().enumerate() {
-            self.emit_ld::<LW>(**register, base, offset_start + i as i64 * 4);
+            self.emit_ld(
+                SourceKind::LW,
+                **register,
+                base,
+                offset_start + i as i64 * 4,
+            );
         }
     }
 
@@ -395,43 +376,40 @@ impl InlineBuilderExt for InlineExpansionBuilder {
     /// Clean extraction: `vr_lo` gets zero-extended low 32 bits; `vr_hi` gets high 32 bits.
     /// Clobbers `temp` for the intermediate 64-bit load.
     fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        use instruction::ld::LD;
-        use instruction::srli::SRLI;
-        use instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
-        self.emit_ld::<LD>(temp, base, offset);
-        self.emit_i::<VirtualZeroExtendWord>(vr_lo, temp, 0);
-        self.emit_i::<SRLI>(vr_hi, temp, 32);
+        jolt_asm!(self, {
+            ld temp, base, offset;
+            zextw vr_lo, temp;
+            srli vr_hi, temp, 32;
+        });
     }
 
     /// Store two u32 values to 8-byte aligned `base+offset` as a single SD.
     /// WARNING: clobbers both `vr_lo` and `vr_hi`.
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        use instruction::or::OR;
-        use instruction::sd::SD;
-        use instruction::slli::SLLI;
-        use instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
-        self.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_lo, 0);
-        self.emit_i::<SLLI>(vr_hi, vr_hi, 32);
-        self.emit_r::<OR>(vr_lo, vr_hi, vr_lo);
-        self.emit_s::<SD>(base, vr_lo, offset);
+        jolt_asm!(self, {
+            zextw vr_lo, vr_lo;
+            slli vr_hi, vr_hi, 32;
+            or vr_lo, vr_hi, vr_lo;
+            sd base, vr_lo, offset;
+        });
     }
 
     /// Load two packed u32 from 8-byte aligned `base+offset` into `vr_lo` and `vr_hi`.
     /// WARNING: leaves junk in upper 32 bits of `vr_lo`. Safe only when downstream ops
     /// preserve correctness independent of upper bits (e.g. SHA-256 32-bit arithmetic).
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        use instruction::ld::LD;
-        use instruction::srli::SRLI;
-        self.emit_ld::<LD>(vr_lo, base, offset);
-        self.emit_i::<SRLI>(vr_hi, vr_lo, 32);
+        jolt_asm!(self, {
+            ld vr_lo, base, offset;
+            srli vr_hi, vr_lo, 32;
+        });
     }
 
     fn emit_advice_stores(&mut self, vr: u8, base_reg: u8, count: usize) {
-        use instruction::sd::SD;
-        use instruction::virtual_advice::VirtualAdvice;
         for i in 0..count {
-            self.emit_j::<VirtualAdvice>(vr, 0);
-            self.emit_s::<SD>(base_reg, vr, i as i64 * 8);
+            jolt_asm!(self, {
+                advice vr;
+                sd base_reg, vr, i as i64 * 8;
+            });
         }
     }
 }
@@ -473,29 +451,37 @@ pub trait MulAccExt {
 
 impl MulAccExt for InlineExpansionBuilder {
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r::<instruction::mul::MUL>(aux, a, b);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+        jolt_asm!(self, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+        });
     }
 
     fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
+        jolt_asm!(self, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+        });
     }
 
     fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r::<instruction::mul::MUL>(aux, a, b);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+        jolt_asm!(self, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
 
     fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+        jolt_asm!(self, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
 
     fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
@@ -515,52 +501,64 @@ impl MulAccExt for InlineExpansionBuilder {
     }
 
     fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r::<instruction::mul::MUL>(aux, a, b);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+        jolt_asm!(self, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
 
     fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(c2, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(aux, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+        jolt_asm!(self, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
 
     fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.emit_r::<instruction::mul::MUL>(aux, a, b);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+        jolt_asm!(self, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+        });
     }
 
     fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.emit_r::<instruction::mulhu::MULHU>(aux, a, b);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
-        self.emit_r::<instruction::add::ADD>(c1, c1, aux);
-        self.emit_r::<instruction::sltu::SLTU>(aux2, c1, aux);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux2);
+        jolt_asm!(self, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+        });
     }
 
     fn adc(&mut self, c2: u8, c1: u8, val: u8) {
-        self.emit_r::<instruction::add::ADD>(c1, c1, val);
-        self.emit_r::<instruction::sltu::SLTU>(c2, c1, val);
+        jolt_asm!(self, {
+            add c1, c1, val;
+            sltu c2, c1, val;
+        });
     }
 
     fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8) {
-        self.emit_r::<instruction::add::ADD>(c1, c1, val);
-        self.emit_r::<instruction::sltu::SLTU>(aux, c1, val);
-        self.emit_r::<instruction::add::ADD>(c2, c2, aux);
+        jolt_asm!(self, {
+            add c1, c1, val;
+            sltu aux, c1, val;
+            add c2, c2, aux;
+        });
     }
 
     fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8) {
@@ -626,12 +624,12 @@ macro_rules! __submit_inline_op {
             $crate::host::InlineRegistration {
                 opcode: <$op as $crate::host::InlineOp>::OPCODE,
                 funct3: <$op as $crate::host::InlineOp>::FUNCT3,
-            funct7: <$op as $crate::host::InlineOp>::FUNCT7,
-            extension: $extension,
-            name: <$op as $crate::host::InlineOp>::NAME,
-            build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
-            build_advice: <$op as $crate::host::InlineOp>::build_runtime_advice,
-        }
+                funct7: <$op as $crate::host::InlineOp>::FUNCT7,
+                extension: $extension,
+                name: <$op as $crate::host::InlineOp>::NAME,
+                build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
+                build_advice: <$op as $crate::host::InlineOp>::build_runtime_advice,
+            }
         }
     };
 }

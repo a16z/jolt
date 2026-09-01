@@ -26,14 +26,14 @@ use jolt_claims::protocols::jolt::{
     ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::outputs::BytecodeReductionWeights;
 use crate::VerifierError;
 
 #[derive(Clone)]
-pub struct BytecodeReductionAddressPhase<F: Field> {
+pub struct BytecodeReductionAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::bytecode::AddressPhase,
     layout: BytecodeClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -43,7 +43,7 @@ pub struct BytecodeReductionAddressPhase<F: Field> {
     weights: Option<BytecodeReductionWeights<F>>,
 }
 
-impl<F: Field> BytecodeReductionAddressPhase<F> {
+impl<F: JoltField> BytecodeReductionAddressPhase<F> {
     /// `weights` are the stage-6b bytecode cycle-phase outputs (`None` in ZK,
     /// clear-only aux); `cycle_phase_variables` and the layout are known before the
     /// stage-7 sumcheck, so a single construction serves both the input claim and
@@ -84,7 +84,7 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
     type Symbolic = relations::claim_reductions::bytecode::AddressPhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -146,7 +146,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
 }
 
 #[derive(Clone)]
-pub struct ProgramImageReductionAddressPhase<F: Field> {
+pub struct ProgramImageReductionAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::program_image::AddressPhase,
     layout: ProgramImageClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -157,7 +157,7 @@ pub struct ProgramImageReductionAddressPhase<F: Field> {
     reference_opening_point: Option<Vec<F>>,
 }
 
-impl<F: Field> ProgramImageReductionAddressPhase<F> {
+impl<F: JoltField> ProgramImageReductionAddressPhase<F> {
     /// `reference_opening_point` is the RAM address point of the staged
     /// `ProgramImageInitContributionRw` opening (from stage 4), `None` in ZK
     /// (clear-only aux). It and the cycle-phase variables are known before the
@@ -185,7 +185,7 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
     type Symbolic = relations::claim_reductions::program_image::AddressPhase;
 
     fn symbolic(&self) -> &Self::Symbolic {

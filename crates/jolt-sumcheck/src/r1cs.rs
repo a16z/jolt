@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 use thiserror::Error;
 
@@ -98,7 +98,7 @@ pub fn allocate_sumcheck_r1cs_layout<F, R>(
     rounds: &[R],
 ) -> Result<SumcheckR1csLayout, SumcheckR1csError>
 where
-    F: Field,
+    F: JoltField,
     R: SumcheckR1csRound<F>,
 {
     validate_rounds_statement(statement, rounds)?;
@@ -135,7 +135,7 @@ pub fn append_sumcheck_r1cs_constraints<F, R>(
     layout: &SumcheckR1csLayout,
 ) -> Result<(), SumcheckR1csError>
 where
-    F: Field,
+    F: JoltField,
     R: SumcheckR1csRound<F>,
 {
     append_sumcheck_r1cs_constraints_for_domain(
@@ -155,7 +155,7 @@ pub fn append_sumcheck_r1cs_constraints_for_domain<F, R, D>(
     domain: D,
 ) -> Result<(), SumcheckR1csError>
 where
-    F: Field,
+    F: JoltField,
     R: SumcheckR1csRound<F>,
     D: SumcheckDomain<F>,
 {
@@ -190,7 +190,7 @@ fn validate_layout<F, R>(
     layout: &SumcheckR1csLayout,
 ) -> Result<(), SumcheckR1csError>
 where
-    F: Field,
+    F: JoltField,
     R: SumcheckR1csRound<F>,
 {
     validate_rounds_statement(statement, rounds)?;
@@ -280,7 +280,7 @@ fn validate_variable(variable: Variable, num_vars: usize) -> Result<(), Sumcheck
     Ok(())
 }
 
-fn append_round_constraints<F: Field>(
+fn append_round_constraints<F: JoltField>(
     builder: &mut R1csBuilder<F>,
     round_index: usize,
     round: &SumcheckR1csRoundLayout,
@@ -296,7 +296,7 @@ fn append_round_constraints<F: Field>(
     Ok(())
 }
 
-fn round_sum_lc<F: Field>(
+fn round_sum_lc<F: JoltField>(
     round_index: usize,
     round: &SumcheckR1csRoundLayout,
     round_sum_coefficients: &[F],
@@ -317,7 +317,7 @@ fn round_sum_lc<F: Field>(
     ))
 }
 
-fn polynomial_eval_lc<F: Field>(coefficients: &[Variable], point: F) -> LinearCombination<F> {
+fn polynomial_eval_lc<F: JoltField>(coefficients: &[Variable], point: F) -> LinearCombination<F> {
     let mut result = LinearCombination::zero();
     let mut power = F::one();
 
@@ -330,10 +330,14 @@ fn polynomial_eval_lc<F: Field>(coefficients: &[Variable], point: F) -> LinearCo
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
+#[expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "tests may panic on assertion failures and index fixture data"
+)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct Round {

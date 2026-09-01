@@ -38,7 +38,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::SuffixEval;
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
@@ -71,7 +71,7 @@ pub struct InstructionReadRafWitness {
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
-impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -96,14 +96,20 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for ReferenceBackend {
 /// address identity): `poly(k) = P(chunk) · Q_shift + Q_value` over the
 /// current phase's chunk domain, with the fully bound `P` becoming the next
 /// phase's checkpoint.
-struct RafDecomposition<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct RafDecomposition<F: JoltField> {
     prefix: Polynomial<F>,
     q_shift: Polynomial<F>,
     q_value: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     checkpoint: F,
 }
 
-impl<F: Field> RafDecomposition<F> {
+impl<F: JoltField> RafDecomposition<F> {
     fn empty() -> Self {
         Self {
             prefix: Polynomial::new(vec![F::zero()]),
@@ -144,7 +150,7 @@ impl<F: Field> RafDecomposition<F> {
 
 /// The linear extension of a dense table's current top variable: `evals[b]`
 /// at 0, `evals[b + half]` at 1, `2·hi − lo` at 2.
-fn extension_eval<F: Field>(evals: &[F], b: usize, half: usize, c: usize) -> F {
+fn extension_eval<F: JoltField>(evals: &[F], b: usize, half: usize, c: usize) -> F {
     let lo = evals[b];
     let hi = evals[b + half];
     match c {
@@ -157,30 +163,47 @@ fn extension_eval<F: Field>(evals: &[F], b: usize, half: usize, c: usize) -> F {
 /// Cycle-indexed tables for the last `log_T` rounds: `eq(r_reduction, ·)`,
 /// the combined `Val + γ·RafVal` at the bound address, and the virtual `ra`
 /// chunk selectors.
-struct CycleTables<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct CycleTables<F: JoltField> {
     eq_reduction: Polynomial<F>,
     combined_val: Polynomial<F>,
     ra: Vec<Polynomial<F>>,
 }
 
-pub struct InstructionReadRafKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub struct InstructionReadRafKernel<F: JoltField> {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: InstructionReadRafDimensions,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_reduction: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rows: Vec<InstructionReadRafWitness>,
     /// Per-table cycle buckets, indexed by `LookupTableKind::index()`.
     buckets: Vec<Vec<usize>>,
     /// Condensed per-cycle eq weights: after phase `p` starts,
     /// `u[j] = eq(r_reduction, j) · Π_{q<p} eq(phase-q challenges, chunk_q(k_j))`.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     u_evals: Vec<F>,
     /// The table-prefix checkpoints, one per `ALL_PREFIXES` entry (fully
     /// bound values of completed phases' prefix chunk polynomials).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
     /// The materialized prefix chunk polynomials for the current phase,
     /// in `ALL_PREFIXES` order.
     prefix_tables: Vec<Polynomial<F>>,
     /// Per present table (enum index, suffix `Q` polynomials in
     /// `table.suffixes()` order) for the current phase.
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_keyed_polys))]
     suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
     raf_left: RafDecomposition<F>,
     raf_right: RafDecomposition<F>,
@@ -191,14 +214,16 @@ pub struct InstructionReadRafKernel<F: Field> {
     raf_upper_all_ones: RafDecomposition<F>,
     /// Completed phases' bound-challenge eq tables (`v[p][x] =
     /// eq(phase-p challenges, x)`, MSB-first).
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     v_tables: Vec<Vec<F>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     phase_challenges: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     cycle_challenges: Vec<F>,
     cycle_tables: Option<CycleTables<F>>,
     rounds_bound: usize,
 }
-
-impl<F: Field> InstructionReadRafKernel<F> {
+impl<F: JoltField> InstructionReadRafKernel<F> {
     pub fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
@@ -616,7 +641,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
+impl<F: JoltField> ProveRounds<F> for InstructionReadRafKernel<F> {
     fn num_rounds(&self) -> usize {
         self.dimensions.sumcheck_rounds()
     }
@@ -651,7 +676,7 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
     }
 }
 
-impl<F: Field> InstructionReadRafKernel<F> {
+impl<F: JoltField> InstructionReadRafKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         if self.rounds_bound < self.address_bits() {
             for table in &mut self.prefix_tables {
@@ -712,7 +737,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for InstructionReadRafKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for InstructionReadRafKernel<F> {
     type Relation = InstructionReadRaf<F>;
 
     fn output_claims(

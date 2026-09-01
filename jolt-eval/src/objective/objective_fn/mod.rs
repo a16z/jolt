@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use crate::agent::DiffScope;
 
+use super::telemetry::{
+    MODULAR_COMMIT_TIME, MODULAR_PROVER_TIME, MODULAR_ROUND_LOOP_TIME, MODULAR_STAGE_TOTALS,
+};
 use super::{
     OptimizationObjective, BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH, COGNITIVE_COMPLEXITY, HALSTEAD_BUGS,
     LLOC, MUL_I128, MUL_I64, MUL_U128, MUL_U64, NAIVE_SORT_TIME,
@@ -39,6 +42,10 @@ impl ObjectiveFunction {
             MINIMIZE_MUL_I64,
             MINIMIZE_MUL_U128,
             MINIMIZE_MUL_I128,
+            MINIMIZE_MODULAR_PROVER_TIME,
+            MINIMIZE_MODULAR_COMMIT_TIME,
+            MINIMIZE_MODULAR_ROUND_LOOP_TIME,
+            MINIMIZE_MODULAR_STAGE_TOTALS,
         ]
     }
 
@@ -124,6 +131,55 @@ pub const MINIMIZE_MUL_I128: ObjectiveFunction = ObjectiveFunction {
     name: "minimize_mul_i128",
     inputs: &[MUL_I128],
     evaluate: |m, _| m.get(&MUL_I128).copied().unwrap_or(f64::INFINITY),
+};
+
+// Curated telemetry wrappers over the modular prover's summary.json
+// (fibonacci workload — the cheapest, sensible for optimizer loops). Any
+// other span/workload is reachable via the raw key grammar; see
+// `objective::telemetry`.
+
+pub const MINIMIZE_MODULAR_PROVER_TIME: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_modular_prover_time",
+    inputs: &[MODULAR_PROVER_TIME],
+    evaluate: |m, _| {
+        m.get(&MODULAR_PROVER_TIME)
+            .copied()
+            .unwrap_or(f64::INFINITY)
+    },
+};
+
+pub const MINIMIZE_MODULAR_COMMIT_TIME: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_modular_commit_time",
+    inputs: &[MODULAR_COMMIT_TIME],
+    evaluate: |m, _| {
+        m.get(&MODULAR_COMMIT_TIME)
+            .copied()
+            .unwrap_or(f64::INFINITY)
+    },
+};
+
+/// The batched sumcheck round loop, summed over every stage's `prove_batch`.
+pub const MINIMIZE_MODULAR_ROUND_LOOP_TIME: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_modular_round_loop_time",
+    inputs: &[MODULAR_ROUND_LOOP_TIME],
+    evaluate: |m, _| {
+        m.get(&MODULAR_ROUND_LOOP_TIME)
+            .copied()
+            .unwrap_or(f64::INFINITY)
+    },
+};
+
+/// Sum of the per-stage inclusive totals — one profile run feeds all ten
+/// inputs, so a stage-shifting regression cannot hide from the aggregate.
+pub const MINIMIZE_MODULAR_STAGE_TOTALS: ObjectiveFunction = ObjectiveFunction {
+    name: "minimize_modular_stage_totals",
+    inputs: &MODULAR_STAGE_TOTALS,
+    evaluate: |m, _| {
+        MODULAR_STAGE_TOTALS
+            .iter()
+            .map(|obj| m.get(obj).copied().unwrap_or(f64::INFINITY))
+            .sum()
+    },
 };
 
 #[cfg(test)]

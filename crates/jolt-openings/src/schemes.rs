@@ -9,7 +9,7 @@
 use std::{fmt::Debug, marker::PhantomData};
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::{Field, FromPrimitiveInt};
+use jolt_field::{JoltField, Ring};
 use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
@@ -35,13 +35,19 @@ pub trait GroupCommitmentMetadata {
 pub trait GroupSetupMetadata {
     fn max_num_vars(&self) -> usize;
     fn max_num_polys_per_commitment_group(&self) -> usize;
+    /// Total number of polynomials admitted across every group in one native
+    /// opening. For ordinary single-group schemes this is identical to the
+    /// group-local limit.
+    fn max_total_batch_polys(&self) -> usize {
+        self.max_num_polys_per_commitment_group()
+    }
     fn default_layout_digest(&self) -> [u8; 32];
     fn one_hot_k(&self) -> usize;
 }
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
 pub trait CommitmentScheme: Commitment {
-    type Field: Field;
+    type Field: JoltField;
     type Proof: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
@@ -80,37 +86,64 @@ pub trait CommitmentScheme: Commitment {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
 
-    /// Opens every member of one commitment group at a shared point in a
-    /// single proof. Only schemes with a native same-point batch (e.g. Akita)
-    /// support this; the hint must be the group commit's hint covering all
-    /// members.
-    fn open_batch(
+    /// Commits a group of polynomials as one commitment object whose members
+    /// are opened together at a shared point. Only schemes
+    /// with a native commitment group (e.g. Akita's one-hot flavor) support
+    /// this; `layout_digest` is the protocol-owned digest binding the ordered
+    /// member identities.
+    fn commit_batch(
         _polynomials: &[&dyn MultilinearPoly<Self::Field>],
-        _point: &[Self::Field],
-        _evaluations: &[Self::Field],
+        _layout_digest: [u8; 32],
         _setup: &Self::ProverSetup,
-        _hint: Self::OpeningHint,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<Self::Proof, OpeningsError> {
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
         Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native same-point batch opening".to_owned(),
+            "this commitment scheme has no native commitment group".to_owned(),
         ))
     }
 
-    /// Verifies a single proof opening every member of one commitment group
-    /// at a shared point.
+    /// Proves one batch containing zero or more independently committed groups
+    /// followed by a final commitment group. Every opening runs from retained
+    /// commit-time state; there is deliberately no polynomial argument.
+    // TODO(#1782): fold the retained-state contract into a first-class
+    // committed-object type on this trait instead of the `OpeningHint`
+    // side-channel.
+    fn prove_batch(
+        _setup: &Self::ProverSetup,
+        _precommitted: Vec<PrecommittedOpening<Self::Field, Self::Output, Self::OpeningHint>>,
+        _final_group: GroupOpeningClaim<Self::Field, Self::Output>,
+        _final_hint: Self::OpeningHint,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Result<Self::Proof, OpeningsError> {
+        Err(OpeningsError::InvalidBatch(
+            "this commitment scheme has no native group-batch opening".to_owned(),
+        ))
+    }
+
+    /// Verifies one proof opening zero or more independently committed groups
+    /// at their group-local points, followed by a final commitment group.
     fn verify_batch(
-        _commitment: &Self::Output,
-        _point: &[Self::Field],
-        _evaluations: &[Self::Field],
-        _proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
+        _precommitted: &[PrecommittedClaim<Self::Field, Self::Output>],
+        _final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
+        _proof: &Self::Proof,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native same-point batch opening".to_owned(),
+            "this commitment scheme has no native group-batch opening".to_owned(),
         ))
     }
+}
+
+/// Transparent derivation of a singleton commitment-object setup from the
+/// object's public shape alone (one polynomial at `num_vars`, seeded by the
+/// object plan's layout digest): prover and verifier re-derive
+/// byte-identical setups independently, so packed objects need no setup
+/// ceremony or transport.
+pub trait TransparentObjectSetup: CommitmentScheme {
+    fn transparent_object_setup(
+        num_vars: usize,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 }
 
 /// C = Σ s_i · C_i.
@@ -164,7 +197,7 @@ pub trait StreamingCommitment: CommitmentScheme {
         let values: Vec<Self::Field> = chunk
             .iter()
             .copied()
-            .map(<Self::Field as FromPrimitiveInt>::from_u64)
+            .map(<Self::Field as Ring>::from_u64)
             .collect();
         Self::feed(partial, &values, setup);
     }
@@ -173,9 +206,31 @@ pub trait StreamingCommitment: CommitmentScheme {
         let values: Vec<Self::Field> = chunk
             .iter()
             .copied()
-            .map(<Self::Field as FromPrimitiveInt>::from_i128)
+            .map(<Self::Field as Ring>::from_i128)
             .collect();
         Self::feed(partial, &values, setup);
+    }
+
+    /// Feed a batch of consecutive `row_width`-wide rows, with values
+    /// produced by `value` per flat index (`count` a multiple of
+    /// `row_width`) — equivalent to calling [`feed_i128`](Self::feed_i128)
+    /// on each window in order. Each row's commitment is independent and
+    /// only the append order is sequenced, so schemes may override this to
+    /// compute the windows in parallel; the closure lets callers feed
+    /// straight off a packed source without staging the whole batch.
+    fn feed_i128_rows_with(
+        partial: &mut Self::PartialCommitment,
+        value: impl Fn(usize) -> i128 + Sync,
+        count: usize,
+        row_width: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        let mut row = Vec::with_capacity(row_width);
+        for base in (0..count).step_by(row_width) {
+            row.clear();
+            row.extend((base..base + row_width).map(&value));
+            Self::feed_i128(partial, &row, setup);
+        }
     }
 
     fn begin_one_hot_column_major_stream(
@@ -189,6 +244,33 @@ pub trait StreamingCommitment: CommitmentScheme {
         one_hot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::OneHotChunkCommitment;
+
+    /// Process a batch of consecutive `chunk_width`-column one-hot chunks,
+    /// with hot addresses produced by `hot_address` per flat index —
+    /// equivalent to calling
+    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk) on each window
+    /// in order and collecting the results. Chunk commitments are
+    /// independent, so schemes may override this to compute the windows in
+    /// parallel; the closure lets callers feed straight off a packed source
+    /// without staging the whole batch.
+    fn process_one_hot_chunks_with(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        hot_address: impl Fn(usize) -> Option<usize> + Sync,
+        count: usize,
+        chunk_width: usize,
+    ) -> Vec<Self::OneHotChunkCommitment> {
+        let mut chunk = Vec::with_capacity(chunk_width);
+        (0..count)
+            .step_by(chunk_width)
+            .map(|base| {
+                chunk.clear();
+                chunk.extend((base..(base + chunk_width).min(count)).map(&hot_address));
+                Self::process_one_hot_chunk(context, setup, one_hot_k, &chunk)
+            })
+            .collect()
+    }
 
     fn finish_with_hint(
         partial: Self::PartialCommitment,
@@ -291,7 +373,7 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
 /// - [`Hints`](Self::Hints) are the commit-time auxiliary data
 ///   ([`CommitmentScheme::OpeningHint`]) the PCS reuses when opening.
 pub trait BatchOpeningScheme {
-    type Field: Field;
+    type Field: JoltField;
     type ProverSetup;
     type VerifierSetup;
     /// Public opening claims plus the commitments they refer to.
@@ -325,6 +407,18 @@ pub trait BatchOpeningScheme {
         T: Transcript<Challenge = Self::Field>;
 }
 
+/// The prover-side outputs of a hiding batch opening: the native proof, the
+/// hiding commitment binding the joint evaluation, that commitment's blind,
+/// and the joint evaluation itself (`Σ γⁱ · evalᵢ`) — the last two are the
+/// secrets a downstream ZK layer (BlindFold's final-opening binding) opens
+/// the hiding commitment with.
+pub struct ZkBatchOpening<S: ZkBatchOpeningScheme + ?Sized> {
+    pub proof: S::Proof,
+    pub hiding_commitment: S::HidingCommitment,
+    pub blind: S::Blind,
+    pub joint_evaluation: S::Field,
+}
+
 /// ZK same-point batching for schemes with native hiding openings.
 ///
 /// The cleartext evaluations are not part of the public statement — the
@@ -336,10 +430,6 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
     type HidingCommitment;
     type Blind;
 
-    #[expect(
-        clippy::type_complexity,
-        reason = "ZK batch openings return the native proof, hiding commitment, and blind"
-    )]
     fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
@@ -348,7 +438,7 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
         hints: Self::Hints,
         evaluations: Vec<Self::Field>,
         transcript: &mut T,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
+    ) -> Result<ZkBatchOpening<Self>, OpeningsError>
     where
         Self: 'a,
         T: Transcript<Challenge = Self::Field>;
@@ -388,6 +478,11 @@ where
     type Hints = Vec<PCS::OpeningHint>;
     type Proof = PCS::Proof;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "HomomorphicBatch::prove_batch",
+        fields(claims = claims.len())
+    )]
     fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         claims: Self::Statement,
@@ -477,22 +572,22 @@ where
     }
 }
 
-struct HomomorphicBatchStatement<'a, F: Field, C> {
+struct HomomorphicBatchStatement<'a, F: JoltField, C> {
     claims: &'a [VerifierOpeningClaim<F, C>],
     point: Point<HIGH_TO_LOW, F>,
 }
 
 impl<'a, F, C> HomomorphicBatchStatement<'a, F, C>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     fn new(claims: &'a [VerifierOpeningClaim<F, C>]) -> Result<Self, OpeningsError> {
-        let first = claims.first().ok_or_else(|| {
+        let (first, rest) = claims.split_first().ok_or_else(|| {
             OpeningsError::InvalidBatch("batch opening requires at least one claim".to_owned())
         })?;
         let point = first.evaluation.point.clone();
-        for claim in &claims[1..] {
+        for claim in rest {
             if claim.evaluation.point != point {
                 return Err(OpeningsError::InvalidBatch(
                     "batch opening claims must use one common point".to_owned(),
@@ -522,7 +617,7 @@ where
 
 impl<F, C> AppendToTranscript for HomomorphicBatchStatement<'_, F, C>
 where
-    F: Field,
+    F: JoltField,
 {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         VerifierRlcClaims(self.claims).append_to_transcript(transcript);
@@ -538,6 +633,11 @@ where
     type HidingCommitment = PCS::HidingCommitment;
     type Blind = PCS::Blind;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "HomomorphicBatch::prove_batch_zk",
+        fields(claims = commitments.len())
+    )]
     fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
@@ -546,7 +646,7 @@ where
         hints: Self::Hints,
         evaluations: Vec<Self::Field>,
         transcript: &mut T,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
+    ) -> Result<ZkBatchOpening<Self>, OpeningsError>
     where
         Self: 'a,
         T: Transcript<Challenge = Self::Field>,
@@ -588,7 +688,12 @@ where
         )?;
         ZkEvaluationClaim::new(point.as_slice(), &hiding_commitment)
             .append_to_transcript(transcript);
-        Ok((proof, hiding_commitment, blind))
+        Ok(ZkBatchOpening {
+            proof,
+            hiding_commitment,
+            blind,
+            joint_evaluation: joint_eval,
+        })
     }
 
     fn verify_batch_zk<T>(
@@ -618,5 +723,78 @@ where
         ZkEvaluationClaim::new(point.as_slice(), &hiding_commitment)
             .append_to_transcript(transcript);
         Ok(hiding_commitment)
+    }
+}
+
+/// One physical commitment group's opening claim. Precommitted groups carry
+/// their own [`PrecommittedRole`]; the final trace group is always last.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupOpeningClaim<F, C> {
+    pub commitment: C,
+    pub point: Vec<F>,
+    pub evaluations: Vec<F>,
+}
+
+impl<F, C> GroupOpeningClaim<F, C> {
+    pub fn new(commitment: C, point: Vec<F>, evaluations: Vec<F>) -> Self {
+        Self {
+            commitment,
+            point,
+            evaluations,
+        }
+    }
+}
+
+/// Protocol-supplied identity of one precommitted group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrecommittedRole {
+    order: u64,
+    transcript_label: &'static [u8],
+    diagnostic_name: &'static str,
+}
+
+impl PrecommittedRole {
+    pub const fn new(
+        order: u64,
+        transcript_label: &'static [u8],
+        diagnostic_name: &'static str,
+    ) -> Self {
+        Self {
+            order,
+            transcript_label,
+            diagnostic_name,
+        }
+    }
+
+    /// Protocol-defined canonical batch position.
+    pub const fn order(self) -> u64 {
+        self.order
+    }
+
+    /// Protocol-defined domain-separating transcript tag.
+    pub const fn transcript_label(self) -> &'static [u8] {
+        self.transcript_label
+    }
+
+    /// Protocol-defined name used in validation diagnostics.
+    pub const fn diagnostic_name(self) -> &'static str {
+        self.diagnostic_name
+    }
+}
+
+/// One precommitted group's public opening claim, tagged with its role.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecommittedClaim<F, C> {
+    pub role: PrecommittedRole,
+    pub claim: GroupOpeningClaim<F, C>,
+}
+
+/// One precommitted group's public claim paired with the prover's retained
+/// opening hint.
+pub type PrecommittedOpening<F, C, H> = (PrecommittedClaim<F, C>, H);
+
+impl<F, C> PrecommittedClaim<F, C> {
+    pub fn new(role: PrecommittedRole, claim: GroupOpeningClaim<F, C>) -> Self {
+        Self { role, claim }
     }
 }

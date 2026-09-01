@@ -10,7 +10,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     VC::Output: Clone,
 {
-    let log_t = input.checked.trace_length.ilog2() as usize;
+    let log_t = crate::num::ilog2(input.checked.trace_length);
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();

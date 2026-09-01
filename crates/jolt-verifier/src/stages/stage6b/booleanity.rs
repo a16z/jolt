@@ -9,7 +9,7 @@
 //! address/cycle drawn from the stage-5 instruction opening.
 //!
 //! Under the `akita` feature the symbolic swaps to the lattice cycle phase,
-//! which extends the same boolean fold over the unsigned-inc chunk and MSB
+//! which extends the same boolean fold over the increment digit and carry
 //! one-hot columns, all opened at the shared `(r_address ‖ r_cycle)` point.
 
 #[cfg(feature = "akita")]
@@ -23,7 +23,7 @@ use jolt_claims::protocols::jolt::{
     geometry::booleanity::BooleanityDimensions, BooleanityPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints, SumcheckOutputPoints};
@@ -43,7 +43,7 @@ pub type BooleanityCycleDimensions = BooleanityDimensions;
 pub type BooleanityCycleDimensions = lattice_booleanity::LatticeBooleanityDimensions;
 
 #[derive(Clone)]
-pub struct Booleanity<F: Field> {
+pub struct Booleanity<F: JoltField> {
     symbolic: CyclePhaseSymbolic,
     dimensions: BooleanityCycleDimensions,
     /// The address opening prefix from the stage-6a phase.
@@ -53,7 +53,7 @@ pub struct Booleanity<F: Field> {
     reference_cycle: Vec<F>,
 }
 
-impl<F: Field> Booleanity<F> {
+impl<F: JoltField> Booleanity<F> {
     pub fn new(
         dimensions: BooleanityCycleDimensions,
         r_address: Vec<F>,
@@ -104,7 +104,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
     type Symbolic = CyclePhaseSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -133,11 +133,11 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
             instruction_ra: vec![opening_point.clone(); layout.instruction()],
             bytecode_ra: vec![opening_point.clone(); layout.bytecode()],
             ram_ra: vec![opening_point.clone(); layout.ram()],
-            unsigned_inc_chunks: vec![
+            balanced_inc_digits: vec![
                 opening_point.clone();
                 self.dimensions.chunking().chunk_count()
             ],
-            unsigned_inc_msb: opening_point,
+            balanced_inc_carry: opening_point,
         })
     }
 

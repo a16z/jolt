@@ -1,0 +1,118 @@
+name: Fiat-Shamir soundness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "common/src/**"
+      - "crates/*/Cargo.toml"
+      - "crates/*/src/**"
+      - "crates/jolt-verifier/tests/**"
+      - "crates/jolt-verifier-derive/**"
+      - "scripts/ci/fs-soundness.sh"
+      - ".github/workflows/fs-soundness.yml"
+  pull_request:
+    branches: ["**", main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "common/src/**"
+      - "crates/*/Cargo.toml"
+      - "crates/*/src/**"
+      - "crates/jolt-verifier/tests/**"
+      - "crates/jolt-verifier-derive/**"
+      - "scripts/ci/fs-soundness.sh"
+      - ".github/workflows/fs-soundness.yml"
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  fs-obligations:
+    name: FS obligations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fs-obligations
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Check transcript and verifier-source inventories
+        run: >
+          cargo nextest run
+          -p jolt-verifier
+          --test fs_obligations
+          --features fs-audit
+          --cargo-quiet
+      - name: Probe Akita ZK support
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo check -p jolt-verifier --lib --features akita,fs-audit,zk 2>akita-zk.log; then
+            echo "Akita+ZK now builds; add it to the Fiat-Shamir fixture matrix."
+            exit 1
+          fi
+          grep -q "features are mutually exclusive" akita-zk.log
+
+  fs-attacks-smoke:
+    name: FS attacks (${{ matrix.instance }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - instance: dory-clear
+            features: fs-audit,prover-fixtures
+          - instance: dory-zk
+            features: fs-audit,prover-fixtures,zk
+          - instance: akita-clear
+            features: akita,fs-audit,prover-fixtures
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run live Fiat-Shamir attacks
+        run: >
+          cargo nextest run
+          --cargo-profile ci
+          -p jolt-verifier
+          --test fs_attacks
+          --features ${{ matrix.features }}
+          --cargo-quiet

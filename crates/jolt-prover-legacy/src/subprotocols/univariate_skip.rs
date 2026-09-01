@@ -174,7 +174,11 @@ pub fn prove_uniskip_round_zk<
     let blinding = F::random(rng);
     let commitment = pedersen_gens.commit(&uni_poly.coeffs, &blinding);
 
-    transcript.append_commitment(b"sumcheck_commitment", &commitment);
+    transcript.append_commitment_with_count(
+        b"sumcheck_commitment",
+        poly_degree as u64,
+        &commitment,
+    );
 
     let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
     instance.cache_openings(opening_accumulator, &[r0]);
@@ -325,7 +329,11 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ZkUniSkipFirstRoundProof<
             ));
         }
 
-        transcript.append_commitment(b"sumcheck_commitment", &self.commitment);
+        transcript.append_commitment_with_count(
+            b"sumcheck_commitment",
+            self.poly_degree as u64,
+            &self.commitment,
+        );
 
         let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);

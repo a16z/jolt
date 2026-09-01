@@ -40,14 +40,16 @@ pub mod committed_program;
 mod error;
 mod kernel;
 pub mod opening;
+pub mod optimized;
 pub mod precommitted_reduction;
 pub mod reference;
 pub mod uniskip;
 
-pub use backend::{JoltBackend, PrepareKernel, ProofSession};
-pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
+pub use backend::{BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession};
+pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;
 pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};
+pub use optimized::OptimizedBackend;
 pub use reference::naive::NaiveSumcheckProver;
 pub use reference::ReferenceBackend;

@@ -1,7 +1,7 @@
 //! Shared checks for committed sumcheck stage boundaries.
 
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::SumcheckProof;
 
 use crate::{verifier::CheckedInputs, VerifierError};
@@ -16,7 +16,7 @@ pub(crate) fn verify_output_claim_commitments<F, C>(
     stage: JoltRelationId,
 ) -> Result<CommittedOutputClaimOutput<C>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     // Invariant: Some(capacity) implies capacity >= MAX_BLINDFOLD_GENERATORS,

@@ -1,4 +1,4 @@
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 
 use crate::opening;
 
@@ -144,13 +144,13 @@ pub fn val_check_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RamRaClaimReductionPublicValues<F: Field> {
+pub struct RamRaClaimReductionPublicValues<F: JoltField> {
     pub eq_cycle_raf: F,
     pub eq_cycle_read_write: F,
     pub eq_cycle_val_check: F,
 }
 
-impl<F: Field> RamRaClaimReductionPublicValues<F> {
+impl<F: JoltField> RamRaClaimReductionPublicValues<F> {
     pub fn value(&self, id: RamRaClaimReductionPublic) -> F {
         match id {
             RamRaClaimReductionPublic::EqCycleRaf => self.eq_cycle_raf,
@@ -162,7 +162,7 @@ impl<F: Field> RamRaClaimReductionPublicValues<F> {
 
 pub(crate) fn committed_ram_ra_product<F>(dimensions: RamRaVirtualizationDimensions) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut product = JoltExpr::one();
     for index in 0..dimensions.num_committed_ra_polys() {

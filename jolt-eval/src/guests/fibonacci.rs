@@ -13,10 +13,10 @@ impl GuestConfig for Fibonacci {
     fn package(&self) -> &str {
         "fibonacci-guest"
     }
+    fn label(&self) -> String {
+        format!("fibonacci_{}", self.0)
+    }
     fn input(&self) -> Vec<u8> {
         postcard::to_stdvec(&self.0).unwrap()
-    }
-    fn bench_name(&self) -> String {
-        format!("prover_time_fibonacci_{}", self.0)
     }
 }

@@ -7,7 +7,7 @@ use super::{
 };
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatVirtualRightShiftI {
+pub struct FormatVirtualRightShiftI<const MASK_WIDTH: usize = 64> {
     pub rd: u8,
     pub rs1: u8,
     pub imm: u64,
@@ -57,7 +57,7 @@ impl InstructionRegisterState for RegisterStateFormatVirtualI {
     }
 }
 
-impl InstructionFormat for FormatVirtualRightShiftI {
+impl<const MASK_WIDTH: usize> InstructionFormat for FormatVirtualRightShiftI<MASK_WIDTH> {
     type RegisterState = RegisterStateFormatVirtualI;
 
     fn parse(_: u32) -> Self {
@@ -75,18 +75,12 @@ impl InstructionFormat for FormatVirtualRightShiftI {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use common::constants::{RISCV_REGISTER_COUNT, XLEN};
+        use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
 
-        let mut imm = rng.next_u64();
-
-        let (shift, len) = match XLEN {
-            32 => (imm & 0x1f, 32),
-            64 => (imm & 0x3f, 64),
-            _ => panic!(),
-        };
-        let ones = (1u128 << (len - shift)) - 1;
-        imm = (ones << shift) as u64;
+        assert!((1..=64).contains(&MASK_WIDTH));
+        let shift = rng.next_u64() % MASK_WIDTH as u64;
+        let imm = ((1u128 << MASK_WIDTH) - (1u128 << shift)) as u64;
 
         Self {
             imm,
@@ -100,7 +94,7 @@ impl InstructionFormat for FormatVirtualRightShiftI {
     }
 }
 
-impl From<NormalizedOperands> for FormatVirtualRightShiftI {
+impl<const MASK_WIDTH: usize> From<NormalizedOperands> for FormatVirtualRightShiftI<MASK_WIDTH> {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
             rd: operands.rd.unwrap(),
@@ -110,8 +104,8 @@ impl From<NormalizedOperands> for FormatVirtualRightShiftI {
     }
 }
 
-impl From<FormatVirtualRightShiftI> for NormalizedOperands {
-    fn from(format: FormatVirtualRightShiftI) -> Self {
+impl<const MASK_WIDTH: usize> From<FormatVirtualRightShiftI<MASK_WIDTH>> for NormalizedOperands {
+    fn from(format: FormatVirtualRightShiftI<MASK_WIDTH>) -> Self {
         Self {
             rd: Some(format.rd),
             rs1: Some(format.rs1),

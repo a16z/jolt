@@ -1,6 +1,6 @@
 //! Hamming-weight claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
@@ -19,6 +19,7 @@ use crate::{
 /// bytecode, RAM) in canonical layout order. Every produced opening shares the
 /// single hamming-weight opening point. Generic over the opening cell (`F` for
 /// the serialized wire value, `Vec<F>` for the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -58,6 +59,7 @@ pub struct HammingWeightClaimReductionInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the hamming-weight claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct HammingWeightClaimReductionChallenges<F> {
     #[challenge(HammingWeightClaimReductionChallenge::Gamma)]
     pub gamma: F,
@@ -97,7 +99,7 @@ impl SymbolicSumcheck for ClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut input = JoltExpr::zero();
 
@@ -111,7 +113,7 @@ impl SymbolicSumcheck for ClaimReduction {
         input
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut output = JoltExpr::zero();
 
@@ -130,11 +132,16 @@ impl SymbolicSumcheck for ClaimReduction {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
+
     use super::*;
     use crate::protocols::jolt::geometry::dimensions::JoltFormulaDimensionsError;
     use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
     use crate::protocols::jolt::geometry::ram::ram_hamming_weight;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn layout(
         instruction: usize,

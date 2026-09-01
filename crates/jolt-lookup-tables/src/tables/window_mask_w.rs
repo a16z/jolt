@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -28,7 +28,7 @@ impl<const XLEN: usize> LookupTable for WindowMaskWTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let half = XLEN / 2;
@@ -45,14 +45,17 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskWTable<XLE
     }
 
     fn suffixes(&self) -> &'static [Suffixes] {
-        // The Pow2OffsetW prefix/suffix pair hardcodes the 32-bit lane width.
-        debug_assert_eq!(XLEN, 64);
+        // The Pow2OffsetW prefix/suffix pair hardcodes the 32-bit lane width,
+        // so any other instantiation is a compile error (materialize_entry
+        // and evaluate_mle are genuinely XLEN-generic; the decomposition is
+        // not).
+        const { assert!(XLEN == 64, "Pow2OffsetW hardcodes the 32-bit lane") };
         &[Suffixes::Pow2OffsetW]
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        debug_assert_eq!(XLEN, 64);
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        const { assert!(XLEN == 64, "Pow2OffsetW hardcodes the 32-bit lane") };
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2_offset_w] = suffixes.try_into().unwrap();
         F::from_u128((1u128 << (XLEN / 2)) - 1) * prefixes[Prefixes::Pow2OffsetW] * pow2_offset_w
@@ -62,7 +65,10 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskWTable<XLE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{
+        mle_full_hypercube_test, mle_random_test, prefix_suffix_materialization_test,
+        prefix_suffix_test,
+    };
     use crate::XLEN;
     use jolt_field::Fr;
 
@@ -74,6 +80,14 @@ mod tests {
     #[test]
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, WindowMaskWTable<XLEN>>();
+    }
+
+    /// Two-round phases put a phase boundary inside the low three index bits
+    /// (suffix_len hits 2), exercising every placement of bit 2 relative to
+    /// the phase window in the Pow2OffsetW prefix/suffix pair.
+    #[test]
+    fn prefix_suffix_small_phases() {
+        prefix_suffix_materialization_test::<XLEN, Fr, WindowMaskWTable<XLEN>>(2, 3);
     }
 
     #[test]

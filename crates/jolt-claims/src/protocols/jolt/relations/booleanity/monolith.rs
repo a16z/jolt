@@ -1,6 +1,6 @@
 //! The full (monolithic) booleanity symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::booleanity::{booleanity_cycle_output, BooleanityDimensions};
@@ -9,6 +9,7 @@ use crate::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The committed per-family `Ra` openings produced by the cycle phase; every
 /// opening shares the single booleanity opening point (`r_address ++ r_cycle`).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -36,6 +37,7 @@ pub struct BooleanityInputClaims<C> {
 /// helper rather than appearing as a literal `challenge(..)` here, so this set is
 /// derived from `required_challenges()`, not a textual scan of the expressions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BooleanityChallenges<F> {
     #[challenge(BooleanityChallenge::Gamma)]
     pub gamma: F,
@@ -76,11 +78,11 @@ impl SymbolicSumcheck for Booleanity {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         booleanity_cycle_output(self.shape)
     }
 }
@@ -94,7 +96,7 @@ mod tests {
         BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltCommittedPolynomial,
         JoltDerivedId, JoltOpeningId,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
         let layout = JoltRaPolynomialLayout::new(instruction, bytecode, ram).unwrap();

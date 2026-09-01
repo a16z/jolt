@@ -4,6 +4,8 @@
 )]
 //! Native proof construction for prover outputs accepted by `jolt-verifier`.
 
+use std::sync::Arc;
+
 #[cfg(not(any(feature = "zk", feature = "akita")))]
 use crate::zkvm::clear_claims::build_clear_claims;
 pub use jolt_verifier::VerifierError;
@@ -30,7 +32,7 @@ use jolt_crypto::{
     PedersenSetup, VectorCommitment as VerifierVectorCommitment,
 };
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
-use jolt_field::{Field as VerifierFieldTrait, Fr as VerifierFr};
+use jolt_field::{Fr as VerifierFr, JoltField as VerifierFieldTrait};
 #[cfg(not(feature = "akita"))]
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
@@ -203,12 +205,12 @@ where
 {
     match &shared.program {
         ProverProgramPreprocessing::Full(full) => {
-            ProgramPreprocessing::Full(JoltProgramPreprocessing {
+            ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
                 bytecode: full.bytecode.as_ref().clone(),
                 ram: full.ram.clone(),
                 memory_layout: shared.memory_layout.clone(),
                 max_padded_trace_length: shared.max_padded_trace_length,
-            })
+            }))
         }
         #[cfg(not(feature = "akita"))]
         ProverProgramPreprocessing::Committed(committed) => {
@@ -777,21 +779,6 @@ pub(crate) fn convert_opening_id(id: prover_opening::OpeningId) -> JoltOpeningId
         prover_opening::OpeningId::Polynomial(poly, sumcheck) => {
             JoltOpeningId::polynomial(convert_polynomial_id(poly), convert_sumcheck_id(sumcheck))
         }
-        // The packed byte-column reconstructions produce COMMITTED byte-lane
-        // openings; the advice accumulator slot is just where the legacy
-        // prover carries them.
-        prover_opening::OpeningId::UntrustedAdvice(
-            prover_opening::SumcheckId::UntrustedAdviceReconstruction,
-        ) => JoltOpeningId::committed(
-            JoltCommittedPolynomial::UntrustedAdviceBytes,
-            JoltRelationId::UntrustedAdviceReconstruction,
-        ),
-        prover_opening::OpeningId::TrustedAdvice(
-            prover_opening::SumcheckId::TrustedAdviceReconstruction,
-        ) => JoltOpeningId::committed(
-            JoltCommittedPolynomial::TrustedAdviceBytes,
-            JoltRelationId::TrustedAdviceReconstruction,
-        ),
         prover_opening::OpeningId::UntrustedAdvice(sumcheck) => {
             JoltOpeningId::untrusted_advice(convert_sumcheck_id(sumcheck))
         }
@@ -871,12 +858,6 @@ pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelatio
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
         }
-        prover_opening::SumcheckId::UntrustedAdviceReconstruction => {
-            JoltRelationId::UntrustedAdviceReconstruction
-        }
-        prover_opening::SumcheckId::TrustedAdviceReconstruction => {
-            JoltRelationId::TrustedAdviceReconstruction
-        }
         prover_opening::SumcheckId::BytecodeChunkReconstruction => {
             JoltRelationId::BytecodeChunkReconstruction
         }
@@ -912,11 +893,11 @@ fn convert_committed_polynomial(
         prover_witness::CommittedPolynomial::ProgramImageInit => {
             JoltCommittedPolynomial::ProgramImageInit
         }
-        prover_witness::CommittedPolynomial::UnsignedIncChunk(index) => {
-            JoltCommittedPolynomial::UnsignedIncChunk(index)
+        prover_witness::CommittedPolynomial::BalancedIncDigit(index) => {
+            JoltCommittedPolynomial::BalancedIncDigit(index)
         }
-        prover_witness::CommittedPolynomial::UnsignedIncMsb => {
-            JoltCommittedPolynomial::UnsignedIncMsb
+        prover_witness::CommittedPolynomial::BalancedIncCarry => {
+            JoltCommittedPolynomial::BalancedIncCarry
         }
         prover_witness::CommittedPolynomial::BytecodeRegisterSelector(chunk, lane) => {
             JoltCommittedPolynomial::BytecodeRegisterSelector {

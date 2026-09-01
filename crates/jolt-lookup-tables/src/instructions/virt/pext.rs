@@ -35,22 +35,20 @@ mod tests {
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
         materialize_entry_test,
     };
+    use tracer::instruction::virtual_pext::VirtualPext;
 
     #[test]
     fn materialize_entry_pext() {
-        materialize_entry_test!(Pext, tracer::instruction::virtual_pext::VirtualPext);
+        materialize_entry_test!(Pext, VirtualPext);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_pext() {
-        instruction_inputs_match_constraint_test!(
-            Pext,
-            tracer::instruction::virtual_pext::VirtualPext
-        );
+        instruction_inputs_match_constraint_test!(Pext, VirtualPext);
     }
 
     #[test]
     fn lookup_output_matches_trace_pext() {
-        lookup_output_matches_trace_test!(Pext, tracer::instruction::virtual_pext::VirtualPext);
+        lookup_output_matches_trace_test!(Pext, VirtualPext);
     }
 }

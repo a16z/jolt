@@ -31,8 +31,10 @@ def format_value(value, metric):
 def main():
     parser = argparse.ArgumentParser(
         description='Generate summary table from benchmark CSV')
-    parser.add_argument('--csv', default='benchmark-runs/results/timings.csv',
-                        help='Path to the benchmark CSV file')
+    parser.add_argument('--csv',
+                        default='benchmark-runs/modular_timings.csv',
+                        help='Path to the benchmark CSV file '
+                             '(written by `jolt-prover benchmark`)')
     parser.add_argument('--metric', default='proving_hz',
                         choices=list(METRICS.keys()),
                         help='Metric to display in the table')

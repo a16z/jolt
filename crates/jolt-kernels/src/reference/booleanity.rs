@@ -24,8 +24,11 @@ use std::collections::BTreeMap;
 
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
-use jolt_field::Field;
+use jolt_claims::protocols::jolt::{
+    BooleanityPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId, JoltRelationId,
+};
+use jolt_claims::{Source, SymbolicSumcheck};
+use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
@@ -41,7 +44,7 @@ use crate::{
     SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -62,21 +65,27 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend 
     }
 }
 
-pub struct BooleanityAddressKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub struct BooleanityAddressKernel<F: JoltField> {
     rounds: usize,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_weights: Vec<F>,
     /// The linear-term tables (plain multilinear binding).
     linear: Vec<Polynomial<F>>,
     /// The squared-term tables (squared-weight binding); raw vectors because
     /// the bind rule is not a multilinear bind.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
     rounds_bound: usize,
 }
-
-impl<F: Field> BooleanityAddressKernel<F> {
+impl<F: JoltField> BooleanityAddressKernel<F> {
     pub fn new(
         relation: &BooleanityAddressPhase<F>,
         dimensions: BooleanityDimensions,
@@ -103,9 +112,30 @@ impl<F: Field> BooleanityAddressKernel<F> {
         let eq_cycle = eq_table(reference_cycle);
 
         // Per-chunk masses of each checked one-hot polynomial, folded over the
-        // cycle dimension by the reference-cycle eq weights.
+        // cycle dimension by the reference-cycle eq weights. The address-phase
+        // relation is column-agnostic (its output is the bare intermediate),
+        // so the checked-column set comes from the shape: the base `Ra`
+        // families plus, on the packed (lattice) build, the fused-inc one-hot
+        // columns at the tail — `lattice_booleanity_output_openings`' order,
+        // continuing the same `γ^{2i}` weight sequence.
+        let mut openings: Vec<_> = dimensions
+            .layout
+            .openings(JoltRelationId::Booleanity)
+            .collect();
+        if super::lattice_shape() {
+            let lattice_dimensions =
+                jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
+                    dimensions,
+                )
+                .map_err(|_| KernelError::InvariantViolation {
+                    reason: "the packed shape requires a lattice-compatible chunk width",
+                })?;
+            openings = jolt_claims::protocols::jolt::lattice::relations::booleanity::lattice_booleanity_output_openings(
+                lattice_dimensions,
+            );
+        }
         let mut linear = Vec::new();
-        for opening in dimensions.layout.openings(JoltRelationId::Booleanity) {
+        for opening in openings {
             let grid = dense_view(witness, opening)?;
             if grid.len() != chunk_size << log_t {
                 return Err(KernelError::TableSizeMismatch {
@@ -144,7 +174,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> BooleanityAddressKernel<F> {
+impl<F: JoltField> BooleanityAddressKernel<F> {
     fn bind(&mut self, challenge: F) {
         let one_minus_sqr = (F::one() - challenge) * (F::one() - challenge);
         let challenge_sqr = challenge * challenge;
@@ -164,7 +194,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for BooleanityAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -225,7 +255,7 @@ impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     type Relation = BooleanityAddressPhase<F>;
 
     fn output_claims(
@@ -252,7 +282,7 @@ impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -271,6 +301,30 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 opening,
                 Polynomial::new(address_fold(witness, opening, dimensions.log_t, r_address)?),
             );
+        }
+        // The packed (lattice) shape extends the boolean fold over the
+        // fused-inc one-hot columns: serve them per the relation's own
+        // expression leaves (the base expression references none, so the
+        // loop no-ops there).
+        for term in &relation.symbolic().output_expression::<F>().terms {
+            for factor in &term.factors {
+                let Source::Opening(id) = factor else {
+                    continue;
+                };
+                if matches!(
+                    id.polynomial_id(),
+                    JoltPolynomialId::Committed(
+                        JoltCommittedPolynomial::BalancedIncDigit(_)
+                            | JoltCommittedPolynomial::BalancedIncCarry,
+                    )
+                ) && !opening_tables.contains_key(id)
+                {
+                    let _ = opening_tables.insert(
+                        *id,
+                        Polynomial::new(address_fold(witness, *id, dimensions.log_t, r_address)?),
+                    );
+                }
+            }
         }
 
         // The fixed address eq factor: both vectors pair positionally in the

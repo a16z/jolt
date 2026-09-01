@@ -373,6 +373,39 @@ impl Program {
         (lazy_trace, trace, memory, jolt_device)
     }
 
+    /// Execute the program to completion without materializing trace rows
+    /// (the emulator's execute-only path). Returns the trace row count (the
+    /// number of rows `trace` would have produced).
+    #[tracing::instrument(skip_all, name = "Program::execute")]
+    pub fn execute(
+        &mut self,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+    ) -> usize {
+        self.build(DEFAULT_TARGET_DIR);
+        let elf = self.elf.as_ref().unwrap();
+        let mut elf_file =
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
+            .expect("program ELF decoding failed");
+        let memory_config =
+            self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
+
+        let (executed_instructions, _, _) = tracer::execute(
+            &elf_contents,
+            self.elf.as_ref(),
+            inputs,
+            untrusted_advice,
+            trusted_advice,
+            &memory_config,
+            None,
+        );
+        executed_instructions
+    }
+
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
     pub fn trace_to_file(
         &mut self,

@@ -5,6 +5,7 @@ pub mod soundness;
 pub mod source_to_jolt_expansion_equivalence;
 pub mod split_eq_bind;
 pub mod synthesis;
+pub mod tracer_backend_equivalence;
 pub mod transcript_symmetry;
 
 use std::fmt;
@@ -144,6 +145,7 @@ pub enum JoltInvariants {
     SourceToJoltExpansionEquivalence(
         source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
     ),
+    TracerBackendEquivalence(tracer_backend_equivalence::TracerBackendEquivalenceInvariant),
 }
 
 macro_rules! dispatch {
@@ -157,6 +159,7 @@ macro_rules! dispatch {
             JoltInvariants::TranscriptConsistencyKeccak($inv) => $body,
             JoltInvariants::TranscriptConsistencyPoseidon($inv) => $body,
             JoltInvariants::SourceToJoltExpansionEquivalence($inv) => $body,
+            JoltInvariants::TracerBackendEquivalence($inv) => $body,
         }
     };
 }
@@ -179,6 +182,9 @@ impl JoltInvariants {
             ),
             Self::SourceToJoltExpansionEquivalence(
                 source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
+            ),
+            Self::TracerBackendEquivalence(
+                tracer_backend_equivalence::TracerBackendEquivalenceInvariant,
             ),
         ]
     }

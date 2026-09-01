@@ -1,9 +1,15 @@
+#![expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions inside Result-returning tests"
+)]
+#![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{
-    JoltInstruction, JoltInstructionProfile, SourceExtension, SourceInlineKey,
-    SourceInstructionRow, RV64IMAC_JOLT,
+    JoltInstruction, JoltInstructionKind as Kind, JoltInstructionProfile, SourceExtension,
+    SourceInlineKey, SourceInstructionRow, RV64IMAC_JOLT,
 };
 #[cfg(feature = "serialization")]
 use serde::Deserialize;
@@ -200,7 +206,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
             let rd = row.operands.rd.ok_or(ExpansionError::MalformedInstruction(
                 "inline row missing rd",
             ))?;
-            builder.emit_i::<jolt_riscv::instructions::Addi>(rd, 0, 0);
+            builder.emit_i(Kind::ADDI, rd, 0, 0);
             builder.finalize()
         }
     }
@@ -292,7 +298,7 @@ fn inline_provider_output_is_validated_and_stamped() {
             _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<ExpandedInstructionSequence, ExpansionError> {
             let mut builder = InlineExpansionBuilder::new(*instruction.row());
-            builder.emit_r::<jolt_riscv::instructions::Mul>(1, 2, 3);
+            builder.emit_r(Kind::MUL, 1, 2, 3);
             builder.finalize()
         }
     }
@@ -321,7 +327,7 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
             let row = instruction.row();
             let mut builder = InlineExpansionBuilder::new(*row);
             let register = builder.allocate_for_inline()?;
-            builder.emit_i::<jolt_riscv::instructions::Addi>(*register, 0, 1);
+            builder.emit_i(Kind::ADDI, *register, 0, 1);
             builder.release(register);
             builder.finalize()
         }
@@ -362,7 +368,7 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
             let row = instruction.row();
             let mut builder = InlineExpansionBuilder::new(*row);
             for _ in 0..=materialize::MAX_FINAL_ROWS_PER_SOURCE {
-                builder.emit_i::<jolt_riscv::instructions::Addi>(0, 0, 0);
+                builder.emit_i(Kind::ADDI, 0, 0, 0);
             }
             builder.finalize()
         }
@@ -401,7 +407,7 @@ fn source_only_expanders_are_not_target_legal() {
     }
 
     assert_source_only! {
-        ADDIW, ADDW, SUBW, MULH, MULHSU, MULW,
+        MULH, MULHSU,
         LB, LBU, LH, LHU, LW, LWU,
         AdviceLB, AdviceLH, AdviceLW, AdviceLD,
         AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOSWAPD,
@@ -412,10 +418,43 @@ fn source_only_expanders_are_not_target_legal() {
         DIV, DIVU, DIVW, DIVUW, REM, REMU, REMW, REMUW,
         SB, SCD, SCW, SH, SW,
         CSRRW, CSRRS, EBREAK, ECALL, MRET,
-        SLL, SLLI, SLLW, SLLIW, SRL, SRLI, SRA, SRAI,
+        SLL, SLLI, SLLIW, SLLW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }
     assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
+}
+
+#[test]
+fn rv64i_word_shift_expansions_are_profile_closed() -> Result<(), ExpansionError> {
+    const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
+        source_extensions: &[SourceExtension::Rv64I],
+        inline_extensions: &[],
+    };
+
+    for instruction_kind in [
+        SourceInstructionKind::SRLW,
+        SourceInstructionKind::SRAW,
+        SourceInstructionKind::SRLIW,
+        SourceInstructionKind::SRAIW,
+    ] {
+        assert!(RV64I_ONLY.supports_source(instruction_kind));
+
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = rows(expand_instruction(
+            &instruction(instruction_kind, Some(3), false),
+            &mut allocator,
+            RV64I_ONLY,
+        )?);
+
+        assert!(
+            expanded
+                .iter()
+                .all(|row| RV64I_ONLY.supports_jolt(row.instruction_kind)),
+            "{instruction_kind:?} emitted a helper outside its source profile"
+        );
+    }
+
+    Ok(())
 }
 
 #[test]
@@ -448,7 +487,7 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // recursive expansion order and virtual-register reuse regressions without
     // checking a giant expanded-row fixture into the repository.
     //
-    // 16 of the 360 hashes were re-baselined when `expand_address` began wrapping
+    // 16 of the 360 hashes were re-baselined when `emit_address` began wrapping
     // its offset through `format_i_imm`: exactly the `imm = -8` cases for LH/LHU/
     // LW/LWU/SH/SW, the accesses that emit an alignment assert. Byte accesses
     // (no assert) and non-negative offsets (wrap is the identity) are unchanged.
@@ -460,9 +499,12 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // moved to their window-mask + parallel-extract sequences.
     // A further 78 (all six loads, 12 each, plus LRW/SCW) were re-baselined
     // when VirtualAlignAddr fused the ADDI + ANDI pair and the window masks
-    // began taking the immediate directly.
+    // began taking the immediate directly, and again when the fused-load
+    // virtual opcodes moved to 0x009a-0x009d after the W-shift tags took
+    // 0x0091-0x0099 (kinds serialize as tags, so renumbering shifts hashes).
     // A further 27 (SB/SH/SW, 8 each, plus 3 SCW) were re-baselined when the
-    // narrow stores moved to the window-mask + ANDN + shift-data sequences.
+    // narrow stores moved to the window-mask + ANDN + shift-data sequences
+    // at tags 0x009e-0x00a0.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a

@@ -24,13 +24,7 @@ impl<const XLEN: usize> JoltLookupTable for PextTable<XLEN> {
         let y = LookupBits::new(y as u128, XLEN);
         let (x_val, y_val) = (u64::from(x), u64::from(y));
 
-        let mut pext = 0u64;
-        for i in (0..XLEN).rev() {
-            if (y_val >> i) & 1 == 1 {
-                pext = (pext << 1) | ((x_val >> i) & 1);
-            }
-        }
-        pext
+        crate::zkvm::lookup_table::suffixes::pext::pext(x_val, y_val)
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F

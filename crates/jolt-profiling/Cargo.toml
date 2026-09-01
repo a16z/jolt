@@ -13,20 +13,32 @@ publish = false
 workspace = true
 
 [features]
-default = []
+# `summary` is a default so the crate's own dev loop (schema drift-lock
+# tests included) runs it; consumers that only need the subscriber stack
+# (jolt-prover-legacy's `host`, jolt-akita) opt out with
+# `default-features = false` to keep schemars + serde_json out of standard
+# host builds.
+default = ["summary"]
 monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
-allocative = ["dep:inferno", "dep:allocative"]
+allocative = ["dep:allocative"]
+# The flush-time summary pipeline (`summary` module): chrome-trace
+# aggregation into the schema-versioned `summary.json`.
+summary = ["dep:schemars", "dep:serde", "dep:serde_json", "dep:thiserror"]
 
 [dependencies]
 tracing.workspace = true
 tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
-inferno = { workspace = true, optional = true }
 allocative = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true
+libc.workspace = true
+schemars = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive", "std"], optional = true }
+serde_json = { workspace = true, features = ["std"], optional = true }
 sysinfo = { workspace = true, optional = true }
 pprof = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }

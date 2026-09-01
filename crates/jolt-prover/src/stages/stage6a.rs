@@ -16,11 +16,13 @@
 
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
-use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
-use jolt_transcript::{AppendToTranscript, Transcript};
+#[cfg(feature = "zk")]
+use jolt_sumcheck::CommittedSumcheckWitness;
+use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
@@ -36,21 +38,26 @@ use jolt_verifier::stages::stage6a::outputs::{
 use jolt_verifier::CheckedInputs;
 use jolt_witness::JoltWitnessPlane;
 
+use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 6a's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 6b consumes.
-pub struct Stage6aProverOutput<F: Field, C> {
+pub struct Stage6aProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6aOutputClaims<F>,
     pub clear_output: Stage6aClearOutput<F>,
+    #[cfg(feature = "zk")]
+    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 6a on `transcript` (positioned at the stage-5 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
-pub fn prove_stage6a<F, PCS, VC, C, T>(
+#[tracing::instrument(skip_all)]
+pub fn prove_stage6a<F, PCS, VC, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
+    mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -61,12 +68,11 @@ pub fn prove_stage6a<F, PCS, VC, C, T>(
     stage5: &Stage5ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
-) -> Result<Stage6aProverOutput<F, C>, ProverError<F>>
+) -> Result<Stage6aProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let formula_dimensions = super::formula_dimensions(
@@ -106,35 +112,57 @@ where
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
     let input_points = sumchecks.empty_input_points();
+    let bytecode_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
+        &stage1.output_values,
+        &stage2.output_values,
+        &stage3.output_values,
+        &stage4.output_values,
+        &stage5.output_values,
+    );
+    // The packed build folds the four reduced `Inc` claims into the bytecode
+    // address-phase input at the fused-inc consumer stage slots — the same
+    // wrapper the verifier's `stage6a::verify` applies.
+    #[cfg(feature = "akita")]
+    let bytecode_input_values =
+        jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
+            base: bytecode_input_values,
+            inc: jolt_verifier::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
+                &stage2.output_values,
+                &stage4.output_values,
+                &stage5.output_values,
+            ),
+        };
     let inputs = Stage6aInputClaims {
-        bytecode_read_raf: bytecode_read_raf_address_phase_input_values_from_upstream(
-            &stage1.output_values,
-            &stage2.output_values,
-            &stage3.output_values,
-            &stage4.output_values,
-            &stage5.output_values,
-        ),
+        bytecode_read_raf: bytecode_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,
         &address_challenges,
-        ClearSumcheckRecorder::<F, C>::new(),
+        mode.recorder()?,
         transcript,
     )?;
+    #[cfg(feature = "zk")]
+    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
+    #[cfg(not(feature = "zk"))]
+    let sumcheck_proof = proved.recorded.proof;
 
     Ok(Stage6aProverOutput {
-        sumcheck_proof: proved.recorded.proof,
+        sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage6aClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,
             challenges: carried,
         },
+        #[cfg(feature = "zk")]
+        committed_witness,
     })
 }

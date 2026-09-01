@@ -30,9 +30,12 @@ mod tests;
 pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
 pub use grammar::{is_source_only, ExpandedInstructionSequence};
-pub use inline::{
-    InlineExpansionBuilder, InlineInstruction, InlineOperands, InlineRegister, Value,
-};
+pub use inline::{InlineExpansionBuilder, InlineOperands, InlineRegister, Value};
+
+#[doc(hidden)]
+pub mod asm_support {
+    pub use jolt_riscv::{JoltInstructionKind as Kind, SourceInstructionKind as SourceKind};
+}
 
 use allocator::{
     mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,
@@ -188,21 +191,21 @@ fn final_rows_to_instructions(
 /// final bytecode semantics.
 ///
 /// Each callee returns a symbolic sequence, not concrete rows. During
-/// materialization, `emit_*` rows become final bytecode directly while
-/// `expand_*` rows are routed back through this dispatcher. That recursive
-/// route is intentional: common substeps such as narrow loads, word shifts, and
-/// virtual assertions keep one definition of their own lowering contract.
+/// materialization, target instructions become final bytecode directly while
+/// source-only instructions are routed back through this dispatcher. That
+/// recursive route lets common substeps such as narrow loads, word shifts, and
+/// virtual assertions keep one lowering contract.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "fail-closed: instructions without a registered expansion error out rather than silently passing through"
+)]
 fn expand_source_only_instruction(
     instruction: &SourceInstruction,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let row = instruction.row();
     match instruction.kind() {
-        SourceInstructionKind::ADDIW => expand_addiw(row),
-        SourceInstructionKind::ADDW => expand_addw(row),
-        SourceInstructionKind::SUBW => expand_subw(row),
         SourceInstructionKind::MULH => expand_mulh(row),
         SourceInstructionKind::MULHSU => expand_mulhsu(row),
-        SourceInstructionKind::MULW => expand_mulw(row),
         SourceInstructionKind::LB => expand_lb(row),
         SourceInstructionKind::LBU => expand_lbu(row),
         SourceInstructionKind::LH => expand_lh(row),
@@ -253,8 +256,8 @@ fn expand_source_only_instruction(
         SourceInstructionKind::MRET => expand_mret(row),
         SourceInstructionKind::SLL => expand_sll(row),
         SourceInstructionKind::SLLI => expand_slli(row),
-        SourceInstructionKind::SLLW => expand_sllw(row),
         SourceInstructionKind::SLLIW => expand_slliw(row),
+        SourceInstructionKind::SLLW => expand_sllw(row),
         SourceInstructionKind::SRL => expand_srl(row),
         SourceInstructionKind::SRLI => expand_srli(row),
         SourceInstructionKind::SRA => expand_sra(row),

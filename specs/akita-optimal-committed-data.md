@@ -278,25 +278,25 @@ remain akita-side fallback tracks.
 
 ## Current state and code map (for the cleanup phase)
 
-The pipeline today: `OneHotTrace` is one native Akita commitment group of
-uniform row-major `K x T` one-hot columns. Every column opens at the same
-`(cycle || address)` point in one backend batch proof. `ProgramOneHot` and the
-advice byte columns remain separate singleton objects.
+The measurements above describe the earlier grouped-member design. The current
+protocol supersedes it: `OneHotTrace` is one fixed-capacity prefix-packed
+physical polynomial in `(slot || cycle || address)` order. Logical address row
+zero is public and omitted from the witness; Stage 7 recenters each semantic
+claim around that row. Stage 8 samples the slot selector only after binding
+the common point and all semantic evaluations, then opens the one physical
+polynomial directly.
 
-The single-polynomial layout experiment was rejected. Packing the semantic
-columns into a new Boolean column axis required power-of-two zero padding and
-raised the polynomial arity by six or seven variables. At `T = 2^20`, the
-result took 47.52 s to prove versus the earlier 6.97 s grouped baseline, while
-verification remained 23.59 ms. The extra arity, not padding alone, destroys
-the native one-hot schedule economics. There is therefore no column-axis fold
-and no additional sumcheck.
+Auxiliary advice objects use the same fixed-prefix API as singleton objects.
+Committed-program bytecode columns are zero-prefix embedded at their widest
+suffix-compatible point; program-image bytes retain an independent singleton
+object. The earlier arbitrary-point reduction sumcheck has been deleted.
 
 | piece | where |
 |---|---|
 | compact-source column assembly (`assemble_one_hot_trace`) | `jolt-prover-legacy/src/zkvm/packed.rs` |
-| prove pipeline (one native grouped opening) | `jolt-prover-legacy/src/zkvm/packed.rs` |
+| prove pipeline (one physical OneHotTrace opening plus direct auxiliary openings) | `jolt-prover-legacy/src/zkvm/packed.rs` |
 | layout and point mapping (`address‖cycle` → `cycle‖address`) | `jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
-| reduction sumcheck + grouped native tail (`prove/verify_packed_openings`, `PackedObjectGroup`, `open_batch`) | `jolt-openings/src/packing.rs` |
+| fixed-capacity prefix selector reduction (`PrefixPackedLayout`) | `jolt-openings/src/prefix.rs` |
 | owned backend adapter (`commit_one_hot_group_owned`, `open_one_hot_group_from_hint`) | `jolt-akita/src/{scheme,adapters}.rs` |
 | verifier mirror | `jolt-verifier/src/stages/stage8/packed.rs` |
 | flavor/measurement bench (`flavor_bench`, `BENCH_*` env knobs) | `jolt-akita/src/scheme.rs` |

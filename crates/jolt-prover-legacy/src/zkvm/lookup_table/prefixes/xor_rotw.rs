@@ -34,6 +34,9 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
             8 => Prefixes::XorRotW8,
             12 => Prefixes::XorRotW12,
             16 => Prefixes::XorRotW16,
+            22 => Prefixes::XorRotW22,
+            19 => Prefixes::XorRotW19,
+            6 => Prefixes::XorRotW6,
             _ => unimplemented!(),
         };
         let mut result = checkpoints[prefix_idx].unwrap_or(F::zero());
@@ -91,6 +94,9 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
                 8 => Prefixes::XorRotW8,
                 12 => Prefixes::XorRotW12,
                 16 => Prefixes::XorRotW16,
+                22 => Prefixes::XorRotW22,
+                19 => Prefixes::XorRotW19,
+                6 => Prefixes::XorRotW6,
                 _ => unimplemented!(),
             };
             let original_pos = (j - XLEN) / 2; // Position within the 32-bit word

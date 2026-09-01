@@ -15,7 +15,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamOutputCheckPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::Transcript;
@@ -24,14 +24,14 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 #[derive(Clone)]
-pub struct RamOutputCheck<F: Field> {
+pub struct RamOutputCheck<F: JoltField> {
     symbolic: relations::ram::OutputCheck,
     read_write_dimensions: ReadWriteDimensions,
     public_memory: PublicIoMemory,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> RamOutputCheck<F> {
+impl<F: JoltField> RamOutputCheck<F> {
     pub fn new(read_write_dimensions: ReadWriteDimensions, public_memory: PublicIoMemory) -> Self {
         Self {
             symbolic: relations::ram::OutputCheck::new(read_write_dimensions),
@@ -47,7 +47,7 @@ impl<F: Field> RamOutputCheck<F> {
 /// `[io_start, io_end)` range mask, and the committed public-IO value. Shared
 /// by the stage-2 clear path and the BlindFold statement builder so the
 /// algebra lives in one place.
-pub(crate) fn ram_output_check_publics<F: Field>(
+pub(crate) fn ram_output_check_publics<F: JoltField>(
     public_memory: &PublicIoMemory,
     output_address_challenges: &[F],
     ram_output_address: &[F],
@@ -92,7 +92,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> RamOutputCheck<F> {
+impl<F: JoltField> RamOutputCheck<F> {
     pub fn read_write_dimensions(&self) -> ReadWriteDimensions {
         self.read_write_dimensions
     }
@@ -102,7 +102,7 @@ impl<F: Field> RamOutputCheck<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
     type Symbolic = relations::ram::OutputCheck;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -176,11 +176,11 @@ mod tests {
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_field::Fr;
 
-    /// The `instance_point_offset` override must reproduce the legacy phase-1
-    /// slicing `(batch_num_vars - (log_t + log_k)) + phase1_num_rounds` the
-    /// pre-port verifier computed via `try_round_offset(log_t + log_k)`.
+    /// The `instance_point_offset` override must place the relation's own
+    /// rounds exactly at the batch tail, and reject batch vectors shorter
+    /// than the active stage-2 window.
     #[test]
-    fn instance_point_offset_matches_legacy_phase1_formula() {
+    fn instance_point_offset_spans_the_batch_tail() {
         for (log_t, log_k, phase1, phase2) in [(4usize, 3usize, 2usize, 1usize), (6, 5, 3, 2)] {
             let dimensions = ReadWriteDimensions::new(log_t, log_k, phase1, phase2);
             let public_memory = PublicIoMemory::new(&JoltDevice::new(&MemoryConfig {
@@ -192,9 +192,7 @@ mod tests {
             // The real batch has `log_t + log_k` variables (the RAM read-write
             // leader); also probe a padded vector.
             for batch_num_vars in [log_t + log_k, log_t + log_k + 5] {
-                let legacy = (batch_num_vars - (log_t + log_k)) + phase1;
                 let offset = relation.instance_point_offset(batch_num_vars).unwrap();
-                assert_eq!(offset, legacy);
                 assert_eq!(offset + relation.rounds(), batch_num_vars);
             }
             assert!(relation.instance_point_offset(log_t + log_k - 1).is_err());

@@ -1,4 +1,5 @@
 use jolt_field::Field;
+use jolt_utils::log2_power_of_two;
 use serde::{Deserialize, Serialize};
 
 pub use super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
@@ -201,7 +202,12 @@ impl ReadWriteDimensions {
         Ok(address)
     }
 
-    const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
+    /// Rejects a phase split exceeding the trace/address geometry. Callers
+    /// building dimensions from prover-chosen `rw_config` values must run
+    /// this eagerly: the round-count accessors above subtract
+    /// `phase1_num_rounds` without their own guard, so an unvalidated split
+    /// underflows them before the lazy check in point derivation runs.
+    pub const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
         if self.phase1_num_rounds > self.log_t || self.phase2_num_rounds > self.log_k {
             return Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
                 phase1_num_rounds: self.phase1_num_rounds,
@@ -292,14 +298,6 @@ impl CommitmentMatrixShape {
         let len = words.next_power_of_two().max(1);
         Self::balanced(log2_power_of_two(len))
     }
-}
-
-pub(crate) fn log2_power_of_two(value: usize) -> usize {
-    assert!(
-        value.is_power_of_two(),
-        "expected a power-of-two dimension, got {value}"
-    );
-    value.trailing_zeros() as usize
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -483,6 +481,10 @@ fn ceil_log_2(value: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::super::claim_reductions::advice::AdviceClaimReductionLayout;
@@ -490,7 +492,7 @@ mod tests {
         PrecommittedClaimReduction, PrecommittedReductionLayout,
     };
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_field::{Field, Fr, Ring};
     use jolt_poly::EqPolynomial;
 
     fn dimensions() -> JoltOneHotDimensions {
