@@ -2540,6 +2540,228 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
     }
 }
 
+#[tracing::instrument(skip_all, name = "TracePackedOneHot::coefficient_packing_cpu")]
+fn coefficient_packing_packed_selectors<E, const D: usize>(
+    source: &TracePackedOneHot,
+    selectors: TracePackedSelectors<'_>,
+    plan: SubringCoefficientPackingPlan<'_, E>,
+) -> Result<SubringCoefficientPackingPartials<AkitaField>, AkitaError>
+where
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+{
+    plan.validate::<D>(RootPolyMeta::<AkitaField>::num_vars(source))?;
+    let point = plan.point;
+    let geometry = point.geometry();
+    if E::DEGREE != geometry.extension_degree() {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing field extension degree mismatch".into(),
+        ));
+    }
+
+    let segment_positions = source.segment_ring_elems::<D>()?;
+    let expected_positions = segment_positions
+        .checked_mul(source.column_capacity)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("trace coefficient-packing position count overflow".into())
+        })?;
+    if expected_positions != point.num_live_positions() {
+        return Err(AkitaError::InvalidSize {
+            expected: point.num_live_positions(),
+            actual: expected_positions,
+        });
+    }
+    let positions_per_block = point.num_positions_per_block();
+    if !segment_positions.is_multiple_of(positions_per_block) {
+        return Err(AkitaError::InvalidInput(
+            "trace coefficient-packing blocks must not cross column segments".into(),
+        ));
+    }
+    let blocks_per_column = segment_positions / positions_per_block;
+    let expected_blocks = blocks_per_column
+        .checked_mul(source.column_capacity)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("trace coefficient-packing block count overflow".into())
+        })?;
+    if expected_blocks != point.num_live_blocks() {
+        return Err(AkitaError::InvalidSize {
+            expected: point.num_live_blocks(),
+            actual: expected_blocks,
+        });
+    }
+
+    let row_major = selectors.row_major();
+    let expected_selector_len =
+        source
+            .num_rows
+            .checked_mul(source.num_columns)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "trace coefficient-packing selector length overflow".into(),
+                )
+            })?;
+    if row_major.len() != expected_selector_len {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_selector_len,
+            actual: row_major.len(),
+        });
+    }
+    let active_zero_rows = selectors.active_zero_rows();
+    let expected_active_words = source.num_rows.div_ceil(u64::BITS as usize);
+    if selectors.zero_column_mask() != 0 && active_zero_rows.len() != expected_active_words {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_active_words,
+            actual: active_zero_rows.len(),
+        });
+    }
+
+    let s = geometry.challenge_subring_dimension();
+    let stride = geometry.subring_embedding_stride();
+    let packing_width = point.packing_weights().len();
+    if packing_width != stride {
+        return Err(AkitaError::InvalidSetup(
+            "trace coefficient-packing weight width mismatch".into(),
+        ));
+    }
+    let partial_width = geometry.partial_base_field_width();
+    let weight_count = positions_per_block
+        .checked_mul(packing_width)
+        .and_then(|count| count.checked_mul(E::DEGREE))
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("trace coefficient-packing weight table overflow".into())
+        })?;
+    let mut weighted_coordinates = Vec::new();
+    weighted_coordinates
+        .try_reserve_exact(weight_count)
+        .map_err(|_| {
+            AkitaError::InvalidInput(
+                "trace coefficient-packing weight table allocation failed".into(),
+            )
+        })?;
+    for &position_weight in point.position_weights() {
+        for &packing_weight in point.packing_weights() {
+            let weighted = position_weight * packing_weight;
+            let coordinates = weighted.ext_coords();
+            if coordinates.len() != E::DEGREE {
+                return Err(AkitaError::InvalidSetup(
+                    "trace coefficient-packing extension encoding width mismatch".into(),
+                ));
+            }
+            weighted_coordinates.extend_from_slice(coordinates);
+        }
+    }
+
+    let block_field_elems = positions_per_block.checked_mul(D).ok_or_else(|| {
+        AkitaError::InvalidInput("trace coefficient-packing block width overflow".into())
+    })?;
+    let tiles = (0..blocks_per_column)
+        .into_par_iter()
+        .map(|relative_block| {
+            let first_field = relative_block
+                .checked_mul(block_field_elems)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "trace coefficient-packing block offset overflow".into(),
+                    )
+                })?;
+            let end_field = first_field
+                .checked_add(block_field_elems)
+                .ok_or(AkitaError::InvalidProof)?;
+            let first_row = first_field / source.one_hot_k;
+            let end_row = end_field.div_ceil(source.one_hot_k).min(source.num_rows);
+            let first_position = first_field / D;
+            let tile_len = source
+                .num_columns
+                .checked_mul(partial_width)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "trace coefficient-packing tile length overflow".into(),
+                    )
+                })?;
+            let mut tile = vec![AkitaField::zero(); tile_len];
+
+            for row in first_row..end_row {
+                let selector_start = row
+                    .checked_mul(source.num_columns)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let selected_rows = row_major
+                    .get(selector_start..selector_start + source.num_columns)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let active_zero = selectors.zero_column_mask() != 0
+                    && active_zero_rows
+                        .get(row / u64::BITS as usize)
+                        .is_some_and(|word| word & (1u64 << (row % u64::BITS as usize)) != 0);
+                let committed_zero_mask = if active_zero {
+                    selectors.zero_column_mask()
+                } else {
+                    0
+                };
+
+                for (column, &selected_row) in selected_rows.iter().enumerate() {
+                    if usize::from(selected_row) >= source.one_hot_k {
+                        return Err(AkitaError::InvalidInput(format!(
+                            "trace one-hot selector {selected_row} exceeds K={}",
+                            source.one_hot_k
+                        )));
+                    }
+                    if !row_is_committed(selected_row, committed_zero_mask, column) {
+                        continue;
+                    }
+                    let field = row
+                        .checked_mul(source.one_hot_k)
+                        .and_then(|base| base.checked_add(usize::from(selected_row)))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    if field < first_field || field >= end_field {
+                        continue;
+                    }
+                    let position = field / D - first_position;
+                    let coefficient = field % D;
+                    let low_index = coefficient % stride;
+                    let subring_index = coefficient / stride;
+                    let weight_start = position
+                        .checked_mul(packing_width)
+                        .and_then(|base| base.checked_add(low_index))
+                        .and_then(|index| index.checked_mul(E::DEGREE))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let output_start = column
+                        .checked_mul(partial_width)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    for extension_coordinate in 0..E::DEGREE {
+                        let output_index = output_start
+                            .checked_add(extension_coordinate * s + subring_index)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let weight_index = weight_start
+                            .checked_add(extension_coordinate)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        *tile.get_mut(output_index).ok_or(AkitaError::InvalidProof)? +=
+                            *weighted_coordinates
+                                .get(weight_index)
+                                .ok_or(AkitaError::InvalidProof)?;
+                    }
+                }
+            }
+            Ok(tile)
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+
+    let output_len = point
+        .num_live_blocks()
+        .checked_mul(partial_width)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("trace coefficient-packing output length overflow".into())
+        })?;
+    let mut coordinates = vec![AkitaField::zero(); output_len];
+    for (relative_block, tile) in tiles.into_iter().enumerate() {
+        for column in 0..source.num_columns {
+            let source_start = column * partial_width;
+            let destination_block = column * blocks_per_column + relative_block;
+            let destination_start = destination_block * partial_width;
+            coordinates[destination_start..destination_start + partial_width]
+                .copy_from_slice(&tile[source_start..source_start + partial_width]);
+        }
+    }
+    SubringCoefficientPackingPartials::new(geometry, point.num_live_blocks(), coordinates)
+}
+
 impl<E, const D: usize>
     SubringCoefficientPackingBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, E, D>
     for CpuBackend
@@ -2560,6 +2782,14 @@ where
                 let actual = RootPolyShape::<AkitaField, D>::num_ring_elems(*source);
                 if actual != expected {
                     return Err(AkitaError::InvalidSize { expected, actual });
+                }
+                if let Some(selectors) = source.rows.packed_selectors() {
+                    let segment_positions = source.segment_ring_elems::<D>()?;
+                    if segment_positions.is_multiple_of(plan.point.num_positions_per_block()) {
+                        return coefficient_packing_packed_selectors::<E, D>(
+                            source, selectors, plan,
+                        );
+                    }
                 }
                 let coordinates =
                     coefficient_packing_partials_from_position_source::<AkitaField, E, _, D>(
@@ -3014,7 +3244,6 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "metal", target_os = "macos"))]
     struct ResidentTestRows {
         columns: usize,
         row_major: Vec<u8>,
@@ -3022,7 +3251,6 @@ mod tests {
         zero_column_mask: u64,
     }
 
-    #[cfg(all(feature = "metal", target_os = "macos"))]
     impl TraceOneHotRows for ResidentTestRows {
         fn num_rows(&self) -> usize {
             self.row_major.len() / self.columns
@@ -3055,6 +3283,103 @@ mod tests {
                 0
             }
         }
+    }
+
+    fn assert_packed_trace_coefficient_packing_matches_onehot<const D: usize>(k: usize) {
+        const ROWS: usize = 1024;
+        const COLUMNS: usize = 3;
+        const CAPACITY: usize = 4;
+        const POSITIONS: usize = 16;
+
+        let mut row_major = (0..ROWS * COLUMNS)
+            .map(|index| ((index * 19 + 7) % (k - 1) + 1) as u8)
+            .collect::<Vec<_>>();
+        let mut active_zero_rows = vec![0u64; ROWS / u64::BITS as usize];
+        for row in (0..ROWS).step_by(11) {
+            row_major[row * COLUMNS] = 0;
+            active_zero_rows[row / u64::BITS as usize] |= 1u64 << (row % u64::BITS as usize);
+        }
+        let zero_column_mask = 1;
+        let materialized_indices = (0..CAPACITY)
+            .flat_map(|column| {
+                let row_major = &row_major;
+                let active_zero_rows = &active_zero_rows;
+                (0..ROWS).map(move |row| {
+                    if column >= COLUMNS {
+                        return None;
+                    }
+                    let selected_row = row_major[row * COLUMNS + column];
+                    let active_zero = active_zero_rows[row / u64::BITS as usize]
+                        & (1u64 << (row % u64::BITS as usize))
+                        != 0;
+                    (selected_row != 0 || (column == 0 && active_zero)).then_some(selected_row)
+                })
+            })
+            .collect::<Vec<_>>();
+        let materialized = OneHotPoly::<AkitaField, u8>::new(k, materialized_indices).unwrap();
+        let source = TracePackedOneHot::new(
+            k,
+            D,
+            CAPACITY,
+            Arc::new(ResidentTestRows {
+                columns: COLUMNS,
+                row_major,
+                active_zero_rows,
+                zero_column_mask,
+            }),
+        )
+        .unwrap();
+        let source_num_vars = RootPolyMeta::num_vars(&source);
+        let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(1, D, 64).unwrap();
+        let public_point = (0..source_num_vars)
+            .map(|index| AkitaField::from_u64((index + 3) as u64))
+            .collect::<Vec<_>>();
+        let point = akita_types::PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            akita_types::BasisMode::Lagrange,
+            RootPolyShape::<AkitaField, D>::num_ring_elems(&source),
+            POSITIONS,
+            source_num_vars,
+            &public_point,
+        )
+        .unwrap();
+        let plan = SubringCoefficientPackingPlan { point: &point };
+        let sources = [&source];
+        let materialized_sources = [&materialized];
+        let trace_view =
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&sources)
+                .unwrap();
+        let materialized_view =
+            <OneHotPoly<AkitaField, u8> as RootOpeningSource<AkitaField, D>>::opening_batch(
+                &materialized_sources,
+            )
+            .unwrap();
+
+        let actual = <CpuBackend as SubringCoefficientPackingBatchKernel<
+            TracePackedOneHotBatchView<'_, D>,
+            AkitaField,
+            AkitaField,
+            D,
+        >>::coefficient_packing_partials_batch(
+            &CpuBackend::DEFAULT, None, trace_view, plan
+        )
+        .unwrap();
+        let expected = <CpuBackend as SubringCoefficientPackingBatchKernel<
+            OneHotBatchView<'_, AkitaField, D, u8>,
+            AkitaField,
+            AkitaField,
+            D,
+        >>::coefficient_packing_partials_batch(
+            &CpuBackend::DEFAULT, None, materialized_view, plan
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn packed_trace_coefficient_packing_matches_onehot_at_both_chunk_widths() {
+        assert_packed_trace_coefficient_packing_matches_onehot::<512>(16);
+        assert_packed_trace_coefficient_packing_matches_onehot::<512>(256);
     }
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
