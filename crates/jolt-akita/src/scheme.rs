@@ -15,6 +15,8 @@ use std::sync::Arc;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use std::{collections::HashMap, sync::Mutex};
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::adapters::AkitaOneHotK256MetalBackendScheme;
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
     domain_size, invalid_batch, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
@@ -101,6 +103,7 @@ impl TraceCommitmentBackend {
         }
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) const fn opening_shape_is_metal_qualified(
         one_hot_k: usize,
         num_vars: usize,
@@ -463,7 +466,7 @@ impl AkitaScheme {
                 &stack,
                 GroupContext::scheduler_with_precommitted_groups(profiles),
             ),
-            (AKITA_ONE_HOT_K256, None) => AkitaOneHotK256BackendScheme::commit::<
+            (AKITA_ONE_HOT_K256, None) => AkitaOneHotK256MetalBackendScheme::commit::<
                 TracePackedOneHot,
                 akita_metal::MetalBackend,
             >(

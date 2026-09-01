@@ -12,12 +12,14 @@ use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
     PolynomialGroupLayout,
 };
-use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256, JoltOneHotK256Metal};
 use jolt_akita::schedule_registry::{FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP};
 use jolt_akita::schedules::emit::{
     family_specs, keys, K16_NUM_VARS, K256_NUM_VARS, ONE_HOT_TRACE_NUM_POLYS,
 };
-use jolt_akita::schedules::{jolt_fp128_onehot_k16_table, jolt_fp128_onehot_k256_table};
+use jolt_akita::schedules::{
+    jolt_fp128_onehot_k16_table, jolt_fp128_onehot_k256_metal_table, jolt_fp128_onehot_k256_table,
+};
 
 /// Every key of a family grid resolves from its checked-in table (binary
 /// lookup over sorted entries) — no planner-DP fallback for reachable
@@ -33,6 +35,11 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
         ),
         (
             jolt_fp128_onehot_k256_table().expect("K256 catalog is checked in"),
+            ONE_HOT_TRACE_NUM_POLYS,
+            K256_NUM_VARS,
+        ),
+        (
+            jolt_fp128_onehot_k256_metal_table().expect("K256 Metal catalog is checked in"),
             ONE_HOT_TRACE_NUM_POLYS,
             K256_NUM_VARS,
         ),
@@ -52,6 +59,14 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
             table.entries.len(),
             "identity key count must match the table"
         );
+    }
+
+    for key in keys(ONE_HOT_TRACE_NUM_POLYS, K256_NUM_VARS) {
+        let _ = JoltOneHotK256Metal::resolve_catalog_row_for_opening(
+            &akita_types::OpeningClaimsLayout::from_groups(vec![key])
+                .expect("K256 Metal catalog key must form an opening layout"),
+        )
+        .expect("K256 Metal catalog row must validate and resolve");
     }
 }
 

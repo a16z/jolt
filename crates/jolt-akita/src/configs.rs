@@ -269,13 +269,146 @@ delegate_preset!(
 );
 
 delegate_preset!(
-    /// Adaptive one-hot config with the Jolt-generated K=256 schedule catalog.
-    JoltOneHotK256,
+    /// CPU-optimized K=256 schedule catalog.
+    JoltOneHotK256Cpu,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
     crate::schedules::jolt_fp128_onehot_k256_table(),
     JOLT_K256_RING_DIMENSION_SCHEDULE_MODE
 );
+
+delegate_preset!(
+    /// Metal-optimized K=256 schedule catalog.
+    JoltOneHotK256Metal,
+    OneHot,
+    <OneHot as CommitmentConfig>::committed_source_class(),
+    crate::schedules::jolt_fp128_onehot_k256_metal_table(),
+    <OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE
+);
+
+fn fallback_to_metal<T>(
+    cpu: Result<T, AkitaError>,
+    metal: impl FnOnce() -> Result<T, AkitaError>,
+) -> Result<T, AkitaError> {
+    match cpu {
+        Err(AkitaError::UnsupportedSchedule(_)) => metal(),
+        result => result,
+    }
+}
+
+/// K=256 one-hot config with CPU-default proving and dual-catalog verification.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct JoltOneHotK256;
+
+impl CommitmentConfig for JoltOneHotK256 {
+    type Field = <OneHot as CommitmentConfig>::Field;
+    type ExtField = <OneHot as CommitmentConfig>::ExtField;
+    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+        JOLT_K256_RING_DIMENSION_SCHEDULE_MODE;
+    const EXT_DEGREE: usize = <OneHot as CommitmentConfig>::EXT_DEGREE;
+
+    fn decomposition() -> akita_types::DecompositionParams {
+        OneHot::decomposition()
+    }
+
+    fn ring_challenge_config(
+        d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+        OneHot::ring_challenge_config(d)
+    }
+
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        OneHot::selection_policy()
+    }
+
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        OneHot::sis_modulus_profile()
+    }
+
+    fn setup_matrix_capacity(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        let mut capacity =
+            JoltOneHotK256Cpu::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
+        let metal =
+            JoltOneHotK256Metal::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
+        capacity.num_field_elements = capacity.num_field_elements.max(metal.num_field_elements);
+
+        for row in crate::schedule_registry::registered_rows::<Self>()?.rows() {
+            let profiles = row.profiles();
+            let key = AkitaScheduleLookupKey {
+                final_group: profiles.final_group.group,
+                precommitteds: profiles.precommitteds.clone(),
+            };
+            fold_row_capacity(
+                &mut capacity,
+                &key,
+                || Ok(row.schedule().clone()),
+                max_num_vars,
+                max_num_batched_polys,
+            )?;
+        }
+        Ok(capacity)
+    }
+
+    fn opening_basis_range() -> (u32, u32) {
+        OneHot::opening_basis_range()
+    }
+
+    fn inner_basis_range() -> (u32, u32) {
+        OneHot::inner_basis_range()
+    }
+
+    fn committed_source_class() -> CommittedSourceClass {
+        OneHot::committed_source_class()
+    }
+
+    fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+        OneHot::chunked_witness_cfg()
+    }
+
+    fn recursive_setup_planning() -> bool {
+        OneHot::recursive_setup_planning()
+    }
+
+    fn schedule_catalog() -> Option<GeneratedScheduleTable> {
+        crate::schedules::jolt_fp128_onehot_k256_table()
+    }
+
+    fn resolve_catalog_row_for_key(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        if let Some(row) = crate::schedule_registry::lookup_key::<Self>(key) {
+            return Ok(row);
+        }
+        JoltOneHotK256Cpu::resolve_catalog_row_for_key(key)
+    }
+
+    fn resolve_catalog_row_for_profiles(
+        profiles: &akita_types::CommittedGroupBatchProfile,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        if let Some(row) = crate::schedule_registry::lookup_profiles::<Self>(profiles) {
+            return Ok(row);
+        }
+        fallback_to_metal(
+            JoltOneHotK256Cpu::resolve_catalog_row_for_profiles(profiles),
+            || JoltOneHotK256Metal::resolve_catalog_row_for_profiles(profiles),
+        )
+    }
+
+    fn resolve_schedule_selection(
+        selection: akita_types::OpeningScheduleSelection,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        if let Some(row) = crate::schedule_registry::lookup_selection::<Self>(selection) {
+            return Ok(row);
+        }
+        fallback_to_metal(
+            JoltOneHotK256Cpu::resolve_schedule_selection(selection),
+            || JoltOneHotK256Metal::resolve_schedule_selection(selection),
+        )
+    }
+}
 
 delegate_preset!(
     /// Dense config for `u64`-bounded advice and committed-program objects.
@@ -319,10 +452,23 @@ mod tests {
     #[expect(clippy::unwrap_used)]
     fn k256_t28_trace_uses_the_prover_optimized_root_shape() {
         let layout = akita_types::OpeningClaimsLayout::new(41, 1).unwrap();
-        let row = JoltOneHotK256::resolve_catalog_row_for_opening(&layout).unwrap();
-        let commitment = row.schedule().root.params.final_group();
+        let cpu = JoltOneHotK256Cpu::resolve_catalog_row_for_opening(&layout).unwrap();
+        let cpu_commitment = cpu.schedule().root.params.final_group();
 
-        assert_eq!(commitment.profile.inner.matrix.ring_dimension(), 128);
-        assert_eq!(commitment.profile.inner.matrix.output_rank(), 3);
+        assert_eq!(cpu_commitment.profile.inner.matrix.ring_dimension(), 128);
+        assert_eq!(cpu_commitment.profile.inner.matrix.output_rank(), 3);
+
+        let metal = JoltOneHotK256Metal::resolve_catalog_row_for_opening(&layout).unwrap();
+        let metal_commitment = metal.schedule().root.params.final_group();
+
+        assert_eq!(metal_commitment.profile.inner.matrix.ring_dimension(), 512);
+        assert_eq!(metal_commitment.profile.inner.matrix.output_rank(), 1);
+
+        let cpu_by_selection = JoltOneHotK256::resolve_schedule_selection(cpu.selection()).unwrap();
+        let metal_by_selection =
+            JoltOneHotK256::resolve_schedule_selection(metal.selection()).unwrap();
+
+        assert_eq!(cpu_by_selection.selection(), cpu.selection());
+        assert_eq!(metal_by_selection.selection(), metal.selection());
     }
 }
