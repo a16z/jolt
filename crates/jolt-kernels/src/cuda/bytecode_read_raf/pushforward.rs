@@ -72,18 +72,21 @@ impl DeviceBytecodePushforward {
         let mut left = context.alloc(TERMS * addresses)?;
         let mut right = context.alloc(TERMS * addresses)?;
 
-        for (stage, point) in inputs.stage_cycle_points.iter().enumerate() {
-            let folded = shards.fold(point, FoldTuning::default())?;
-            Self::term(
-                context,
-                &folded,
-                &int,
-                [powers[stage], Fr::from(0u64)],
-                &mut left,
-                stage * addresses,
-                addresses,
-            )?;
-        }
+        tracing::info_span!("brap_left_terms").in_scope(|| -> Result<(), CudaError> {
+            for (stage, point) in inputs.stage_cycle_points.iter().enumerate() {
+                let folded = shards.fold(point, FoldTuning::default())?;
+                Self::term(
+                    context,
+                    &folded,
+                    &int,
+                    [powers[stage], Fr::from(0u64)],
+                    &mut left,
+                    stage * addresses,
+                    addresses,
+                )?;
+            }
+            Ok(())
+        })?;
         let entry_trace = Self::one_hot(context, inputs.entry_trace_index, addresses)?;
         Self::term(
             context,
@@ -95,23 +98,26 @@ impl DeviceBytecodePushforward {
             addresses,
         )?;
 
-        for stage in 0..STAGES {
-            let column: Vec<F> = inputs
-                .stage_values
-                .iter()
-                .map(|values| values[stage])
-                .collect();
-            let uploaded = context.upload(require_fr_slice(&column)?)?;
-            Self::term(
-                context,
-                &uploaded,
-                &int,
-                [Fr::from(1u64), raf[stage]],
-                &mut right,
-                stage * addresses,
-                addresses,
-            )?;
-        }
+        tracing::info_span!("brap_right_terms").in_scope(|| -> Result<(), CudaError> {
+            for stage in 0..STAGES {
+                let column: Vec<F> = inputs
+                    .stage_values
+                    .iter()
+                    .map(|values| values[stage])
+                    .collect();
+                let uploaded = context.upload(require_fr_slice(&column)?)?;
+                Self::term(
+                    context,
+                    &uploaded,
+                    &int,
+                    [Fr::from(1u64), raf[stage]],
+                    &mut right,
+                    stage * addresses,
+                    addresses,
+                )?;
+            }
+            Ok(())
+        })?;
         let entry_expected = Self::one_hot(context, inputs.entry_expected_index, addresses)?;
         Self::term(
             context,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::Field;
+use jolt_field::{Field, Fr};
 
 use jolt_witness::JoltWitnessPlane;
 
@@ -123,9 +123,9 @@ impl OneHotShards {
             return self.whole()?.fold_cycles(context, cycle_point, tuning);
         }
         let point = require_fr_slice(cycle_point)?;
-        let tasks: Vec<DeviceTask<'_, DeviceFrVec, CudaError>> = (0..shards)
+        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = (0..shards)
             .map(|ordinal| {
-                let task: DeviceTask<'_, DeviceFrVec, CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
                     let context = context_for(ordinal).ok_or_else(absent)?;
                     let columns =
                         self.columns
@@ -133,8 +133,13 @@ impl OneHotShards {
                             .ok_or(CudaError::InvariantViolation {
                                 reason: "a one-hot cycle-fold window has no columns",
                             })?;
-                    let eq = context.eq_evals_shard(point, ordinal, shards)?;
-                    tracing::info_span!(
+                    let eq = tracing::info_span!(
+                        "cuda_one_hot_fold_eq",
+                        device = ordinal,
+                        cycles = columns.cycles,
+                    )
+                    .in_scope(|| context.eq_evals_shard(point, ordinal, shards))?;
+                    let folded = tracing::info_span!(
                         "cuda_one_hot_fold_window",
                         device = ordinal,
                         addresses = columns.addresses(),
@@ -143,31 +148,39 @@ impl OneHotShards {
                         shared =
                             columns.addresses() * LANES * size_of::<u64>() <= tuning.shared_budget,
                     )
-                    .in_scope(|| columns.fold_cycles_with_eq(context, &eq, tuning))
+                    .in_scope(|| columns.fold_cycles_with_eq(context, &eq, tuning))?;
+                    tracing::info_span!(
+                        "cuda_one_hot_fold_download",
+                        device = ordinal,
+                        elements = folded.len(),
+                    )
+                    .in_scope(|| folded.to_host())
                 });
                 task
             })
             .collect();
         let parts = fan_out(tasks)?;
-        let mut totals = parts
-            .first()
-            .ok_or(CudaError::InvariantViolation {
-                reason: "the one-hot cycle fold produced no window",
-            })?
-            .to_host()?;
-        for part in parts.iter().skip(1) {
-            let addend = part.to_host()?;
-            if addend.len() != totals.len() {
-                return Err(CudaError::LengthMismatch {
-                    expected: totals.len(),
-                    got: addend.len(),
-                });
-            }
-            for (total, value) in totals.iter_mut().zip(&addend) {
-                *total += *value;
-            }
-        }
-        context_for(0).ok_or_else(absent)?.upload(&totals)
+        let folded_len = parts.first().map_or(0, Vec::len);
+        tracing::info_span!("cuda_one_hot_fold_reduce", shards, elements = folded_len).in_scope(
+            || -> Result<DeviceFrVec, CudaError> {
+                let mut parts = parts.into_iter();
+                let mut totals = parts.next().ok_or(CudaError::InvariantViolation {
+                    reason: "the one-hot cycle fold produced no window",
+                })?;
+                for addend in parts {
+                    if addend.len() != totals.len() {
+                        return Err(CudaError::LengthMismatch {
+                            expected: totals.len(),
+                            got: addend.len(),
+                        });
+                    }
+                    for (total, value) in totals.iter_mut().zip(&addend) {
+                        *total += *value;
+                    }
+                }
+                context_for(0).ok_or_else(absent)?.upload(&totals)
+            },
+        )
     }
 }
 
