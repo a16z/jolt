@@ -17,6 +17,10 @@ on:
       - ".github/workflows/bench-crates.yml"
       - "scripts/ci/bench_comment.py"
 
+permissions:
+  contents: read
+  pull-requests: write
+
 env:
   CARGO_TERM_COLOR: always
   # Every CPU observed in the hosted x64 fleet (Xeon 8370C/8573C, EPYC 7763/9V74)
@@ -46,38 +50,40 @@ jobs:
         id: refs
         run: |
           git rev-parse --verify -q HEAD^2 >/dev/null || { echo "::error::expected the PR merge commit, got a non-merge HEAD"; exit 1; }
-          { echo "head=$(git rev-parse HEAD)"; echo "base=$(git rev-parse HEAD^1)"; } >> "$GITHUB_OUTPUT"
+          { echo "merge=$(git rev-parse HEAD)"; echo "base=$(git rev-parse HEAD^1)"; echo "head=$(git rev-parse HEAD^2)"; } >> "$GITHUB_OUTPUT"
 
       # Base and PR are benchmarked back-to-back on the SAME runner. Comparing
       # against a stored main baseline measured on a different VM flagged most of
       # the suite on unrelated PRs: the hosted x64 fleet mixes CPU models, which
       # alone shifts wall time by 14% (median) to 34% (p90) between runs.
-      - name: Run benchmarks (base)
+      #
+      # The base leg always runs first. On the validation run (no code change
+      # between legs) the second leg came out ~0.2% faster (median; 42 of 57
+      # non-zero rows) — a systematic lean far below the 10% threshold. Don't
+      # tighten the threshold to a few percent without switching to an
+      # alternating (A/B/A) order.
+      - name: Run benchmarks (base, then PR)
+        env:
+          BASE: ${{ steps.refs.outputs.base }}
+          MERGE: ${{ steps.refs.outputs.merge }}
         run: |
-          git checkout --quiet ${{ steps.refs.outputs.base }}
-          cargo bench \
-            -p jolt-crypto \
-            -p jolt-field \
-            -p jolt-poly \
-            -p jolt-transcript \
-            --features jolt-field/solinas,jolt-field/asm \
-            --bench '*' \
-            -- --save-baseline base_run --noplot
+          for leg in "$BASE base_run" "$MERGE pr_run"; do
+            read -r sha baseline <<< "$leg"
+            echo "::group::$baseline @ $sha"
+            git checkout --quiet "$sha"
+            cargo bench \
+              -p jolt-crypto \
+              -p jolt-field \
+              -p jolt-poly \
+              -p jolt-transcript \
+              --features jolt-field/solinas,jolt-field/asm \
+              --bench '*' \
+              -- --save-baseline "$baseline" --noplot
+            echo "::endgroup::"
+          done
 
-      - name: Run benchmarks (PR)
-        run: |
-          git checkout --quiet ${{ steps.refs.outputs.head }}
-          cargo bench \
-            -p jolt-crypto \
-            -p jolt-field \
-            -p jolt-poly \
-            -p jolt-transcript \
-            --features jolt-field/solinas,jolt-field/asm \
-            --bench '*' \
-            -- --save-baseline pr_run --noplot
-
-      # Bolds the faster run per benchmark and colors entries whose delta
-      # exceeds the noise threshold (see NOISE_THRESHOLD in the script).
+      # Bolds the faster run per benchmark and colors the Δ of entries whose
+      # delta exceeds the noise threshold (see NOISE_THRESHOLD in the script).
       - name: Render comparison
         run: |
           python3 scripts/ci/bench_comment.py ${{ steps.refs.outputs.base }} ${{ steps.refs.outputs.head }} > "$RUNNER_TEMP/bench-comment.md"
@@ -94,10 +100,11 @@ jobs:
             // The renderer owns the comment body; its first line is the
             // sticky-comment marker used to find the comment to update.
             const marker = body.split('\n', 1)[0];
-            const { data: comments } = await github.rest.issues.listComments({
+            const comments = await github.paginate(github.rest.issues.listComments, {
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
+              per_page: 100,
             });
             const existing = comments.find(c => c.body.includes(marker));
             if (existing) {

@@ -4,16 +4,14 @@
 Reads every ``<criterion-dir>/**/{base_run,pr_run}/estimates.json`` pair saved
 by ``cargo bench -- --save-baseline {base_run,pr_run}`` and prints a GitHub
 Markdown comment to stdout: per benchmark, the faster run is bolded, and when
-the relative difference exceeds ``NOISE_THRESHOLD`` the entry is colored
-(green = PR faster, red = PR slower). Coloring uses GitHub's client-side math
-rendering (``$\\color{..}..$``), the only inline text coloring GitHub Markdown
-supports; colored cells therefore use ASCII-only TeX (``\\pm``, ``\\mu``,
-``\\%``) instead of the plain-text ``±``/``µ``.
+the relative difference exceeds ``NOISE_THRESHOLD`` the Δ cell is colored
+(green = PR faster, red = PR slower) via GitHub's client-side math rendering
+(``$\\color{..}..$``), the only inline text coloring GitHub Markdown supports.
 
 Usage: bench_comment.py <base-sha> <head-sha> [criterion-dir]
 
-The first output line is the HTML marker the workflow's comment step uses to
-upsert the sticky PR comment.
+The SHAs (merge target, PR head) are display-only. The first output line is the
+HTML marker the workflow's comment step uses to upsert the sticky PR comment.
 """
 
 from __future__ import annotations
@@ -29,13 +27,8 @@ MARKER = "<!-- bench-crates -->"
 # noisy neighbors), more on the rayon-parallel jolt-poly benches.
 NOISE_THRESHOLD = 0.10
 
-# (scale in ns, plain suffix, TeX suffix)
-UNITS = [
-    (1.0, "ns", r"\text{ns}"),
-    (1e3, "µs", r"\mu\text{s}"),
-    (1e6, "ms", r"\text{ms}"),
-    (1e9, "s", r"\text{s}"),
-]
+# (scale in ns, suffix)
+UNITS = [(1.0, "ns"), (1e3, "µs"), (1e6, "ms"), (1e9, "s")]
 
 TABLE_HEADER = (
     "| Benchmark | `base_run` (merge target) | `pr_run` (this PR) | Δ |\n"
@@ -58,25 +51,24 @@ def load_baseline(criterion_dir: Path, name: str) -> dict[str, tuple[float, floa
     return out
 
 
-def time_cell(mean_ns: float, sd_ns: float, bold: bool, color: str | None) -> str:
-    scale, suffix, tex = UNITS[0]
+def time_cell(mean_ns: float, sd_ns: float, bold: bool) -> str:
+    scale, suffix = UNITS[0]
     for candidate in UNITS:
         if mean_ns >= candidate[0]:
-            scale, suffix, tex = candidate
-    value, sd = mean_ns / scale, sd_ns / scale
-    if color is not None:
-        return f"${{\\color{{{color}}}\\mathbf{{{value:.1f} \\pm {sd:.2f}}}\\ {tex}}}$"
-    text = f"{value:.1f}±{sd:.2f}{suffix}"
+            scale, suffix = candidate
+    text = f"{mean_ns / scale:.1f}±{sd_ns / scale:.2f}{suffix}"
     return f"**{text}**" if bold else text
 
 
 def delta_cell(pct: float, color: str | None) -> str:
+    # `+ 0.0` turns the -0.0 that rounding a tiny negative leaves into +0.0.
+    text = f"{round(pct, 1) + 0.0:+.1f}"
     # Markdown un-escapes backslash-punctuation inside $...$ before math
     # rendering, and a bare % starts a TeX comment — so % needs a double
     # backslash to reach MathJax as \%.
     if color is not None:
-        return f"${{\\color{{{color}}}\\mathbf{{{pct:+.1f}\\\\%}}}}$"
-    return f"{pct:+.1f}%"
+        return f"${{\\color{{{color}}}\\mathbf{{{text}\\\\%}}}}$"
+    return f"{text}%"
 
 
 @dataclass
@@ -95,8 +87,8 @@ def render_row(name: str, base: tuple[float, float], pr: tuple[float, float]) ->
     color = ("green" if pr_faster else "red") if significant else None
     cells = (
         f"`{name.replace('|', chr(92) + '|')}`",
-        time_cell(base_mean, base_sd, not pr_faster, None if pr_faster else color),
-        time_cell(pr_mean, pr_sd, pr_faster, color if pr_faster else None),
+        time_cell(base_mean, base_sd, not pr_faster),
+        time_cell(pr_mean, pr_sd, pr_faster),
         delta_cell(pct, color),
     )
     return Row(f"| {' | '.join(cells)} |", pct, significant)
@@ -124,8 +116,9 @@ def main() -> int:
         "## Benchmark comparison (crates)",
         "",
         f"Same-runner A/B: `base_run` = {base_sha[:9]} (merge target) vs "
-        f"`pr_run` = {head_sha[:9]} (merge commit). Bold = faster run; colored "
-        f"when the difference exceeds the ±{NOISE_THRESHOLD:.0%} noise threshold.",
+        f"`pr_run` = {head_sha[:9]} (PR head merged onto it). "
+        f"Bold = faster run; Δ colored when the difference exceeds the "
+        f"±{NOISE_THRESHOLD:.0%} noise threshold.",
         "",
     ]
     if significant:
