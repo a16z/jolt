@@ -20,20 +20,17 @@ use metal::{
 
 use super::{
     REGISTERS_READ_WRITE_BOOTSTRAP_PIPELINE, REGISTERS_READ_WRITE_COMPACT_RS1_CLAIM_PIPELINE,
-    REGISTERS_READ_WRITE_DERIVE_RD_PRE_CHUNKS_PIPELINE,
     REGISTERS_READ_WRITE_DIRECT_BIND_MESSAGE_PIPELINE,
     REGISTERS_READ_WRITE_DIRECT_COOPERATIVE_PIPELINE,
     REGISTERS_READ_WRITE_DIRECT_GEOMETRY_PIPELINE,
     REGISTERS_READ_WRITE_FIRST_MESSAGE_INTERSECTION_PIPELINE,
-    REGISTERS_READ_WRITE_FIRST_MESSAGE_PIPELINE, REGISTERS_READ_WRITE_FIXUP_RD_PRE_PIPELINE,
+    REGISTERS_READ_WRITE_FIRST_MESSAGE_PIPELINE,
     REGISTERS_READ_WRITE_INDEXED_BIND_MESSAGE_PIPELINE,
     REGISTERS_READ_WRITE_INDEXED_COOPERATIVE_PIPELINE,
     REGISTERS_READ_WRITE_INDEXED_STATE_GEOMETRY_PIPELINE,
     REGISTERS_READ_WRITE_INDEXED_STATE_MESSAGE_PIPELINE,
-    REGISTERS_READ_WRITE_OPERAND_CLAIMS_PIPELINE, REGISTERS_READ_WRITE_RD_PRE_CHUNK_ROWS,
-    REGISTERS_READ_WRITE_RD_PRE_DERIVE_THREADS, REGISTERS_READ_WRITE_RD_PRE_FIXUP_GROUPS,
-    REGISTERS_READ_WRITE_RD_PRE_FIXUP_THREADS, REGISTERS_READ_WRITE_RD_PRE_REGISTERS,
-    REGISTERS_READ_WRITE_REDUCTION_PIPELINE, REGISTERS_READ_WRITE_REPLAY_BOOTSTRAP_PIPELINE,
+    REGISTERS_READ_WRITE_OPERAND_CLAIMS_PIPELINE, REGISTERS_READ_WRITE_REDUCTION_PIPELINE,
+    REGISTERS_READ_WRITE_REPLAY_BOOTSTRAP_PIPELINE,
     REGISTERS_READ_WRITE_REPLAY_THREE_BOOTSTRAP_PIPELINE,
     REGISTERS_READ_WRITE_REPLAY_THREE_MATERIALIZE_PIPELINE, REGISTERS_READ_WRITE_SIMD_WIDTH,
     REGISTERS_READ_WRITE_SOURCE_PRIMER_PIPELINE, REGISTERS_READ_WRITE_STATELESS_BOOTSTRAP_PIPELINE,
@@ -89,8 +86,9 @@ const fn direct_cooperative_work_items_min(log_t: usize) -> usize {
     }
 }
 
-const fn uses_operand_carry(log_t: usize) -> bool {
-    log_t >= CROSS_REPRESENTATION_REUSE_LOG_T_MIN && log_t < COMPACT_RS1_SOURCE_LOG_T_MIN
+const fn uses_operand_carry(log_t: usize, stage1_source: bool) -> bool {
+    log_t >= CROSS_REPRESENTATION_REUSE_LOG_T_MIN
+        && (stage1_source || log_t < COMPACT_RS1_SOURCE_LOG_T_MIN)
 }
 
 #[repr(C)]
@@ -104,17 +102,6 @@ struct FirstMessageParams {
 }
 
 const _: [(); 20] = [(); size_of::<FirstMessageParams>()];
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct RdPreParams {
-    row_count: u32,
-    chunk_rows: u32,
-    chunks: u32,
-    source_stride: u32,
-}
-
-const _: [(); 16] = [(); size_of::<RdPreParams>()];
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -211,20 +198,10 @@ enum CycleSequenceSource {
     },
 }
 
-#[expect(
-    clippy::struct_field_names,
-    reason = "the rd prefix distinguishes these carried planes from the other register state"
-)]
 struct Stage1SourceBuffers {
-    rd_indices: Buffer,
+    instruction_read_raf: Buffer,
+    instruction_read_raf_fused_offset: u64,
     rd_post: Buffer,
-    rd_pre: Buffer,
-    rd_pre_last_values: Option<Buffer>,
-    rd_pre_first_offsets: Option<Buffer>,
-    rd_pre_params: RdPreParams,
-    rd_index_bytes: usize,
-    rd_pre_bytes: usize,
-    rd_pre_summary_bytes: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -334,8 +311,6 @@ impl StateGeometry {
 }
 
 struct SequencePipelines {
-    derive_rd_pre_chunks: ComputePipelineState,
-    fixup_rd_pre: ComputePipelineState,
     first_message: ComputePipelineState,
     first_message_intersection: ComputePipelineState,
     bootstrap: ComputePipelineState,
@@ -760,13 +735,7 @@ impl SolinasMetal {
             let _ =
                 self.compile_registers_read_write_source_pipeline(name, remap_registers, true)?;
         }
-        for name in [
-            REGISTERS_READ_WRITE_DERIVE_RD_PRE_CHUNKS_PIPELINE,
-            REGISTERS_READ_WRITE_FIXUP_RD_PRE_PIPELINE,
-        ] {
-            let _ = self.compile_named_pipeline(name)?;
-        }
-        if uses_operand_carry(log_t) {
+        if uses_operand_carry(log_t, true) {
             let _ = self.compile_registers_read_write_direct_pipeline(
                 REGISTERS_READ_WRITE_DIRECT_BIND_MESSAGE_PIPELINE,
                 4,
@@ -1023,19 +992,6 @@ impl SolinasMetal {
                 let expected_rd_post_bytes = cycles
                     .checked_mul(size_of::<u64>())
                     .ok_or(MetalError::InputTooLong(cycles))?;
-                let rd_pre_bytes = source
-                    .physical_rows
-                    .checked_mul(size_of::<u64>())
-                    .ok_or(MetalError::InputTooLong(source.physical_rows))?;
-                let rd_pre_chunks = source
-                    .physical_rows
-                    .div_ceil(REGISTERS_READ_WRITE_RD_PRE_CHUNK_ROWS);
-                let rd_pre_summary_elements = rd_pre_chunks
-                    .checked_mul(REGISTERS_READ_WRITE_RD_PRE_REGISTERS)
-                    .ok_or(MetalError::InputTooLong(rd_pre_chunks))?;
-                let rd_pre_summary_bytes = rd_pre_summary_elements
-                    .checked_mul(size_of::<u64>() + size_of::<u16>())
-                    .ok_or(MetalError::InputTooLong(rd_pre_summary_elements))?;
                 if source.physical_rows == 0
                     || source.physical_rows > cycles
                     || source.cycles != cycles
@@ -1057,10 +1013,9 @@ impl SolinasMetal {
                     ));
                 }
                 let source_bytes = expected_instruction_bytes
-                    .checked_add(expected_rd_index_bytes)
+                    .checked_add(expected_instruction_read_raf_bytes)
+                    .and_then(|bytes| bytes.checked_add(expected_rd_index_bytes))
                     .and_then(|bytes| bytes.checked_add(expected_rd_post_bytes))
-                    .and_then(|bytes| bytes.checked_add(rd_pre_bytes))
-                    .and_then(|bytes| bytes.checked_add(rd_pre_summary_bytes))
                     .ok_or(MetalError::InputTooLong(cycles))?;
                 (
                     source.physical_rows,
@@ -1084,7 +1039,7 @@ impl SolinasMetal {
             PRIVATE_PAYLOAD_POOL_CAP_BYTES,
         )?;
 
-        let (direct, direct_cooperative) = if uses_operand_carry(log_t) {
+        let (direct, direct_cooperative) = if uses_operand_carry(log_t, stage1_source) {
             (
                 [
                     None,
@@ -1145,10 +1100,6 @@ impl SolinasMetal {
             )
         };
         let pipelines = SequencePipelines {
-            derive_rd_pre_chunks: self
-                .compile_named_pipeline(REGISTERS_READ_WRITE_DERIVE_RD_PRE_CHUNKS_PIPELINE)?,
-            fixup_rd_pre: self
-                .compile_named_pipeline(REGISTERS_READ_WRITE_FIXUP_RD_PRE_PIPELINE)?,
             first_message: self.compile_registers_read_write_source_pipeline(
                 REGISTERS_READ_WRITE_FIRST_MESSAGE_PIPELINE,
                 remap_registers,
@@ -1227,8 +1178,6 @@ impl SolinasMetal {
                 "registers read-write sequence has no reachable direct pipeline",
             ))?;
         let mut all_pipelines = vec![
-            &pipelines.derive_rd_pre_chunks,
-            &pipelines.fixup_rd_pre,
             &pipelines.first_message,
             &pipelines.first_message_intersection,
             &pipelines.bootstrap,
@@ -1265,18 +1214,12 @@ impl SolinasMetal {
             });
         }
         let threads = Self::resolve_threadgroup_width(Some(REGISTERS_READ_WRITE_THREADS), limits)?;
-        let derive_limits = Self::limits(&pipelines.derive_rd_pre_chunks);
-        let fixup_limits = Self::limits(&pipelines.fixup_rd_pre);
         let static_threadgroup_bytes = all_pipelines
             .iter()
             .map(|pipeline| Self::limits(pipeline).static_threadgroup_memory_length)
             .max()
             .unwrap_or(0);
         if threads != REGISTERS_READ_WRITE_THREADS
-            || derive_limits.max_total_threads_per_threadgroup
-                < REGISTERS_READ_WRITE_RD_PRE_DERIVE_THREADS
-            || fixup_limits.max_total_threads_per_threadgroup
-                < REGISTERS_READ_WRITE_RD_PRE_FIXUP_THREADS
             || static_threadgroup_bytes > REGISTERS_READ_WRITE_THREADGROUP_BYTES_MAX
         {
             return Err(MetalError::InvalidRegistersReadWriteState(
@@ -1359,43 +1302,14 @@ impl SolinasMetal {
             CycleSequenceSource::Stage1 { source, rd_post } => {
                 let source_view = source.device_view();
                 let instruction_buffer = source_view.instruction_input.clone();
-                let chunks = physical_rows.div_ceil(REGISTERS_READ_WRITE_RD_PRE_CHUNK_ROWS);
-                let summary_elements = chunks
-                    .checked_mul(REGISTERS_READ_WRITE_RD_PRE_REGISTERS)
-                    .ok_or(MetalError::InputTooLong(chunks))?;
-                let rd_pre_bytes = physical_rows
-                    .checked_mul(size_of::<u64>())
-                    .ok_or(MetalError::InputTooLong(physical_rows))?;
-                let rd_pre_summary_bytes = summary_elements
-                    .checked_mul(size_of::<u64>() + size_of::<u16>())
-                    .ok_or(MetalError::InputTooLong(summary_elements))?;
+                let instruction_read_raf_fused_offset = cycles
+                    .checked_mul(2 * size_of::<u64>())
+                    .and_then(|bytes| u64::try_from(bytes).ok())
+                    .ok_or(MetalError::InputTooLong(cycles))?;
                 let buffers = Stage1SourceBuffers {
-                    rd_indices: source_view.rd_indices.clone(),
+                    instruction_read_raf: source_view.instruction_read_raf.clone(),
+                    instruction_read_raf_fused_offset,
                     rd_post: rd_post.buffer().clone(),
-                    rd_pre: new_buffer::<u64>(
-                        self,
-                        physical_rows,
-                        MTLResourceOptions::StorageModePrivate,
-                    )?,
-                    rd_pre_last_values: Some(new_buffer::<u64>(
-                        self,
-                        summary_elements,
-                        MTLResourceOptions::StorageModePrivate,
-                    )?),
-                    rd_pre_first_offsets: Some(new_buffer::<u16>(
-                        self,
-                        summary_elements,
-                        MTLResourceOptions::StorageModePrivate,
-                    )?),
-                    rd_pre_params: RdPreParams {
-                        row_count: checked_u32(physical_rows)?,
-                        chunk_rows: checked_u32(REGISTERS_READ_WRITE_RD_PRE_CHUNK_ROWS)?,
-                        chunks: checked_u32(chunks)?,
-                        source_stride: checked_u32(cycles)?,
-                    },
-                    rd_index_bytes: cycles,
-                    rd_pre_bytes,
-                    rd_pre_summary_bytes,
                 };
                 let compact = Some(new_buffer::<u8>(
                     self,
@@ -1463,7 +1377,7 @@ impl SolinasMetal {
             deferred_wide_challenge: None,
             ra_lut: vec![AkitaField::zero(), gamma, gamma_sq, gamma + gamma_sq],
             wa_lut: vec![AkitaField::zero(), AkitaField::one()],
-            rs1_weights: uses_operand_carry(log_t).then(|| vec![AkitaField::one()]),
+            rs1_weights: uses_operand_carry(log_t, stage1_source).then(|| vec![AkitaField::one()]),
             gamma,
             threads,
             #[cfg(feature = "test-utils")]
@@ -1553,7 +1467,11 @@ impl RegistersReadWriteCycleSequence {
                 ),
             )?;
             encoder.set_buffer(23, Some(self.source()?), 0);
-            encoder.set_buffer(24, Some(&source.rd_pre), 0);
+            encoder.set_buffer(
+                24,
+                Some(&source.instruction_read_raf),
+                source.instruction_read_raf_fused_offset,
+            );
             encoder.set_buffer(25, Some(&source.rd_post), 0);
             encoder.set_buffer(26, Some(&self.register_map), 0);
         }
@@ -1657,65 +1575,6 @@ impl RegistersReadWriteCycleSequence {
         let gamma = Fp128::from_jolt_field(&gamma);
         let (quadratic, wall, gpu_active) = autoreleasepool(|| {
             let command = self.context.queue.new_command_buffer();
-            if self.stage1_source {
-                let source = self.stage1_source_buffers.as_ref().ok_or(
-                    MetalError::InvalidRegistersReadWriteState(
-                        "registers read-write lost its rd-pre derivation buffers",
-                    ),
-                )?;
-                let last_values = source.rd_pre_last_values.as_ref().ok_or(
-                    MetalError::InvalidRegistersReadWriteState(
-                        "registers read-write rd-pre summaries were already retired",
-                    ),
-                )?;
-                let first_offsets = source.rd_pre_first_offsets.as_ref().ok_or(
-                    MetalError::InvalidRegistersReadWriteState(
-                        "registers read-write rd-pre offsets were already retired",
-                    ),
-                )?;
-                let encoder = command.new_compute_command_encoder();
-                encoder.set_compute_pipeline_state(&self.pipelines.derive_rd_pre_chunks);
-                encoder.set_buffer(0, Some(&source.rd_indices), 0);
-                encoder.set_buffer(1, Some(&source.rd_post), 0);
-                encoder.set_buffer(2, Some(&self.register_map), 0);
-                encoder.set_buffer(3, Some(&source.rd_pre), 0);
-                encoder.set_buffer(4, Some(last_values), 0);
-                encoder.set_buffer(5, Some(first_offsets), 0);
-                set_inline_bytes(encoder, 6, &source.rd_pre_params);
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: u64::from(source.rd_pre_params.chunks),
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: REGISTERS_READ_WRITE_RD_PRE_DERIVE_THREADS as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-                encoder.end_encoding();
-
-                let encoder = command.new_compute_command_encoder();
-                encoder.set_compute_pipeline_state(&self.pipelines.fixup_rd_pre);
-                encoder.set_buffer(3, Some(&source.rd_pre), 0);
-                encoder.set_buffer(4, Some(last_values), 0);
-                encoder.set_buffer(5, Some(first_offsets), 0);
-                set_inline_bytes(encoder, 6, &source.rd_pre_params);
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: REGISTERS_READ_WRITE_RD_PRE_FIXUP_GROUPS as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: REGISTERS_READ_WRITE_RD_PRE_FIXUP_THREADS as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-                encoder.end_encoding();
-            }
             let encoder = command.new_compute_command_encoder();
             let pipeline = if geometry_free {
                 &self.pipelines.first_message_intersection
@@ -1777,22 +1636,13 @@ impl RegistersReadWriteCycleSequence {
             };
             Ok::<_, MetalError>((read_quadratic(&self.context, output)?, wall, gpu_active))
         })?;
-        if let Some(source) = self.stage1_source_buffers.as_mut() {
+        if self.stage1_source {
             tracing::info!(
                 target: "jolt::metal",
-                rows = source.rd_pre_params.row_count,
-                chunks = source.rd_pre_params.chunks,
-                chunk_rows = source.rd_pre_params.chunk_rows,
-                rd_index_bytes = source.rd_index_bytes,
-                rd_pre_bytes = source.rd_pre_bytes,
-                summary_bytes = source.rd_pre_summary_bytes,
-                predecessor_scan_dispatches = 2usize,
-                instruction_read_raf_bytes = 0usize,
-                algorithm = "simd_segmented_bitonic_v1",
-                "completed registers read-write rd-pre predecessor scan"
+                predecessor_scan_dispatches = 0usize,
+                algorithm = "signed_fused_inc_v1",
+                "reconstructed registers read-write rd-pre from Stage-1 deltas"
             );
-            drop(source.rd_pre_last_values.take());
-            drop(source.rd_pre_first_offsets.take());
         }
         self.pending_geometry = match geometry {
             Some((geometry_offsets, geometry_masks)) => {
@@ -2288,7 +2138,7 @@ impl RegistersReadWriteCycleSequence {
                     MTLResourceOptions::StorageModePrivate,
                     reusable,
                     reusable_common,
-                    operand_carry_element_bytes(self.log_t, new_rounds_bound),
+                    operand_carry_element_bytes(self.log_t, self.stage1_source, new_rounds_bound),
                     self.private_buffer_pool_epoch,
                 )?)
             }
@@ -2332,7 +2182,11 @@ impl RegistersReadWriteCycleSequence {
                         &self.context,
                         future_geometry,
                         MTLResourceOptions::StorageModePrivate,
-                        operand_carry_element_bytes(self.log_t, new_rounds_bound + 1),
+                        operand_carry_element_bytes(
+                            self.log_t,
+                            self.stage1_source,
+                            new_rounds_bound + 1,
+                        ),
                         self.private_buffer_pool_epoch,
                     )?)
                 }
@@ -2419,7 +2273,7 @@ impl RegistersReadWriteCycleSequence {
             wa_lut_bits,
             source_stride: checked_u32(self.cycles)?,
             emit_message: 1,
-            reserved: operand_carry_kind(self.log_t, new_rounds_bound),
+            reserved: operand_carry_kind(self.log_t, self.stage1_source, new_rounds_bound),
         };
         let deferred_challenge = challenge;
         let prefill = future_wide
@@ -2532,7 +2386,7 @@ impl RegistersReadWriteCycleSequence {
             &self.context,
             geometry,
             MTLResourceOptions::StorageModeShared,
-            operand_carry_element_bytes(self.log_t, self.log_t),
+            operand_carry_element_bytes(self.log_t, self.stage1_source, self.log_t),
             self.private_buffer_pool_epoch,
         )?);
         let allocation = allocation_started.elapsed();
@@ -2554,7 +2408,7 @@ impl RegistersReadWriteCycleSequence {
             ra_lut_bits: 0,
             wa_lut_bits: 0,
             emit_message: 0,
-            reserved: operand_carry_kind(self.log_t, self.log_t),
+            reserved: operand_carry_kind(self.log_t, self.stage1_source, self.log_t),
             source_stride: checked_u32(self.cycles)?,
         };
         let (_, wall, gpu_active, _) = self.submit_bind(
@@ -4380,8 +4234,12 @@ fn direct_transition_bound(log_t: usize) -> usize {
     }
 }
 
-fn operand_carry_element_bytes(log_t: usize, rounds_bound: usize) -> Option<usize> {
-    if !uses_operand_carry(log_t) || rounds_bound < 5 {
+fn operand_carry_element_bytes(
+    log_t: usize,
+    stage1_source: bool,
+    rounds_bound: usize,
+) -> Option<usize> {
+    if !uses_operand_carry(log_t, stage1_source) || rounds_bound < 5 {
         return None;
     }
     Some(match rounds_bound {
@@ -4391,8 +4249,8 @@ fn operand_carry_element_bytes(log_t: usize, rounds_bound: usize) -> Option<usiz
     })
 }
 
-fn operand_carry_kind(log_t: usize, rounds_bound: usize) -> u32 {
-    if !uses_operand_carry(log_t) {
+fn operand_carry_kind(log_t: usize, stage1_source: bool, rounds_bound: usize) -> u32 {
+    if !uses_operand_carry(log_t, stage1_source) {
         return 0;
     }
     match rounds_bound {
@@ -4554,6 +4412,17 @@ fn checked_u64(value: usize) -> Result<u64, MetalError> {
 mod tests {
     use super::*;
     use crate::metal::solinas::buffer_from_slice;
+
+    #[test]
+    fn stage1_retains_operand_carry_at_compact_source_threshold() {
+        assert!(uses_operand_carry(COMPACT_RS1_SOURCE_LOG_T_MIN, true));
+        assert!(!uses_operand_carry(COMPACT_RS1_SOURCE_LOG_T_MIN, false));
+        assert!(uses_operand_carry(COMPACT_RS1_SOURCE_LOG_T_MIN - 1, false));
+        assert!(!uses_operand_carry(
+            CROSS_REPRESENTATION_REUSE_LOG_T_MIN - 1,
+            true
+        ));
+    }
 
     #[test]
     fn source_primer_touches_read_raf_pages_without_mutating_sources() {

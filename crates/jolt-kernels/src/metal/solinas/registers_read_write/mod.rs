@@ -62,10 +62,6 @@ pub const REGISTERS_READ_WRITE_OPERAND_CLAIMS_PIPELINE: &str =
     "solinas_registers_read_write_operand_claims";
 pub const REGISTERS_READ_WRITE_COMPACT_RS1_CLAIM_PIPELINE: &str =
     "solinas_registers_read_write_compact_rs1_claim";
-pub const REGISTERS_READ_WRITE_DERIVE_RD_PRE_CHUNKS_PIPELINE: &str =
-    "solinas_registers_read_write_derive_rd_pre_chunks";
-pub const REGISTERS_READ_WRITE_FIXUP_RD_PRE_PIPELINE: &str =
-    "solinas_registers_read_write_fixup_rd_pre";
 pub const REGISTERS_READ_WRITE_SOURCE_PRIMER_PIPELINE: &str =
     "solinas_registers_read_write_source_primer";
 pub const REGISTERS_READ_WRITE_REDUCTION_PIPELINE: &str = "solinas_ram_read_write_reduce";
@@ -74,12 +70,3 @@ pub const REGISTERS_READ_WRITE_THREADS: usize = 256;
 pub const REGISTERS_READ_WRITE_PAIRS_PER_GROUP: usize = REGISTERS_READ_WRITE_THREADS;
 pub const REGISTERS_READ_WRITE_SIMD_WIDTH: usize = 32;
 pub const REGISTERS_READ_WRITE_THREADGROUP_BYTES_MAX: u64 = 16 * 1024;
-pub const REGISTERS_READ_WRITE_RD_PRE_CHUNK_ROWS: usize = 1 << 12;
-pub const REGISTERS_READ_WRITE_RD_PRE_REGISTERS: usize = 64;
-pub const REGISTERS_READ_WRITE_RD_PRE_DERIVE_THREADS: usize = 32;
-pub const REGISTERS_READ_WRITE_RD_PRE_FIXUP_THREADS: usize = 256;
-pub const REGISTERS_READ_WRITE_RD_PRE_FIXUP_PARTITIONS: usize = 32;
-pub const REGISTERS_READ_WRITE_RD_PRE_FIXUP_REGISTERS_PER_GROUP: usize =
-    REGISTERS_READ_WRITE_RD_PRE_FIXUP_THREADS / REGISTERS_READ_WRITE_RD_PRE_FIXUP_PARTITIONS;
-pub const REGISTERS_READ_WRITE_RD_PRE_FIXUP_GROUPS: usize =
-    REGISTERS_READ_WRITE_RD_PRE_REGISTERS / REGISTERS_READ_WRITE_RD_PRE_FIXUP_REGISTERS_PER_GROUP;

@@ -427,7 +427,7 @@ impl PrepareKernel<AkitaField, RegistersReadWriteChecking<AkitaField>> for Metal
                 let physical_rows = source.physical_rows;
                 let _span = tracing::info_span!(
                     "MetalRegistersReadWrite::source_prepare",
-                    source_kind = "stage1_simd_segmented_predecessor_v1",
+                    source_kind = "stage1_fused_delta_carried_rs1_v1",
                     physical_rows,
                     witness_row_extractions = 0usize,
                     packed_owner_bytes = 0usize,
@@ -449,7 +449,7 @@ impl PrepareKernel<AkitaField, RegistersReadWriteChecking<AkitaField>> for Metal
                     "metal_cycle_sequence_v1",
                     "none",
                     source_bytes,
-                    "stage1_simd_segmented_predecessor_v1",
+                    "stage1_fused_delta_carried_rs1_v1",
                 );
                 #[cfg(any(test, feature = "test-utils"))]
                 let _ = self

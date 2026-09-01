@@ -12,14 +12,6 @@ constant bool registers_read_write_stage1_source [[function_constant(3)]];
 #define REGISTERS_READ_WRITE_RS1_INDEX_SHIFT 32u
 #define REGISTERS_READ_WRITE_RS2_INDEX_SHIFT 40u
 #define REGISTERS_READ_WRITE_RD_INDEX_SHIFT 48u
-#define REGISTERS_READ_WRITE_RD_PRE_REGISTERS 64u
-#define REGISTERS_READ_WRITE_RD_PRE_CHUNK_ROWS 4096u
-#define REGISTERS_READ_WRITE_RD_PRE_LOCAL_BITS 12u
-#define REGISTERS_READ_WRITE_RD_PRE_LOCAL_MASK 0xfffu
-#define REGISTERS_READ_WRITE_RD_PRE_NO_OFFSET 0xffffu
-#define REGISTERS_READ_WRITE_RD_PRE_NO_KEY 0xffffffffu
-#define REGISTERS_READ_WRITE_RD_PRE_FIXUP_PARTITIONS 32u
-#define REGISTERS_READ_WRITE_RD_PRE_FIXUP_REGISTERS_PER_GROUP 8u
 
 struct PackedRegisterCycleRow {
     ulong rs1_value;
@@ -44,13 +36,6 @@ struct RegistersReadWriteSourcePrimerParams {
     ulong word_counts[3];
     uint page_words;
     uint total_threads;
-};
-
-struct RegistersReadWriteRdPreParams {
-    uint row_count;
-    uint chunk_rows;
-    uint chunks;
-    uint source_stride;
 };
 
 struct RegistersReadWriteCell {
@@ -123,8 +108,8 @@ inline uchar registers_read_write_remap_index(
 inline PackedRegisterCycleRow registers_read_write_load_source_row(
     uint row_index,
     device const PackedRegisterCycleRow* packed_rows,
-    device const ulong* instruction_input,
-    device const ulong* rd_pre,
+    device const InstructionInputRow* instruction_input,
+    device const ulong* fused_inc_source,
     device const ulong* rd_post,
     device const uchar* register_map,
     uint source_stride)
@@ -132,8 +117,8 @@ inline PackedRegisterCycleRow registers_read_write_load_source_row(
     if (!registers_read_write_stage1_source) {
         return registers_read_write_remap_row(packed_rows[row_index]);
     }
-    uint instruction_offset = 6u * row_index;
-    ulong flags = instruction_input[instruction_offset + 5u];
+    device const InstructionInputRow& instruction_row = instruction_input[row_index];
+    ulong flags = instruction_input_row_word(instruction_row, 5u);
     uchar rd_plus_one = uchar(
         (flags >> REGISTERS_READ_WRITE_RD_INDEX_SHIFT) & 0xfful);
     uchar rd_index = rd_plus_one == 0u
@@ -144,10 +129,17 @@ inline PackedRegisterCycleRow registers_read_write_load_source_row(
         flags, REGISTERS_READ_WRITE_RS1_INDEX_SHIFT);
     uchar rs2_index = registers_read_write_decode_index(
         flags, REGISTERS_READ_WRITE_RS2_INDEX_SHIFT);
-    ulong rd_pre_value = rd_plus_one == 0u ? 0ul : rd_pre[row_index];
+    ulong rd_pre_value = 0ul;
+    if (rd_plus_one != 0u) {
+        ulong magnitude = fused_inc_source[row_index];
+        ulong metadata = fused_inc_source[source_stride + row_index];
+        rd_pre_value = ((metadata >> 62u) & 1u) != 0u
+            ? rd_post_value + magnitude
+            : rd_post_value - magnitude;
+    }
     PackedRegisterCycleRow row;
-    row.rs1_value = instruction_input[instruction_offset];
-    row.rs2_value = instruction_input[instruction_offset + 2u];
+    row.rs1_value = instruction_input_row_word(instruction_row, 0u);
+    row.rs2_value = instruction_input_row_word(instruction_row, 2u);
     row.rd_pre_value = rd_pre_value;
     row.rd_post_value = rd_post_value;
     row.rs1_index = registers_read_write_remap_index(rs1_index, register_map);
@@ -157,161 +149,6 @@ inline PackedRegisterCycleRow registers_read_write_load_source_row(
         row.padding[index] = 0u;
     }
     return row;
-}
-
-kernel void solinas_registers_read_write_derive_rd_pre_chunks(
-    device const uchar* rd_indices [[buffer(0)]],
-    device const ulong* rd_post [[buffer(1)]],
-    device const uchar* register_map [[buffer(2)]],
-    device ulong* rd_pre [[buffer(3)]],
-    device ulong* last_values [[buffer(4)]],
-    device ushort* first_offsets [[buffer(5)]],
-    constant RegistersReadWriteRdPreParams& params [[buffer(6)]],
-    uint chunk [[threadgroup_position_in_grid]],
-    uint lane [[thread_index_in_threadgroup]])
-{
-    if (chunk >= params.chunks) {
-        return;
-    }
-    threadgroup ulong register_values[REGISTERS_READ_WRITE_RD_PRE_REGISTERS];
-    threadgroup ushort register_first[REGISTERS_READ_WRITE_RD_PRE_REGISTERS];
-    for (uint reg = lane;
-         reg < REGISTERS_READ_WRITE_RD_PRE_REGISTERS;
-         reg += REGISTERS_READ_WRITE_SIMD_WIDTH) {
-        register_values[reg] = 0ul;
-        register_first[reg] = ushort(REGISTERS_READ_WRITE_RD_PRE_NO_OFFSET);
-    }
-    simdgroup_barrier(mem_flags::mem_threadgroup);
-
-    uint row_start = chunk * params.chunk_rows;
-    uint row_end = min(row_start + params.chunk_rows, params.row_count);
-    for (uint batch = 0u; batch < params.chunk_rows;
-         batch += REGISTERS_READ_WRITE_SIMD_WIDTH) {
-        uint local = batch + lane;
-        uint row = row_start + local;
-        uchar rd_index = row < row_end
-            ? rd_indices[row]
-            : uchar(REGISTERS_READ_WRITE_NO_REGISTER);
-        uint key = rd_index == uchar(REGISTERS_READ_WRITE_NO_REGISTER)
-            ? REGISTERS_READ_WRITE_RD_PRE_NO_KEY
-            : (uint(register_map[uint(rd_index)])
-                << REGISTERS_READ_WRITE_RD_PRE_LOCAL_BITS) | local;
-        ulong post = row < row_end ? rd_post[row] : 0ul;
-
-        for (uint size = 2u; size <= REGISTERS_READ_WRITE_SIMD_WIDTH; size <<= 1u) {
-            for (uint stride = size >> 1u; stride > 0u; stride >>= 1u) {
-                uint other_key = simd_shuffle_xor(key, stride);
-                uint other_post_low = simd_shuffle_xor(uint(post), stride);
-                uint other_post_high = simd_shuffle_xor(uint(post >> 32u), stride);
-                ulong other_post = (ulong(other_post_high) << 32u)
-                    | ulong(other_post_low);
-                bool ascending = (lane & size) == 0u;
-                bool lower_lane = (lane & stride) == 0u;
-                bool take_minimum = ascending == lower_lane;
-                bool take_other = take_minimum
-                    ? other_key < key
-                    : other_key > key;
-                if (take_other) {
-                    key = other_key;
-                    post = other_post;
-                }
-            }
-        }
-
-        uint reg = key >> REGISTERS_READ_WRITE_RD_PRE_LOCAL_BITS;
-        bool write = key != REGISTERS_READ_WRITE_RD_PRE_NO_KEY;
-        uint sorted_local = key & REGISTERS_READ_WRITE_RD_PRE_LOCAL_MASK;
-        uint prior_key = simd_shuffle_up(key, 1u);
-        uint prior_post_low = simd_shuffle_up(uint(post), 1u);
-        uint prior_post_high = simd_shuffle_up(uint(post >> 32u), 1u);
-        ulong prior_post = (ulong(prior_post_high) << 32u)
-            | ulong(prior_post_low);
-        bool segment_head = write
-            && (lane == 0u
-                || (prior_key >> REGISTERS_READ_WRITE_RD_PRE_LOCAL_BITS) != reg);
-        if (write) {
-            ulong previous = segment_head ? register_values[reg] : prior_post;
-            rd_pre[row_start + sorted_local] = previous;
-            if (segment_head
-                && register_first[reg]
-                    == ushort(REGISTERS_READ_WRITE_RD_PRE_NO_OFFSET)) {
-                register_first[reg] = ushort(sorted_local);
-            }
-        }
-        uint next_key = simd_shuffle_down(key, 1u);
-        bool segment_tail = write
-            && (lane + 1u == REGISTERS_READ_WRITE_SIMD_WIDTH
-                || (next_key >> REGISTERS_READ_WRITE_RD_PRE_LOCAL_BITS) != reg);
-        if (segment_tail) {
-            register_values[reg] = post;
-        }
-        simdgroup_barrier(mem_flags::mem_threadgroup);
-    }
-
-    ulong summary = ulong(chunk) * REGISTERS_READ_WRITE_RD_PRE_REGISTERS;
-    for (uint reg = lane;
-         reg < REGISTERS_READ_WRITE_RD_PRE_REGISTERS;
-         reg += REGISTERS_READ_WRITE_SIMD_WIDTH) {
-        ulong index = summary + ulong(reg);
-        last_values[index] = register_values[reg];
-        first_offsets[index] = register_first[reg];
-    }
-}
-
-kernel void solinas_registers_read_write_fixup_rd_pre(
-    device ulong* rd_pre [[buffer(3)]],
-    device const ulong* last_values [[buffer(4)]],
-    device const ushort* first_offsets [[buffer(5)]],
-    constant RegistersReadWriteRdPreParams& params [[buffer(6)]],
-    uint register_group [[threadgroup_position_in_grid]],
-    uint tid [[thread_index_in_threadgroup]])
-{
-    threadgroup ulong partition_last[REGISTERS_READ_WRITE_THREADS];
-    threadgroup uint partition_first_row[REGISTERS_READ_WRITE_THREADS];
-
-    uint local_register = tid / REGISTERS_READ_WRITE_RD_PRE_FIXUP_PARTITIONS;
-    uint partition = tid % REGISTERS_READ_WRITE_RD_PRE_FIXUP_PARTITIONS;
-    uint reg = register_group
-        * REGISTERS_READ_WRITE_RD_PRE_FIXUP_REGISTERS_PER_GROUP
-        + local_register;
-    uint chunk_start = uint(
-        (ulong(params.chunks) * ulong(partition))
-        / ulong(REGISTERS_READ_WRITE_RD_PRE_FIXUP_PARTITIONS));
-    uint chunk_end = uint(
-        (ulong(params.chunks) * ulong(partition + 1u))
-        / ulong(REGISTERS_READ_WRITE_RD_PRE_FIXUP_PARTITIONS));
-    ulong previous = 0ul;
-    uint first_row = REGISTERS_READ_WRITE_RD_PRE_NO_KEY;
-    for (uint chunk = chunk_start; chunk < chunk_end; chunk++) {
-        ulong index = ulong(chunk) * REGISTERS_READ_WRITE_RD_PRE_REGISTERS
-            + ulong(reg);
-        ushort first = first_offsets[index];
-        if (first == ushort(REGISTERS_READ_WRITE_RD_PRE_NO_OFFSET)) {
-            continue;
-        }
-        uint row = chunk * params.chunk_rows + uint(first);
-        if (first_row == REGISTERS_READ_WRITE_RD_PRE_NO_KEY) {
-            first_row = row;
-        }
-        rd_pre[row] = previous;
-        previous = last_values[index];
-    }
-    partition_last[tid] = previous;
-    partition_first_row[tid] = first_row;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    ulong partition_carry = 0ul;
-    uint partition_base = local_register
-        * REGISTERS_READ_WRITE_RD_PRE_FIXUP_PARTITIONS;
-    for (uint prior = 0u; prior < partition; prior++) {
-        uint index = partition_base + prior;
-        if (partition_first_row[index] != REGISTERS_READ_WRITE_RD_PRE_NO_KEY) {
-            partition_carry = partition_last[index];
-        }
-    }
-    if (first_row != REGISTERS_READ_WRITE_RD_PRE_NO_KEY) {
-        rd_pre[first_row] = partition_carry;
-    }
 }
 
 kernel void solinas_registers_read_write_source_primer(
@@ -546,8 +383,8 @@ kernel void solinas_registers_read_write_first_message(
     device uint* geometry_counts [[buffer(7)]],
     device ushort* geometry_offsets [[buffer(8)]],
     device ulong* geometry_masks [[buffer(9)]],
-    device const ulong* stage1_instruction_input [[buffer(23)]],
-    device const ulong* stage1_rd_pre [[buffer(24)]],
+    device const InstructionInputRow* stage1_instruction_input [[buffer(23)]],
+    device const ulong* stage1_fused_inc_source [[buffer(24)]],
     device const ulong* stage1_rd_post [[buffer(25)]],
     device const uchar* stage1_register_map [[buffer(26)]],
     device uchar* stage1_compact_rs1 [[buffer(27)]],
@@ -569,7 +406,7 @@ kernel void solinas_registers_read_write_first_message(
                 low_index,
                 rows,
                 stage1_instruction_input,
-                stage1_rd_pre,
+                stage1_fused_inc_source,
                 stage1_rd_post,
                 stage1_register_map,
                 params.source_stride)
@@ -579,18 +416,18 @@ kernel void solinas_registers_read_write_first_message(
                 high_index,
                 rows,
                 stage1_instruction_input,
-                stage1_rd_pre,
+                stage1_fused_inc_source,
                 stage1_rd_post,
                 stage1_register_map,
                 params.source_stride)
             : registers_read_write_empty_row();
         if (registers_read_write_stage1_source) {
             stage1_compact_rs1[low_index] = registers_read_write_decode_index(
-                stage1_instruction_input[6u * low_index + 5u],
+                instruction_input_row_word(stage1_instruction_input[low_index], 5u),
                 REGISTERS_READ_WRITE_RS1_INDEX_SHIFT);
             if (high_index < params.row_count) {
                 stage1_compact_rs1[high_index] = registers_read_write_decode_index(
-                    stage1_instruction_input[6u * high_index + 5u],
+                    instruction_input_row_word(stage1_instruction_input[high_index], 5u),
                     REGISTERS_READ_WRITE_RS1_INDEX_SHIFT);
             }
         }
@@ -720,8 +557,8 @@ kernel void solinas_registers_read_write_first_message_intersection(
     constant RegistersReadWriteFirstMessageParams& params [[buffer(4)]],
     constant SolinasFp128& gamma [[buffer(5)]],
     constant SolinasFp128& gamma_sq [[buffer(6)]],
-    device const ulong* stage1_instruction_input [[buffer(23)]],
-    device const ulong* stage1_rd_pre [[buffer(24)]],
+    device const InstructionInputRow* stage1_instruction_input [[buffer(23)]],
+    device const ulong* stage1_fused_inc_source [[buffer(24)]],
     device const ulong* stage1_rd_post [[buffer(25)]],
     device const uchar* stage1_register_map [[buffer(26)]],
     device uchar* stage1_compact_rs1 [[buffer(27)]],
@@ -741,7 +578,7 @@ kernel void solinas_registers_read_write_first_message_intersection(
                 low_index,
                 rows,
                 stage1_instruction_input,
-                stage1_rd_pre,
+                stage1_fused_inc_source,
                 stage1_rd_post,
                 stage1_register_map,
                 params.source_stride)
@@ -751,18 +588,18 @@ kernel void solinas_registers_read_write_first_message_intersection(
                 high_index,
                 rows,
                 stage1_instruction_input,
-                stage1_rd_pre,
+                stage1_fused_inc_source,
                 stage1_rd_post,
                 stage1_register_map,
                 params.source_stride)
             : registers_read_write_empty_row();
         if (registers_read_write_stage1_source) {
             stage1_compact_rs1[low_index] = registers_read_write_decode_index(
-                stage1_instruction_input[6u * low_index + 5u],
+                instruction_input_row_word(stage1_instruction_input[low_index], 5u),
                 REGISTERS_READ_WRITE_RS1_INDEX_SHIFT);
             if (high_index < params.row_count) {
                 stage1_compact_rs1[high_index] = registers_read_write_decode_index(
-                    stage1_instruction_input[6u * high_index + 5u],
+                    instruction_input_row_word(stage1_instruction_input[high_index], 5u),
                     REGISTERS_READ_WRITE_RS1_INDEX_SHIFT);
             }
         }
