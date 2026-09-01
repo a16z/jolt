@@ -17,6 +17,8 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::configs::JoltOneHotK256Metal;
 use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
 use crate::schedule_registry::PrecommittedScheduleParams;
 use crate::trace_onehot::TracePackedOneHot;
@@ -42,6 +44,8 @@ pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtFie
 pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 pub(crate) type AkitaOneHotK16BackendScheme = AkitaCommitmentScheme<AkitaOneHotK16Config>;
 pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256Config>;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) type AkitaOneHotK256MetalBackendScheme = AkitaCommitmentScheme<JoltOneHotK256Metal>;
 pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
 pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
 pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
