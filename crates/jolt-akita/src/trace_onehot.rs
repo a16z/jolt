@@ -278,6 +278,7 @@ pub struct TracePackedSelectors<'a> {
     row_major: &'a [u8],
     active_zero_rows: &'a [u64],
     zero_column_mask: u64,
+    hot_entries: Option<usize>,
 }
 
 impl<'a> TracePackedSelectors<'a> {
@@ -287,6 +288,22 @@ impl<'a> TracePackedSelectors<'a> {
             row_major,
             active_zero_rows,
             zero_column_mask,
+            hot_entries: None,
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_hot_entries(
+        row_major: &'a [u8],
+        active_zero_rows: &'a [u64],
+        zero_column_mask: u64,
+        hot_entries: usize,
+    ) -> Self {
+        Self {
+            row_major,
+            active_zero_rows,
+            zero_column_mask,
+            hot_entries: Some(hot_entries),
         }
     }
 
@@ -303,6 +320,11 @@ impl<'a> TracePackedSelectors<'a> {
     #[must_use]
     pub fn zero_column_mask(self) -> u64 {
         self.zero_column_mask
+    }
+
+    #[must_use]
+    pub fn hot_entries(self) -> Option<usize> {
+        self.hot_entries
     }
 }
 
@@ -662,6 +684,35 @@ impl<const D: usize> TracePackedOneHotView<'_, D> {
 impl<const D: usize> TracePackedOneHotBatchView<'_, D> {
     fn source(&self) -> &TracePackedOneHot {
         self.sources[0]
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn packed_metal_view(
+    source: &TracePackedOneHot,
+) -> Result<akita_metal::PackedOneHotCommitView<'_>, AkitaError> {
+    let selectors = source.rows.packed_selectors().ok_or_else(|| {
+        AkitaError::InvalidInput("Metal trace opening requires resident packed selectors".into())
+    })?;
+    match (source.one_hot_k, selectors.hot_entries()) {
+        (256, Some(hot_entries)) => {
+            akita_metal::PackedOneHotCommitView::new_k256_with_precomputed_hot_entries(
+                source.column_capacity,
+                source.num_columns,
+                selectors.row_major(),
+                selectors.active_zero_rows(),
+                selectors.zero_column_mask(),
+                hot_entries,
+            )
+        }
+        _ => akita_metal::PackedOneHotCommitView::new_with_active_zero_rows(
+            source.one_hot_k,
+            source.column_capacity,
+            source.num_columns,
+            selectors.row_major(),
+            selectors.active_zero_rows(),
+            selectors.zero_column_mask(),
+        ),
     }
 }
 
@@ -2511,24 +2562,17 @@ impl<const D: usize> RootCommitKernel<TracePackedOneHotView<'_, D>, AkitaField, 
             )));
         };
         let source = view.source();
-        let Some(selectors) = source.rows.packed_selectors() else {
+        if source.rows.packed_selectors().is_none() {
             let cpu = self.cpu_backend();
             return commit_packed::<D>(&cpu, prepared.cpu_prepared(), source, plan)
                 .map(|witness| vec![witness]);
-        };
+        }
         if D != 512 {
             let cpu = self.cpu_backend();
             return commit_packed::<D>(&cpu, prepared.cpu_prepared(), source, plan)
                 .map(|witness| vec![witness]);
         }
-        let packed = akita_metal::PackedOneHotCommitView::new_with_active_zero_rows(
-            source.one_hot_k,
-            source.column_capacity,
-            source.num_columns,
-            selectors.row_major(),
-            selectors.active_zero_rows(),
-            selectors.zero_column_mask(),
-        )?;
+        let packed = packed_metal_view(source)?;
         self.commit_packed_onehot::<D>(prepared, packed, plan)
             .map(|witness| vec![witness])
     }
@@ -2584,6 +2628,78 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
                 )?,
             )),
         }
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField, D>
+    for akita_metal::MetalBackend
+{
+    fn evaluate_and_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotView<'_, D>,
+        plan: OpeningFoldPlan<'_, AkitaField>,
+    ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
+        self.record_opening_cpu_fallback(
+            source
+                .source()
+                .num_rows
+                .saturating_mul(source.source().num_columns),
+        )
+        .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        CpuBackend::DEFAULT.evaluate_and_fold(None, source, plan)
+    }
+
+    #[tracing::instrument(skip_all, name = "TracePackedOneHot::decompose_fold_metal_single")]
+    fn decompose_fold(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotView<'_, D>,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
+        if D != 512 || source.source().one_hot_k != 256 || source.source().column_capacity != 32 {
+            self.record_opening_cpu_fallback(1)
+                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+            return CpuBackend::DEFAULT.decompose_fold(None, source, plan);
+        }
+        self.decompose_fold_packed_onehot::<D>(packed_metal_view(source.source())?, plan)
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, D>
+    for akita_metal::MetalBackend
+{
+    #[tracing::instrument(skip_all, name = "TracePackedOneHot::decompose_fold_metal_batch")]
+    fn decompose_fold_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotBatchView<'_, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
+        if D != 512 || source.source().one_hot_k != 256 || source.source().column_capacity != 32 {
+            self.record_opening_cpu_fallback(1)
+                .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+            return CpuBackend::DEFAULT.decompose_fold_batch(None, source, plan);
+        }
+        let DecomposeFoldBatchPlan::Sparse {
+            challenges,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
+        } = plan;
+        Ok(BatchDecomposeFoldOutcome::Fused(
+            self.decompose_fold_packed_onehot::<D>(
+                packed_metal_view(source.source())?,
+                DecomposeFoldPlan {
+                    challenges,
+                    num_positions_per_block,
+                    num_digits,
+                    log_basis,
+                },
+            )?,
+        ))
     }
 }
 
@@ -2872,19 +2988,7 @@ impl<const D: usize>
         plan: SubringCoefficientPackingPlan<'_, AkitaField>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<AkitaField>>, AkitaError> {
         let trace = source.source();
-        let selectors = trace.rows.packed_selectors().ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "Metal trace opening requires resident packed selectors".to_string(),
-            )
-        })?;
-        let packed = akita_metal::PackedOneHotCommitView::new_with_active_zero_rows(
-            trace.one_hot_k,
-            trace.column_capacity,
-            trace.num_columns,
-            selectors.row_major(),
-            selectors.active_zero_rows(),
-            selectors.zero_column_mask(),
-        )?;
+        let packed = packed_metal_view(trace)?;
         self.packed_onehot_coefficient_packing::<D>(packed, plan.point)
             .map(|partials| vec![partials])
     }
@@ -3113,6 +3217,167 @@ impl<const D: usize> OpeningBatchKernel<GroupedRootBatchView<'_, D>, AkitaField,
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize> OpeningFoldKernel<GroupedRootView<'_, D>, AkitaField, D>
+    for akita_metal::MetalBackend
+{
+    fn evaluate_and_fold(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: GroupedRootView<'_, D>,
+        plan: OpeningFoldPlan<'_, AkitaField>,
+    ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
+        match source.source {
+            GroupedRootSource::Dense(polys) => {
+                OpeningFoldKernel::<DenseView<'_, AkitaField, D>, AkitaField, D>::evaluate_and_fold(
+                    self,
+                    prepared,
+                    grouped_singleton(polys).opening_view()?,
+                    plan,
+                )
+            }
+            GroupedRootSource::OneHot(polys) => OpeningFoldKernel::<
+                OneHotView<'_, AkitaField, D, u8>,
+                AkitaField,
+                D,
+            >::evaluate_and_fold(
+                self,
+                prepared,
+                grouped_singleton(polys).opening_view()?,
+                plan,
+            ),
+            GroupedRootSource::Trace(polys) => {
+                OpeningFoldKernel::<TracePackedOneHotView<'_, D>, AkitaField, D>::evaluate_and_fold(
+                    self,
+                    prepared,
+                    grouped_singleton(polys).opening_view()?,
+                    plan,
+                )
+            }
+        }
+    }
+
+    fn decompose_fold(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: GroupedRootView<'_, D>,
+        plan: DecomposeFoldPlan<'_>,
+    ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
+        match source.source {
+            GroupedRootSource::Dense(polys) => {
+                OpeningFoldKernel::<DenseView<'_, AkitaField, D>, AkitaField, D>::decompose_fold(
+                    self,
+                    prepared,
+                    grouped_singleton(polys).opening_view()?,
+                    plan,
+                )
+            }
+            GroupedRootSource::OneHot(polys) => OpeningFoldKernel::<
+                OneHotView<'_, AkitaField, D, u8>,
+                AkitaField,
+                D,
+            >::decompose_fold(
+                self,
+                prepared,
+                grouped_singleton(polys).opening_view()?,
+                plan,
+            ),
+            GroupedRootSource::Trace(polys) => {
+                OpeningFoldKernel::<TracePackedOneHotView<'_, D>, AkitaField, D>::decompose_fold(
+                    self,
+                    prepared,
+                    grouped_singleton(polys).opening_view()?,
+                    plan,
+                )
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<const D: usize> OpeningBatchKernel<GroupedRootBatchView<'_, D>, AkitaField, D>
+    for akita_metal::MetalBackend
+{
+    fn decompose_fold_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: GroupedRootBatchView<'_, D>,
+        plan: DecomposeFoldBatchPlan<'_>,
+    ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
+        let Some(first) = source.sources.first() else {
+            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
+        };
+        match first {
+            GroupedRootSource::Dense(_) => {
+                let dense = source
+                    .sources
+                    .iter()
+                    .map(|source| match source {
+                        GroupedRootSource::Dense(polys) => Ok(grouped_singleton(polys)),
+                        GroupedRootSource::OneHot(_) | GroupedRootSource::Trace(_) => {
+                            Err(AkitaError::InvalidInput(
+                                "grouped root opening groups must be representation-homogeneous"
+                                    .into(),
+                            ))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let view =
+                    <DensePoly<AkitaField> as RootOpeningSource<AkitaField, D>>::opening_batch(
+                        &dense,
+                    )?;
+                OpeningBatchKernel::<DenseBatchView<'_, AkitaField, D>, AkitaField, D>::decompose_fold_batch(
+                    self, prepared, view, plan,
+                )
+            }
+            GroupedRootSource::OneHot(_) => {
+                let one_hot = source
+                    .sources
+                    .iter()
+                    .map(|source| match source {
+                        GroupedRootSource::OneHot(polys) => Ok(grouped_singleton(polys)),
+                        GroupedRootSource::Dense(_) | GroupedRootSource::Trace(_) => {
+                            Err(AkitaError::InvalidInput(
+                                "grouped root opening groups must be representation-homogeneous"
+                                    .into(),
+                            ))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let view = <OneHotPoly<AkitaField, u8> as RootOpeningSource<
+                    AkitaField,
+                    D,
+                >>::opening_batch(&one_hot)?;
+                OpeningBatchKernel::<
+                    OneHotBatchView<'_, AkitaField, D, u8>,
+                    AkitaField,
+                    D,
+                >::decompose_fold_batch(self, prepared, view, plan)
+            }
+            GroupedRootSource::Trace(_) => {
+                let trace = source
+                    .sources
+                    .iter()
+                    .map(|source| match source {
+                        GroupedRootSource::Trace(polys) => Ok(grouped_singleton(polys)),
+                        GroupedRootSource::Dense(_) | GroupedRootSource::OneHot(_) => {
+                            Err(AkitaError::InvalidInput(
+                                "grouped root opening groups must be representation-homogeneous"
+                                    .into(),
+                            ))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let view =
+                    <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&trace)?;
+                OpeningBatchKernel::<TracePackedOneHotBatchView<'_, D>, AkitaField, D>::decompose_fold_batch(
+                    self, prepared, view, plan,
+                )
+            }
+        }
+    }
+}
+
 impl<E, const D: usize>
     SubringCoefficientPackingBatchKernel<GroupedRootBatchView<'_, D>, AkitaField, E, D>
     for CpuBackend
@@ -3313,10 +3578,27 @@ mod tests {
         }
 
         fn packed_selectors(&self) -> Option<TracePackedSelectors<'_>> {
-            Some(TracePackedSelectors::new(
+            let hot_entries = self
+                .row_major
+                .iter()
+                .enumerate()
+                .filter(|&(position, selected_row)| {
+                    if *selected_row != 0 {
+                        return true;
+                    }
+                    let row = position / self.columns;
+                    let column = position % self.columns;
+                    self.zero_column_mask & (1u64 << column) != 0
+                        && self.active_zero_rows[row / u64::BITS as usize]
+                            & (1u64 << (row % u64::BITS as usize))
+                            != 0
+                })
+                .count();
+            Some(TracePackedSelectors::new_with_hot_entries(
                 &self.row_major,
                 &self.active_zero_rows,
                 self.zero_column_mask,
+                hot_entries,
             ))
         }
 
@@ -3958,6 +4240,89 @@ mod tests {
         let rotations =
             prepare_rotations::<128>(&challenges, None, 1, DecomposeRotationMode::Auto).unwrap();
         assert!(matches!(rotations, PreparedRotations::Compact(_)));
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_d512_packed_decompose_fold_matches_cpu_with_committed_zeroes() {
+        const D: usize = 512;
+        const ROWS: usize = 128;
+        const COLUMNS: usize = 3;
+        const CAPACITY: usize = 32;
+        const POSITIONS: usize = 8;
+
+        let mut row_major = (0..ROWS * COLUMNS)
+            .map(|index| (1 + (index * 17 + 29) % 255) as u8)
+            .collect::<Vec<_>>();
+        let mut active_zero_rows = vec![0u64; ROWS / u64::BITS as usize];
+        for row in (0..ROWS).step_by(11) {
+            row_major[row * COLUMNS] = 0;
+            active_zero_rows[row / u64::BITS as usize] |= 1u64 << (row % u64::BITS as usize);
+        }
+        let source = TracePackedOneHot::new(
+            256,
+            D,
+            CAPACITY,
+            Arc::new(ResidentTestRows {
+                columns: COLUMNS,
+                row_major,
+                active_zero_rows,
+                zero_column_mask: 1,
+            }),
+        )
+        .unwrap();
+        let num_blocks =
+            <TracePackedOneHot as RootPolyShape<AkitaField, D>>::num_ring_elems(&source)
+                / POSITIONS;
+        let challenges = (0..num_blocks)
+            .map(|block| SparseChallenge {
+                positions: (0..19)
+                    .map(|term| (8 * ((block * 7 + term * 23) % 64)) as u32)
+                    .collect::<Vec<_>>()
+                    .into(),
+                coeffs: (0..19)
+                    .map(|term| {
+                        if (block + term).is_multiple_of(2) {
+                            1
+                        } else {
+                            -1
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+            })
+            .collect::<Vec<_>>();
+        let plan = DecomposeFoldPlan {
+            challenges: &challenges,
+            num_positions_per_block: POSITIONS,
+            num_digits: 2,
+            log_basis: 3,
+        };
+        let opening =
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap();
+        let cpu = <CpuBackend as OpeningFoldKernel<
+            TracePackedOneHotView<'_, D>,
+            AkitaField,
+            D,
+        >>::decompose_fold(&CpuBackend::DEFAULT, None, opening, plan)
+        .unwrap();
+        let metal = akita_metal::MetalBackend::new(akita_metal::MetalExecutionPolicy::RequireMetal)
+            .unwrap();
+        metal.begin_opening_metrics().unwrap();
+        let opening =
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap();
+        let gpu = <akita_metal::MetalBackend as OpeningFoldKernel<
+            TracePackedOneHotView<'_, D>,
+            AkitaField,
+            D,
+        >>::decompose_fold(&metal, None, opening, plan)
+        .unwrap();
+
+        assert_eq!(gpu, cpu);
+        let metrics = metal.last_opening_metrics().unwrap().unwrap();
+        assert_eq!(metrics.cpu_fallback_calls, 0);
+        assert!(!metrics.command_wall_time.is_zero());
+        assert!(metrics.allocation_bytes > 0);
     }
 
     #[test]
