@@ -50,6 +50,7 @@ struct PackedTraceRows {
     selected_rows: Vec<u8>,
     ram_active_rows: Vec<u64>,
     ram_digit_zero_mask: u64,
+    hot_entries: usize,
 }
 
 impl PackedTraceRows {
@@ -98,10 +99,11 @@ impl TraceOneHotRows for PackedTraceRows {
     }
 
     fn packed_selectors(&self) -> Option<jolt_akita::TracePackedSelectors<'_>> {
-        Some(jolt_akita::TracePackedSelectors::new(
+        Some(jolt_akita::TracePackedSelectors::new_with_hot_entries(
             &self.selected_rows,
             &self.ram_active_rows,
             self.ram_digit_zero_mask,
+            self.hot_entries,
         ))
     }
 
@@ -140,6 +142,20 @@ fn fill_trace_row(
         *selected_row = row_index as u8;
     }
     row.ram_address.0.is_some()
+}
+
+fn committed_entry_count(
+    selected_rows: &[u8],
+    ram_active: bool,
+    ram_digit_zero_mask: u64,
+) -> usize {
+    selected_rows
+        .iter()
+        .enumerate()
+        .filter(|&(column, selected_row)| {
+            *selected_row != 0 || (ram_active && ram_digit_zero_mask & (1u64 << column) != 0)
+        })
+        .count()
 }
 
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
@@ -200,20 +216,27 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
     if let Some(access) = witness.random_access() {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
-            selected_rows
+            let hot_entries = selected_rows
                 .par_chunks_mut(num_columns * u64::BITS as usize)
                 .zip(ram_active_rows.par_iter_mut())
                 .enumerate()
-                .for_each(|(word_index, (word_rows, ram_active_word))| {
+                .map(|(word_index, (word_rows, ram_active_word))| {
+                    let mut hot_entries = 0usize;
                     for (row_offset, selected_rows) in
                         word_rows.chunks_exact_mut(num_columns).enumerate()
                     {
                         let row_index = word_index * u64::BITS as usize + row_offset;
                         match access.window::<OneHotTraceSourceRow>(row_index) {
                             Ok(row) => {
-                                if fill_trace_row(row, &columns, selected_rows) {
+                                let ram_active = fill_trace_row(row, &columns, selected_rows);
+                                if ram_active {
                                     *ram_active_word |= 1u64 << row_offset;
                                 }
+                                hot_entries += committed_entry_count(
+                                    selected_rows,
+                                    ram_active,
+                                    ram_digit_zero_mask,
+                                );
                             }
                             Err(error) => {
                                 if let Ok(mut guard) = extraction_error.try_lock() {
@@ -222,7 +245,9 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                             }
                         }
                     }
-                });
+                    hot_entries
+                })
+                .sum();
             #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
             if let Some(error) = extraction_error.into_inner().unwrap() {
                 return Err(error.into());
@@ -233,20 +258,24 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                 selected_rows,
                 ram_active_rows,
                 ram_digit_zero_mask,
+                hot_entries,
             }));
         }
     }
 
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
+    let mut hot_entries = 0usize;
     for (row_index, (row, selected_rows)) in rows
         .into_iter()
         .zip(selected_rows.chunks_exact_mut(num_columns))
         .enumerate()
     {
-        if fill_trace_row(row, &columns, selected_rows) {
+        let ram_active = fill_trace_row(row, &columns, selected_rows);
+        if ram_active {
             ram_active_rows[row_index / u64::BITS as usize] |=
                 1u64 << (row_index % u64::BITS as usize);
         }
+        hot_entries += committed_entry_count(selected_rows, ram_active, ram_digit_zero_mask);
     }
     Ok(Arc::new(PackedTraceRows {
         num_rows,
@@ -254,6 +283,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         selected_rows,
         ram_active_rows,
         ram_digit_zero_mask,
+        hot_entries,
     }))
 }
 
