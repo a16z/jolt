@@ -4,7 +4,6 @@ use cudarc::driver::{CudaSlice, CudaStream};
 use jolt_field::{Fr, Limbs};
 
 use super::error::CudaError;
-use super::staging::StagingPool;
 use super::xfer_stats::{self, Phase};
 
 pub const LIMBS: usize = 4;
@@ -28,7 +27,6 @@ pub struct DeviceFrVec {
     stream: Arc<CudaStream>,
     buffer: CudaSlice<u64>,
     len: usize,
-    staging: StagingPool,
 }
 
 impl DeviceFrVec {
@@ -36,13 +34,11 @@ impl DeviceFrVec {
         stream: Arc<CudaStream>,
         buffer: CudaSlice<u64>,
         len: usize,
-        staging: StagingPool,
     ) -> Self {
         Self {
             stream,
             buffer,
             len,
-            staging,
         }
     }
 
@@ -77,18 +73,21 @@ impl DeviceFrVec {
         }
         let limbs = self.len * LIMBS;
         xfer_stats::timed(Phase::D2h, limbs * size_of::<u64>(), || {
-            let mut pool = self.staging.lock();
-            let staging = pool.ensure(self.stream.context(), limbs)?;
-            self.stream.memcpy_dtoh(
-                &self.buffer.slice(0..limbs),
-                &mut staging.as_mut_slice()?[..limbs],
-            )?;
-            self.stream.synchronize()?;
-            let raw = staging.as_slice()?;
-            Ok(raw[..limbs]
+            let raw = self.stream.clone_dtoh(&self.buffer.slice(0..limbs))?;
+            Ok(raw
                 .chunks_exact(LIMBS)
                 .map(|limbs| limbs_to_fr([limbs[0], limbs[1], limbs[2], limbs[3]]))
                 .collect())
+        })
+    }
+
+    pub fn to_limbs(&self) -> Result<Vec<u64>, CudaError> {
+        if self.len == 0 {
+            return Ok(Vec::new());
+        }
+        let limbs = self.len * LIMBS;
+        xfer_stats::timed(Phase::D2h, limbs * size_of::<u64>(), || {
+            Ok(self.stream.clone_dtoh(&self.buffer.slice(0..limbs))?)
         })
     }
 
@@ -121,7 +120,6 @@ impl DeviceFrVec {
             stream: self.stream.clone(),
             buffer,
             len,
-            staging: self.staging.clone(),
         })
     }
 
@@ -133,7 +131,6 @@ impl DeviceFrVec {
             stream: self.stream.clone(),
             buffer,
             len: self.len,
-            staging: self.staging.clone(),
         })
     }
 }

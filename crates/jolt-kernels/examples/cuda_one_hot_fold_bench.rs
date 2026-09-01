@@ -53,11 +53,53 @@ impl Shape {
     }
 }
 
+fn probe_to_host(context: &jolt_kernels::cuda::CudaKernelContext) {
+    println!("DeviceFrVec::to_host cost by length (best of {SAMPLES}):");
+    println!(
+        "{:>10}  {:>9}  {:>9}  {:>10}  {:>9}  {:>9}  {:>10}",
+        "elements", "KiB", "d2h ms", "raw ms", "raw MB/s", "h2d ms", "h2d ns/el",
+    );
+    for log_len in [10usize, 13, 16, 19, 22] {
+        let len = 1usize << log_len;
+        let device = context.alloc(len).expect("allocate a device vector");
+        let _ = device.to_host().expect("warm the download");
+        let mut best = f64::MAX;
+        for _ in 0..SAMPLES {
+            let started = Instant::now();
+            let host = device.to_host().expect("timed download");
+            best = best.min(started.elapsed().as_secs_f64() * 1e3);
+            assert_eq!(host.len(), len, "the download lost elements");
+        }
+        let mut raw = f64::MAX;
+        for _ in 0..SAMPLES {
+            let started = Instant::now();
+            let _ = device.to_limbs().expect("timed raw download");
+            raw = raw.min(started.elapsed().as_secs_f64() * 1e3);
+        }
+        let host = device.to_host().expect("host copy for the upload probe");
+        let mut up = f64::MAX;
+        for _ in 0..SAMPLES {
+            let started = Instant::now();
+            let _ = context.upload(&host).expect("timed upload");
+            up = up.min(started.elapsed().as_secs_f64() * 1e3);
+        }
+        let bytes = (len * 32) as f64;
+        println!(
+            "{len:>10}  {:>9.0}  {best:>9.3}  {raw:>10.3}  {:>9.1}  {up:>9.3}  {:>10.1}",
+            bytes / 1024.0,
+            bytes / (raw / 1e3) / 1e6,
+            up * 1e6 / len as f64,
+        );
+    }
+    println!();
+}
+
 fn main() {
     let Some(context) = shared_context() else {
         println!("no CUDA device; nothing to measure");
         return;
     };
+    probe_to_host(context);
     let cycles = 1usize << LOG_CYCLES;
     let point: Vec<Fr> = (0..LOG_CYCLES)
         .map(|index| Fr::from_u64(index as u64 * 7 + 11))
@@ -121,10 +163,6 @@ fn main() {
         println!();
     }
 
-    // The production geometry that dominates `cuda_one_hot_fold_window`: the
-    // 40-polynomial instruction family over a 16-address chunk. `groups =
-    // polys / polys_per_block` blocks each stride the whole cycle column, so a
-    // small `polys_per_block` re-reads the column once per group.
     const POLYS: usize = 40;
     const CHUNK_BITS: usize = 4;
     let addresses = 1usize << CHUNK_BITS;

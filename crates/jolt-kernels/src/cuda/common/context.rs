@@ -11,7 +11,6 @@ use jolt_field::Fr;
 
 use super::device::{fill_staging, DeviceFrVec, LIMBS};
 use super::error::CudaError;
-use super::staging::StagingPool;
 use super::xfer_stats::{self, Phase};
 
 const POISON_BYTE: u8 = 0xA5;
@@ -28,7 +27,6 @@ const KERNEL_CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kernels.cu
 pub struct CudaKernelContext {
     ordinal: usize,
     stream: Arc<CudaStream>,
-    staging: StagingPool,
     fr_identity_probe: CudaFunction,
     pub(super) add: CudaFunction,
     pub(super) sub: CudaFunction,
@@ -207,7 +205,6 @@ impl CudaKernelContext {
         Ok(Self {
             ordinal,
             stream,
-            staging: StagingPool::new(),
             fr_identity_probe: module.load_function("fr_identity_probe")?,
             add: module.load_function("add_kernel")?,
             sub: module.load_function("sub_kernel")?,
@@ -386,12 +383,7 @@ impl CudaKernelContext {
         let limbs = values.len() * LIMBS;
         if values.is_empty() {
             let buffer = self.stream.alloc_zeros::<u64>(0)?;
-            return Ok(DeviceFrVec::from_parts(
-                self.stream.clone(),
-                buffer,
-                0,
-                self.staging.clone(),
-            ));
+            return Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, 0));
         }
         let buffer = xfer_stats::timed(Phase::H2d, limbs * size_of::<u64>(), || {
             let mut host = vec![0u64; limbs];
@@ -402,7 +394,6 @@ impl CudaKernelContext {
             self.stream.clone(),
             buffer,
             values.len(),
-            self.staging.clone(),
         ))
     }
 
@@ -416,32 +407,17 @@ impl CudaKernelContext {
         let len = limbs.len() / LIMBS;
         if limbs.is_empty() {
             let buffer = self.stream.alloc_zeros::<u64>(0)?;
-            return Ok(DeviceFrVec::from_parts(
-                self.stream.clone(),
-                buffer,
-                0,
-                self.staging.clone(),
-            ));
+            return Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, 0));
         }
         let buffer = xfer_stats::timed(Phase::H2d, size_of_val(limbs), || {
             Ok::<_, CudaError>(self.stream.clone_htod(limbs)?)
         })?;
-        Ok(DeviceFrVec::from_parts(
-            self.stream.clone(),
-            buffer,
-            len,
-            self.staging.clone(),
-        ))
+        Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, len))
     }
 
     pub fn alloc(&self, len: usize) -> Result<DeviceFrVec, CudaError> {
         let buffer = self.stream.alloc_zeros::<u64>(len * LIMBS)?;
-        Ok(DeviceFrVec::from_parts(
-            self.stream.clone(),
-            buffer,
-            len,
-            self.staging.clone(),
-        ))
+        Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, len))
     }
 
     pub(crate) const fn stream(&self) -> &Arc<CudaStream> {
