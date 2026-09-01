@@ -279,6 +279,7 @@ pub struct TracePackedSelectors<'a> {
     active_zero_rows: &'a [u64],
     zero_column_mask: u64,
     hot_entries: Option<usize>,
+    zero_suffix_start: Option<usize>,
 }
 
 impl<'a> TracePackedSelectors<'a> {
@@ -289,6 +290,7 @@ impl<'a> TracePackedSelectors<'a> {
             active_zero_rows,
             zero_column_mask,
             hot_entries: None,
+            zero_suffix_start: None,
         }
     }
 
@@ -304,6 +306,24 @@ impl<'a> TracePackedSelectors<'a> {
             active_zero_rows,
             zero_column_mask,
             hot_entries: Some(hot_entries),
+            zero_suffix_start: None,
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_precomputed_metrics(
+        row_major: &'a [u8],
+        active_zero_rows: &'a [u64],
+        zero_column_mask: u64,
+        hot_entries: usize,
+        zero_suffix_start: usize,
+    ) -> Self {
+        Self {
+            row_major,
+            active_zero_rows,
+            zero_column_mask,
+            hot_entries: Some(hot_entries),
+            zero_suffix_start: Some(zero_suffix_start),
         }
     }
 
@@ -325,6 +345,11 @@ impl<'a> TracePackedSelectors<'a> {
     #[must_use]
     pub fn hot_entries(self) -> Option<usize> {
         self.hot_entries
+    }
+
+    #[must_use]
+    pub fn zero_suffix_start(self) -> Option<usize> {
+        self.zero_suffix_start
     }
 }
 
@@ -694,8 +719,23 @@ fn packed_metal_view(
     let selectors = source.rows.packed_selectors().ok_or_else(|| {
         AkitaError::InvalidInput("Metal trace opening requires resident packed selectors".into())
     })?;
-    match (source.one_hot_k, selectors.hot_entries()) {
-        (256, Some(hot_entries)) => {
+    match (
+        source.one_hot_k,
+        selectors.hot_entries(),
+        selectors.zero_suffix_start(),
+    ) {
+        (256, Some(hot_entries), Some(zero_suffix_start)) => {
+            akita_metal::PackedOneHotCommitView::new_k256_with_precomputed_metrics(
+                source.column_capacity,
+                source.num_columns,
+                selectors.row_major(),
+                selectors.active_zero_rows(),
+                selectors.zero_column_mask(),
+                hot_entries,
+                zero_suffix_start,
+            )
+        }
+        (256, Some(hot_entries), None) => {
             akita_metal::PackedOneHotCommitView::new_k256_with_precomputed_hot_entries(
                 source.column_capacity,
                 source.num_columns,
