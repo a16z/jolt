@@ -15,6 +15,7 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".github/workflows/bench-crates.yml"
+      - "scripts/ci/bench_comment.py"
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,9 +41,6 @@ jobs:
           fetch-depth: 2
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Install critcmp
-        run: cargo install critcmp --locked
 
       - name: Resolve base and head
         id: refs
@@ -78,26 +76,24 @@ jobs:
             --bench '*' \
             -- --save-baseline pr_run --noplot
 
-      # Same-VM back-to-back legs still drift a few percent (frequency scaling,
-      # noisy neighbors), more on the rayon-parallel poly benches; 10% keeps
-      # those quiet while cross-VM offsets no longer apply.
-      - name: Compare benchmarks
-        id: critcmp
+      # Bolds the faster run per benchmark and colors entries whose delta
+      # exceeds the noise threshold (see NOISE_THRESHOLD in the script).
+      - name: Render comparison
         run: |
-          OUTPUT=$(critcmp base_run pr_run --threshold 10)
-          echo "comparison<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          python3 scripts/ci/bench_comment.py ${{ steps.refs.outputs.base }} ${{ steps.refs.outputs.head }} > "$RUNNER_TEMP/bench-comment.md"
+          cat "$RUNNER_TEMP/bench-comment.md"
 
       - name: Post benchmark comparison
-        if: steps.critcmp.outputs.comparison != '' && github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         uses: actions/github-script@v9
         with:
           script: |
-            const marker = '<!-- bench-crates -->';
-            const header = `Same-runner A/B: \`base_run\` = ${process.env.BASE_SHA.slice(0, 9)} (merge target) vs \`pr_run\` = ${process.env.HEAD_SHA.slice(0, 9)} (merge commit), threshold 10%.`;
-            const body = `${marker}\n## Benchmark comparison (crates)\n\n${header}\n\n\`\`\`\n${process.env.COMPARISON}\n\`\`\``;
+            const fs = require('fs');
+            const body = fs.readFileSync(process.env.COMMENT_PATH, 'utf8');
+            // The renderer owns the comment body; its first line is the
+            // sticky-comment marker used to find the comment to update.
+            const marker = body.split('\n', 1)[0];
             const { data: comments } = await github.rest.issues.listComments({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -120,6 +116,4 @@ jobs:
               });
             }
         env:
-          COMPARISON: ${{ steps.critcmp.outputs.comparison }}
-          BASE_SHA: ${{ steps.refs.outputs.base }}
-          HEAD_SHA: ${{ steps.refs.outputs.head }}
+          COMMENT_PATH: ${{ runner.temp }}/bench-comment.md
