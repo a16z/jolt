@@ -4,11 +4,13 @@
 //! - The expanded inline sequence, executed instruction-by-instruction in the
 //!   tracer emulator (`InlineTestHarness`), vs `tiny_keccak::keccakf`. This is
 //!   the layer that exercises `VirtualXORROTL1` and the in-place rho/pi/chi schedule.
-//! - The one-shot `Keccak256::digest` sponge (padding, absorption, squeezing)
-//!   vs `tiny_keccak::Keccak::v256` over random lengths straddling the rate.
+//! - The `Keccak256` sponge (one-shot `digest` and chunked `update`/`finalize`:
+//!   buffering, padding, absorption, squeezing) vs `tiny_keccak::Keccak::v256`
+//!   over lengths and split points straddling the rate.
 //!
-//! Iteration counts scale with `KECCAK_FUZZ_ITERS` (default keeps CI fast);
-//! the soundness gate runs one million iterations for each inline entry point.
+//! Iteration counts scale with `KECCAK_FUZZ_ITERS`; CI runs only the 2,000-case
+//! default per test. `KECCAK_FUZZ_ITERS=1000000` reproduces the one-off
+//! million-case evidence gathered for #1749.
 #![cfg(feature = "host")]
 
 use jolt_inlines_keccak256::{
@@ -17,7 +19,7 @@ use jolt_inlines_keccak256::{
 };
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
-use tiny_keccak::Keccak;
+use tiny_keccak::{Hasher, Keccak};
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 fn fuzz_iters(default: usize) -> usize {
@@ -25,6 +27,14 @@ fn fuzz_iters(default: usize) -> usize {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
+}
+
+fn reference_digest(input: &[u8]) -> [u8; 32] {
+    let mut reference = Keccak::v256();
+    reference.update(input);
+    let mut expected = [0u8; 32];
+    reference.finalize(&mut expected);
+    expected
 }
 
 #[test]
@@ -95,8 +105,6 @@ fn fuzz_absorb_permute_inline_vs_tiny_keccak() {
 
 #[test]
 fn fuzz_digest_vs_tiny_keccak() {
-    use tiny_keccak::Hasher;
-
     let iters = fuzz_iters(2_000);
     let mut rng = StdRng::seed_from_u64(0xD16E57);
 
@@ -108,16 +116,74 @@ fn fuzz_digest_vs_tiny_keccak() {
             2 => (rng.next_u32() % 600) as usize,
             _ => (rng.next_u32() % 4096) as usize,
         };
+        // Odd iterations hash from a 1-byte offset into the (8-aligned) heap
+        // buffer so the unaligned absorb paths run as often as the aligned ones.
+        let offset = i % 2;
+        let mut buffer = vec![0u8; len + offset];
+        rng.fill_bytes(&mut buffer);
+        let input = &buffer[offset..];
+
+        assert_eq!(
+            Keccak256::digest(input),
+            reference_digest(input),
+            "iteration {i}, len {len}, offset {offset}"
+        );
+    }
+}
+
+#[test]
+fn fuzz_chunked_update_vs_tiny_keccak() {
+    // Split schedules landing exactly on, and one byte either side of, the
+    // 136- and 272-byte block boundaries.
+    const BOUNDARY_SPLITS: &[&[usize]] = &[
+        &[136],
+        &[135, 1],
+        &[1, 135],
+        &[137],
+        &[136, 136],
+        &[135, 1, 136],
+        &[136, 135, 1],
+        &[137, 135],
+        &[271, 1],
+        &[1, 271],
+        &[272],
+        &[273],
+    ];
+
+    let iters = fuzz_iters(2_000);
+    let mut rng = StdRng::seed_from_u64(0xC4A2_5E0D);
+
+    for i in 0..iters {
+        let chunks: Vec<usize> = if i % 2 == 0 {
+            BOUNDARY_SPLITS[(i / 2) % BOUNDARY_SPLITS.len()].to_vec()
+        } else {
+            (0..1 + rng.next_u32() % 6)
+                .map(|_| (rng.next_u32() % 300) as usize)
+                .collect()
+        };
+        // Every fourth iteration finalizes right after a boundary schedule with
+        // nothing buffered (or one byte, or the 0x81 combined-padding case).
+        let tail = if i % 4 == 0 {
+            0
+        } else {
+            (rng.next_u32() % 200) as usize
+        };
+        let len = chunks.iter().sum::<usize>() + tail;
         let mut input = vec![0u8; len];
         rng.fill_bytes(&mut input);
 
-        let actual = Keccak256::digest(&input);
+        let mut hasher = Keccak256::new();
+        let mut offset = 0;
+        for chunk in chunks {
+            hasher.update(&input[offset..offset + chunk]);
+            offset += chunk;
+        }
+        hasher.update(&input[offset..]);
 
-        let mut reference = Keccak::v256();
-        reference.update(&input);
-        let mut expected = [0u8; 32];
-        reference.finalize(&mut expected);
-
-        assert_eq!(actual, expected, "iteration {i}, len {len}");
+        assert_eq!(
+            hasher.finalize(),
+            reference_digest(&input),
+            "iteration {i}, len {len}"
+        );
     }
 }

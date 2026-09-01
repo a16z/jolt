@@ -5,8 +5,6 @@
 //! constant; if it regresses, that is a real cost increase to justify.
 #![cfg(feature = "host")]
 
-use std::collections::BTreeMap;
-
 use jolt_inlines_keccak256::{
     INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT3, KECCAK256_FUNCT7,
     KECCAK256_NAME,
@@ -25,23 +23,6 @@ fn count_keccak256_rows() {
         KECCAK256_FUNCT7,
     );
     let sequence = instr.inline_sequence(&VirtualRegisterAllocator::default());
-
-    let mut histogram: BTreeMap<String, usize> = BTreeMap::new();
-    for i in &sequence {
-        let dbg = format!("{i:?}");
-        let name = dbg
-            .split([' ', '(', '{'])
-            .next()
-            .unwrap_or("unknown")
-            .to_string();
-        *histogram.entry(name).or_default() += 1;
-    }
-
-    println!("TOTAL ROWS: {}", sequence.len());
-    for (name, count) in &histogram {
-        println!("{count:6}  {name}");
-    }
-
     // 24 rounds x 125 rows (70 XOR + 5 XORROTL1 + 24 ROTRI + 25 ANDN + 1 XORI)
     // + 25 LD + 25 SD + 37 register resets.
     assert_eq!(

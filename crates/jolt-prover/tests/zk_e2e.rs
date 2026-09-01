@@ -332,6 +332,10 @@ mod zk {
 
     // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
     const KECCAK_ROTRI_ROWS: usize = 576;
+    // 300 bytes drive every `Keccak256::digest` inline path: a first block
+    // (plain permutation), one fused absorb-permute block, and a padded final block.
+    const SHA3_INPUT_LEN: usize = 300;
+    const SHA3_PERMUTATIONS: usize = 3;
 
     fn prove_guest_zk(
         guest_name: &str,
@@ -442,7 +446,8 @@ mod zk {
     #[test]
     fn zk_sha3_inline_modular_proof_is_accepted() {
         support::with_zk_stack(|| {
-            let inputs = postcard::to_stdvec(&[5u8; 32]).expect("serialize input");
+            let message: Vec<u8> = (0..SHA3_INPUT_LEN).map(|i| i as u8).collect();
+            let inputs = postcard::to_stdvec(&message).expect("serialize input");
             let (preprocessing, public_io, proof) = prove_guest_zk(
                 "sha3-guest",
                 inputs,
@@ -455,8 +460,8 @@ mod zk {
                                     == JoltInstructionKind::VirtualROTRI
                             })
                             .count(),
-                        KECCAK_ROTRI_ROWS,
-                        "one Keccak permutation must be expanded into the modular trace",
+                        KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
+                        "first, fused-absorb, and final Keccak permutations must be expanded into the modular trace",
                     );
                 },
             );
