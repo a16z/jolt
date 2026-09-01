@@ -133,12 +133,12 @@ The table below compares the performance of reference and inline implementations
 
 | Hash Function | Implementation | Cycles | Cycles Per Byte (CPB) | Speedup |
 |--------------|----------------|----------------|----------------------|---------|
-| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 10,414,653     | 317.83               | -       |
-| SHA-256      | **Jolt Inline**     | **1,545,643**  | **47.17**            | **6.74×** |
-| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 2,556,519      | 78.02                | -       |
-| Keccak-256   | **Jolt Inline**     | **848,224**    | **25.89**            | **3.01×** |
-| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 951,043        | 29.02                | -       |
-| Blake2B      | **Jolt Inline**     | **303,148**    | **9.25**             | **3.14×** |
+| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 2,380,389      | 72.64                | -       |
+| SHA-256      | **Jolt Inline**     | **1,037,131**  | **31.65**            | **2.30×** |
+| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 1,938,499      | 59.16                | -       |
+| Keccak-256   | **Jolt Inline**     | **805,298**    | **24.58**            | **2.41×** |
+| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 820,496        | 25.04                | -       |
+| Blake2B      | **Jolt Inline**     | **304,185**    | **9.28**             | **2.70×** |
 
 *Note: Blake3 currently supports inputs up to 64 bytes. Full implementation for larger inputs is in development.*
 
@@ -154,9 +154,9 @@ The following table shows the data that can be proved by each of the Jolt inline
 
 | Hash Function | MacBook M4 Max (500 kHz) | Threadripper Pro 7975WX (1.5 MHz) |
 |--------------|---------------------|----------------------|
-| SHA-256 Inline | 10.4 KiB/s | 31.1 KiB/s |
-| Keccak-256 Inline | 18.9 KiB/s | 56.6 KiB/s |
-| Blake2B Inline | 52.8 KiB/s | 158.3 KiB/s |
+| SHA-256 Inline | 15.4 KiB/s | 46.3 KiB/s |
+| Keccak-256 Inline | 19.9 KiB/s | 59.6 KiB/s |
+| Blake2B Inline | 52.6 KiB/s | 157.8 KiB/s |
 
 
 ## Jolt CPU Advantages
