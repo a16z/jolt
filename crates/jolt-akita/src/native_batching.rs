@@ -255,7 +255,7 @@ fn prove_grouped_trace_metal(
         (&CpuBackend::DEFAULT, cpu_prepared),
         (&metal.backend, prepared.as_ref()),
         (&CpuBackend::DEFAULT, cpu_prepared),
-        (&CpuBackend::DEFAULT, cpu_prepared),
+        (&metal.backend, prepared.as_ref()),
         backend_prover_setup.expanded.as_ref(),
     )
     .map_err(akita_error)?;
