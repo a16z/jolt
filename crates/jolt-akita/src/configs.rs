@@ -15,6 +15,16 @@ use akita_types::{
 
 use crate::AKITA_ONE_HOT_K16;
 
+const JOLT_K256_A_RING_DIMENSIONS: &[usize] = &[64, 128];
+const JOLT_K256_RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+    akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: JOLT_K256_A_RING_DIMENSIONS,
+        potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
+        potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,
+    };
+
 fn dp_planned_schedule<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
@@ -109,7 +119,8 @@ macro_rules! delegate_preset {
         $name:ident,
         $base:ty,
         $committed_source_class:expr,
-        $catalog:expr
+        $catalog:expr,
+        $ring_dimension_schedule_mode:expr
     ) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, Default)]
@@ -119,7 +130,7 @@ macro_rules! delegate_preset {
             type Field = <$base as CommitmentConfig>::Field;
             type ExtField = <$base as CommitmentConfig>::ExtField;
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-                <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+                $ring_dimension_schedule_mode;
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -253,7 +264,8 @@ delegate_preset!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    crate::schedules::jolt_fp128_onehot_k16_table()
+    crate::schedules::jolt_fp128_onehot_k16_table(),
+    <OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE
 );
 
 delegate_preset!(
@@ -261,7 +273,8 @@ delegate_preset!(
     JoltOneHotK256,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    crate::schedules::jolt_fp128_onehot_k256_table()
+    crate::schedules::jolt_fp128_onehot_k256_table(),
+    JOLT_K256_RING_DIMENSION_SCHEDULE_MODE
 );
 
 delegate_preset!(
@@ -269,7 +282,8 @@ delegate_preset!(
     JoltDenseBounded,
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),
-    crate::schedules::jolt_fp128_dense_bounded_table()
+    crate::schedules::jolt_fp128_dense_bounded_table(),
+    <DenseBounded as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE
 );
 
 #[cfg(test)]
@@ -299,5 +313,16 @@ mod tests {
         let commitment = schedule.root.params.final_group();
         assert!([64, 128, 256, 512].contains(&commitment.profile.inner.matrix.ring_dimension()));
         assert!([64, 128].contains(&commitment.profile.outer.matrix.ring_dimension()));
+    }
+
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn k256_t28_trace_uses_the_prover_optimized_root_shape() {
+        let layout = akita_types::OpeningClaimsLayout::new(41, 1).unwrap();
+        let row = JoltOneHotK256::resolve_catalog_row_for_opening(&layout).unwrap();
+        let commitment = row.schedule().root.params.final_group();
+
+        assert_eq!(commitment.profile.inner.matrix.ring_dimension(), 128);
+        assert_eq!(commitment.profile.inner.matrix.output_rank(), 3);
     }
 }
