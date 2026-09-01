@@ -51,6 +51,7 @@ struct PackedTraceRows {
     ram_active_rows: Vec<u64>,
     ram_digit_zero_mask: u64,
     hot_entries: usize,
+    zero_suffix_start: usize,
 }
 
 impl PackedTraceRows {
@@ -99,12 +100,15 @@ impl TraceOneHotRows for PackedTraceRows {
     }
 
     fn packed_selectors(&self) -> Option<jolt_akita::TracePackedSelectors<'_>> {
-        Some(jolt_akita::TracePackedSelectors::new_with_hot_entries(
-            &self.selected_rows,
-            &self.ram_active_rows,
-            self.ram_digit_zero_mask,
-            self.hot_entries,
-        ))
+        Some(
+            jolt_akita::TracePackedSelectors::new_with_precomputed_metrics(
+                &self.selected_rows,
+                &self.ram_active_rows,
+                self.ram_digit_zero_mask,
+                self.hot_entries,
+                self.zero_suffix_start,
+            ),
+        )
     }
 
     fn committed_digit_zero_mask(&self, row: usize) -> u64 {
@@ -210,15 +214,36 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         }
     }
 
+    let random_access = witness.random_access();
+    let zero_suffix_start = if let Some(access) = random_access.as_ref() {
+        let physical_rows = access.physical_rows().min(num_rows);
+        if physical_rows < num_rows {
+            let padding = access.window::<OneHotTraceSourceRow>(physical_rows)?;
+            let mut selected = vec![0u8; num_columns];
+            if fill_trace_row(padding, &columns, &mut selected)
+                || selected.iter().any(|&row| row != 0)
+            {
+                num_rows
+            } else {
+                physical_rows
+            }
+        } else {
+            num_rows
+        }
+    } else {
+        num_rows
+    };
     let mut selected_rows = vec![0u8; num_rows * num_columns];
     let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
     #[cfg(feature = "parallel")]
-    if let Some(access) = witness.random_access() {
+    if let Some(access) = random_access {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
-            let hot_entries = selected_rows
+            let active_lane_count = zero_suffix_start * num_columns;
+            let active_word_count = zero_suffix_start.div_ceil(u64::BITS as usize);
+            let hot_entries = selected_rows[..active_lane_count]
                 .par_chunks_mut(num_columns * u64::BITS as usize)
-                .zip(ram_active_rows.par_iter_mut())
+                .zip(ram_active_rows[..active_word_count].par_iter_mut())
                 .enumerate()
                 .map(|(word_index, (word_rows, ram_active_word))| {
                     let mut hot_entries = 0usize;
@@ -259,6 +284,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                 ram_active_rows,
                 ram_digit_zero_mask,
                 hot_entries,
+                zero_suffix_start,
             }));
         }
     }
@@ -284,6 +310,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         ram_active_rows,
         ram_digit_zero_mask,
         hot_entries,
+        zero_suffix_start,
     }))
 }
 
