@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-use jolt_field::{Field, Fr};
+use jolt_field::Field;
 
 use jolt_witness::JoltWitnessPlane;
 
@@ -51,6 +51,11 @@ pub struct DeviceOneHotColumns {
 pub(crate) struct OneHotShards {
     windows: Vec<CycleWindow>,
     columns: Vec<DeviceOneHotColumns>,
+}
+
+enum FoldPart {
+    Resident(DeviceFrVec),
+    Limbs(Vec<u64>),
 }
 
 impl OneHotShards {
@@ -123,9 +128,9 @@ impl OneHotShards {
             return self.whole()?.fold_cycles(context, cycle_point, tuning);
         }
         let point = require_fr_slice(cycle_point)?;
-        let tasks: Vec<DeviceTask<'_, Vec<Fr>, CudaError>> = (0..shards)
+        let tasks: Vec<DeviceTask<'_, FoldPart, CudaError>> = (0..shards)
             .map(|ordinal| {
-                let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, FoldPart, CudaError> = Box::new(move || {
                     let context = context_for(ordinal).ok_or_else(absent)?;
                     let columns =
                         self.columns
@@ -149,36 +154,48 @@ impl OneHotShards {
                             columns.addresses() * LANES * size_of::<u64>() <= tuning.shared_budget,
                     )
                     .in_scope(|| columns.fold_cycles_with_eq(context, &eq, tuning))?;
+                    if ordinal == 0 {
+                        return Ok(FoldPart::Resident(folded));
+                    }
                     tracing::info_span!(
                         "cuda_one_hot_fold_download",
                         device = ordinal,
                         elements = folded.len(),
                     )
-                    .in_scope(|| folded.to_host())
+                    .in_scope(|| Ok(FoldPart::Limbs(context.download_u64(folded.limbs())?)))
                 });
                 task
             })
             .collect();
         let parts = fan_out(tasks)?;
-        let folded_len = parts.first().map_or(0, Vec::len);
-        tracing::info_span!("cuda_one_hot_fold_reduce", shards, elements = folded_len).in_scope(
+        tracing::info_span!("cuda_one_hot_fold_reduce", shards).in_scope(
             || -> Result<DeviceFrVec, CudaError> {
+                let context = context_for(0).ok_or_else(absent)?;
                 let mut parts = parts.into_iter();
-                let mut totals = parts.next().ok_or(CudaError::InvariantViolation {
-                    reason: "the one-hot cycle fold produced no window",
-                })?;
-                for addend in parts {
-                    if addend.len() != totals.len() {
+                let mut total = match parts.next() {
+                    Some(FoldPart::Resident(resident)) => resident,
+                    _ => {
+                        return Err(CudaError::InvariantViolation {
+                            reason: "the one-hot cycle fold lost its device-0 window",
+                        })
+                    }
+                };
+                for part in parts {
+                    let FoldPart::Limbs(limbs) = part else {
+                        return Err(CudaError::InvariantViolation {
+                            reason: "a one-hot cycle-fold window past device 0 stayed resident",
+                        });
+                    };
+                    let addend = context.upload_limbs(&limbs)?;
+                    if addend.len() != total.len() {
                         return Err(CudaError::LengthMismatch {
-                            expected: totals.len(),
+                            expected: total.len(),
                             got: addend.len(),
                         });
                     }
-                    for (total, value) in totals.iter_mut().zip(&addend) {
-                        *total += *value;
-                    }
+                    total = context.add(&total, &addend)?;
                 }
-                context_for(0).ok_or_else(absent)?.upload(&totals)
+                Ok(total)
             },
         )
     }

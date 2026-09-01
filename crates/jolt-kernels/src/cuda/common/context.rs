@@ -406,6 +406,34 @@ impl CudaKernelContext {
         ))
     }
 
+    pub(crate) fn upload_limbs(&self, limbs: &[u64]) -> Result<DeviceFrVec, CudaError> {
+        if !limbs.len().is_multiple_of(LIMBS) {
+            return Err(CudaError::LengthMismatch {
+                expected: LIMBS,
+                got: limbs.len() % LIMBS,
+            });
+        }
+        let len = limbs.len() / LIMBS;
+        if limbs.is_empty() {
+            let buffer = self.stream.alloc_zeros::<u64>(0)?;
+            return Ok(DeviceFrVec::from_parts(
+                self.stream.clone(),
+                buffer,
+                0,
+                self.staging.clone(),
+            ));
+        }
+        let buffer = xfer_stats::timed(Phase::H2d, size_of_val(limbs), || {
+            Ok::<_, CudaError>(self.stream.clone_htod(limbs)?)
+        })?;
+        Ok(DeviceFrVec::from_parts(
+            self.stream.clone(),
+            buffer,
+            len,
+            self.staging.clone(),
+        ))
+    }
+
     pub fn alloc(&self, len: usize) -> Result<DeviceFrVec, CudaError> {
         let buffer = self.stream.alloc_zeros::<u64>(len * LIMBS)?;
         Ok(DeviceFrVec::from_parts(
