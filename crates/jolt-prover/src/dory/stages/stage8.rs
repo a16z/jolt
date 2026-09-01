@@ -253,8 +253,9 @@ where
     // joint evaluation and blind for BlindFold.
     #[cfg(not(feature = "zk"))]
     {
-        // Drop each view after its final tier-1 fold; purge after the last.
-        let polynomials: Vec<FoldOnce<F>> = FoldOnce::wrap(polynomials);
+        // Dory declares its fold terminal, so each backing view can die there.
+        let polynomials: Vec<OpeningView<F>> =
+            OpeningView::wrap(polynomials, PCS::OPENING_FOLD_IS_TERMINAL, log_t);
         let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
             &preprocessing.pcs_setup,
             statement,
@@ -300,18 +301,23 @@ where
     }
 }
 
-/// Transparent opening view consumed by `fold_rows`.
-/// The last fold purges freed backing columns; post-fold reads panic.
+/// Transparent opening view released when the PCS declares its fold terminal.
 #[cfg(not(feature = "zk"))]
-struct FoldOnce<F: JoltField> {
+struct OpeningView<F: JoltField> {
     inner: Mutex<Option<Box<dyn MultilinearPoly<F>>>>,
     num_vars: usize,
     remaining: Arc<AtomicUsize>,
+    terminal_fold: bool,
+    log_t: usize,
 }
 
 #[cfg(not(feature = "zk"))]
-impl<F: JoltField> FoldOnce<F> {
-    fn wrap(polynomials: Vec<Box<dyn MultilinearPoly<F>>>) -> Vec<Self> {
+impl<F: JoltField> OpeningView<F> {
+    fn wrap(
+        polynomials: Vec<Box<dyn MultilinearPoly<F>>>,
+        terminal_fold: bool,
+        log_t: usize,
+    ) -> Vec<Self> {
         let remaining = Arc::new(AtomicUsize::new(polynomials.len()));
         polynomials
             .into_iter()
@@ -319,6 +325,8 @@ impl<F: JoltField> FoldOnce<F> {
                 num_vars: poly.num_vars(),
                 inner: Mutex::new(Some(poly)),
                 remaining: Arc::clone(&remaining),
+                terminal_fold,
+                log_t,
             })
             .collect()
     }
@@ -336,8 +344,13 @@ impl<F: JoltField> FoldOnce<F> {
     }
 }
 
+/// Only the methods Dory's `open` calls are forwarded. The structure queries
+/// (`is_one_hot`, `one_hot_*`, `dense_evaluations`, `to_dense`, `for_each_one`)
+/// fall to the trait defaults: the borrow-returning ones cannot be served
+/// through the `Mutex<Option<..>>`, and `OPENING_FOLD_IS_TERMINAL` is the
+/// PCS's promise that `open` never consults them.
 #[cfg(not(feature = "zk"))]
-impl<F: JoltField> MultilinearPoly<F> for FoldOnce<F> {
+impl<F: JoltField> MultilinearPoly<F> for OpeningView<F> {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -355,6 +368,9 @@ impl<F: JoltField> MultilinearPoly<F> for FoldOnce<F> {
         reason = "a second fold is an invariant violation; fail loudly, not with stale data"
     )]
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        if !self.terminal_fold {
+            return self.with_inner(|poly| poly.fold_rows(left, sigma));
+        }
         let folded = {
             let poly = self
                 .inner
@@ -366,8 +382,34 @@ impl<F: JoltField> MultilinearPoly<F> for FoldOnce<F> {
             // Drop the view and its shared-column handles here.
         };
         if self.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
-            let _ = jolt_kernels::mem::release_retained_memory();
+            jolt_kernels::mem::purge_retained_memory(self.log_t);
         }
         folded
+    }
+}
+
+#[cfg(all(test, not(feature = "zk")))]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::Polynomial;
+
+    use super::*;
+
+    #[test]
+    fn non_terminal_opening_view_remains_reusable() {
+        let polynomial = Polynomial::new(vec![
+            Fr::from_u64(1),
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(4),
+        ]);
+        let expected = polynomial.evaluate(&[Fr::from_u64(5), Fr::from_u64(6)]);
+        let polynomials: Vec<Box<dyn MultilinearPoly<Fr>>> = vec![Box::new(polynomial)];
+        let view = OpeningView::wrap(polynomials, false, 0).pop().unwrap();
+        let left = [Fr::from_u64(7), Fr::from_u64(8)];
+
+        assert_eq!(view.fold_rows(&left, 1), view.fold_rows(&left, 1));
+        assert_eq!(view.evaluate(&[Fr::from_u64(5), Fr::from_u64(6)]), expected);
     }
 }

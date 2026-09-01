@@ -95,7 +95,7 @@ impl TraceFixture {
             is_compressed: false,
         };
         self.rows
-            .push(TraceRow::new(instruction, registers, RamAccess::NoOp));
+            .push(TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap());
     }
 
     /// Run `f` against a trace backend padded to `2^log_t` cycles.

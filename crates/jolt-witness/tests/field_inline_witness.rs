@@ -119,7 +119,7 @@ fn field_row_with_registers(
     registers: RegisterState,
     data: FieldInlineTraceData,
 ) -> TraceRow {
-    let mut row = TraceRow::new(instruction, registers, RamAccess::NoOp);
+    let mut row = TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap();
     row.field_inline = Some(data.into());
     row
 }
@@ -264,7 +264,8 @@ fn field_inline_public_provider_is_absent_for_fr_off_programs() {
             Some(2),
             None,
             3,
-        ))],
+        ))
+        .unwrap()],
         2,
     );
 

@@ -419,26 +419,10 @@ fn validate_trace_data(
             "field-inline trace payload op does not match instruction",
         ));
     }
-    validate_read(
-        index,
-        "rs1",
-        data.rs1,
-        row.instruction().operands.rs1,
-        shape.reads_fr_rs1,
-    )?;
-    validate_read(
-        index,
-        "rs2",
-        data.rs2,
-        row.instruction().operands.rs2,
-        shape.reads_fr_rs2,
-    )?;
-    validate_write(
-        index,
-        data.rd,
-        row.instruction().operands.rd,
-        shape.writes_fr_rd,
-    )?;
+    let operands = row.instruction().operands;
+    validate_read(index, "rs1", data.rs1, operands.rs1, shape.reads_fr_rs1)?;
+    validate_read(index, "rs2", data.rs2, operands.rs2, shape.reads_fr_rs2)?;
+    validate_write(index, data.rd, operands.rd, shape.writes_fr_rd)?;
 
     if data.product.is_some() != shape.requires_product_payload() {
         return Err(invalid_row(
@@ -541,9 +525,10 @@ fn validate_bridge(
                 x_value,
             }),
         ) => {
-            if Some(field_register) != row.instruction().operands.rs1
+            let operands = row.instruction().operands;
+            if Some(field_register) != operands.rs1
                 || Some(field_value) != data.rs1.map(|read| read.value)
-                || Some(x_register) != row.instruction().operands.rd
+                || Some(x_register) != operands.rd
                 || Some(x_value) != row.rd_write().map(|write| write.post_value)
             {
                 return Err(invalid_row(
@@ -724,7 +709,7 @@ mod tests {
         registers: RegisterState,
         data: FieldInlineTraceData,
     ) -> TraceRow {
-        let mut row = TraceRow::new(instruction, registers, RamAccess::NoOp);
+        let mut row = TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap();
         row.field_inline = Some(data.into());
         row
     }
@@ -861,7 +846,8 @@ mod tests {
             Some(2),
             None,
             3,
-        ));
+        ))
+        .unwrap();
         let witness = witness(&program, &preprocessing, vec![row], 2);
 
         assert_eq!(

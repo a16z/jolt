@@ -814,7 +814,7 @@ pub(crate) mod testing {
         let row = |instruction: Option<JoltInstructionRow>,
                    registers: RegisterState,
                    ram_access: RamAccess| {
-            TraceRow::new(instruction.unwrap_or_default(), registers, ram_access)
+            TraceRow::new(instruction.unwrap_or_default(), registers, ram_access).unwrap()
         };
         let mut rows = vec![
             // Hot bytecode, hot RAM, register activity.

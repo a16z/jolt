@@ -32,7 +32,7 @@ use crate::{
 /// `[is_rs1, rs1, is_pc, upc, is_rs2, rs2, is_imm, imm]`.
 const NUM_TABLES: usize = 8;
 
-use crate::mem::purge_staging;
+use crate::mem::purge_retained_memory;
 
 /// Bind count that triggers the late allocator purge.
 const LATE_PURGE_ROUNDS: usize = 8;
@@ -366,19 +366,16 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                         .map_err(row_extraction_error)?;
                 self.state = InputState::Dense(tables);
                 // Return row and preparation pages before dense rounds.
-                purge_staging(self.progress.total());
+                purge_retained_memory(self.progress.total());
             }
             InputState::Dense(tables) => {
                 // In-place binds avoid eight dead half-size generations.
                 for table in tables.iter_mut() {
-                    table.bind_low_to_high_in_place(challenge);
-                    if table.capacity() >= 8 * table.len().max(1) {
-                        table.shrink_to_fit();
-                    }
+                    let _ = table.bind_low_to_high_in_place(challenge);
                 }
                 // Return shrink tails once the live tables are small.
                 if self.progress.bound() + 1 == LATE_PURGE_ROUNDS {
-                    purge_staging(self.progress.total());
+                    purge_retained_memory(self.progress.total());
                 }
             }
         }

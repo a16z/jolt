@@ -321,7 +321,7 @@ impl Observation {
                     }),
                 },
                 observation.ram_access(row.instruction_kind),
-            ));
+            )?);
         }
         Ok(rows)
     }

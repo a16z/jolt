@@ -79,7 +79,6 @@ use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     RoundChallenges,
 };
-use crate::mem::PURGE_MIN_LOG_T;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -758,17 +757,13 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        self.az.bind_low_to_high_in_place(challenge);
-        self.bz.bind_low_to_high_in_place(challenge);
-        // Shrink dominant tails; purge once after the first shrink.
-        if self.az.capacity() >= 8 * self.az.len().max(1) {
-            self.az.shrink_to_fit();
-            self.bz.shrink_to_fit();
-            // `rounds = log_t + 1`; compare against log_t.
-            if !self.purged && self.challenges.total() > PURGE_MIN_LOG_T {
-                self.purged = true;
-                let _ = crate::mem::release_retained_memory();
-            }
+        let shrunk = self.az.bind_low_to_high_in_place(challenge);
+        let _ = self.bz.bind_low_to_high_in_place(challenge);
+        // Purge once after the first shrink.
+        if shrunk && !self.purged {
+            self.purged = true;
+            // `rounds = log_t + 1`.
+            crate::mem::purge_retained_memory(self.challenges.total() - 1);
         }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);

@@ -219,7 +219,7 @@ pub(crate) fn with_ram_fixture_init<R>(
                     RamAccess::NoOp,
                 ),
             };
-            TraceRow::new(instruction, registers, ram_access)
+            TraceRow::new(instruction, registers, ram_access).unwrap()
         })
         .collect();
 

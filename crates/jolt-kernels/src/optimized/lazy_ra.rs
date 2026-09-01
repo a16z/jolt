@@ -171,7 +171,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     // Return branch tables and the final shared index handle.
                     drop(tables);
                     drop(source);
-                    crate::mem::purge_staging(log_t);
+                    crate::mem::purge_retained_memory(log_t);
                     dense
                 }
             }

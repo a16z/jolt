@@ -104,7 +104,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 /// Address chunk `i`, absent on no-access cycles.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
-    addresses: Arc<Vec<u64>>,
+    addresses: Arc<Vec<u32>>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }

@@ -285,10 +285,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
         // Avoid a fresh half-size table each round.
-        self.combined.bind_low_to_high_in_place(challenge);
-        if self.combined.capacity() >= 8 * self.combined.len().max(1) {
-            self.combined.shrink_to_fit();
-        }
+        let _ = self.combined.bind_low_to_high_in_place(challenge);
         self.bound_challenges.push(challenge);
         self.progress.advance();
     }

@@ -14,13 +14,14 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 use std::sync::Arc;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::{pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt};
+use super::support::{
+    bind_raw_twice, bound_pair, pin_derived_term, triple_product_round_evals, RoundProgress,
+    SplitLt,
+};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -30,7 +31,7 @@ use crate::{
 /// Remapped RAM address index, absent on no-access cycles.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
-    addresses: Arc<Vec<u64>>,
+    addresses: Arc<Vec<u32>>,
 }
 
 impl ChunkIndexSource for RamAddressIndices {
@@ -104,24 +105,6 @@ fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
     F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
 }
 
-/// `left * right`, skipping the multiply when either side is zero.
-#[inline(always)]
-fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
-    if left.is_zero() || right.is_zero() {
-        F::zero()
-    } else {
-        left * right
-    }
-}
-
-/// First-bind `inc(y)` on the half domain.
-#[inline]
-fn raw_bound_inc<F: JoltField>(columns: &RamAccessColumns, r1: F, y: usize) -> F {
-    let lo = raw_inc::<F>(columns, 2 * y);
-    let hi = raw_inc::<F>(columns, 2 * y + 1);
-    lo + mul_0_optimized(r1, hi - lo)
-}
-
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -153,18 +136,13 @@ impl<F: JoltField> RamValCheckKernel<F> {
                 },
                 // Materialize the second bind directly at `T/4`.
                 IncColumn::RawBound { columns, r1 } => {
-                    let quarter = columns.addresses.len() / 4;
-                    let pair = |z: usize| {
-                        let lo = raw_bound_inc::<F>(&columns, r1, 2 * z);
-                        let hi = raw_bound_inc::<F>(&columns, r1, 2 * z + 1);
-                        lo + mul_0_optimized(challenge, hi - lo)
-                    };
-                    #[cfg(feature = "parallel")]
-                    let bound: Vec<F> = (0..quarter).into_par_iter().map(pair).collect();
-                    #[cfg(not(feature = "parallel"))]
-                    let bound: Vec<F> = (0..quarter).map(pair).collect();
                     freed_columns = true;
-                    IncColumn::Bound(Polynomial::new(bound))
+                    IncColumn::Bound(bind_raw_twice(
+                        |j| raw_inc(&columns, j),
+                        columns.addresses.len(),
+                        r1,
+                        challenge,
+                    ))
                 }
                 IncColumn::Bound(_) => unreachable!("bound inc binds in place above"),
             };
@@ -174,7 +152,7 @@ impl<F: JoltField> RamValCheckKernel<F> {
         self.progress.advance();
         // Return freed `T`-sized columns before the stage boundary.
         if freed_columns {
-            crate::mem::purge_staging(self.progress.total());
+            crate::mem::purge_retained_memory(self.progress.total());
         }
     }
 }
@@ -207,10 +185,8 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
             IncColumn::RawBound { columns, r1 } => triple_product_round_evals(
                 columns.addresses.len() / 4,
                 |y| {
-                    (
-                        raw_bound_inc(columns, *r1, 2 * y),
-                        raw_bound_inc(columns, *r1, 2 * y + 1),
-                    )
+                    let inc = |j| raw_inc(columns, j);
+                    (bound_pair(inc, *r1, 2 * y), bound_pair(inc, *r1, 2 * y + 1))
                 },
                 ra,
                 lt,
@@ -248,7 +224,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
                 // Only when log_t = 0.
                 IncColumn::Raw(columns) => raw_inc(columns, 0),
                 // Only when log_t = 1.
-                IncColumn::RawBound { columns, r1 } => raw_bound_inc(columns, *r1, 0),
+                IncColumn::RawBound { columns, r1 } => bound_pair(|j| raw_inc(columns, j), *r1, 0),
                 IncColumn::Bound(inc) => inc.evals()[0],
             },
         })

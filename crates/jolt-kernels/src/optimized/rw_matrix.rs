@@ -365,7 +365,7 @@ fn round0_entry<F: JoltField>(
         let pre_value = columns.pre_values[cycle];
         CycleMajorEntry {
             row: cycle as u32,
-            col: address as u32,
+            col: address,
             prev_val: pre_value,
             next_val: columns.post_values[cycle],
             val: F::from_u64(pre_value),

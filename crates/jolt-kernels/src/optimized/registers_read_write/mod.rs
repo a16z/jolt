@@ -4,7 +4,7 @@
 //! `ra = γ·rs1_ra + γ²·rs2_ra`. Gruen factoring handles cycle rounds;
 //! address rounds use three dense `K`-sized arrays.
 //!
-//! [`SeedEntry`] omits the round-0 field value. The first challenge is held
+//! `SeedEntry` omits the round-0 field value. The first challenge is held
 //! without materializing `T/2`; the second bind creates the `T/4` indexed SoA
 //! layout. Coefficients stay as LUT indices until the `u16` domain saturates.
 //!
@@ -41,7 +41,7 @@ mod tests;
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use rows::CollectRegisterEntries;
-use sparse::{CoeffLut, IncColumn, SparseEntries};
+use sparse::{CoeffLut, CycleState};
 
 pub struct OptimizedRegistersReadWrite;
 
@@ -93,11 +93,12 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             rd_indices,
             rd_inc,
         } = CollectRegisterEntries::collect(witness, cycles)?;
-        let entries = SparseEntries::Seed {
+        let cycle = CycleState::new(
             entries,
-            ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
-            wa_lut: CoeffLut::new(vec![F::zero(), F::one()]),
-        };
+            CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
+            CoeffLut::new(vec![F::zero(), F::one()]),
+            rd_inc,
+        );
 
         // Park the rd hot indices for the stage-5 val-evaluation kernel.
         session.park(SharedRdIndices(rd_indices));
@@ -105,9 +106,8 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         Ok(Box::new(ReadWriteKernel {
             log_t,
             log_k,
-            entries,
+            cycle,
             gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            inc: IncColumn::Raw(rd_inc),
             ra: Vec::new(),
             wa: Vec::new(),
             val: Vec::new(),
@@ -130,9 +130,8 @@ struct ReadWriteKernel<F: JoltField> {
     log_k: usize,
     /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
     /// cycle→address transition.
-    entries: SparseEntries<F>,
+    cycle: CycleState<F>,
     gruen: GruenSplitEqPolynomial<F>,
-    inc: IncColumn<F>,
     // Address-phase dense state (K-sized), materialized at the transition.
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     ra: Vec<F>,
@@ -158,7 +157,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
     fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let quadratic = self.entries.quadratic(e_in, e_out, &self.inc);
+        let quadratic = self.cycle.quadratic(e_in, e_out);
         self.gruen
             .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
     }
@@ -208,8 +207,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
         let mut layout_transitioned = false;
         if self.challenges.bound() < self.log_t {
             self.gruen.bind(r);
-            self.inc.bind(r);
-            layout_transitioned = self.entries.bind(r);
+            layout_transitioned = self.cycle.bind(r);
         } else {
             for table in [&mut self.ra, &mut self.wa, &mut self.val] {
                 bind_pairs(table, r);
@@ -220,15 +218,14 @@ impl<F: JoltField> ReadWriteKernel<F> {
         if self.challenges.bound() == self.log_t {
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
-            let entries = std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new()));
-            (self.ra, self.wa, self.val) = entries.into_dense(1usize << self.log_k);
+            (self.ra, self.wa, self.val, self.inc_scalar) =
+                self.cycle.take_dense(1usize << self.log_k);
             self.eq_scalar = self.gruen.current_scalar();
-            self.inc_scalar = self.inc.final_scalar();
         }
 
         // Return replaced entry generations immediately.
         if layout_transitioned {
-            crate::mem::purge_staging(self.log_t);
+            crate::mem::purge_retained_memory(self.log_t);
         }
     }
 

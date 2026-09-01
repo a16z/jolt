@@ -82,9 +82,9 @@ fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn Any) {
 fn stage_flamegraph(_stage: &str, _session: &ProofSession, _output: &dyn Any) {}
 
 /// Purge allocator-retained pages after a stage drops its temporaries.
-fn stage_boundary(stage: &str) {
+fn stage_boundary(stage: &str, log_t: usize) {
     let _span = tracing::info_span!("release_retained_memory", stage).entered();
-    let _ = jolt_kernels::mem::release_retained_memory();
+    jolt_kernels::mem::purge_retained_memory(log_t);
 }
 
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and
@@ -141,10 +141,10 @@ where
         public_io,
     )?;
     stage_flamegraph("stage0", &session, &());
-    stage_boundary("stage0");
+    let log_t = config.trace_length.ilog2() as usize;
+    stage_boundary("stage0", log_t);
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
-    let log_t = config.trace_length.ilog2() as usize;
 
     let stage1 = prove_stage1::<F, PCS, VC, T>(
         backend,
@@ -155,7 +155,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage1", &session, &stage1.clear_output);
-    stage_boundary("stage1");
+    stage_boundary("stage1", log_t);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -167,7 +167,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage2", &session, &stage2.clear_output);
-    stage_boundary("stage2");
+    stage_boundary("stage2", log_t);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -179,7 +179,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage3", &session, &stage3.clear_output);
-    stage_boundary("stage3");
+    stage_boundary("stage3", log_t);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -193,7 +193,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage4", &session, &stage4.clear_output);
-    stage_boundary("stage4");
+    stage_boundary("stage4", log_t);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -207,7 +207,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage5", &session, &stage5.clear_output);
-    stage_boundary("stage5");
+    stage_boundary("stage5", log_t);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -224,7 +224,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage6a", &session, &stage6a.clear_output);
-    stage_boundary("stage6a");
+    stage_boundary("stage6a", log_t);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -242,7 +242,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage6b", &session, &stage6b.clear_output);
-    stage_boundary("stage6b");
+    stage_boundary("stage6b", log_t);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -256,7 +256,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage7", &session, &stage7.clear_output);
-    stage_boundary("stage7");
+    stage_boundary("stage7", log_t);
     let stage8 = prove_stage8::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -273,7 +273,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage8", &session, &());
-    stage_boundary("stage8");
+    stage_boundary("stage8", log_t);
 
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

@@ -70,7 +70,8 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
                 ..Default::default()
             },
             RamAccess::NoOp,
-        ),
+        )
+        .unwrap(),
         TraceRow::new(
             store,
             RegisterState {
@@ -89,7 +90,8 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
                 pre_value: 7,
                 post_value: 11,
             }),
-        ),
+        )
+        .unwrap(),
     ];
     let config = JoltVmWitnessConfig::new(
         2,

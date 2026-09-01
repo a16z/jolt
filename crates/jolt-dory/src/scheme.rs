@@ -208,6 +208,8 @@ impl CommitmentScheme for DoryScheme {
     type OpeningHint = DoryHint;
     type SetupParams = usize;
 
+    const OPENING_FOLD_IS_TERMINAL: bool = true;
+
     fn setup(
         max_num_vars: Self::SetupParams,
     ) -> Result<(DoryProverSetup, DoryVerifierSetup), OpeningsError> {

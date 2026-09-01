@@ -581,7 +581,7 @@ mod tests {
         let rows: Vec<TraceRow> = script
             .iter()
             .take(real_rows)
-            .map(|&instruction| TraceRow::from_instruction(instruction))
+            .map(|&instruction| TraceRow::from_instruction(instruction).unwrap())
             .collect();
 
         use std::sync::Arc;

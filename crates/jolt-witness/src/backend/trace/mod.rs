@@ -340,7 +340,8 @@ impl<T: TraceSource> TraceBackend<T> {
         preprocessing: &JoltProgramPreprocessing,
     ) -> Result<JoltTraceRow, WitnessError> {
         let register = row.registers();
-        let instruction = JoltInstruction::try_from(row.instruction()).map_err(|kind| {
+        let instruction_row = row.instruction();
+        let instruction = JoltInstruction::try_from(instruction_row).map_err(|kind| {
             WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: format!("unsupported Jolt instruction kind in trace row: {kind:?}"),
@@ -405,19 +406,19 @@ impl<T: TraceSource> TraceBackend<T> {
         };
         let pc = preprocessing
         .bytecode
-        .get_pc(&row.instruction())
+        .get_pc(&instruction_row)
         .ok_or_else(|| WitnessError::InvalidWitnessData {
             label: JOLT_VM_LABEL,
             reason: format!(
                 "bytecode preprocessing is missing PC mapping for address {:#x} with virtual_sequence_remaining {:?}",
-                row.instruction().address, row.instruction().virtual_sequence_remaining
+                instruction_row.address, instruction_row.virtual_sequence_remaining
             ),
         })?;
         let pc = u32::try_from(pc).map_err(|_| WitnessError::InvalidWitnessData {
             label: JOLT_VM_LABEL,
             reason: format!("bytecode PC {pc} does not fit the compact trace row"),
         })?;
-        JoltTraceRow::from_components(state, &row.instruction(), pc).map_err(|error| {
+        JoltTraceRow::from_components(state, &instruction_row, pc).map_err(|error| {
             WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: error.to_string(),

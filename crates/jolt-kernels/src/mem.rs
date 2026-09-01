@@ -25,11 +25,11 @@ fn pump_large_cache() {
     }
 }
 
-/// Minimum cycle-domain size for mid-stage purges.
-pub(crate) const PURGE_MIN_LOG_T: usize = 22;
+/// Minimum cycle-domain size for allocator purges.
+const PURGE_MIN_LOG_T: usize = 22;
 
-/// Purge after a large staging generation dies.
-pub(crate) fn purge_staging(log_t: usize) {
+/// Purge after a large allocation generation dies.
+pub fn purge_retained_memory(log_t: usize) {
     if log_t >= PURGE_MIN_LOG_T {
         let _ = release_retained_memory();
     }
@@ -37,7 +37,7 @@ pub(crate) fn purge_staging(log_t: usize) {
 
 /// Return allocator-retained pages to the OS. Only macOS pressure relief
 /// reports a byte count.
-pub fn release_retained_memory() -> usize {
+fn release_retained_memory() -> usize {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: NULL zone and zero goal are valid; no Rust pointer is passed.

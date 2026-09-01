@@ -136,10 +136,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 gruen.bind(r);
             }
             // Avoid a fresh half-size increment table each round.
-            self.inc.bind_low_to_high_in_place(r);
-            if self.inc.capacity() >= 8 * self.inc.len().max(1) {
-                self.inc.shrink_to_fit();
-            }
+            let _ = self.inc.bind_low_to_high_in_place(r);
             if round == self.log_t - 1 {
                 let Some(Phase::Cycle { matrix, gruen }) = self.phase.take() else {
                     return Err(Phase::error());
@@ -154,7 +151,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
             // Purge after raw columns, late bind tails, and the cycle matrix.
             if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round == self.log_t - 1 {
-                crate::mem::purge_staging(self.log_t);
+                crate::mem::purge_retained_memory(self.log_t);
             }
         } else {
             let Some(Phase::Address { matrix, .. }) = &mut self.phase else {

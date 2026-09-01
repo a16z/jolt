@@ -121,13 +121,13 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
 /// `Q_x[c_lo] = Σ_{c_hi} eq(r_address)[addresses[c_hi‖c_lo]] · eq_hi_x[c_hi]`
 /// for the three cycle points, in one pass over the access columns.
 fn build_q_tables<F: JoltField>(
-    addresses: &[u64],
+    addresses: &[u32],
     eq_address: &[F],
     eq_hi: &[Vec<F>; TERMS],
     prefix_bits: usize,
 ) -> [Vec<F>; TERMS] {
     let prefix_size = 1usize << prefix_bits;
-    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u64]| {
+    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u32]| {
         for (i, &address) in chunk.iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
@@ -179,7 +179,7 @@ fn build_q_tables<F: JoltField>(
 /// — the partial evaluation of the address-folded `ra` at the prefix
 /// challenges, regathered from the access columns.
 fn gather_h_prime<F: JoltField>(
-    addresses: &[u64],
+    addresses: &[u32],
     eq_address: &[F],
     eq_prefix: &[F],
     prefix_bits: usize,
@@ -187,7 +187,7 @@ fn gather_h_prime<F: JoltField>(
 ) -> Vec<F> {
     let prefix_size = 1usize << prefix_bits;
     let suffix_size = 1usize << suffix_bits;
-    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u64]| {
+    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u32]| {
         for (i, &address) in chunk.iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
@@ -248,7 +248,7 @@ enum Phase<F: JoltField> {
         q: [Vec<F>; TERMS],
         #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         eq_hi: [Vec<F>; TERMS],
-        addresses: Arc<Vec<u64>>,
+        addresses: Arc<Vec<u32>>,
         #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,
         #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]

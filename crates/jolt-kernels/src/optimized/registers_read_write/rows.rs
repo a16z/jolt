@@ -257,3 +257,50 @@ impl CollectRegisterEntries {
         })
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use common::jolt_device::MemoryLayout;
+    use jolt_program::preprocess::{
+        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
+    };
+    use jolt_riscv::{
+        CapturedState, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NonMemoryState,
+        NormalizedOperands,
+    };
+
+    use super::*;
+
+    #[test]
+    fn rejects_register_outside_protocol_domain() {
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            operands: NormalizedOperands {
+                rs1: Some(200),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let row = JoltTraceRow::from_components(
+            CapturedState::NonMemory(NonMemoryState::default()),
+            &instruction,
+            0,
+        )
+        .unwrap();
+        let preprocessing = JoltProgramPreprocessing {
+            bytecode: BytecodePreprocessing::default(),
+            ram: RAMPreprocessing::default(),
+            memory_layout: MemoryLayout::default(),
+            max_padded_trace_length: 1,
+        };
+        let env = WitnessEnv::new(&preprocessing);
+
+        let error = RegisterCycleRow::from_row(&row, None, &env).unwrap_err();
+        assert!(matches!(
+            error,
+            WitnessError::InvalidWitnessData { reason, .. }
+                if reason.contains("register index 200")
+        ));
+    }
+}

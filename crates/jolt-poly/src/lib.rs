@@ -78,7 +78,7 @@ mod univariate;
 pub use allocative_support::{visit_scalar_rows, visit_scalars};
 pub use binding::BindingOrder;
 pub use compressed_univariate::CompressedPoly;
-pub use dense::{bind_low_to_high_in_place, Polynomial};
+pub use dense::Polynomial;
 pub use eq::{
     boolean_bits_msb, boolean_index_msb, boolean_point_msb, eq_index_msb, try_eq_mle, EqPolynomial,
 };

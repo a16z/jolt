@@ -20,7 +20,7 @@ pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, T
 pub use error::TraceError;
 pub use trace::{
     JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
-    RegisterState, RegisterWrite, TraceInputs, TraceOutput, TraceRow,
+    RegisterState, RegisterWrite, TraceInputs, TraceOutput, TraceRow, TraceRowError,
 };
 
 #[cfg(feature = "image")]

@@ -359,7 +359,7 @@ fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
         jolt_instruction_row(&cycle)?,
         register_state(&cycle),
         cycle.ram_access().into(),
-    );
+    )?;
     #[cfg(feature = "field-inline")]
     let row = {
         let mut row = row;

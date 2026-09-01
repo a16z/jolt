@@ -273,23 +273,19 @@ impl<F: JoltField> Polynomial<F> {
         self.num_vars -= 1;
     }
 
-    /// Binds the LSB variable in place without another buffer.
+    /// Binds the LSB variable in place without another buffer. Once the
+    /// backing allocation reaches 8x the live length it is released; the
+    /// return value reports that release so callers can purge after it.
     #[inline]
-    pub fn bind_low_to_high_in_place(&mut self, scalar: F) {
+    pub fn bind_low_to_high_in_place(&mut self, scalar: F) -> bool {
         assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         bind_low_to_high_in_place(&mut self.evals, scalar);
         self.num_vars -= 1;
-    }
-
-    /// Allocated evaluation capacity.
-    #[inline]
-    pub fn capacity(&self) -> usize {
-        self.evals.capacity()
-    }
-
-    /// Release the evaluation vector's vacated capacity.
-    pub fn shrink_to_fit(&mut self) {
-        self.evals.shrink_to_fit();
+        let shrink = self.evals.capacity() >= 8 * self.evals.len().max(1);
+        if shrink {
+            self.evals.shrink_to_fit();
+        }
+        shrink
     }
 
     /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
@@ -609,7 +605,7 @@ impl<F: JoltField> Neg for Polynomial<F> {
 ///
 /// Each power-of-two level writes below its read window. Earlier outputs lie
 /// below later reads, and each level splits into disjoint `dst` and `src`.
-pub fn bind_low_to_high_in_place<F: JoltField>(evals: &mut Vec<F>, challenge: F) {
+fn bind_low_to_high_in_place<F: JoltField>(evals: &mut Vec<F>, challenge: F) {
     debug_assert!(evals.len().is_power_of_two());
     let half = evals.len() / 2;
     if half == 0 {

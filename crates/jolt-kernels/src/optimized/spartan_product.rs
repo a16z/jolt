@@ -48,7 +48,6 @@ use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     RoundChallenges,
 };
-use crate::mem::PURGE_MIN_LOG_T;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -433,16 +432,12 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        self.left.bind_low_to_high_in_place(challenge);
-        self.right.bind_low_to_high_in_place(challenge);
-        // Shrink dominant tails; purge once after the first shrink.
-        if self.left.capacity() >= 8 * self.left.len().max(1) {
-            self.left.shrink_to_fit();
-            self.right.shrink_to_fit();
-            if !self.purged && self.challenges.total() >= PURGE_MIN_LOG_T {
-                self.purged = true;
-                let _ = crate::mem::release_retained_memory();
-            }
+        let shrunk = self.left.bind_low_to_high_in_place(challenge);
+        let _ = self.right.bind_low_to_high_in_place(challenge);
+        // Purge once after the first shrink.
+        if shrunk && !self.purged {
+            self.purged = true;
+            crate::mem::purge_retained_memory(self.challenges.total());
         }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
