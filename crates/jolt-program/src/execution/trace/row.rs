@@ -220,15 +220,13 @@ impl Serialize for TraceRow {
 impl<'de> Deserialize<'de> for TraceRow {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let wire = TraceRowWire::deserialize(deserializer)?;
-        let row =
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+        let mut row =
             Self::new(wire.instruction, wire.registers, wire.ram_access).map_err(Error::custom)?;
         #[cfg(feature = "field-inline")]
         {
-            let mut row = row;
             row.field_inline = wire.field_inline;
-            return Ok(row);
         }
-        #[cfg(not(feature = "field-inline"))]
         Ok(row)
     }
 }
