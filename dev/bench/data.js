@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788380589361,
+  "lastUpdate": 1788384016399,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -150322,6 +150322,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864248,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bdef2ab6b70c597536dcfb1ad829515667829138",
+          "message": "ci: same-runner A/B comparison for crate benchmarks (#1824)\n\n* ci: same-runner A/B comparison for crate benchmarks\n\nThe stored-baseline comparison was dominated by runner noise: baseline\n(main push) and PR runs land on different hosted VMs from a heterogeneous\nCPU fleet, shifting wall time 14% median / 34% p90 with a 5% threshold.\nBench the merge target and the merge commit back-to-back on one runner\ninstead, and drop the artifact plumbing.\n\nAlso narrow triggers to paths that can affect the benched crates, and\nenable bmi2/adx/avx2 so the specialized fp128 asm and packed SIMD paths\nare no longer compile-time dead code in CI.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* ci: render bench comparison as a styled markdown table\n\nReplace critcmp with scripts/ci/bench_comment.py: drop the meaningless\n\"? ?/sec\" throughput column (no bench declares a Criterion throughput),\nbold the faster run per benchmark, and color entries green/red via\nGitHub math rendering when the delta exceeds the 10% noise threshold.\nAlso sidesteps critcmp exiting 1 on \"no benchmark comparisons to show\",\nwhich failed the first A/B validation run.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* ci(bench): color Δ only, show PR head SHA, loop bench legs, permissions + pagination\n\n- bench_comment.py: color only the Δ cell (the faster base value turned red on a regression); drop the TeX time-cell branch and TeX unit suffixes; fold -0.0% into +0.0%\n- report the PR head SHA (HEAD^2) instead of the synthetic merge-commit SHA; the merge commit is still what the PR leg benches\n- run both legs in one looped step; ::group:: per leg keeps the log split\n- document the base-first order effect (~-0.2% second-leg lean on the validation run) next to the 10% threshold\n- permissions: contents read, pull-requests write; paginate listComments so the sticky comment is found on long PRs\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-09-02T16:24:39-04:00",
+          "tree_id": "cb077d37678c0fe31c45a26f9378ae2a30a02b16",
+          "url": "https://github.com/a16z/jolt/commit/bdef2ab6b70c597536dcfb1ad829515667829138"
+        },
+        "date": 1788384011086,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.0904,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.9712,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 496940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 497000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 493540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6198,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 493516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.4717,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 493432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.065,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 493704,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.0647,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.0975,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4878,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 497048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4005,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 499476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 17.8891,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 497556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.7598,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 495260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 25.5037,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1067512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 12.1297,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 617508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 63.2042,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2126588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.1178,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 493712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.3193,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 493516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 12.8359,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861612,
             "unit": "KB",
             "extra": ""
           }
