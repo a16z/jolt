@@ -33,6 +33,8 @@ use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::inputs::ShiftSumcheckCycleState;
+#[cfg(feature = "implicit-carry")]
+use crate::zkvm::witness::CommittedPolynomial;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 
@@ -258,7 +260,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
             ProductTerm::scaled(
                 ValueSource::Challenge(6),
                 vec![ValueSource::Opening(OpeningId::committed(
-                    crate::zkvm::witness::CommittedPolynomial::Carry,
+                    CommittedPolynomial::Carry,
                     SumcheckId::SpartanShift,
                 ))],
             ),
@@ -420,7 +422,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         );
         #[cfg(feature = "implicit-carry")]
         accumulator.append_dense(
-            crate::zkvm::witness::CommittedPolynomial::Carry,
+            CommittedPolynomial::Carry,
             SumcheckId::SpartanShift,
             opening_point.r,
             carry_eval,
@@ -501,7 +503,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         #[cfg(feature = "implicit-carry")]
         let carry_term = {
             let (_, carry_claim) = accumulator.get_committed_polynomial_opening(
-                crate::zkvm::witness::CommittedPolynomial::Carry,
+                CommittedPolynomial::Carry,
                 SumcheckId::SpartanShift,
             );
             self.params.gamma_powers[5] * carry_claim * eq_plus_one_r_outer_at_shift
@@ -572,7 +574,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         );
         #[cfg(feature = "implicit-carry")]
         accumulator.append_dense(
-            crate::zkvm::witness::CommittedPolynomial::Carry,
+            CommittedPolynomial::Carry,
             SumcheckId::SpartanShift,
             opening_point.r,
         );
@@ -647,8 +649,7 @@ impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
                     input_sumcheck_id: SumcheckId::SpartanOuter,
                     input_claim_expr: VirtualPolynomial::NextCarry.into(),
                     batching_poly: outer_sumcheck_r,
-                    expected_output_claim_expr: crate::zkvm::witness::CommittedPolynomial::Carry
-                        .into(),
+                    expected_output_claim_expr: CommittedPolynomial::Carry.into(),
                 },
             ],
             output_sumcheck_id: SumcheckId::SpartanShift,

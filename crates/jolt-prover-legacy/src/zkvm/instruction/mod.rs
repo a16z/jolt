@@ -4,7 +4,7 @@ use allocative::Allocative;
 use jolt_riscv::{
     CircuitFlagSet as RiscvCircuitFlagSet, Flags as RiscvFlags,
     InstructionFlagSet as RiscvInstructionFlagSet, JoltInstruction, JoltInstructionKind,
-    JoltInstructionRow, SourceInstructionKind,
+    JoltInstructionRow, SourceInstructionKind, NUM_CIRCUIT_FLAGS as RISCV_NUM_CIRCUIT_FLAGS,
 };
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
@@ -178,7 +178,7 @@ pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 // `circuit_flags_from_riscv` converts by bit position, so the legacy enum must
 // mirror `jolt_riscv::CircuitFlags` variant-for-variant or flags silently
 // vanish from the witness.
-const _: () = assert!(NUM_CIRCUIT_FLAGS == jolt_riscv::NUM_CIRCUIT_FLAGS);
+const _: () = assert!(NUM_CIRCUIT_FLAGS == RISCV_NUM_CIRCUIT_FLAGS);
 
 pub trait InterleavedBitsMarker {
     fn is_interleaved_operands(&self) -> bool;

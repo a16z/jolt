@@ -41,6 +41,8 @@ use crate::zkvm::r1cs::constraints::{
 };
 use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
 use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
+#[cfg(feature = "implicit-carry")]
+use crate::zkvm::witness::CommittedPolynomial;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
@@ -483,7 +485,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
             ),
             #[cfg(feature = "implicit-carry")]
             OpeningId::committed(
-                crate::zkvm::witness::CommittedPolynomial::Carry,
+                CommittedPolynomial::Carry,
                 SumcheckId::SpartanProductVirtualization,
             ),
         ];
@@ -822,7 +824,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         // entry of `compute_claimed_factors`.
         #[cfg(feature = "implicit-carry")]
         accumulator.append_dense(
-            crate::zkvm::witness::CommittedPolynomial::Carry,
+            CommittedPolynomial::Carry,
             SumcheckId::SpartanProductVirtualization,
             r_cycle.r.clone(),
             claims[claims.len() - 1],
@@ -920,7 +922,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
                 .1;
             let carry = accumulator
                 .get_committed_polynomial_opening(
-                    crate::zkvm::witness::CommittedPolynomial::Carry,
+                    CommittedPolynomial::Carry,
                     SumcheckId::SpartanProductVirtualization,
                 )
                 .1;
@@ -957,7 +959,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         }
         #[cfg(feature = "implicit-carry")]
         accumulator.append_dense(
-            crate::zkvm::witness::CommittedPolynomial::Carry,
+            CommittedPolynomial::Carry,
             SumcheckId::SpartanProductVirtualization,
             opening_point.r,
         );

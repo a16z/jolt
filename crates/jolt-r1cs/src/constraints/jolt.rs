@@ -12,6 +12,10 @@ use crate::SparseRow;
 use crate::{ConstraintMatrices, ConstraintMatrixEvalError};
 
 use super::rv64;
+#[cfg(feature = "implicit-carry")]
+use super::rv64::{
+    ROW_LOOKUP_SPLITS_INTO_OUTPUT_AND_NEXT_CARRY, ROW_NEXT_CARRY_ZERO_IF_NOT_PRODUCES_CARRY,
+};
 
 #[cfg(feature = "field-inline")]
 use super::field_constraints;
@@ -81,11 +85,8 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
     14,
     17,
     18,
-    // NextCarryZeroIfNotProducesCarry (the last rv64 eq row)
     #[cfg(feature = "implicit-carry")]
-    {
-        rv64::NUM_EQ_CONSTRAINTS - 1
-    },
+    ROW_NEXT_CARRY_ZERO_IF_NOT_PRODUCES_CARRY,
 ];
 
 #[cfg(feature = "field-inline")]
@@ -100,11 +101,8 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
     14,
     17,
     18,
-    // NextCarryZeroIfNotProducesCarry (the last rv64 eq row)
     #[cfg(feature = "implicit-carry")]
-    {
-        rv64::NUM_EQ_CONSTRAINTS - 1
-    },
+    ROW_NEXT_CARRY_ZERO_IF_NOT_PRODUCES_CARRY,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FADD,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FSUB,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FMUL,
@@ -122,11 +120,8 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     13,
     15,
     16,
-    // LookupSplitsIntoOutputAndNextCarry (second-to-last rv64 eq row)
     #[cfg(feature = "implicit-carry")]
-    {
-        rv64::NUM_EQ_CONSTRAINTS - 2
-    },
+    ROW_LOOKUP_SPLITS_INTO_OUTPUT_AND_NEXT_CARRY,
 ];
 
 #[cfg(feature = "field-inline")]
@@ -140,11 +135,8 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     13,
     15,
     16,
-    // LookupSplitsIntoOutputAndNextCarry (second-to-last rv64 eq row)
     #[cfg(feature = "implicit-carry")]
-    {
-        rv64::NUM_EQ_CONSTRAINTS - 2
-    },
+    ROW_LOOKUP_SPLITS_INTO_OUTPUT_AND_NEXT_CARRY,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ASSERT_EQ,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_FROM_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,

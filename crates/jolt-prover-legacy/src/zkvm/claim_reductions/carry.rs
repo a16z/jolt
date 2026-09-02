@@ -13,6 +13,8 @@
 //! reducing all three to one opening of `Carry` at a fresh point.
 
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -236,7 +238,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
 }

@@ -2047,6 +2047,8 @@ pub struct RISCVCycle<T: RISCVInstruction> {
 impl<T: RISCVInstruction> RISCVCycle<T> {
     #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
+        #[cfg(feature = "implicit-carry")]
+        use rand::RngCore;
         let instruction = T::random(rng);
         let concrete: Instruction = instruction.into();
         let source_instruction = concrete.source_instruction();
@@ -2060,7 +2062,7 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
             ram_access: Default::default(),
             register_state,
             #[cfg(feature = "implicit-carry")]
-            carry: rand::RngCore::next_u64(rng),
+            carry: rng.next_u64(),
         }
     }
 }

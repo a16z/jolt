@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
 use jolt_field::{Fr, JoltField};
+#[cfg(feature = "implicit-carry")]
+use jolt_verifier::stages::stage6b::outputs::CarryClaimReductionOutputClaims;
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
@@ -1533,7 +1535,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rd_inc: zero,
             },
             #[cfg(feature = "implicit-carry")]
-            carry_claim_reduction: stage6b::outputs::CarryClaimReductionOutputClaims {
+            carry_claim_reduction: CarryClaimReductionOutputClaims {
                 carry: zero,
             },
             trusted_advice: fill_optionals.then_some(

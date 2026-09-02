@@ -55,7 +55,7 @@ use crate::{
         relations::validate_member_presence,
         stage1::Stage1Output,
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
-        stage3::Stage3Output,
+        stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
         stage4::{Stage4ClearOutput, Stage4Output, Stage4OutputPoints},
         stage5::{Stage5Output, Stage5OutputClaims, Stage5OutputPoints},
         stage6a::{outputs::Stage6aOutputClaims, Stage6aOutput},
@@ -401,7 +401,7 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
     address_claims: &Stage6aOutputClaims<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputClaims<F>,
     #[cfg_attr(not(feature = "implicit-carry"), expect(unused_variables))]
-    stage3: &crate::stages::stage3::Stage3OutputClaims<F>,
+    stage3: &Stage3OutputClaims<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5OutputClaims<F>,
 ) -> Result<Stage6bInputClaims<F>, VerifierError> {
@@ -466,7 +466,7 @@ pub fn stage6b_input_points_from_upstream<F: JoltField>(
     sumchecks: &Stage6bSumchecks<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputPoints<F>,
     #[cfg_attr(not(feature = "implicit-carry"), expect(unused_variables))]
-    stage3: &crate::stages::stage3::Stage3OutputPoints<F>,
+    stage3: &Stage3OutputPoints<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage4: &Stage4OutputPoints<F>,
     stage5: &Stage5OutputPoints<F>,
 ) -> Stage6bInputPoints<F> {

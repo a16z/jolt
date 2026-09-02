@@ -3,6 +3,9 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 
 use crate::derived;
 
+#[cfg(feature = "implicit-carry")]
+use super::super::JoltCommittedPolynomial;
+
 use super::super::{
     JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     SpartanProductVirtualizationPublic,
@@ -190,7 +193,7 @@ pub fn uses_carry_product() -> JoltOpeningId {
 #[cfg(feature = "implicit-carry")]
 pub fn carry_product() -> JoltOpeningId {
     JoltOpeningId::committed(
-        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
+        JoltCommittedPolynomial::Carry,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
@@ -198,17 +201,14 @@ pub fn carry_product() -> JoltOpeningId {
 #[cfg(feature = "implicit-carry")]
 pub fn carry_reduced() -> JoltOpeningId {
     JoltOpeningId::committed(
-        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
+        JoltCommittedPolynomial::Carry,
         JoltRelationId::CarryClaimReduction,
     )
 }
 
 #[cfg(feature = "implicit-carry")]
 pub fn carry_shift() -> JoltOpeningId {
-    JoltOpeningId::committed(
-        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
-        JoltRelationId::SpartanShift,
-    )
+    JoltOpeningId::committed(JoltCommittedPolynomial::Carry, JoltRelationId::SpartanShift)
 }
 
 #[cfg(feature = "implicit-carry")]

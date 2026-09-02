@@ -31,6 +31,10 @@ use crate::zkvm::Serializable;
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_svg};
+#[cfg(feature = "implicit-carry")]
+use crate::zkvm::claim_reductions::{
+    CarryClaimReductionSumcheckParams, CarryClaimReductionSumcheckProver,
+};
 use crate::{
     field::JoltField,
     guest,
@@ -1368,12 +1372,11 @@ impl<
             &mut self.transcript,
         );
         #[cfg(feature = "implicit-carry")]
-        let carry_reduction_params =
-            crate::zkvm::claim_reductions::CarryClaimReductionSumcheckParams::new(
-                self.trace.len(),
-                &self.opening_accumulator,
-                &mut self.transcript,
-            );
+        let carry_reduction_params = CarryClaimReductionSumcheckParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
@@ -1499,11 +1502,10 @@ impl<
         let mut inc_reduction =
             IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
         #[cfg(feature = "implicit-carry")]
-        let mut carry_reduction =
-            crate::zkvm::claim_reductions::CarryClaimReductionSumcheckProver::initialize(
-                carry_reduction_params,
-                self.trace.clone(),
-            );
+        let mut carry_reduction = CarryClaimReductionSumcheckProver::initialize(
+            carry_reduction_params,
+            self.trace.clone(),
+        );
 
         #[cfg(feature = "allocative")]
         {

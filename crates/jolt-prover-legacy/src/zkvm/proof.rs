@@ -40,6 +40,8 @@ use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(not(feature = "akita"))]
 use jolt_program::preprocess::ProgramMetadata;
+#[cfg(not(feature = "zk"))]
+use jolt_riscv::CircuitFlags as RiscvCircuitFlags;
 use jolt_sumcheck::{
     ClearProof, ClearSumcheckProof, CommittedOutputClaims, CommittedRound, CommittedSumcheckProof,
     CompressedSumcheckProof, SumcheckProof,
@@ -1010,40 +1012,32 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
 }
 
 #[cfg(not(feature = "zk"))]
-fn convert_circuit_flag(flag: prover_instruction::CircuitFlags) -> jolt_riscv::CircuitFlags {
+fn convert_circuit_flag(flag: prover_instruction::CircuitFlags) -> RiscvCircuitFlags {
     match flag {
-        prover_instruction::CircuitFlags::AddOperands => jolt_riscv::CircuitFlags::AddOperands,
-        prover_instruction::CircuitFlags::SubtractOperands => {
-            jolt_riscv::CircuitFlags::SubtractOperands
-        }
-        prover_instruction::CircuitFlags::MultiplyOperands => {
-            jolt_riscv::CircuitFlags::MultiplyOperands
-        }
-        prover_instruction::CircuitFlags::Load => jolt_riscv::CircuitFlags::Load,
-        prover_instruction::CircuitFlags::Store => jolt_riscv::CircuitFlags::Store,
-        prover_instruction::CircuitFlags::Jump => jolt_riscv::CircuitFlags::Jump,
+        prover_instruction::CircuitFlags::AddOperands => RiscvCircuitFlags::AddOperands,
+        prover_instruction::CircuitFlags::SubtractOperands => RiscvCircuitFlags::SubtractOperands,
+        prover_instruction::CircuitFlags::MultiplyOperands => RiscvCircuitFlags::MultiplyOperands,
+        prover_instruction::CircuitFlags::Load => RiscvCircuitFlags::Load,
+        prover_instruction::CircuitFlags::Store => RiscvCircuitFlags::Store,
+        prover_instruction::CircuitFlags::Jump => RiscvCircuitFlags::Jump,
         prover_instruction::CircuitFlags::WriteLookupOutputToRD => {
-            jolt_riscv::CircuitFlags::WriteLookupOutputToRD
+            RiscvCircuitFlags::WriteLookupOutputToRD
         }
         prover_instruction::CircuitFlags::VirtualInstruction => {
-            jolt_riscv::CircuitFlags::VirtualInstruction
+            RiscvCircuitFlags::VirtualInstruction
         }
-        prover_instruction::CircuitFlags::Assert => jolt_riscv::CircuitFlags::Assert,
+        prover_instruction::CircuitFlags::Assert => RiscvCircuitFlags::Assert,
         prover_instruction::CircuitFlags::DoNotUpdateUnexpandedPC => {
-            jolt_riscv::CircuitFlags::DoNotUpdateUnexpandedPC
+            RiscvCircuitFlags::DoNotUpdateUnexpandedPC
         }
-        prover_instruction::CircuitFlags::Advice => jolt_riscv::CircuitFlags::Advice,
-        prover_instruction::CircuitFlags::IsCompressed => jolt_riscv::CircuitFlags::IsCompressed,
-        prover_instruction::CircuitFlags::IsFirstInSequence => {
-            jolt_riscv::CircuitFlags::IsFirstInSequence
-        }
-        prover_instruction::CircuitFlags::IsLastInSequence => {
-            jolt_riscv::CircuitFlags::IsLastInSequence
-        }
+        prover_instruction::CircuitFlags::Advice => RiscvCircuitFlags::Advice,
+        prover_instruction::CircuitFlags::IsCompressed => RiscvCircuitFlags::IsCompressed,
+        prover_instruction::CircuitFlags::IsFirstInSequence => RiscvCircuitFlags::IsFirstInSequence,
+        prover_instruction::CircuitFlags::IsLastInSequence => RiscvCircuitFlags::IsLastInSequence,
         #[cfg(feature = "implicit-carry")]
-        prover_instruction::CircuitFlags::UsesCarry => jolt_riscv::CircuitFlags::UsesCarry,
+        prover_instruction::CircuitFlags::UsesCarry => RiscvCircuitFlags::UsesCarry,
         #[cfg(feature = "implicit-carry")]
-        prover_instruction::CircuitFlags::ProducesCarry => jolt_riscv::CircuitFlags::ProducesCarry,
+        prover_instruction::CircuitFlags::ProducesCarry => RiscvCircuitFlags::ProducesCarry,
     }
 }
 

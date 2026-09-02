@@ -83,6 +83,12 @@ pub const NUM_R1CS_INPUTS: usize = 35 + IMPLICIT_CARRY_EXTRA_INPUTS;
 pub const NUM_PRODUCT_FACTORS: usize = 2 + cfg!(feature = "implicit-carry") as usize;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS;
 pub const NUM_EQ_CONSTRAINTS: usize = 19 + 2 * cfg!(feature = "implicit-carry") as usize;
+/// Row of `LookupSplitsIntoOutputAndNextCarry` (second-to-last rv64 eq row).
+#[cfg(feature = "implicit-carry")]
+pub const ROW_LOOKUP_SPLITS_INTO_OUTPUT_AND_NEXT_CARRY: usize = NUM_EQ_CONSTRAINTS - 2;
+/// Row of `NextCarryZeroIfNotProducesCarry` (the last rv64 eq row).
+#[cfg(feature = "implicit-carry")]
+pub const ROW_NEXT_CARRY_ZERO_IF_NOT_PRODUCES_CARRY: usize = NUM_EQ_CONSTRAINTS - 1;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3 + cfg!(feature = "implicit-carry") as usize;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS;
 

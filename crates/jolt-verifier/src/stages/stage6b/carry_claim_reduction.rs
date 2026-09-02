@@ -8,7 +8,7 @@
 //! Its publics are the `Eq` coefficients comparing this sumcheck's cycle to
 //! each source's cycle, plus the all-zeros selector.
 
-use jolt_claims::protocols::jolt::relations;
+use jolt_claims::protocols::jolt::relations::claim_reductions::carry::CarryReduction;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::carry::{
     CarryClaimReductionChallenges, CarryClaimReductionInputClaims, CarryClaimReductionOutputClaims,
 };
@@ -50,7 +50,7 @@ pub fn carry_claim_reduction_input_points_from_upstream<F: JoltField>(
 
 #[derive(Clone)]
 pub struct CarryClaimReduction<F: JoltField> {
-    symbolic: relations::claim_reductions::carry::CarryReduction,
+    symbolic: CarryReduction,
     product_cycle: Vec<F>,
     shift_cycle: Vec<F>,
 }
@@ -62,7 +62,7 @@ impl<F: JoltField> CarryClaimReduction<F> {
         shift_cycle: Vec<F>,
     ) -> Self {
         Self {
-            symbolic: relations::claim_reductions::carry::CarryReduction::new(trace_dimensions),
+            symbolic: CarryReduction::new(trace_dimensions),
             product_cycle,
             shift_cycle,
         }
@@ -77,7 +77,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for CarryClaimReduction<F> {
-    type Symbolic = relations::claim_reductions::carry::CarryReduction;
+    type Symbolic = CarryReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic

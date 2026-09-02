@@ -38,6 +38,8 @@
 
 use super::inputs::JoltR1CSInputs;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+#[cfg(feature = "implicit-carry")]
+use crate::zkvm::witness::CommittedPolynomial;
 use crate::zkvm::witness::VirtualPolynomial;
 use strum::EnumCount as EnumCountTrait;
 use strum_macros::{EnumCount, EnumIter};
@@ -613,7 +615,7 @@ pub enum ProductFactorExpr {
     Var(VirtualPolynomial),
     OneMinus(VirtualPolynomial),
     #[cfg(feature = "implicit-carry")]
-    Committed(crate::zkvm::witness::CommittedPolynomial),
+    Committed(CommittedPolynomial),
 }
 
 /// A single product constraint row: Az · Bz = z', where z' is a virtual
@@ -657,7 +659,7 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
     ProductConstraint {
         label: ProductConstraintLabel::CarryUsed,
         left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::UsesCarry)),
-        right: ProductFactorExpr::Committed(crate::zkvm::witness::CommittedPolynomial::Carry),
+        right: ProductFactorExpr::Committed(CommittedPolynomial::Carry),
         output: VirtualPolynomial::CarryUsed,
     },
 ];

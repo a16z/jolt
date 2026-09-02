@@ -32,7 +32,7 @@ where
             register_state,
             ram_access: T::RAMAccess::default(),
             #[cfg(feature = "implicit-carry")]
-            carry: rand::RngCore::next_u64(rng),
+            carry: rng.next_u64(),
         }
     }
 }
