@@ -81,5 +81,21 @@ jolt = { package = "jolt-sdk", features = ["guest-std", "debug"] }
 ```
 This prints every syscall the guest makes (e.g. `[syscall] SYS_clone`), which helps identify which capability is missing.
 
+## Release Builds Miscompile Under Fat LTO
+The workspace release profile uses `lto = "fat"`. Fat LTO has miscompiled this
+workspace before ([rust-lang/rust#116941](https://github.com/rust-lang/rust/issues/116941)):
+a lookup-table test failed only in `--release` builds, with a field-element
+`assertion \`left == right\` failed` and no bug in the code under test.
+
+If a test fails only under `--release`, try one of these before debugging the code:
+
+- Build with thin LTO: `CARGO_PROFILE_RELEASE_LTO=thin cargo nextest run --release ...`
+- Keep fat LTO but disable LLVM's prepopulated passes:
+  `CARGO_PROFILE_RELEASE_LTO=fat RUSTFLAGS="-C no-prepopulate-passes" cargo nextest run --release ...`
+
+`-C no-prepopulate-passes` also changes guest code generation and can push an
+execution trace past a tight `max_trace_length`; raise that limit for the affected
+guest if it happens.
+
 ## Getting Help
 If none of the above solve the problem, please create a Github issue with a detailed bug report including the Jolt commit hash, the hardware or container configuration used, and a minimal guest program to reproduce the bug.

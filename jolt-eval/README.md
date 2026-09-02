@@ -33,7 +33,7 @@ The motivation is twofold:
 
 | Objective | Units | Description |
 |---|---|---|
-| `lloc` | lines | Total logical lines of code in `crates/jolt-prover/src/` |
+| `lloc` | lines | Total logical lines of code across the proof-system crates listed in `PROOF_SYSTEM_CRATE_DIRS` |
 | `cognitive_complexity_avg` | — | Average cognitive complexity per function |
 | `halstead_bugs` | — | Estimated delivered bugs (Halstead volume / 3000) |
 
