@@ -274,8 +274,10 @@ where
         reason = "dedicated rows come from final-opening coordinates, range-checked against the witness grid in witness_coordinate"
     )]
     for row in dedicated_rows {
+        // Values only: the folded row must stay dedicated for the verifier's
+        // opening check, while the row blinding stays random so the published
+        // row commitment hides the final evaluation and its Dory blinding.
         random_witness_rows[row].fill(F::zero());
-        random_witness_blindings[row] = F::zero();
     }
     #[expect(
         clippy::indexing_slicing,

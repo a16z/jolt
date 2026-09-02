@@ -3535,6 +3535,7 @@ dependencies = [
  "jolt-inlines-sdk",
  "rand 0.8.7",
  "sha3 0.12.0",
+ "tiny-keccak",
  "tracer",
 ]
 
@@ -4008,7 +4009,6 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
- "jolt-utils",
  "jolt-verifier-derive",
  "num-traits",
  "postcard",
@@ -7092,6 +7092,15 @@ checksum = "2e70e4c5a0e0a8a4823ad65dfe1a6930e4f4d756dcd9dd7939022b5e8c501215"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "tiny-keccak"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]

@@ -116,6 +116,9 @@ pub use virt::Pow2;
 pub use virt::Pow2I;
 pub use virt::Pow2IW;
 pub use virt::Pow2W;
+pub use virt::ShiftDataB;
+pub use virt::ShiftDataH;
+pub use virt::ShiftDataW;
 pub use virt::VirtualAdvice;
 pub use virt::VirtualAdviceLen;
 pub use virt::VirtualAdviceLoad;
@@ -140,6 +143,7 @@ pub use virt::VirtualXorRot16;
 pub use virt::VirtualXorRot24;
 pub use virt::VirtualXorRot32;
 pub use virt::VirtualXorRot63;
+pub use virt::VirtualXorRotL1;
 pub use virt::VirtualXorRotW12;
 pub use virt::VirtualXorRotW16;
 pub use virt::VirtualXorRotW19;
@@ -430,6 +434,10 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     WindowMaskB(WindowMaskB<T>),
     WindowMaskH(WindowMaskH<T>),
     AlignAddr(AlignAddr<T>),
+    ShiftDataB(ShiftDataB<T>),
+    ShiftDataH(ShiftDataH<T>),
+    ShiftDataW(ShiftDataW<T>),
+    VirtualXorRotL1(VirtualXorRotL1<T>),
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
@@ -650,6 +658,10 @@ impl_jolt_instructions_flags! {
     WindowMaskB => VirtualWindowMaskB,
     WindowMaskH => VirtualWindowMaskH,
     AlignAddr => VirtualAlignAddr,
+    ShiftDataB => VirtualShiftDataB,
+    ShiftDataH => VirtualShiftDataH,
+    ShiftDataW => VirtualShiftDataW,
+    VirtualXorRotL1 => VirtualXORROTL1,
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,

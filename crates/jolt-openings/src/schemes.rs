@@ -144,6 +144,12 @@ pub trait TransparentObjectSetup: CommitmentScheme {
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Reuses an object's backend setup for another layout at the same arity.
+    fn retag_transparent_object_setup(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 }
 
 /// C = Σ s_i · C_i.
@@ -782,6 +788,7 @@ pub struct PrecommittedRole {
     order: u64,
     transcript_label: &'static [u8],
     diagnostic_name: &'static str,
+    transcript_index: Option<u64>,
 }
 
 impl PrecommittedRole {
@@ -794,6 +801,21 @@ impl PrecommittedRole {
             order,
             transcript_label,
             diagnostic_name,
+            transcript_index: None,
+        }
+    }
+
+    pub const fn new_indexed(
+        order: u64,
+        transcript_label: &'static [u8],
+        diagnostic_name: &'static str,
+        transcript_index: u64,
+    ) -> Self {
+        Self {
+            order,
+            transcript_label,
+            diagnostic_name,
+            transcript_index: Some(transcript_index),
         }
     }
 
@@ -810,6 +832,11 @@ impl PrecommittedRole {
     /// Protocol-defined name used in validation diagnostics.
     pub const fn diagnostic_name(self) -> &'static str {
         self.diagnostic_name
+    }
+
+    /// Optional semantic index for repeated protocol roles.
+    pub const fn transcript_index(self) -> Option<u64> {
+        self.transcript_index
     }
 }
 
