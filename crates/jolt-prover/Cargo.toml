@@ -38,6 +38,7 @@ zk = [
 ]
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
+  "dep:bincode",
   "dep:chrono",
   "dep:clap",
   "dep:jolt-inlines-keccak256",
@@ -90,7 +91,7 @@ tracing.workspace = true
 
 # Optional: the `profiling` harness (bins cannot use dev-dependencies).
 allocative = { workspace = true, optional = true }
-bincode.workspace = true
+bincode = { workspace = true, optional = true }
 blake2.workspace = true
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
