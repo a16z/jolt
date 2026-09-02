@@ -63,7 +63,6 @@ pub enum KernelId {
     TablePairsRound,
     HammingRound,
     G1SegSum,
-    G1SegSumSerial,
     G1CombineRows,
     G1ScalarMulAdd,
     G1ProjectiveMulAdd,
@@ -129,14 +128,13 @@ pub enum KernelId {
     Fq12Mul034,
     MillerTable,
     MillerFly,
-    MillerFlyIndexed,
     MillerFlyLines,
     MillerFlyFold,
     RegistersValRound,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 83] = [
+    pub const ALL: [Self; 81] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -150,7 +148,6 @@ impl KernelId {
         Self::TablePairsRound,
         Self::HammingRound,
         Self::G1SegSum,
-        Self::G1SegSumSerial,
         Self::G1CombineRows,
         Self::G1ScalarMulAdd,
         Self::G1ProjectiveMulAdd,
@@ -216,7 +213,6 @@ impl KernelId {
         Self::Fq12Mul034,
         Self::MillerTable,
         Self::MillerFly,
-        Self::MillerFlyIndexed,
         Self::MillerFlyLines,
         Self::MillerFlyFold,
         Self::RegistersValRound,
@@ -237,7 +233,6 @@ impl KernelId {
             Self::TablePairsRound => "jk_table_pairs_round",
             Self::HammingRound => "jk_hamming_round",
             Self::G1SegSum => "jk_g1_seg_sum",
-            Self::G1SegSumSerial => "jk_g1_seg_sum_serial",
             Self::G1CombineRows => "jk_g1_combine_rows",
             Self::G1ScalarMulAdd => "jk_g1_scalar_mul_add",
             Self::G1ProjectiveMulAdd => "jk_g1_projective_mul_add",
@@ -303,7 +298,6 @@ impl KernelId {
             Self::Fq12Mul034 => "jk_fq12_mul034",
             Self::MillerTable => "jk_miller_table",
             Self::MillerFly => "jk_miller_fly",
-            Self::MillerFlyIndexed => "jk_miller_fly_indexed",
             Self::MillerFlyLines => "jk_miller_fly_lines",
             Self::MillerFlyFold => "jk_miller_fly_fold",
             Self::RegistersValRound => "jk_registers_val_round",
@@ -327,7 +321,6 @@ impl KernelId {
                 | Self::Fq12Mul034
                 | Self::MillerTable
                 | Self::MillerFly
-                | Self::MillerFlyIndexed
                 | Self::MillerFlyLines
                 | Self::MillerFlyFold
         )
@@ -350,13 +343,6 @@ impl KernelId {
     ///   latency; at saturation full occupancy already hides the spill.
     /// - `jk_miller_fly` runs solo-dominant in stage-8 reduce rounds →
     ///   capped (with `MillerFlyLines`/`Fold`, same lane).
-    /// - `jk_miller_fly_indexed` co-runs with `jk_g1_seg_sum` waves in
-    ///   the stage-0 commit pipeline, where the isolated −12% INVERTS:
-    ///   commit wall 1.207 → 1.233 s at cap 64 (+2%), Miller CB device
-    ///   time +2.5%; cap 32 parity. The freed occupancy is consumed by
-    ///   the co-scheduled G1 threadgroups — uncapped, as is
-    ///   `jk_miller_table` (its isolated −24% @cap 32 carries the same
-    ///   co-run caveat; stage-0's call).
     ///
     /// `JOLT_METAL_PAIRING_TG_CAP` overrides the WHOLE pairing family for
     /// experiments (`0` = uncapped everywhere), read once at context

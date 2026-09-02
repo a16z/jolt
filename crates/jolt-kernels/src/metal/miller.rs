@@ -9,8 +9,6 @@
 //! - [`miller_fly_partials`] — the stage-8 reduce-round shape: affine
 //!   (G1, G2) pairs with the G2 preparation ladder run inline on the
 //!   device, one pair per thread.
-//! - [`miller_fly_indexed_partials`] — the stage-0 shape after W3: G1 points
-//!   select affine G2 setup rows by index, avoiding the prepared table.
 //!
 //! Either way the batch Miller value is the exact Fq12 product of the
 //! partials ([`product_of_partials`]): a multi-Miller loop over a pair set
@@ -510,40 +508,31 @@ fn miller_fly_split_enabled() -> bool {
     std::env::var(ENV_MILLER_FLY_SPLIT).is_ok_and(|value| value.trim() == "1")
 }
 
-/// log2 of the split scratch block (`JOLT_MILLER_FLY_BLOCK_LOG2`, default
-/// 2^15 pairs ≈ 547 MB of line records): bounds transient footprint at
-/// production sizes while keeping each pass wide enough to fill the device.
-pub const ENV_MILLER_FLY_BLOCK_LOG2: &str = "JOLT_MILLER_FLY_BLOCK_LOG2";
-const DEFAULT_MILLER_FLY_BLOCK_LOG2: u32 = 15;
-
-fn miller_fly_block_pairs() -> usize {
-    let log2 = std::env::var(ENV_MILLER_FLY_BLOCK_LOG2)
-        .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        .unwrap_or(DEFAULT_MILLER_FLY_BLOCK_LOG2)
-        .min(24);
-    1usize << log2
-}
+/// Pairs per split-ladder scratch block (≈ 547 MB of line records): bounds
+/// transient footprint at production sizes while keeping each pass wide
+/// enough to fill the device.
+const MILLER_FLY_BLOCK_PAIRS: usize = 1 << 15;
 
 /// [`miller_fly_partials`] as the two-pass split ladder (W4-fly): pass 1
 /// (`jk_miller_fly_lines`) runs the G2 preparation ladder with no Fq12
 /// state and writes P-scaled line records step-major; pass 2
 /// (`jk_miller_fly_fold`) replays the ate walk over the records with no
-/// ladder state. Blocks of [`miller_fly_block_pairs`] pairs reuse one
-/// scratch table inside a single command buffer (barriers order the
-/// write→read and read→rewrite hazards). Partials are bit-identical to the
-/// fused kernel's — same field ops on the same values in the same order.
+/// ladder state. Blocks of `block_pairs` pairs reuse one scratch table
+/// inside a single command buffer (barriers order the write→read and
+/// read→rewrite hazards). Partials are bit-identical to the fused kernel's
+/// — same field ops on the same values in the same order.
 pub fn miller_fly_split_partials(
     ctx: &MetalContext,
     points: &[G1Affine],
     qs: &[G2Affine],
+    block_pairs: usize,
 ) -> Result<Vec<u32>, MetalError> {
     assert_eq!(points.len(), qs.len());
     let n_pairs = points.len();
     if n_pairs == 0 {
         return Ok(Vec::new());
     }
-    let block = miller_fly_block_pairs().min(n_pairs);
+    let block = block_pairs.min(n_pairs);
     let steps = ell_coeffs_per_pair();
     let ps_buf = ctx.wrap_slice(g1_points_as_u32s(points))?;
     let qs_buf = ctx.wrap_slice(g2_points_as_u32s(qs))?;
@@ -584,49 +573,18 @@ pub fn miller_fly_split_partials(
     Ok(partials)
 }
 
-/// The fly-family dispatch the stage-8 hook uses: split ladder unless
-/// [`ENV_MILLER_FLY_SPLIT`] disables it.
+/// The fly-family dispatch the stage-8 hook uses: the fused kernel, or the
+/// split ladder when [`ENV_MILLER_FLY_SPLIT`] opts in.
 fn miller_fly_device_partials(
     ctx: &MetalContext,
     points: &[G1Affine],
     qs: &[G2Affine],
 ) -> Result<Vec<u32>, MetalError> {
     if miller_fly_split_enabled() {
-        miller_fly_split_partials(ctx, points, qs)
+        miller_fly_split_partials(ctx, points, qs, MILLER_FLY_BLOCK_PAIRS)
     } else {
         miller_fly_partials(ctx, points, qs)
     }
-}
-
-/// Stage-0 twin of [`miller_fly_partials`]: G2 setup rows remain shared,
-/// while `row_indices` selects one for each G1 point. This avoids expanding
-/// repeated setup rows or building the prepared-coefficient table.
-pub fn miller_fly_indexed_partials(
-    ctx: &MetalContext,
-    points: &[G1Affine],
-    row_indices: &[u32],
-    qs: &[G2Affine],
-) -> Result<Vec<u32>, MetalError> {
-    assert_eq!(points.len(), row_indices.len());
-    assert!(
-        row_indices.iter().all(|&row| (row as usize) < qs.len()),
-        "Miller row index exceeds the G2 table"
-    );
-    let n_pairs = points.len();
-    let ps_buf = ctx.wrap_slice(g1_points_as_u32s(points))?;
-    let row_indices_buf = ctx.wrap_slice(row_indices)?;
-    let qs_buf = ctx.wrap_slice(g2_points_as_u32s(qs))?;
-    let out_buf = ctx.alloc_u32s(n_pairs * FQ12_U32S)?;
-    let params = [u32::try_from(n_pairs).map_err(|_| MetalError::Execution("pair count".into()))?];
-    ctx.run_once(
-        KernelId::MillerFlyIndexed,
-        &params,
-        &[&ps_buf, &row_indices_buf, &qs_buf, &out_buf],
-        n_pairs,
-    )?;
-    let mut partials = vec![0u32; n_pairs * FQ12_U32S];
-    out_buf.copy_to_u32s(&mut partials);
-    Ok(partials)
 }
 
 /// Per-pair Fq-mul-equivalents fed to [`super::metal_gate`] so the shared
@@ -1371,22 +1329,20 @@ mod tests {
         qs[40] = -qs[40];
         ps[72] = G1Affine::identity();
 
-        for block_log2 in ["4", "20"] {
-            std::env::set_var(ENV_MILLER_FLY_BLOCK_LOG2, block_log2);
-            let split = miller_fly_split_partials(ctx, &ps, &qs).unwrap();
+        for block in [16usize, 1 << 20] {
+            let split = miller_fly_split_partials(ctx, &ps, &qs, block).unwrap();
             let fused = miller_fly_partials(ctx, &ps, &qs).unwrap();
-            assert_eq!(split, fused, "partial drift at block 2^{block_log2}");
+            assert_eq!(split, fused, "partial drift at block {block}");
             assert_eq!(
                 product_of_partials(&split),
                 reference_miller(&ps, &qs),
-                "arkworks drift at block 2^{block_log2}"
+                "arkworks drift at block {block}"
             );
         }
-        std::env::remove_var(ENV_MILLER_FLY_BLOCK_LOG2);
     }
 
-    /// The dory hook under both fly forms: split on (default) and the
-    /// fused-kernel opt-out produce the exact GT of dory's CPU
+    /// The dory hook under both fly forms: the fused kernel (default) and
+    /// the split-ladder opt-in produce the exact GT of dory's CPU
     /// `multi_pair`. st8 is consensus-critical — this pins the toggle.
     #[test]
     fn multi_pair_device_fly_split_matches_dory_cpu() {
@@ -1411,23 +1367,5 @@ mod tests {
             assert_eq!(device.0, cpu.0, "GT drift at split={split}");
         }
         std::env::remove_var(ENV_MILLER_FLY_SPLIT);
-    }
-
-    #[test]
-    fn miller_fly_indexed_matches_arkworks() {
-        let _lock = gpu_lock();
-        let ctx = MetalContext::global().expect("metal context");
-        let mut rng = rng();
-        let (mut ps, qs) = random_pairs(&mut rng, 73);
-        let mut table = qs[..17].to_vec();
-        ps[19] = G1Affine::identity();
-        table[5] = G2Affine::identity();
-        let indices: Vec<u32> = (0..ps.len())
-            .map(|i| ((i * 11 + 3) % table.len()) as u32)
-            .collect();
-        let selected: Vec<G2Affine> = indices.iter().map(|&row| table[row as usize]).collect();
-        let got =
-            product_of_partials(&miller_fly_indexed_partials(ctx, &ps, &indices, &table).unwrap());
-        assert_eq!(got, reference_miller(&ps, &selected));
     }
 }

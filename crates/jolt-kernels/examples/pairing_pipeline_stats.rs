@@ -34,7 +34,6 @@ fn main() {
         KernelId::Fq12Mul034,
         KernelId::MillerTable,
         KernelId::MillerFly,
-        KernelId::MillerFlyIndexed,
         KernelId::MillerFlyLines,
         KernelId::MillerFlyFold,
         KernelId::G1ProjectiveMulAdd,

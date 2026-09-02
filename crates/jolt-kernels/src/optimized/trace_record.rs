@@ -568,33 +568,8 @@ struct PrebuiltTraceRecord {
 /// the walk finishes inside stage 0's commit window (measured ~7 s vs the
 /// ~11 s window @2^27) while leaving stage 0's host feed (~8 busy cores of
 /// 18) unconstrained.
-const RECORD_BACKGROUND_THREADS: usize = 8;
-
-/// The background walk's dedicated pool, with the `JOLT_RECORD_QOS` bench
-/// knob applied to every worker (macOS): `background`/`utility` derate the
-/// walk below the commit lanes' default class so the scheduler resolves the
-/// st0 contention instead of round-robining it.
 #[cfg(feature = "parallel")]
-fn record_pool(threads: usize) -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError> {
-    let builder = rayon::ThreadPoolBuilder::new().num_threads(threads);
-    #[cfg(target_os = "macos")]
-    let builder = match std::env::var("JOLT_RECORD_QOS").ok().as_deref() {
-        Some("background") => Some(libc::qos_class_t::QOS_CLASS_BACKGROUND),
-        Some("utility") => Some(libc::qos_class_t::QOS_CLASS_UTILITY),
-        _ => None,
-    }
-    .map_or_else(
-        || rayon::ThreadPoolBuilder::new().num_threads(threads),
-        |qos| {
-            builder.start_handler(move |_| {
-                // SAFETY: plain libc call on the current thread; any failure
-                // leaves the default QoS class in place.
-                let _ = unsafe { libc::pthread_set_qos_class_self_np(qos, 0) };
-            })
-        },
-    );
-    builder.build()
-}
+const RECORD_BACKGROUND_THREADS: usize = 8;
 
 /// jolt-eval `st0-contention` isolated-objective seam: resolve the session's
 /// shared record exactly as stage 1's first consumer does — join the spawned
@@ -615,44 +590,25 @@ pub fn join_shared_record_for_bench<F: JoltField>(
 /// [`TraceRecord::shared`]. Holds the process-wide
 /// [`super::BACKGROUND_BUILD_TOKEN`] for the duration, serializing with the
 /// stage-6a background builds (which run post-stage-4 — no overlap).
-///
-/// Bench knobs: `JOLT_RECORD_HOIST=off` disables the spawn (same-binary
-/// ablation arm); `JOLT_RECORD_BACKGROUND_THREADS=N` overrides the pool
-/// width; `JOLT_RECORD_HOIST_DELAY_MS=N` staggers the walk's start behind
-/// the commit window; `JOLT_RECORD_QOS=background|utility` derates the pool
-/// threads' scheduler class (macOS).
 pub fn spawn_shared_record_collect<'scope, 'env, F: JoltField>(
     session: &mut ProofSession,
     witness: &'env dyn JoltWitnessPlane<F>,
     log_t: usize,
     scope: &'scope std::thread::Scope<'scope, 'env>,
 ) {
-    if std::env::var("JOLT_RECORD_HOIST").as_deref() == Ok("off") {
-        return;
-    }
-    let threads = std::env::var("JOLT_RECORD_BACKGROUND_THREADS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|&threads| threads > 0)
-        .unwrap_or(RECORD_BACKGROUND_THREADS);
-    let delay = std::env::var("JOLT_RECORD_HOIST_DELAY_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|&ms| ms > 0)
-        .map(std::time::Duration::from_millis);
     let (sender, receiver) = std::sync::mpsc::channel();
     // The handle is intentionally unparked: the receiver is the join point,
     // and the scope's exit joins the worker on every path.
     let _ = scope.spawn(move || {
-        if let Some(delay) = delay {
-            std::thread::sleep(delay);
-        }
         let _token = super::BACKGROUND_BUILD_TOKEN
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let build = || collect_artifacts::<F>(witness, log_t);
         #[cfg(feature = "parallel")]
-        let artifacts = match record_pool(threads) {
+        let artifacts = match rayon::ThreadPoolBuilder::new()
+            .num_threads(RECORD_BACKGROUND_THREADS)
+            .build()
+        {
             Ok(pool) => pool.install(build),
             Err(_) => build(),
         };

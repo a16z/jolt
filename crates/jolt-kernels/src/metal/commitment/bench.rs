@@ -149,13 +149,8 @@ impl G1SegBenchFixture {
     pub fn assert_equivalent(&self, cases: &[&G1SegBenchCase]) -> Result<(), MetalError> {
         let mut expected = None;
         for case in cases {
-            std::env::set_var("JOLT_METAL_G1_SEG_SERIAL", "1");
-            let _ = case.sample(self)?;
-            let serial = case.reduced_outputs();
-            std::env::remove_var("JOLT_METAL_G1_SEG_SERIAL");
             let _ = case.sample(self)?;
             let reduced = case.reduced_outputs();
-            assert_eq!(serial, reduced, "XYZZ changed tier-1 row sums");
             if let Some(expected) = &expected {
                 assert_eq!(*expected, reduced, "segment cap changed tier-1 row sums");
             } else {
@@ -175,18 +170,12 @@ impl G1SegBenchCase {
         let bounds = self.bounds.device_buffer();
         let out = self.out.device_buffer();
         let mut pass = context.begin_pass()?;
-        let (kernel, threads) = g1_seg_dispatch(self.destinations.len());
-        let montgomery_muls = if kernel == KernelId::G1SegSumSerial {
-            self.additions.saturating_sub(self.destinations.len()) * 11
-        } else {
-            self.montgomery_muls
-        };
         pass.dispatch_width(
-            kernel,
+            KernelId::G1SegSum,
             &[self.destinations.len() as u32],
             &[&bases, &indices, &bounds, &out],
-            threads,
-            crate::metal::g1::seg_sum_width(),
+            self.destinations.len(),
+            SEG_SUM_WIDTH,
         );
         let wall_start = std::time::Instant::now();
         let gpu_s = pass.commit().wait_timed()?.as_secs_f64();
@@ -197,7 +186,7 @@ impl G1SegBenchCase {
             segments: self.destinations.len(),
             additions: self.additions,
             useful_gbps: self.useful_bytes as f64 / gpu_s / 1e9,
-            gmul_s: montgomery_muls as f64 / gpu_s / 1e9,
+            gmul_s: self.montgomery_muls as f64 / gpu_s / 1e9,
         })
     }
 

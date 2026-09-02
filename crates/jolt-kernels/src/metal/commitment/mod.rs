@@ -59,7 +59,7 @@
 use std::any::TypeId;
 use std::sync::mpsc::{sync_channel, SyncSender};
 
-use ark_bn254::{G1Affine, G1Projective, G2Affine, G2Projective};
+use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, Zero};
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
@@ -77,10 +77,11 @@ use rayon::prelude::*;
 
 #[cfg(feature = "bench-utils")]
 use super::field::FR_U32_LIMBS;
-use super::g1::{bases_as_u32s, jac_from_device_limbs, JAC_U32S, SEG_INDEX_SIGN_BIT};
+use super::g1::{
+    bases_as_u32s, jac_from_device_limbs, JAC_U32S, SEG_INDEX_SIGN_BIT, SEG_SUM_WIDTH,
+};
 use super::miller::{
-    g1_points_as_u32s, g2_points_as_u32s, miller_table_params, product_of_partials, MillerTile,
-    FQ12_U32S,
+    g1_points_as_u32s, miller_table_params, product_of_partials, MillerTile, FQ12_U32S,
 };
 use super::runtime::{KernelId, MetalContext};
 use super::{metal_gate, DeviceBuffer, MetalError, PageAlignedVec};
@@ -102,7 +103,7 @@ pub use bench::{G1SegBenchCase, G1SegBenchFixture, G1SegBenchSample};
 use builder::{
     build_inc_job, build_one_hot_job, reduce_inc_superchunk, DriverScratch, MetalColumns, SlabPool,
 };
-use tier2::{absorb_superchunk, drain_miller_lane, MillerBatch, MillerInput, MillerLane};
+use tier2::{absorb_superchunk, drain_miller_lane, MillerBatch, MillerLane};
 
 /// Cycles per superchunk — the optimized kernel's width, so both backends
 /// stream the same window sequences.
@@ -116,17 +117,8 @@ const PIPELINE_DEPTH: usize = 2;
 /// Staging sets circulating between the driver and the builder lane. Two
 /// overlaps superchunk N's job build (and its GPU-queue backpressure) with
 /// superchunk N+1's extraction, so the two host phases run concurrently
-/// instead of serializing on one thread. `JOLT_METAL_DRIVER_OVERLAP=0`
-/// drops to one set, which re-serializes extract → build → send per
-/// superchunk (the single-thread driver schedule) at one set less
-/// residency; a set is ~20 MB at 2^27 geometry.
-fn staging_sets() -> usize {
-    if std::env::var("JOLT_METAL_DRIVER_OVERLAP").as_deref() == Ok("0") {
-        1
-    } else {
-        2
-    }
-}
+/// instead of serializing on one thread; a set is ~20 MB at 2^27 geometry.
+const STAGING_SETS: usize = 2;
 
 /// Per-thread segment cap: buckets larger than this split into several
 /// device threads whose partial sums the tier-2 lane re-adds. The kernel is
@@ -134,25 +126,8 @@ fn staging_sets() -> usize {
 /// Gmul/s at ~12k threads vs 11.6 saturated), so more, shorter segments buy
 /// device throughput; 128 beat 256 by −7.7% and 64 inverted (in-pipeline
 /// commit ABBA @2^25) — the tier-2 lane re-adds 2× the partials, affordable
-/// since the W7/W8 host cuts. `JOLT_METAL_G1_SEGMENT_LEN` overrides
-/// (kill switch: 256 restores the former cap).
+/// since the W7/W8 host cuts.
 const MAX_SEGMENT_LEN: usize = 128;
-
-fn max_segment_len() -> usize {
-    std::env::var("JOLT_METAL_G1_SEGMENT_LEN")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|&value| value.is_power_of_two() && (32..=1024).contains(&value))
-        .unwrap_or(MAX_SEGMENT_LEN)
-}
-
-fn g1_seg_dispatch(n_segs: usize) -> (KernelId, usize) {
-    #[cfg(feature = "bench-utils")]
-    if std::env::var_os("JOLT_METAL_G1_SEG_SERIAL").is_some() {
-        return (KernelId::G1SegSumSerial, n_segs);
-    }
-    (KernelId::G1SegSum, n_segs)
-}
 
 /// Pairs per device Miller thread. W13 re-sweep at the post-W7 65536-pair
 /// flush (cap-32 pipeline, production row striping): ppt 1/2/4/8 →
@@ -166,43 +141,22 @@ const MILLER_TABLE_SEG_PAIRS: usize = 4;
 /// ≈ +1% of its line-fold work).
 const MILLER_CPU_SHARD: usize = 64;
 
-/// Default CPU share of each superchunk's Miller pairs (see
-/// [`miller_cpu_fraction`]). Tier2Accumulator is partition-invariant, so
-/// ANY split is byte-identical — the knob is pure load balance. The tiled
-/// table kernel absorbs a pair ~20× cheaper than the CPU path (1.03 vs
-/// ~21 µs), and at flagship scale the tier-2 host lane (decode +
-/// reduce_inc) is the pipeline's second-binding lane while the device
-/// holds slack — so every pair rides the device. Raise per device
-/// (`JOLT_METAL_MILLER_CPU_FRACTION`) when its balance differs.
-const MILLER_CPU_FRACTION_DEFAULT: f64 = 0.0;
+/// CPU share of each superchunk's Miller pairs. Tier2Accumulator is
+/// partition-invariant, so ANY split is byte-identical — the share is pure
+/// load balance. The tiled table kernel absorbs a pair ~20× cheaper than
+/// the CPU path (1.03 vs ~21 µs), and at flagship scale the tier-2 host
+/// lane (decode + reduce_inc) is the pipeline's second-binding lane while
+/// the device holds slack — so every pair rides the device; the CPU absorb
+/// remains the device-failure recovery arm.
+const MILLER_CPU_FRACTION: f64 = 0.0;
 
-/// Commit-shape Miller arm. Default: `jk_miller_table` (2.2× less ALU/pair
-/// than fly) over per-flush bounded tiles — each dispatch gathers only ITS
-/// rows into a recycled [`MillerTile`], so the device references O(flush)
-/// coefficient bytes at every scale instead of the row-scaled whole table
-/// whose 2.19 GiB of wired residency stretched co-running CBs +2.59 s at
-/// the w13 2^27 gate. `JOLT_METAL_MILLER_TILING=0` kills tiling back to
-/// the fly arm (the pre-W15 flagship-scale default);
-/// `JOLT_METAL_MILLER_COMMIT_FLY` forces: `1` = fly, `0` = tiled table.
-fn miller_commit_fly() -> bool {
-    match std::env::var("JOLT_METAL_MILLER_COMMIT_FLY").as_deref() {
-        Ok("1") => true,
-        Ok("0") => false,
-        _ => std::env::var("JOLT_METAL_MILLER_TILING").as_deref() == Ok("0"),
-    }
-}
-
-/// `JOLT_METAL_MILLER_CPU_FRACTION` — CPU share of Miller pairs in
-/// `[0, 1]`; `0` = all-device, `1` = all-CPU (the ablation arm). Read once
-/// per commit pass.
-fn miller_cpu_fraction() -> f64 {
-    std::env::var("JOLT_METAL_MILLER_CPU_FRACTION")
-        .ok()
-        .and_then(|value| value.parse::<f64>().ok())
-        .map_or(MILLER_CPU_FRACTION_DEFAULT, |fraction| {
-            fraction.clamp(0.0, 1.0)
-        })
-}
+/// Queued device pairs flush when they reach this count: dispatches batch
+/// across superchunks — byte-free by the same partition invariance as the
+/// CPU/device split itself. The Miller kernels starve below ~32k-pair
+/// dispatches (W7 fly retune −40% CB mass at 65536; W13 table scale
+/// curve agrees); diminishing past that, and the stream-end drain batch
+/// grows with the threshold.
+const MILLER_FLUSH_PAIRS: usize = 65536;
 
 /// Signed base-256 digit slots covering any `i128` magnitude (16 bytes plus
 /// a possible recoding carry into a 17th slot).
@@ -320,7 +274,8 @@ impl CommitWitness<Fr, DoryScheme> for MetalCommitWitness {
             grid,
             setup,
             SUPERCHUNK_CYCLES,
-            max_segment_len(),
+            MAX_SEGMENT_LEN,
+            MILLER_FLUSH_PAIRS,
             inc_device,
         ) {
             Ok(outputs) => Ok(outputs
@@ -426,7 +381,7 @@ struct GpuDone {
 /// One extracted superchunk in flight to the builder lane: staged hot
 /// addresses / bucket counts / increment scalars plus the chunk geometry
 /// the builds need. Sets recycle through a free-list channel
-/// ([`staging_sets`]).
+/// ([`STAGING_SETS`]).
 struct StagedChunk {
     scratch: DriverScratch,
     inc_vals: Vec<Vec<i128>>,
@@ -445,11 +400,12 @@ impl StagedChunk {
     }
 }
 
-/// The streaming metal commit at explicit superchunk width and segment cap
-/// (tests shrink both to force multi-delivery and multi-segment reduction).
-/// Returns per-column outputs in `kinds` order. `inc_device` routes the
-/// increment columns' row MSMs through the device as signed digit buckets;
-/// off, they run the CPU `feed_i128_rows` path.
+/// The streaming metal commit at explicit superchunk width, segment cap, and
+/// Miller flush threshold (tests shrink all three to force multi-delivery,
+/// multi-segment reduction, and mid-stream Miller flushes). Returns
+/// per-column outputs in `kinds` order. `inc_device` routes the increment
+/// columns' row MSMs through the device as signed digit buckets; off, they
+/// run the CPU `feed_i128_rows` path.
 #[expect(
     clippy::expect_used,
     reason = "worker joins fail only on a panicked worker (which must propagate); the \
@@ -457,7 +413,7 @@ impl StagedChunk {
 )]
 #[expect(
     clippy::too_many_arguments,
-    reason = "internal seam; the trailing three are the test/ablation knobs"
+    reason = "internal seam; the trailing four are the geometry/gate knobs the tests shrink"
 )]
 fn commit_streaming_metal(
     ctx: &'static MetalContext,
@@ -467,6 +423,7 @@ fn commit_streaming_metal(
     setup: &DoryProverSetup,
     superchunk_cycles: usize,
     max_segment_len: usize,
+    miller_flush_pairs: usize,
     inc_device: bool,
 ) -> Result<Vec<(DoryCommitment, DoryHint)>, MetalCommitError> {
     let cycles = 1usize << grid.log_t;
@@ -502,20 +459,7 @@ fn commit_streaming_metal(
          reads the infinity flag)"
     );
 
-    let miller_cpu_share = miller_cpu_fraction();
-    let miller_pairs = n_one_hot * one_hot_rows;
-    let miller_device = metal_gate("miller", miller_pairs) && miller_cpu_share < 1.0;
-    let miller_input = miller_device.then(|| {
-        if miller_commit_fly() {
-            let qs = &setup.0.g2_vec[..prep.prepared().len()];
-            let projective: Vec<G2Projective> = qs.iter().map(|q| q.0).collect();
-            MillerInput::Fly(G2Projective::normalize_batch(&projective))
-        } else {
-            // W15 tiled table: no whole-table flatten — each dispatch
-            // gathers its own rows (see `miller_commit_fly`).
-            MillerInput::Table
-        }
-    });
+    let miller_device = metal_gate("miller", n_one_hot * one_hot_rows);
 
     std::thread::scope(|scope| {
         let (tx_jobs, rx_jobs) = sync_channel::<GpuJob>(PIPELINE_DEPTH);
@@ -523,7 +467,7 @@ fn commit_streaming_metal(
         let (tx_recycle, rx_recycle) = std::sync::mpsc::channel::<PageAlignedVec<u32>>();
         let (tx_staged, rx_staged) = sync_channel::<StagedChunk>(1);
         let (tx_free, rx_free) = std::sync::mpsc::channel::<StagedChunk>();
-        for _ in 0..staging_sets() {
+        for _ in 0..STAGING_SETS {
             let _ = tx_free.send(StagedChunk::new(row_width, n_inc));
         }
 
@@ -544,15 +488,14 @@ fn commit_streaming_metal(
                 let bounds_buf = job.seg_bounds.device_buffer(ctx)?;
                 let out_buf = ctx.alloc_u32s(n_segs * JAC_U32S)?;
                 let mut pass = ctx.begin_pass()?;
-                let (kernel, threads) = g1_seg_dispatch(n_segs);
                 pass.dispatch_width(
-                    kernel,
+                    KernelId::G1SegSum,
                     &[u32::try_from(n_segs).map_err(|_| {
                         MetalError::Execution("segment count overflows u32".to_owned())
                     })?],
                     &[&bases_buf, &indices_buf, &bounds_buf, &out_buf],
-                    threads,
-                    super::g1::seg_sum_width(),
+                    n_segs,
+                    SEG_SUM_WIDTH,
                 );
                 // The increment family joins the same command buffer: a
                 // second dispatch over disjoint buffers, one wait for both.
@@ -562,17 +505,16 @@ fn commit_streaming_metal(
                         let inc_indices_buf = inc.indices.device_buffer(ctx)?;
                         let inc_bounds_buf = inc.seg_bounds.device_buffer(ctx)?;
                         let inc_out_buf = ctx.alloc_u32s(n_inc_segs * JAC_U32S)?;
-                        let (kernel, threads) = g1_seg_dispatch(n_inc_segs);
                         pass.dispatch_width(
-                            kernel,
+                            KernelId::G1SegSum,
                             &[u32::try_from(n_inc_segs).map_err(|_| {
                                 MetalError::Execution(
                                     "increment segment count overflows u32".to_owned(),
                                 )
                             })?],
                             &[&bases_buf, &inc_indices_buf, &inc_bounds_buf, &inc_out_buf],
-                            threads,
-                            super::g1::seg_sum_width(),
+                            n_inc_segs,
+                            SEG_SUM_WIDTH,
                         );
                         Some((n_inc_segs, inc_indices_buf, inc_bounds_buf, inc_out_buf))
                     }
@@ -624,7 +566,6 @@ fn commit_streaming_metal(
         });
 
         let prep_ref = &prep;
-        let miller_input_ref = miller_input.as_ref();
         type Tier2Out = (Vec<Tier2Accumulator>, Vec<Vec<Bn254G1>>, Vec<Vec<Bn254G1>>);
         let tier2 = scope.spawn(move || -> Tier2Out {
             let mut accumulators: Vec<Tier2Accumulator> =
@@ -633,27 +574,13 @@ fn commit_streaming_metal(
                 .map(|_| vec![Default::default(); one_hot_rows])
                 .collect();
             // The Miller lane's device objects live and die on this thread
-            // (MTLBuffers are not Send); a declined wrap only costs the
-            // device share — the pass continues all-CPU.
-            let mut miller_lane = miller_input_ref.and_then(|input| {
-                let fly_qs = match input {
-                    MillerInput::Table => Ok(None),
-                    MillerInput::Fly(qs) => ctx.wrap_slice(g2_points_as_u32s(qs)).map(Some),
-                };
-                match fly_qs {
-                    Ok(fly_qs) => Some(MillerLane {
-                        fly_qs,
-                        cpu_share: miller_cpu_share,
-                        failed: false,
-                        queue: MillerBatch::new(),
-                        in_flight: None,
-                        tiles: Vec::new(),
-                    }),
-                    Err(error) => {
-                        tracing::warn!(%error, "miller input wrap failed; tier-2 stays on CPU");
-                        None
-                    }
-                }
+            // (MTLBuffers are not Send).
+            let mut miller_lane = miller_device.then(|| MillerLane {
+                flush_pairs: miller_flush_pairs,
+                failed: false,
+                queue: MillerBatch::new(),
+                in_flight: None,
+                tiles: Vec::new(),
             });
             // Increment row commitments by absolute window; windows whose
             // scalars are all zero receive no segments and stay identity —

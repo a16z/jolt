@@ -23,16 +23,9 @@ unsafe impl<T: Send> Sync for ScatterPtr<T> {}
 /// re-fill warm pages instead of faulting and zeroing fresh allocations
 /// every job. Slabs travel at full length; segment tables name only the
 /// written prefix, so stale tails are never read.
-/// `JOLT_METAL_JOB_SLAB_REUSE=0` ablates the recycling (fresh exact-length
-/// allocations per job, the pre-reuse behavior).
 pub(super) struct SlabPool {
     free: Vec<PageAlignedVec<u32>>,
     returns: Option<std::sync::mpsc::Receiver<PageAlignedVec<u32>>>,
-}
-
-fn slab_reuse() -> bool {
-    static REUSE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *REUSE.get_or_init(|| std::env::var("JOLT_METAL_JOB_SLAB_REUSE").as_deref() != Ok("0"))
 }
 
 impl SlabPool {
@@ -57,14 +50,7 @@ impl SlabPool {
     /// settles on a stable slab set.
     pub(super) fn take(&mut self, len: usize) -> PageAlignedVec<u32> {
         if let Some(returns) = &self.returns {
-            while let Ok(slab) = returns.try_recv() {
-                if slab_reuse() {
-                    self.free.push(slab);
-                }
-            }
-        }
-        if !slab_reuse() {
-            return PageAlignedVec::from_elem(0u32, len.max(1));
+            self.free.extend(returns.try_iter());
         }
         let fit = self
             .free

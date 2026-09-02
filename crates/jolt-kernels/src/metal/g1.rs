@@ -73,38 +73,21 @@ pub fn jac_from_device_limbs(limbs: &[u32]) -> G1Projective {
     }
 }
 
-/// Threadgroup width for the segment-sum dispatches. Default 64: at
-/// production segment counts (~20k threads) the 256-wide dispatch loses
-/// ~10% to threadgroup packing (measured @2^24 shape: w64 6.75 ms vs w256
-/// 7.61 ms isolated). `JOLT_METAL_G1_TG_WIDTH` overrides (kill switch:
-/// `256` restores the former width); read once.
-pub(super) fn seg_sum_width() -> usize {
-    static WIDTH: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *WIDTH.get_or_init(|| {
-        std::env::var("JOLT_METAL_G1_TG_WIDTH")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|width| width.is_power_of_two() && (32..=1024).contains(width))
-            .unwrap_or(64)
-    })
-}
+/// Threadgroup width for the segment-sum dispatches: at production segment
+/// counts (~20k threads) a 256-wide dispatch loses ~10% to threadgroup
+/// packing (measured @2^24 shape: w64 6.75 ms vs w256 7.61 ms isolated).
+pub(super) const SEG_SUM_WIDTH: usize = 64;
 
 /// Device segment-bounds triples `[start, end, out_slot]` from a prefix
 /// array, length-sorted descending: a simdgroup runs as long as its longest
 /// segment, so dispatch order groups near-equal trip counts; `out_slot`
 /// keeps results in the prefix order the host reducers expect.
-/// `JOLT_METAL_G1_SORT=0` keeps bucket-walk order (kill switch; read once).
 pub fn seg_bounds_sorted(seg_starts: &[u32]) -> Vec<u32> {
-    static SORT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let sort = *SORT
-        .get_or_init(|| std::env::var("JOLT_METAL_G1_SORT").map_or(true, |value| value != "0"));
     let n_segs = seg_starts.len().saturating_sub(1);
     let mut order: Vec<u32> = (0..n_segs as u32).collect();
-    if sort {
-        order.sort_unstable_by_key(|&s| {
-            std::cmp::Reverse(seg_starts[s as usize + 1] - seg_starts[s as usize])
-        });
-    }
+    order.sort_unstable_by_key(|&s| {
+        std::cmp::Reverse(seg_starts[s as usize + 1] - seg_starts[s as usize])
+    });
     let mut bounds = Vec::with_capacity(3 * n_segs);
     for &s in &order {
         let s = s as usize;
@@ -137,7 +120,7 @@ pub fn g1_seg_sum_dispatch(
         &[n_segs as u32],
         &[bases, indices, seg_bounds, out],
         n_segs,
-        seg_sum_width(),
+        SEG_SUM_WIDTH,
     );
     pass.run()
 }

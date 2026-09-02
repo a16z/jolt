@@ -784,31 +784,3 @@ kernel void jk_g1_seg_sum(
     }
     g1_store_jac(out + seg_bounds[3u * tid + 2u] * (3u * FR_LIMBS), g1_xyzz_to_jac(acc));
 }
-
-// Measurement oracle for the retained XYZZ kernel. Production never
-// selects this dependency-chain baseline.
-kernel void jk_g1_seg_sum_serial(
-    device const uint* bases [[buffer(0)]],
-    device const uint* indices [[buffer(1)]],
-    device const uint* seg_bounds [[buffer(2)]],
-    device uint* out [[buffer(3)]],
-    constant uint* params [[buffer(4)]],
-    uint tid [[thread_position_in_grid]])
-{
-    uint n_segs = params[0];
-    if (tid >= n_segs) {
-        return;
-    }
-    uint start = seg_bounds[3u * tid];
-    uint end = seg_bounds[3u * tid + 1u];
-    G1Jac acc = g1_identity();
-    for (uint i = start; i < end; i++) {
-        uint raw = indices[i];
-        G1AffinePt q = g1_load_base(bases, raw & 0x7fffffffu);
-        if (raw >> 31) {
-            q.y = fq_sub(fq_zero(), q.y);
-        }
-        acc = g1_madd(acc, q);
-    }
-    g1_store_jac(out + seg_bounds[3u * tid + 2u] * (3u * FR_LIMBS), acc);
-}

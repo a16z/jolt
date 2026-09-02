@@ -653,22 +653,6 @@ kernel void jk_miller_fly(
     fq12_store_at(out + tid * (12u * FR_LIMBS), jk_miller_fly_one(pt, q));
 }
 
-kernel void jk_miller_fly_indexed(
-    device const uint* ps [[buffer(0)]],
-    device const uint* row_indices [[buffer(1)]],
-    device const uint* qs [[buffer(2)]],
-    device uint* out [[buffer(3)]],
-    constant MillerFlyParams& p [[buffer(4)]],
-    uint tid [[thread_position_in_grid]])
-{
-    if (tid >= p.n_pairs) {
-        return;
-    }
-    G1AffinePt pt = g1_load_base(ps, tid);
-    G2AffinePt q = g2_load_base(qs, row_indices[tid]);
-    fq12_store_at(out + tid * (12u * FR_LIMBS), jk_miller_fly_one(pt, q));
-}
-
 // --- Miller loop, split-ladder form (W4-fly spill restructure) -----------------
 //
 // jk_miller_fly's ~430 live u32 words (f 96 + G2Hom 48 + q/nqy 48 + P 16 +

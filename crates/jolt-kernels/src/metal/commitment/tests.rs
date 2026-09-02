@@ -160,18 +160,17 @@ fn assert_same(
 /// and hints exactly: whole-trace superchunks with production segment
 /// caps, and single-window superchunks with a 1-entry segment cap (every
 /// addition its own device thread — the deepest multi-segment reduction
-/// and multi-delivery sequencing). The Miller gate is forced open, so
-/// every arm also exercises the hybrid tier-2 absorb at the default CPU
-/// share; dedicated arms pin the all-device and all-CPU extremes
-/// (partition invariance makes every split byte-identical).
+/// and multi-delivery sequencing). The Miller gate is forced open and the
+/// flush threshold shrunk to a few pairs, so every arm exercises mid-stream
+/// device Miller flushes and the asynchronous settle.
 #[test]
 fn metal_commit_matches_optimized() {
     let _lock = gpu_lock();
-    // nextest runs one process per test, so the env writes cannot race
-    // another test. The tiny flush threshold forces mid-stream batch
-    // flushes (production only reaches them at deep geometries).
+    // nextest runs one process per test, so the env write cannot race
+    // another test.
     std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER", "1");
-    std::env::set_var("JOLT_METAL_MILLER_FLUSH_PAIRS", "8");
+    // Production reaches mid-stream Miller flushes only at deep geometries.
+    let miller_flush_pairs = 8;
     let shape = FixtureShape {
         log_t: 6,
         ram_k: 16,
@@ -228,6 +227,7 @@ fn metal_commit_matches_optimized() {
             &setup,
             1 << shape.log_t,
             MAX_SEGMENT_LEN,
+            miller_flush_pairs,
             true,
         )
         .expect("whole-trace metal commit");
@@ -245,6 +245,7 @@ fn metal_commit_matches_optimized() {
             &setup,
             grid.num_columns(),
             1,
+            miller_flush_pairs,
             true,
         )
         .expect("single-window metal commit");
@@ -258,43 +259,11 @@ fn metal_commit_matches_optimized() {
             &setup,
             1 << shape.log_t,
             MAX_SEGMENT_LEN,
+            miller_flush_pairs,
             false,
         )
         .expect("cpu-increment metal commit");
         assert_same(&optimized, &inc_on_cpu, "cpu-increment fallback");
-
-        // The split extremes: all pairs on device (fly kill-switch
-        // arm), then all on CPU (which skips the table build).
-        std::env::set_var("JOLT_METAL_MILLER_CPU_FRACTION", "0");
-        std::env::set_var("JOLT_METAL_MILLER_COMMIT_FLY", "1");
-        let all_device = commit_streaming_metal(
-            ctx,
-            source,
-            &kinds,
-            grid,
-            &setup,
-            1 << shape.log_t,
-            MAX_SEGMENT_LEN,
-            true,
-        )
-        .expect("all-device miller commit");
-        assert_same(&optimized, &all_device, "all-device miller split");
-
-        std::env::set_var("JOLT_METAL_MILLER_CPU_FRACTION", "1");
-        let all_cpu = commit_streaming_metal(
-            ctx,
-            source,
-            &kinds,
-            grid,
-            &setup,
-            1 << shape.log_t,
-            MAX_SEGMENT_LEN,
-            true,
-        )
-        .expect("all-cpu miller commit");
-        assert_same(&optimized, &all_cpu, "all-cpu miller split");
-        std::env::remove_var("JOLT_METAL_MILLER_CPU_FRACTION");
-        std::env::remove_var("JOLT_METAL_MILLER_COMMIT_FLY");
     });
 }
 

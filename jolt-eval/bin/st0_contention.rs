@@ -10,11 +10,9 @@
 //!
 //! Legs (per `--iters` iteration, one JSON line each):
 //!
-//! - `commit`  — the Metal commit slot alone (production stage-0 grid/ids);
-//!   `commit-N` overrides the G1 segment cap for same-binary A/B.
+//! - `commit`  — the Metal commit slot alone (production stage-0 grid/ids).
 //! - `g1-N`    — one production-shaped `jk_g1_seg_sum` superchunk at segment
 //!   cap `N`, reporting device time, useful GB/s, and Fq Montgomery Gmul/s.
-//! - `g1s-N`   — the same dispatch through the retained serial A/B oracle.
 //! - `g1x`     — the tier-1 `jk_g1_seg_sum` attribution matrix (wave 9):
 //!   TG-width sweep, fixed-base/gather-only/pipelined variant kernels, and
 //!   mul-chain roofs at production and saturated thread counts.
@@ -28,11 +26,9 @@
 //!   control at negligible bandwidth. Together they separate fabric traffic
 //!   from VM-subsystem serialization.
 //!
-//! Mechanism knobs (all read by the production spawn, same binary):
-//! `JOLT_RECORD_BACKGROUND_THREADS`, `JOLT_RECORD_HOIST_DELAY_MS`,
-//! `JOLT_RECORD_QOS=background|utility`. Guest compile, tracing, and PCS
-//! setup happen once, untimed; every iteration re-runs the timed leg on the
-//! same witness (fresh `ProofSession`, fresh lane allocations).
+//! Guest compile, tracing, and PCS setup happen once, untimed; every
+//! iteration re-runs the timed leg on the same witness (fresh
+//! `ProofSession`, fresh lane allocations).
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 fn main() {
@@ -380,16 +376,11 @@ mod harness {
             order: config.trace_polynomial_order,
         };
 
-        let knob = |name: &str| std::env::var(name).unwrap_or_else(|_| "-".to_owned());
         println!(
             "{{\"config\":{{\"scale\":{scale},\"log_t\":{log_t},\"columns\":{},\"total_vars\":{},\
-             \"record_threads\":\"{}\",\"record_delay_ms\":\"{}\",\"record_qos\":\"{}\",\
              \"soak_threads\":{}}}}}",
             ids.len(),
             grid.total_vars,
-            knob("JOLT_RECORD_BACKGROUND_THREADS"),
-            knob("JOLT_RECORD_HOIST_DELAY_MS"),
-            knob("JOLT_RECORD_QOS"),
             cli.soak_threads,
         );
 
@@ -411,14 +402,9 @@ mod harness {
         let legs: Vec<&str> = cli.legs.split(',').collect();
         let parse_g1_leg = |leg: &str| {
             leg.strip_prefix("g1-")
-                .map(|cap| (cap, false))
-                .or_else(|| leg.strip_prefix("g1s-").map(|cap| (cap, true)))
-                .and_then(|(cap, serial)| cap.parse().ok().map(|cap| (cap, serial)))
+                .and_then(|cap| cap.parse::<usize>().ok())
         };
-        let mut g1_caps: Vec<usize> = legs
-            .iter()
-            .filter_map(|leg| parse_g1_leg(leg).map(|(cap, _)| cap))
-            .collect();
+        let mut g1_caps: Vec<usize> = legs.iter().filter_map(|leg| parse_g1_leg(leg)).collect();
         if legs.contains(&"g1x") {
             g1_caps.push(256);
         }
@@ -462,18 +448,14 @@ mod harness {
             let mut totals = Vec::with_capacity(cli.iters);
             for iter in 0..cli.iters {
                 dirty_pages(cli.dirty_gb);
-                if let Some((cap, serial)) = parse_g1_leg(leg) {
+                if let Some(cap) = parse_g1_leg(leg) {
                     let fixture = g1_fixture.as_ref().expect("G1 fixture");
                     let case = g1_cases
                         .iter()
                         .find(|(candidate, _)| *candidate == cap)
                         .map(|(_, case)| case)
                         .expect("requested G1 case");
-                    if serial {
-                        std::env::set_var("JOLT_METAL_G1_SEG_SERIAL", "1");
-                    }
                     let sample = case.sample(fixture).expect("G1 segment dispatch");
-                    std::env::remove_var("JOLT_METAL_G1_SEG_SERIAL");
                     println!(
                         "{{\"leg\":\"{leg}\",\"iter\":{iter},\"gpu_s\":{:.6},\
                          \"wall_s\":{:.6},\"segments\":{},\"additions\":{},\
@@ -493,40 +475,6 @@ mod harness {
                         commit_once();
                         (None, None)
                     }),
-                    _ if leg
-                        .strip_prefix("commit-s")
-                        .and_then(|cap| cap.parse::<usize>().ok())
-                        .is_some() =>
-                    {
-                        let cap = leg
-                            .strip_prefix("commit-s")
-                            .and_then(|cap| cap.parse::<usize>().ok())
-                            .expect("checked segment cap");
-                        timed_leg(|| {
-                            std::env::set_var("JOLT_METAL_G1_SEGMENT_LEN", cap.to_string());
-                            std::env::set_var("JOLT_METAL_G1_SEG_SERIAL", "1");
-                            commit_once();
-                            std::env::remove_var("JOLT_METAL_G1_SEG_SERIAL");
-                            std::env::remove_var("JOLT_METAL_G1_SEGMENT_LEN");
-                            (None, None)
-                        })
-                    }
-                    _ if leg
-                        .strip_prefix("commit-")
-                        .and_then(|cap| cap.parse::<usize>().ok())
-                        .is_some() =>
-                    {
-                        let cap = leg
-                            .strip_prefix("commit-")
-                            .and_then(|cap| cap.parse::<usize>().ok())
-                            .expect("checked segment cap");
-                        timed_leg(|| {
-                            std::env::set_var("JOLT_METAL_G1_SEGMENT_LEN", cap.to_string());
-                            commit_once();
-                            std::env::remove_var("JOLT_METAL_G1_SEGMENT_LEN");
-                            (None, None)
-                        })
-                    }
                     "walk" => timed_leg(|| {
                         let mut session = backend.begin_proof();
                         std::thread::scope(|scope| {
@@ -541,44 +489,6 @@ mod harness {
                         });
                         (None, None)
                     }),
-                    // `corun-bg12`: the E-cluster arm — background QoS at
-                    // 12 threads (the walk's package draw floor), interleaved
-                    // A/B-safe because the spawn reads the knobs per call.
-                    "corun-bg12" => {
-                        std::env::set_var("JOLT_RECORD_QOS", "background");
-                        std::env::set_var("JOLT_RECORD_BACKGROUND_THREADS", "12");
-                        let sample = timed_leg(|| {
-                            let mut session = backend.begin_proof();
-                            std::thread::scope(|scope| {
-                                spawn_shared_record_collect::<Fr>(
-                                    &mut session,
-                                    &witness as &dyn JoltWitnessPlane<Fr>,
-                                    log_t,
-                                    scope,
-                                );
-                                let commit_start = Instant::now();
-                                let committed = backend
-                                    .commit
-                                    .commit_witness(
-                                        &mut session,
-                                        &witness as &dyn RowSource,
-                                        &ids,
-                                        grid,
-                                        &prover_preprocessing.pcs_setup,
-                                    )
-                                    .expect("commit");
-                                assert_eq!(committed.len(), ids.len());
-                                let commit_s = commit_start.elapsed().as_secs_f64();
-                                let join_start = Instant::now();
-                                join_shared_record_for_bench::<Fr>(&mut session, &witness, log_t)
-                                    .expect("record walk");
-                                (Some(commit_s), Some(join_start.elapsed().as_secs_f64()))
-                            })
-                        });
-                        std::env::remove_var("JOLT_RECORD_QOS");
-                        std::env::remove_var("JOLT_RECORD_BACKGROUND_THREADS");
-                        sample
-                    }
                     "corun" => timed_leg(|| {
                         let mut session = backend.begin_proof();
                         std::thread::scope(|scope| {
@@ -796,7 +706,7 @@ kernel void xv_pipelined(
 "#;
 
     fn g1_attribution(fixture: &G1SegBenchFixture, case: &G1SegBenchCase, iters: usize) {
-        use jolt_kernels::metal::{KernelId, MetalContext, JAC_U32S};
+        use jolt_kernels::metal::{KernelId, MetalContext};
         let ctx = MetalContext::global().expect("metal context");
         let (bases_words, row_width) = fixture.bases_words();
         let (indices, bounds, out) = case.raw_parts();
@@ -987,6 +897,5 @@ kernel void xv_pipelined(
                 0
             });
         }
-        let _ = JAC_U32S;
     }
 }

@@ -1,54 +1,25 @@
 //! The tier-2 Miller lane: batches finished tier-1 rows into device Miller
-//! dispatches (tiled prepared-coefficient table by default, fly arm behind
-//! [`miller_commit_fly`]), settles them asynchronously, and falls back to
-//! CPU absorption per batch on any device failure.
+//! dispatches (`jk_miller_table`, 2.2× less ALU per pair than the on-the-fly
+//! ladder, over per-flush coefficient tiles), settles them asynchronously,
+//! and falls back to CPU absorption per batch on any device failure.
 
 use super::*;
 
-/// Queued device pairs flush when they reach this count: dispatches batch
-/// across superchunks — byte-free by the same partition invariance as the
-/// CPU/device split itself. Both Miller kernels starve below ~32k-pair
-/// dispatches (W7 fly retune −40% CB mass at 65536; W13 table scale
-/// curve agrees); diminishing past that, and the stream-end drain batch
-/// grows with the threshold. Override: `JOLT_METAL_MILLER_FLUSH_PAIRS`
-/// (tests force mid-stream flushes with it).
-const MILLER_FLUSH_PAIRS_DEFAULT: usize = 65536;
-
-fn miller_flush_pairs() -> usize {
-    std::env::var("JOLT_METAL_MILLER_FLUSH_PAIRS")
-        .ok()
-        .and_then(|value| value.trim().parse().ok())
-        .unwrap_or(MILLER_FLUSH_PAIRS_DEFAULT)
-}
-
-pub(super) enum MillerInput {
-    Table,
-    Fly(Vec<G2Affine>),
-}
-
-pub(super) struct MillerLane<'b> {
-    /// `Some` = fly arm (the wrapped affine G2 setup rows); `None` = the
-    /// tiled prepared-coefficient table (default, [`miller_commit_fly`]).
-    pub(super) fly_qs: Option<DeviceBuffer<'b>>,
-    pub(super) cpu_share: f64,
+pub(super) struct MillerLane {
+    /// Queued pairs flush into one device dispatch at this count
+    /// ([`MILLER_FLUSH_PAIRS`] in production; tests shrink it to force
+    /// mid-stream flushes).
+    pub(super) flush_pairs: usize,
     pub(super) failed: bool,
     pub(super) queue: MillerBatch,
     /// The committed-but-unsettled previous dispatch (see
     /// [`InFlightMiller`]); at most one, settled at the next flush point or
-    /// at drain.
+    /// at drain, so this lane keeps decoding later superchunks while the
+    /// device crunches instead of sleeping in `miller_wait` and
+    /// backpressuring the whole pipeline through the depth-2 queues.
     pub(super) in_flight: Option<InFlightMiller>,
     /// Recycled tile backing (≤ 2: one building + one in flight).
     pub(super) tiles: Vec<MillerTile>,
-}
-
-/// `JOLT_METAL_MILLER_ASYNC=0` restores the synchronous settle (wait + fold
-/// immediately after each Miller dispatch, the pre-W7 shape). Default on:
-/// the tier-2 lane keeps decoding later superchunks while the device
-/// crunches, instead of sleeping in `miller_wait` and backpressuring the
-/// whole pipeline through the depth-2 queues.
-fn miller_async() -> bool {
-    static ASYNC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ASYNC.get_or_init(|| std::env::var("JOLT_METAL_MILLER_ASYNC").as_deref() != Ok("0"))
 }
 
 /// One committed, un-waited Miller dispatch. `batch` and `tile` own the
@@ -58,7 +29,7 @@ fn miller_async() -> bool {
 /// sees the tile remap); `out_buf` is device-allocated, read after the wait.
 pub(super) struct InFlightMiller {
     batch: MillerBatch,
-    tile: Option<MillerTile>,
+    tile: MillerTile,
     out_buf: DeviceBuffer<'static>,
     pending: crate::metal::runtime::DetachedPass,
     n_threads: usize,
@@ -85,26 +56,19 @@ impl MillerBatch {
     }
 }
 
-impl MillerLane<'_> {
+impl MillerLane {
     fn take_queue(&mut self) -> MillerBatch {
         std::mem::replace(&mut self.queue, MillerBatch::new())
     }
 
-    const fn pairs_per_thread(&self) -> usize {
-        match self.fly_qs {
-            Some(_) => 1,
-            None => MILLER_TABLE_SEG_PAIRS,
-        }
-    }
-
-    /// On the table arm, gather `batch`'s rows into a recycled tile (see
-    /// [`miller_commit_fly`]); `None` on the fly arm.
-    fn build_tile(&mut self, prep: &DoryTier2Prep, batch: &MillerBatch) -> Option<MillerTile> {
-        self.fly_qs.is_none().then(|| {
-            let mut tile = self.tiles.pop().unwrap_or_default();
-            tile.build(prep.prepared(), &batch.row_indices);
-            tile
-        })
+    /// Gather `batch`'s rows into a recycled tile, so each dispatch
+    /// references O(flush) coefficient bytes at every scale — the row-scaled
+    /// whole table wired 2.19 GiB at 2^27 and stretched co-running command
+    /// buffers by +2.59 s.
+    fn build_tile(&mut self, prep: &DoryTier2Prep, batch: &MillerBatch) -> MillerTile {
+        let mut tile = self.tiles.pop().unwrap_or_default();
+        tile.build(prep.prepared(), &batch.row_indices);
+        tile
     }
 }
 
@@ -115,7 +79,7 @@ impl MillerLane<'_> {
 /// are exact field ops, so settle timing never changes a byte.
 fn settle_in_flight(
     prep: &DoryTier2Prep,
-    lane: &mut MillerLane<'_>,
+    lane: &mut MillerLane,
     accumulators: &mut [Tier2Accumulator],
     in_flight: InFlightMiller,
 ) {
@@ -127,7 +91,7 @@ fn settle_in_flight(
         n_threads,
     } = in_flight;
     let waited = tracing::info_span!("MetalCommit::miller_wait").in_scope(|| pending.wait());
-    lane.tiles.extend(tile);
+    lane.tiles.push(tile);
     match waited {
         Ok(()) => {
             let _span = tracing::info_span!("MetalCommit::miller_fold").entered();
@@ -190,11 +154,11 @@ struct PendingPairs {
 /// Decode one finished superchunk: reduce multi-segment buckets, batch
 /// normalize, record rows — parallel across columns — then absorb the
 /// Miller mass: the CPU share through [`Tier2Accumulator::absorb`], the
-/// device share queued and dispatched as one table or indexed-fly command
-/// buffer per flush threshold, whose per-thread segments never straddle
-/// columns. Dispatches settle (wait + per-column partial-product fold) one
-/// flush later ([`InFlightMiller`]), so the device crunches a batch while
-/// this lane decodes the following superchunks.
+/// device share queued and dispatched as one table command buffer per
+/// flush threshold, whose per-thread segments never straddle columns.
+/// Dispatches settle (wait + per-column partial-product fold) one flush
+/// later ([`InFlightMiller`]), so the device crunches a batch while this
+/// lane decodes the following superchunks.
 #[tracing::instrument(skip_all, name = "MetalCommit::tier2_absorb")]
 pub(super) fn absorb_superchunk(
     ctx: &MetalContext,
@@ -202,7 +166,7 @@ pub(super) fn absorb_superchunk(
     done: &GpuDone,
     accumulators: &mut [Tier2Accumulator],
     rows: &mut [Vec<Bn254G1>],
-    lane: Option<&mut MillerLane<'_>>,
+    lane: Option<&mut MillerLane>,
 ) {
     // Segments arrive column-major (the driver emits buckets column by
     // column), so each column owns one contiguous segment range.
@@ -218,10 +182,7 @@ pub(super) fn absorb_superchunk(
     }
 
     let (lane, cpu_share) = match lane {
-        Some(lane) if !lane.failed => {
-            let share = lane.cpu_share;
-            (Some(lane), share)
-        }
+        Some(lane) if !lane.failed => (Some(lane), MILLER_CPU_FRACTION),
         _ => (None, 1.0),
     };
 
@@ -310,7 +271,6 @@ pub(super) fn absorb_superchunk(
     // superchunk's CPU share.
     match lane {
         Some(lane) => {
-            let pairs_per_thread = lane.pairs_per_thread();
             for (column, pending_column) in pending.iter().enumerate() {
                 let Some(p) = pending_column else { continue };
                 if p.cpu_len == p.points.len() {
@@ -324,17 +284,17 @@ pub(super) fn absorb_superchunk(
                     .extend_from_slice(&p.row_indices[p.cpu_len..]);
                 let mut at = queue.seg_starts[thread_start] as usize;
                 while at < queue.points.len() {
-                    at = (at + pairs_per_thread).min(queue.points.len());
+                    at = (at + MILLER_TABLE_SEG_PAIRS).min(queue.points.len());
                     queue.seg_starts.push(at as u32);
                 }
                 queue
                     .folds
                     .push((column, thread_start, queue.seg_starts.len() - 1));
             }
-            if lane.queue.points.len() >= miller_flush_pairs() {
+            if lane.queue.points.len() >= lane.flush_pairs {
                 let batch = lane.take_queue();
                 let tile = lane.build_tile(prep, &batch);
-                match commit_miller_dispatch(ctx, lane.fly_qs.as_ref(), tile, batch) {
+                match commit_miller_dispatch(ctx, tile, batch) {
                     Ok(dispatched) => {
                         // The new dispatch crunches while this superchunk's
                         // CPU share absorbs and the PREVIOUS dispatch —
@@ -344,10 +304,10 @@ pub(super) fn absorb_superchunk(
                         if let Some(previous) = lane.in_flight.take() {
                             settle_in_flight(prep, lane, accumulators, previous);
                         }
-                        if miller_async() && !lane.failed {
-                            lane.in_flight = Some(dispatched);
-                        } else {
+                        if lane.failed {
                             settle_in_flight(prep, lane, accumulators, dispatched);
+                        } else {
+                            lane.in_flight = Some(dispatched);
                         }
                     }
                     Err((batch, error)) => {
@@ -377,7 +337,7 @@ pub(super) fn absorb_superchunk(
 pub(super) fn drain_miller_lane(
     ctx: &MetalContext,
     prep: &DoryTier2Prep,
-    lane: &mut MillerLane<'_>,
+    lane: &mut MillerLane,
     accumulators: &mut [Tier2Accumulator],
 ) {
     if let Some(previous) = lane.in_flight.take() {
@@ -388,7 +348,7 @@ pub(super) fn drain_miller_lane(
     }
     let batch = lane.take_queue();
     let tile = lane.build_tile(prep, &batch);
-    match commit_miller_dispatch(ctx, lane.fly_qs.as_ref(), tile, batch) {
+    match commit_miller_dispatch(ctx, tile, batch) {
         Ok(dispatched) => settle_in_flight(prep, lane, accumulators, dispatched),
         Err((batch, error)) => {
             tracing::warn!(%error, "device miller drain failed; absorbing on the CPU");
@@ -404,8 +364,7 @@ pub(super) fn drain_miller_lane(
 /// table-global indices).
 fn commit_miller_dispatch(
     ctx: &MetalContext,
-    fly_qs: Option<&DeviceBuffer<'_>>,
-    tile: Option<MillerTile>,
+    tile: MillerTile,
     batch: MillerBatch,
 ) -> Result<InFlightMiller, (MillerBatch, MetalError)> {
     let n_threads = batch.seg_starts.len() - 1;
@@ -413,35 +372,18 @@ fn commit_miller_dispatch(
         let ps_buf = ctx.wrap_slice(g1_points_as_u32s(&batch.points))?;
         let out_buf = ctx.alloc_u32s(n_threads * FQ12_U32S)?;
         let mut pass = ctx.begin_pass()?;
-        // Per-arm wrappers may drop before commit — the encoder retains each
-        // bound MTLBuffer; only the BACKING memory must outlive the pass.
-        match (&tile, fly_qs) {
-            (Some(tile), _) => {
-                let params = miller_table_params(n_threads, tile.n_rows())?;
-                let idx_buf = ctx.wrap_slice(&tile.local_rows)?;
-                let seg_buf = ctx.wrap_slice(&batch.seg_starts)?;
-                let coeffs_buf = ctx.wrap_slice(&tile.coeffs)?;
-                pass.dispatch(
-                    KernelId::MillerTable,
-                    &params,
-                    &[&ps_buf, &idx_buf, &seg_buf, &coeffs_buf, &out_buf],
-                    n_threads,
-                );
-            }
-            (None, Some(qs)) => {
-                assert_eq!(n_threads, batch.points.len());
-                let params = [u32::try_from(n_threads)
-                    .map_err(|_| MetalError::Execution("pair count overflows u32".into()))?];
-                let idx_buf = ctx.wrap_slice(&batch.row_indices)?;
-                pass.dispatch(
-                    KernelId::MillerFlyIndexed,
-                    &params,
-                    &[&ps_buf, &idx_buf, qs, &out_buf],
-                    n_threads,
-                );
-            }
-            (None, None) => unreachable!("table dispatch always builds a tile"),
-        }
+        // Wrappers may drop before commit — the encoder retains each bound
+        // MTLBuffer; only the BACKING memory must outlive the pass.
+        let params = miller_table_params(n_threads, tile.n_rows())?;
+        let idx_buf = ctx.wrap_slice(&tile.local_rows)?;
+        let seg_buf = ctx.wrap_slice(&batch.seg_starts)?;
+        let coeffs_buf = ctx.wrap_slice(&tile.coeffs)?;
+        pass.dispatch(
+            KernelId::MillerTable,
+            &params,
+            &[&ps_buf, &idx_buf, &seg_buf, &coeffs_buf, &out_buf],
+            n_threads,
+        );
         // SAFETY: the returned `InFlightMiller` owns `batch` and `tile` —
         // the heap backing of every wrapped input buffer, address-stable
         // across moves, neither written nor dropped until
