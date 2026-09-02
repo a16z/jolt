@@ -92,3 +92,47 @@ Options for 54 × 2^17 ≈ 7.1M 16-bit range checks under HyperKZG + sumcheck (p
 Full-width commits run at 0.55 µs/point; a committed inverse costs exactly one such point per chunk, so A is bounded below by 7.1M × 0.55 µs ≈ 3.9 s at 2^17 regardless of layout tweaks — 10× the 0.4 s component budget by itself. The remaining phases (0.34 + 1.0→0.5 + 0.26 s) already exceed 0.4 s. **Budget verdict: missed by ≈ 14× with A, ≈ 3–4× without any range check.**
 
 Next technique (ranked): (1) GPU (Metal) full-width MSM for the inverse columns — the user's Metal lanes put Dory tier-1 on the M-series GPU; even a 3–4× win leaves ≈ 1 s. (2) Move the 2^16 range table to Dory for the inverse columns — no gain (Dory tier-1 is the same G1 MSM). (3) Accept option C's proof size (27 KB) for a ≈ 2 s prover, or A′ with s = 2–3 (2.0–1.4 s, +0.3–0.6 KB rounds). (4) Reduce chunks per row below 54 only by shrinking k's range check (k < 2^263 exactly: 16 chunks + a 7-bit chunk range-checked as chunk·2^9 — saves nothing at 16-bit granularity) or by re-deriving the operation set (M1) so fewer rows exist. There is no known HyperKZG-compatible range argument with both cheap commits and O(log N) proof; the relation itself (§1–2) is sound and cheap.
+
+## 6. Next technique — measured (follow-up, tree 790ed8cfa)
+
+Code: `790ed8cfa` test(jolt-limb-bench): grouped LogUp helpers (`s=<n>` arg), Gruen split-eq, WideAccumulator fmadd; adaptive-cheater tamper (round polys forced to pass the round check; rejection now happens at the final relation check, verified for s ∈ {1, 3, 6, 9}). Quiet machine (≥ 87% idle), 10 threads, 2^17 rows.
+
+### 6.1 Grouped-inverse LogUp: one helper per s chunk columns, `h_g·Π_{i∈g}(α − c_i) = 1`, LogUp sum `Σ_g h_g·e_{s−1,g}` (degree s+2 with eq)
+
+| s | helper cols | degree | commit chunks | commit helpers | sumcheck | RLC+open | **prover total** | proof B | RSS |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 54 | 3 | 324 | 3,580 | 856 | 237 | **4,999** | 15,392 | 3.2 GB |
+| 3 | 18 | 5 | 325 | 1,180 | 878 | 204 | **2,589** | 14,176 | 2.9 GB |
+| 6 | 9 | 8 | 338 | 649 | 1,158 | 228 | **2,375** | 15,232 | 2.8 GB |
+| 9 | 6 | 11 | 341 | 437 | 1,363 | 226 | **2,370** | 16,672 | 2.8 GB |
+
+(t = 24; ms.) Helper commits scale as 54/s × 72 ms; the sumcheck grows with the degree because the range part is evaluated at s+2 points per row pair (only chunks + helpers are extrapolated for the extra points; the degree-2 part uses 3 points). Proof: rounds 17·(s+2)·32 B vs helper columns 64 B each — s = 3 is the byte minimum (−1.2 KB vs s = 1), s = 6 the time minimum at t = 24 together with s = 9.
+
+### 6.2 Sumcheck speedups (s = 1, t = 24, 2^17): 1,027 → **856 ms (−17%)**
+
+Applied: (a) Gruen split-eq — eq(τ,·) leaves the row matrix; the round polynomial is `eq_prefix·eq1(τ_i,X)·q(X) + λ·L(X)` with q evaluated at deg(Φ)+1 points (one fewer extrapolation of the full 255-wide row); (b) unreduced accumulation — the 168 limb/native products per evaluation go through `WideAccumulator::fmadd` with one reduction per sum; (c) removed a per-group heap allocation from the range evaluation. Not applied: P-core-only pool — `RAYON_NUM_THREADS=4` makes every phase 1.6–1.75× slower (sumcheck 805 → 1,303 ms at t = 12, s = 3): rayon already balances the 4P+6E cores; E-cores are worth keeping.
+
+### 6.3 Realistic Dory point (M1 row model: ≈ 122k rows ≈ 2^16.9 at t ≤ 12 with fused G1/G2 formulas) — measured at 2^17
+
+| t | s | commit chunks | commit helpers | sumcheck | RLC+open | **prover total** | proof B | RSS |
+|---|---|---|---|---|---|---|---|---|
+| 12 | 3 | 323 | 1,238 | 805 | 230 | 2,598 | 11,872 | 2.0 GB |
+| **12** | **6** | **323** | **619** | **945** | **226** | **2,115** | **12,928** | 1.6 GB |
+| 5 | 3 | 318 | 1,231 | 688 | 231 | 2,470 | 10,528 | 1.2 GB |
+| 5 | 6 | 321 | 624 | 828 | 222 | 1,997 | 11,584 | 1.1 GB |
+
+Best configuration: **s = 6, split-eq + fmadd**. Projected Dory component at 122k rows (× 0.93): commit chunks 300 + helpers 575 + sumcheck 880 + one opening 210 (upper bound: the opening is shared with the transcript table and the R1CS witness) ≈ **1.95 s**; proof **12.9 KB** (rounds 17·8·32 = 4,352; 64 committed columns × 64 B = 4,096; 72 operand-limb claims 2,304; HyperKZG 2,176) — 9.9 KB if the operand-limb claims are counted with the wiring lane.
+
+**Verdict:** does not meet 0.4 s — gap **≈ 5×** (was 14× with per-chunk inverses). Split: sumcheck 45%, helper commits 29%, chunk commits 15%, opening 11%. The single next lever after this is the range part of the sumcheck (≈ 550 of the 945 ms at s = 6: the (s+2)-point evaluation of 9 group products per row pair) — coefficient-form expansion of the group products and the L polynomial (O(s²) per group instead of O(s·(s+2)) evaluations) is worth ≈ −30% of the sumcheck, i.e. ≈ −0.3 s; after that no lane-local lever remains — the row count (M1) or the budget has to move. GPU MSM for the 9 helper columns (575 ms) is the other 0.4 s candidate but is outside this lane.
+
+### 6.4 Lazy fusion of GT products (estimate, not built)
+
+Fuse m sequential Fq12 multiplications into one reduction per output coefficient (m = 1 is the current row). Per output coefficient: z 16 chunks; k ≈ 254m + 8 bits → ⌈(254m+8)/16⌉ chunks; carries: the mod-2^M check needs M ≥ 254m + 9 → ⌈(254m+9)/96⌉ positions × 7 chunks. Using M1's 6,204 GT mults (74,448 output rows at m = 1):
+
+| m | chunks/row | rows (GT mults) | chunk·rows | range-checked bits per Fq12 mult | limb products per row (virtual intermediates) |
+|---|---|---|---|---|---|
+| 1 | 54 = 16+17+21 | 74,448 | 4.02M | 10,368 | 6t ≈ 72 (t = 12) |
+| 2 | 91 = 16+33+42 | 37,224 | 3.39M (−16%) | 8,736 | 12²·27 ≈ 3,888 (54×), degree 3 |
+| 4 | 157 = 16+64+77 | 18,612 | 2.92M (−27%) | 7,536 | 12⁴·81 ≈ 1.7M, degree 5 |
+
+The commit saving (−16% / −27% of the GT-mult share, i.e. ≈ −40 / −70 ms of the 300 ms chunk commits, −25 / −45 ms of helpers) is real only if the unreduced intermediates stay *virtual*; then every output coefficient is a sum over 12^m index tuples of degree-(m+1) limb monomials — the sumcheck work per row grows 54× at m = 2 (≈ 25 s at 2^17), so virtual fusion is infeasible. With *committed* intermediates (the unreduced product P = A·B as 33 z-chunks + 3 carries = 54 chunks, then the wide final row P·C with 33 k-chunks + 6 carries = 91 chunks) the chunk·rows grow: m = 2 → 145 per 2 mults (+34%), m = 4 → 54 + 91 + 128 + 158 = 431 per 4 mults (+100%). **Lazy fusion does not pay in this table model**; the one-reduction-per-inner-product structure the rows already have (t products, one k) is the useful form of laziness.
