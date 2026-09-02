@@ -2,7 +2,7 @@
 
 use jolt_field::JoltField;
 
-use super::bit::{xor_word, Bit};
+use super::{bit::xor_word, Bit};
 use crate::{LinearCombination, R1csBuilder};
 
 const WORD_BITS: usize = 64;
