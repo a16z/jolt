@@ -42,6 +42,7 @@ members = [
   "crates/jolt-witness-derive",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
+  "crates/jolt-wrapper-bench",
   "crates/jolt-riscv",
   "crates/jolt-tracer-x86",
   "crates/jolt-transcript",

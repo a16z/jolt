@@ -1,0 +1,22 @@
+[package]
+name = "jolt-wrapper-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Microbench for the wrapper's committed-bit transcript table: batch-addition HyperKZG commits, degree-3 sumcheck, one RLC opening"
+
+[lints]
+workspace = true
+
+[dependencies]
+bincode = { workspace = true }
+jolt-crypto = { workspace = true }
+jolt-field = { workspace = true, features = ["bn254"] }
+jolt-hyperkzg = { workspace = true }
+jolt-openings = { workspace = true }
+jolt-poly = { workspace = true }
+jolt-transcript = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
+rayon = { workspace = true }

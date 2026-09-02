@@ -32,6 +32,8 @@
     clippy::wildcard_enum_match_arm
 )]
 
+#[cfg(feature = "transcript-blake3")]
+mod blake3;
 mod codec;
 mod digest;
 mod legacy;
@@ -41,6 +43,8 @@ mod prover;
 mod setup;
 mod verifier;
 
+#[cfg(feature = "transcript-blake3")]
+pub use blake3::Blake3Transcript;
 pub use codec::BytesMsg;
 pub use digest::DigestTranscript;
 pub use legacy::{

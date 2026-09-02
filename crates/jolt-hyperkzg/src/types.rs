@@ -78,6 +78,14 @@ impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
     }
 }
 
+impl<P: PairingGroup> HyperKZGCommitment<P> {
+    /// Wraps a commitment computed outside the scheme (e.g. a batch-addition
+    /// commitment to a 0/1 column over the same SRS powers).
+    pub fn new(point: P::G1) -> Self {
+        Self { point }
+    }
+}
+
 /// Opening proof for the HyperKZG protocol.
 ///
 /// - `com`: intermediate polynomial commitments from the Gemini folding (ell - 1 elements)
