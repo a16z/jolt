@@ -261,7 +261,7 @@ keep the legacy type. Expected Jolt-prover delta ≈ 0: ≈3,000 transcript call
   (jolt-crypto, jolt-dory compression, jolt-hyperkzg bench/scheme/types), none in this lane's code.
 - `gt_compression` (lane J's module in `dory_byte_diff.rs`) did not compile against the current
   `prove(&W)` signature; fixed with `witness.as_ref()`.
-- Code commit: 7b5b1b9f8.
+- Commits: 7b5b1b9f8 (code), d7db622b9 (clippy `print_stdout` expectation on the schedule test module; `cargo clippy -p jolt-prover --tests --features prover-fixtures -- -D warnings` clean).
 
 ## Files
 
