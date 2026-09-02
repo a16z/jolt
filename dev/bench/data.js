@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788369435936,
+  "lastUpdate": 1788380589361,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -150070,6 +150070,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865936,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5f918f1957fcfe78e5b5839b688a04917740ab5c",
+          "message": "perf(inlines): Keccak theta-D, in-place scheduling, and fused absorb (3,260 -> 3,087 rows) (#1749)\n\n* perf(keccak): fuse theta D xor and rotation\n\n* perf(keccak): schedule rho pi and chi in place\n\n* perf(keccak): fuse absorb with permutation\n\n* test(inlines): regenerate keccak parity hashes for VirtualXORROTL1 tag 0x008f\n\n* test(jolt-prover): update Keccak ROTRI canaries for theta-D fusion (696 -> 576)\n\n* fix(jolt-tracer-x86): emit VirtualXorRotL1 in the x86 AOT backend\n\nMain's exhaustive emit match (#1729) predates this branch's theta-D\nfused instruction; emit rs1 ^ rotl(rs2, 1), enroll it in the\ndifferential suite, and bump the SUPPORTED count pin.\n\n* test(inlines): regenerate keccak parity hashes for VirtualXORROTL1 tag 0x0091\n\n* fix(lookup-tables): adopt JoltField bound in xor_rotl1 after shared field stack merge\n\n* fix: re-baseline keccak inline expansion parity hashes for XORROTL1 tag 0x00a1\n\n* style: satisfy nominal-imports invariant (new CI style gate from main)\n\n* fix(keccak): address #1749 review — prefix wrap arm, fused-ABI e2e coverage, sponge tests\n\n- xor_rotl1 prefix: the single-phase (`suffix_pairs == 0 && first_phase`) arm\n  re-added the `y_{XLEN-1}` wrap seed already in `acc`; both phases now share\n  `acc += wrap * x_0`. New test pins the one-phase geometry against\n  `materialize_entry`, which the phased materialization tests never reach.\n- e2e (clear + ZK): the sha3 guest hashes a 300-byte input so the trace runs a\n  plain first permutation, one fused `keccak256_absorb_permute` block, and the\n  padded final block; the ROTRI-row assertion now expects three permutations.\n- differential_fuzz: chunked `update`/`finalize` schedules straddling the\n  136/272-byte boundaries vs tiny-keccak; `digest` fuzz alternates a 1-byte\n  offset so the unaligned absorb paths run; the doc labels the million-case\n  run as one-off evidence (CI runs the 2,000-case default only).\n- row_count: drop the unasserted Debug-text histogram.\n\n* perf(keccak): absorb every block through the fused inline; cover the aligned guest path\n\nDrop the `initialized` flag and the software first-absorb helpers: the fused\nabsorb-permute is state-agnostic, so the software path only cost 34 extra\nrows per block whenever the state was not a compile-time constant (every\n`digest` final block, every streaming first block). `update` now absorbs full\nblocks straight from the input instead of staging them through the buffer.\nPadding writes go through a bounds-checked byte view of the buffer.\n\nThe 300-byte `&[u8]` guest message sits behind postcard's length prefix and\nnever took the aligned path. Add `sha3_aligned([[u64; 17]; 2])` to the sha3\nexample guest and run the clear-mode byte-diff on it, so the fused inline\nreading caller memory through rs2 is pinned against legacy; the ZK e2e keeps\nthe unaligned path.\n\nGuest trace for the 300-byte digest: 11,469 -> 11,071 rows.\n\n* refactor(legacy): fold XorRotL1 prefix seeding, accumulate the Boolean tail as u64\n\nSeed the prefix state via `unwrap_or` (checkpoints are `None` only before the\nfirst pair) so the two verbatim seeding blocks and the `first_pair` branch of\n`bind_pair` collapse into one `PrefixState::bound`. The tail loop binds 0/1\nbits, so fold the xor pairs into one integer and reduce the `straddle`/`wrap`\ncoefficients to conditional adds, matching the modular twin.\n\n* chore(keccak): closed-form pi inverse, single rate owner, drop duplicate ratchet\n\n- `pi_source` is the closed-form inverse (`2^-1 = 3 mod 5`); `pi_destination`\n  is the one owner of the pi map, shared with the reference `exec.rs`;\n  `PI_TEMP_LANE` is derived from `RHO_PI_FIRST_SOURCE` instead of being\n  coupled by a debug_assert.\n- `exec.rs` uses the crate-level `RATE_IN_BYTES`; tests spell the 136/200\n  geometry with constants.\n- Delete `tests/row_count.rs`: the inline expansion fixture already ratchets\n  3087/3121 in CI. Drop the `KECCAK256_NAME` \"registration anchor\" lines.\n- The chunked-update fuzz alternates input alignment.\n\n* fix(legacy): select the sha3 provable when building the two-function sha3 guest\n\nsha3-ex now defines two #[jolt::provable] functions (sha3, sha3_aligned).\nWithout JOLT_FUNC_NAME every provable emits its own main/jolt_panic, so\njolt build fails with E0428 — which is what broke the legacy sha3_e2e_dory\ntest in CI. Set the function on every remaining sha3-guest build site: the\nlegacy e2e test, the legacy profiling bench (func threaded through\nprove_example), and jolt-eval's Sha3 guest via a GuestConfig::func hook.",
+          "timestamp": "2026-09-02T15:24:24-04:00",
+          "tree_id": "b9ca775b81e65dac9f4f0bbe4d9a20914d153d5c",
+          "url": "https://github.com/a16z/jolt/commit/5f918f1957fcfe78e5b5839b688a04917740ab5c"
+        },
+        "date": 1788380576121,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 1.8569,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.8954,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 507024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 509324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500548,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5595,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.444,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.6291,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 509204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 2.6252,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 0.9656,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4483,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 509084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3728,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 509216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 15.8296,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 507204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 2.8121,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 22.4983,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1081040,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.8268,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 634176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 56.8648,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2122940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0.9848,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.117,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 10.4912,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864248,
             "unit": "KB",
             "extra": ""
           }
