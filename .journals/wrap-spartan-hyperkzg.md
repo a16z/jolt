@@ -33,3 +33,10 @@ essentially spartan + hyperkzg wrapper of jolt proof. The important part is to l
 - .journals/discovery/proof-size.md — measured proof sizes 2^18–2^24, byte breakdown (lane C)
 - .journals/discovery/prior-art.md — Blindfold paper, external in-circuit pairing costs, Jolt recursion prior art (lane D)
 - .journals/plan.md — architecture decision + component ladder (after Phase 0)
+
+## Lane registry (task ids, orchestrator bookkeeping)
+- P0-A ff0c9341 (fable-max) blindfold/r1cs/spartan/hyperkzg tooling → discovery/blindfold-and-r1cs-tooling.md
+- P0-B 26e932a2 (fable-max) verifier structure + dory op counts → discovery/verifier-structure.md
+- P0-C b0447a41 (codex sol-xhigh) proof-size measurement (owns cargo build dir) → discovery/proof-size.md
+- P0-D d7def195 (fable-max) prior art + in-circuit cost numbers → discovery/prior-art.md
+- 14:50 P0-C done: clear proof 82,191 B @2^18 → 95,187 B @2^24. Fixed: 41 GT commitments 15,870 B; 266 Fr claims 8,536 B. Scaling: sumchecks 28.3→33.6 KB, Dory 29.4→37.2 KB (11 rounds @2^18: 68 GT+35 G1+34 G2). +4,332 B per 4× trace. ZK @2^18 80,375 B (BlindFold 22,780 B = 496 G1+199 Fr). Prover 2.7s/7.1s/20s/79s, RSS 0.43/1.25/3.3/8.85 GiB. Details: discovery/proof-size.md
