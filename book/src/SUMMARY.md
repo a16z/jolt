@@ -33,6 +33,7 @@
         - [Torus compression](./how/optimizations/compression.md)
     - [Formal Verification](./how/formal-verification/formal-verification.md)
         - [Field Kernels](./how/formal-verification/field-kernels.md)
+            - [Scalar Fp64 Proofs](./how/formal-verification/field-kernels-fp64.md)
             - [From Rust to Machine Bytes](./how/formal-verification/field-kernels-source-to-bytes.md)
             - [Reading a Machine Theorem](./how/formal-verification/field-kernels-reading-theorem.md)
             - [Trust Boundary and Review Guide](./how/formal-verification/field-kernels-trust-boundary.md)

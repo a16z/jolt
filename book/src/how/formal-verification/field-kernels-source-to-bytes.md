@@ -1,8 +1,14 @@
 # From Rust to machine bytes
 
-This page explains how a normal field multiplication reaches handwritten
-instructions. It also explains which parts Rust checks and which parts the
+This page explains how a field operation reaches the exact bytes used by a
+machine proof. It also explains which parts Rust checks and which parts the
 machine proof checks.
+
+The Fp128 production kernels use shared inline assembly fragments. The Fp64
+production kernels use generic Rust arithmetic. For Fp64, the compiler emits a
+fixed sequence in a separate inspection function. The artifact checker compares
+that compiled sequence with a standalone proof object. Both designs stop short
+of proving every optimized downstream caller.
 
 ## The path through the program
 
@@ -31,9 +37,9 @@ flowchart TD
     Import --> Theorem
 ```
 
-The public `Field` operation is safe Rust. The field type stores a value as two
-64 bit limbs. Its representation rule says that the integer formed by those
-limbs is less than the modulus.
+The public `Field` operation is safe Rust. Fp128 stores a value as two 64 bit
+limbs. Fp64 stores one 64 bit word. In both cases, the representation rule says
+that the represented integer is less than the modulus.
 
 The compiler knows the modulus because it is a constant parameter of the field
 type. It also knows the target architecture and the target CPU features. It can
@@ -53,7 +59,11 @@ offsets and a test-only generic offset 173 are also differentially tested
 against portable Rust to exercise the Rust dispatch and inline-assembly
 contract.
 
-## What `include_str!` does
+`Prime64Offset59` uses portable Rust because an inline assembly experiment made
+several measured operations slower. Its proof objects are inspection artifacts
+and are not called by normal production dispatch.
+
+## What `include_str!` does for Fp128
 
 The Rust source contains code of this form.
 
@@ -145,9 +155,10 @@ The baseline x86-64 object includes the arithmetic fragment, two result moves,
 and `ret`. The BMI2 and ADX object forms its result directly in `rax:rdx`, so it
 contains only the shared fragment followed by `ret`.
 
-The object is not linked as a second production implementation. Production
-uses the inline fragment to avoid an extra function call in a hot loop. The
-object exists so HOL Light can state and prove a complete callable function.
+The object is not linked as a second production implementation. Fp128 uses the
+inline fragment to avoid an extra function call in a hot loop. Fp64 keeps the
+compiler generated Rust path because it was faster in the native benchmark.
+The objects exist so HOL Light can state and prove complete callable functions.
 
 ## Why several byte lists exist
 
@@ -160,11 +171,13 @@ There is deliberate duplication.
 | HOL Light byte list | Exact bytes accepted by the theorem |
 | Compiled inspection witness | Evidence for one optimized Rust compilation |
 
-The shared fragment reduces accidental divergence. The independent lists make
-changes visible. If a developer changes one instruction, the artifact check
-fails until a reviewer updates the expected bytes. HOL Light then rejects the
-object until the proof byte list is updated. Updating the list does not prove
-the new code. The theorem must run again and succeed.
+For Fp128, the shared fragment reduces accidental divergence. For Fp64, the
+compiler output and proof source can diverge, so exact byte comparison is the
+required connection. The independent lists make changes visible. If one
+instruction changes, the artifact check fails until a reviewer updates the
+expected bytes. HOL Light then rejects the object until the proof byte list is
+updated. Updating the list does not prove the new code. The theorem must run
+again and succeed.
 
 A byte match proves identity. It does not prove arithmetic correctness. The
 HOL Light theorem supplies the arithmetic claim.

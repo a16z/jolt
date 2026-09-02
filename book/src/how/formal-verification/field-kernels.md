@@ -9,6 +9,10 @@ expected bytes. The proof does not cover every inlined caller or a downstream
 executable. This chapter explains the exact claim, its connection to Rust, and
 its limits.
 
+This page focuses on `Prime128OffsetA7F7`. The
+[scalar Fp64 page](field-kernels-fp64.md) describes the separate
+`Prime64Offset59` proofs.
+
 The `jolt-field/asm` feature opts into these architecture kernels. A `solinas`
 build without `asm` uses portable Rust even on AArch64 and x86-64. The
 inspection-only `fp128-proof-linkage` feature implies `asm`.

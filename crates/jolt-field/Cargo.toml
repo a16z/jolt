@@ -39,6 +39,7 @@ fuzzing = ["asm"]
 parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
 fp128-proof-linkage = ["asm"]
+fp64-proof-linkage = []
 
 [dev-dependencies]
 bincode = { workspace = true }
@@ -66,3 +67,7 @@ required-features = ["solinas"]
 [[example]]
 name = "fp128_production_witness"
 required-features = ["solinas", "fp128-proof-linkage"]
+
+[[example]]
+name = "fp64_production_witness"
+required-features = ["solinas", "fp64-proof-linkage"]
