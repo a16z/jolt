@@ -2452,7 +2452,7 @@ fn prover_matches_legacy_on_muldiv() {}
     not(feature = "akita"),
     not(feature = "zk")
 ))]
-#[expect(clippy::expect_used, clippy::panic)]
+#[expect(clippy::expect_used, clippy::panic, clippy::print_stdout)]
 mod transcript_schedule {
     use std::any::type_name;
     use std::cell::{Cell, RefCell};
@@ -2534,7 +2534,7 @@ mod transcript_schedule {
                 log.borrow_mut().push(Event::Append {
                     kind,
                     len: bytes.len(),
-                })
+                });
             });
             self.0.append_bytes(bytes);
         }
