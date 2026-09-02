@@ -236,6 +236,7 @@ pub use g1::Bn254G1;
 pub use g1_affine::Bn254G1Affine;
 pub use g2::Bn254G2;
 pub use gt::Bn254GT;
+pub use msm::SmallScalar;
 
 use ark_bn254::Bn254 as ArkBn254;
 use ark_ec::pairing::Pairing;
@@ -266,6 +267,17 @@ impl Bn254 {
     pub fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Bn254G1 {
         use ark_std::UniformRand;
         Bn254G1(ark_bn254::G1Projective::rand(rng))
+    }
+
+    /// MSM with small unsigned scalars (`u8`/`u16`/`u32`): one 8-bit window
+    /// per scalar byte instead of the full-width signed-digit Pippenger.
+    pub fn g1_affine_msm_small<S: SmallScalar>(bases: &[Bn254G1Affine], scalars: &[S]) -> Bn254G1 {
+        assert_eq!(
+            bases.len(),
+            scalars.len(),
+            "g1_msm_small: bases/scalars length mismatch"
+        );
+        Bn254G1(msm::g1_msm_small(bases, scalars))
     }
 }
 

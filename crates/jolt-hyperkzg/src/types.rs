@@ -117,6 +117,14 @@ pub struct HyperKZGProverSetup<P: PairingGroup> {
     pub(crate) g2_powers: Vec<P::G2>,
 }
 
+impl<P: PairingGroup> HyperKZGProverSetup<P> {
+    /// SRS G1 powers `[g1, beta * g1, ...]`, for committing outside the
+    /// generic `CommitmentScheme::commit` path (e.g. small-scalar MSMs).
+    pub fn g1_powers(&self) -> &[P::G1Affine] {
+        &self.g1_powers
+    }
+}
+
 /// Verifier setup powers needed for the degree-three KZG pairing check.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(bound(

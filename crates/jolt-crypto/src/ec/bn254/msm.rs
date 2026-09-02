@@ -88,3 +88,113 @@ fn booth_digit(scalar: &BigInteger256, window: usize, width: usize) -> i32 {
         -((!(magnitude - 1) & ((1 << width) - 1)) as i32)
     }
 }
+
+/// Scalar type for [`g1_msm_small`]: an unsigned integer read as little-endian
+/// 8-bit Pippenger digits.
+pub trait SmallScalar: Copy + Send + Sync {
+    /// Number of 8-bit windows.
+    const WINDOWS: usize;
+    fn byte(self, window: usize) -> u8;
+}
+
+macro_rules! impl_small_scalar {
+    ($($ty:ty),*) => {
+        $(impl SmallScalar for $ty {
+            const WINDOWS: usize = std::mem::size_of::<$ty>();
+
+            #[inline(always)]
+            fn byte(self, window: usize) -> u8 {
+                (self >> (8 * window)) as u8
+            }
+        })*
+    };
+}
+
+impl_small_scalar!(u8, u16, u32);
+
+/// MSM for small unsigned scalars: one 8-bit bucket window per scalar byte
+/// (`S::WINDOWS` mixed additions per point, buckets L1-resident), base chunks
+/// processed in parallel and their partial sums combined at the end.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "bucket index is a nonzero byte minus one within a 255-entry window"
+)]
+pub(super) fn g1_msm_small<S: SmallScalar>(bases: &[Bn254G1Affine], scalars: &[S]) -> G1Projective {
+    if bases.is_empty() {
+        return G1Projective::zero();
+    }
+    let bases = Bn254G1Affine::as_inner_slice(bases);
+    let chunk_len = bases
+        .len()
+        .div_ceil(2 * rayon::current_num_threads())
+        .max(2048);
+    bases
+        .par_chunks(chunk_len)
+        .zip(scalars.par_chunks(chunk_len))
+        .map(|(bases, scalars)| {
+            let mut buckets = vec![Bucket::<G1Config>::ZERO; S::WINDOWS * 255];
+            for (base, scalar) in bases.iter().zip(scalars) {
+                for window in 0..S::WINDOWS {
+                    let digit = scalar.byte(window) as usize;
+                    if digit != 0 {
+                        buckets[window * 255 + digit - 1] += base;
+                    }
+                }
+            }
+            buckets
+                .chunks_exact(255)
+                .rev()
+                .fold(G1Projective::zero(), |mut total, window| {
+                    for _ in 0..8 {
+                        let _doubled = total.double_in_place();
+                    }
+                    let mut running_sum = Bucket::<G1Config>::ZERO;
+                    let mut sum = Bucket::<G1Config>::ZERO;
+                    for bucket in window.iter().rev() {
+                        running_sum += bucket;
+                        sum += &running_sum;
+                    }
+                    total += G1Projective::from(sum);
+                    total
+                })
+        })
+        .reduce(G1Projective::zero, |a, b| a + b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_std::UniformRand;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{RngCore, SeedableRng};
+
+    fn bases(n: usize, rng: &mut ChaCha20Rng) -> Vec<Bn254G1Affine> {
+        (0..n).map(|_| Bn254G1Affine(G1Affine::rand(rng))).collect()
+    }
+
+    fn check<S: SmallScalar + Into<u64>>(n: usize, scalars: Vec<S>) {
+        let mut rng = ChaCha20Rng::seed_from_u64(n as u64);
+        let bases = bases(n, &mut rng);
+        let full: Vec<JoltFr> = scalars.iter().map(|s| JoltFr::from((*s).into())).collect();
+        assert_eq!(g1_msm_small(&bases, &scalars), g1_msm(&bases, &full));
+    }
+
+    #[test]
+    fn small_scalar_msm_matches_full_width() {
+        let mut rng = ChaCha20Rng::seed_from_u64(7);
+        for n in [1, 2, 31, 1000, 4097] {
+            check(n, (0..n).map(|_| rng.next_u32() as u8).collect());
+            check(n, (0..n).map(|_| rng.next_u32() as u16).collect());
+            check(n, (0..n).map(|_| rng.next_u32()).collect());
+        }
+    }
+
+    #[test]
+    fn small_scalar_msm_edge_values() {
+        check(64, vec![0u16; 64]);
+        check(64, vec![u16::MAX; 64]);
+        check(64, vec![u32::MAX; 64]);
+        check(5, vec![0u16, 1, 255, 256, u16::MAX]);
+        assert_eq!(g1_msm_small::<u16>(&[], &[]), G1Projective::zero());
+    }
+}
