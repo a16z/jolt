@@ -81,7 +81,7 @@ impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
 /// Opening proof for the HyperKZG protocol.
 ///
 /// - `com`: intermediate polynomial commitments from the Gemini folding (ell - 1 elements)
-/// - `w`: KZG witness commitments for the three evaluation points `[r, -r, r^2]`
+/// - `w`: KZG witness commitment for the three evaluation points `[r, -r, r^2]`
 /// - `v`: evaluations of all intermediate polynomials at the three points
 ///   (`v[t][k]` = polynomial k evaluated at point t)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,29 +91,25 @@ impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
 ))]
 pub struct HyperKZGProof<P: PairingGroup> {
     pub com: Vec<P::G1>,
-    pub w: [P::G1; 3],
+    pub w: P::G1,
     pub v: [Vec<P::ScalarField>; 3],
 }
 
 /// Prover setup: SRS G1 and G2 powers.
 ///
 /// G1 powers: `[g1, beta * g1, beta^2 * g1, ..., beta^n * g1]`
-/// G2 powers: `[g2, beta * g2]` (only two needed for KZG verification).
+/// G2 powers through `beta^3 * g2` for the degree-three batch opening divisor.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "P::G1: Serialize, P::G2: Serialize",
-    deserialize = "P::G1: for<'a> Deserialize<'a>, P::G2: for<'a> Deserialize<'a>"
+    serialize = "P::G1Affine: Serialize, P::G2: Serialize",
+    deserialize = "P::G1Affine: for<'a> Deserialize<'a>, P::G2: for<'a> Deserialize<'a>"
 ))]
 pub struct HyperKZGProverSetup<P: PairingGroup> {
-    pub(crate) g1_powers: Vec<P::G1>,
+    pub(crate) g1_powers: Vec<P::G1Affine>,
     pub(crate) g2_powers: Vec<P::G2>,
 }
 
-/// Verifier setup: the four G1/G2 elements needed for pairing checks.
-///
-/// - `g1`: generator $g$
-/// - `g2`: generator $h$
-/// - `beta_g2`: $\beta \cdot h$ (for KZG pairing check)
+/// Verifier setup powers needed for the degree-three KZG pairing check.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "P::G1: Serialize, P::G2: Serialize",
@@ -121,27 +117,32 @@ pub struct HyperKZGProverSetup<P: PairingGroup> {
 ))]
 pub struct HyperKZGVerifierSetup<P: PairingGroup> {
     pub(crate) g1: P::G1,
+    pub(crate) beta_g1: P::G1,
+    pub(crate) beta_sq_g1: P::G1,
     pub(crate) g2: P::G2,
     pub(crate) beta_g2: P::G2,
+    pub(crate) beta_sq_g2: P::G2,
+    pub(crate) beta_cu_g2: P::G2,
 }
 
 impl<P: PairingGroup> From<&HyperKZGProverSetup<P>> for HyperKZGVerifierSetup<P> {
     /// # Panics
     ///
-    /// Panics on a hand-built setup with empty power vectors. The fields are
-    /// public, so the type cannot enforce the invariant itself; every
-    /// generation path (`setup_from_secret`, SRS loading) produces at least
-    /// one G1 power and exactly two G2 powers, and conversion happens at
-    /// setup time, never on the proof-verification path.
+    /// Panics on a hand-built setup with fewer than three G1 powers or four
+    /// G2 powers. `setup_from_secret` produces both required prefixes.
     #[expect(
         clippy::indexing_slicing,
-        reason = "setup-time conversion; all generation paths produce >= 1 G1 and exactly 2 G2 powers (see Panics)"
+        reason = "setup_from_secret produces at least 3 G1 powers and exactly 4 G2 powers (see Panics)"
     )]
     fn from(prover: &HyperKZGProverSetup<P>) -> Self {
         Self {
-            g1: prover.g1_powers[0],
+            g1: P::g1_from_affine(&prover.g1_powers[0]),
+            beta_g1: P::g1_from_affine(&prover.g1_powers[1]),
+            beta_sq_g1: P::g1_from_affine(&prover.g1_powers[2]),
             g2: prover.g2_powers[0],
             beta_g2: prover.g2_powers[1],
+            beta_sq_g2: prover.g2_powers[2],
+            beta_cu_g2: prover.g2_powers[3],
         }
     }
 }

@@ -67,11 +67,10 @@ fuzz_target!(|data: &[u8]| {
             }
         }
         _ => {
-            // Tamper witness commitments (exercises pairing check)
-            let idx = (data[1] as usize) % tampered.w.len();
+            // Tamper witness commitment (exercises pairing check)
             let scalar = Fr::from_bytes(&data[2..]);
-            tampered.w[idx] = tampered.w[idx].scalar_mul(&scalar);
-            if tampered.w[idx] == proof.w[idx] {
+            tampered.w = tampered.w.scalar_mul(&scalar);
+            if tampered.w == proof.w {
                 return;
             }
         }

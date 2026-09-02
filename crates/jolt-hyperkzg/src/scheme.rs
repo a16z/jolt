@@ -57,14 +57,20 @@ where
         g1: P::G1,
         g2: P::G2,
     ) -> HyperKZGProverSetup<P> {
-        let mut g1_powers = Vec::with_capacity(max_degree + 1);
+        let mut g1_powers = Vec::with_capacity(max_degree.max(2) + 1);
         let mut cur = g1;
-        for _ in 0..=max_degree {
+        for _ in 0..=max_degree.max(2) {
             g1_powers.push(cur);
             cur = cur.scalar_mul(&beta);
         }
+        let g1_powers = P::g1_to_affine(&g1_powers);
 
-        let g2_powers = vec![g2, g2.scalar_mul(&beta)];
+        let mut g2_powers = Vec::with_capacity(4);
+        let mut cur = g2;
+        for _ in 0..4 {
+            g2_powers.push(cur);
+            cur = cur.scalar_mul(&beta);
+        }
 
         HyperKZGProverSetup {
             g1_powers,
@@ -234,7 +240,7 @@ where
         }
 
         // Batch KZG pairing check
-        if !kzg_verify_batch::<P, T>(vk, &com, &proof.w, &u, &proof.v, transcript) {
+        if !kzg_verify_batch::<P, T>(vk, &com, proof.w, &u, &proof.v, transcript) {
             return Err(HyperKZGError::PairingCheckFailed);
         }
 
@@ -263,8 +269,10 @@ impl<P: PairingGroup> DeriveSetup<HyperKZGProverSetup<P>> for PedersenSetup<P::G
             capacity + 1,
         );
         let (message_generators, rest) = source.g1_powers.split_at(capacity);
-        let blinding_generator = *rest.first().expect("length checked by the assert above");
-        PedersenSetup::new(message_generators.to_vec(), blinding_generator)
+        let message_generators = message_generators.iter().map(P::g1_from_affine).collect();
+        let blinding_generator =
+            P::g1_from_affine(rest.first().expect("length checked by the assert above"));
+        PedersenSetup::new(message_generators, blinding_generator)
     }
 }
 
@@ -347,7 +355,7 @@ where
         assert_eq!(commitments.len(), scalars.len());
         let bases: Vec<P::G1> = commitments.iter().map(|c| c.point).collect();
         HyperKZGCommitment {
-            point: P::G1::msm(&bases, scalars),
+            point: P::g1_msm(&bases, scalars),
         }
     }
 }

@@ -6,7 +6,8 @@
 use jolt_crypto::{JoltGroup, PairingGroup};
 use jolt_field::JoltField;
 use jolt_transcript::{AppendToTranscript, Transcript};
-use num_traits::{One, Zero};
+use num_traits::Zero;
+use rayon::prelude::*;
 
 use crate::error::HyperKZGError;
 use crate::types::{HyperKZGProverSetup, HyperKZGVerifierSetup};
@@ -23,55 +24,37 @@ pub(crate) fn kzg_commit<P: PairingGroup>(
             have: setup.g1_powers.len(),
             need: coeffs.len(),
         })?;
-    Ok(P::G1::msm(bases, coeffs))
-}
-
-/// Computes the KZG witness polynomial `h(x) = f(x) / (x - u)`.
-///
-/// Uses Horner's method in reverse: `h[i-1] = f[i] + h[i] * u`.
-/// The remainder is `f(u)`, but we don't need it since the verifier
-/// can derive it from the evaluation vectors.
-pub(crate) fn compute_witness_polynomial<F: JoltField>(f: &[F], u: F) -> Vec<F> {
-    let d = f.len();
-    if d <= 1 {
-        return vec![];
-    }
-    let mut h = vec![F::zero(); d - 1];
-    let mut acc = F::zero();
-    for (hi, &fi) in h.iter_mut().rev().zip(f.iter().skip(1).rev()) {
-        acc = fi + acc * u;
-        *hi = acc;
-    }
-    h
+    Ok(P::g1_affine_msm(bases, coeffs))
 }
 
 /// Evaluates a polynomial (in evaluation/coefficient form) at a point.
 ///
 /// Standard Horner evaluation: `f(u) = f[0] + f[1]*u + f[2]*u^2 + ...`
 pub(crate) fn eval_univariate<F: JoltField>(coeffs: &[F], u: F) -> F {
-    let mut result = F::zero();
-    let mut power = F::one();
-    for &c in coeffs {
-        result += c * power;
-        power *= u;
-    }
-    result
+    coeffs
+        .iter()
+        .rev()
+        .fold(F::zero(), |result, &coefficient| result * u + coefficient)
 }
 
-/// Batch KZG opening: commits to witness polynomials for each evaluation point.
+/// Batch KZG opening at three points with one degree-three quotient witness.
 ///
 /// Given polynomials `f[0..k]` and evaluation points `u[0..t]`, computes:
 /// - `v[i][j]` = f_j(u_i) for all i, j
 /// - Linear combination `B = sum_j q^j * f_j` using Fiat-Shamir challenge
-/// - Witness commitments `w[i]` = commit(B(x) / (x - u_i))
+/// - Witness commitment `w` = commit(B(x) / product_i(x - u_i))
 ///
 /// Returns `(w, v)`.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "evaluation rows and points are fixed-size arrays of length three"
+)]
 pub(crate) fn kzg_open_batch<P, T>(
     f: &[Vec<P::ScalarField>],
     u: &[P::ScalarField; 3],
     setup: &HyperKZGProverSetup<P>,
     transcript: &mut T,
-) -> ([P::G1; 3], [Vec<P::ScalarField>; 3])
+) -> (P::G1, [Vec<P::ScalarField>; 3])
 where
     P: PairingGroup,
     T: Transcript<Challenge = P::ScalarField>,
@@ -81,8 +64,11 @@ where
     let k = f.len();
 
     // Compute evaluations v[t][j] = f_j(u_t)
-    let v: [Vec<P::ScalarField>; 3] =
-        (*u).map(|ui| f.iter().map(|fj| eval_univariate(fj, ui)).collect());
+    let evaluations = f
+        .par_iter()
+        .map(|fj| (*u).map(|ui| eval_univariate(fj, ui)))
+        .collect::<Vec<_>>();
+    let v = std::array::from_fn(|i| evaluations.iter().map(|row| row[i]).collect());
 
     // Absorb all evaluations into transcript
     for row in &v {
@@ -96,43 +82,36 @@ where
     let q_powers = challenge_powers(q, k);
 
     // B(x) = sum_j q^j * f_j(x)
-    let poly_len = f.first().map_or(0, Vec::len);
-    let mut b_poly = vec![P::ScalarField::zero(); poly_len];
-    for (fj, &qj) in f.iter().zip(q_powers.iter()) {
-        for (b, &c) in b_poly.iter_mut().zip(fj.iter()) {
-            *b += qj * c;
-        }
+    let mut b_poly = f.first().cloned().unwrap_or_default();
+    for (fj, &qj) in f.iter().zip(q_powers.iter()).skip(1) {
+        b_poly
+            .par_iter_mut()
+            .zip(fj.par_iter())
+            .for_each(|(b, &c)| *b += qj * c);
     }
 
-    // Compute witness polynomials and commit
-    let w: [P::G1; 3] = (*u).map(|ui| {
-        let h = compute_witness_polynomial::<P::ScalarField>(&b_poly, ui);
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "prover SRS covers the full polynomial length and the witness polynomial is strictly shorter"
-        )]
-        let bases = &setup.g1_powers[..h.len()];
-        P::G1::msm(bases, &h)
-    });
+    let divisor = vanishing_polynomial(u);
+    let h = divide_by_monic_cubic(&b_poly, &divisor);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "prover SRS covers the full polynomial length and the witness polynomial is strictly shorter"
+    )]
+    let bases = &setup.g1_powers[..h.len()];
+    let w = P::g1_affine_msm(bases, &h);
 
-    // Absorb witness commitments and mirror the verifier's `d_0` challenge
-    // to keep prover/verifier transcripts in sync.
-    for wi in &w {
-        transcript.append(wi);
-    }
-    let _d_0: P::ScalarField = transcript.challenge();
+    transcript.append(&w);
 
     (w, v)
 }
 
 /// Batch KZG verification: checks that commitments open correctly at all points.
 ///
-/// Optimized for the t=3 case used by HyperKZG. The pairing check verifies:
-/// `e(L, g2) == e(R, beta_g2)`
+/// Optimized for the t=3 case used by HyperKZG. The pairing check verifies
+/// `e(C_B - C_R, g2) == e(W, Z(beta) * g2)`.
 pub(crate) fn kzg_verify_batch<P, T>(
     vk: &HyperKZGVerifierSetup<P>,
     com: &[P::G1],
-    wit: &[P::G1; 3],
+    wit: P::G1,
     u: &[P::ScalarField; 3],
     v: &[Vec<P::ScalarField>; 3],
     transcript: &mut T,
@@ -159,17 +138,7 @@ where
     let q: P::ScalarField = transcript.challenge();
     let q_powers = challenge_powers(q, k);
 
-    // Absorb witness commitments
-    for wi in wit {
-        transcript.append(wi);
-    }
-    let d_0: P::ScalarField = transcript.challenge();
-    let d_1 = d_0 * d_0;
-
-    // q_power_multiplier = 1 + d_0 + d_1
-    let q_power_multiplier = P::ScalarField::one() + d_0 + d_1;
-    let q_powers_multiplied: Vec<P::ScalarField> =
-        q_powers.iter().map(|qp| *qp * q_power_multiplier).collect();
+    transcript.append(&wit);
 
     // B(u_i) = sum_j q^j * v[i][j]
     let b_u: [P::ScalarField; 3] = v.each_ref().map(|v_i| {
@@ -179,34 +148,69 @@ where
             .fold(P::ScalarField::zero(), |acc, x| acc + x)
     });
 
-    // L = MSM over [C_0..C_{k-1}, W_0, W_1, W_2, g1] with scalars
-    //   [q_powers_multiplied, u_0, u_1*d_0, u_2*d_1, -(b_u[0] + d_0*b_u[1] + d_1*b_u[2])]
-    let mut bases = Vec::with_capacity(k + 4);
-    bases.extend_from_slice(com);
-    bases.push(wit[0]);
-    bases.push(wit[1]);
-    bases.push(wit[2]);
-    bases.push(vk.g1);
+    let Some(remainder) = interpolate_three(u, &b_u) else {
+        return false;
+    };
+    let b_commitment = P::g1_msm(com, &q_powers);
+    let remainder_commitment = P::g1_msm(&[vk.g1, vk.beta_g1, vk.beta_sq_g1], &remainder);
+    let divisor = vanishing_polynomial(u);
+    let divisor_at_beta = vk.g2.scalar_mul(&divisor[0])
+        + vk.beta_g2.scalar_mul(&divisor[1])
+        + vk.beta_sq_g2.scalar_mul(&divisor[2])
+        + vk.beta_cu_g2;
 
-    // The bases side contributes exactly `com.len()` commitments; a
-    // `challenge_powers` regression returning a different count would
-    // otherwise surface as an MSM length panic instead of a clean mismatch.
-    debug_assert_eq!(q_powers_multiplied.len(), k);
-    let mut scalars = Vec::with_capacity(k + 4);
-    scalars.extend_from_slice(&q_powers_multiplied);
-    scalars.push(u[0]);
-    scalars.push(u[1] * d_0);
-    scalars.push(u[2] * d_1);
-    scalars.push(-(b_u[0] + d_0 * b_u[1] + d_1 * b_u[2]));
-
-    let lhs = P::G1::msm(&bases, &scalars);
-
-    // R = W[0] + d_0*W[1] + d_1*W[2]
-    let rhs = wit[0] + wit[1].scalar_mul(&d_0) + wit[2].scalar_mul(&d_1);
-
-    // e(L, g2) * e(-R, beta_g2) == identity
-    let result = P::multi_pairing(&[lhs, -rhs], &[vk.g2, vk.beta_g2]);
+    let result = P::multi_pairing(
+        &[b_commitment - remainder_commitment, -wit],
+        &[vk.g2, divisor_at_beta],
+    );
     result.is_identity()
+}
+
+fn vanishing_polynomial<F: JoltField>(u: &[F; 3]) -> [F; 4] {
+    [
+        -(u[0] * u[1] * u[2]),
+        u[0] * u[1] + u[0] * u[2] + u[1] * u[2],
+        -(u[0] + u[1] + u[2]),
+        F::one(),
+    ]
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "loop bounds pin all polynomial and degree-three divisor indices"
+)]
+fn divide_by_monic_cubic<F: JoltField>(f: &[F], divisor: &[F; 4]) -> Vec<F> {
+    if f.len() <= 3 {
+        return vec![];
+    }
+    let mut quotient = vec![F::zero(); f.len() - 3];
+    for i in (0..quotient.len()).rev() {
+        let mut coefficient = f[i + 3];
+        for offset in 1..=3 {
+            if let Some(next) = quotient.get(i + offset) {
+                coefficient -= divisor[3 - offset] * *next;
+            }
+        }
+        quotient[i] = coefficient;
+    }
+    quotient
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "all indices are reduced modulo fixed-size three-element arrays"
+)]
+fn interpolate_three<F: JoltField>(u: &[F; 3], y: &[F; 3]) -> Option<[F; 3]> {
+    let mut result = [F::zero(); 3];
+    for i in 0..3 {
+        let j = (i + 1) % 3;
+        let k = (i + 2) % 3;
+        let scale = y[i] * ((u[i] - u[j]) * (u[i] - u[k])).inverse()?;
+        result[0] += scale * u[j] * u[k];
+        result[1] -= scale * (u[j] + u[k]);
+        result[2] += scale;
+    }
+    Some(result)
 }
 
 /// Computes `[1, c, c^2, ..., c^{n-1}]`.
@@ -222,32 +226,36 @@ pub(crate) fn challenge_powers<F: JoltField>(c: F, n: usize) -> Vec<F> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::indexing_slicing, reason = "tests index fixture vectors")]
+
     use super::*;
     use jolt_field::{Fr, Ring};
     use num_traits::Zero;
 
     #[test]
-    fn witness_polynomial_division() {
-        // f(x) = 1 + 2x + 3x^2 + 4x^3
-        // f(2) = 1 + 4 + 12 + 32 = 49
-        // h(x) = f(x)/(x-2), so f(x) = (x-2)*h(x) + f(2)
-        let f = vec![
-            Fr::from_u64(1),
-            Fr::from_u64(2),
+    fn cubic_quotient_and_remainder() {
+        let roots = [Fr::from_u64(2), Fr::from_u64(4), Fr::from_u64(6)];
+        let divisor = vanishing_polynomial(&roots);
+        let expected = [
             Fr::from_u64(3),
-            Fr::from_u64(4),
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+            Fr::from_u64(11),
         ];
-        let u = Fr::from_u64(2);
-        let h = compute_witness_polynomial::<Fr>(&f, u);
-
-        // Verify: (x-u)*h(x) + f(u) should reconstruct f(x)
-        for x_val in [0u64, 1, 3, 5, 100] {
-            let x = Fr::from_u64(x_val);
-            let fx = eval_univariate(&f, x);
-            let hx = eval_univariate(&h, x);
-            let fu = eval_univariate(&f, u);
-            assert_eq!(fx, (x - u) * hx + fu);
+        let remainder = [Fr::from_u64(13), Fr::from_u64(17), Fr::from_u64(19)];
+        let mut polynomial = vec![Fr::zero(); expected.len() + divisor.len() - 1];
+        for (i, &a) in expected.iter().enumerate() {
+            for (j, &b) in divisor.iter().enumerate() {
+                polynomial[i + j] += a * b;
+            }
         }
+        for (coefficient, &value) in polynomial.iter_mut().zip(&remainder) {
+            *coefficient += value;
+        }
+
+        assert_eq!(divide_by_monic_cubic(&polynomial, &divisor), expected);
+        let values = roots.map(|root| eval_univariate(&remainder, root));
+        assert_eq!(interpolate_three(&roots, &values), Some(remainder));
     }
 
     #[test]
