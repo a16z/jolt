@@ -219,3 +219,113 @@ Jolt stage 8 total, clear mode (n = L + 4, N = 41; adds RLC: N GT exps + N−1 G
 (ram_d grows to 5–6 for K > 16, i.e. N = 42–43.) Lane C measured Dory proof 29,429 / 32,021 / 34,613 / 37,205 B = these + 3-byte bincode prefix ✓.
 
 GT encodings: `ArkGT` `CanonicalSerialize` → `PairingOutput` → `QuadExtField::serialize_with_mode` ignores `compress` (`A/ff/src/fields/models/quadratic_extension.rs:727-738`) → 12 × 32 B = **384 B always**. The fork has torus compression (`torus_compress_*`, `quadratic_extension.rs:126-147` → 192 B, lossless on the cyclotomic subgroup) and `CompressedFq12(Fq2,Fq2)` = 128 B (`A/curves/bn254/src/fields/compression.rs:13-14, 119`; via `CompressedPairing::CompressedTargetField`, `A/ec/src/pairing.rs:22-42`) but no Jolt crate uses either. G1 = 32 B compressed / 64 uncompressed (`A/ec/src/models/short_weierstrass/mod.rs:118-137, 189-195`), G2 = 64 / 128, Fr = 32.
+
+---
+
+## 4. Transcript
+
+**Production type = `LegacyBlake2bTranscript<Fr>` = `DigestTranscript<Blake2b<U32>, Fr>`** — a chained Blake2b-256 digest, not a spongefish sponge (`crates/jolt-transcript/src/lib.rs:72-74`, `digest.rs:25-199`). Instantiated at: SDK verifier alias `jolt-sdk/src/host_utils.rs:49, 67` (`VerifierTranscript = LegacyBlake2bTranscript<VerifierField>`, unconditional; used by the `#[jolt::provable]` verify closures `jolt-sdk/macros/src/lib.rs:282-290, 1386-1394`); SDK prover = legacy `RV64IMACProver` (`macros/src/lib.rs:935`; `crates/jolt-prover-legacy/src/zkvm/mod.rs:311-322`) whose `Blake2bTranscript` (`legacy/src/transcripts/blake2b.rs:6-35`) is byte-identical; modular harness `crates/jolt-prover/src/profile.rs:69, 723, 739`. Both fronts seed `T::new(b"Jolt")` (`V/verifier.rs:301`; `crates/jolt-prover/src/dory/stages/stage0.rs:153`). Other impls exist but are unused in production: `Blake2bTranscript` (spongefish Blake2b512 bridge), `KeccakTranscript` (spongefish `DuplexSponge<KeccakF1600,200,136>`), `PoseidonTranscript` (lib.rs:65-83), split `ProverTranscript`/`VerifierTranscript` (`prover.rs`, `verifier.rs` — no jolt-prover/jolt-verifier caller).
+
+Mechanics (`digest.rs`): state = 32 B + `n_rounds: u32`. `new(label)`: `state = Blake2b256(label padded to 32)` (:149-171). `append_bytes(p)`: `state ← Blake2b256(state ‖ 0^28 ‖ n_rounds_BE ‖ p)`, `n_rounds += 1` (:91-96, 173-176) — one hash invocation per append, no length prefix. Squeeze: `state ← Blake2b256(state ‖ round)`, 32 B out (:115-120); challenges take **16 bytes** (:178-188). Decode (`crates/jolt-field/src/bn254/mod.rs:165-193`): `challenge()` → `from_challenge_bytes`: `u128` LE, top 3 bits masked → **125-bit** value placed as limbs `[0,0,lo,hi]` via `from_bigint_unchecked` (the Montgomery representation IS the shifted integer, i.e. field element = v·2^128·R⁻¹); `challenge_scalar()` → `from_scalar_challenge_bytes`: 16 bytes as a **big-endian** integer < 2^128 (= `ScalarChallengeEndianness::Big`, `V/config.rs:37-42, 81-83`; `Little` only under akita). Which draw uses which: sumcheck round challenges, `tau`, `tau_high`, `RamOutputCheck` address → `challenge()` (125-bit); batching coefficients, member γs, RLC γ, all Dory challenges → `challenge_scalar()` (128-bit). Per-challenge soundness ≈ 2^-125 / 2^-128.
+
+Absorb encodings (`legacy.rs`, `jolt-crypto`, `jolt-dory`):
+
+| Item | Bytes | Cite |
+|---|---|---|
+| `Fr` | 32, big-endian (LE bytes reversed) | `legacy.rs:120-129`; `bn254/mod.rs:113-124` |
+| `Label(l)` / `LabelWithCount(l,n)` / `U64Word(x)` | 32 each (label zero-padded; count/word as 8-byte BE tail) | `legacy.rs:149-194` |
+| `append_labeled(l, fr)` (input claims, opening claims) | 64 (2 appends) | `legacy.rs:51-54` |
+| commitment GT | `LabelWithCount(b"commitment",384)` + 384 B (`serialize_uncompressed` Fq12, **byte-reversed**) = 416 | `V/verifier.rs:770-800`; `crates/jolt-crypto/src/ec/bn254/gt.rs:138-154` |
+| G1 / G2 (Pedersen, ZK only) | 32 / 64 compressed | `jolt-crypto/src/ec/bn254/mod.rs:162-171` |
+| Dory adapter `JoltToDoryTranscript` (`crates/jolt-dory/src/transcript.rs:27-76`; dory labels ignored) | GT/G1/G2: `LabelWithCount(b"dory_serde", len)` + compressed bytes (GT 384 LE not reversed, G1 32, G2 64) = 416/64/96; Fr: `Label(b"dory_field")` + 32; challenge = Jolt `challenge_scalar()` | `transcript.rs:30-71`; dory-pcs's own `blake2b_transcript.rs` is NOT used (`scheme.rs:288-308`) |
+| compressed sumcheck round, degree d | `LabelWithCount(b"sumcheck_poly", d)` + d·32 = 32(d+1), then 1 squeeze | `S/verifier.rs:110-129`; labels `S/lib.rs:104-111` |
+| uni-skip round, degree d (full) | `LabelWithCount(b"uniskip_poly", d+1)` + (d+1)·32, squeeze, then `opening_claim` 64 | `S/round_proof.rs:80-86`; `uniskip.rs:148-165` |
+| preamble | digest 64 + 14 labeled u64 × 64 + `inputs` (32+|in|) + `outputs` (32+|out|) = 1024 + |in| + |out| | `V/verifier.rs:580-660` |
+| stage-8 RLC / final claim | `LabelWithCount(b"rlc_claims",41)` + 41·32; `EvaluationClaim` = `LabelWithCount(b"opening_point",n)` + n·32 + `Label(b"opening_eval")` + 32 | `stage8/verify.rs:207-244`; `jolt-openings/src/claims.rs:23-35` |
+
+Per-stage recipe: `[stage draws] → m × (sumcheck_claim 64 B) → m × challenge_scalar → n rounds × (32(d+1) B + challenge) → o × (opening_claim 64 B)`; m/n/d/o per stage in §1.
+
+Budget for L = 20, K = 16 (derivation: preamble ≈1,044 with fibonacci-sized IO; commitments 41×416 = 17,056; S1 992+64+128·21+2,240 = 5,984; S2 320+320+128·36+960 = 6,208; S3 3,584; S4 32+128+128·27+448 = 4,064; S5 192 + 128·96 + 20·352 + 4,224 = 23,744; S6a 1,536; S6b 384+192·20+5,120 = 9,344; S7 2,944; S8 1,344 + Dory (896 VMV + 12·2,976 + 160) + 864 = 38,976): **≈114.5 KB absorbed, 398 challenges, ≈3,020 Blake2b compressions** (128-B blocks: each 32-B word = 1, each GT = 5, each squeeze = 1; ≈2,624 append blocks + 398 squeeze blocks). Fr-valued absorbs (the part a circuit must hash if commitments/Dory are hashed natively): 939 round coeffs + 35 uni-skip coeffs + 23 input claims + 261 opening claims + 41 RLC claims ≈ **1,300 Fr**, with 371 squeezes interleaved (stages 1–7 + RLC γ).
+
+**Poseidon** (`crates/jolt-transcript/src/poseidon.rs:36-164`): `PoseidonSponge` implements spongefish `DuplexSpongeInterface<u8>`, so `PoseidonTranscript<F> = SpongeTranscript<PoseidonSponge, F>` (lib.rs:81-83) is a full `Transcript` (`legacy.rs:240-305`). Hash = light-poseidon 0.4 `Poseidon::<Fr>::new_circom(3)` (Circom BN254 x⁵, t = 4, 8 full + 56 partial rounds): 1 capacity + 2 rate Fr per permutation (:54-66). Absorb is **byte-oriented**: one permutation binding the length, then 31-byte LE chunks, two per permutation (:117-133); squeeze `permute(0,0)` → 32 LE bytes cached (:68-85). Under the facade `challenge()` still takes 16 bytes → 125-bit (`legacy.rs:280-292`). `SpongeTranscript::append_bytes` frames `0x9B ‖ len_LE8 ‖ body` (`legacy.rs:262-278`) and `new` absorbs a 64-B `PROTOCOL_ID` (`setup.rs:39`). Consequence: a 32-B Fr costs 2 chunks (31 + 1) = 1 permutation, a GT 13 chunks ≈ 7 permutations; the framing bytes are extra chunks. **Selectable end-to-end today: yes at the type level** — `jolt_verifier::verify<F,PCS,VC,T: Transcript<Challenge=F>>` (`V/verifier.rs:34-48`) and `jolt_prover::dory::prove<F,PCS,VC,T,W>` (`crates/jolt-prover/src/dory/prover.rs:110-126`) are generic; jolt-verifier's `transcript-*` Cargo features are empty/unreferenced (`crates/jolt-verifier/Cargo.toml:27-29`). Hardwired names: `host_utils.rs:6-19` (legacy `ProofTranscript` by feature), `:49, :67` (verifier Blake2b, unconditional), `profile.rs:69`, `legacy zkvm/mod.rs:43-47, 303-322`, tests/byte-diff (`crates/jolt-prover/tests/dory_byte_diff.rs`, `zk_e2e.rs`, `crates/jolt-verifier/tests/fs_attacks.rs:24`). Switch cost (estimate): modular prove+verify with Poseidon = one type argument (0 source edits, e.g. a `profile.rs` alias); SDK-integrated = 2 aliases in `host_utils.rs` + porting the macro prove path (`macros/src/lib.rs:826-935`) from `RV64IMACProver` to `jolt_prover::dory::prove` (~1 day incl. fixtures) — the legacy prover's `transcripts/poseidon.rs` (width-3 `hash(state, n_rounds, data)`, forces 254-bit challenges) is NOT byte-compatible with `PoseidonSponge`, so `--features transcript-poseidon` today yields SDK proofs the SDK verifier cannot check. For a wrapper the right target is a **field-native** Poseidon transcript (absorb Fr as one element; absorb GT/G1/G2 natively or via a digest) implemented on both fronts — new code (lane A estimated 300–500 lines; prior art `PoseidonR1csTranscript` in prover-stack 03), since the byte-chunked `PoseidonSponge` doubles permutation count and drags `0x9B ‖ len` framing into the circuit.
+
+---
+
+## 5. Serialization
+
+**Serializer = serde + bincode 2.0.1 `config::standard()`** (little-endian, varint ints): `jolt-sdk/src/host_utils.rs:79-111` (`serialize_verifier_object` = `bincode::serde::encode_to_vec`; `serialize_and_print_size`), modular runner `crates/jolt-prover/src/profile.rs:734-736`. Proof type on the SDK path: `RV64IMACProof = jolt_verifier::JoltProof<DoryScheme, Pedersen<Bn254G1>>` (`host_utils.rs:43-56`; legacy prover output converted by `proof_parts_into_verifier`, `crates/jolt-prover-legacy/src/zkvm/proof.rs:423-473`; uni-skip → `ClearProof::Full`, batches → `ClearProof::Compressed`, `:529-568`). Arkworks `CanonicalSerialize` survives only inside the Dory blob and `JoltDevice`.
+
+Encodings (bincode rules: varint ≤250 → 1 B, ≤u16 → 3 B, ≤u32 → 5 B; `Option` tag 1 B; enum variant = varint index; seq = varint len + elements; structs/tuples/arrays no header — `bincode-2.0.1/src/features/serde/ser.rs`, `varint/`):
+
+| Type | Bytes | Cite |
+|---|---|---|
+| `Fr` (`[u8;32]` tuple, LE, no prefix) | **32** | `crates/jolt-field/src/ops.rs:169-177` |
+| `UnivariatePoly<F>` (n coeffs) / `CompressedPoly<F>` (d coeffs) | 1 + 32n / 1 + 32d | `jolt-poly/src/univariate.rs:25-29`, `compressed_univariate.rs:20-23` |
+| `SumcheckProof::Clear(ClearProof::X(Vec))` per stage | 3 B overhead + polys | `S/proof.rs:26-61` |
+| GT commitment (`serialize_bytes` of 384 B Fq12) | **387** | `jolt-crypto/src/ec/bn254/gt.rs:197-205`; `jolt-dory/src/types.rs:36-40` |
+| `JoltCommitments` (N GT, 3 Vecs) | 387N + 3 | `V/proof.rs:103-110` |
+| Dory proof (`canonical_serialize` compressed → `serialize_bytes`) | 3 + 914 + 2592σ | `jolt-dory/src/types.rs:78-82, 153-162`; `D/backends/arkworks/ark_serde.rs:324-372` |
+| `ClearProofClaims` (266 Fr + 12 Vec prefixes + 11 Option tags + enum tag) | **8,536** | `V/proof.rs:142-170`; per-stage structs `V/stages/*/outputs.rs` |
+| `protocol` 3, `untrusted_advice_commitment: None` 1, `trace_length`/`ram_K` varints 5+3..5, `rw_config` 4, `one_hot_config` 2, `trace_polynomial_order` 1 | ≈19–21 | `V/proof.rs:44-59`; `V/config.rs:19-49`; `C/geometry/dimensions.rs:21-25, 231-236, 314-317` |
+
+Claims are values only; opening points are re-derived by the verifier and never serialized (`V/stages/relations.rs:68-73`). Per-stage claim counts: 36 / 19 / 16 / 7 / 66 / 2 / 81 / 39 = 266 Fr.
+
+Byte formula (L = log_T, K = log2 ram_K, K_b = bytecode log_k ≥ 4, N = 34 + bytecode_d + ram_d, σ = ⌈(L+4)/2⌉; stages 2/4 assumed at full degree 3):
+```
+bytes(L) = 3 + (387N + 3)                                   protocol, commitments
+         + (3 + 1 + 28·32) + (3 + 1 + 7·32)                 uni-skips: 900 + 228
+         + [3 + 97(L+1)] + [3 + 97(L+K)] + [3 + 97L] + [3 + 97(L+7)]   stages 1–4 (97 = 1 + 3·32)
+         + [3 + 65·128 + 321·L]                             stage 5 (65 = 1+2·32, 321 = 1+10·32)
+         + [3 + 65(K_b − 4) + 97·4]                         stage 6a
+         + [3 + 161·L] + [3 + 65·4]                         stages 6b, 7
+         + (917 + 2592·σ)                                   Dory
+         + 8,536 + ≈20                                      claims, misc
+```
+Slope: **+870 B per unit of L** (4×97 + 321 + 161) plus **+2,592 B per Dory round** (one per 2 units of L) ⇒ +4,332 B per 4× trace, exactly lane C's measured slope.
+
+| Component | L=18 (σ=11) | L=20 (σ=12) | L=22 (σ=13) | L=24 (σ=14) |
+|---|---|---|---|---|
+| commitments (41 GT) | 15,870 | 15,870 | 15,870 | 15,870 |
+| uni-skip polys | 1,128 | 1,128 | 1,128 | 1,128 |
+| stage 1–4 batches (K=16) | 9,324 | 10,100 | 10,876 | 11,652 |
+| stage 5 | 14,101 | 14,743 | 15,385 | 16,027 |
+| stage 6a / 6b / 7 | 911 / 2,901 / 263 | 911 / 3,223 / 263 | 911 / 3,545 / 263 | 911 / 3,867 / 263 |
+| claims | 8,536 | 8,536 | 8,536 | 8,536 |
+| Dory proof | 29,429 | 32,021 | 34,613 | 37,205 |
+| misc | 21 | 21 | 21 | 21 |
+| **formula (K=16)** | **82,484** | **86,816** | **91,148** | **95,480** |
+| **lane C measured (fibonacci, K=13)** | **82,191** | **86,523** | **90,855** | **95,187** |
+
+Residual +293 B = 3 fewer stage-2 rounds for fibonacci (K = 13: −291 B) + 2 B varint — the formula is exact once K is set to the program's actual `log2 ram_K`. Shares at L=20: Dory 37%, sumcheck polys 35% (stage 5 alone 17%; its 128 degree-2 address rounds = 8.3 KB), commitments 18%, claims 10%. GT elements (41 + 6σ+2 = 115 at L=20) = 44 KB = 51% of the proof; torus compression (192 B) would save ≈22 KB, `CompressedFq12` (128 B) ≈29 KB — neither wired.
+
+---
+
+## 6. Circuit-cost implications (for an Fr-native R1CS of the verifier)
+
+Assumptions, stated once: Fr mul = 1 constraint, linear ops free; Fr inversion = 1 constraint with a witness hint (+1 non-zero check); `eq(r, x)` over n vars with both sides witness = n constraints; Poseidon t=4 (rate 2) permutation ≈ 264 constraints (lane E's count, prover-stack 03), Poseidon2 t=8 ≈ 55 constraints per absorbed element (orchestrator note); non-native Fq mul = N_Fq constraints (N_Fq ≈ 1,000 plain R1CS per lane D; 2,716 for prover-stack `FqVar`; ≈30–60 only with a lookup argument Spartan does not have); Fq12 mul ≈ 54 Fq mults; GT exp by a 254-bit scalar ≈ 254 sqr + 127 mul ≈ 16k Fq mults (generic pow as the code does; cyclotomic squaring would cut ~40%); G1 scalar mul ≈ 3k Fq mults, G2 ≈ 9k; 4-way multi-pairing ≈ 25–30k Fq mults (estimate). All "≈" figures are estimates.
+
+**Cheap (pure Fr algebra) — the whole of stages 1–7 and the stage-8 RLC arithmetic**, at L = 20, K = 16, config as above:
+
+| Piece | constraints (≈) | note |
+|---|---|---|
+| all round checks (939 compressed coeffs + 35 uni-skip; Horner at r) | 1.0k | exact count = wire coefficients; per-round degree is deterministic from (L, K, config) — the circuit must pin the ACTUAL per-phase degrees (2 in stage-5 address rounds, 2/3 in 6a), not the bounds, or it wastes ≈1,000 witness slots and hashes |
+| batch heads, alias checks, 2^k scalings | 0.1k | |
+| S1 expected output (1,296-term fold, R1CS coefficient table, Lagrange over 10 nodes, 60 inv) | 6.5k | table weights depend on `r_uniskip` (witness) → not constants |
+| S2 (Lagrange(3) ×many, ~10 eqs, IO MLE) | 2k + 5·|IO words|·(io_vars+1) | dedupe the recomputed Lagrange/kernel factors (native code recomputes ≈288 inversions) |
+| S3 (EqPlusOne ×6 at O(L²) natively) | 6k → 0.5k | use the O(L) `eq_plus_one` recursion in-circuit |
+| S4 (LT, eqs) | 0.4k | |
+| S4 **initial-RAM MLE** | `(K+1)·(#image words + #inputs)` ≈ 17/word | **program-size dependent**: fibonacci ≈ 10³ words → ≈17k; 1 MiB image → 2.2M — must go |
+| S5 (54 table MLEs ≈10k, eq/LT/operands ≈1k with sharing; 560-term fold) | 12–14k | data-independent, all 54 evaluated |
+| S6a | 0.2k | |
+| S6b **bytecode fold** | `≈10·code_size + 2^log_k` | **program-size dependent**: 45k at 4,096 rows, 720k at 65,536 — must go |
+| S6b rest, S7 | 1k | |
+| S8 RLC (γ powers, joint claim, embedding scales) | 1–2k | |
+| **subtotal, program-size terms excluded** | **≈25–30k** | |
+
+Both program-size loops disappear in committed-program mode (`ProgramPreprocessing::Committed`): the verifier then opens `BytecodeValClaim(s)`/`ProgramImageInit` via extra Dory commitments (`bytecode_chunk_count + 1` GT) and extra stage 6a/6b/7 members — Fr-cheap in-circuit, but N and hence the native GT RLC grow, and the circuit shape depends on `bytecode_chunk_count`. Alternative: leave the two MLEs as *deferred native checks* whose results enter the circuit as public inputs (the values are cheap natively; the point `r_address` is a circuit output).
+
+**Transcript in-circuit** (the dominant Fr-side cost). Hidden data only (≈1,300 Fr absorbs + 371 squeezes, commitments/Dory hashed natively with the transcript state passed at the stage-0/stage-8 boundaries): Poseidon t=4 ≈ (650 + 371) perms × 264 ≈ **270k**; Poseidon2 t=8 (rate 7, ≈385 per permutation) with one duplex permutation per round (absorb d coeffs, read the challenge from the same permutation) ≈ 290 round perms + ≈30 for member/batch draws + ≈50 for claim absorbs ≈ 370 perms ≈ **≈140k** (estimate; the per-round absorb→squeeze alternation, not the byte volume, sets the floor). Blake2b as-is: ≈3,020 compressions × ≈21k ≈ 63M — infeasible; Keccak worse. Full byte transcript incl. 41 GT + Dory proof (+≈1,500 31-byte chunks) adds ≈200k with t=4. So: inner proof must use a field-native algebraic transcript (§4), and non-Fr data should be hashed natively.
+
+**Expensive (non-native) — only Dory (stage 8 group ops) and the transcript if kept byte-oriented.** At L = 20 (σ = 12, N = 41), online verification = 165 GT exps + 177 GT mults + 40 G1 + 40 G2 scalar muls + one 4-pair multi-pairing ≈ 165·16k + 177·54 + 40·3k + 40·9k + 30k ≈ **3.2M Fq mults**; the deserialization subgroup checks (6σ + 2 + N = 115 GT exps) add ≈1.8M if not trusted. At N_Fq = 1,000 that is ≈3.2–5.0 **billion** constraints; with `FqVar` (2,716) ≈ 9–14B; even a hypothetical 40-constraint lookup-based Fq mul gives ≈130–200M. The 41-term GT RLC alone (`PCS::combine`, ≈660k Fq mults) is ≈0.7B plain constraints. Against a ≈2^19-constraint wrapper budget (lane F) every in-circuit Dory variant is ≥100× over; deferring only the pairing (≈30k Fq mults of 3.2M) saves <1%. Design consequence for lane planning: Dory stays native (or leaves the Fr field entirely, e.g. a Grumpkin-cycle circuit); the Fr circuit = stages 1–7 + RLC arithmetic + algebraic transcript ≈ **170–320k constraints** for a fibonacci-sized program in committed-program mode (≈25–30k verifier algebra + 140–270k transcript + 5–20k program-image/IO terms if not deferred), and the retained native Dory data floors the proof at 41×384 (15.7 KB) + 29–37 KB Dory + wrapper.
+
+Exactness ledger: stage/round/degree/claim/challenge counts, byte formula, Dory op counts, proof element counts, encodings — exact from code (cited); Fr mult counts of expected-output formulas, table-MLE costs, hash-compression counts, Poseidon/N_Fq constraint figures — estimates.
