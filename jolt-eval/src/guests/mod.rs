@@ -122,6 +122,11 @@ pub trait GuestConfig: Default + Send + Sync {
     /// Cargo package name (e.g. "fibonacci-guest").
     fn package(&self) -> &str;
 
+    /// Provable function to build when the package defines more than one.
+    fn func(&self) -> Option<&str> {
+        None
+    }
+
     /// Objective-neutral guest label including parameters
     /// (e.g. "fibonacci_400000"). Objectives prefix it with their own name.
     fn label(&self) -> String;

@@ -44,5 +44,6 @@ pub mod window_mask_b;
 pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 pub mod zero_extend_word;

@@ -1855,12 +1855,24 @@ mod inline_sha3 {
 
     use super::support;
 
-    const KECCAK_ROTRI_ROWS: usize = 696;
+    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
+    const KECCAK_ROTRI_ROWS: usize = 576;
+    // The `[[u64; 17]; 2]` message is 8-byte aligned in the guest, so `digest`
+    // takes its aligned path: two fused absorb-permute blocks read straight
+    // from the caller's memory through `rs2`, then the pad-only final block.
+    // The `&[u8]` entry point always sits behind postcard's length prefix and
+    // can only cover the stack-copy path; `zk_e2e` pins that one.
+    const SHA3_PERMUTATIONS: usize = 3;
 
     #[test]
     fn prover_matches_legacy_on_sha3_inline() {
         let mut program = host::Program::new("sha3-guest");
-        let inputs = postcard::to_stdvec(&[5u8; 32]).expect("serialize input");
+        program.set_func("sha3_aligned");
+        let mut message = [[0u64; 17]; 2];
+        for (i, word) in message.as_flattened_mut().iter_mut().enumerate() {
+            *word = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+        let inputs = postcard::to_stdvec(&message).expect("serialize input");
 
         let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
         let shared = JoltSharedPreprocessing::new(
@@ -1896,8 +1908,8 @@ mod inline_sha3 {
                     row.instruction.instruction_kind == JoltInstructionKind::VirtualROTRI
                 })
                 .count(),
-            KECCAK_ROTRI_ROWS,
-            "one Keccak permutation must be expanded into the modular trace",
+            KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
+            "two aligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
         );
         let program_preprocessing = verifier_preprocessing
             .program

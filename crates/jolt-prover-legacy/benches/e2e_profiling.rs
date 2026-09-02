@@ -53,23 +53,39 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
 }
 
 fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("fibonacci-guest", postcard::to_stdvec(&400000u32).unwrap())
+    prove_example(
+        "fibonacci-guest",
+        "fib",
+        postcard::to_stdvec(&400000u32).unwrap(),
+    )
 }
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     #[cfg(feature = "host")]
     use jolt_inlines_sha2 as _;
-    prove_example("sha2-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
+    prove_example(
+        "sha2-guest",
+        "sha2",
+        postcard::to_stdvec(&vec![5u8; 2048]).unwrap(),
+    )
 }
 
 fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     #[cfg(feature = "host")]
     use jolt_inlines_keccak256 as _;
-    prove_example("sha3-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
+    prove_example(
+        "sha3-guest",
+        "sha3",
+        postcard::to_stdvec(&vec![5u8; 2048]).unwrap(),
+    )
 }
 
 fn btreemap() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("btreemap-guest", postcard::to_stdvec(&50u32).unwrap())
+    prove_example(
+        "btreemap-guest",
+        "btreemap",
+        postcard::to_stdvec(&50u32).unwrap(),
+    )
 }
 
 fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -82,7 +98,7 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         CYCLES_PER_SHA256,
     );
     inputs.append(&mut postcard::to_stdvec(&iters).unwrap());
-    prove_example("sha2-chain-guest", inputs)
+    prove_example("sha2-chain-guest", "sha2_chain", inputs)
 }
 
 fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
@@ -91,7 +107,7 @@ fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&20u32).unwrap());
-    prove_example("sha3-chain-guest", inputs)
+    prove_example("sha3-chain-guest", "sha3_chain", inputs)
 }
 
 pub fn master_benchmark(
@@ -206,6 +222,7 @@ pub fn master_benchmark(
 #[cfg(feature = "akita")]
 fn prove_example(
     _example_name: &str,
+    _func: &str,
     _serialized_input: Vec<u8>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     unimplemented!("akita profiling arrives with the packed prove path")
@@ -214,10 +231,12 @@ fn prove_example(
 #[cfg(not(feature = "akita"))]
 fn prove_example(
     example_name: &str,
+    func: &str,
     serialized_input: Vec<u8>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
+    program.set_func(func);
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let (_lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();

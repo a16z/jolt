@@ -3054,6 +3054,7 @@ mod tests {
         DoryGlobals::reset();
 
         let mut program = host::Program::new("sha3-guest");
+        program.set_func("sha3");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
