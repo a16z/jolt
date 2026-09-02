@@ -246,7 +246,8 @@ __device__ __noinline__ void fq12_mul_by_034(const u64 *f, const u64 *c0, const 
     fq6_copy(e, out + FQ6_LIMBS);
 }
 
-__device__ void g2_double_step(u64 *rx, u64 *ry, u64 *rz, const u64 *consts, u64 *coeff) {
+__device__ __noinline__ void g2_double_step(u64 *rx, u64 *ry, u64 *rz, const u64 *consts,
+                                            u64 *coeff) {
     const u64 *two_inv = consts + PC_TWO_INV;
     const u64 *coeff_b = consts + PC_COEFF_B;
 
@@ -291,7 +292,8 @@ __device__ void g2_double_step(u64 *rx, u64 *ry, u64 *rz, const u64 *consts, u64
     fq2_copy(i, coeff + 2 * FQ2_LIMBS);
 }
 
-__device__ void g2_add_step(u64 *rx, u64 *ry, u64 *rz, const u64 *qx, const u64 *qy, u64 *coeff) {
+__device__ __noinline__ void g2_add_step(u64 *rx, u64 *ry, u64 *rz, const u64 *qx, const u64 *qy,
+                                         u64 *coeff) {
     u64 theta[FQ2_LIMBS], lambda[FQ2_LIMBS], c[FQ2_LIMBS], d[FQ2_LIMBS];
     u64 e[FQ2_LIMBS], f[FQ2_LIMBS], g[FQ2_LIMBS], h[FQ2_LIMBS];
     u64 j[FQ2_LIMBS], t[FQ2_LIMBS], u[FQ2_LIMBS];
@@ -329,7 +331,7 @@ __device__ void g2_add_step(u64 *rx, u64 *ry, u64 *rz, const u64 *qx, const u64 
     fq2_copy(j, coeff + 2 * FQ2_LIMBS);
 }
 
-__device__ void ell(u64 *f, const u64 *coeff, const u64 *px, const u64 *py) {
+__device__ __noinline__ void ell(u64 *f, const u64 *coeff, const u64 *px, const u64 *py) {
     u64 c0[FQ2_LIMBS], c1[FQ2_LIMBS], scratch[FQ12_LIMBS];
     fq2_mul_by_fp(coeff, py, c0);
     fq2_mul_by_fp(coeff + FQ2_LIMBS, px, c1);
@@ -337,8 +339,8 @@ __device__ void ell(u64 *f, const u64 *coeff, const u64 *px, const u64 *py) {
     fq12_copy(scratch, f);
 }
 
-__device__ void g2_mul_by_char(const u64 *qx, const u64 *qy, const u64 *consts, u64 *outx,
-                               u64 *outy) {
+__device__ __noinline__ void g2_mul_by_char(const u64 *qx, const u64 *qy, const u64 *consts,
+                                            u64 *outx, u64 *outy) {
     u64 t[FQ2_LIMBS];
     fq2_conj(qx, t);
     fq2_mul(t, consts + PC_TWIST_Q_X, outx);
