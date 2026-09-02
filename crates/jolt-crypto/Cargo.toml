@@ -31,7 +31,13 @@ bn254 = [
   "dep:num-traits",
   "parallel",
 ]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
+parallel = [
+  "dep:rayon",
+  "jolt-poly/parallel",
+  "ark-ec/parallel",
+  "ark-ff/parallel",
+  "ark-std/parallel",
+]
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
