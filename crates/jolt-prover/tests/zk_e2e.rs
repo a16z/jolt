@@ -29,7 +29,13 @@ mod zk {
     use tracer::execution_backend::TracerBackend;
 
     const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
-    const KECCAK_ROTRI_ROWS: usize = 696;
+    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
+    const KECCAK_ROTRI_ROWS: usize = 576;
+    // The `&[u8]` guest input sits behind postcard's 2-byte length prefix, so
+    // `digest` takes its unaligned path: two fused absorb-permute blocks staged
+    // through stack copies, then a padded final block.
+    const SHA3_INPUT_LEN: usize = 300;
+    const SHA3_PERMUTATIONS: usize = 3;
 
     type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 
@@ -59,12 +65,11 @@ mod zk {
     }
 
     fn guest_run(
-        guest_name: &str,
+        mut source: Program,
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> GuestRun {
-        let mut source = Program::new(guest_name);
         let (_, sizing_trace, _, device) = source.trace(inputs, untrusted_advice, trusted_advice);
         assert!(
             sizing_trace.len().next_power_of_two() <= MAX_PADDED_TRACE_LENGTH,
@@ -125,14 +130,14 @@ mod zk {
     }
 
     fn prove_guest(
-        guest_name: &str,
+        source: Program,
         inputs: Vec<u8>,
         untrusted_advice: Vec<u8>,
         trusted_advice: Vec<u8>,
         backend: JoltBackend<Fr, DoryScheme>,
         inspect_trace: impl FnOnce(&[TraceRow]),
     ) -> ProvedGuest {
-        let run = guest_run(guest_name, &inputs, &untrusted_advice, &trusted_advice);
+        let run = guest_run(source, &inputs, &untrusted_advice, &trusted_advice);
         inspect_trace(run.trace.trace.rows());
         let config = derive_config(&run.trace, &run.preprocessing);
         let shared = JoltSharedPreprocessing::new(run.preprocessing).expect("shared preprocessing");
@@ -180,7 +185,7 @@ mod zk {
 
     fn prove_muldiv(backend: JoltBackend<Fr, DoryScheme>) -> ProvedGuest {
         prove_guest(
-            "muldiv-guest",
+            Program::new("muldiv-guest"),
             postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
             Vec::new(),
             Vec::new(),
@@ -227,9 +232,12 @@ mod zk {
     #[test]
     fn zk_sha3_inline_modular_proof_is_accepted() {
         with_zk_stack(|| {
+            let message: Vec<u8> = (0..SHA3_INPUT_LEN).map(|i| i as u8).collect();
+            let mut program = Program::new("sha3-guest");
+            program.set_func("sha3");
             let proved = prove_guest(
-                "sha3-guest",
-                postcard::to_stdvec(&[5u8; 32]).expect("serialize input"),
+                program,
+                postcard::to_stdvec(&message).expect("serialize input"),
                 Vec::new(),
                 Vec::new(),
                 JoltBackend::optimized(),
@@ -241,7 +249,8 @@ mod zk {
                                     == JoltInstructionKind::VirtualROTRI
                             })
                             .count(),
-                        KECCAK_ROTRI_ROWS,
+                        KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
+                        "two unaligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
                     );
                 },
             );
@@ -265,7 +274,7 @@ mod zk {
     fn zk_advice_consumer_modular_proof_is_accepted() {
         with_zk_stack(|| {
             let proved = prove_guest(
-                "advice-consumer-guest",
+                Program::new("advice-consumer-guest"),
                 postcard::to_stdvec(&12u64).expect("serialize input"),
                 postcard::to_stdvec(&5u64).expect("serialize untrusted advice"),
                 postcard::to_stdvec(&7u64).expect("serialize trusted advice"),
@@ -281,7 +290,7 @@ mod zk {
     fn zk_committed_muldiv_modular_proof_is_accepted() {
         with_zk_stack(|| {
             let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-            let run = guest_run("muldiv-guest", &inputs, &[], &[]);
+            let run = guest_run(Program::new("muldiv-guest"), &inputs, &[], &[]);
             let config = derive_config(&run.trace, &run.preprocessing);
             let preprocessing = jolt_prover::dory::preprocess_committed(run.preprocessing, 2)
                 .expect("committed preprocessing");

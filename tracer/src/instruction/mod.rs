@@ -167,6 +167,7 @@ use virtual_window_mask_b::VirtualWindowMaskB;
 use virtual_window_mask_h::VirtualWindowMaskH;
 use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use virtual_xor_rotl1::VirtualXORROTL1;
 use virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
     VirtualXORROTW7, VirtualXORROTW8,
@@ -370,6 +371,7 @@ pub mod virtual_window_mask_b;
 pub mod virtual_window_mask_h;
 pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
 pub mod xor;

@@ -50,6 +50,7 @@ pub mod window_sign_pow2;
 pub mod word_msb;
 pub mod xor;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 
 use jolt_field::JoltField;
@@ -181,6 +182,9 @@ pub enum Prefixes {
     OffsetScaleB,
     OffsetScaleH,
     OffsetScaleW,
+    XorRotL1Acc,
+    XorRotL1Straddle,
+    XorRotL1Wrap,
 }
 
 /// Total number of prefix variants.
@@ -255,6 +259,9 @@ macro_rules! dispatch_prefix {
             Prefixes::OffsetScaleB => offset_scale::OffsetScalePrefix::<1>::$method($($args),*),
             Prefixes::OffsetScaleH => offset_scale::OffsetScalePrefix::<2>::$method($($args),*),
             Prefixes::OffsetScaleW => offset_scale::OffsetScalePrefix::<4>::$method($($args),*),
+            Prefixes::XorRotL1Acc => xor_rotl1::XorRotL1AccPrefix::$method($($args),*),
+            Prefixes::XorRotL1Straddle => xor_rotl1::XorRotL1StraddlePrefix::$method($($args),*),
+            Prefixes::XorRotL1Wrap => xor_rotl1::XorRotL1WrapPrefix::$method($($args),*),
         }
     };
 }

@@ -41,6 +41,9 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         // Compile
         let target_dir = "/tmp/jolt-eval-bench-targets";
         let mut host_program = Program::new(self.guest.package());
+        if let Some(func) = self.guest.func() {
+            host_program.set_func(func);
+        }
         host_program.set_memory_config(mc);
         host_program.build(target_dir);
         let mut program = host_program;

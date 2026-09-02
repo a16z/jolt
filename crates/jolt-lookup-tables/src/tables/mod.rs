@@ -56,6 +56,7 @@ pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srlw;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod window_mask_b;
 pub mod window_mask_h;
@@ -105,6 +106,7 @@ use virtual_sraw::VirtualSRAWTable;
 use virtual_srl::VirtualSRLTable;
 use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
+use virtual_xor_rotl1::VirtualXORROTL1Table;
 use virtual_xor_rotw::VirtualXORROTWTable;
 use window_mask_b::WindowMaskBTable;
 use window_mask_h::WindowMaskHTable;
@@ -189,6 +191,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     ShiftDataB(ShiftDataBTable<XLEN>),
     ShiftDataH(ShiftDataHTable<XLEN>),
     ShiftDataW(ShiftDataWTable<XLEN>),
+    VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -252,6 +255,7 @@ macro_rules! dispatch {
             Self::ShiftDataB($t) => $expr,
             Self::ShiftDataH($t) => $expr,
             Self::ShiftDataW($t) => $expr,
+            Self::VirtualXORROTL1($t) => $expr,
         }
     };
 }
@@ -349,7 +353,7 @@ mod tests {
 
     #[test]
     fn proof_format_indices_are_stable() {
-        const EXPECTED: [&str; 54] = [
+        const EXPECTED: [&str; 55] = [
             "RangeCheck",
             "RangeCheckAligned",
             "And",
@@ -404,6 +408,7 @@ mod tests {
             "ShiftDataB",
             "ShiftDataH",
             "ShiftDataW",
+            "VirtualXORROTL1",
         ];
 
         let actual = LookupTableKind::<64>::iter()

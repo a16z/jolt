@@ -1,27 +1,19 @@
-//! This file contains Keccak256-specific logic to be used in the Keccak256 inline:
-//! 1) Prover: Keccak256SequenceBuilder expands the inline to a list of RV instructions.
-//! 2) Host: Rust reference implementation to be called by jolt-sdk.
+//! Keccak-f[1600] inline expansion.
 //!
-//! Keccak is a hash function that uses a sponge construction. The spone absorbs (and permutes) data. Each permutation has 24 rounds. Then squeezes out the hash.
-//! Glossary:
-//!   - “Lane”  = one 64-bit word in the 5×5 state matrix (25 lanes total for Keccak256).
-//!   - “Round” = single application of θ ρ π χ ι to the state.
-//!   - “Rate”  = 1088 bits (136 B) that interact with the message/output.
-//!   - “Capacity” = 512 bits hidden from the attacker (1600 − 1088).
-//!   - “Permutation” = `Keccak-f[1600]`: 24 rounds, each θ -> ρ -> π -> χ -> ι.
-//!
-//! Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
-//! Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
+//! Every emitted instruction is one trace row. The ρ/π step follows its
+//! single 24-lane cycle in place, leaving one rotated lane in a temporary
+//! register until χ consumes it. D[3] and D[4] reuse dead C registers.
 
-use crate::NUM_LANES;
+use crate::{
+    INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME,
+    KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, NUM_LANES, RATE_IN_U64,
+};
 use jolt_inlines_sdk::host::{
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
     InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice,
     Value::{Imm, Reg},
 };
 
-/// The 24 round constants for the Keccak-f[1600] permutation.
-/// These values are XORed into the state during the `iota` step of each round.
 #[rustfmt::skip]
 pub(crate) const ROUND_CONSTANTS: [u64; 24] = [
     0x0000000000000001, 0x0000000000008082,
@@ -38,11 +30,8 @@ pub(crate) const ROUND_CONSTANTS: [u64; 24] = [
     0x0000000080000001, 0x8000000080008008,
 ];
 
-/// The rotation offsets for the `rho` step of the Keccak-f[1600] permutation.
-/// The state is organized as a 5x5 matrix of 64-bit lanes, and `ROTATION_OFFSETS[y][x]`
-/// specifies the left-rotation amount for the lane at `(x, y)`. Also known as rotation constants.
 #[rustfmt::skip]
-pub (crate) const ROTATION_OFFSETS: [[u32; 5]; 5] = [
+pub(crate) const ROTATION_OFFSETS: [[u32; 5]; 5] = [
     [ 0, 36,  3, 41, 18],
     [ 1, 44, 10, 45,  2],
     [62,  6, 43, 15, 61],
@@ -50,66 +39,49 @@ pub (crate) const ROTATION_OFFSETS: [[u32; 5]; 5] = [
     [27, 20, 39,  8, 14],
 ];
 
-/// Layout of the virtual registers (`vr`).
-///
-/// For NUM_LANES = 25, the layout is:
-/// - `vr[0..24]`: The 25 lanes of the Keccak state array `A`.
-/// - `vr[25..49]`: A temporary state array `B` used in `rho_and_pi`.
-/// - `vr[50..54]`: The 5 lanes of the `C` array (column parities) in `theta`.
-/// - `vr[55..59]`: The 5 lanes of the `D` array (theta effect) in `theta`.
-/// - `vr[60..64]`: A 5-lane temporary buffer for the current row in `chi`.
-/// - `vr[65..66]`: General-purpose scratch registers for intermediate values.
-pub(crate) const NEEDED_REGISTERS: usize = 66;
+/// Register plan (37 virtual registers): A[25], C[5], D[3], one ρ/π
+/// temporary, two χ temporaries, and one scratch register.
 struct Keccak256SequenceBuilder {
     asm: InlineExpansionBuilder,
     round: u32,
-    vr: [InlineRegister; NEEDED_REGISTERS],
+    a: [InlineRegister; NUM_LANES],
+    c: [InlineRegister; 5],
+    d: [InlineRegister; 3],
+    pi_temp: InlineRegister,
+    chi_temp: [InlineRegister; 2],
+    scratch: InlineRegister,
+    absorb_block: bool,
     operands: InlineOperands,
 }
 
-/// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
-/// sequence required to emulate the Keccak-256 hashing operation within the RISC-V
-/// instruction set. This builder is responsible for generating the correct sequence of
-/// `ExpandedInstructionSequence` instances that together perform the Keccak-256 permutation and
-/// hashing steps, using a set of virtual registers to hold intermediate state.
-///
-/// # Fields
-/// - `address`: The starting program counter address for the sequence.
-/// - `asm`: Builder for the vector of generated instructions representing the Keccak-256 operation.
-/// - `round`: The current round of the Keccak permutation (0..24).
-/// - `vr`: An array of virtual register indices used for state and temporary values.
-/// - `operand_rs1`: The source register index for the first operand (input state pointer).
-/// - `operand_rs2`: Unused.
-///
-/// # Usage
-/// Typically, you construct a `Keccak256SequenceBuilder` with the required register mapping
-/// and operands, then call `.build()` to obtain the full instruction sequence for the
-/// Keccak-256 operation. This is used to inline the Keccak-256 hash logic into the
-/// RISC-V instruction stream for tracing or emulation purposes.
-///
-/// # Note
-/// The actual Keccak-256 logic is implemented in the `build` method, which generates
-/// the appropriate instruction sequence. This struct is not intended for direct execution,
-/// but rather for constructing instruction traces or emulation flows.
 impl Keccak256SequenceBuilder {
     fn new(
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
+        absorb_block: bool,
     ) -> Result<Self, ExpansionError> {
-        let vr = asm.allocate_inline_array::<NEEDED_REGISTERS>()?;
-        Ok(Keccak256SequenceBuilder {
+        let a = asm.allocate_inline_array::<NUM_LANES>()?;
+        let c = asm.allocate_inline_array::<5>()?;
+        let d = asm.allocate_inline_array::<3>()?;
+        let pi_temp = asm.allocate_for_inline()?;
+        let chi_temp = asm.allocate_inline_array::<2>()?;
+        let scratch = asm.allocate_for_inline()?;
+        Ok(Self {
             asm,
             round: 0,
-            vr,
+            a,
+            c,
+            d,
+            pi_temp,
+            chi_temp,
+            scratch,
+            absorb_block,
             operands,
         })
     }
 
     fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        // 1. Load NUM_LANES lanes (64-bit words) of state from memory into registers.
         self.load_state();
-
-        // 2. Main loop: 24 rounds of Keccak-f permutation.
         for round in 0..24 {
             self.round = round;
             self.theta();
@@ -117,134 +89,153 @@ impl Keccak256SequenceBuilder {
             self.chi();
             self.iota();
         }
-
-        // 3. Store the final state back to memory.
         self.store_state();
 
-        // 4. Finalize assembler and return instruction sequence.
-        self.asm.release_many(self.vr);
+        self.asm.release_many(self.a);
+        self.asm.release_many(self.c);
+        self.asm.release_many(self.d);
+        self.asm.release(self.pi_temp);
+        self.asm.release_many(self.chi_temp);
+        self.asm.release(self.scratch);
         self.asm.finalize()
     }
 
-    /// Load the initial Keccak state from memory into virtual registers.
-    /// Keccak state is NUM_LANES lanes of 64 bits each (200 bytes total).
     fn load_state(&mut self) {
-        self.asm
-            .load_u64_range(self.operands.rs1, 0, &self.vr[..NUM_LANES]);
+        self.asm.load_u64_range(self.operands.rs1, 0, &self.a);
+        if self.absorb_block {
+            let scratch = *self.scratch;
+            for i in 0..RATE_IN_U64 {
+                self.asm.emit_ld(
+                    Kind::LD,
+                    scratch,
+                    self.operands.rs2,
+                    i as i64 * size_of::<u64>() as i64,
+                );
+                self.asm.xor(Reg(*self.a[i]), Reg(scratch), *self.a[i]);
+            }
+        }
     }
 
-    /// Store the final Keccak state from virtual registers back to memory.
     fn store_state(&mut self) {
-        self.asm
-            .store_u64_range(self.operands.rs1, 0, &self.vr[..NUM_LANES]);
+        self.asm.store_u64_range(self.operands.rs1, 0, &self.a);
     }
 
-    /// Get the register index for a given lane in the state matrix.
     fn lane(&self, x: usize, y: usize) -> u8 {
-        *self.vr[5 * y + x]
+        *self.a[5 * y + x]
     }
 
-    // --- Keccak-f Round Functions ---
+    fn rho_pi_lane(&self, x: usize, y: usize) -> u8 {
+        if (x, y) == PI_TEMP_LANE {
+            *self.pi_temp
+        } else {
+            self.lane(x, y)
+        }
+    }
+
+    fn d_lane(&self, x: usize) -> u8 {
+        match x {
+            0..=2 => *self.d[x],
+            3 => *self.c[1],
+            4 => *self.c[2],
+            _ => unreachable!("keccak D index out of range"),
+        }
+    }
 
     fn theta(&mut self) {
-        // --- C[x] = A[x,0] ^ A[x,1] ^ A[x,2] ^ A[x,3] ^ A[x,4] ---
         for x in 0..5 {
-            let c_reg = *self.vr[50 + x];
-            // c_reg = A[x,0] ^ A[x,1]
-            self.asm
-                .xor(Reg(self.lane(x, 0)), Reg(self.lane(x, 1)), c_reg);
-            // c_reg ^= A[x,2] ^ A[x,3] ^ A[x,4]
+            let c = *self.c[x];
+            self.asm.xor(Reg(self.lane(x, 0)), Reg(self.lane(x, 1)), c);
             for y in 2..5 {
-                self.asm.xor(Reg(c_reg), Reg(self.lane(x, y)), c_reg);
+                self.asm.xor(Reg(c), Reg(self.lane(x, y)), c);
             }
         }
 
-        // --- D[x] = C[x-1] ^ rotl(C[x+1], 1) ---
+        // C[1] is last read at x=2 and C[2] at x=3, so D[3..5] can reuse them.
         for x in 0..5 {
-            let d_reg = *self.vr[55 + x];
-            let c_prev = *self.vr[50 + (x + 4) % 5];
-            let c_next = *self.vr[50 + (x + 1) % 5];
-            let temp_rot_reg = *self.vr[65]; // Use a scratch register for the rotation result
-
-            self.asm.rotl64(Reg(c_next), 1, temp_rot_reg);
-            self.asm.xor(Reg(c_prev), Reg(temp_rot_reg), d_reg);
+            let d = self.d_lane(x);
+            let c_prev = *self.c[(x + 4) % 5];
+            let c_next = *self.c[(x + 1) % 5];
+            self.asm.emit_r(Kind::VirtualXORROTL1, d, c_prev, c_next);
         }
 
-        // --- A[x,y] ^= D[x] ---
         for x in 0..5 {
-            let d_reg = *self.vr[55 + x];
+            let d = self.d_lane(x);
             for y in 0..5 {
-                let a_reg = self.lane(x, y);
-                self.asm.xor(Reg(a_reg), Reg(d_reg), a_reg);
+                let a = self.lane(x, y);
+                self.asm.xor(Reg(a), Reg(d), a);
             }
         }
     }
 
+    /// Walks the 24-lane π cycle backwards from `RHO_PI_FIRST_SOURCE`: each
+    /// lane is rotated into the register whose own value was rotated out one
+    /// step earlier, so only the first lane needs a temporary. The last
+    /// source is `PI_TEMP_LANE`, whose register is left holding stale data
+    /// until χ reads the lane from `pi_temp` instead.
     fn rho_and_pi(&mut self) {
-        // This function combines two steps:
-        // 1. Rho (ρ): Rotates each lane A[x,y] by a fixed offset.
-        // 2. Pi (π): Permutes the lanes into a new configuration.
-        //
-        // The combined operation is: B[y, 2x+3y] = ROTL(A[x,y], offset)
-        // We use vr[NUM_LANES..NUM_LANES*2-1] as the temporary state B.
+        self.emit_rho_pi_lane(RHO_PI_FIRST_SOURCE, *self.pi_temp);
 
-        // --- 1. Rotate each lane and store in the permuted position in B ---
-        #[allow(clippy::needless_range_loop)] // This is clearer than enumerating
-        for x in 0..5 {
-            for y in 0..5 {
-                // Get the source lane A[x,y] and its rotation offset.
-                let source_reg = self.lane(x, y);
-                // We have checked that this is [x][y].
-                let rotation_offset = ROTATION_OFFSETS[x][y];
-
-                // Calculate the permuted destination coordinates in B.
-                let nx = y;
-                let ny = (2 * x + 3 * y) % 5;
-                let dest_reg_in_b = *self.vr[NUM_LANES + (5 * ny + nx)];
-
-                // Rotate A[x,y] and store the result in B[nx, ny].
-                self.asm
-                    .rotl64(Reg(source_reg), rotation_offset, dest_reg_in_b);
-            }
+        let mut destination = RHO_PI_FIRST_SOURCE;
+        for _ in 1..24 {
+            let source = pi_source(destination);
+            self.emit_rho_pi_lane(source, self.lane(destination.0, destination.1));
+            destination = source;
         }
+    }
+
+    fn emit_rho_pi_lane(&mut self, source: (usize, usize), destination: u8) {
+        let (x, y) = source;
+        self.asm
+            .rotl64(Reg(self.lane(x, y)), ROTATION_OFFSETS[x][y], destination);
     }
 
     fn chi(&mut self) {
-        // The chi step provides non-linearity. For each row, it updates each lane as:
-        // A[x,y] ^= (~A[x+1,y] & A[x+2,y])
         for y in 0..5 {
-            for x in 0..5 {
-                // Get the registers for the three input values
-                // A[x,y], A[x+1,y], A[x+2,y]
-                let current = NUM_LANES as u8 + self.lane(x, y);
-                let next = NUM_LANES as u8 + self.lane((x + 1) % 5, y);
-                let two_next = NUM_LANES as u8 + self.lane((x + 2) % 5, y);
+            let b: [u8; 5] = std::array::from_fn(|x| self.rho_pi_lane(x, y));
+            let destination: [u8; 5] = std::array::from_fn(|x| self.lane(x, y));
+            let scratch = *self.scratch;
+            let t3 = *self.chi_temp[0];
+            let t4 = *self.chi_temp[1];
 
-                // Define scratch registers for intermediate results.
-                let not_next_and_two_next = *self.vr[65]; // reuse scratch
+            self.asm.emit_r(Kind::ANDN, scratch, b[2], b[1]);
+            self.asm.emit_r(Kind::ANDN, t3, b[0], b[4]);
+            self.asm.emit_r(Kind::ANDN, t4, b[1], b[0]);
+            self.asm.xor(Reg(b[0]), Reg(scratch), destination[0]);
 
-                // Get the register for the lane we are updating in the main state A.
-                let dest_a_reg = self.lane(x, y);
+            self.asm.emit_r(Kind::ANDN, scratch, b[3], b[2]);
+            self.asm.xor(Reg(b[1]), Reg(scratch), destination[1]);
 
-                // Implement A[x,y] ^= (~A[x+1,y] & A[x+2,y])
-                // 1. not_next_and_two_next = A[x+2,y] & ~A[x+1,y] using ANDN
-                self.asm
-                    .emit_r(Kind::ANDN, not_next_and_two_next, two_next, next);
-                // 2. A[x,y] ^= not_next_and_two_next
-                self.asm
-                    .xor(Reg(current), Reg(not_next_and_two_next), dest_a_reg);
-            }
+            self.asm.emit_r(Kind::ANDN, scratch, b[4], b[3]);
+            self.asm.xor(Reg(b[2]), Reg(scratch), destination[2]);
+            self.asm.xor(Reg(b[3]), Reg(t3), destination[3]);
+            self.asm.xor(Reg(b[4]), Reg(t4), destination[4]);
         }
     }
 
     fn iota(&mut self) {
-        // The iota step breaks symmetry by XORing a round-specific constant
-        // into the first lane of the state, A[0,0].
-        let round_constant = ROUND_CONSTANTS[self.round as usize];
-        let first_lane_reg = self.lane(0, 0);
-        self.asm
-            .xor(Reg(first_lane_reg), Imm(round_constant), first_lane_reg);
+        let first_lane = self.lane(0, 0);
+        self.asm.xor(
+            Reg(first_lane),
+            Imm(ROUND_CONSTANTS[self.round as usize]),
+            first_lane,
+        );
     }
+}
+
+/// First lane rotated in ρ/π. Its destination register still holds an unread
+/// lane at that point, so the result is parked in `pi_temp`.
+const RHO_PI_FIRST_SOURCE: (usize, usize) = (1, 0);
+/// The lane whose ρ/π result lives in `pi_temp` rather than its own register.
+const PI_TEMP_LANE: (usize, usize) = pi_destination(RHO_PI_FIRST_SOURCE);
+
+/// π moves lane `(x, y)` to `(y, 2x + 3y mod 5)`.
+pub(crate) const fn pi_destination((x, y): (usize, usize)) -> (usize, usize) {
+    (y, (2 * x + 3 * y) % 5)
+}
+
+/// Inverse of [`pi_destination`]: `x = X + 3Y mod 5` since `2^-1 = 3 mod 5`.
+const fn pi_source((x, y): (usize, usize)) -> (usize, usize) {
+    ((x + 3 * y) % 5, x)
 }
 
 pub struct Keccak256Permutation;
@@ -252,15 +243,33 @@ pub struct Keccak256Permutation;
 impl InlineOp for Keccak256Permutation {
     type Advice = NoAdvice;
 
-    const OPCODE: u32 = crate::INLINE_OPCODE;
-    const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
-    const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
-    const NAME: &'static str = crate::KECCAK256_NAME;
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_NAME;
 
     fn build_sequence(
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Keccak256SequenceBuilder::new(asm, operands)?.build()
+        Keccak256SequenceBuilder::new(asm, operands, false)?.build()
+    }
+}
+
+pub struct Keccak256AbsorbPermutation;
+
+impl InlineOp for Keccak256AbsorbPermutation {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_ABSORB_PERMUTE_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_ABSORB_PERMUTE_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Keccak256SequenceBuilder::new(asm, operands, true)?.build()
     }
 }
