@@ -1,47 +1,40 @@
-//! The Akita prove path. Stage 8 opens dense advice and the packed one-hot
-//! trace in one heterogeneous batch; committed-program objects remain
-//! auxiliary openings.
+//! The Akita prove path. Stage 8 opens dense advice, direct committed-program
+//! objects, and the packed one-hot trace in one heterogeneous batch.
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
-use jolt_kernels::{JoltBackend, KernelSlots, PrepareKernel, ProofSession, ReferenceBackend};
+use jolt_kernels::{JoltBackend, KernelSlots, ProofSession, ReferenceBackend};
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltProof;
-use jolt_verifier::stages::stage8::reconstruction::{
-    BytecodeChunkReconstructionInstance, ProgramImageReconstructionInstance,
-};
 use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
-use witness::AdviceObject;
 
 mod prover;
 mod setup;
 pub use setup::one_hot_trace_setup_shape;
-mod reconstruction;
 mod stage0;
 mod stage8;
 pub mod witness;
+use witness::AdviceObject;
 
 /// The packed slot registry: the akita analog of a bare [`JoltBackend`]. A
 /// parallel struct rather than cfg-gated [`JoltBackend`] fields —
 /// `jolt-kernels` deliberately has no `akita` feature (a local `cfg!` there
 /// would silently read `false` and desynchronize the prover from the
 /// verifier; see `jolt_claims`'s `CANONICAL_INSTRUCTION_ADDRESS`), so the
-/// packed-only pieces live on this crate's akita-only side of the fence.
+/// packed-only pieces live on this crate's Akita-only side of the fence.
 ///
 /// The packed PIOP shares its stage 1–7 members with the base protocol, so
 /// they resolve through the embedded [`JoltBackend`] registry (whose commit
 /// slot is an unreachable stub: the packed path commits one native
 /// `OneHotTrace` group in its own stage 0, never through the streaming
-/// commit seam). The reconstruction-phase members resolve through their own
-/// replaceable slots, exactly like the shared registry's — an optimized
-/// packed backend swaps the boxes, never the type.
+/// commit seam).
 #[derive(KernelSlots)]
 pub struct JoltAkitaBackend<F, PCS>
 where
@@ -50,9 +43,6 @@ where
 {
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
-    pub bytecode_reconstruction: Box<dyn PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>>,
-    pub program_image_reconstruction:
-        Box<dyn PrepareKernel<F, ProgramImageReconstructionInstance<F>>>,
 }
 
 /// The packed path's stand-in for the streaming witness-commit slot: stage 0
@@ -102,12 +92,9 @@ where
     /// The always-present packed reference registry: every shared stage 1–7
     /// slot naive-served (the reference kernels adapt to the packed
     /// jolt-claims shape at runtime), the commit slot stubbed out (the packed
-    /// commit lives in stage 0), and every reconstruction slot served by the
-    /// reference reconstruction kernels.
+    /// commit lives in stage 0).
     pub fn reference() -> Self {
         Self {
-            bytecode_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
-            program_image_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
                 round_scheduler: Box::new(ReferenceBackend),
