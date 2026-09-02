@@ -3,7 +3,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use jolt_crypto::{
-    Bn254, Bn254G1, Bn254G2, JoltGroup, PairingGroup, Pedersen, PedersenSetup, VectorCommitment,
+    compress_gt, decompress_gt, Bn254, Bn254G1, Bn254G2, JoltGroup, PairingGroup, Pedersen,
+    PedersenSetup, VectorCommitment,
 };
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use rand_chacha::ChaCha20Rng;
@@ -138,6 +139,23 @@ fn bench_gt_scalar_mul(c: &mut Criterion) {
     });
 }
 
+fn bench_gt_decompression(c: &mut Criterion) {
+    let gt = Bn254::pairing(&Bn254::g1_generator(), &Bn254::g2_generator());
+    let compressed = compress_gt(&gt);
+    c.bench_function("gt_decompress", |b| {
+        b.iter(|| decompress_gt(&compressed).unwrap());
+    });
+
+    let compressed_set = vec![compressed; 110];
+    c.bench_function("gt_decompress_110", |b| {
+        b.iter(|| {
+            for compressed in &compressed_set {
+                decompress_gt(compressed).unwrap();
+            }
+        });
+    });
+}
+
 fn bench_g1_serde(c: &mut Criterion) {
     let mut rng = ChaCha20Rng::seed_from_u64(60);
     let g = Bn254::random_g1(&mut rng);
@@ -167,6 +185,7 @@ criterion_group!(
     bench_multi_pairing,
     bench_pedersen_commit,
     bench_gt_scalar_mul,
+    bench_gt_decompression,
     bench_g1_serde,
 );
 criterion_main!(benches);

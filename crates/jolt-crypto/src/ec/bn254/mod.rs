@@ -216,6 +216,7 @@ macro_rules! impl_jolt_group_wrapper {
 
 pub(crate) use impl_jolt_group_wrapper;
 
+mod compressed_gt;
 mod g1;
 mod g2;
 mod gt;
@@ -225,6 +226,9 @@ pub mod batch_addition;
 #[doc(hidden)]
 pub mod glv;
 
+pub use compressed_gt::{
+    compress_gt, decompress_gt, CompressedBn254GT, GtCompressionError, COMPRESSED_GT_SIZE,
+};
 pub use g1::Bn254G1;
 pub use g2::Bn254G2;
 pub use gt::Bn254GT;
