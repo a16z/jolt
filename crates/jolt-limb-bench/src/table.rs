@@ -203,14 +203,25 @@ impl Table {
         self.overrides.iter().any(|(c, _, _)| *c == column)
     }
 
-    /// LogUp witness: `1/(α − chunk)` per chunk column, and the multiplicity
-    /// of every 16-bit value across all chunk columns.
-    pub fn logup_columns(&self, alpha: Fr) -> (Vec<Vec<Fr>>, Vec<u32>) {
-        let inverses: Vec<Vec<Fr>> = (0..self.chunks.len())
-            .into_par_iter()
-            .map(|column| {
+    /// LogUp witness: one helper column `1/Π_{i∈g}(α − chunk_i)` per group of
+    /// `group_size` chunk columns, and the multiplicity of every 16-bit value
+    /// across all chunk columns.
+    pub fn logup_columns(&self, alpha: Fr, group_size: usize) -> (Vec<Vec<Fr>>, Vec<u32>) {
+        let groups: Vec<Vec<usize>> = (0..self.chunks.len())
+            .collect::<Vec<_>>()
+            .chunks(group_size)
+            .map(<[usize]>::to_vec)
+            .collect();
+        let inverses: Vec<Vec<Fr>> = groups
+            .par_iter()
+            .map(|group| {
                 let mut values: Vec<ark_bn254::Fr> = (0..self.rows)
-                    .map(|row| ark_bn254::Fr::from(alpha - self.chunk(column, row)))
+                    .map(|row| {
+                        let product = group.iter().fold(Fr::from_u64(1), |acc, &column| {
+                            acc * (alpha - self.chunk(column, row))
+                        });
+                        ark_bn254::Fr::from(product)
+                    })
                     .collect();
                 ark_ff::batch_inversion(&mut values);
                 values.into_iter().map(Fr::from).collect()

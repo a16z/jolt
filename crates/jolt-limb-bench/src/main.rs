@@ -3,7 +3,7 @@
 //! HyperKZG (small-scalar MSMs for 16-bit chunks) and proven by one
 //! degree-3 sumcheck + one batched HyperKZG opening.
 //!
-//! Usage: `limb-relation <log2 rows> <t products per row> [commit-operands] [tamper]`.
+//! Usage: `limb-relation <log2 rows> <t products per row> [s=<group size>] [commit-operands] [tamper]`.
 
 #![expect(
     clippy::cast_possible_truncation,
@@ -74,6 +74,7 @@ fn powers(base: Fr, count: usize) -> Vec<Fr> {
 fn run(
     log_rows: usize,
     t: usize,
+    group_size: usize,
     commit_operands: bool,
     pk: &HyperKZGProverSetup<Bn254>,
     vk: &HyperKZGVerifierSetup<Bn254>,
@@ -115,9 +116,9 @@ fn run(
     }
     let alpha: Fr = transcript.challenge();
 
-    // Phase 2: LogUp inverses h = 1/(α − chunk) (full-width columns) and the
-    // range-table multiplicities.
-    let (inverses, multiplicities) = table.logup_columns(alpha);
+    // Phase 2: grouped LogUp helpers h_g = 1/Π_{i∈g}(α − chunk_i) (full-width
+    // columns) and the range-table multiplicities.
+    let (inverses, multiplicities) = table.logup_columns(alpha, group_size);
     let start = Instant::now();
     let inverse_commitments: Vec<HyperKZGCommitment<Bn254>> = inverses
         .par_iter()
@@ -141,6 +142,7 @@ fn run(
         log_rows,
         t,
         num_chunk_columns,
+        group_size,
         alpha,
         commit_operands,
     );
@@ -184,6 +186,7 @@ fn run(
         log_rows,
         t,
         num_chunk_columns,
+        group_size,
         alpha_v,
         commit_operands,
     );
@@ -259,6 +262,10 @@ fn main() {
     let log_rows: usize = args.get(1).map_or(16, |s| s.parse().unwrap());
     let t: usize = args.get(2).map_or(24, |s| s.parse().unwrap());
     let commit_operands = args.iter().any(|s| s == "commit-operands");
+    let group_size: usize = args
+        .iter()
+        .find_map(|s| s.strip_prefix("s="))
+        .map_or(1, |s| s.parse().unwrap());
     let tamper = args.iter().any(|s| s == "tamper");
     let rows = 1usize << log_rows;
 
@@ -271,7 +278,15 @@ fn main() {
             ("crt (flip z chunk bit)", tamper_crt as fn(&mut Table)),
             ("range (chunk += 2^16, neighbour -= 1)", tamper_range),
         ] {
-            let (accepted, _, _) = run(log_rows, t, commit_operands, &pk, &vk, Some(tamper));
+            let (accepted, _, _) = run(
+                log_rows,
+                t,
+                group_size,
+                commit_operands,
+                &pk,
+                &vk,
+                Some(tamper),
+            );
             println!("tamper {name}: verifier says {accepted:?}");
             assert!(accepted.is_err(), "tampered run must be rejected");
         }
@@ -279,11 +294,14 @@ fn main() {
     }
 
     let columns = CHUNK_COLUMNS + if commit_operands { 32 * t } else { 0 };
+    let helper_columns = columns.div_ceil(group_size);
     println!(
-        "rows=2^{log_rows} t={t} commit_operands={commit_operands} chunk_columns={columns} inverse_columns={columns} operand_limb_polys={} degree=3",
-        6 * t
+        "rows=2^{log_rows} t={t} s={group_size} commit_operands={commit_operands} chunk_columns={columns} helper_columns={helper_columns} operand_limb_polys={} degree={}",
+        6 * t,
+        (group_size + 2).max(3)
     );
-    let (accepted, timings, proof_bytes) = run(log_rows, t, commit_operands, &pk, &vk, None);
+    let (accepted, timings, proof_bytes) =
+        run(log_rows, t, group_size, commit_operands, &pk, &vk, None);
     assert!(accepted.is_ok(), "honest run must verify: {accepted:?}");
     let prover_ms = timings.commit_chunks
         + timings.commit_inverses
@@ -297,9 +315,9 @@ fn main() {
         timings.commit_chunks / columns as f64
     );
     println!(
-        "commit inverses     {:>9.1} ms  ({:.2} ms/column)",
+        "commit helpers      {:>9.1} ms  ({:.2} ms/column)",
         timings.commit_inverses,
-        timings.commit_inverses / columns as f64
+        timings.commit_inverses / helper_columns as f64
     );
     println!(
         "commit multiplicity {:>9.1} ms",
