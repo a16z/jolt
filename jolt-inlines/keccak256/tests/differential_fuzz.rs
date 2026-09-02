@@ -14,13 +14,15 @@
 #![cfg(feature = "host")]
 
 use jolt_inlines_keccak256::{
-    Keccak256, INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME,
-    KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, RATE_IN_BYTES, RATE_IN_U64,
+    Keccak256, INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT3, KECCAK256_FUNCT7,
+    NUM_LANES, RATE_IN_BYTES, RATE_IN_U64,
 };
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use tiny_keccak::{Hasher, Keccak};
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+
+const STATE_IN_BYTES: usize = NUM_LANES * size_of::<u64>();
 
 fn fuzz_iters(default: usize) -> usize {
     std::env::var("KECCAK_FUZZ_ITERS")
@@ -39,17 +41,19 @@ fn reference_digest(input: &[u8]) -> [u8; 32] {
 
 #[test]
 fn fuzz_inline_sequence_vs_tiny_keccak() {
-    let _ = KECCAK256_NAME;
     let iters = fuzz_iters(2_000);
     let mut rng = StdRng::seed_from_u64(0xECCA_C001);
 
     for i in 0..iters {
-        let mut state = [0u64; 25];
+        let mut state = [0u64; NUM_LANES];
         for lane in state.iter_mut() {
             *lane = rng.next_u64();
         }
 
-        let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(136, 200));
+        let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(
+            RATE_IN_BYTES,
+            STATE_IN_BYTES,
+        ));
         harness.setup_registers();
         harness.load_state64(&state);
         harness.execute_inline(InlineTestHarness::create_default_instruction(
@@ -57,7 +61,7 @@ fn fuzz_inline_sequence_vs_tiny_keccak() {
             KECCAK256_FUNCT3,
             KECCAK256_FUNCT7,
         ));
-        let actual = harness.read_output64(25);
+        let actual = harness.read_output64(NUM_LANES);
 
         let mut expected = state;
         tiny_keccak::keccakf(&mut expected);
@@ -68,12 +72,11 @@ fn fuzz_inline_sequence_vs_tiny_keccak() {
 
 #[test]
 fn fuzz_absorb_permute_inline_vs_tiny_keccak() {
-    let _ = KECCAK256_ABSORB_PERMUTE_NAME;
     let iters = fuzz_iters(2_000);
     let mut rng = StdRng::seed_from_u64(0xAB50_BB01);
 
     for i in 0..iters {
-        let mut state = [0u64; 25];
+        let mut state = [0u64; NUM_LANES];
         let mut block = [0u64; RATE_IN_U64];
         for lane in &mut state {
             *lane = rng.next_u64();
@@ -82,8 +85,10 @@ fn fuzz_absorb_permute_inline_vs_tiny_keccak() {
             *lane = rng.next_u64();
         }
 
-        let mut harness =
-            InlineTestHarness::new(InlineMemoryLayout::single_input(RATE_IN_BYTES, 200));
+        let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(
+            RATE_IN_BYTES,
+            STATE_IN_BYTES,
+        ));
         harness.setup_registers();
         harness.load_state64(&state);
         harness.load_input64(&block);
@@ -92,7 +97,7 @@ fn fuzz_absorb_permute_inline_vs_tiny_keccak() {
             KECCAK256_ABSORB_PERMUTE_FUNCT3,
             KECCAK256_FUNCT7,
         ));
-        let actual = harness.read_output64(25);
+        let actual = harness.read_output64(NUM_LANES);
 
         for (lane, block_lane) in state.iter_mut().zip(block) {
             *lane ^= block_lane;
@@ -169,21 +174,25 @@ fn fuzz_chunked_update_vs_tiny_keccak() {
             (rng.next_u32() % 200) as usize
         };
         let len = chunks.iter().sum::<usize>() + tail;
-        let mut input = vec![0u8; len];
-        rng.fill_bytes(&mut input);
+        // Odd iterations feed chunks from a 1-byte offset so `update` absorbs
+        // full blocks through both its aligned and unaligned paths.
+        let offset = i % 2;
+        let mut buffer = vec![0u8; len + offset];
+        rng.fill_bytes(&mut buffer);
+        let input = &buffer[offset..];
 
         let mut hasher = Keccak256::new();
-        let mut offset = 0;
+        let mut consumed = 0;
         for chunk in chunks {
-            hasher.update(&input[offset..offset + chunk]);
-            offset += chunk;
+            hasher.update(&input[consumed..consumed + chunk]);
+            consumed += chunk;
         }
-        hasher.update(&input[offset..]);
+        hasher.update(&input[consumed..]);
 
         assert_eq!(
             hasher.finalize(),
-            reference_digest(&input),
-            "iteration {i}, len {len}"
+            reference_digest(input),
+            "iteration {i}, len {len}, offset {offset}"
         );
     }
 }

@@ -125,7 +125,7 @@ impl Keccak256SequenceBuilder {
     }
 
     fn rho_pi_lane(&self, x: usize, y: usize) -> u8 {
-        if (x, y) == (0, 2) {
+        if (x, y) == PI_TEMP_LANE {
             *self.pi_temp
         } else {
             self.lane(x, y)
@@ -167,17 +167,20 @@ impl Keccak256SequenceBuilder {
         }
     }
 
+    /// Walks the 24-lane π cycle backwards from `RHO_PI_FIRST_SOURCE`: each
+    /// lane is rotated into the register whose own value was rotated out one
+    /// step earlier, so only the first lane needs a temporary. The last
+    /// source is `PI_TEMP_LANE`, whose register is left holding stale data
+    /// until χ reads the lane from `pi_temp` instead.
     fn rho_and_pi(&mut self) {
-        let first_source = (1, 0);
-        self.emit_rho_pi_lane(first_source, *self.pi_temp);
+        self.emit_rho_pi_lane(RHO_PI_FIRST_SOURCE, *self.pi_temp);
 
-        let mut destination = first_source;
+        let mut destination = RHO_PI_FIRST_SOURCE;
         for _ in 1..24 {
-            let source = inverse_pi(destination);
+            let source = pi_source(destination);
             self.emit_rho_pi_lane(source, self.lane(destination.0, destination.1));
             destination = source;
         }
-        debug_assert_eq!(destination, pi_destination(first_source));
     }
 
     fn emit_rho_pi_lane(&mut self, source: (usize, usize), destination: u8) {
@@ -219,19 +222,20 @@ impl Keccak256SequenceBuilder {
     }
 }
 
-fn pi_destination((x, y): (usize, usize)) -> (usize, usize) {
+/// First lane rotated in ρ/π. Its destination register still holds an unread
+/// lane at that point, so the result is parked in `pi_temp`.
+const RHO_PI_FIRST_SOURCE: (usize, usize) = (1, 0);
+/// The lane whose ρ/π result lives in `pi_temp` rather than its own register.
+const PI_TEMP_LANE: (usize, usize) = pi_destination(RHO_PI_FIRST_SOURCE);
+
+/// π moves lane `(x, y)` to `(y, 2x + 3y mod 5)`.
+pub(crate) const fn pi_destination((x, y): (usize, usize)) -> (usize, usize) {
     (y, (2 * x + 3 * y) % 5)
 }
 
-fn inverse_pi(destination: (usize, usize)) -> (usize, usize) {
-    for x in 0..5 {
-        for y in 0..5 {
-            if pi_destination((x, y)) == destination {
-                return (x, y);
-            }
-        }
-    }
-    unreachable!("pi is a permutation")
+/// Inverse of [`pi_destination`]: `x = X + 3Y mod 5` since `2^-1 = 3 mod 5`.
+const fn pi_source((x, y): (usize, usize)) -> (usize, usize) {
+    ((x + 3 * y) % 5, x)
 }
 
 pub struct Keccak256Permutation;

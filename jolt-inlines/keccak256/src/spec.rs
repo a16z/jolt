@@ -30,7 +30,10 @@ impl InlineSpec for Keccak256Permutation {
     }
 
     fn harness() -> InlineTestHarness {
-        InlineTestHarness::new(InlineMemoryLayout::single_input(136, 200))
+        InlineTestHarness::new(InlineMemoryLayout::single_input(
+            RATE_IN_BYTES,
+            NUM_LANES * size_of::<u64>(),
+        ))
     }
 
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {
