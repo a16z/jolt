@@ -296,7 +296,7 @@ pub trait CanonicalEncoding:
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;
 
-    /// Decodes exactly [`NUM_BYTES`](Self::NUM_BYTES) canonical bytes;
+    /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
     /// `None` on wrong length or a non-canonical value.
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;
 

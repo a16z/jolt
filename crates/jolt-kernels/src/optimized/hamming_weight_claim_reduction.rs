@@ -1,9 +1,7 @@
 //! Optimized Hamming-weight claim-reduction (stage 7) kernel, byte-parity
 //! twin of [`crate::reference::hamming_weight_claim_reduction`].
 //!
-//! Ported legacy techniques
-//! (`jolt-prover-legacy/src/zkvm/claim_reductions/hamming_weight.rs` +
-//! `poly/shared_ra_polys.rs::compute_all_G`):
+//! Carries forward the former prover's shared-RA `compute_all_G` technique:
 //!
 //! - **Shared-eq pushforwards over every RA family in one trace pass**: each
 //!   `G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)` collapses, for a one-hot

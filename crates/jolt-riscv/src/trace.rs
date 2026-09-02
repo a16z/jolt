@@ -1,6 +1,6 @@
 //! Tracer-free runtime views of executed Jolt instructions.
 //!
-//! [`JoltCycle`] pairs the static [`JoltInstructionRowData`](crate::JoltInstructionRowData)
+//! [`JoltCycle`] pairs the static [`JoltInstructionRowData`]
 //! vocabulary with register and RAM values captured during execution, so lookup
 //! table code can operate on cycle data without depending on tracer's concrete
 //! cycle types.

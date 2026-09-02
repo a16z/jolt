@@ -1,8 +1,7 @@
 //! Optimized increment claim-reduction (stage 6b) kernel, byte-parity twin of
 //! [`crate::reference::inc_claim_reduction`].
 //!
-//! Ported legacy technique
-//! (`jolt-prover-legacy/src/zkvm/claim_reductions/increments.rs`):
+//! Carries forward the former increment reduction's paired-eq fusion:
 //! **paired-eq fusion** — the four upstream eq leaves enter the summand
 //! linearly per increment column, so they collapse into two combined tables
 //!

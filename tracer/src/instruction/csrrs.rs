@@ -1,6 +1,6 @@
 //! CSRRS (CSR Read-Set) — Read CSR to rd, set bits from rs1.
 //!
-//! Encoding: csr[31:20] | rs1[19:15] | funct3=010[14:12] | rd[11:7] | opcode=1110011[6:0]
+//! Encoding: `csr[31:20] | rs1[19:15] | funct3=010[14:12] | rd[11:7] | opcode=1110011[6:0]`
 //!
 //! The `csrr rd, csr` pseudo-instruction is `csrrs rd, csr, x0` (read only, no bits set).
 //! The `csrs csr, rs` pseudo-instruction is `csrrs x0, csr, rs` (set only, discard old value).

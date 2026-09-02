@@ -12,7 +12,7 @@
 //!   lookup — `ra_i(r_chunk_i, j) = eq_table_i[chunk_i(address_j)]`, zero
 //!   when the cycle makes no access. `T` lookups per chunk, no grid.
 //! - **Session-carried access columns**: the per-cycle addresses come from
-//!   [`RamAccessColumns::shared`] — one typed trace walk shared with the
+//!   `RamAccessColumns::shared`: one typed trace walk shared with the
 //!   whole optimized RAM family across the proof session.
 //! - **Gruen split-eq factoring**: `eq(r_cycle, ·)` is never materialized or
 //!   bound; each round emits `s(t) = ℓ(t) · Σ_y E(y) · Π_i ra_i(t, y)` at

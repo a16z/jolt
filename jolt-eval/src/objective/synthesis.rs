@@ -1,4 +1,4 @@
-/// Macro that generates a Criterion benchmark harness for an [`Objective`].
+/// Macro that generates a Criterion benchmark harness for an [`crate::Objective`].
 ///
 /// Uses `iter_batched` with `BatchSize::LargeInput` so that per-iteration
 /// setup (e.g. polynomial clone) is excluded from the measurement.

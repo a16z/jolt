@@ -521,8 +521,8 @@ pub fn build_summary(
         }
     });
 
-    // Pipeline order per the taxonomy, then any unknown prove_stage* labels
-    // (e.g. legacy stage spans in a mixed trace) in first-seen order.
+    // Pipeline order per the taxonomy, then unknown prove_stage* labels in
+    // first-seen order.
     let mut ordered: Vec<(String, Interval)> = Vec::with_capacity(aggregate.stage_intervals.len());
     for stage in taxonomy::STAGE_SPANS {
         ordered.extend(

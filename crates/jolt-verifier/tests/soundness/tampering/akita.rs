@@ -24,14 +24,13 @@
     reason = "fixture tamper tests should fail loudly when the stored proof shape changes"
 )]
 
+use jolt_akita::{AkitaField, AkitaScheme};
 use jolt_claims::protocols::jolt::lattice::relations::{
     booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
-use jolt_prover_legacy::zkvm::packed::{
-    AkitaField, AkitaJoltProof, AkitaScheme, AkitaTranscript, AkitaVc,
-};
+use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
 use jolt_verifier::preprocessing::ProgramPreprocessing;
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
@@ -81,6 +80,7 @@ use jolt_verifier::VerifierError;
 
 use crate::support::akita_fixtures::{
     akita_advice_case, akita_committed_muldiv_case, akita_muldiv_case, AkitaFixtureCase,
+    AkitaJoltProof,
 };
 use crate::support::assert_rejects;
 

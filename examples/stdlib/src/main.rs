@@ -12,11 +12,8 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_int_to_string(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_int_to_string(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_int_to_string(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_int_to_string(&prover_preprocessing);
 
     let prove = guest::build_prover_int_to_string(program, prover_preprocessing);
     let verify = guest::build_verifier_int_to_string(verifier_preprocessing);
@@ -33,11 +30,8 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_string_concat(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_string_concat(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_string_concat(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_string_concat(&prover_preprocessing);
 
     let prove = guest::build_prover_string_concat(program, prover_preprocessing);
     let verify = guest::build_verifier_string_concat(verifier_preprocessing);
@@ -60,11 +54,8 @@ pub fn main() {
         guest::preprocess_shared_parallel_sum_of_squares(&mut program).unwrap();
     let prover_preprocessing =
         guest::preprocess_prover_parallel_sum_of_squares(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_parallel_sum_of_squares(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_parallel_sum_of_squares(&prover_preprocessing);
 
     let prove = guest::build_prover_parallel_sum_of_squares(program, prover_preprocessing);
     let verify = guest::build_verifier_parallel_sum_of_squares(verifier_preprocessing);

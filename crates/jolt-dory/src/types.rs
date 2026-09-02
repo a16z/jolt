@@ -9,7 +9,7 @@ use dory::backends::arkworks::{
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
 use jolt_field::Fr;
 use jolt_transcript::{AppendToTranscript, Transcript};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Caps the upstream `Vec::with_capacity(num_rounds)` allocation against
 /// attacker-supplied round counts during proof deserialization. Real Dory
@@ -85,20 +85,17 @@ impl<'de> Deserialize<'de> for DoryProof {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
         if buf.len() > MAX_SERIALIZED_PROOF_BYTES {
-            return Err(serde::de::Error::custom(format!(
+            return Err(Error::custom(format!(
                 "Dory proof ({} bytes) exceeds maximum ({MAX_SERIALIZED_PROOF_BYTES})",
                 buf.len()
             )));
         }
-        validate_proof_round_count(&buf).map_err(serde::de::Error::custom)?;
+        validate_proof_round_count(&buf).map_err(Error::custom)?;
         let mut cursor = Cursor::new(&buf[..]);
-        let proof =
-            ArkDoryProof::deserialize_compressed(&mut cursor).map_err(serde::de::Error::custom)?;
+        let proof = ArkDoryProof::deserialize_compressed(&mut cursor).map_err(Error::custom)?;
         // Canonical encoding: a valid parse must consume the entire buffer.
         if cursor.position() != buf.len() as u64 {
-            return Err(serde::de::Error::custom(
-                "Dory proof encoding has trailing bytes",
-            ));
+            return Err(Error::custom("Dory proof encoding has trailing bytes"));
         }
         Ok(Self(proof))
     }
@@ -106,6 +103,27 @@ impl<'de> Deserialize<'de> for DoryProof {
 
 #[derive(Clone)]
 pub struct DoryProverSetup(pub ArkworksProverSetup);
+
+impl Serialize for DoryProverSetup {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        canonical_serialize(&self.0, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DoryProverSetup {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let mut cursor = Cursor::new(&buf[..]);
+        let setup =
+            ArkworksProverSetup::deserialize_compressed(&mut cursor).map_err(Error::custom)?;
+        if cursor.position() != buf.len() as u64 {
+            return Err(Error::custom(
+                "Dory prover setup encoding has trailing bytes",
+            ));
+        }
+        Ok(Self(setup))
+    }
+}
 
 #[derive(Clone)]
 pub struct DoryVerifierSetup(pub ArkworksVerifierSetup);
@@ -119,14 +137,14 @@ impl Serialize for DoryVerifierSetup {
 impl<'de> Deserialize<'de> for DoryVerifierSetup {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        validate_verifier_setup_structure(&buf).map_err(serde::de::Error::custom)?;
+        validate_verifier_setup_structure(&buf).map_err(Error::custom)?;
         ArkworksVerifierSetup::deserialize_compressed(&buf[..])
-            .map_err(serde::de::Error::custom)
+            .map_err(Error::custom)
             .map(Self)
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DoryHint {
     pub(crate) row_commitments: Vec<Bn254G1>,
     pub(crate) commit_blind: Fr,

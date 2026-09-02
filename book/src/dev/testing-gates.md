@@ -53,12 +53,10 @@ registry plans only the setup's final arity, with at most four rows for the
 reachable advice-presence combinations. Its 128-row bound applies to one
 provisioning request, not to the process cache.
 
-Run the focused committed-program and byte-parity gates with:
+Run the focused committed-program gate with:
 
 ```bash
 cargo nextest run -p jolt-prover muldiv_e2e_akita_committed_program \
-  --features akita,prover-fixtures --cargo-quiet
-cargo nextest run -p jolt-prover prover_matches_legacy_on_committed_muldiv_akita \
   --features akita,prover-fixtures --cargo-quiet
 ```
 

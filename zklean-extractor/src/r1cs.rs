@@ -1,9 +1,9 @@
-use jolt_prover_legacy::zkvm::r1cs::{
-    constraints::{NamedR1CSConstraint, R1CSConstraint, R1CS_CONSTRAINTS},
-    inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS},
-    ops::{Term, LC},
+use jolt_field::{Fr, Ring};
+use jolt_r1cs::{
+    constraints::rv64::{self, RV64_CONSTRAINT_NAMES, RV64_VARIABLE_NAMES, V_CONST},
+    ConstraintMatrices, SparseRow,
 };
-use regex::{NoExpand, Regex};
+use jolt_riscv::CircuitFlags;
 
 use crate::{
     constants::JoltParameterSet,
@@ -12,19 +12,14 @@ use crate::{
 };
 
 pub struct ZkLeanR1CSConstraints<J> {
-    inputs: Vec<JoltR1CSInputs>,
-    uniform_constraints: Vec<NamedR1CSConstraint>,
+    matrices: ConstraintMatrices<Fr>,
     phantom: std::marker::PhantomData<J>,
 }
 
 impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
     pub fn extract() -> Self {
-        let inputs = ALL_R1CS_INPUTS.to_vec();
-        let uniform_constraints = R1CS_CONSTRAINTS.to_vec();
-
         Self {
-            inputs,
-            uniform_constraints,
+            matrices: rv64::rv64_trace_constraints(),
             phantom: std::marker::PhantomData,
         }
     }
@@ -36,162 +31,142 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
     ) -> std::io::Result<()> {
         let top_level_indent = indent_level;
 
-        f.write_fmt(format_args!(
-            "{}structure JoltR1CSInputs (f : Type) : Type where\n",
-            indent(indent_level),
-        ))?;
+        writeln!(
+            f,
+            "{}structure JoltR1CSInputs (f : Type) : Type where",
+            indent(indent_level)
+        )?;
         indent_level += 1;
-        for input in &self.inputs {
-            let field = input_to_field_name(input);
-            f.write_fmt(format_args!("{}{field} : ZKExpr f\n", indent(indent_level),))?;
+        for field in &RV64_VARIABLE_NAMES[1..] {
+            writeln!(f, "{}{field} : ZKExpr f", indent(indent_level))?;
         }
-        f.write_all(b"\n")?;
+        writeln!(f)?;
 
-        // for every input make it Witnessable following the pattern
-        // ```
-        // instance: Witnessable f (JoltR1CSInputs f) where
-        //   witness := do
-        //     let bytecode_a <- Witnessable.witness;
-        //     let bytecode_elf_address <- Witnessable.witness;
-        //     let bytecode_bitflags <- Witnessable.witness;
-        //     ...
-        //     pure {
-        //       Bytecode_A := bytecode_a,
-        //       Bytecode_ELFAddress := bytecode_elf_address,
-        //       Bytecode_Bitflags := bytecode_bitflags,
-        //       ...
-        //     }
-        // ```
         indent_level = top_level_indent;
-        f.write_fmt(format_args!(
-            "{}instance: Witnessable f (JoltR1CSInputs f) where\n",
-            indent(indent_level),
-        ))?;
+        writeln!(
+            f,
+            "{}instance: Witnessable f (JoltR1CSInputs f) where",
+            indent(indent_level)
+        )?;
         indent_level += 1;
-        f.write_fmt(format_args!("{}witness := do\n", indent(indent_level),))?;
+        writeln!(f, "{}witness := do", indent(indent_level))?;
         indent_level += 1;
-        for input in &self.inputs {
-            let field = input_to_field_name(input);
-            f.write_fmt(format_args!(
-                "{}let {field} <- Witnessable.witness\n",
-                indent(indent_level),
-            ))?;
+        for field in &RV64_VARIABLE_NAMES[1..] {
+            writeln!(
+                f,
+                "{}let {field} <- Witnessable.witness",
+                indent(indent_level)
+            )?;
         }
-        f.write_all(b"\n")?;
-        f.write_fmt(format_args!("{}pure {{\n", indent(indent_level),))?;
+        writeln!(f)?;
+        writeln!(f, "{}pure {{", indent(indent_level))?;
         indent_level += 1;
-        for input in &self.inputs {
-            let field = input_to_field_name(input);
-            f.write_fmt(format_args!("{}{field} := {field}\n", indent(indent_level),))?;
+        for field in &RV64_VARIABLE_NAMES[1..] {
+            writeln!(f, "{}{field} := {field}", indent(indent_level))?;
         }
         indent_level -= 1;
-        f.write_fmt(format_args!("{}}}\n", indent(indent_level),))?;
-        f.write_all(b"\n")?;
+        writeln!(f, "{}}}", indent(indent_level))?;
+        writeln!(f)?;
 
         indent_level = top_level_indent;
-        f.write_fmt(format_args!(
-                "{}def uniform_jolt_constraints [ZKField f] (jolt_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do\n",
-                indent(indent_level),
-        ))?;
+        writeln!(
+            f,
+            "{}def uniform_jolt_constraints [ZKField f] (jolt_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do",
+            indent(indent_level)
+        )?;
         indent_level += 1;
-        for constraint in &self.uniform_constraints {
-            // Note that an R1CS constraint in Jolt is currently expressed as *just* the `a` and
-            // `b` parts, with the `c` part omitted. See `zkvm/r1cs/constraints.rs`. That's because
-            // all constraints are conditional equalities:
-            //   if <condition> { <left> - <right> == 0 }
-            // Thus `a` = <condition>, `b` = <left> - <right>, and (implicitly) `c` = 0.
-            let R1CSConstraint { a, b } = &constraint.cons;
-            let c = &LC::zero();
-            let name = format!("{:?}", constraint.label);
-
-            f.write_fmt(format_args!("{}-- {name}\n", indent(indent_level)))?;
-            f.write_fmt(format_args!(
-                "{}ZKBuilder.constrainR1CS\n",
+        for (index, ((a, b), c)) in self
+            .matrices
+            .a
+            .iter()
+            .zip(&self.matrices.b)
+            .zip(&self.matrices.c)
+            .enumerate()
+        {
+            writeln!(
+                f,
+                "{}-- {}",
                 indent(indent_level),
-            ))?;
+                RV64_CONSTRAINT_NAMES[index]
+            )?;
+            writeln!(f, "{}ZKBuilder.constrainR1CS", indent(indent_level))?;
             indent_level += 1;
-            f.write_fmt(format_args!(
-                "{}{}\n",
+            writeln!(
+                f,
+                "{}{}",
                 indent(indent_level),
-                pretty_print_lc("jolt_inputs", a),
-            ))?;
-            f.write_fmt(format_args!(
-                "{}{}\n",
+                pretty_print_lc("jolt_inputs", a)
+            )?;
+            writeln!(
+                f,
+                "{}{}",
                 indent(indent_level),
-                pretty_print_lc("jolt_inputs", b),
-            ))?;
-            f.write_fmt(format_args!(
-                "{}{}\n",
+                pretty_print_lc("jolt_inputs", b)
+            )?;
+            writeln!(
+                f,
+                "{}{}",
                 indent(indent_level),
-                pretty_print_lc("jolt_inputs", c),
-            ))?;
+                pretty_print_lc("jolt_inputs", c)
+            )?;
             indent_level -= 1;
         }
 
         Ok(())
     }
-
-    pub fn zklean_imports(&self) -> Vec<String> {
-        vec![String::from("zkLean")]
-    }
 }
 
 impl<J: JoltParameterSet> AsModule for ZkLeanR1CSConstraints<J> {
     fn as_module(&self) -> std::io::Result<Module> {
-        let mut contents: Vec<u8> = vec![];
+        let mut contents = Vec::new();
         self.zklean_pretty_print(&mut contents, 0)?;
 
         Ok(Module {
             name: String::from("R1CS"),
-            imports: self.zklean_imports(),
+            imports: vec![String::from("zkLean")],
             contents,
         })
     }
 }
 
-pub fn input_to_field_name(input: &JoltR1CSInputs) -> String {
-    let paren = Regex::new(r"\((.*)\)").unwrap();
-    let comma = Regex::new(r", *").unwrap();
+pub fn circuit_flag_field_name(flag: CircuitFlags) -> String {
+    format!("OpFlags_{flag:?}")
+}
 
-    let mut string: String = format!("{input:?}");
+fn signed_coefficient(value: Fr) -> i128 {
+    for magnitude in [1_i128, 2, 4, 1_i128 << 64] {
+        if value == Fr::from_i128(magnitude) {
+            return magnitude;
+        }
+        if value == Fr::from_i128(-magnitude) {
+            return -magnitude;
+        }
+    }
+    panic!("RV64 R1CS introduced an unsupported coefficient: {value}")
+}
 
-    string = comma
-        .replace_all(string.as_str(), NoExpand("_"))
-        .to_string();
-
-    while paren.is_match(string.as_str()) {
-        string = paren.replace(string.as_str(), "_$1").to_string();
+fn pretty_print_term(inputs_struct: &str, variable: usize, coefficient: Fr) -> String {
+    let coefficient = signed_coefficient(coefficient);
+    if variable == V_CONST {
+        return coefficient.to_string();
     }
 
-    string
-}
-
-fn input_index_to_field_name(index: usize) -> String {
-    input_to_field_name(&ALL_R1CS_INPUTS[index])
-}
-
-fn pretty_print_term(inputs_struct: &str, Term { input_index, coeff }: &Term) -> String {
-    let var = input_index_to_field_name(*input_index);
-    match coeff {
-        1 => format!("{inputs_struct}.{var}").to_string(),
-        c => format!("({c}*{inputs_struct}.{var})").to_string(),
+    let variable = format!("{inputs_struct}.{}", RV64_VARIABLE_NAMES[variable]);
+    match coefficient {
+        1 => variable,
+        coefficient => format!("({coefficient}*{variable})"),
     }
 }
 
-fn pretty_print_lc(inputs_struct: &str, lc: &LC) -> String {
-    let (var_terms, len, const_term) = LC::decompose(*lc);
-    let const_term = match const_term {
-        0 => None,
-        c => Some(format!("{c}").to_string()),
-    };
-    let var_terms = var_terms[..len]
+fn pretty_print_lc(inputs_struct: &str, row: &SparseRow<Fr>) -> String {
+    let terms = row
         .iter()
-        .map(|t| pretty_print_term(inputs_struct, t));
-    let terms = const_term.into_iter().chain(var_terms).collect::<Vec<_>>();
+        .map(|&(variable, coefficient)| pretty_print_term(inputs_struct, variable, coefficient))
+        .collect::<Vec<_>>();
 
-    match terms.len() {
-        0 => "0".to_string(),
-        1 => terms[0].clone(),
-        _ => format!("({})", terms.join(" + ")).to_string(),
+    match terms.as_slice() {
+        [] => "0".to_string(),
+        [term] => term.clone(),
+        _ => format!("({})", terms.join(" + ")),
     }
 }

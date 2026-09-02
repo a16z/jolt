@@ -40,11 +40,10 @@ pub fn main() {
         guest::preprocess_shared_allocate_stack_with_increased_size(&mut program).unwrap();
     let prover_preprocessing =
         guest::preprocess_prover_allocate_stack_with_increased_size(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_allocate_stack_with_increased_size(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_allocate_stack_with_increased_size(
+            &prover_preprocessing,
+        );
 
     let prove_allocate_stack_with_increased_size =
         guest::build_prover_allocate_stack_with_increased_size(program, prover_preprocessing);

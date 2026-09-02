@@ -9,9 +9,7 @@
 //! factoring, γ-combined ra, deferred-reduction accumulation) preserve every
 //! wire byte.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/registers/read_write_checking.rs` and
-//! `subprotocols/read_write_matrix/{cycle_major,registers}.rs`:
+//! Carries forward the former sparse read/write-matrix optimizations:
 //!
 //! - **Sparse cycle-major matrix**: `rd_wa`/`rs1_ra`/`rs2_ra`/`Val` are
 //!   represented by ≤ 3 entries per cycle (the touched registers) instead of

@@ -9,11 +9,8 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_memory_ops(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_memory_ops(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_memory_ops(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_memory_ops(&prover_preprocessing);
 
     let prove = guest::build_prover_memory_ops(program, prover_preprocessing);
     let verify = guest::build_verifier_memory_ops(verifier_preprocessing);

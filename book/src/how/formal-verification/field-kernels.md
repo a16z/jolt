@@ -423,7 +423,7 @@ The result relies on the following assumptions.
 
 Jolt owns the kernel, theorem, proof object, and inspection witness. This
 does not yet prove every executable that depends on Jolt. In particular, the
-current legacy `akita` feature in `jolt-prover` still reaches the external
+current `akita` feature in `jolt-prover` still reaches the external
 Akita field implementation instead of `Prime128OffsetA7F7`. These theorems do
 not cover that path. The final cutover must route the production prover or
 verifier through this field type and inspect that final binary before making

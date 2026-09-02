@@ -1,4 +1,4 @@
-use jolt_prover_legacy::host::Program;
+use jolt_host::Program;
 
 use crate::guests::{self, GuestConfig, GuestProgram, ProverPreprocessing};
 use crate::objective::Objective;
@@ -35,7 +35,7 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
     }
 
     fn setup(&self) -> ProverTimeSetup {
-        let mut mc = self.guest.memory_config();
+        let mc = self.guest.memory_config();
         let input = self.guest.input();
 
         // Compile
@@ -46,21 +46,12 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         }
         host_program.set_memory_config(mc);
         host_program.build(target_dir);
-        let elf_bytes = host_program
-            .get_elf_contents()
-            .expect("guest ELF not found after build");
-
-        // Decode to get program_size, trace to get trace length
-        let (_bytecode, _memory_init, program_size, _e_entry) =
-            jolt_prover_legacy::guest::program::decode(&elf_bytes);
-        mc.program_size = Some(program_size);
-
-        let program = GuestProgram::new(&elf_bytes, &mc);
+        let mut program = host_program;
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input, &[], &[]);
         let max_trace_length = (trace.len() + 1).next_power_of_two();
         drop(trace);
 
-        let prover_pp = guests::prover_preprocessing(&program, max_trace_length);
+        let prover_pp = guests::prover_preprocessing(&mut program, mc, max_trace_length);
 
         ProverTimeSetup {
             program,

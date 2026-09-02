@@ -29,7 +29,7 @@ use crate::constraint::ConstraintMatrices;
 /// Dimensional invariants (power-of-two `num_cycles`, padded dimensions
 /// re-derivable from the matrices, non-overflowing `total_rows`/`total_cols`
 /// products) are established at construction. Deserialization routes through
-/// [`RawR1csKey`] and revalidates them; malformed input is rejected before
+/// `RawR1csKey` and revalidates them; malformed input is rejected before
 /// any consumer sees the struct.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(

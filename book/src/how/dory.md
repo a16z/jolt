@@ -88,9 +88,4 @@ In Jolt, witness polynomials can be committed in a **streaming** fashion: rather
 
 ## Implementation
 
-The Jolt implementation of Dory lives in `crates/jolt-prover-legacy/src/poly/commitment/dory/` and wraps the [`a16z/dory`](https://github.com/a16z/dory/) library. Key files:
-
-- `commitment_scheme.rs` &mdash; Implements the `CommitmentScheme` and `StreamingCommitmentScheme` traits.
-- `dory_globals.rs` &mdash; Manages per-context Dory matrix dimensions ($\nu$, $\sigma$) and coefficient layout.
-- `wrappers.rs` &mdash; Bridges Jolt's `MultilinearPolynomial` types to Dory's polynomial interface, including specialized `commit_tier_1` for compact scalars and one-hot polynomials.
-- `jolt_dory_routines.rs` &mdash; Custom implementations of low-level group operations (MSM, vector-scalar multiplication, folding) used by the Dory prover and verifier.
+The Jolt adapter lives in `crates/jolt-dory/` and wraps the [`a16z/dory`](https://github.com/a16z/dory/) library. `scheme.rs` implements commitments and openings, `streaming.rs` implements trace streaming and the one-hot fast path, and `routines.rs` contains Jolt's low-level group operations. The generic PCS interface lives in `crates/jolt-openings/`; the Jolt prover assembles the final batch in `crates/jolt-prover/src/dory/stages/stage8.rs`.

@@ -1,8 +1,6 @@
-//! The optimized backend: legacy-ported kernels behind the same slots the
-//! reference backend serves, byte-identical round polynomials and output
-//! claims by construction (the parity tests in each module pin them against
-//! the naive tier on synthetic traces; `byte_diff` pins the full proofs
-//! against `jolt-prover-legacy`).
+//! The optimized backend: kernels behind the same slots the reference backend
+//! serves. Parity tests in each module pin round polynomials and output claims
+//! against the reference tier on synthetic traces.
 //!
 //! The shared playbook, per kernel:
 //! - **Sparse one-hot access**: per-cycle hot indices off typed witness
@@ -19,8 +17,8 @@
 //!   byte-identical.
 //! - **Eval-at-1 recovery**: round messages sample the summand at
 //!   `t ∈ {0, 2, .., degree}` and recover `s(1) = previous_claim − s(0)`,
-//!   the same trade the legacy prover makes (a dishonest input claim
-//!   surfaces at the driver's final-claim check instead of the round check).
+//!   so a dishonest input claim surfaces at the driver's final-claim check
+//!   instead of the round check.
 //! - **Rayon cycle walks** with per-thread partial accumulators.
 //!
 //! Each module documents its own port; [`JoltBackend::optimized`] wires them.
