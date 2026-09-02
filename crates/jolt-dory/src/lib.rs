@@ -41,6 +41,7 @@
     clippy::wildcard_enum_match_arm
 )]
 
+mod compression;
 mod routines;
 mod scheme;
 mod streaming;
@@ -49,6 +50,7 @@ mod types;
 #[cfg(not(target_arch = "wasm32"))]
 mod urs_lock;
 
+pub use compression::{CompressedDoryArtifacts, CompressedDoryProof, DoryCompressionError};
 pub use scheme::DoryScheme;
 pub use types::{
     DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,

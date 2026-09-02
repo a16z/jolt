@@ -3349,6 +3349,7 @@ dependencies = [
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "bincode 2.0.1",
  "criterion",
  "dory-pcs",
  "jolt-crypto",

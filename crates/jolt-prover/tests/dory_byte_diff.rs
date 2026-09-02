@@ -2294,6 +2294,144 @@ mod wide_one_hot {
     }
 }
 
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
+#[expect(clippy::expect_used)]
+mod gt_compression {
+    use std::sync::Arc;
+
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::{CompressedDoryArtifacts, DoryScheme};
+    use jolt_field::Fr;
+    use jolt_program::execution::JoltProgram;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
+
+    use super::support;
+
+    const TRACE_LENGTH: usize = 1 << 18;
+    const FIBONACCI_UNITS: u32 = 19_660;
+
+    #[test]
+    fn fibonacci_2_18_dory_artifacts_compress_and_verify() {
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&FIBONACCI_UNITS).expect("serialize inputs");
+        let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
+        let memory_layout = &guest.io_device.memory_layout;
+        let shared =
+            JoltSharedPreprocessing::new(guest.program, memory_layout.clone(), TRACE_LENGTH);
+        let legacy_preprocessing = support::LegacyPreprocessing::new(shared);
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full_arc()
+            .expect("full program preprocessing");
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
+        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        let config = ProverConfig::derive::<Fr>(
+            trace_output.trace.rows(),
+            memory_layout,
+            verifier_preprocessing.program.min_bytecode_address(),
+            verifier_preprocessing.program.program_image_len_words(),
+            TRACE_LENGTH,
+        )
+        .expect("derive config");
+        assert_eq!(config.trace_length, TRACE_LENGTH);
+        assert_eq!(
+            config.trace_polynomial_order,
+            TracePolynomialOrder::CycleMajor
+        );
+
+        let public_io = trace_output.device.clone();
+        let padded_output = support::pad_trace(trace_output, config.trace_length);
+        let witness = Arc::new(TraceBackend::new(
+            support::witness_config(&config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        ));
+        let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                TRACE_LENGTH,
+            )),
+            committed_program: None,
+        };
+        let mut proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &JoltBackend::<Fr, DoryScheme>::optimized(),
+                &prover_preprocessing,
+                &config,
+                None,
+                witness,
+                &public_io,
+            )
+            .expect("prove fibonacci");
+
+        let mut commitments = Vec::new();
+        commitments.push(proof.commitments.rd_inc.clone());
+        commitments.push(proof.commitments.ram_inc.clone());
+        commitments.extend(proof.commitments.instruction_ra.iter().cloned());
+        commitments.extend(proof.commitments.ram_ra.iter().cloned());
+        commitments.extend(proof.commitments.bytecode_ra.iter().cloned());
+        assert_eq!(
+            (
+                proof.commitments.instruction_ra.len(),
+                proof.commitments.ram_ra.len(),
+                proof.commitments.bytecode_ra.len(),
+            ),
+            (32, 4, 4),
+        );
+        assert_eq!(commitments.len(), 42);
+        assert_eq!(proof.joint_opening_proof.0.sigma, 11);
+
+        let native_bytes = bincode::serde::encode_to_vec(
+            (&commitments, &proof.joint_opening_proof),
+            bincode::config::standard(),
+        )
+        .expect("encode native Dory artifacts");
+        let compressed =
+            CompressedDoryArtifacts::from_native(&commitments, &proof.joint_opening_proof)
+                .expect("compress Dory artifacts");
+        let compressed_bytes =
+            bincode::serde::encode_to_vec(compressed, bincode::config::standard())
+                .expect("encode compressed Dory artifacts");
+        assert_eq!(native_bytes.len(), 45_684);
+        assert_eq!(compressed_bytes.len(), 17_398);
+
+        let (compressed, consumed): (CompressedDoryArtifacts, usize) =
+            bincode::serde::decode_from_slice(&compressed_bytes, bincode::config::standard())
+                .expect("decode compressed Dory artifacts");
+        assert_eq!(consumed, compressed_bytes.len());
+        let (recovered_commitments, recovered_proof) =
+            compressed.into_native().expect("decompress Dory artifacts");
+
+        let mut recovered = recovered_commitments.into_iter();
+        proof.commitments.rd_inc = recovered.next().expect("rd_inc commitment");
+        proof.commitments.ram_inc = recovered.next().expect("ram_inc commitment");
+        for commitment in &mut proof.commitments.instruction_ra {
+            *commitment = recovered.next().expect("instruction_ra commitment");
+        }
+        for commitment in &mut proof.commitments.ram_ra {
+            *commitment = recovered.next().expect("ram_ra commitment");
+        }
+        for commitment in &mut proof.commitments.bytecode_ra {
+            *commitment = recovered.next().expect("bytecode_ra commitment");
+        }
+        assert!(recovered.next().is_none());
+        proof.joint_opening_proof = recovered_proof;
+        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+    }
+}
+
 #[cfg(not(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
