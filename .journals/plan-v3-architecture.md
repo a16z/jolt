@@ -48,3 +48,47 @@ challenge wires ↔ squeeze output words (125/128-bit decode is linear in bits);
 transcript never exits the table again (Dory challenges are consumed by the limb table's public scalar arithmetic in the R1CS: 143 scalars,
 ≈600 constraints); L4 GT/G1/G2 limb chunks ↔ hash message bits (16 bits per chunk, linear); L5 Dory Fr scalars (R1CS) ↔ limb rows' public
 scalar inputs (Straus digit selectors, §2 W).
+
+## 2. Layer-1 component catalog (common to D0–D5; measured unit costs, 10 threads)
+
+Unit costs (measured): HyperKZG open 2^17 0.17 s · 2^18 0.34 · 2^19 0.67 · 2^20 1.35 · 2^21 ≈2.7 · 2^22 ≈5.4 (est. ×2/doubling); bit-column commit
+3.6 ns/bit (M6, ≥16 columns shared); u16 column 6.3 ms per 2^17 column (54 in parallel, M2) → 12.6 ms @2^18; full-width column 72 ms per 2^17
+→ 144 ms @2^18; limb sumcheck 0.95 s @2^17 (54+9 cols, s=6, t=12, split-eq+fmadd) / 0.88 s (s=3, deg 5); hash sumcheck 0.35 s @2^17 × 163 cols
+deg 3; Spartan 2.4 µs/constraint incl. its PCS share; G1 32 B compressed (64 B on EVM), Fr 32 B.
+
+| id | component | rows (L=20) | committed columns | degree | prover s @2^18 | notes / anchors |
+|---|---|---:|---|---:|---:|---|
+| R | Spartan R1CS: stage algebra 9,895 (plan-relation §2) + Dory Fr scalars ≈600 + Straus digit bits 143×254 = 36.3k booleans + heads/IO ≈100 | m ≈ 47k → 2^16 | W (1 poly, 2^16) | outer 3 / inner 2 | 0.11 | `jolt-blindfold/src/prove.rs:805-1025` fork, plan-relation §7 |
+| T1 | Blake3 transcript table (M3 §B): row = half-G step; 116 rows/compression; C_tot 1,980 (1,893) | 229.7k → 2^18 (88%) | 163 bits (131 + 32-col message table, lever L2) | 3 | commit 0.135 (37.4M bits) · sumcheck 0.70 | `crates/jolt-r1cs/src/gadgets/blake3.rs` (round structure), `jolt-transcript/src/blake3.rs` (profile) |
+| T2 | non-native limb table (M2 §1–2: 96-bit limbs, 16-bit chunks, CRT mod r·2^288): row = one Fq output coefficient, t ≤ 24 products | Pippenger (M1) 205k/230.6k → 2^18; Straus fixed-wiring (§W) ≈259k → 2^18 (99%) or 2^19 | 54 u16 chunks + LogUp helpers (s=3: 18 fw, deg 5 · s=6: 9 fw, deg 8) + 1 multiplicity | 5 / 8 | chunks 0.68 · helpers 2.6 (s=3) / 1.3 (s=6) · sumcheck 1.8 / 1.9 | GT mul 12 rows, cyc-sqr 12, G1 add 11–15, G2 add 22–30, Miller 14,380, FE 3,288 (M1) |
+| T2-ops | operand rows: 42 commitments + 74 proof GT + 38 G1 + 37 G2 as 16-bit chunk rows (range-checked once) | 1,320 + ~500 | (inside T2) | — | — | operands of §1 statement |
+| W | wiring/linking sumcheck S2 (M3 §B, M2 §4): `Σ_u Σ_j ρ_j M̃_j(r,u)·col_src(j)(u)`; + L1–L5 | 2^18 (no rows added) | none | 2–3 | ≈0.12 | verifier cost = §W |
+| S3 | multi-point → one-point reduction (`Σ_u (eq(r,u)+β·eq(u*,u)+…)·col(u)`) | 2^18 + log(P·k) | none | 2 | ≈0.05 | ends at the single HyperKZG point |
+| O | ONE HyperKZG opening of the RLC (eq-weighted, §3) of all P polys, size k·2^18 | — | — | — | k=1 0.34 · k=8 2.7 · k=16 5.4 | `jolt-hyperkzg/src/scheme.rs:128-158`; proof (ℓ+1) G1 + 3ℓ Fr |
+
+Layer-1 prover total (L=20): **k=1 5.3 s · k=8 7.7 s · k=16 10.4 s** (s=6; s=3 +1.0 s). Split @k=8: opening 35%, T2 helpers 17%, T2 sumcheck
+25%, T1 sumcheck 9%, T2 chunk commits 9%, rest 5%. M2/M3's "2.5 s" was the 2^17 shapes (C3-only hash rows, 122k fused limb rows).
+
+### W — wiring choice (decides recursion feasibility)
+- (a) **Declared directed edges, public sparse matrices evaluated natively** — verifier O(#edges) ≈ 2^18 × 66 wired inputs ≈ 17M Fr mults
+  ≈ 0.3 s native, 0 proof bytes. Fine for D1/D2 (native verifier). **Fatal for D3/D4/D5**: 17M constraints in a layer-2 circuit, ≈850M gas on-chain.
+- (b) **Structural wiring** (required for D3/D4/D5): T1's 8 wiring shapes (same-G, round permutation, message schedule, chaining) are
+  fixed per compression → MLE = eq(compression) × P̃(pos,pos') with P̃ a 128×128 public matrix → O(128²) ≈ 16k mults, or sparse ≈2k; intra-op
+  wiring in T2 (12 coefficient rows of an op read the operand op's 12 rows) = row shift by a constant → `EqPlusOnePolynomial::evals`-style kernels
+  (`jolt-poly/src/eq_plus_one.rs:71`), O(log). The instance-specific part is the multi-exp schedule: Pippenger's bucket wiring depends on the
+  public challenge digits → O(rows). Fix: **Straus w=4 with fixed wiring + public digit selectors** (Dory-assist's exponentiate-and-multiply
+  with `digit(s,x)` selector, `/tmp/dory-assist-protocol.md` §GT Semantics): per base k precompute B_k^j, j<16 (15 GT mults, fixed wiring);
+  64 steps × (144 selected mults + 4 cyclotomic sqr); selected operand = Σ_j δ(k,step,j)·B_k^j with δ = [digit(k,step)=j] a public 0/1 MLE of
+  144×64×16 entries, evaluated as Σ_{k,step} eq(r,(k,step))·eq(r_j, digit(k,step)) → **9.2k terms ≈ 20k mults** (verifier), digits are R1CS
+  bits (row R). Cost: GT ops 11.6k (vs Pippenger 6.3k) → +65k rows; same for G1/G2 Straus (≈100k rows, ≈ M1's Pippenger 112k). Alternative with
+  fewer rows: keep Pippenger and prove the bucket wiring by offline memory checking over 37 windows × 128 buckets with the 5.3k-entry public
+  digit table as addresses (Twist/Shout-style, new argument, +2–3 committed columns, +1 stage).
+  **Decision:** (a) for D1/D2; (b)+Straus for D3/D4/D5 (rows 205k → ≈259k; if it does not fit 2^18 after the T2-ops rows, 2^19: opening ×2).
+
+### Row/column shape (brief's reshape question)
+Opening cost ∝ (total committed entries)/(#polys) = E/P; proof ∝ P (32 B commitment) + claims + rounds. Reshaping rows↔columns changes
+neither E nor the algebra: T1 as (G-step,bit) rows = 56·32·C_tot = 3.5M rows × 14 committed columns → 2^22 (same E = 49M as 163 × 2^18 ≈ 43M,
++14% for per-bit carries); T2 as (Fq output, limb) rows = 3× rows × 19 chunk + 7 helper columns → 2^20 (E unchanged, helper *entries* ×1.1).
+Reshaping only lowers P at the same E/P as column packing does, with a harder relation (bit-level ripple carries, rotation as row shifts).
+**Decision: keep the M2/M3 row shapes; pack k columns per polynomial** (P = ⌈163/k⌉ + ⌈73/k⌉ + 1: k=1 → 237, k=8 → 32, k=16 → 17; the packed
+poly's extra log k variables are the column index; opening size k·2^18).
