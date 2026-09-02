@@ -228,6 +228,16 @@ fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     }
 }
 
+/// The committed one-hot chunk width [`one_hot_config`] selects for a
+/// `2^log_T`-cycle trace. The committed preprocessing digest and the Dory
+/// setup sizing read it from here so they keep describing the chunking the
+/// prover actually uses.
+#[cfg(not(feature = "akita"))]
+#[expect(non_snake_case)]
+pub(crate) fn committed_log_k_chunk(log_T: usize) -> u8 {
+    one_hot_config(log_T).log_k_chunk
+}
+
 /// The committed-program precommitted candidates' variable counts, folded
 /// into the shared commitment grid alongside the advice candidates.
 #[derive(Clone, Copy, Debug)]
