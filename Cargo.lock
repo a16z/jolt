@@ -3857,6 +3857,8 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
+ "blake2 0.11.0-rc.6",
+ "hex",
  "jolt-claims",
  "jolt-field",
  "jolt-poly",
