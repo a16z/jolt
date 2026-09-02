@@ -1,22 +1,20 @@
-//! Stage-5 scan-kernel roof attribution (wave-12 lane S12).
+//! Stage-5 scan-kernel roof attribution.
 //!
 //! Factorizes the achieved IrrPhaseScan / IrrSuffixScan rate against
-//! candidate roofs on production-distribution rows, X9-method:
+//! candidate roofs on production-distribution rows:
 //!
 //! - `base`   — production scan+reduce vs scan-only (reduce share), per
 //!   phase shape
 //! - `sgs`    — production scan at 512..8192 simdgroups (thread starvation
 //!   + single-level reduce tax; production uses the two-level RAF reduce)
 //! - `width`  — production scan at TG widths 32..256 (packing)
+//! - `mach`   — the production scan body with its flush swapped for each
+//!   rung of the flush machinery (none → sort → gather → scan → tail)
 //! - `floor`  — probe kernels: quiet floor (loads + identical field math,
 //!   no emit machinery) and loads floor (no field ALU) — the gap between
 //!   production and quiet is the flush/emit machinery
-//! - `chain`  — serial fr_mont_mul chain occupancy curve (Fr twin of the
-//!   X9 fq mulroof)
+//! - `chain`  — serial fr_mont_mul chain occupancy curve
 //! - `suffix` — the same floors for the suffix scan
-//!
-//! Kernel-arm A/Bs (sorted default vs scatter/grouped/eager) run through
-//! the production kill switches; this rig only prices roofs.
 //!
 //! Usage:
 //!   /usr/bin/lockf -k /tmp/jolt-metal-gpu.lock env IRR_ROOF_ROWS=<dump> \
@@ -272,8 +270,8 @@ kernel void jkx_suffix_loads_floor(
 "#;
 
     /// Production phase-scan body with the flush swapped for `//FLUSH//`:
-    /// the machinery-decomposition ladder (w17). Dead-state XOR folds keep
-    /// every register live without field-add pollution.
+    /// the machinery-decomposition ladder. Dead-state XOR folds keep every
+    /// register live without field-add pollution.
     const PHASE_TMPL: &str = r#"
 kernel void ENTRY(
     device const uint* rows [[buffer(0)]],
@@ -496,12 +494,6 @@ kernel void ENTRY(
                     &format!("P{phase} scan only"),
                     &sample(iters, || buffers.run_timed_scan_only().expect("timed")),
                 );
-                report(
-                    &format!("P{phase} scan only FIXED"),
-                    &sample(iters, || {
-                        buffers.run_timed_scan_only_fixed().expect("timed")
-                    }),
-                );
             }
             fixture.reset_u_evals();
         }
@@ -661,12 +653,6 @@ kernel void ENTRY(
             report(
                 "suffix scan only",
                 &sample(iters, || buffers.run_timed_scan_only().expect("timed")),
-            );
-            report(
-                "suffix scan only FIXED",
-                &sample(iters, || {
-                    buffers.run_timed_scan_only_fixed().expect("timed")
-                }),
             );
             report(
                 "suffix quiet floor",

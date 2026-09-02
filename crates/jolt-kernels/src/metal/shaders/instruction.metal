@@ -14,10 +14,10 @@
 //
 // Conflict resolution: each simdgroup owns a private device-memory bucket
 // row (zeroed at kernel start), so races only exist between lanes of one
-// simdgroup. A tile whose active lanes share one chunk (the dominant case
-// in early phases — high index bits are mostly zero on real traces)
-// reduces lane values with a shuffle-xor butterfly and lane 0 adds once;
-// mixed-chunk tiles fall back to lanes taking turns (masked serial adds).
+// simdgroup, and those are settled in registers — a shuffle-xor butterfly
+// for a tile whose active lanes share one chunk (the dominant case in early
+// phases — high index bits are mostly zero on real traces), a sort +
+// segmented scan otherwise — before one lane per key adds to device memory.
 
 // --- u128 / bit helpers -----------------------------------------------------
 
@@ -458,14 +458,6 @@ struct IrrPhaseScanParams {
     uint upper_suffix_bits;  // suffix_len.saturating_sub(64)
 };
 
-inline Fr256 jk_simd_shuffle_fr(Fr256 v, uint source) {
-    Fr256 out;
-    for (uint i = 0u; i < FR_LIMBS; i++) {
-        out.v[i] = simd_shuffle(v.v[i], (ushort)source);
-    }
-    return out;
-}
-
 inline Fr256 jk_fr_shuffle_v4(Fr256 v, uint source) {
     uint4 a = uint4(v.v[0], v.v[1], v.v[2], v.v[3]);
     uint4 b = uint4(v.v[4], v.v[5], v.v[6], v.v[7]);
@@ -521,9 +513,8 @@ inline uint jk_sort_key_lane(uint packed, uint lane) {
 // start so the last valid lane detects its tail. A lane at offset `o`
 // merges at scan step `d` iff `o >= d` (sorted keys make "the key `d` lanes
 // up equals mine" and "my run extends `d` past its start" the same
-// predicate), so the scan below can stop after the longest run is covered:
-// the skipped steps performed no adds, leaving the add tree — and the
-// cells — bit-identical to the fixed-step arm.
+// predicate), so the scan below can stop after the longest run is covered
+// (the skipped steps would have performed no adds).
 inline void jk_sorted_runs(
     uint skey,
     bool valid,
@@ -545,12 +536,10 @@ inline void jk_sorted_runs(
 // Flush the held (key, 3xFr) accumulators: sort lanes by key, gather each
 // lane's sorted-slot values with one vec4 shuffle triple, segmented
 // inclusive scan over the (now contiguous) equal-key runs, segment tails
-// add the per-key totals to device cells. Replaces the 2x32-source-turn
-// scatter reduce: <= 5 scan steps instead of 32 gather turns, and the
-// run-offset ballot (jk_sorted_runs) bounds the steps by the longest
-// equal-key run — production tiles carry 8-18 distinct keys, so most
-// flushes finish in 1-3 steps. Field adds regroup exactly, so cells stay
-// byte-identical to the scatter arm.
+// add the per-key totals to device cells. The run-offset ballot
+// (jk_sorted_runs) bounds the <= 5 scan steps by the longest equal-key run
+// — production tiles carry 8-18 distinct keys, so most flushes finish in
+// 1-3 steps.
 inline void jk_flush_sorted3(
     device uint* cells,
     uint key,
@@ -591,167 +580,6 @@ inline void jk_flush_sorted3(
     }
 }
 
-// Kill-switch twin (`JOLT_IRR_SCAN_FIXED_STEPS`): the w12 fixed-step flush —
-// per-step key shuffles, always log2(simd_size) scan steps.
-inline void jk_flush_sorted3_fixed(
-    device uint* cells,
-    uint key,
-    bool flush,
-    Fr256 h0,
-    Fr256 h1,
-    Fr256 h2,
-    uint lane,
-    uint simd_size)
-{
-    uint packed = jk_sort_key_lane(flush ? ((key << 5u) | lane) : 0xFFFFu, lane);
-    uint src = packed & 31u;
-    uint skey = packed >> 5u;
-    bool valid = packed != 0xFFFFu;
-    Fr256 g0 = jk_fr_shuffle_v4(h0, src);
-    Fr256 g1 = jk_fr_shuffle_v4(h1, src);
-    Fr256 g2 = jk_fr_shuffle_v4(h2, src);
-    for (uint d = 1u; d < simd_size; d <<= 1u) {
-        uint pkey = simd_shuffle_up(skey, (ushort)d);
-        Fr256 p0 = jk_fr_shuffle_up_v4(g0, (ushort)d);
-        Fr256 p1 = jk_fr_shuffle_up_v4(g1, (ushort)d);
-        Fr256 p2 = jk_fr_shuffle_up_v4(g2, (ushort)d);
-        if (valid && lane >= d && pkey == skey) {
-            g0 = fr_add(g0, p0);
-            g1 = fr_add(g1, p1);
-            g2 = fr_add(g2, p2);
-        }
-    }
-    uint nkey = simd_shuffle_down(skey, 1u);
-    bool tail = valid && (lane == simd_size - 1u || nkey != skey);
-    if (tail) {
-        uint family_base = (skey >> 8u) * 3u * 256u;
-        uint chunk = skey & 255u;
-        jk_cell_add(cells, family_base + chunk, g0);
-        jk_cell_add(cells, family_base + 256u + chunk, g1);
-        jk_cell_add(cells, family_base + 512u + chunk, g2);
-    }
-}
-
-// One-value twin of jk_flush_sorted3 with the sort hoisted: the suffix scan
-// sorts a tile once (chunk keys are suffix-invariant) and scans each
-// suffix's values through the same (src, skey) mapping.
-inline void jk_scan_sorted1(
-    device uint* cells,
-    uint cell_base,
-    uint src,
-    uint skey,
-    bool valid,
-    Fr256 v,
-    uint lane,
-    uint simd_size)
-{
-    Fr256 g = jk_fr_shuffle_v4(v, src);
-    for (uint d = 1u; d < simd_size; d <<= 1u) {
-        uint pkey = simd_shuffle_up(skey, (ushort)d);
-        Fr256 p = jk_fr_shuffle_up_v4(g, (ushort)d);
-        if (valid && lane >= d && pkey == skey) {
-            g = fr_add(g, p);
-        }
-    }
-    uint nkey = simd_shuffle_down(skey, 1u);
-    bool tail = valid && (lane == simd_size - 1u || nkey != skey);
-    if (tail) {
-        jk_cell_add(cells, cell_base + skey, g);
-    }
-}
-
-// Reduce equal scatter keys inside the simdgroup, then let only each key's
-// first lane update device memory. Leaders have distinct cells, so the
-// read-modify-writes are independent without 32 lane-turn barriers.
-inline void jk_simd_scatter3(
-    device uint* cells,
-    uint key,
-    bool active,
-    Fr256 v0,
-    Fr256 v1,
-    Fr256 v2,
-    uint lane,
-    uint simd_size)
-{
-    bool collision = false;
-    bool leader = active;
-    for (uint source = 0u; source < simd_size; source++) {
-        bool source_active = simd_shuffle((uint)active, (ushort)source) != 0u;
-        uint source_key = simd_shuffle(key, (ushort)source);
-        bool same = source_active && source_key == key && source != lane;
-        collision = collision || same;
-        leader = leader && !(same && source < lane);
-    }
-    Fr256 sum0 = fr_zero();
-    Fr256 sum1 = fr_zero();
-    Fr256 sum2 = fr_zero();
-    for (uint source = 0u; source < simd_size; source++) {
-        bool source_collision =
-            simd_shuffle((uint)(active && collision), (ushort)source) != 0u;
-        if (source_collision) {
-            uint source_key = simd_shuffle(key, (ushort)source);
-            Fr256 source0 = jk_simd_shuffle_fr(v0, source);
-            Fr256 source1 = jk_simd_shuffle_fr(v1, source);
-            Fr256 source2 = jk_simd_shuffle_fr(v2, source);
-            if (collision && source_key == key) {
-                sum0 = fr_add(sum0, source0);
-                sum1 = fr_add(sum1, source1);
-                sum2 = fr_add(sum2, source2);
-            }
-        }
-    }
-    if (!active || (collision && !leader)) {
-        return;
-    }
-    if (!collision) {
-        sum0 = v0;
-        sum1 = v1;
-        sum2 = v2;
-    }
-    uint family_base = (key >> 8u) * 3u * 256u;
-    uint chunk = key & 255u;
-    jk_cell_add(cells, family_base + chunk, sum0);
-    jk_cell_add(cells, family_base + 256u + chunk, sum1);
-    jk_cell_add(cells, family_base + 512u + chunk, sum2);
-}
-
-// Random suffix chunks are almost always unique inside a simdgroup. Exchange
-// keys first; only the rare colliding lanes pay for field shuffles/reduction.
-inline void jk_simd_scatter1(
-    device uint* cells,
-    uint key,
-    bool active,
-    Fr256 value,
-    uint lane,
-    uint simd_size)
-{
-    bool collision = false;
-    bool leader = active;
-    for (uint source = 0u; source < simd_size; source++) {
-        bool source_active = simd_shuffle((uint)active, (ushort)source) != 0u;
-        uint source_key = simd_shuffle(key, (ushort)source);
-        bool same = source_active && source_key == key && source != lane;
-        collision = collision || same;
-        leader = leader && !(same && source < lane);
-    }
-    Fr256 sum = fr_zero();
-    for (uint source = 0u; source < simd_size; source++) {
-        bool source_collision =
-            simd_shuffle((uint)(active && collision), (ushort)source) != 0u;
-        if (source_collision) {
-            uint source_key = simd_shuffle(key, (ushort)source);
-            Fr256 source_value = jk_simd_shuffle_fr(value, source);
-            if (collision && source_key == key) {
-                sum = fr_add(sum, source_value);
-            }
-        }
-    }
-    if (!active || (collision && !leader)) {
-        return;
-    }
-    jk_cell_add(cells, key, collision ? sum : value);
-}
-
 // Fused condensation + RAF scan with per-lane run-length accumulation.
 // Per-simdgroup cells, quantity-major:
 // [0] shift_half, [1] left, [2] right (interleaved rows);
@@ -759,12 +587,9 @@ inline void jk_simd_scatter1(
 // cell = quantity * 256 + chunk. Cells 1/2/4 are RAW space (host fix-up).
 //
 // Equal-key runs accumulate in per-lane registers; on any key change the
-// tile flushes through jk_flush_sorted3 (sort + segmented scan — the w12
-// repricing measured the previous 2x32-source scatter turns at ~65% of the
-// kernel on production rows, where ~80% of iterations flush with ~24 lanes
-// colliding). No uniform-tile special case: run-length + sorted flush
-// handles uniform runs cheaper than per-tile butterflies. Field adds
-// regroup exactly — cells land bit-identical to every other arm.
+// tile flushes through jk_flush_sorted3 (sort + segmented scan). No
+// uniform-tile special case: run-length + sorted flush handles uniform runs
+// cheaper than per-tile butterflies.
 kernel void jk_irr_phase_scan(
     device const uint* rows [[buffer(0)]],
     device uint* u_evals [[buffer(1)]],
@@ -853,390 +678,6 @@ kernel void jk_irr_phase_scan(
     }
 }
 
-// Kill-switch arm for JOLT_IRR_SCAN_FIXED_STEPS: the w12 body — identical
-// run-length accumulation, flushing through the fixed-step sorted scan.
-kernel void jk_irr_phase_scan_fixed(
-    device const uint* rows [[buffer(0)]],
-    device uint* u_evals [[buffer(1)]],
-    device const uint* v_prev [[buffer(2)]],
-    device uint* partials [[buffer(3)]],
-    constant IrrPhaseScanParams& p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simd_size [[threads_per_simdgroup]])
-{
-    uint sg = gid / simd_size;
-    if (sg >= p.num_sgs) {
-        return;
-    }
-    device uint* my = partials + sg * JK_IRR_RAF_CELLS * FR_LIMBS;
-    for (uint i = lane; i < JK_IRR_RAF_CELLS * FR_LIMBS; i += simd_size) {
-        my[i] = 0u;
-    }
-    simdgroup_barrier(mem_flags::mem_device);
-
-    uint held_key = 0xFFFFFFFFu;
-    Fr256 h0 = fr_zero();
-    Fr256 h1 = fr_zero();
-    Fr256 h2 = fr_zero();
-
-    uint row_start = sg * p.rows_per_sg;
-    uint row_end = min(row_start + p.rows_per_sg, p.n);
-    for (uint base = row_start; base < row_end; base += simd_size) {
-        uint j = base + lane;
-        bool active = j < row_end;
-        uint chunk = 0u;
-        bool flag = false;
-        Fr256 v0 = fr_zero();
-        Fr256 v1 = fr_zero();
-        Fr256 v2 = fr_zero();
-        if (active) {
-            device const uint* row = rows + j * 12u;
-            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
-            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-            flag = ((row[8] >> 8) & 0xFFu) != 0u;
-            Fr256 u = fr_load(u_evals, j);
-            if (p.do_condense != 0u) {
-                u = fr_mont_mul(u, fr_load(v_prev, jk_chunk8(lo, hi, p.prev_shift)));
-                fr_store(u_evals, j, u);
-            }
-            chunk = jk_chunk8(lo, hi, p.suffix_len);
-            ulong s_lo, s_hi;
-            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
-            v0 = u;
-            if (!flag) {
-                ulong x, y;
-                jk_uninterleave(s_lo, s_hi, x, y);
-                v1 = fr_mont_mul(u, jk_fr_from_u64(x));
-                v2 = fr_mont_mul(u, jk_fr_from_u64(y));
-            } else {
-                v1 = fr_mont_mul(u, jk_fr_from_u128(s_lo, s_hi));
-                bool upper_ok = (p.canonical != 0u)
-                    && (p.upper_suffix_bits == 0u
-                        || s_hi == ((1ul << p.upper_suffix_bits) - 1ul));
-                v2 = upper_ok ? u : fr_zero();
-            }
-        }
-
-        uint key = (flag ? 256u : 0u) + chunk;
-        bool same = active && key == held_key;
-        if (same) {
-            h0 = fr_add(h0, v0);
-            h1 = fr_add(h1, v1);
-            h2 = fr_add(h2, v2);
-        }
-        bool take = active && !same;
-        bool flush = take && held_key != 0xFFFFFFFFu;
-        if (simd_any(flush)) {
-            jk_flush_sorted3_fixed(my, held_key, flush, h0, h1, h2, lane, simd_size);
-        }
-        if (take) {
-            held_key = key;
-            h0 = v0;
-            h1 = v1;
-            h2 = v2;
-        }
-    }
-    bool have = held_key != 0xFFFFFFFFu;
-    if (simd_any(have)) {
-        jk_flush_sorted3_fixed(my, held_key, have, h0, h1, h2, lane, simd_size);
-    }
-}
-
-// Kill-switch arm for JOLT_IRR_PHASE_SCAN_SCATTER: the wave-5 body —
-// run-length accumulation + uniform-tile butterflies, flushing through the
-// 2x32-source-turn collision scatter.
-kernel void jk_irr_phase_scan_scatter(
-    device const uint* rows [[buffer(0)]],
-    device uint* u_evals [[buffer(1)]],
-    device const uint* v_prev [[buffer(2)]],
-    device uint* partials [[buffer(3)]],
-    constant IrrPhaseScanParams& p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simd_size [[threads_per_simdgroup]])
-{
-    uint sg = gid / simd_size;
-    if (sg >= p.num_sgs) {
-        return;
-    }
-    device uint* my = partials + sg * JK_IRR_RAF_CELLS * FR_LIMBS;
-    for (uint i = lane; i < JK_IRR_RAF_CELLS * FR_LIMBS; i += simd_size) {
-        my[i] = 0u;
-    }
-    simdgroup_barrier(mem_flags::mem_device);
-
-    uint held_key = 0xFFFFFFFFu;
-    Fr256 h0 = fr_zero();
-    Fr256 h1 = fr_zero();
-    Fr256 h2 = fr_zero();
-
-    uint row_start = sg * p.rows_per_sg;
-    uint row_end = min(row_start + p.rows_per_sg, p.n);
-    for (uint base = row_start; base < row_end; base += simd_size) {
-        uint j = base + lane;
-        bool active = j < row_end;
-        uint chunk = 0u;
-        bool flag = false;
-        Fr256 v0 = fr_zero();
-        Fr256 v1 = fr_zero();
-        Fr256 v2 = fr_zero();
-        if (active) {
-            device const uint* row = rows + j * 12u;
-            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
-            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-            flag = ((row[8] >> 8) & 0xFFu) != 0u;
-            Fr256 u = fr_load(u_evals, j);
-            if (p.do_condense != 0u) {
-                u = fr_mont_mul(u, fr_load(v_prev, jk_chunk8(lo, hi, p.prev_shift)));
-                fr_store(u_evals, j, u);
-            }
-            chunk = jk_chunk8(lo, hi, p.suffix_len);
-            ulong s_lo, s_hi;
-            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
-            v0 = u;
-            if (!flag) {
-                ulong x, y;
-                jk_uninterleave(s_lo, s_hi, x, y);
-                v1 = fr_mont_mul(u, jk_fr_from_u64(x));
-                v2 = fr_mont_mul(u, jk_fr_from_u64(y));
-            } else {
-                v1 = fr_mont_mul(u, jk_fr_from_u128(s_lo, s_hi));
-                bool upper_ok = (p.canonical != 0u)
-                    && (p.upper_suffix_bits == 0u
-                        || s_hi == ((1ul << p.upper_suffix_bits) - 1ul));
-                v2 = upper_ok ? u : fr_zero();
-            }
-        }
-
-        // Family split without divergence in the emit structure: RAF rows
-        // land in cells 3..5, interleaved rows in 0..2. Uniform tiles skip
-        // the held state entirely (their sums emit in place).
-        bool tile_uniform = simd_all(active)
-            && simd_all(chunk == simd_broadcast_first(chunk))
-            && simd_size == 32u;
-        if (tile_uniform) {
-            uint c = simd_broadcast_first(chunk);
-            Fr256 a0 = jk_simd_sum(flag ? fr_zero() : v0, simd_size);
-            Fr256 a1 = jk_simd_sum(flag ? fr_zero() : v1, simd_size);
-            Fr256 a2 = jk_simd_sum(flag ? fr_zero() : v2, simd_size);
-            Fr256 b0 = jk_simd_sum(flag ? v0 : fr_zero(), simd_size);
-            Fr256 b1 = jk_simd_sum(flag ? v1 : fr_zero(), simd_size);
-            Fr256 b2 = jk_simd_sum(flag ? v2 : fr_zero(), simd_size);
-            if (lane == 0u) {
-                jk_cell_add(my, 0u * 256u + c, a0);
-                jk_cell_add(my, 1u * 256u + c, a1);
-                jk_cell_add(my, 2u * 256u + c, a2);
-                jk_cell_add(my, 3u * 256u + c, b0);
-                jk_cell_add(my, 4u * 256u + c, b1);
-                jk_cell_add(my, 5u * 256u + c, b2);
-            }
-        } else {
-            uint key = (flag ? 256u : 0u) + chunk;
-            bool same = active && key == held_key;
-            if (same) {
-                h0 = fr_add(h0, v0);
-                h1 = fr_add(h1, v1);
-                h2 = fr_add(h2, v2);
-            }
-            bool take = active && !same;
-            bool flush = take && held_key != 0xFFFFFFFFu;
-            if (simd_any(flush)) {
-                jk_simd_scatter3(my, held_key, flush, h0, h1, h2, lane, simd_size);
-            }
-            if (take) {
-                held_key = key;
-                h0 = v0;
-                h1 = v1;
-                h2 = v2;
-            }
-        }
-    }
-    bool have = held_key != 0xFFFFFFFFu;
-    if (simd_any(have)) {
-        jk_simd_scatter3(my, held_key, have, h0, h1, h2, lane, simd_size);
-    }
-}
-
-// Kill-switch arm for JOLT_IRR_PHASE_SCAN_EAGER: the wave-3 collision-only
-// scatter without run-length accumulation (every row scatters immediately).
-kernel void jk_irr_phase_scan_eager(
-    device const uint* rows [[buffer(0)]],
-    device uint* u_evals [[buffer(1)]],
-    device const uint* v_prev [[buffer(2)]],
-    device uint* partials [[buffer(3)]],
-    constant IrrPhaseScanParams& p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simd_size [[threads_per_simdgroup]])
-{
-    uint sg = gid / simd_size;
-    if (sg >= p.num_sgs) {
-        return;
-    }
-    device uint* my = partials + sg * JK_IRR_RAF_CELLS * FR_LIMBS;
-    for (uint i = lane; i < JK_IRR_RAF_CELLS * FR_LIMBS; i += simd_size) {
-        my[i] = 0u;
-    }
-    simdgroup_barrier(mem_flags::mem_device);
-
-    uint row_start = sg * p.rows_per_sg;
-    uint row_end = min(row_start + p.rows_per_sg, p.n);
-    for (uint base = row_start; base < row_end; base += simd_size) {
-        uint j = base + lane;
-        bool active = j < row_end;
-        uint chunk = 0u;
-        bool flag = false;
-        Fr256 v0 = fr_zero();
-        Fr256 v1 = fr_zero();
-        Fr256 v2 = fr_zero();
-        if (active) {
-            device const uint* row = rows + j * 12u;
-            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
-            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-            flag = ((row[8] >> 8) & 0xFFu) != 0u;
-            Fr256 u = fr_load(u_evals, j);
-            if (p.do_condense != 0u) {
-                u = fr_mont_mul(u, fr_load(v_prev, jk_chunk8(lo, hi, p.prev_shift)));
-                fr_store(u_evals, j, u);
-            }
-            chunk = jk_chunk8(lo, hi, p.suffix_len);
-            ulong s_lo, s_hi;
-            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
-            v0 = u;
-            if (!flag) {
-                ulong x, y;
-                jk_uninterleave(s_lo, s_hi, x, y);
-                v1 = fr_mont_mul(u, jk_fr_from_u64(x));
-                v2 = fr_mont_mul(u, jk_fr_from_u64(y));
-            } else {
-                v1 = fr_mont_mul(u, jk_fr_from_u128(s_lo, s_hi));
-                bool upper_ok = (p.canonical != 0u)
-                    && (p.upper_suffix_bits == 0u
-                        || s_hi == ((1ul << p.upper_suffix_bits) - 1ul));
-                v2 = upper_ok ? u : fr_zero();
-            }
-        }
-
-        bool tile_uniform = simd_all(active)
-            && simd_all(chunk == simd_broadcast_first(chunk))
-            && simd_size == 32u;
-        if (tile_uniform) {
-            uint c = simd_broadcast_first(chunk);
-            Fr256 a0 = jk_simd_sum(flag ? fr_zero() : v0, simd_size);
-            Fr256 a1 = jk_simd_sum(flag ? fr_zero() : v1, simd_size);
-            Fr256 a2 = jk_simd_sum(flag ? fr_zero() : v2, simd_size);
-            Fr256 b0 = jk_simd_sum(flag ? v0 : fr_zero(), simd_size);
-            Fr256 b1 = jk_simd_sum(flag ? v1 : fr_zero(), simd_size);
-            Fr256 b2 = jk_simd_sum(flag ? v2 : fr_zero(), simd_size);
-            if (lane == 0u) {
-                jk_cell_add(my, 0u * 256u + c, a0);
-                jk_cell_add(my, 1u * 256u + c, a1);
-                jk_cell_add(my, 2u * 256u + c, a2);
-                jk_cell_add(my, 3u * 256u + c, b0);
-                jk_cell_add(my, 4u * 256u + c, b1);
-                jk_cell_add(my, 5u * 256u + c, b2);
-            }
-        } else {
-            uint key = (flag ? 256u : 0u) + chunk;
-            jk_simd_scatter3(my, key, active, v0, v1, v2, lane, simd_size);
-        }
-    }
-}
-
-// Ablation arm for JOLT_IRR_PHASE_SCAN_LEGACY: identical arithmetic and
-// schedule, retaining the barrier-serialized scatter this lane replaced.
-kernel void jk_irr_phase_scan_legacy(
-    device const uint* rows [[buffer(0)]],
-    device uint* u_evals [[buffer(1)]],
-    device const uint* v_prev [[buffer(2)]],
-    device uint* partials [[buffer(3)]],
-    constant IrrPhaseScanParams& p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simd_size [[threads_per_simdgroup]])
-{
-    uint sg = gid / simd_size;
-    if (sg >= p.num_sgs) {
-        return;
-    }
-    device uint* my = partials + sg * JK_IRR_RAF_CELLS * FR_LIMBS;
-    for (uint i = lane; i < JK_IRR_RAF_CELLS * FR_LIMBS; i += simd_size) {
-        my[i] = 0u;
-    }
-    simdgroup_barrier(mem_flags::mem_device);
-
-    uint row_start = sg * p.rows_per_sg;
-    uint row_end = min(row_start + p.rows_per_sg, p.n);
-    for (uint base = row_start; base < row_end; base += simd_size) {
-        uint j = base + lane;
-        bool active = j < row_end;
-        uint chunk = 0u;
-        bool flag = false;
-        Fr256 v0 = fr_zero();
-        Fr256 v1 = fr_zero();
-        Fr256 v2 = fr_zero();
-        if (active) {
-            device const uint* row = rows + j * 12u;
-            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
-            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-            flag = ((row[8] >> 8) & 0xFFu) != 0u;
-            Fr256 u = fr_load(u_evals, j);
-            if (p.do_condense != 0u) {
-                u = fr_mont_mul(u, fr_load(v_prev, jk_chunk8(lo, hi, p.prev_shift)));
-                fr_store(u_evals, j, u);
-            }
-            chunk = jk_chunk8(lo, hi, p.suffix_len);
-            ulong s_lo, s_hi;
-            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
-            v0 = u;
-            if (!flag) {
-                ulong x, y;
-                jk_uninterleave(s_lo, s_hi, x, y);
-                v1 = fr_mont_mul(u, jk_fr_from_u64(x));
-                v2 = fr_mont_mul(u, jk_fr_from_u64(y));
-            } else {
-                v1 = fr_mont_mul(u, jk_fr_from_u128(s_lo, s_hi));
-                bool upper_ok = (p.canonical != 0u)
-                    && (p.upper_suffix_bits == 0u
-                        || s_hi == ((1ul << p.upper_suffix_bits) - 1ul));
-                v2 = upper_ok ? u : fr_zero();
-            }
-        }
-
-        uint cell_base = (flag ? 3u : 0u) * 256u + chunk;
-        bool tile_uniform = simd_all(active)
-            && simd_all(chunk == simd_broadcast_first(chunk))
-            && simd_size == 32u;
-        if (tile_uniform) {
-            uint c = simd_broadcast_first(chunk);
-            Fr256 a0 = jk_simd_sum(flag ? fr_zero() : v0, simd_size);
-            Fr256 a1 = jk_simd_sum(flag ? fr_zero() : v1, simd_size);
-            Fr256 a2 = jk_simd_sum(flag ? fr_zero() : v2, simd_size);
-            Fr256 b0 = jk_simd_sum(flag ? v0 : fr_zero(), simd_size);
-            Fr256 b1 = jk_simd_sum(flag ? v1 : fr_zero(), simd_size);
-            Fr256 b2 = jk_simd_sum(flag ? v2 : fr_zero(), simd_size);
-            if (lane == 0u) {
-                jk_cell_add(my, 0u * 256u + c, a0);
-                jk_cell_add(my, 1u * 256u + c, a1);
-                jk_cell_add(my, 2u * 256u + c, a2);
-                jk_cell_add(my, 3u * 256u + c, b0);
-                jk_cell_add(my, 4u * 256u + c, b1);
-                jk_cell_add(my, 5u * 256u + c, b2);
-            }
-        } else {
-            for (uint k = 0u; k < simd_size; k++) {
-                if (lane == k && active) {
-                    jk_cell_add(my, cell_base, v0);
-                    jk_cell_add(my, cell_base + 256u, v1);
-                    jk_cell_add(my, cell_base + 512u, v2);
-                }
-                simdgroup_barrier(mem_flags::mem_device);
-            }
-        }
-    }
-}
-
 struct IrrSuffixScanParams {
     uint num_sgs;
     uint suffix_len;
@@ -1252,8 +693,7 @@ struct IrrSuffixScanParams {
 // and every suffix reuses the mapping: one vec4 gather + 5-step segmented
 // scan per suffix (zero-valued lanes contribute exact zeros) instead of
 // per-suffix collision scatters. Uniform tiles skip the sort and keep the
-// single-butterfly emit. Field adds regroup exactly — cells stay
-// byte-identical to the grouped/eager arms.
+// single-butterfly emit.
 kernel void jk_irr_suffix_scan(
     device const uint* rows [[buffer(0)]],
     device const uint* u_evals [[buffer(1)]],
@@ -1329,8 +769,7 @@ kernel void jk_irr_suffix_scan(
             // lane's sorted-slot suffix bits + weight through the mapping, and
             // hoist the run structure: every suffix then scans in place with
             // no per-suffix gathers or key shuffles, in as many steps as the
-            // longest run needs. Values and adds are unchanged per sorted
-            // slot, so cells stay byte-identical to the fixed-step arm.
+            // longest run needs.
             uint packed =
                 jk_sort_key_lane(active ? ((chunk << 5u) | lane) : 0xFFFFu, lane);
             uint src = packed & 31u;
@@ -1372,349 +811,6 @@ kernel void jk_irr_suffix_scan(
     }
 }
 
-// Kill-switch arm for JOLT_IRR_SCAN_FIXED_STEPS: the w12 body — per-suffix
-// gathers through the fixed-step sorted scan.
-kernel void jk_irr_suffix_scan_fixed(
-    device const uint* rows [[buffer(0)]],
-    device const uint* u_evals [[buffer(1)]],
-    device const uint* bucket_flat [[buffer(2)]],
-    device const uint* sg_slot [[buffer(3)]],
-    device const uint* sg_range [[buffer(4)]],
-    device const uint* suffix_meta [[buffer(5)]],
-    device uint* partials [[buffer(6)]],
-    constant IrrSuffixScanParams& p [[buffer(7)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simd_size [[threads_per_simdgroup]])
-{
-    uint sg = gid / simd_size;
-    if (sg >= p.num_sgs) {
-        return;
-    }
-    uint slot = sg_slot[sg];
-    uint count = suffix_meta[slot * 9u];
-    device uint* my = partials + sg * JK_IRR_SUF_CELLS * FR_LIMBS;
-    for (uint i = lane; i < count * 256u * FR_LIMBS; i += simd_size) {
-        my[i] = 0u;
-    }
-    simdgroup_barrier(mem_flags::mem_device);
-
-    uint start = sg_range[2u * sg];
-    uint end = sg_range[2u * sg + 1u];
-    for (uint base = start; base < end; base += simd_size) {
-        uint i = base + lane;
-        bool active = i < end;
-        uint chunk = 0u;
-        ulong s_lo = 0ul;
-        ulong s_hi = 0ul;
-        Fr256 u = fr_zero();
-        if (active) {
-            uint j = bucket_flat[i];
-            device const uint* row = rows + j * 12u;
-            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
-            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-            u = fr_load(u_evals, j);
-            chunk = jk_chunk8(lo, hi, p.suffix_len);
-            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
-        }
-        bool tile_uniform = simd_all(active)
-            && simd_all(chunk == simd_broadcast_first(chunk))
-            && simd_size == 32u;
-
-        uint src = lane;
-        uint skey = chunk;
-        bool valid = active;
-        if (!tile_uniform) {
-            uint packed =
-                jk_sort_key_lane(active ? ((chunk << 5u) | lane) : 0xFFFFu, lane);
-            src = packed & 31u;
-            skey = packed >> 5u;
-            valid = packed != 0xFFFFu;
-        }
-
-        for (uint s = 0u; s < count; s++) {
-            uint meta = suffix_meta[slot * 9u + 1u + s];
-            uint id = meta & 0xFFu;
-            bool is01 = (meta & 0x100u) != 0u;
-            Fr256 v = fr_zero();
-            if (active) {
-                ulong m = jk_suffix_mle(id, s_lo, s_hi, p.suffix_len);
-                if (m != 0ul) {
-                    v = is01 ? u : fr_mont_mul(u, jk_fr_from_u64(m));
-                }
-            }
-            if (tile_uniform) {
-                Fr256 total = jk_simd_sum(v, simd_size);
-                if (lane == 0u) {
-                    jk_cell_add(my, s * 256u + simd_broadcast_first(chunk), total);
-                }
-            } else {
-                jk_scan_sorted1(my, s * 256u, src, skey, valid, v, lane, simd_size);
-            }
-        }
-    }
-}
-
-// Kill-switch arm for JOLT_IRR_SUFFIX_SCAN_GROUPED: the wave-5 body —
-// hoisted collision detection behind the xor-neighbor entropy probe,
-// distinct <= 8 tiles emitting per-group masked sums, the rest through the
-// per-suffix collision scatter.
-kernel void jk_irr_suffix_scan_grouped(
-    device const uint* rows [[buffer(0)]],
-    device const uint* u_evals [[buffer(1)]],
-    device const uint* bucket_flat [[buffer(2)]],
-    device const uint* sg_slot [[buffer(3)]],
-    device const uint* sg_range [[buffer(4)]],
-    device const uint* suffix_meta [[buffer(5)]],
-    device uint* partials [[buffer(6)]],
-    constant IrrSuffixScanParams& p [[buffer(7)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simd_size [[threads_per_simdgroup]])
-{
-    uint sg = gid / simd_size;
-    if (sg >= p.num_sgs) {
-        return;
-    }
-    uint slot = sg_slot[sg];
-    uint count = suffix_meta[slot * 9u];
-    device uint* my = partials + sg * JK_IRR_SUF_CELLS * FR_LIMBS;
-    for (uint i = lane; i < count * 256u * FR_LIMBS; i += simd_size) {
-        my[i] = 0u;
-    }
-    simdgroup_barrier(mem_flags::mem_device);
-
-    uint start = sg_range[2u * sg];
-    uint end = sg_range[2u * sg + 1u];
-    for (uint base = start; base < end; base += simd_size) {
-        uint i = base + lane;
-        bool active = i < end;
-        uint chunk = 0u;
-        ulong s_lo = 0ul;
-        ulong s_hi = 0ul;
-        Fr256 u = fr_zero();
-        if (active) {
-            uint j = bucket_flat[i];
-            device const uint* row = rows + j * 12u;
-            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
-            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-            u = fr_load(u_evals, j);
-            chunk = jk_chunk8(lo, hi, p.suffix_len);
-            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
-        }
-        bool tile_uniform = simd_all(active)
-            && simd_all(chunk == simd_broadcast_first(chunk))
-            && simd_size == 32u;
-
-        bool leader = active;
-        uint distinct = simd_size;
-        if (!tile_uniform) {
-            // Cheap entropy probe: equal-key xor-1-neighbor matches average
-            // ≈ 32/d, so low-entropy tiles (d ≲ 8) show ≥ 4 matches. Only
-            // those pay the full leader detect; the rest keep `distinct`
-            // saturated and take the per-suffix scatter arm.
-            bool neighbor_same = active && simd_shuffle_xor(chunk, 1u) == chunk;
-            if (simd_sum((uint)neighbor_same) >= 4u) {
-                for (uint source = 0u; source < simd_size; source++) {
-                    bool source_active = simd_shuffle((uint)active, (ushort)source) != 0u;
-                    uint source_key = simd_shuffle(chunk, (ushort)source);
-                    bool same = source_active && source_key == chunk && source < lane;
-                    leader = leader && !same;
-                }
-                distinct = simd_sum((uint)leader);
-            }
-        }
-
-        for (uint s = 0u; s < count; s++) {
-            uint meta = suffix_meta[slot * 9u + 1u + s];
-            uint id = meta & 0xFFu;
-            bool is01 = (meta & 0x100u) != 0u;
-            Fr256 v = fr_zero();
-            bool emit = false;
-            if (active) {
-                ulong m = jk_suffix_mle(id, s_lo, s_hi, p.suffix_len);
-                if (m != 0ul) {
-                    v = is01 ? u : fr_mont_mul(u, jk_fr_from_u64(m));
-                    emit = true;
-                }
-            }
-            if (tile_uniform) {
-                Fr256 total = jk_simd_sum(v, simd_size);
-                if (lane == 0u) {
-                    jk_cell_add(my, s * 256u + simd_broadcast_first(chunk), total);
-                }
-            } else if (distinct <= 8u) {
-                for (uint source = 0u; source < simd_size; source++) {
-                    if (simd_shuffle((uint)leader, (ushort)source) == 0u) {
-                        continue;
-                    }
-                    uint source_key = simd_shuffle(chunk, (ushort)source);
-                    Fr256 total = jk_simd_sum(
-                        (active && chunk == source_key) ? v : fr_zero(), simd_size);
-                    if (lane == source) {
-                        jk_cell_add(my, s * 256u + source_key, total);
-                    }
-                }
-            } else {
-                // High-entropy tiles: the wave-3 emit-trimmed scatter (the
-                // hoisted flags only picked this path).
-                jk_simd_scatter1(
-                    my, s * 256u + chunk, emit, v, lane, simd_size);
-            }
-        }
-    }
-}
-
-// Kill-switch arm for JOLT_IRR_SUFFIX_SCAN_EAGER: the wave-3 body — full
-// collision detection and scatter per suffix.
-kernel void jk_irr_suffix_scan_eager(
-    device const uint* rows [[buffer(0)]],
-    device const uint* u_evals [[buffer(1)]],
-    device const uint* bucket_flat [[buffer(2)]],
-    device const uint* sg_slot [[buffer(3)]],
-    device const uint* sg_range [[buffer(4)]],
-    device const uint* suffix_meta [[buffer(5)]],
-    device uint* partials [[buffer(6)]],
-    constant IrrSuffixScanParams& p [[buffer(7)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simd_size [[threads_per_simdgroup]])
-{
-    uint sg = gid / simd_size;
-    if (sg >= p.num_sgs) {
-        return;
-    }
-    uint slot = sg_slot[sg];
-    uint count = suffix_meta[slot * 9u];
-    device uint* my = partials + sg * JK_IRR_SUF_CELLS * FR_LIMBS;
-    for (uint i = lane; i < count * 256u * FR_LIMBS; i += simd_size) {
-        my[i] = 0u;
-    }
-    simdgroup_barrier(mem_flags::mem_device);
-
-    uint start = sg_range[2u * sg];
-    uint end = sg_range[2u * sg + 1u];
-    for (uint base = start; base < end; base += simd_size) {
-        uint i = base + lane;
-        bool active = i < end;
-        uint chunk = 0u;
-        ulong s_lo = 0ul;
-        ulong s_hi = 0ul;
-        Fr256 u = fr_zero();
-        if (active) {
-            uint j = bucket_flat[i];
-            device const uint* row = rows + j * 12u;
-            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
-            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-            u = fr_load(u_evals, j);
-            chunk = jk_chunk8(lo, hi, p.suffix_len);
-            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
-        }
-        bool tile_uniform = simd_all(active)
-            && simd_all(chunk == simd_broadcast_first(chunk))
-            && simd_size == 32u;
-        for (uint s = 0u; s < count; s++) {
-            uint meta = suffix_meta[slot * 9u + 1u + s];
-            uint id = meta & 0xFFu;
-            bool is01 = (meta & 0x100u) != 0u;
-            Fr256 v = fr_zero();
-            bool emit = false;
-            if (active) {
-                ulong m = jk_suffix_mle(id, s_lo, s_hi, p.suffix_len);
-                if (m != 0ul) {
-                    v = is01 ? u : fr_mont_mul(u, jk_fr_from_u64(m));
-                    emit = true;
-                }
-            }
-            if (tile_uniform) {
-                Fr256 total = jk_simd_sum(v, simd_size);
-                if (lane == 0u) {
-                    jk_cell_add(my, s * 256u + simd_broadcast_first(chunk), total);
-                }
-            } else {
-                jk_simd_scatter1(
-                    my, s * 256u + chunk, emit, v, lane, simd_size);
-            }
-        }
-    }
-}
-
-// Ablation arm for JOLT_IRR_SUFFIX_SCAN_LEGACY: retains full-row clearing
-// and the barrier-serialized scatter for same-window retention tests.
-kernel void jk_irr_suffix_scan_legacy(
-    device const uint* rows [[buffer(0)]],
-    device const uint* u_evals [[buffer(1)]],
-    device const uint* bucket_flat [[buffer(2)]],
-    device const uint* sg_slot [[buffer(3)]],
-    device const uint* sg_range [[buffer(4)]],
-    device const uint* suffix_meta [[buffer(5)]],
-    device uint* partials [[buffer(6)]],
-    constant IrrSuffixScanParams& p [[buffer(7)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simd_size [[threads_per_simdgroup]])
-{
-    uint sg = gid / simd_size;
-    if (sg >= p.num_sgs) {
-        return;
-    }
-    device uint* my = partials + sg * JK_IRR_SUF_CELLS * FR_LIMBS;
-    for (uint i = lane; i < JK_IRR_SUF_CELLS * FR_LIMBS; i += simd_size) {
-        my[i] = 0u;
-    }
-    simdgroup_barrier(mem_flags::mem_device);
-
-    uint slot = sg_slot[sg];
-    uint count = suffix_meta[slot * 9u];
-    uint start = sg_range[2u * sg];
-    uint end = sg_range[2u * sg + 1u];
-    for (uint base = start; base < end; base += simd_size) {
-        uint i = base + lane;
-        bool active = i < end;
-        uint chunk = 0u;
-        ulong s_lo = 0ul;
-        ulong s_hi = 0ul;
-        Fr256 u = fr_zero();
-        if (active) {
-            uint j = bucket_flat[i];
-            device const uint* row = rows + j * 12u;
-            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
-            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-            u = fr_load(u_evals, j);
-            chunk = jk_chunk8(lo, hi, p.suffix_len);
-            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
-        }
-        bool tile_uniform = simd_all(active)
-            && simd_all(chunk == simd_broadcast_first(chunk))
-            && simd_size == 32u;
-        for (uint s = 0u; s < count; s++) {
-            uint meta = suffix_meta[slot * 9u + 1u + s];
-            uint id = meta & 0xFFu;
-            bool is01 = (meta & 0x100u) != 0u;
-            Fr256 v = fr_zero();
-            if (active) {
-                ulong m = jk_suffix_mle(id, s_lo, s_hi, p.suffix_len);
-                if (m != 0ul) {
-                    v = is01 ? u : fr_mont_mul(u, jk_fr_from_u64(m));
-                }
-            }
-            if (tile_uniform) {
-                Fr256 total = jk_simd_sum(v, simd_size);
-                if (lane == 0u) {
-                    jk_cell_add(my, s * 256u + simd_broadcast_first(chunk), total);
-                }
-            } else {
-                for (uint k = 0u; k < simd_size; k++) {
-                    if (lane == k && active) {
-                        jk_cell_add(my, s * 256u + chunk, v);
-                    }
-                    simdgroup_barrier(mem_flags::mem_device);
-                }
-            }
-        }
-    }
-}
-
 struct IrrReduceParams {
     uint total_cells;      // out length
     uint cells_per_group;  // out cells per group (= partials row cells used)
@@ -1734,7 +830,7 @@ struct IrrEqOuterParams {
 // (each half entry is the exact partial product; Montgomery mul of
 // canonical elements is the canonical full product), so the table lands
 // byte-identical to the host `EqPolynomial::evals` fill it replaces. Runs
-// as dispatch 0 of the phase-0 scan command buffer (w17 prepare fold).
+// as dispatch 0 of the phase-0 scan command buffer.
 kernel void jk_irr_eq_outer(
     device uint* u_evals [[buffer(0)]],
     device const uint* hi [[buffer(1)]],
@@ -1775,7 +871,6 @@ struct IrrCycleInitParams {
     uint phase_begin;  // first bound-challenge table of this ra product
     uint phase_count;  // 0 selects combined_val mode
     uint address_bits;
-    uint out_base;     // element offset of this table in `out`
     uint raf_interleaved[FR_LIMBS];
     uint raf_identity[FR_LIMBS];
 };
@@ -1799,7 +894,7 @@ kernel void jk_irr_cycle_init(
     device const uint* row = rows + gid * 12u;
     ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
     ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
-    ulong out_word = ((ulong)p.out_base + (ulong)gid) * (ulong)FR_LIMBS;
+    ulong out_word = (ulong)gid * (ulong)FR_LIMBS;
     if (p.phase_count == 0u) {
         uint table_plus_one = row[8] & 0xFFu;
         bool flag = ((row[8] >> 8) & 0xFFu) != 0u;
@@ -1968,7 +1063,7 @@ kernel void jk_suffix_probe(
     out[2u * gid + 1u] = (uint)(v >> 32);
 }
 
-// --- Stage-3 instruction input-virtualization (W9) ---------------------------
+// --- Stage-3 instruction input-virtualization --------------------------------
 //
 // Summand q = (is_rs2·rs2 + is_imm·imm) + γ·(is_rs1·rs1 + is_pc·upc) over
 // eight tables, table-major in one ping-pong pair (table i's length-`len`

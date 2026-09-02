@@ -116,6 +116,7 @@ fn cycle_entry_count(registers: &RegisterLanes, t: usize) -> usize {
         + usize::from(rd != NO_REGISTER && rd != rs1 && rd != rs2)
 }
 
+#[cfg(any(test, not(feature = "parallel")))]
 pub(super) fn build_register_tables_serial<F: JoltField>(
     registers: &RegisterLanes,
 ) -> RegisterTables<F> {
@@ -257,14 +258,10 @@ pub(crate) fn register_build_chunk_size(cycles: usize) -> usize {
 pub(super) fn build_register_tables<F: JoltField>(registers: &RegisterLanes) -> RegisterTables<F> {
     #[cfg(feature = "parallel")]
     {
-        if std::env::var_os("JOLT_REGISTERS_PREPARE_SERIAL").is_some() {
-            build_register_tables_serial(registers)
-        } else {
-            build_register_tables_parallel(
-                registers,
-                register_build_chunk_size(registers.rd_index.len()),
-            )
-        }
+        build_register_tables_parallel(
+            registers,
+            register_build_chunk_size(registers.rd_index.len()),
+        )
     }
     #[cfg(not(feature = "parallel"))]
     {

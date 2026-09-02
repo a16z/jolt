@@ -1,7 +1,7 @@
 //! Metal instruction read+RAF checking (stage 5): device phase scans behind
 //! the optimized kernel's [`PhaseScanner`] seam.
 //!
-//! This slot deviates from the W2 `MetalX { fallback }` shape on purpose:
+//! This slot deviates from the sibling `MetalX { fallback }` shape on purpose:
 //! stage 5's device-worthy work is not the rounds (256-sized chunk tables)
 //! but the three `O(T)` passes at each of the 16 phase boundaries —
 //! condensation, the fused RAF scan, the per-table suffix scan. The
@@ -12,9 +12,9 @@
 //! failure ⇒ [`ScanOutcome::Corrupt`] ⇒ the kernel rebuilds `u_evals` from
 //! its intact inputs and finishes every remaining phase on the CPU).
 //!
-//! Per phase the scanner runs ONE command buffer with four dispatches
-//! (fused condense+RAF scan, its reduce, the suffix scan, its reduce) over
-//! zero-copy wraps of the shared rows / `u_evals` / flat bucket arrays.
+//! Per phase the scanner runs ONE command buffer with five dispatches (the
+//! fused condense+RAF scan, its two-level reduce, the suffix scan and its
+//! reduce) over zero-copy wraps of the shared rows / `u_evals` / flat buckets.
 //! Bucket sums come back as exact field elements: cells fed by plain `u`
 //! additions are Montgomery-form; cells fed by `u·scalar` products
 //! accumulate in RAW space on the device and get one value-space `×R`
@@ -31,7 +31,7 @@
 //! own `gruen_poly_from_evals` recipe. Below the gate (tail rounds) or on a
 //! failure the scanner steps aside and the kernel reclaims the live tables
 //! (`take_cycle_tables`, a small copy at the shrunken length) and finishes
-//! on the CPU, exactly as the W2 slots do.
+//! on the CPU, exactly as the other slots do.
 
 use std::sync::Arc;
 
@@ -44,7 +44,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::{num_threadgroups, own_eq, own_uninit_frs, uninit_frs, DeviceRound, Partials};
 use crate::metal::buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec};
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
-use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
+use crate::metal::runtime::{ComputePass, DetachedPass, KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::instruction_read_raf::{
     shared_instruction_rows, CycleInitRequest, CycleTables, InstructionCycleRow, InstructionRows,
@@ -67,10 +67,10 @@ const SIMD_WIDTH: usize = 32;
 /// Flat cycle-table capacity baked into the round shader
 /// (`JK_IRR_MAX_FACTORS`): `1 + ra_count` must fit.
 const MAX_FACTORS: usize = 16;
-/// Scan parallelism. The w12 occupancy curve (serial fr_mont_mul chain:
-/// 8.3 Gmul/s at 16k threads vs 11.6 saturated) plus the sorted-flush
-/// kernel's sweep put the knee at 4096 simdgroups; the reduce tax this adds
-/// is paid by the two-level RAF reduce below.
+/// Scan parallelism: the serial fr_mont_mul occupancy curve (8.3 Gmul/s at
+/// 16k threads vs 11.6 saturated) plus the sorted-flush kernel's sweep put
+/// the knee at 4096 simdgroups; the reduce tax this adds is paid by the
+/// two-level RAF reduce below.
 const TARGET_SIMDGROUPS: usize = 4096;
 /// First-level fan-in of the RAF reduce: partials collapse to this many
 /// rows (threads = chunks x cells), then one final row.
@@ -78,9 +78,12 @@ const RAF_REDUCE_CHUNKS: usize = 32;
 /// Suffix gathers need more in-flight groups to hide indexed row/weight loads;
 /// 2048 wins scan+reduce while 4096 overlaps it at twice the partial memory.
 const TARGET_SUFFIX_SIMDGROUPS: usize = 2048;
-/// The w2 legacy suffix arm keeps its original 512-group schedule.
-const LEGACY_SUFFIX_SIMDGROUPS: usize = 512;
 const MIN_ROWS_PER_SIMDGROUP: usize = 1024;
+/// Phase index (of 16) at which the cycle ping-pong is allocated and handed
+/// to the driver for wiring: late enough that the added residency window
+/// stays short, early enough that ~32 GiB wires under the remaining phase
+/// scans.
+const PREWIRE_PHASE: usize = 12;
 
 // The device decodes rows as 12 u32 words (offsets pinned by the repr(C)
 // asserts next to the struct) and 128-bit lookup indices.
@@ -175,11 +178,11 @@ struct IrrInFlight {
     _eq: (OwnedDeviceBuffer<Fr>, OwnedDeviceBuffer<Fr>),
 }
 
-/// A prepare-time phase-0 launch (w17 prepare fold): one detached command
-/// buffer that fills `u_evals = eq ⊗` and runs the phase-0 scan while the
-/// stage's remaining prepares execute on the host. The eq half tables are
-/// flight-owned (the CB reads them); `u_evals`' backing belongs to the
-/// optimized kernel, untouched until collect per the seam contract.
+/// A prepare-time phase-0 launch: one detached command buffer that fills
+/// `u_evals = eq ⊗` and runs the phase-0 scan while the stage's remaining
+/// prepares execute on the host. The eq half tables are flight-owned (the
+/// CB reads them); `u_evals`' backing belongs to the optimized kernel,
+/// untouched until collect per the seam contract.
 struct Phase0Flight {
     pass: DetachedPass,
     _eq: (OwnedDeviceBuffer<Fr>, OwnedDeviceBuffer<Fr>),
@@ -205,8 +208,6 @@ struct DeviceIrrScanner {
     factors_hint: usize,
     /// Completed `scan_phase` calls — the prewire trigger clock.
     scans_seen: usize,
-    /// Phase index at which to prewire; `usize::MAX` disables.
-    prewire_phase: usize,
     /// Value-space `R = 2^256 mod p`: multiplying a raw-space cell by this
     /// re-expresses it in Montgomery form (the exact element the CPU
     /// accumulator reduces to).
@@ -258,11 +259,11 @@ struct AddressState {
     v_prev: OwnedDeviceBuffer<Fr>,
     raf_out: OwnedDeviceBuffer<Fr>,
     suffix_out: OwnedDeviceBuffer<Fr>,
+    /// Row count the schedule was built for.
+    n: usize,
     raf_chunks: usize,
     num_sgs_raf: usize,
     rows_per_sg_raf: usize,
-    phase_scan_kernel: KernelId,
-    suffix_scan_kernel: KernelId,
     num_sgs_suffix: usize,
 }
 
@@ -291,28 +292,13 @@ impl DeviceIrrScanner {
         let bucket_flat = Arc::clone(inputs.bucket_flat);
         let n = rows.len();
 
-        // Kill switch (schedule side): field sums regroup exactly, so the
-        // simdgroup count is value-neutral; the override restores the
-        // pre-w12 512-group parallelism in one binary.
-        let target_simdgroups = std::env::var("JOLT_IRR_PHASE_SCAN_SGS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .filter(|&sgs: &usize| sgs > 0)
-            .unwrap_or(TARGET_SIMDGROUPS);
-        let rows_per_sg_raf = div_ceil_pos(n, target_simdgroups).max(MIN_ROWS_PER_SIMDGROUP);
+        let rows_per_sg_raf = div_ceil_pos(n, TARGET_SIMDGROUPS).max(MIN_ROWS_PER_SIMDGROUP);
         let num_sgs_raf = div_ceil_pos(n, rows_per_sg_raf);
 
         // Suffix schedule: simdgroup count per table proportional to its
         // bucket, each simdgroup a contiguous index range of one table.
-        let suffix_legacy =
-            std::env::var_os("JOLT_IRR_SUFFIX_SCAN_LEGACY").is_some_and(|value| value != "0");
-        let suffix_simdgroups = if suffix_legacy {
-            LEGACY_SUFFIX_SIMDGROUPS
-        } else {
-            TARGET_SUFFIX_SIMDGROUPS
-        };
         let rows_per_sg_suffix =
-            div_ceil_pos(bucket_flat.len(), suffix_simdgroups).max(MIN_ROWS_PER_SIMDGROUP);
+            div_ceil_pos(bucket_flat.len(), TARGET_SUFFIX_SIMDGROUPS).max(MIN_ROWS_PER_SIMDGROUP);
         let mut sg_slot = Vec::new();
         let mut sg_range = Vec::new();
         let mut suffix_group = Vec::new();
@@ -373,24 +359,6 @@ impl DeviceIrrScanner {
                 ]
             })
             .collect();
-        // Prewire trigger: phase index (of 16) at which the cycle ping-pong
-        // is allocated and handed to the driver for wiring; `0` disables.
-        // Late enough that the added residency window stays short, early
-        // enough that ~32 GiB wires under the remaining phase scans.
-        // Kill switch (w17): both scan kernels' fixed-step bodies — the
-        // run-offset early exit regroups nothing (skipped steps performed
-        // no adds), so either arm is byte-identical.
-        let scan_fixed_steps =
-            std::env::var_os("JOLT_IRR_SCAN_FIXED_STEPS").is_some_and(|value| value != "0");
-        let prewire_phase = match std::env::var("JOLT_IRR_CYCLE_PREWIRE")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-        {
-            Some(0) => usize::MAX,
-            Some(phase) => phase,
-            None => 12,
-        };
-
         let zero = Fr::from_u64(0);
         Ok(Self {
             phase0: None,
@@ -400,6 +368,7 @@ impl DeviceIrrScanner {
             address: Some(AddressState {
                 bucket_flat,
                 slots,
+                n,
                 sg_slot: own_u32s(sg_slot)?,
                 sg_range: own_u32s(sg_range)?,
                 suffix_meta: own_u32s(suffix_meta)?,
@@ -418,45 +387,6 @@ impl DeviceIrrScanner {
                 ))?,
                 num_sgs_raf,
                 rows_per_sg_raf,
-                phase_scan_kernel: if std::env::var_os("JOLT_IRR_PHASE_SCAN_LEGACY")
-                    .is_some_and(|value| value != "0")
-                {
-                    KernelId::IrrPhaseScanLegacy
-                } else if scan_fixed_steps {
-                    // Kill switch: the w12 fixed-step sorted flush.
-                    KernelId::IrrPhaseScanFixed
-                } else if std::env::var_os("JOLT_IRR_PHASE_SCAN_EAGER")
-                    .is_some_and(|value| value != "0")
-                {
-                    // Kill switch: the wave-3 scatter without run-length
-                    // accumulation.
-                    KernelId::IrrPhaseScanEager
-                } else if std::env::var_os("JOLT_IRR_PHASE_SCAN_SCATTER")
-                    .is_some_and(|value| value != "0")
-                {
-                    // Kill switch: the wave-5 collision-scatter flush.
-                    KernelId::IrrPhaseScanScatter
-                } else {
-                    KernelId::IrrPhaseScan
-                },
-                suffix_scan_kernel: if suffix_legacy {
-                    KernelId::IrrSuffixScanLegacy
-                } else if scan_fixed_steps {
-                    // Kill switch: the w12 fixed-step per-suffix scan.
-                    KernelId::IrrSuffixScanFixed
-                } else if std::env::var_os("JOLT_IRR_SUFFIX_SCAN_EAGER")
-                    .is_some_and(|value| value != "0")
-                {
-                    // Kill switch: the wave-3 per-suffix detect + scatter.
-                    KernelId::IrrSuffixScanEager
-                } else if std::env::var_os("JOLT_IRR_SUFFIX_SCAN_GROUPED")
-                    .is_some_and(|value| value != "0")
-                {
-                    // Kill switch: the wave-5 grouped masked-sum emission.
-                    KernelId::IrrSuffixScanGrouped
-                } else {
-                    KernelId::IrrSuffixScan
-                },
                 num_sgs_suffix,
                 raf_chunks,
             }),
@@ -464,62 +394,41 @@ impl DeviceIrrScanner {
             prewired: None,
             factors_hint: 1 + inputs.ra_count,
             scans_seen: 0,
-            prewire_phase,
             r_mont: Fr::from_u64(1).mul_pow_2(128).mul_pow_2(128),
         })
     }
 }
 
 impl AddressState {
-    /// Encode and run the phase's command buffer. `Ok(true)` means every
-    /// dispatch ran; `Ok(false)` means a buffer wrap was ineligible and
-    /// NOTHING ran (safe to decline).
-    fn dispatch_phase(
-        &mut self,
-        context: &'static MetalContext,
-        rows: &[InstructionCycleRow],
-        request: &mut PhaseScanRequest<'_, Fr>,
-    ) -> Result<bool, MetalError> {
-        let suffix_len = request.suffix_len as u32;
-        let (do_condense, prev_shift) = match request.condense {
-            Some((v_prev, shift)) => {
-                debug_assert_eq!(v_prev.len(), CHUNK_SIZE);
-                self.v_prev.as_mut_slice().copy_from_slice(v_prev);
-                (1u32, shift as u32)
-            }
-            None => (0u32, 0u32),
-        };
-
-        let Some(rows_buffer) = context.wrap_slice_nocopy(rows) else {
-            return Ok(false);
-        };
-        let Some(u_evals_buffer) = context.wrap_slice_mut_nocopy(request.u_evals) else {
-            return Ok(false);
-        };
-        // Read-only: the copying fallback is correct, just counted.
-        let bucket_buffer = context.wrap_slice(self.bucket_flat.as_slice())?;
-        testing::note_copied_buffers(u64::from(bucket_buffer.was_copied()));
-
-        let n = rows.len();
-        let scan_params: Vec<u32> = vec![
-            n as u32,
+    /// Encode the phase's dispatches: the fused condense+RAF scan, its
+    /// two-level reduce, then (when any table is present) the suffix scan
+    /// and its reduce. `condense` is the previous phase's suffix width when
+    /// `u_evals` is to be condensed in place.
+    fn encode_scan<'b>(
+        &'b self,
+        pass: &mut ComputePass<'_, 'b>,
+        rows: &DeviceBuffer<'b>,
+        u_evals: &DeviceBuffer<'b>,
+        bucket: &DeviceBuffer<'b>,
+        suffix_len: usize,
+        condense: Option<usize>,
+    ) {
+        let scan_params = [
+            self.n as u32,
             self.rows_per_sg_raf as u32,
             self.num_sgs_raf as u32,
-            suffix_len,
-            prev_shift,
-            do_condense,
+            suffix_len as u32,
+            condense.unwrap_or(0) as u32,
+            u32::from(condense.is_some()),
             u32::from(CANONICAL_INSTRUCTION_ADDRESS),
-            request.suffix_len.saturating_sub(RISCV_XLEN) as u32,
+            suffix_len.saturating_sub(RISCV_XLEN) as u32,
         ];
         let raf_l1_cells = self.raf_chunks * RAF_CELLS;
-        let raf_reduce_l1_params: Vec<u32> =
-            vec![raf_l1_cells as u32, RAF_CELLS as u32, RAF_CELLS as u32];
-        let raf_reduce_l2_params: Vec<u32> =
-            vec![RAF_CELLS as u32, RAF_CELLS as u32, RAF_CELLS as u32];
-        let suffix_params: Vec<u32> = vec![self.num_sgs_suffix as u32, suffix_len];
+        let raf_reduce_l1_params = [raf_l1_cells as u32, RAF_CELLS as u32, RAF_CELLS as u32];
+        let raf_reduce_l2_params = [RAF_CELLS as u32, RAF_CELLS as u32, RAF_CELLS as u32];
+        let suffix_params = [self.num_sgs_suffix as u32, suffix_len as u32];
         let suffix_cells = self.slots.len() * SUF_CELLS;
-        let suffix_reduce_params: Vec<u32> =
-            vec![suffix_cells as u32, SUF_CELLS as u32, SUF_CELLS as u32];
+        let suffix_reduce_params = [suffix_cells as u32, SUF_CELLS as u32, SUF_CELLS as u32];
 
         let partials = self.partials.device_buffer();
         let raf_partials2 = self.raf_partials2.device_buffer();
@@ -532,101 +441,84 @@ impl AddressState {
         let raf_group_l1 = self.raf_group_l1.device_buffer();
         let raf_group_l2 = self.raf_group_l2.device_buffer();
         let suffix_group = self.suffix_group.device_buffer();
-        let raf_threads = self.num_sgs_raf * SIMD_WIDTH;
 
-        // Attribution-only split: GPU timestamps are per command buffer, so
-        // separate buffers name the phase and suffix owners without changing
-        // either kernel's inputs or outputs.
-        if std::env::var_os("JOLT_IRR_SPLIT_TRACE").is_some_and(|value| value != "0") {
-            let mut pass = context.begin_pass()?;
+        pass.dispatch(
+            KernelId::IrrPhaseScan,
+            &scan_params,
+            &[rows, u_evals, &v_prev, &partials],
+            self.num_sgs_raf * SIMD_WIDTH,
+        );
+        pass.dispatch(
+            KernelId::IrrReduce,
+            &raf_reduce_l1_params,
+            &[&partials, &raf_group_l1, &raf_partials2],
+            raf_l1_cells,
+        );
+        pass.dispatch(
+            KernelId::IrrReduce,
+            &raf_reduce_l2_params,
+            &[&raf_partials2, &raf_group_l2, &raf_out],
+            RAF_CELLS,
+        );
+        if !self.slots.is_empty() {
             pass.dispatch(
-                self.phase_scan_kernel,
-                &scan_params,
-                &[&rows_buffer, &u_evals_buffer, &v_prev, &partials],
-                raf_threads,
+                KernelId::IrrSuffixScan,
+                &suffix_params,
+                &[
+                    rows,
+                    u_evals,
+                    bucket,
+                    &sg_slot,
+                    &sg_range,
+                    &suffix_meta,
+                    &partials,
+                ],
+                self.num_sgs_suffix * SIMD_WIDTH,
             );
             pass.dispatch(
                 KernelId::IrrReduce,
-                &raf_reduce_l1_params,
-                &[&partials, &raf_group_l1, &raf_partials2],
-                raf_l1_cells,
+                &suffix_reduce_params,
+                &[&partials, &suffix_group, &suffix_out],
+                suffix_cells,
             );
-            pass.dispatch(
-                KernelId::IrrReduce,
-                &raf_reduce_l2_params,
-                &[&raf_partials2, &raf_group_l2, &raf_out],
-                RAF_CELLS,
-            );
-            pass.run()?;
-
-            let mut pass = context.begin_pass()?;
-            if !self.slots.is_empty() {
-                pass.dispatch(
-                    self.suffix_scan_kernel,
-                    &suffix_params,
-                    &[
-                        &rows_buffer,
-                        &u_evals_buffer,
-                        &bucket_buffer,
-                        &sg_slot,
-                        &sg_range,
-                        &suffix_meta,
-                        &partials,
-                    ],
-                    self.num_sgs_suffix * SIMD_WIDTH,
-                );
-                pass.dispatch(
-                    KernelId::IrrReduce,
-                    &suffix_reduce_params,
-                    &[&partials, &suffix_group, &suffix_out],
-                    suffix_cells,
-                );
-            }
-            pass.run()?;
-        } else {
-            let mut pass = context.begin_pass()?;
-            pass.dispatch(
-                self.phase_scan_kernel,
-                &scan_params,
-                &[&rows_buffer, &u_evals_buffer, &v_prev, &partials],
-                raf_threads,
-            );
-            pass.dispatch(
-                KernelId::IrrReduce,
-                &raf_reduce_l1_params,
-                &[&partials, &raf_group_l1, &raf_partials2],
-                raf_l1_cells,
-            );
-            pass.dispatch(
-                KernelId::IrrReduce,
-                &raf_reduce_l2_params,
-                &[&raf_partials2, &raf_group_l2, &raf_out],
-                RAF_CELLS,
-            );
-            if !self.slots.is_empty() {
-                pass.dispatch(
-                    self.suffix_scan_kernel,
-                    &suffix_params,
-                    &[
-                        &rows_buffer,
-                        &u_evals_buffer,
-                        &bucket_buffer,
-                        &sg_slot,
-                        &sg_range,
-                        &suffix_meta,
-                        &partials,
-                    ],
-                    self.num_sgs_suffix * SIMD_WIDTH,
-                );
-                pass.dispatch(
-                    KernelId::IrrReduce,
-                    &suffix_reduce_params,
-                    &[&partials, &suffix_group, &suffix_out],
-                    suffix_cells,
-                );
-            }
-            tracing::info_span!("IrrScanner::phase_run").in_scope(|| pass.run())?;
         }
+    }
+
+    /// Encode and run the phase's command buffer. `Ok(true)` means every
+    /// dispatch ran; `Ok(false)` means a buffer wrap was ineligible and
+    /// NOTHING ran (safe to decline).
+    fn dispatch_phase(
+        &mut self,
+        context: &'static MetalContext,
+        rows: &[InstructionCycleRow],
+        request: &mut PhaseScanRequest<'_, Fr>,
+    ) -> Result<bool, MetalError> {
+        let condense = request.condense.map(|(v_prev, shift)| {
+            debug_assert_eq!(v_prev.len(), CHUNK_SIZE);
+            self.v_prev.as_mut_slice().copy_from_slice(v_prev);
+            shift
+        });
+
+        let Some(rows_buffer) = context.wrap_slice_nocopy(rows) else {
+            return Ok(false);
+        };
+        let Some(u_evals_buffer) = context.wrap_slice_mut_nocopy(request.u_evals) else {
+            return Ok(false);
+        };
+        // Read-only: the copying fallback is correct, just counted.
+        let bucket_buffer = context.wrap_slice(self.bucket_flat.as_slice())?;
+        testing::note_copied_buffers(u64::from(bucket_buffer.was_copied()));
+
+        let mut pass = context.begin_pass()?;
+        self.encode_scan(
+            &mut pass,
+            &rows_buffer,
+            &u_evals_buffer,
+            &bucket_buffer,
+            request.suffix_len,
+            condense,
+        );
+        tracing::info_span!("IrrScanner::phase_run").in_scope(|| pass.run())?;
         testing::note_device_round();
         Ok(true)
     }
@@ -664,39 +556,7 @@ impl AddressState {
         let eq_lo = context.own_page_aligned(PageAlignedVec::from_slice(&eq_table(
             &r_reduction[log_t - lo_bits..],
         )))?;
-        let eq_params: Vec<u32> = vec![rows.len() as u32, lo_bits as u32];
-
-        let scan_params: Vec<u32> = vec![
-            rows.len() as u32,
-            self.rows_per_sg_raf as u32,
-            self.num_sgs_raf as u32,
-            suffix_len as u32,
-            0,
-            0,
-            u32::from(CANONICAL_INSTRUCTION_ADDRESS),
-            suffix_len.saturating_sub(RISCV_XLEN) as u32,
-        ];
-        let raf_l1_cells = self.raf_chunks * RAF_CELLS;
-        let raf_reduce_l1_params: Vec<u32> =
-            vec![raf_l1_cells as u32, RAF_CELLS as u32, RAF_CELLS as u32];
-        let raf_reduce_l2_params: Vec<u32> =
-            vec![RAF_CELLS as u32, RAF_CELLS as u32, RAF_CELLS as u32];
-        let suffix_params: Vec<u32> = vec![self.num_sgs_suffix as u32, suffix_len as u32];
-        let suffix_cells = self.slots.len() * SUF_CELLS;
-        let suffix_reduce_params: Vec<u32> =
-            vec![suffix_cells as u32, SUF_CELLS as u32, SUF_CELLS as u32];
-
-        let partials = self.partials.device_buffer();
-        let raf_partials2 = self.raf_partials2.device_buffer();
-        let v_prev = self.v_prev.device_buffer();
-        let raf_out = self.raf_out.device_buffer();
-        let suffix_out = self.suffix_out.device_buffer();
-        let sg_slot = self.sg_slot.device_buffer();
-        let sg_range = self.sg_range.device_buffer();
-        let suffix_meta = self.suffix_meta.device_buffer();
-        let raf_group_l1 = self.raf_group_l1.device_buffer();
-        let raf_group_l2 = self.raf_group_l2.device_buffer();
-        let suffix_group = self.suffix_group.device_buffer();
+        let eq_params = [rows.len() as u32, lo_bits as u32];
         let eq_hi_buffer = eq_hi.device_buffer();
         let eq_lo_buffer = eq_lo.device_buffer();
 
@@ -707,46 +567,14 @@ impl AddressState {
             &[&u_evals_buffer, &eq_hi_buffer, &eq_lo_buffer],
             rows.len(),
         );
-        pass.dispatch(
-            self.phase_scan_kernel,
-            &scan_params,
-            &[&rows_buffer, &u_evals_buffer, &v_prev, &partials],
-            self.num_sgs_raf * SIMD_WIDTH,
+        self.encode_scan(
+            &mut pass,
+            &rows_buffer,
+            &u_evals_buffer,
+            &bucket_buffer,
+            suffix_len,
+            None,
         );
-        pass.dispatch(
-            KernelId::IrrReduce,
-            &raf_reduce_l1_params,
-            &[&partials, &raf_group_l1, &raf_partials2],
-            raf_l1_cells,
-        );
-        pass.dispatch(
-            KernelId::IrrReduce,
-            &raf_reduce_l2_params,
-            &[&raf_partials2, &raf_group_l2, &raf_out],
-            RAF_CELLS,
-        );
-        if !self.slots.is_empty() {
-            pass.dispatch(
-                self.suffix_scan_kernel,
-                &suffix_params,
-                &[
-                    &rows_buffer,
-                    &u_evals_buffer,
-                    &bucket_buffer,
-                    &sg_slot,
-                    &sg_range,
-                    &suffix_meta,
-                    &partials,
-                ],
-                self.num_sgs_suffix * SIMD_WIDTH,
-            );
-            pass.dispatch(
-                KernelId::IrrReduce,
-                &suffix_reduce_params,
-                &[&partials, &suffix_group, &suffix_out],
-                suffix_cells,
-            );
-        }
         // SAFETY: rows/bucket are Arc'd on the scanner, the schedule and
         // working buffers are `self`-owned, the eq halves ride the returned
         // flight, and `u_evals`' backing is the optimized kernel's vec —
@@ -805,11 +633,6 @@ impl AddressState {
 
 impl PhaseScanner<Fr> for DeviceIrrScanner {
     fn launch_phase0(&mut self, r_reduction: &[Fr], suffix_len: usize) -> Option<Vec<Fr>> {
-        // Kill switch (w17 prepare fold): restore the host eq fill + the
-        // synchronous phase-0 scan.
-        if std::env::var_os("JOLT_IRR_PREPARE_FOLD").is_some_and(|value| value == "0") {
-            return None;
-        }
         let context = self.device.gated(self.rows.len())?;
         let address = self.address.as_ref()?;
         if self.rows.len() != 1usize << r_reduction.len() {
@@ -858,7 +681,7 @@ impl PhaseScanner<Fr> for DeviceIrrScanner {
             return ScanOutcome::Declined;
         };
         self.scans_seen += 1;
-        if self.scans_seen == self.prewire_phase {
+        if self.scans_seen == PREWIRE_PHASE {
             self.try_prewire(context);
         }
         let Some(address) = self.address.as_mut() else {
@@ -953,8 +776,7 @@ impl PhaseScanner<Fr> for DeviceIrrScanner {
         };
         // The live values are host-owned now; the pair is dead weight and
         // frees here (malloc's large cache recycles the pages into the
-        // next stage's allocations — the W1D ablation measured a placement
-        // arena over this pair perf-neutral at every scale).
+        // next stage's allocations).
         drop((cycle.cur, cycle.nxt));
         Some(tables)
     }
@@ -1068,7 +890,7 @@ impl DeviceIrrScanner {
         for (position, output) in outputs.iter().enumerate() {
             pass.dispatch(
                 KernelId::IrrCycleInit,
-                &cycle_init_params(n, position, 0, request),
+                &cycle_init_params(n, position, request),
                 &[&rows_buffer, &v_tables_buffer, &table_values_buffer, output],
                 n,
             );
@@ -1192,46 +1014,28 @@ impl DeviceIrrScanner {
         };
 
         let cur_buffer = cur.device_buffer();
+        // IrrCycleInitFusedParams: [n, ra_count, phases_per_ra,
+        // address_bits, raf_interleaved, raf_identity].
+        let mut params = vec![
+            n as u32,
+            request.ra_count as u32,
+            request.phases_per_ra as u32,
+            request.address_bits as u32,
+        ];
+        params.extend_from_slice(&fr_to_u32_limbs(request.raf_interleaved));
+        params.extend_from_slice(&fr_to_u32_limbs(request.raf_identity));
         let mut pass = context.begin_pass()?;
-        if std::env::var_os("JOLT_IRR_CYCLE_INIT_SPLIT").is_some_and(|value| value != "0") {
-            // Kill switch: the pre-w15 one-dispatch-per-table shape (each
-            // dispatch re-reads all rows).
-            for position in 0..factors {
-                pass.dispatch(
-                    KernelId::IrrCycleInit,
-                    &cycle_init_params(n, position, position * n, request),
-                    &[
-                        &rows_buffer,
-                        &v_tables_buffer,
-                        &table_values_buffer,
-                        &cur_buffer,
-                    ],
-                    n,
-                );
-            }
-        } else {
-            // IrrCycleInitFusedParams: [n, ra_count, phases_per_ra,
-            // address_bits, raf_interleaved, raf_identity].
-            let mut params = vec![
-                n as u32,
-                request.ra_count as u32,
-                request.phases_per_ra as u32,
-                request.address_bits as u32,
-            ];
-            params.extend_from_slice(&fr_to_u32_limbs(request.raf_interleaved));
-            params.extend_from_slice(&fr_to_u32_limbs(request.raf_identity));
-            pass.dispatch(
-                KernelId::IrrCycleInitFused,
-                &params,
-                &[
-                    &rows_buffer,
-                    &v_tables_buffer,
-                    &table_values_buffer,
-                    &cur_buffer,
-                ],
-                n,
-            );
-        }
+        pass.dispatch(
+            KernelId::IrrCycleInitFused,
+            &params,
+            &[
+                &rows_buffer,
+                &v_tables_buffer,
+                &table_values_buffer,
+                &cur_buffer,
+            ],
+            n,
+        );
         tracing::info_span!("IrrScanner::cycle_init_run").in_scope(|| pass.run())?;
         testing::note_device_round();
         drop(cur_buffer);
@@ -1326,13 +1130,8 @@ impl DeviceIrrScanner {
 }
 
 /// `IrrCycleInitParams` for output table `position` (0 = combined_val,
-/// `1 + i` = `ra_i`) written at element offset `out_base`.
-fn cycle_init_params(
-    n: usize,
-    position: usize,
-    out_base: usize,
-    request: &CycleInitRequest<'_, Fr>,
-) -> Vec<u32> {
+/// `1 + i` = `ra_i`).
+fn cycle_init_params(n: usize, position: usize, request: &CycleInitRequest<'_, Fr>) -> Vec<u32> {
     let (phase_begin, phase_count) = match position.checked_sub(1) {
         None => (0, 0),
         Some(i) => (i * request.phases_per_ra, request.phases_per_ra),
@@ -1342,7 +1141,6 @@ fn cycle_init_params(
         phase_begin as u32,
         phase_count as u32,
         request.address_bits as u32,
-        out_base as u32,
     ];
     params.extend_from_slice(&fr_to_u32_limbs(request.raf_interleaved));
     params.extend_from_slice(&fr_to_u32_limbs(request.raf_identity));
@@ -1351,11 +1149,10 @@ fn cycle_init_params(
 
 #[cfg(feature = "bench-utils")]
 pub mod bench {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use jolt_field::{Fr, Ring};
-    use jolt_lookup_tables::{LookupBits, LookupTableKind};
-    use rayon::prelude::*;
+    use jolt_lookup_tables::LookupTableKind;
 
     use super::*;
     use crate::metal::runtime::VariantPipeline;
@@ -1398,8 +1195,6 @@ pub mod bench {
         params: Vec<u32>,
         reduce_params: Vec<u32>,
         threads: usize,
-        tables: Vec<LookupTableKind<RISCV_XLEN>>,
-        ranges: Vec<std::ops::Range<usize>>,
     }
 
     pub struct IrrSuffixScanBuffers<'a> {
@@ -1489,95 +1284,6 @@ pub mod bench {
             }
         }
 
-        pub fn assert_oracle(&mut self) -> Result<(), MetalError> {
-            self.assert_oracle_once("random")?;
-            // Two distinct keys per tile: exercises the held-run
-            // accumulate/flush (including the tail flush) and the scatter's
-            // full-collision reduce against the same CPU sums.
-            self.set_chunk_values(&[3, 7]);
-            self.assert_oracle_once("skewed")?;
-            let uniform: Vec<u8> = (0..=255).collect();
-            self.set_chunk_values(&uniform);
-            Ok(())
-        }
-
-        fn assert_oracle_once(&mut self, label: &str) -> Result<(), MetalError> {
-            let context = MetalContext::global()?;
-            let expected = self
-                .rows
-                .par_iter()
-                .zip(self.u_evals.par_iter())
-                .fold(
-                    || vec![Fr::from_u64(0); RAF_CELLS],
-                    |mut sums, (row, &u)| {
-                        let suffix = row.lookup_index & u64::MAX as u128;
-                        let chunk = ((row.lookup_index >> 64) as usize) & (CHUNK_SIZE - 1);
-                        if row.raf_flag {
-                            sums[3 * CHUNK_SIZE + chunk] += u;
-                            sums[4 * CHUNK_SIZE + chunk] += u * Fr::from_u128(suffix);
-                            if CANONICAL_INSTRUCTION_ADDRESS {
-                                sums[5 * CHUNK_SIZE + chunk] += u;
-                            }
-                        } else {
-                            let (left, right) = LookupBits::new(suffix, 64).uninterleave();
-                            sums[chunk] += u;
-                            sums[CHUNK_SIZE + chunk] += u * Fr::from_u64(u64::from(left));
-                            sums[2 * CHUNK_SIZE + chunk] += u * Fr::from_u64(u64::from(right));
-                        }
-                        sums
-                    },
-                )
-                .reduce(
-                    || vec![Fr::from_u64(0); RAF_CELLS],
-                    |mut left, right| {
-                        for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
-                        }
-                        left
-                    },
-                );
-            let r_mont = Fr::from_u64(1).mul_pow_2(128).mul_pow_2(128);
-            for kernel in [
-                KernelId::IrrPhaseScan,
-                KernelId::IrrPhaseScanFixed,
-                KernelId::IrrPhaseScanScatter,
-                KernelId::IrrPhaseScanEager,
-                KernelId::IrrPhaseScanLegacy,
-            ] {
-                {
-                    let rows = self.rows.device_buffer(context)?;
-                    let u_evals = self.u_evals.device_buffer(context)?;
-                    let v_prev = self.v_prev.device_buffer(context)?;
-                    let partials = self.partials.device_buffer_mut(context)?;
-                    let out = self.out.device_buffer_mut(context)?;
-                    let group = self.group.device_buffer(context)?;
-                    let mut pass = context.begin_pass()?;
-                    pass.dispatch(
-                        kernel,
-                        &self.params,
-                        &[&rows, &u_evals, &v_prev, &partials],
-                        self.threads,
-                    );
-                    pass.dispatch(
-                        KernelId::IrrReduce,
-                        &self.reduce_params,
-                        &[&partials, &group, &out],
-                        RAF_CELLS,
-                    );
-                    pass.run()?;
-                }
-                for (index, (&got, &expected)) in self.out.iter().zip(&expected).enumerate() {
-                    let got = if matches!(index / CHUNK_SIZE, 1 | 2 | 4) {
-                        got * r_mont
-                    } else {
-                        got
-                    };
-                    assert_eq!(got, expected, "{label} {kernel:?} cell {index}");
-                }
-            }
-            Ok(())
-        }
-
         pub fn buffers(&mut self) -> Result<IrrPhaseScanBuffers<'_>, MetalError> {
             let context = MetalContext::global()?;
             Ok(IrrPhaseScanBuffers {
@@ -1603,21 +1309,6 @@ pub mod bench {
             self.params[4] = if condense { (suffix_len + 8) as u32 } else { 0 };
             self.params[5] = u32::from(condense);
             self.params[7] = suffix_len.saturating_sub(RISCV_XLEN) as u32;
-        }
-
-        /// Overwrite every row's scatter key — lookup-index bits
-        /// `[suffix_len, suffix_len + 8)` for the CURRENT `suffix_len` — with
-        /// a value drawn from `values` (deterministic per-row pick), pricing
-        /// per-simdgroup key entropy: `len = 1` makes tiles uniform, small
-        /// `len` forces the collision-reduce path, 256 ≈ the random default.
-        pub fn set_chunk_values(&mut self, values: &[u8]) {
-            let suffix_len = self.params[3];
-            let mask = !(0xFFu128 << suffix_len);
-            let mut state = 0x4348_554E_4B56_414Cu64 ^ u64::from(suffix_len);
-            for row in self.rows.iter_mut() {
-                let value = values[(splitmix(&mut state) as usize) % values.len()];
-                row.lookup_index = (row.lookup_index & mask) | (u128::from(value) << suffix_len);
-            }
         }
 
         /// Rebuild `u_evals` (condensing dispatches scale it in place; reset
@@ -1653,121 +1344,17 @@ pub mod bench {
         ) -> Result<VariantPipeline, MetalError> {
             MetalContext::global()?.compile_variant(extra_source, entry)
         }
-
-        /// One production-shaped command buffer (scan + reduce) over FRESH
-        /// copies of rows and `u_evals` — new pages, host-written this
-        /// iteration, wrapped by new `MTLBuffer`s — pricing buffer freshness.
-        /// Returns (wall around wrap+dispatch+wait, GPU execution window).
-        pub fn run_timed_fresh(&mut self) -> Result<(Duration, Duration), MetalError> {
-            let context = MetalContext::global()?;
-            let wall_start = Instant::now();
-            let rows = PageAlignedVec::from_slice(&self.rows);
-            let mut u_evals = PageAlignedVec::from_slice(&self.u_evals);
-            let gpu = dispatch_scan_reduce(
-                context,
-                &rows.device_buffer(context)?,
-                &u_evals.device_buffer_mut(context)?,
-                &self.v_prev.device_buffer(context)?,
-                &self.partials.device_buffer_mut(context)?,
-                &self.out.device_buffer_mut(context)?,
-                &self.group.device_buffer(context)?,
-                &self.params,
-                &self.reduce_params,
-                self.threads,
-            )?;
-            Ok((wall_start.elapsed(), gpu))
-        }
-
-        /// As [`run_timed_fresh`](Self::run_timed_fresh) but on the fixture's
-        /// OWN memory: only the `MTLBuffer` wraps are new (the e2e
-        /// `dispatch_phase` re-wrap), no pages change.
-        pub fn run_timed_rewrap(&mut self) -> Result<(Duration, Duration), MetalError> {
-            let context = MetalContext::global()?;
-            let wall_start = Instant::now();
-            let gpu = dispatch_scan_reduce(
-                context,
-                &self.rows.device_buffer(context)?,
-                &self.u_evals.device_buffer_mut(context)?,
-                &self.v_prev.device_buffer(context)?,
-                &self.partials.device_buffer_mut(context)?,
-                &self.out.device_buffer_mut(context)?,
-                &self.group.device_buffer(context)?,
-                &self.params,
-                &self.reduce_params,
-                self.threads,
-            )?;
-            Ok((wall_start.elapsed(), gpu))
-        }
-    }
-
-    #[expect(clippy::too_many_arguments, reason = "flat dispatch helper")]
-    fn dispatch_scan_reduce(
-        context: &'static MetalContext,
-        rows: &DeviceBuffer<'_>,
-        u_evals: &DeviceBuffer<'_>,
-        v_prev: &DeviceBuffer<'_>,
-        partials: &DeviceBuffer<'_>,
-        out: &DeviceBuffer<'_>,
-        group: &DeviceBuffer<'_>,
-        params: &[u32],
-        reduce_params: &[u32],
-        threads: usize,
-    ) -> Result<Duration, MetalError> {
-        let mut pass = context.begin_pass()?;
-        pass.dispatch(
-            KernelId::IrrPhaseScan,
-            params,
-            &[rows, u_evals, v_prev, partials],
-            threads,
-        );
-        pass.dispatch(
-            KernelId::IrrReduce,
-            reduce_params,
-            &[partials, group, out],
-            RAF_CELLS,
-        );
-        pass.commit().wait_timed()
     }
 
     impl IrrPhaseScanBuffers<'_> {
-        pub fn run(&self) -> Result<(), MetalError> {
-            self.context.run_once(
-                KernelId::IrrPhaseScan,
-                self.params,
-                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
-                self.threads,
-            )
-        }
-
-        pub fn run_legacy(&self) -> Result<(), MetalError> {
-            self.context.run_once(
-                KernelId::IrrPhaseScanLegacy,
-                self.params,
-                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
-                self.threads,
-            )
-        }
-
-        /// One production-shaped command buffer — scan + its reduce, the
-        /// exact `dispatch_phase` split-trace shape — returning the CB's GPU
-        /// execution window.
+        /// One production-shaped command buffer — scan + its reduce —
+        /// returning the CB's GPU execution window.
         pub fn run_timed(&self) -> Result<Duration, MetalError> {
-            self.run_timed_kernel(KernelId::IrrPhaseScan)
-        }
-
-        /// [`run_timed`](Self::run_timed) on the wave-3 eager-scatter arm
-        /// (the `JOLT_IRR_PHASE_SCAN_EAGER` kill switch), for same-window
-        /// A/B against the run-length kernel.
-        pub fn run_timed_eager(&self) -> Result<Duration, MetalError> {
-            self.run_timed_kernel(KernelId::IrrPhaseScanEager)
-        }
-
-        fn run_timed_kernel(&self, kernel: KernelId) -> Result<Duration, MetalError> {
             let mut pass = self.context.begin_pass()?;
             pass.dispatch(
-                kernel,
+                KernelId::IrrPhaseScan,
                 self.params,
-                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
+                &self.scan_buffers(),
                 self.threads,
             );
             pass.dispatch(
@@ -1782,22 +1369,11 @@ pub mod bench {
         /// Scan dispatch alone (no reduce) — separates the reduce's share of
         /// the production CB window.
         pub fn run_timed_scan_only(&self) -> Result<Duration, MetalError> {
-            self.run_timed_scan_only_kernel(KernelId::IrrPhaseScan)
-        }
-
-        /// [`run_timed_scan_only`](Self::run_timed_scan_only) on the w12
-        /// fixed-step arm (the `JOLT_IRR_SCAN_FIXED_STEPS` kill switch), for
-        /// same-window A/B against the run-offset early exit.
-        pub fn run_timed_scan_only_fixed(&self) -> Result<Duration, MetalError> {
-            self.run_timed_scan_only_kernel(KernelId::IrrPhaseScanFixed)
-        }
-
-        fn run_timed_scan_only_kernel(&self, kernel: KernelId) -> Result<Duration, MetalError> {
             let mut pass = self.context.begin_pass()?;
             pass.dispatch(
-                kernel,
+                KernelId::IrrPhaseScan,
                 self.params,
-                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
+                &self.scan_buffers(),
                 self.threads,
             );
             pass.commit().wait_timed()
@@ -1809,7 +1385,7 @@ pub mod bench {
             pass.dispatch_width(
                 KernelId::IrrPhaseScan,
                 self.params,
-                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
+                &self.scan_buffers(),
                 self.threads,
                 width,
             );
@@ -1822,15 +1398,7 @@ pub mod bench {
             probe: &VariantPipeline,
             width: usize,
         ) -> Result<Duration, MetalError> {
-            let mut pass = self.context.begin_pass()?;
-            pass.dispatch_variant(
-                probe,
-                self.params,
-                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
-                self.threads,
-                width,
-            );
-            pass.commit().wait_timed()
+            self.run_timed_probe_threads(probe, self.params, self.threads, width)
         }
 
         /// One probe dispatch at an explicit thread count (occupancy-curve
@@ -1843,28 +1411,18 @@ pub mod bench {
             width: usize,
         ) -> Result<Duration, MetalError> {
             let mut pass = self.context.begin_pass()?;
-            pass.dispatch_variant(
-                probe,
-                params,
-                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
-                threads,
-                width,
-            );
+            pass.dispatch_variant(probe, params, &self.scan_buffers(), threads, width);
             pass.commit().wait_timed()
+        }
+
+        /// The scan's argument table (`jk_irr_phase_scan` buffers 0–3).
+        fn scan_buffers(&self) -> [&DeviceBuffer<'_>; 4] {
+            [&self.rows, &self.u_evals, &self.v_prev, &self.partials]
         }
     }
 
     impl IrrSuffixScanFixture {
         pub fn production_geometry(log_t: usize) -> Result<Self, MetalError> {
-            Self::with_simdgroups(log_t, TARGET_SUFFIX_SIMDGROUPS)
-        }
-
-        pub fn with_simdgroups(log_t: usize, target_simdgroups: usize) -> Result<Self, MetalError> {
-            if target_simdgroups == 0 {
-                return Err(MetalError::UnsupportedShape(
-                    "suffix-scan fixture requires a nonzero simdgroup target",
-                ));
-            }
             let n = 1usize << log_t;
             let all_tables: Vec<_> = LookupTableKind::<RISCV_XLEN>::iter().collect();
             let table_indices = [0, 3, 7, 11, LookupTableKind::<RISCV_XLEN>::COUNT - 1];
@@ -1891,146 +1449,7 @@ pub mod bench {
                 )
             });
             let u_evals = PageAlignedVec::from_fn(n, |_| Fr::from_u64(splitmix(&mut state)));
-            Self::from_parts(rows, u_evals, tables, buckets, target_simdgroups)
-        }
-
-        pub fn assert_oracle(&mut self) -> Result<(), MetalError> {
-            self.assert_oracle_once("random")?;
-            // Two distinct keys per tile: the grouped masked-sum emission
-            // and the precomputed-flag collision reduce, vs the same sums.
-            self.set_chunk_values(&[3, 7]);
-            self.assert_oracle_once("skewed")?;
-            let uniform: Vec<u8> = (0..=255).collect();
-            self.set_chunk_values(&uniform);
-            Ok(())
-        }
-
-        fn assert_oracle_once(&mut self, label: &str) -> Result<(), MetalError> {
-            let mut expected = vec![Fr::from_u64(0); self.tables.len() * SUF_CELLS];
-            for (slot, (table, range)) in self.tables.iter().zip(&self.ranges).enumerate() {
-                for &j in &self.bucket_flat[range.clone()] {
-                    let row = &self.rows[j as usize];
-                    let suffix_bits = LookupBits::new(row.lookup_index & u64::MAX as u128, 64);
-                    let chunk = ((row.lookup_index >> 64) as usize) & (CHUNK_SIZE - 1);
-                    let u = self.u_evals[j as usize];
-                    for (suffix_index, suffix) in table.suffixes().iter().enumerate() {
-                        let scalar = suffix.suffix_mle(suffix_bits);
-                        expected[slot * SUF_CELLS + suffix_index * CHUNK_SIZE + chunk] +=
-                            u * Fr::from_u64(scalar);
-                    }
-                }
-            }
-
-            let context = MetalContext::global()?;
-            for kernel in [
-                KernelId::IrrSuffixScan,
-                KernelId::IrrSuffixScanFixed,
-                KernelId::IrrSuffixScanGrouped,
-                KernelId::IrrSuffixScanEager,
-                KernelId::IrrSuffixScanLegacy,
-            ] {
-                self.dispatch_and_reduce(context, kernel)?;
-                self.assert_output(&expected, &format!("{label} {kernel:?}"));
-            }
-            Ok(())
-        }
-
-        fn dispatch_and_reduce(
-            &mut self,
-            context: &'static MetalContext,
-            kernel: KernelId,
-        ) -> Result<(), MetalError> {
-            let out_len = self.out.len();
-            let rows = self.rows.device_buffer(context)?;
-            let u_evals = self.u_evals.device_buffer(context)?;
-            let bucket_flat = self.bucket_flat.device_buffer(context)?;
-            let sg_slot = self.sg_slot.device_buffer(context)?;
-            let sg_range = self.sg_range.device_buffer(context)?;
-            let suffix_meta = self.suffix_meta.device_buffer(context)?;
-            let partials = self.partials.device_buffer_mut(context)?;
-            let out = self.out.device_buffer_mut(context)?;
-            let group = self.group.device_buffer(context)?;
-            let mut pass = context.begin_pass()?;
-            pass.dispatch(
-                kernel,
-                &self.params,
-                &[
-                    &rows,
-                    &u_evals,
-                    &bucket_flat,
-                    &sg_slot,
-                    &sg_range,
-                    &suffix_meta,
-                    &partials,
-                ],
-                self.threads,
-            );
-            pass.dispatch(
-                KernelId::IrrReduce,
-                &self.reduce_params,
-                &[&partials, &group, &out],
-                out_len,
-            );
-            pass.run()
-        }
-
-        fn assert_output(&self, expected: &[Fr], label: &str) {
-            let r_mont = Fr::from_u64(1).mul_pow_2(128).mul_pow_2(128);
-            for (slot, table) in self.tables.iter().enumerate() {
-                for (suffix_index, suffix) in table.suffixes().iter().enumerate() {
-                    let start = slot * SUF_CELLS + suffix_index * CHUNK_SIZE;
-                    let end = start + CHUNK_SIZE;
-                    for (offset, (&got, &expected)) in self.out[start..end]
-                        .iter()
-                        .zip(&expected[start..end])
-                        .enumerate()
-                    {
-                        let index = start + offset;
-                        let got = if suffix.is_01_valued() {
-                            got
-                        } else {
-                            got * r_mont
-                        };
-                        assert_eq!(got, expected, "{label} cell {index}");
-                    }
-                }
-            }
-        }
-
-        pub fn buffers(&mut self) -> Result<IrrSuffixScanBuffers<'_>, MetalError> {
-            let context = MetalContext::global()?;
-            let out_len = self.out.len();
-            Ok(IrrSuffixScanBuffers {
-                context,
-                rows: self.rows.device_buffer(context)?,
-                u_evals: self.u_evals.device_buffer(context)?,
-                bucket_flat: self.bucket_flat.device_buffer(context)?,
-                sg_slot: self.sg_slot.device_buffer(context)?,
-                sg_range: self.sg_range.device_buffer(context)?,
-                suffix_meta: self.suffix_meta.device_buffer(context)?,
-                partials: self.partials.device_buffer_mut(context)?,
-                group: self.group.device_buffer(context)?,
-                out: self.out.device_buffer_mut(context)?,
-                params: &self.params,
-                reduce_params: &self.reduce_params,
-                threads: self.threads,
-                out_len,
-            })
-        }
-    }
-
-    impl IrrSuffixScanFixture {
-        /// Overwrite every row's scatter chunk (lookup-index bits
-        /// `[64, 72)`, this fixture's fixed key position) with a value drawn
-        /// from `values` — the suffix twin of the phase fixture's
-        /// [`set_chunk_values`](IrrPhaseScanFixture::set_chunk_values).
-        pub fn set_chunk_values(&mut self, values: &[u8]) {
-            let mask = !(0xFFu128 << 64);
-            let mut state = 0x5355_4646_4B45_5953u64;
-            for row in self.rows.iter_mut() {
-                let value = values[(splitmix(&mut state) as usize) % values.len()];
-                row.lookup_index = (row.lookup_index & mask) | (u128::from(value) << 64);
-            }
+            Ok(Self::from_parts(rows, u_evals, &tables, buckets))
         }
 
         /// Real-trace rows (the `JOLT_IRR_DUMP_ROWS` format): production
@@ -2066,47 +1485,41 @@ pub mod bench {
             }
             let mut state = 0x5355_4652_4541_4C53u64;
             let u_evals = PageAlignedVec::from_fn(n, |_| Fr::from_u64(splitmix(&mut state)));
-            Self::from_parts(
-                rows,
-                u_evals,
-                tables,
-                present_buckets,
-                TARGET_SUFFIX_SIMDGROUPS,
-            )
+            Ok(Self::from_parts(rows, u_evals, &tables, present_buckets))
         }
 
+        /// The production suffix schedule over `buckets` (one per table, in
+        /// `tables` order): `TARGET_SUFFIX_SIMDGROUPS` simdgroups shared in
+        /// proportion to bucket size, each a contiguous range of one table.
         fn from_parts(
             rows: PageAlignedVec<InstructionCycleRow>,
             u_evals: PageAlignedVec<Fr>,
-            tables: Vec<LookupTableKind<RISCV_XLEN>>,
+            tables: &[LookupTableKind<RISCV_XLEN>],
             buckets: Vec<Vec<u32>>,
-            target_simdgroups: usize,
-        ) -> Result<Self, MetalError> {
+        ) -> Self {
             let bucket_len: usize = buckets.iter().map(Vec::len).sum();
             let rows_per_sg =
-                div_ceil_pos(bucket_len, target_simdgroups).max(MIN_ROWS_PER_SIMDGROUP);
+                div_ceil_pos(bucket_len, TARGET_SUFFIX_SIMDGROUPS).max(MIN_ROWS_PER_SIMDGROUP);
             let mut bucket_flat = Vec::with_capacity(bucket_len);
-            let mut ranges = Vec::with_capacity(tables.len());
             let mut sg_slot = Vec::new();
             let mut sg_range = Vec::new();
             let mut group = Vec::with_capacity(2 * tables.len());
-            for bucket in buckets {
+            for (slot, bucket) in buckets.into_iter().enumerate() {
                 let range_start = bucket_flat.len();
                 bucket_flat.extend_from_slice(&bucket);
                 let range_end = bucket_flat.len();
-                ranges.push(range_start..range_end);
                 group.push(sg_slot.len() as u32);
                 let mut start = range_start;
                 while start < range_end {
                     let end = (start + rows_per_sg).min(range_end);
-                    sg_slot.push(ranges.len() as u32 - 1);
+                    sg_slot.push(slot as u32);
                     sg_range.extend_from_slice(&[start as u32, end as u32]);
                     start = end;
                 }
                 group.push(sg_slot.len() as u32);
             }
             let mut suffix_meta = Vec::with_capacity(tables.len() * (MAX_SUFFIXES + 1));
-            for table in &tables {
+            for table in tables {
                 let suffixes = table.suffixes();
                 suffix_meta.push(suffixes.len() as u32);
                 for index in 0..MAX_SUFFIXES {
@@ -2118,7 +1531,7 @@ pub mod bench {
             let num_sgs = sg_slot.len();
             let total_cells = tables.len() * SUF_CELLS;
             let zero = Fr::from_u64(0);
-            Ok(Self {
+            Self {
                 rows,
                 u_evals,
                 bucket_flat: PageAlignedVec::from_slice(&bucket_flat),
@@ -2131,43 +1544,40 @@ pub mod bench {
                 params: vec![num_sgs as u32, 64],
                 reduce_params: vec![total_cells as u32, SUF_CELLS as u32, SUF_CELLS as u32],
                 threads: num_sgs * SIMD_WIDTH,
-                tables,
-                ranges,
+            }
+        }
+
+        pub fn buffers(&mut self) -> Result<IrrSuffixScanBuffers<'_>, MetalError> {
+            let context = MetalContext::global()?;
+            let out_len = self.out.len();
+            Ok(IrrSuffixScanBuffers {
+                context,
+                rows: self.rows.device_buffer(context)?,
+                u_evals: self.u_evals.device_buffer(context)?,
+                bucket_flat: self.bucket_flat.device_buffer(context)?,
+                sg_slot: self.sg_slot.device_buffer(context)?,
+                sg_range: self.sg_range.device_buffer(context)?,
+                suffix_meta: self.suffix_meta.device_buffer(context)?,
+                partials: self.partials.device_buffer_mut(context)?,
+                group: self.group.device_buffer(context)?,
+                out: self.out.device_buffer_mut(context)?,
+                params: &self.params,
+                reduce_params: &self.reduce_params,
+                threads: self.threads,
+                out_len,
             })
         }
     }
 
     impl IrrSuffixScanBuffers<'_> {
-        pub fn run(&self) -> Result<(), MetalError> {
-            self.dispatch(KernelId::IrrSuffixScan)
-        }
-
         /// One production-shaped command buffer (suffix scan + its reduce)
         /// returning the CB's GPU execution window.
         pub fn run_timed(&self) -> Result<Duration, MetalError> {
-            self.run_timed_kernel(KernelId::IrrSuffixScan)
-        }
-
-        /// [`run_timed`](Self::run_timed) on the wave-3 eager arm (the
-        /// `JOLT_IRR_SUFFIX_SCAN_EAGER` kill switch).
-        pub fn run_timed_eager(&self) -> Result<Duration, MetalError> {
-            self.run_timed_kernel(KernelId::IrrSuffixScanEager)
-        }
-
-        fn run_timed_kernel(&self, kernel: KernelId) -> Result<Duration, MetalError> {
             let mut pass = self.context.begin_pass()?;
             pass.dispatch(
-                kernel,
+                KernelId::IrrSuffixScan,
                 self.params,
-                &[
-                    &self.rows,
-                    &self.u_evals,
-                    &self.bucket_flat,
-                    &self.sg_slot,
-                    &self.sg_range,
-                    &self.suffix_meta,
-                    &self.partials,
-                ],
+                &self.scan_buffers(),
                 self.threads,
             );
             pass.dispatch(
@@ -2181,29 +1591,11 @@ pub mod bench {
 
         /// Suffix scan alone (no reduce) — the reduce's share of the CB.
         pub fn run_timed_scan_only(&self) -> Result<Duration, MetalError> {
-            self.run_timed_scan_only_kernel(KernelId::IrrSuffixScan)
-        }
-
-        /// [`run_timed_scan_only`](Self::run_timed_scan_only) on the w12
-        /// fixed-step arm (the `JOLT_IRR_SCAN_FIXED_STEPS` kill switch).
-        pub fn run_timed_scan_only_fixed(&self) -> Result<Duration, MetalError> {
-            self.run_timed_scan_only_kernel(KernelId::IrrSuffixScanFixed)
-        }
-
-        fn run_timed_scan_only_kernel(&self, kernel: KernelId) -> Result<Duration, MetalError> {
             let mut pass = self.context.begin_pass()?;
             pass.dispatch(
-                kernel,
+                KernelId::IrrSuffixScan,
                 self.params,
-                &[
-                    &self.rows,
-                    &self.u_evals,
-                    &self.bucket_flat,
-                    &self.sg_slot,
-                    &self.sg_range,
-                    &self.suffix_meta,
-                    &self.partials,
-                ],
+                &self.scan_buffers(),
                 self.threads,
             );
             pass.commit().wait_timed()
@@ -2219,65 +1611,24 @@ pub mod bench {
             pass.dispatch_variant(
                 probe,
                 self.params,
-                &[
-                    &self.rows,
-                    &self.u_evals,
-                    &self.bucket_flat,
-                    &self.sg_slot,
-                    &self.sg_range,
-                    &self.suffix_meta,
-                    &self.partials,
-                ],
+                &self.scan_buffers(),
                 self.threads,
                 width,
             );
             pass.commit().wait_timed()
         }
 
-        pub fn run_legacy(&self) -> Result<(), MetalError> {
-            self.dispatch(KernelId::IrrSuffixScanLegacy)
-        }
-
-        pub fn run_with_reduce(&self) -> Result<(), MetalError> {
-            let mut pass = self.context.begin_pass()?;
-            pass.dispatch(
-                KernelId::IrrSuffixScan,
-                self.params,
-                &[
-                    &self.rows,
-                    &self.u_evals,
-                    &self.bucket_flat,
-                    &self.sg_slot,
-                    &self.sg_range,
-                    &self.suffix_meta,
-                    &self.partials,
-                ],
-                self.threads,
-            );
-            pass.dispatch(
-                KernelId::IrrReduce,
-                self.reduce_params,
-                &[&self.partials, &self.group, &self.out],
-                self.out_len,
-            );
-            pass.run()
-        }
-
-        fn dispatch(&self, kernel: KernelId) -> Result<(), MetalError> {
-            self.context.run_once(
-                kernel,
-                self.params,
-                &[
-                    &self.rows,
-                    &self.u_evals,
-                    &self.bucket_flat,
-                    &self.sg_slot,
-                    &self.sg_range,
-                    &self.suffix_meta,
-                    &self.partials,
-                ],
-                self.threads,
-            )
+        /// The scan's argument table (`jk_irr_suffix_scan` buffers 0–6).
+        fn scan_buffers(&self) -> [&DeviceBuffer<'_>; 7] {
+            [
+                &self.rows,
+                &self.u_evals,
+                &self.bucket_flat,
+                &self.sg_slot,
+                &self.sg_range,
+                &self.suffix_meta,
+                &self.partials,
+            ]
         }
     }
 
@@ -2472,8 +1823,8 @@ mod tests {
     }
 
     /// Synthetic rows; `skewed` keeps operands tiny so early-phase chunks
-    /// collapse to zero (the butterfly fast path), while `!skewed` uses full
-    /// random indices (the serial emit path).
+    /// collapse to zero (uniform tiles, long equal-key runs), while `!skewed`
+    /// uses full random indices (every tile flushes through the sorted scan).
     fn fixture_rows(log_t: usize, seed: u64, skewed: bool) -> Vec<InstructionCycleRow> {
         let count = LookupTableKind::<RISCV_XLEN>::COUNT;
         let tables = [0, 3 % count, 7 % count, 11 % count, count - 1];
@@ -2606,17 +1957,6 @@ mod tests {
     fn scanner_parity_random_indices_two_phase() {
         let _lock = gpu_lock();
         assert_scanner_parity(13, 12345, false, 0, 13, true);
-    }
-
-    #[test]
-    #[ignore = "large attribution fixture; run explicitly"]
-    fn scanner_attribution_scale() {
-        let _lock = gpu_lock();
-        let log_t = std::env::var("JOLT_IRR_ATTR_LOG_T")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(22);
-        assert_scanner_parity(log_t, 12345, false, 0, log_t, true);
     }
 
     #[test]

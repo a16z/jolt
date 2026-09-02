@@ -1,4 +1,4 @@
-//! The stage-5 registers value-evaluation slot (W10): fused bind+eval device
+//! The stage-5 registers value-evaluation slot: fused bind+eval device
 //! rounds over the `Inc·Wa·LT` cubic.
 //!
 //! Table strategy per factor:
@@ -24,10 +24,6 @@
 //! tier does — Fr arithmetic is exact on both sides, so any summation
 //! regrouping yields identical field values, and the wire polynomial is
 //! assembled through the same `from_evals_and_hint` recipe.
-//!
-//! Kill switch: `JOLT_METAL_REGVAL=0` keeps this slot on the optimized tier
-//! (the per-slot `JOLT_METAL_MIN_TERMS_REGISTERS_VAL_EVALUATION` gate
-//! override also applies).
 
 use jolt_field::{Fr, Ring};
 use jolt_poly::UnivariatePoly;
@@ -78,9 +74,8 @@ impl PrepareKernel<Fr, RegistersValEvaluation<Fr>> for MetalRegistersValEvaluati
     {
         let parts = ValEvaluationParts::collect(session, witness, &inputs)?;
         let cycles = 1usize << parts.log_t;
-        let killed = std::env::var_os("JOLT_METAL_REGVAL").is_some_and(|value| value == "0");
         // Gate on the first dispatch's work items (round-0 pairs).
-        if killed || !metal_gate(KIND, cycles / 2) {
+        if !metal_gate(KIND, cycles / 2) {
             return Ok(Box::new(ValEvaluationKernel::from_parts(parts)));
         }
         let context = match MetalContext::global() {
@@ -523,7 +518,6 @@ mod tests {
         let _lock = gpu_lock();
         // nextest runs one process per test, so env mutation is safe.
         std::env::remove_var("JOLT_METAL_DISABLE");
-        std::env::remove_var("JOLT_METAL_REGVAL");
         std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
         fixture.with_plane(log_t, |backend| {
             let relation = RegistersValEvaluation::<Fr>::new(TraceDimensions::new(log_t));
@@ -590,49 +584,5 @@ mod tests {
     #[test]
     fn parity_with_parked_indices() {
         run_parity(structured_fixture(8), 3, 71, true);
-    }
-
-    /// The kill switch keeps the whole sumcheck on the optimized tier.
-    #[test]
-    fn kill_switch_stays_on_host() {
-        let _lock = gpu_lock();
-        std::env::remove_var("JOLT_METAL_DISABLE");
-        std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
-        std::env::set_var("JOLT_METAL_REGVAL", "0");
-        structured_fixture(8).with_plane(3, |backend| {
-            let relation = RegistersValEvaluation::<Fr>::new(TraceDimensions::new(3));
-            let point = challenge_sequence(REGISTER_ADDRESS_BITS + 3, 0x7777 ^ 0x3C3C);
-            let grid = JoltWitnessOracle::<Fr>::oracle_table(
-                backend,
-                JoltPolynomialId::Virtual(JoltVirtualPolynomial::RegistersVal),
-            )
-            .unwrap();
-            let input_claim = Polynomial::new(grid).evaluate(&point);
-            let claims = RegistersValEvaluationInputClaims {
-                registers_val: input_claim,
-            };
-            let points = RegistersValEvaluationInputClaims {
-                registers_val: point,
-            };
-            let round_challenges = challenge_sequence(3, 0x7777);
-            let before = device_probe_count();
-            assert_kernel_parity_with_session(
-                &mut ProofSession::default(),
-                &MetalRegistersValEvaluation,
-                backend,
-                &relation,
-                &claims,
-                &points,
-                &NoChallenges::default(),
-                input_claim,
-                &round_challenges,
-            );
-            assert_eq!(
-                device_probe_count(),
-                before,
-                "kill switch leaked a dispatch"
-            );
-        });
-        std::env::remove_var("JOLT_METAL_REGVAL");
     }
 }

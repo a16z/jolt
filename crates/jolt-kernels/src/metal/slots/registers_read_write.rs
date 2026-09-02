@@ -36,47 +36,6 @@ use crate::{
 const KIND: &str = "registers_read_write";
 const RA_TABLE_DEREF_LEN: usize = 256;
 
-fn fused_rounds_enabled() -> bool {
-    std::env::var("JOLT_REGRW_FUSED").is_ok_and(|value| matches!(value.trim(), "1" | "on" | "ON"))
-}
-
-fn gpu_prepare_enabled() -> bool {
-    std::env::var("JOLT_REGRW_GPU_PREPARE")
-        .map_or(true, |value| !matches!(value.trim(), "0" | "off" | "OFF"))
-        && std::env::var_os("JOLT_REGISTERS_PREPARE_SERIAL").is_none()
-}
-
-/// Bind outputs as kernel-zeroed mmap buffers instead of host-memset
-/// `PageAlignedVec`s: the eager serial zero-fill of the multi-GiB early-round
-/// CSRs was 2.84 s of st4 host time @2^27. `JOLT_REGRW_MMAP_BIND=0` restores
-/// the eager allocation.
-fn mmap_bind_buffers_enabled() -> bool {
-    std::env::var("JOLT_REGRW_MMAP_BIND")
-        .map_or(true, |value| !matches!(value.trim(), "0" | "off" | "OFF"))
-}
-
-/// Recycle bind output buffers round-over-round (ping-pong through the
-/// retired input slab) instead of mapping a fresh region every round: the
-/// lazy-zero mmap buffers pay first-touch fault cost inside the bind CBs
-/// (the W11 31% clawback); a reused slab's pages are already resident.
-/// Sound because every readable slot `[0, new_count)` is fully written by
-/// the bind kernel (out_offsets are exact prefix sums of the merge counts).
-/// `JOLT_REGRW_ARENA=0` restores per-round allocation.
-fn arena_reuse_enabled() -> bool {
-    std::env::var("JOLT_REGRW_ARENA")
-        .map_or(true, |value| !matches!(value.trim(), "0" | "off" | "OFF"))
-}
-
-/// Launch each device cycle round as a detached fused bind+message command
-/// buffer through [`ProveRounds::begin_round`], so the batch engine overlaps
-/// the CB with RamValCheck's synchronous CPU rounds instead of serializing
-/// them behind blocking waits. `JOLT_REGRW_OVERLAP=0` restores the
-/// synchronous schedule.
-fn overlap_rounds_enabled() -> bool {
-    std::env::var("JOLT_REGRW_OVERLAP")
-        .map_or(true, |value| !matches!(value.trim(), "0" | "off" | "OFF"))
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RawRwEntryIdx {
@@ -105,15 +64,6 @@ const _: () = {
     assert!(std::mem::size_of::<RawRwEntryIdx>() == 56);
     assert!(std::mem::size_of::<RawRwEntryF>() == 120);
 };
-
-struct MetalRegisterTables {
-    entries: Vec<RawRwEntryIdx>,
-    offsets: Vec<u32>,
-    inc: Vec<Fr>,
-    rs1_indices: Vec<Option<u8>>,
-    rs2_indices: Vec<Option<u8>>,
-    rd_indices: Vec<Option<u8>>,
-}
 
 struct MetalRegisterMetadata {
     offsets: Vec<u32>,
@@ -155,62 +105,6 @@ impl RegisterBuildInputs<'_> {
 }
 
 #[inline]
-fn raw_cycle_entries(registers: RegisterBuildInputs<'_>, t: usize) -> ([RawRwEntryIdx; 3], usize) {
-    let mut row = [RawRwEntryIdx::default(); 3];
-    let mut len = 0;
-    let rs1 = registers.rs1_index[t];
-    let rs2 = registers.rs2_index[t];
-    let rd = registers.rd_index[t];
-    if rs1 != NO_REGISTER {
-        row[len] = RawRwEntryIdx {
-            val: Fr::from_u64(registers.rs1_value[t]),
-            prev_val: registers.rs1_value[t],
-            next_val: registers.rs1_value[t],
-            ra: 1,
-            wa: 0,
-            col: rs1,
-            pad: [0; 3],
-        };
-        len += 1;
-    }
-    if rs2 != NO_REGISTER {
-        if let Some(entry) = row[..len].iter_mut().find(|entry| entry.col == rs2) {
-            entry.ra = 3;
-        } else {
-            row[len] = RawRwEntryIdx {
-                val: Fr::from_u64(registers.rs2_value[t]),
-                prev_val: registers.rs2_value[t],
-                next_val: registers.rs2_value[t],
-                ra: 2,
-                wa: 0,
-                col: rs2,
-                pad: [0; 3],
-            };
-            len += 1;
-        }
-    }
-    if rd != NO_REGISTER {
-        if let Some(entry) = row[..len].iter_mut().find(|entry| entry.col == rd) {
-            entry.wa = 1;
-            entry.next_val = registers.rd_post_value[t];
-        } else {
-            row[len] = RawRwEntryIdx {
-                val: Fr::from_u64(registers.rd_pre_value[t]),
-                prev_val: registers.rd_pre_value[t],
-                next_val: registers.rd_post_value[t],
-                ra: 0,
-                wa: 1,
-                col: rd,
-                pad: [0; 3],
-            };
-            len += 1;
-        }
-    }
-    row[..len].sort_unstable_by_key(|entry| entry.col);
-    (row, len)
-}
-
-#[inline]
 fn raw_cycle_entry_count(registers: RegisterBuildInputs<'_>, t: usize) -> usize {
     let rs1 = registers.rs1_index[t];
     let rs2 = registers.rs2_index[t];
@@ -220,35 +114,7 @@ fn raw_cycle_entry_count(registers: RegisterBuildInputs<'_>, t: usize) -> usize 
         + usize::from(rd != NO_REGISTER && rd != rs1 && rd != rs2)
 }
 
-fn build_metal_register_tables_serial(registers: RegisterBuildInputs<'_>) -> MetalRegisterTables {
-    let cycles = registers.len();
-    let mut tables = MetalRegisterTables {
-        entries: Vec::with_capacity(cycles * 3),
-        offsets: Vec::with_capacity(cycles + 1),
-        inc: Vec::with_capacity(cycles),
-        rs1_indices: Vec::with_capacity(cycles),
-        rs2_indices: Vec::with_capacity(cycles),
-        rd_indices: Vec::with_capacity(cycles),
-    };
-    tables.offsets.push(0);
-    for t in 0..cycles {
-        let (row, len) = raw_cycle_entries(registers, t);
-        tables.entries.extend_from_slice(&row[..len]);
-        tables.offsets.push(tables.entries.len() as u32);
-        tables.inc.push(Fr::from_i128(
-            i128::from(registers.rd_post_value[t]) - i128::from(registers.rd_pre_value[t]),
-        ));
-        let rs1 = registers.rs1_index[t];
-        let rs2 = registers.rs2_index[t];
-        let rd = registers.rd_index[t];
-        tables.rs1_indices.push((rs1 != NO_REGISTER).then_some(rs1));
-        tables.rs2_indices.push((rs2 != NO_REGISTER).then_some(rs2));
-        tables.rd_indices.push((rd != NO_REGISTER).then_some(rd));
-    }
-    tables
-}
-
-#[cfg(any(test, not(feature = "parallel")))]
+#[cfg(not(feature = "parallel"))]
 fn build_metal_register_metadata_serial(
     registers: RegisterBuildInputs<'_>,
 ) -> MetalRegisterMetadata {
@@ -420,18 +286,6 @@ impl EntrySlab {
     }
 }
 
-/// A raw-entry `Vec`'s bytes (for slab fills). Both entry structs carry
-/// explicit, always-initialized pad fields, so every byte is defined.
-fn entry_bytes(entries: &[RawRwEntryIdx]) -> &[u8] {
-    // SAFETY: repr(C) POD with explicit pad fields; length is exact.
-    unsafe {
-        std::slice::from_raw_parts(
-            entries.as_ptr().cast::<u8>(),
-            std::mem::size_of_val(entries),
-        )
-    }
-}
-
 struct DeviceBindPlan {
     out_offsets: OwnedDeviceBuffer<u32>,
     new_entries: OwnedDeviceBuffer<u8>,
@@ -469,13 +323,13 @@ struct DeviceRegistersRwState {
     entries: EntrySlab,
     entry_count: usize,
     /// The previous round's retired input slab, recycled as a later round's
-    /// output when arena reuse is on (never the current round's input, so no
-    /// aliasing with in-flight reads).
+    /// output (never the NEXT round's input, so no aliasing with in-flight
+    /// reads). A fresh lazy-zero mmap slab would pay its first-touch faults
+    /// inside the bind command buffer; the recycled slab's pages are already
+    /// resident. Sound because the bind kernel writes every readable slot
+    /// `[0, new_count)` (out_offsets are exact prefix sums of the merge
+    /// counts).
     spare: Option<OwnedDeviceBuffer<u8>>,
-    /// `arena_reuse_enabled() && mmap_bind_buffers_enabled()`, cached.
-    arena: bool,
-    /// `mmap_bind_buffers_enabled()`, cached.
-    mmap_bind: bool,
     row_offsets: OwnedDeviceBuffer<u32>,
     rows: usize,
     counts: OwnedDeviceBuffer<u32>,
@@ -487,39 +341,8 @@ struct DeviceRegistersRwState {
 }
 
 impl DeviceRegistersRwState {
-    fn new(
-        context: &'static MetalContext,
-        entries: Vec<RawRwEntryIdx>,
-        row_offsets: Vec<u32>,
-        inc: Vec<Fr>,
-        gamma: Fr,
-    ) -> Result<Self, MetalError> {
-        let rows = inc.len();
-        let mut slab = MmapVec::<u8>::zeroed(std::mem::size_of_val(entries.as_slice()));
-        slab.copy_from_slice(entry_bytes(&entries));
-        let mmap_bind = mmap_bind_buffers_enabled();
-        Ok(Self {
-            context,
-            entry_count: entries.len(),
-            entries: EntrySlab {
-                buffer: context.own_mmap(slab)?,
-                kind: EntryKind::Indexed,
-            },
-            spare: None,
-            arena: mmap_bind && arena_reuse_enabled(),
-            mmap_bind,
-            row_offsets: context.own_vec(row_offsets)?,
-            rows,
-            counts: context
-                .own_page_aligned(PageAlignedVec::from_elem(0_u32, (rows / 2).max(1)))?,
-            counts_valid: false,
-            inc: RoundTable::new(context, inc)?,
-            partials: Partials::new(context, 2, (rows / 2).max(1))?,
-            ra_table: vec![Fr::from_u64(0), gamma, gamma * gamma, gamma + gamma * gamma],
-            wa_table: vec![Fr::from_u64(0), Fr::from_u64(1)],
-        })
-    }
-
+    /// Build the indexed CSR on device from the trace's register lanes
+    /// (`row_offsets` are the host-scanned per-cycle entry offsets).
     fn new_from_registers(
         context: &'static MetalContext,
         registers: RegisterBuildInputs<'_>,
@@ -563,7 +386,6 @@ impl DeviceRegistersRwState {
             );
             pass.run()?;
         }
-        let mmap_bind = mmap_bind_buffers_enabled();
         Ok(Self {
             context,
             entries: EntrySlab {
@@ -572,8 +394,6 @@ impl DeviceRegistersRwState {
             },
             entry_count,
             spare: None,
-            arena: mmap_bind && arena_reuse_enabled(),
-            mmap_bind,
             row_offsets,
             rows,
             counts: context
@@ -754,28 +574,22 @@ impl DeviceRegistersRwState {
         Ok((offsets, total as usize))
     }
 
-    /// A fresh (kernel-zeroed) bind output slab of `needed` bytes. With
-    /// arena reuse on, new mmap slabs take Direct-width headroom — virtual
-    /// pages are free until touched, and the deref round then fits in the
-    /// recycled slab without a growth remap.
+    /// A fresh bind output slab of `needed` bytes: kernel-zeroed mmap pages
+    /// (a host memset of the multi-GiB early-round CSRs costs seconds of
+    /// serial time), sized with Direct-width headroom — virtual pages are
+    /// free until touched, and the deref round then fits in the recycled
+    /// slab without a growth remap.
     fn alloc_entries(
         &self,
         needed: usize,
         new_count: usize,
     ) -> Result<OwnedDeviceBuffer<u8>, MetalError> {
-        if !self.mmap_bind {
-            return self
-                .context
-                .own_page_aligned(PageAlignedVec::from_elem(0u8, needed));
-        }
-        if self.arena {
-            let headroom = new_count * EntryKind::Direct.entry_size();
-            if headroom > needed {
-                // An oversized wrap can exceed the device's buffer cap —
-                // fall through to the exact size.
-                if let Ok(buffer) = self.context.own_mmap(MmapVec::<u8>::zeroed(headroom)) {
-                    return Ok(buffer);
-                }
+        let headroom = new_count * EntryKind::Direct.entry_size();
+        if headroom > needed {
+            // An oversized wrap can exceed the device's buffer cap —
+            // fall through to the exact size.
+            if let Ok(buffer) = self.context.own_mmap(MmapVec::<u8>::zeroed(headroom)) {
+                return Ok(buffer);
             }
         }
         self.context.own_mmap(MmapVec::<u8>::zeroed(needed))
@@ -901,14 +715,11 @@ impl DeviceRegistersRwState {
     }
 
     fn install_bind(&mut self, plan: DeviceBindPlan) {
-        let retired = std::mem::replace(&mut self.entries.buffer, plan.new_entries);
+        self.spare = Some(std::mem::replace(
+            &mut self.entries.buffer,
+            plan.new_entries,
+        ));
         self.entries.kind = plan.new_kind;
-        if self.arena {
-            // The retired input becomes a later round's output slab; it is
-            // never the NEXT round's input, so recycling cannot alias a
-            // concurrent read.
-            self.spare = Some(retired);
-        }
         self.entry_count = plan.new_count;
         self.row_offsets = plan.out_offsets;
         self.ra_table = plan.next_ra_table;
@@ -970,15 +781,6 @@ impl DeviceRegistersRwState {
             plan: Some(plan),
             num_tgs,
         })
-    }
-
-    fn bind_and_message(
-        &mut self,
-        challenge: Fr,
-        gruen: &GruenSplitEqPolynomial<Fr>,
-    ) -> Result<[Fr; 2], MetalError> {
-        let flight = self.launch_bind_and_message(challenge, gruen)?;
-        self.collect_flight(flight)
     }
 
     fn into_cycle_state(self) -> Result<(Vec<BoundRegistersRwEntry<Fr>>, Fr), ()> {
@@ -1135,62 +937,30 @@ impl PrepareKernel<Fr, RegistersReadWriteChecking<Fr>> for MetalRegistersReadWri
         crate::optimized::opening::park_opening_increments(session, &registers, &ram);
 
         let register_inputs = RegisterBuildInputs::from(registers.as_ref());
-        let prepared = if gpu_prepare_enabled() {
-            let metadata = tracing::info_span!("RegRw::prepare_meta")
-                .in_scope(|| build_metal_register_metadata(register_inputs));
-            if metadata.offsets.last().copied().unwrap_or_default() == 0 {
-                return self.fallback.prepare(session, witness, inputs);
-            }
-            DeviceRegistersRwState::new_from_registers(
-                context,
-                register_inputs,
-                metadata.offsets,
-                metadata.inc,
-                inputs.challenges.gamma,
-            )
-            .map(|device| {
-                (
-                    device,
-                    metadata.rs1_indices,
-                    metadata.rs2_indices,
-                    metadata.rd_indices,
-                )
-            })
-        } else {
-            let tables = build_metal_register_tables_serial(register_inputs);
-            if tables.entries.is_empty() {
-                return self.fallback.prepare(session, witness, inputs);
-            }
-            DeviceRegistersRwState::new(
-                context,
-                tables.entries,
-                tables.offsets,
-                tables.inc,
-                inputs.challenges.gamma,
-            )
-            .map(|device| {
-                (
-                    device,
-                    tables.rs1_indices,
-                    tables.rs2_indices,
-                    tables.rd_indices,
-                )
-            })
-        };
+        let metadata = tracing::info_span!("RegRw::prepare_meta")
+            .in_scope(|| build_metal_register_metadata(register_inputs));
+        if metadata.offsets.last().copied().unwrap_or_default() == 0 {
+            return self.fallback.prepare(session, witness, inputs);
+        }
+        let device = DeviceRegistersRwState::new_from_registers(
+            context,
+            register_inputs,
+            metadata.offsets,
+            metadata.inc,
+            inputs.challenges.gamma,
+        );
         drop(registers);
-        let (device, rs1_indices, rs2_indices, rd_indices) = match prepared {
-            Ok(prepared) => prepared,
+        let device = match device {
+            Ok(device) => device,
             Err(error) => {
                 tracing::warn!(slot = KIND, %error, "device preparation failed; using optimized fallback");
                 return self.fallback.prepare(session, witness, inputs);
             }
         };
-        session.park(SharedRdIndices(rd_indices));
+        session.park(SharedRdIndices(metadata.rd_indices));
         Ok(Box::new(MetalRegistersRwKernel {
             log_t,
             log_k,
-            fused_rounds: fused_rounds_enabled(),
-            overlap: overlap_rounds_enabled(),
             in_flight: None,
             device: Some(device),
             gruen: Some(GruenSplitEqPolynomial::new(
@@ -1198,8 +968,8 @@ impl PrepareKernel<Fr, RegistersReadWriteChecking<Fr>> for MetalRegistersReadWri
                 BindingOrder::LowToHigh,
             )),
             host: None,
-            rs1_indices: Some(rs1_indices),
-            rs2_indices: Some(rs2_indices),
+            rs1_indices: Some(metadata.rs1_indices),
+            rs2_indices: Some(metadata.rs2_indices),
             bound_challenges: Some(Vec::with_capacity(log_t + log_k)),
             rounds_bound: 0,
         }))
@@ -1228,8 +998,6 @@ struct RwFlight {
 struct MetalRegistersRwKernel {
     log_t: usize,
     log_k: usize,
-    fused_rounds: bool,
-    overlap: bool,
     in_flight: Option<RwFlight>,
     device: Option<DeviceRegistersRwState>,
     gruen: Option<GruenSplitEqPolynomial<Fr>>,
@@ -1299,42 +1067,6 @@ impl ProveRounds<Fr> for MetalRegistersRwKernel {
         }
         if let Some(challenge) = bind {
             let final_bind = self.rounds_bound + 1 == self.log_t;
-            if self.fused_rounds && !final_bind {
-                let mut next_gruen = self
-                    .gruen
-                    .as_ref()
-                    .ok_or_else(missing_device_state)?
-                    .clone();
-                next_gruen.bind(challenge);
-                let result = self
-                    .device
-                    .as_mut()
-                    .ok_or_else(missing_device_state)?
-                    .bind_and_message(challenge, &next_gruen);
-                let [q_0, q_inf] = match result {
-                    Ok(values) => values,
-                    Err(error) => {
-                        tracing::warn!(slot = KIND, %error, "fused device round failed; finishing on CPU");
-                        self.fallback_to_host()?;
-                        return self
-                            .host
-                            .as_mut()
-                            .ok_or_else(missing_device_state)?
-                            .prove_round(Some(challenge), round, previous_claim);
-                    }
-                };
-                self.gruen = Some(next_gruen);
-                self.bound_challenges
-                    .as_mut()
-                    .ok_or_else(missing_device_state)?
-                    .push(challenge);
-                self.rounds_bound += 1;
-                return Ok(self
-                    .gruen
-                    .as_ref()
-                    .ok_or_else(missing_device_state)?
-                    .gruen_poly_deg_3(q_0, q_inf, previous_claim));
-            }
             let result = self
                 .device
                 .as_mut()
@@ -1391,13 +1123,16 @@ impl ProveRounds<Fr> for MetalRegistersRwKernel {
             .gruen_poly_deg_3(q_0, q_inf, previous_claim))
     }
 
+    /// Launch the round as a detached (fused bind+message) command buffer so
+    /// the batch engine overlaps it with its synchronous members' CPU rounds
+    /// instead of serializing them behind a blocking wait.
     fn begin_round(
         &mut self,
         bind: Option<Fr>,
         _round: usize,
         _previous_claim: Fr,
     ) -> Result<bool, SumcheckError<Fr>> {
-        if !self.overlap || self.host.is_some() || self.device.is_none() {
+        if self.host.is_some() || self.device.is_none() {
             return Ok(false);
         }
         // The final cycle bind transitions to the host tail — synchronous.
@@ -1571,54 +1306,12 @@ mod tests {
         assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture,
     };
 
-    #[test]
-    fn registers_rw_gpu_prepare_matches_serial() {
-        let _lock = gpu_lock();
-        structured_fixture(257).with_plane(9, |backend| {
-            let mut session = ProofSession::default();
-            let record = TraceRecord::shared::<Fr>(&mut session, backend, 9).unwrap();
-            let inputs = RegisterBuildInputs::from(record.registers.as_ref());
-            let serial = build_metal_register_tables_serial(inputs);
-            let metadata = build_metal_register_metadata_serial(inputs);
-            let context = MetalContext::global().unwrap();
-            let device = DeviceRegistersRwState::new_from_registers(
-                context,
-                inputs,
-                metadata.offsets.clone(),
-                metadata.inc.clone(),
-                Fr::from_u64(0x5EED_1234_5678_9ABC),
-            )
-            .unwrap();
-
-            assert_eq!(
-                device.entries.kind,
-                EntryKind::Indexed,
-                "prepare must start in the indexed CSR representation"
-            );
-            let entries = device
-                .entries
-                .typed::<RawRwEntryIdx>(device.entry_count)
-                .unwrap();
-            assert_eq!(entries, serial.entries);
-            assert_eq!(metadata.offsets, serial.offsets);
-            assert_eq!(metadata.inc, serial.inc);
-            assert_eq!(metadata.rs1_indices, serial.rs1_indices);
-            assert_eq!(metadata.rs2_indices, serial.rs2_indices);
-            assert_eq!(metadata.rd_indices, serial.rd_indices);
-        });
-    }
-
-    fn run_parity(log_t: usize, seed: u64, fused: bool, arena: bool, expected_device_rounds: u64) {
+    /// The synchronous `prove_round` path (the parity harness never calls
+    /// `begin_round`): one command buffer per message and one per bind.
+    fn run_parity(log_t: usize, seed: u64) {
         let _lock = gpu_lock();
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS_REGISTERS_READ_WRITE", "0");
-        std::env::set_var("JOLT_REGRW_FUSED", if fused { "1" } else { "0" });
-        std::env::set_var("JOLT_REGRW_ARENA", if arena { "1" } else { "0" });
-        // The parity harness drives `prove_round` (the synchronous path);
-        // pin the overlap switch off so the CB-count assertions stay exact.
-        std::env::set_var("JOLT_REGRW_OVERLAP", "0");
-        std::env::set_var("JOLT_REGRW_GPU_PREPARE", "1");
-        std::env::remove_var("JOLT_REGISTERS_PREPARE_SERIAL");
         structured_fixture(1usize << log_t).with_plane(log_t, |backend| {
             let relation = RegistersReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(
                 log_t,
@@ -1665,7 +1358,7 @@ mod tests {
             );
             assert_eq!(
                 device_probe_count() - before,
-                expected_device_rounds,
+                2 * log_t as u64,
                 "registers read/write command-buffer schedule drifted"
             );
             assert_eq!(
@@ -1676,24 +1369,21 @@ mod tests {
         });
     }
 
+    /// The Indexed→Direct deref lands on a mid-cycle bind.
     #[test]
     fn registers_rw_matches_reference_index_handoff() {
-        run_parity(4, 23, true, true, 5);
+        run_parity(4, 23);
     }
 
+    /// Several Direct-coefficient cycle rounds after the deref.
     #[test]
     fn registers_rw_matches_reference_field_rounds() {
-        run_parity(6, 47, true, true, 7);
-    }
-
-    #[test]
-    fn registers_rw_legacy_schedule_matches_reference() {
-        run_parity(6, 71, false, false, 12);
+        run_parity(6, 47);
     }
 
     /// The overlap path (detached `begin_round`/`collect_round` fused
-    /// rounds, arena reuse on) against the reference kernel's synchronous
-    /// rounds — the schedule the batch engine actually drives in production.
+    /// rounds) against the reference kernel's synchronous rounds — the
+    /// schedule the batch engine drives in production.
     #[test]
     fn registers_rw_overlapped_matches_reference() {
         use crate::reference::ReferenceBackend;
@@ -1703,11 +1393,6 @@ mod tests {
         let _lock = gpu_lock();
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS_REGISTERS_READ_WRITE", "0");
-        std::env::set_var("JOLT_REGRW_FUSED", "0");
-        std::env::set_var("JOLT_REGRW_ARENA", "1");
-        std::env::set_var("JOLT_REGRW_OVERLAP", "1");
-        std::env::set_var("JOLT_REGRW_GPU_PREPARE", "1");
-        std::env::remove_var("JOLT_REGISTERS_PREPARE_SERIAL");
         structured_fixture(1usize << log_t).with_plane(log_t, |backend| {
             let relation = RegistersReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(
                 log_t,

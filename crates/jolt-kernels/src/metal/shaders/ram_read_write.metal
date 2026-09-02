@@ -10,32 +10,6 @@ struct JkRamRwEntry {
     uint pad;
 };
 
-struct JkRamRwBuildParams {
-    uint cycles;
-};
-
-kernel void jk_ram_rw_build(
-    device const uint* addresses [[buffer(0)]],
-    device const ulong* pre_values [[buffer(1)]],
-    device const ulong* post_values [[buffer(2)]],
-    device const uint* row_offsets [[buffer(3)]],
-    device JkRamRwEntry* entries [[buffer(4)]],
-    constant JkRamRwBuildParams& p [[buffer(5)]],
-    uint gid [[thread_position_in_grid]])
-{
-    if (gid >= p.cycles || addresses[gid] == uint(-1)) {
-        return;
-    }
-    JkRamRwEntry entry;
-    entry.val = jk_fr_mont_from_u64(pre_values[gid]);
-    entry.ra = jk_fr_mont_from_u64(1ul);
-    entry.prev_val = pre_values[gid];
-    entry.next_val = post_values[gid];
-    entry.col = addresses[gid];
-    entry.pad = 0u;
-    entries[row_offsets[gid]] = entry;
-}
-
 inline Fr256 jk_ram_rw_val_term(Fr256 val, Fr256 inc, Fr256 gamma) {
     return fr_add(val, fr_mont_mul(gamma, fr_add(inc, val)));
 }

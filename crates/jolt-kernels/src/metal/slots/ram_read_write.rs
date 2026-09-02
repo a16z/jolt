@@ -14,9 +14,8 @@ use jolt_witness::JoltWitnessPlane;
 use super::{num_threadgroups, Partials, RoundTable};
 use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
-use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
+use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
-use crate::mmap_vec::MmapVec;
 use crate::optimized::ram_read_write::RamReadWriteKernel;
 use crate::optimized::ram_trace::{RamAccessColumns, RamAccessValues, NO_ACCESS};
 use crate::optimized::rw_matrix::{CycleMajorEntry, CycleMajorMatrix};
@@ -27,15 +26,6 @@ use crate::{
 
 const KIND: &str = "ram_read_write";
 const HANDOFF_ROWS: usize = 4096;
-
-fn fused_rounds_enabled() -> bool {
-    std::env::var("JOLT_RAMRW_FUSED").is_ok_and(|value| matches!(value.trim(), "1" | "on" | "ON"))
-}
-
-fn gpu_prepare_enabled() -> bool {
-    std::env::var("JOLT_RAMRW_GPU_PREPARE")
-        .is_ok_and(|value| matches!(value.trim(), "1" | "on" | "ON"))
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -50,47 +40,23 @@ struct RawRamRwEntry {
 
 const _: () = assert!(std::mem::size_of::<RawRamRwEntry>() == 88);
 
-#[derive(Clone, Copy)]
-struct RamRwBuildInputs<'a> {
-    addresses: &'a [u32],
-    pre_values: &'a [u64],
-    post_values: &'a [u64],
-}
-
-impl RamRwBuildInputs<'_> {
-    fn new<'a>(columns: &'a RamAccessColumns, values: &'a RamAccessValues) -> RamRwBuildInputs<'a> {
-        RamRwBuildInputs {
-            addresses: columns.addresses.as_slice(),
-            pre_values: values.pre_values.as_slice(),
-            post_values: values.post_values.as_slice(),
-        }
-    }
-}
-
-fn ram_rw_offsets(inputs: RamRwBuildInputs<'_>) -> (Vec<u32>, usize) {
-    let mut offsets = Vec::with_capacity(inputs.addresses.len() + 1);
-    offsets.push(0);
-    let mut count = 0_u32;
-    for &address in inputs.addresses {
-        count += u32::from(address != NO_ACCESS);
-        offsets.push(count);
-    }
-    (offsets, count as usize)
-}
-
-fn ram_rw_entries_serial(inputs: RamRwBuildInputs<'_>) -> (Vec<RawRamRwEntry>, Vec<u32>) {
+/// The cycle-major CSR: one entry per RAM access, `offsets[t]..offsets[t+1]`
+/// spanning cycle `t`'s row.
+fn ram_rw_entries(
+    columns: &RamAccessColumns,
+    values: &RamAccessValues,
+) -> (Vec<RawRamRwEntry>, Vec<u32>) {
     let mut entries = Vec::new();
-    let mut offsets = Vec::with_capacity(inputs.addresses.len() + 1);
+    let mut offsets = Vec::with_capacity(columns.addresses.len() + 1);
     offsets.push(0);
-    for cycle in 0..inputs.addresses.len() {
-        let address = inputs.addresses[cycle];
+    for (cycle, &address) in columns.addresses.iter().enumerate() {
         if address != NO_ACCESS {
-            let pre_value = inputs.pre_values[cycle];
+            let pre_value = values.pre_values[cycle];
             entries.push(RawRamRwEntry {
                 val: Fr::from_u64(pre_value),
                 ra: Fr::from_u64(1),
                 prev_val: pre_value,
-                next_val: inputs.post_values[cycle],
+                next_val: values.post_values[cycle],
                 col: address,
                 pad: 0,
             });
@@ -98,87 +64,6 @@ fn ram_rw_entries_serial(inputs: RamRwBuildInputs<'_>) -> (Vec<RawRamRwEntry>, V
         offsets.push(entries.len() as u32);
     }
     (entries, offsets)
-}
-
-struct PendingRamRwEntries {
-    // The flight must settle before its output buffers drop.
-    pass: DetachedPass,
-    entries: OwnedDeviceBuffer<RawRamRwEntry>,
-    entry_count: usize,
-    offsets: OwnedDeviceBuffer<u32>,
-}
-
-impl PendingRamRwEntries {
-    fn launch(
-        context: &'static MetalContext,
-        inputs: RamRwBuildInputs<'_>,
-    ) -> Result<Self, MetalError> {
-        let cycles = inputs.addresses.len();
-        let (offsets, entry_count) = ram_rw_offsets(inputs);
-        if entry_count == 0 {
-            return Err(MetalError::UnsupportedShape(
-                "RAM read/write CSR has no entries",
-            ));
-        }
-        let offsets = context.own_vec(offsets)?;
-        let entries = context.own_mmap(MmapVec::zeroed(entry_count))?;
-        let addresses = context.wrap_slice(inputs.addresses)?;
-        let pre_values = context.wrap_slice(inputs.pre_values)?;
-        let post_values = context.wrap_slice(inputs.post_values)?;
-        let offset_buffer = offsets.device_buffer();
-        let entry_buffer = entries.device_buffer();
-        let mut pass = context.begin_pass()?;
-        pass.dispatch(
-            KernelId::RamRwBuild,
-            &[cycles as u32],
-            &[
-                &addresses,
-                &pre_values,
-                &post_values,
-                &offset_buffer,
-                &entry_buffer,
-            ],
-            cycles,
-        );
-        // SAFETY: the columns outlive the wait in `prepare`; the output
-        // buffers move into this flight and are host-untouched until wait.
-        let pass = unsafe { pass.commit().detach() };
-        Ok(Self {
-            pass,
-            entries,
-            entry_count,
-            offsets,
-        })
-    }
-
-    fn wait(
-        self,
-        context: &'static MetalContext,
-        inc: Vec<Fr>,
-    ) -> Result<DeviceRamRwState, MetalError> {
-        let (entries, entry_count, offsets) = self.wait_buffers()?;
-        DeviceRamRwState::from_buffers(context, entries, entry_count, offsets, inc)
-    }
-
-    fn wait_buffers(
-        self,
-    ) -> Result<
-        (
-            OwnedDeviceBuffer<RawRamRwEntry>,
-            usize,
-            OwnedDeviceBuffer<u32>,
-        ),
-        MetalError,
-    > {
-        let Self {
-            pass,
-            entries,
-            entry_count,
-            offsets,
-        } = self;
-        pass.wait()?;
-        Ok((entries, entry_count, offsets))
-    }
 }
 
 struct PingPong<T: Copy> {
@@ -214,16 +99,6 @@ impl DeviceRamRwState {
         let entry_count = entries.len();
         let entries = context.own_vec(entries)?;
         let offsets = context.own_vec(offsets)?;
-        Self::from_buffers(context, entries, entry_count, offsets, inc)
-    }
-
-    fn from_buffers(
-        context: &'static MetalContext,
-        entries: OwnedDeviceBuffer<RawRamRwEntry>,
-        entry_count: usize,
-        offsets: OwnedDeviceBuffer<u32>,
-        inc: Vec<Fr>,
-    ) -> Result<Self, MetalError> {
         let rows = inc.len();
         Ok(Self {
             context,
@@ -357,78 +232,6 @@ impl DeviceRamRwState {
         Ok(())
     }
 
-    fn bind_and_message(
-        &mut self,
-        challenge: Fr,
-        gruen: &GruenSplitEqPolynomial<Fr>,
-        gamma: Fr,
-    ) -> Result<[Fr; 2], MetalError> {
-        let new_count = self.scan_bind_offsets()?;
-        let rows = self.rows / 2;
-        let pairs = rows / 2;
-        let num_tgs = num_threadgroups(pairs);
-        let e_in = gruen.e_in_current();
-        let e_out = gruen.e_out_current();
-        let e_in_buffer = self.context.wrap_slice(fr_as_u32s(e_in))?;
-        let e_out_buffer = self.context.wrap_slice(fr_as_u32s(e_out))?;
-        let entry_buffer = self.entries.cur.device_buffer();
-        let offset_buffer = self.offsets.cur.device_buffer();
-        let out_offset_buffer = self.offsets.nxt.device_buffer();
-        let out_entry_buffer = self.entries.nxt.device_buffer();
-        let inc_buffer = self.inc.cur().device_buffer();
-        let out_inc_buffer = self.inc.nxt().device_buffer();
-        let partial_buffer = self.partials.buffer().device_buffer();
-        let count_buffer = self.counts.device_buffer();
-        let mut bind_params = vec![rows as u32];
-        bind_params.extend_from_slice(&fr_to_u32_limbs(challenge));
-        let mut message_params = vec![
-            pairs as u32,
-            num_tgs as u32,
-            e_in.len().trailing_zeros(),
-            e_in.len() as u32,
-        ];
-        message_params.extend_from_slice(&fr_to_u32_limbs(gamma));
-        let mut pass = self.context.begin_pass()?;
-        pass.dispatch(
-            KernelId::RamRwBind,
-            &bind_params,
-            &[
-                &entry_buffer,
-                &offset_buffer,
-                &out_offset_buffer,
-                &out_entry_buffer,
-                &inc_buffer,
-                &out_inc_buffer,
-            ],
-            rows,
-        );
-        pass.buffer_barrier();
-        pass.dispatch(
-            KernelId::RamRwMessage,
-            &message_params,
-            &[
-                &out_entry_buffer,
-                &out_offset_buffer,
-                &out_inc_buffer,
-                &e_out_buffer,
-                &e_in_buffer,
-                &partial_buffer,
-                &count_buffer,
-            ],
-            pairs,
-        );
-        pass.run()?;
-        testing::note_device_round();
-        self.entries.swap();
-        self.offsets.swap();
-        self.inc.swap();
-        self.entry_count = new_count;
-        self.rows = rows;
-        self.counts_valid = true;
-        let sums = self.partials.sums(num_tgs);
-        Ok([sums[0], sums[1]])
-    }
-
     fn into_cycle_state(self) -> Result<(CycleMajorMatrix<Fr>, Polynomial<Fr>), ()> {
         let offsets = &self.offsets.cur.as_slice()[..=self.rows];
         if offsets[self.rows] as usize != self.entry_count {
@@ -520,33 +323,10 @@ impl PrepareKernel<Fr, RamReadWriteChecking<Fr>> for MetalRamReadWriteChecking {
                     reason: "RAM access value columns were already consumed",
                 },
             )?);
-        let gpu_prepare = gpu_prepare_enabled();
-        let (context, pending_entries, serial_entries) = if gpu_prepare {
-            let context = match MetalContext::global() {
-                Ok(context) => context,
-                Err(error) => {
-                    tracing::warn!(slot = KIND, %error, "no device context; using optimized fallback");
-                    return self.fallback.prepare(session, witness, inputs);
-                }
-            };
-            let pending = match PendingRamRwEntries::launch(
-                context,
-                RamRwBuildInputs::new(&columns, &values),
-            ) {
-                Ok(pending) => pending,
-                Err(error) => {
-                    tracing::warn!(slot = KIND, %error, "device CSR build failed; using optimized fallback");
-                    return self.fallback.prepare(session, witness, inputs);
-                }
-            };
-            (Some(context), Some(pending), None)
-        } else {
-            let serial = ram_rw_entries_serial(RamRwBuildInputs::new(&columns, &values));
-            if serial.0.is_empty() {
-                return self.fallback.prepare(session, witness, inputs);
-            }
-            (None, None, Some(serial))
-        };
+        let (entries, offsets) = ram_rw_entries(&columns, &values);
+        if entries.is_empty() {
+            return self.fallback.prepare(session, witness, inputs);
+        }
         let inc = values.inc_column::<Fr>();
         let val_final = witness.oracle_table(JoltPolynomialId::Virtual(
             JoltVirtualPolynomial::RamValFinal,
@@ -557,21 +337,14 @@ impl PrepareKernel<Fr, RamReadWriteChecking<Fr>> for MetalRamReadWriteChecking {
             });
         }
         let val_init = Polynomial::new(columns.reconstruct_val_init(&values.pre_values, val_final));
-        let context = match context.map_or_else(MetalContext::global, Ok) {
+        let context = match MetalContext::global() {
             Ok(context) => context,
             Err(error) => {
                 tracing::warn!(slot = KIND, %error, "no device context; using optimized fallback");
                 return self.fallback.prepare(session, witness, inputs);
             }
         };
-        let device = match (pending_entries, serial_entries) {
-            (Some(pending), None) => pending.wait(context, inc),
-            (None, Some((entries, offsets))) => {
-                DeviceRamRwState::new(context, entries, offsets, inc)
-            }
-            _ => unreachable!("RAM read/write prepare selects exactly one CSR builder"),
-        };
-        let device = match device {
+        let device = match DeviceRamRwState::new(context, entries, offsets, inc) {
             Ok(device) => device,
             Err(error) => {
                 tracing::warn!(slot = KIND, %error, "device preparation failed; using optimized fallback");
@@ -595,7 +368,6 @@ impl PrepareKernel<Fr, RamReadWriteChecking<Fr>> for MetalRamReadWriteChecking {
             log_t,
             log_k,
             handoff_rows: self.handoff_rows.max(1),
-            fused_rounds: fused_rounds_enabled(),
             rounds_bound: 0,
         }))
     }
@@ -616,7 +388,6 @@ struct MetalRamRwKernel {
     log_t: usize,
     log_k: usize,
     handoff_rows: usize,
-    fused_rounds: bool,
     rounds_bound: usize,
 }
 
@@ -680,39 +451,6 @@ impl ProveRounds<Fr> for MetalRamRwKernel {
             return self.host_round(bind, round, previous_claim);
         }
         if let Some(challenge) = bind {
-            let can_fuse = self.fused_rounds
-                && self
-                    .device
-                    .as_ref()
-                    .is_some_and(|state| state.rows / 2 > self.handoff_rows && state.rows >= 4);
-            if can_fuse {
-                let mut next_gruen = self
-                    .gruen
-                    .as_ref()
-                    .ok_or_else(missing_device_state)?
-                    .clone();
-                next_gruen.bind(challenge);
-                let result = self
-                    .device
-                    .as_mut()
-                    .ok_or_else(missing_device_state)?
-                    .bind_and_message(challenge, &next_gruen, self.gamma);
-                let [q_0, q_inf] = match result {
-                    Ok(values) => values,
-                    Err(error) => {
-                        tracing::warn!(slot = KIND, %error, "fused device round failed; finishing on CPU");
-                        self.transition()?;
-                        return self.host_round(Some(challenge), round, previous_claim);
-                    }
-                };
-                self.gruen = Some(next_gruen);
-                self.rounds_bound += 1;
-                return Ok(self
-                    .gruen
-                    .as_ref()
-                    .ok_or_else(missing_device_state)?
-                    .gruen_poly_deg_3(q_0, q_inf, previous_claim));
-            }
             let bind_result = self
                 .device
                 .as_mut()
@@ -899,8 +637,6 @@ mod tests {
     fn force_device() {
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS_RAM_READ_WRITE", "0");
-        std::env::set_var("JOLT_RAMRW_GPU_PREPARE", "1");
-        std::env::set_var("JOLT_RAMRW_FUSED", "1");
     }
 
     #[test]
