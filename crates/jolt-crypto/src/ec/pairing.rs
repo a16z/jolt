@@ -16,8 +16,34 @@ pub trait PairingGroup: Clone + Debug + Eq + Sync + Send + 'static {
     /// Scalar field for G1 and G2 (e.g., BN254 Fr).
     type ScalarField: JoltField;
     type G1: JoltGroup;
+    type G1Affine: Clone
+        + Copy
+        + Debug
+        + Eq
+        + Send
+        + Sync
+        + serde::Serialize
+        + for<'de> serde::Deserialize<'de>;
     type G2: JoltGroup;
     type GT: JoltGroup;
+
+    /// Batch-converts G1 elements to the backend's persistent MSM form.
+    #[must_use]
+    fn g1_to_affine(bases: &[Self::G1]) -> Vec<Self::G1Affine>;
+
+    /// Converts one prepared G1 element back to the group representation.
+    #[must_use]
+    fn g1_from_affine(base: &Self::G1Affine) -> Self::G1;
+
+    /// Computes a G1 MSM over prepared bases.
+    #[must_use]
+    fn g1_affine_msm(bases: &[Self::G1Affine], scalars: &[Self::ScalarField]) -> Self::G1;
+
+    /// Computes a G1 MSM using the pairing backend's scalar representation.
+    #[must_use]
+    fn g1_msm(bases: &[Self::G1], scalars: &[Self::ScalarField]) -> Self::G1 {
+        Self::g1_affine_msm(&Self::g1_to_affine(bases), scalars)
+    }
 
     /// Computes the bilinear pairing `e(g1, g2)`.
     #[must_use]

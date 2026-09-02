@@ -217,8 +217,10 @@ macro_rules! impl_jolt_group_wrapper {
 pub(crate) use impl_jolt_group_wrapper;
 
 mod g1;
+mod g1_affine;
 mod g2;
 mod gt;
+mod msm;
 
 #[doc(hidden)]
 pub mod batch_addition;
@@ -226,6 +228,7 @@ pub mod batch_addition;
 pub mod glv;
 
 pub use g1::Bn254G1;
+pub use g1_affine::Bn254G1Affine;
 pub use g2::Bn254G2;
 pub use gt::Bn254GT;
 
@@ -264,8 +267,29 @@ impl Bn254 {
 impl PairingGroup for Bn254 {
     type ScalarField = jolt_field::Fr;
     type G1 = Bn254G1;
+    type G1Affine = Bn254G1Affine;
     type G2 = Bn254G2;
     type GT = Bn254GT;
+
+    fn g1_to_affine(bases: &[Self::G1]) -> Vec<Self::G1Affine> {
+        ark_bn254::G1Projective::normalize_batch(Bn254G1::as_inner_slice(bases))
+            .into_iter()
+            .map(Bn254G1Affine)
+            .collect()
+    }
+
+    fn g1_from_affine(base: &Self::G1Affine) -> Self::G1 {
+        Bn254G1(base.0.into())
+    }
+
+    fn g1_affine_msm(bases: &[Self::G1Affine], scalars: &[Self::ScalarField]) -> Self::G1 {
+        assert_eq!(
+            bases.len(),
+            scalars.len(),
+            "g1_msm: bases/scalars length mismatch"
+        );
+        Bn254G1(msm::g1_msm(bases, scalars))
+    }
 
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT {
         Bn254GT(ArkBn254::pairing(g1.0, g2.0).0)
