@@ -1,17 +1,18 @@
 //! Device lane for the Dory reduce-round vector folds
-//! (`jk_g1_scalar_mul_add`, `jk_g2_scalar_mul_add`, `jk_g2_fixed_base_mul`).
+//! (`jk_g1_scalar_mul_add`, `jk_g2_scalar_mul_add`, `jk_g2_fixed_base_table`).
 //!
 //! dory-pcs's reduce-and-fold rounds spend their EC time in two
 //! uniform-scalar vector ops per group — `vs[i] += s·bases[i]` (apply the β
 //! challenge) and `vs[i] = s·vs[i] + addends[i]` (fold under α) — both
 //! instances of one kernel shape: `out[i] = s·P[i] + Q[i]` with a single
 //! scalar shared by the whole vector. Thread-per-element double-and-add
-//! keeps every bit branch warp-uniform (the W3b combine-rows insight); the
+//! keeps every bit branch warp-uniform; the
 //! host batch-normalizes both point vectors to affine so the device runs
 //! only the parity-tested mixed formulas, with identities lowered to the
 //! `(0, 0)` sentinel. The G2 side adds the VMV preamble's fixed-base sweep
-//! `out[i] = base·scalars[i]` (v₂ = v_vec · Γ2,fin): per-thread scalars,
-//! shared base, uniform doublings. Results return as Jacobian points —
+//! `out[i] = base·scalars[i]` (v₂ = v_vec · Γ2,fin): per-thread scalars
+//! against a host-built window table of the shared base. Results return as
+//! Jacobian points —
 //! group-equal to the CPU fold; every consumer (pairings, MSMs, later
 //! folds, serialized final message) normalizes before use, so proof bytes
 //! are unchanged.
@@ -245,30 +246,42 @@ pub fn g2_scalar_mul_add_device(
         .collect())
 }
 
-/// Window-table toggle for the fixed-base sweep
-/// (`JOLT_DORY_FIXED_BASE_TABLE=0` restores the plain per-thread ladder).
-/// The base is shared by every thread, so the host prices one 16-ary table
-/// (`d·16^win·base`, ≤64×15 affine entries, ~2 ms) and each thread pays only
-/// its ~60 nonzero-nibble mixed adds — the plain ladder's ~254 doublings,
-/// its dominant term, disappear. Group-equal results (different op order,
-/// same sum); every consumer normalizes before serializing.
-fn fixed_base_table_enabled() -> bool {
-    !std::env::var("JOLT_DORY_FIXED_BASE_TABLE").is_ok_and(|value| value.trim() == "0")
-}
-
 /// One `jk_g2_fixed_base_table` dispatch: `out[i] = base·scalars[i]` off a
-/// host-built window table. `windows` covers the top nonzero nibble across
-/// the scalar batch.
-fn g2_fixed_base_table_device(
+/// host-built window table. The base is shared by every thread, so the host
+/// prices one 16-ary table (`d·16^win·base`, ≤64×15 affine entries, ~2 ms)
+/// covering the top nonzero nibble across the scalar batch, and each thread
+/// pays only its ~60 nonzero-nibble mixed adds — a per-thread ladder's ~254
+/// doublings, its dominant term, never run. Group-equal results (different
+/// op order, same sum); every consumer normalizes before serializing. An
+/// identity base short-circuits to identities without dispatching (the
+/// kernel's table slots have no sentinel check).
+pub fn g2_fixed_base_mul_device(
     ctx: &MetalContext,
-    base_affine: &G2Affine,
-    scalar_limbs: &[u32],
-    start_bit: u32,
-    n: usize,
+    base: &G2Projective,
+    scalars: &[ArkFr],
 ) -> Result<Vec<G2Projective>, MetalError> {
+    let n = scalars.len();
+    if n == 0 {
+        return Ok(vec![]);
+    }
+    if base.is_zero() {
+        return Ok(vec![G2Projective::zero(); n]);
+    }
+    let base_affine = base.into_affine();
+
+    // Canonical limbs per thread; the top set bit across the batch sizes the
+    // window table.
+    let mut scalar_limbs: Vec<u32> = Vec::with_capacity(n * FR_U32_LIMBS);
+    let mut start_bit = 0u32;
+    for scalar in scalars {
+        let (limbs, bit) = scalar_limbs_and_start_bit(scalar);
+        scalar_limbs.extend_from_slice(&limbs);
+        start_bit = start_bit.max(bit);
+    }
+
     let windows = (start_bit / 4 + 1) as usize;
     let mut entries: Vec<G2Projective> = Vec::with_capacity(windows * 15);
-    let mut cur: G2Projective = (*base_affine).into();
+    let mut cur: G2Projective = base_affine.into();
     for _ in 0..windows {
         let row_start = entries.len();
         entries.push(cur);
@@ -280,7 +293,7 @@ fn g2_fixed_base_table_device(
     }
     let table_affine = G2Projective::normalize_batch(&entries);
 
-    let scalars_buffer = ctx.wrap_slice(scalar_limbs)?;
+    let scalars_buffer = ctx.wrap_slice(&scalar_limbs)?;
     let table_buffer = ctx.wrap_slice(g2_bases_as_u32s(&table_affine))?;
     let out_buffer = ctx.alloc_u32s(n * G2_JAC_U32S)?;
     testing::note_copied_buffers(
@@ -308,74 +321,15 @@ fn g2_fixed_base_table_device(
         .collect())
 }
 
-/// One `jk_g2_fixed_base_table` (default) or `jk_g2_fixed_base_mul`
-/// dispatch: `out[i] = base·scalars[i]`. An identity base short-circuits to
-/// identities without dispatching (neither kernel's base slot has a
-/// sentinel check).
-pub fn g2_fixed_base_mul_device(
-    ctx: &MetalContext,
-    base: &G2Projective,
-    scalars: &[ArkFr],
-) -> Result<Vec<G2Projective>, MetalError> {
-    let n = scalars.len();
-    if n == 0 {
-        return Ok(vec![]);
-    }
-    if base.is_zero() {
-        return Ok(vec![G2Projective::zero(); n]);
-    }
-    let base_affine = base.into_affine();
-
-    // Canonical limbs per thread plus the shared ladder start (max top bit).
-    let mut scalar_limbs: Vec<u32> = Vec::with_capacity(n * FR_U32_LIMBS);
-    let mut start_bit = 0u32;
-    for scalar in scalars {
-        let (limbs, bit) = scalar_limbs_and_start_bit(scalar);
-        scalar_limbs.extend_from_slice(&limbs);
-        start_bit = start_bit.max(bit);
-    }
-
-    if fixed_base_table_enabled() {
-        return g2_fixed_base_table_device(ctx, &base_affine, &scalar_limbs, start_bit, n);
-    }
-
-    let scalars_buffer = ctx.wrap_slice(&scalar_limbs)?;
-    let out_buffer = ctx.alloc_u32s(n * G2_JAC_U32S)?;
-    testing::note_copied_buffers(u64::from(scalars_buffer.was_copied()));
-
-    let mut params = [0u32; 2 + 4 * FR_U32_LIMBS];
-    params[0] = u32::try_from(n)
-        .map_err(|_| MetalError::Execution("scalar vector length overflows u32".to_owned()))?;
-    params[1] = start_bit;
-    params[2..]
-        .copy_from_slice(&g2_bases_as_u32s(std::slice::from_ref(&base_affine))[..4 * FR_U32_LIMBS]);
-    ctx.run_once(
-        KernelId::G2FixedBaseMul,
-        &params,
-        &[&scalars_buffer, &out_buffer],
-        n,
-    )?;
-    testing::note_device_round();
-
-    let mut jac = vec![0u32; n * G2_JAC_U32S];
-    out_buffer.copy_to_u32s(&mut jac);
-    Ok(jac
-        .chunks_exact(G2_JAC_U32S)
-        .map(g2_jac_from_device_limbs)
-        .collect())
-}
-
 /// Gate scaling, calibrated to the MEASURED crossovers (@2^22 in-proof
 /// traces, M4), not to a per-point work model: the per-lane ladder is
 /// latency-floored below a few thousand threads, so each kernel's
-/// profitable region starts where its floor undercuts the CPU. Under the
-/// 2^18 default these shifts land the crossovers at:
+/// profitable region starts where its floor undercuts the CPU. Under a
+/// 2^18 gate these shifts land the crossovers at:
 /// - G1 fold (254-bit ladder): len ≥ 1024 (3.2× at 8192, 1.7× at 1024).
 /// - G2 fold (4-GLV ~64-iteration ladder): len ≥ 512 (1.5× at 8192 over
 ///   the plain-ladder device, 1.6× at 2048, floor ~7 ms).
-/// - G2 fixed-base (plain 254-bit ladder, ~21 ms floor): len ≥ 2048 —
-///   the device lost to the CPU at 512 pre-GLV, and this kernel still
-///   walks the full scalar width.
+/// - G2 fixed-base: len ≥ 2048.
 const G1_WORK_PER_POINT_LOG2: usize = 8;
 const G2_FOLD_WORK_LOG2: usize = 9;
 const G2_FIXED_BASE_WORK_LOG2: usize = 7;
@@ -693,9 +647,8 @@ mod tests {
         assert_eq!(unhooked_g1, cpu_g1);
     }
 
-    /// Fixed-base sweep against arkworks, both kernel arms (window table and
-    /// plain ladder): random scalars plus the degenerate set (0, 1, −1), an
-    /// identity base, and a Z ≠ 1 base.
+    /// Fixed-base sweep against arkworks: random scalars plus the degenerate
+    /// set (0, 1, −1), an identity base, and a Z ≠ 1 base.
     #[test]
     fn g2_fixed_base_mul_matches_arkworks() {
         let _lock = gpu_lock();
@@ -707,22 +660,18 @@ mod tests {
         scalars[17] = -ArkFr::from(1u64);
         let expected: Vec<G2Projective> = scalars.iter().map(|s| base * s).collect();
 
-        for (env, label) in [("1", "table"), ("0", "ladder")] {
-            std::env::set_var("JOLT_DORY_FIXED_BASE_TABLE", env);
-            let probes_before = device_probe_count();
-            let device = g2_fixed_base_mul_device(ctx(), &base, &scalars).unwrap();
-            assert_eq!(
-                device_probe_count() - probes_before,
-                1,
-                "one dispatch per call ({label})"
-            );
-            assert_eq!(device, expected, "{label} arm diverged");
-            assert!(device[3].is_zero(), "zero scalar must yield identity");
+        let probes_before = device_probe_count();
+        let device = g2_fixed_base_mul_device(ctx(), &base, &scalars).unwrap();
+        assert_eq!(
+            device_probe_count() - probes_before,
+            1,
+            "one dispatch per call"
+        );
+        assert_eq!(device, expected);
+        assert!(device[3].is_zero(), "zero scalar must yield identity");
 
-            let identity_out =
-                g2_fixed_base_mul_device(ctx(), &G2Projective::zero(), &scalars).unwrap();
-            assert!(identity_out.iter().all(|p| p.is_zero()));
-        }
-        std::env::remove_var("JOLT_DORY_FIXED_BASE_TABLE");
+        let identity_out =
+            g2_fixed_base_mul_device(ctx(), &G2Projective::zero(), &scalars).unwrap();
+        assert!(identity_out.iter().all(|p| p.is_zero()));
     }
 }

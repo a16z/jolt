@@ -7,8 +7,8 @@
 //! wall). [`DoryTier2Prep`] borrows the setup-owned prepared table (built
 //! once at `setup_prover` time; ~0.47 s of per-proof Miller precompute moved
 //! out of the prove wall) and the `*_prepared` finish variants pair against
-//! it. With `JOLT_DORY_SETUP_PREP=0` the setup carries no table and
-//! [`DoryTier2Prep::new`] prepares the prefix per pass instead.
+//! it; a pass needing more rows than the table covers prepares its prefix
+//! itself.
 //!
 //! Unlike dory-pcs's global prepared-point cache (deliberately not primed —
 //! see `DoryScheme::setup_prover`), this state is scoped to one setup object
@@ -46,14 +46,8 @@ use crate::types::{DoryCommitment, DoryHint, DoryProverSetup};
 type EllCoeff = ark_ec::bn::g2::EllCoeff<ark_bn254::Config>;
 
 /// Setup-owned Miller-loop-prepared `g2_vec` prefix, shared by every proof
-/// over one setup. Empty when `JOLT_DORY_SETUP_PREP=0`.
+/// over one setup.
 pub(crate) type PreparedG2Table = Arc<Vec<<Bn254 as Pairing>::G2Prepared>>;
-
-/// `JOLT_DORY_SETUP_PREP=0` disables the setup-owned prepared-G2 table;
-/// [`DoryTier2Prep::new`] then falls back to per-proof preparation.
-pub(crate) fn setup_prep_enabled() -> bool {
-    std::env::var("JOLT_DORY_SETUP_PREP").map_or(true, |v| v != "0")
-}
 
 /// Miller-prepare the first `rows` setup `g2_vec` generators — the eager
 /// setup-owned table.
@@ -112,7 +106,7 @@ impl DoryTier2Prep {
     }
 }
 
-// --- fresh prepared-coefficient multi-Miller (W10b) ---------------------------
+// --- prepared-coefficient multi-Miller -----------------------------------------
 //
 // `Bn254::multi_miller_loop`'s value, computed cheaper for the fixed-G2
 // absorb shape: ONE squaring ladder shared by the whole pair set (arkworks
@@ -233,19 +227,13 @@ fn multi_miller_prepared(pairs: &[(G1Affine, &[EllCoeff])]) -> Fq12 {
     f
 }
 
-/// [`multi_miller_prepared`] over caller-borrowed coefficient slices — the
-/// probe/bench seam for timing the shared-ladder Miller phase alone.
-pub fn multi_miller_prepared_pairs(pairs: &[(G1Affine, &[EllCoeff])]) -> Fq12 {
-    multi_miller_prepared(pairs)
-}
-
 /// The multi-Miller Fp12 value of affine pairs — the deterministic CPU
 /// twin of the Metal fly kernel (its co-execution arm). Chunks on the
 /// rayon pool; each chunk prepares its own G2 points once and runs ONE
 /// shared squaring ladder ([`multi_miller_prepared`]), so per-pair cost is
 /// the preparation + prepared-Miller rate with no dependence on arkworks'
 /// internal 4-pair re-chunking (nondeterministically 3-4× slower on a
-/// saturated pool — W3-st8 measurement). Identity pairs are filtered
+/// saturated pool). Identity pairs are filtered
 /// exactly as arkworks' pair filter; any partition multiplies the same
 /// Fp12 factors, so the value is bit-identical to `multi_miller_loop`.
 pub fn multi_miller_affine(ps: &[G1Affine], qs: &[ark_bn254::G2Affine]) -> Fq12 {

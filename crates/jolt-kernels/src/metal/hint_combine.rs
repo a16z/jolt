@@ -16,12 +16,13 @@
 //! hint-major (lane-adjacent rows load adjacent points), all points batch-
 //! normalized to affine so the kernel reuses the commit lane's parity-tested
 //! `g1_madd`, identity rows lowered to a `(0, 0)` sentinel (not on the
-//! curve), and the γ-powers converted to CANONICAL integer limbs for bit
-//! tests. Results return as Jacobian points — group-equal to the CPU
-//! combination by commutativity; every downstream consumer (Dory's reduce
-//! rounds, transcript absorbs) operates on group elements or normalized
-//! serializations, so proof bytes are unchanged. Pinned by this module's
-//! normalized-coordinate parity tests and byte_diff's metal arms.
+//! curve), and the γ-powers encoded as signed NAF digits (~1/3 nonzero
+//! density against a binary ladder's 1/2 — one third fewer mixed adds for
+//! the same group value). Results return as Jacobian points — group-equal
+//! to the CPU combination by commutativity; every downstream consumer
+//! (Dory's reduce rounds, transcript absorbs) operates on group elements or
+//! normalized serializations, so proof bytes are unchanged. Pinned by this
+//! module's normalized-coordinate parity tests and byte_diff's metal arms.
 //!
 //! Installed per proof through [`jolt_dory::install_combine_hints_hook`] by
 //! the metal joint-opening slot (the guard parks in the `ProofSession`);
@@ -36,7 +37,6 @@ use jolt_dory::DoryHint;
 use jolt_field::Fr;
 use rayon::prelude::*;
 
-use super::field::FR_U32_LIMBS;
 use super::g1::{bases_as_u32s, jac_from_device_limbs, JAC_U32S};
 use super::runtime::{KernelId, MetalContext};
 use super::{metal_gate, testing, MetalError};
@@ -52,14 +52,6 @@ const WORK_PER_POINT_LOG2: usize = 8;
 /// NAF spans ≤ 255 digits; padded to a u32 boundary, four `i8` per word).
 const NAF_DIGIT_SLOTS: usize = 256;
 const NAF_U32S: usize = NAF_DIGIT_SLOTS / 4;
-
-/// NAF digits default on (~1/3 nonzero density vs the canonical ladder's
-/// 1/2 — one third fewer mixed adds for the same group value). Kill switch:
-/// `JOLT_METAL_COMBINE_NAF=0` restores the canonical bit ladder (identical
-/// proof bytes either way; both paths land the same group elements).
-fn naf_enabled() -> bool {
-    std::env::var("JOLT_METAL_COMBINE_NAF").map_or(true, |v| v.trim() != "0")
-}
 
 /// The `combine_hints` hook: `Some(combined)` when the device served the
 /// call, `None` (undersized, empty, or failed) for the CPU path.
@@ -126,12 +118,9 @@ fn combine_rows_device(
             .ok_or_else(|| MetalError::Execution("hint point count overflows u32".to_owned()))?;
     }
 
-    // The kernel's shared sweep digits: signed NAF (default) or canonical
-    // integer limbs, plus the highest nonzero digit across the live scalars
-    // (the sweep's start).
-    let use_naf = naf_enabled();
-    let mut scalar_limbs: Vec<u32> =
-        vec![0; num_hints * if use_naf { NAF_U32S } else { FR_U32_LIMBS }];
+    // The kernel's shared sweep digits: signed NAF per hint scalar, plus the
+    // highest nonzero digit across the live scalars (the sweep's start).
+    let mut scalar_limbs: Vec<u32> = vec![0; num_hints * NAF_U32S];
     let mut start_bit = 0u32;
     for (slot, &i) in order.iter().enumerate() {
         // SAFETY: jolt_field::Fr is #[repr(transparent)] over ark_bn254::Fr
@@ -139,34 +128,18 @@ fn combine_rows_device(
         // adapters rely on).
         let ark: ark_bn254::Fr = unsafe { std::mem::transmute_copy(&scalars[i]) };
         let big = ark.into_bigint();
-        if use_naf {
-            let words = &mut scalar_limbs[slot * NAF_U32S..(slot + 1) * NAF_U32S];
-            #[expect(clippy::expect_used, reason = "w = 2 is always a valid wNAF width")]
-            let digits = big.find_wnaf(2).expect("w = 2 is a valid wNAF width");
-            debug_assert!(
-                digits.len() <= NAF_DIGIT_SLOTS,
-                "NAF span exceeds its slots"
-            );
-            for (index, &digit) in digits.iter().enumerate() {
-                debug_assert!((-1..=1).contains(&digit), "w = 2 digits are 0 or ±1");
-                words[index / 4] |= u32::from(digit as i8 as u8) << ((index % 4) * 8);
-                if digit != 0 {
-                    start_bit = start_bit.max(index as u32);
-                }
-            }
-        } else {
-            let words = &mut scalar_limbs[slot * FR_U32_LIMBS..(slot + 1) * FR_U32_LIMBS];
-            for (word_index, word) in big.0.iter().enumerate() {
-                let lo = *word as u32;
-                let hi = (*word >> 32) as u32;
-                words[2 * word_index] = lo;
-                words[2 * word_index + 1] = hi;
-                for (half, limb) in [(0u32, lo), (1u32, hi)] {
-                    if limb != 0 {
-                        let bit = (word_index as u32) * 64 + half * 32 + limb.ilog2();
-                        start_bit = start_bit.max(bit);
-                    }
-                }
+        let words = &mut scalar_limbs[slot * NAF_U32S..(slot + 1) * NAF_U32S];
+        #[expect(clippy::expect_used, reason = "w = 2 is always a valid wNAF width")]
+        let digits = big.find_wnaf(2).expect("w = 2 is a valid wNAF width");
+        debug_assert!(
+            digits.len() <= NAF_DIGIT_SLOTS,
+            "NAF span exceeds its slots"
+        );
+        for (index, &digit) in digits.iter().enumerate() {
+            debug_assert!((-1..=1).contains(&digit), "w = 2 digits are 0 or ±1");
+            words[index / 4] |= u32::from(digit as i8 as u8) << ((index % 4) * 8);
+            if digit != 0 {
+                start_bit = start_bit.max(index as u32);
             }
         }
     }
@@ -238,12 +211,7 @@ fn combine_rows_device(
     );
     drop(buffers_span);
 
-    let params = [
-        num_rows as u32,
-        num_hints as u32,
-        start_bit,
-        u32::from(use_naf),
-    ];
+    let params = [num_rows as u32, num_hints as u32, start_bit];
     tracing::info_span!("combine_hints_kernel").in_scope(|| {
         context.run_once(
             KernelId::G1CombineRows,
@@ -357,35 +325,6 @@ mod tests {
                 cpu_row.into_inner(),
                 "row {row} diverged"
             );
-            assert_eq!(
-                device_row.into_inner().into_affine(),
-                cpu_row.into_inner().into_affine(),
-                "row {row} normalized coordinates diverged"
-            );
-        }
-    }
-
-    /// The `JOLT_METAL_COMBINE_NAF=0` kill switch: the canonical bit ladder
-    /// must produce the same normalized rows as the CPU path (and therefore
-    /// as the default NAF sweep).
-    #[test]
-    fn combine_rows_canonical_ladder_matches_cpu() {
-        let _lock = gpu_lock();
-        force_device_gate();
-        std::env::set_var("JOLT_METAL_COMBINE_NAF", "0");
-        let (hints, scalars) = synthetic_batch();
-
-        let cpu = DoryScheme::combine_hints(hints.clone(), &scalars);
-        let device = combine_hints_device(&hints, &scalars).unwrap();
-        std::env::remove_var("JOLT_METAL_COMBINE_NAF");
-
-        assert_eq!(device.commit_blind, cpu.commit_blind);
-        for (row, (device_row, cpu_row)) in device
-            .row_commitments
-            .iter()
-            .zip(&cpu.row_commitments)
-            .enumerate()
-        {
             assert_eq!(
                 device_row.into_inner().into_affine(),
                 cpu_row.into_inner().into_affine(),

@@ -155,23 +155,17 @@ impl DoryScheme {
         // against the wrong generators. The setup-owned table below gives
         // the same saving without the footgun: it lives and dies with this
         // one setup object, so a prefix of it always matches this URS.
-        let (prepared_g2, affine_g1) = if crate::tier2::setup_prep_enabled() {
-            // A balanced matrix layout gives any committable poly
-            // (≤ max_num_vars vars) at most 2^floor(max_num_vars/2) tier-2
-            // rows, but the even-padded SRS carries 2^ceil(max_num_vars/2)
-            // G2 generators — preparing the unconsumed half would double
-            // the table's memory (~16.7 kB per prepared point, ~2 GiB dead
-            // weight @2^27) for rows no finish ever pairs against. A
-            // larger request falls back to per-pass preparation in
-            // `DoryTier2Prep::new`.
-            let consumed_rows = (1usize << (max_num_vars / 2)).min(setup.g2_vec.len());
-            (
-                crate::tier2::prepare_g2_table(&setup, consumed_rows),
-                crate::streaming::affine_g1_table(&setup),
-            )
-        } else {
-            Default::default()
-        };
+        //
+        // A balanced matrix layout gives any committable poly (≤ max_num_vars
+        // vars) at most 2^floor(max_num_vars/2) tier-2 rows, but the
+        // even-padded SRS carries 2^ceil(max_num_vars/2) G2 generators —
+        // preparing the unconsumed half would double the table's memory
+        // (~16.7 kB per prepared point, ~2 GiB dead weight @2^27) for rows no
+        // finish ever pairs against. A larger request falls back to per-pass
+        // preparation in `DoryTier2Prep::new`.
+        let consumed_rows = (1usize << (max_num_vars / 2)).min(setup.g2_vec.len());
+        let prepared_g2 = crate::tier2::prepare_g2_table(&setup, consumed_rows);
+        let affine_g1 = crate::streaming::affine_g1_table(&setup);
         DoryProverSetup(setup, prepared_g2, affine_g1)
     }
 
@@ -646,16 +640,6 @@ impl<S: MultilinearPoly<Fr> + ?Sized> MultilinearLagrange<ArkFr> for DorySourceA
         let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
         let result = self.source.fold_rows(&native_left, sigma);
         result.iter().map(jolt_fr_to_ark).collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "DorySourceAdapter::compute_evaluation_vectors")]
-    fn compute_evaluation_vectors(
-        &self,
-        point: &[ArkFr],
-        nu: usize,
-        sigma: usize,
-    ) -> (Vec<ArkFr>, Vec<ArkFr>) {
-        dory::primitives::poly::compute_left_right_vectors(point, nu, sigma)
     }
 }
 

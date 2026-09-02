@@ -75,7 +75,6 @@ pub enum KernelId {
     G2ProjectiveMulAdd,
     G2DoryMsmOwner,
     G2DoryMsmWindowFold,
-    G2FixedBaseMul,
     G2FixedBaseTable,
     OpeningFoldDense,
     OpeningFoldOneHot,
@@ -134,7 +133,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 81] = [
+    pub const ALL: [Self; 80] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -160,7 +159,6 @@ impl KernelId {
         Self::G2ProjectiveMulAdd,
         Self::G2DoryMsmOwner,
         Self::G2DoryMsmWindowFold,
-        Self::G2FixedBaseMul,
         Self::G2FixedBaseTable,
         Self::OpeningFoldDense,
         Self::OpeningFoldOneHot,
@@ -245,7 +243,6 @@ impl KernelId {
             Self::G2ProjectiveMulAdd => "jk_g2_projective_mul_add",
             Self::G2DoryMsmOwner => "jk_g2_dory_msm_owner",
             Self::G2DoryMsmWindowFold => "jk_g2_dory_msm_window_fold",
-            Self::G2FixedBaseMul => "jk_g2_fixed_base_mul",
             Self::G2FixedBaseTable => "jk_g2_fixed_base_table",
             Self::OpeningFoldDense => "jk_opening_fold_dense",
             Self::OpeningFoldOneHot => "jk_opening_fold_onehot",

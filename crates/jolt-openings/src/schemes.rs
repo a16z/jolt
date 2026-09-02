@@ -305,10 +305,8 @@ pub trait StreamingCommitment: CommitmentScheme {
     fn finish_with_hint_prepared(
         partial: Self::PartialCommitment,
         setup: &Self::ProverSetup,
-        _prep: &Self::Tier2Prep,
-    ) -> (Self::Output, Self::OpeningHint) {
-        Self::finish_with_hint(partial, setup)
-    }
+        prep: &Self::Tier2Prep,
+    ) -> (Self::Output, Self::OpeningHint);
 
     /// [`finish_one_hot_column_major_chunks`](Self::finish_one_hot_column_major_chunks)
     /// reusing shared per-pass finish state. Must produce the identical
@@ -317,10 +315,8 @@ pub trait StreamingCommitment: CommitmentScheme {
         setup: &Self::ProverSetup,
         one_hot_k: usize,
         chunks: &[Self::OneHotChunkCommitment],
-        _prep: &Self::Tier2Prep,
-    ) -> (Self::Output, Self::OpeningHint) {
-        Self::finish_one_hot_column_major_chunks(setup, one_hot_k, chunks)
-    }
+        prep: &Self::Tier2Prep,
+    ) -> (Self::Output, Self::OpeningHint);
 }
 
 /// Opening proofs that hide the evaluation behind a commitment.

@@ -393,8 +393,7 @@ inline G1Jac g1_xyzz_to_jac(G1Xyzz p) {
 struct G1CombineParams {
     uint num_rows;
     uint num_hints;
-    uint start_bit;  // highest set bit / nonzero NAF digit across all scalars
-    uint use_naf;    // 1: `scalars` holds packed signed NAF digits (4 i8 per uint)
+    uint start_bit;  // highest nonzero NAF digit across all scalars
 };
 
 // Signed-digit slots per hint scalar in the NAF encoding (host twin:
@@ -403,7 +402,7 @@ constant uint JK_NAF_DIGIT_SLOTS = 256u;
 
 kernel void jk_g1_combine_rows(
     device const uint* points [[buffer(0)]],   // affine, stride JK_G1_AFFINE_STRIDE
-    device const uint* scalars [[buffer(1)]],  // per hint: FR_LIMBS canonical LE limbs, or 64 packed NAF words
+    device const uint* scalars [[buffer(1)]],  // per hint: 64 packed signed NAF words (4 i8 per uint)
     device const uint* lens [[buffer(2)]],     // num_hints row counts, nonincreasing
     device const uint* offsets [[buffer(3)]],  // num_hints starts into `points`
     device uint* out [[buffer(4)]],            // num_rows Jacobian results
@@ -416,20 +415,14 @@ kernel void jk_g1_combine_rows(
     G1Jac acc = g1_identity();
     for (int bit = (int)p.start_bit; bit >= 0; bit--) {
         acc = g1_dbl(acc);
-        uint word_index = p.use_naf != 0u ? ((uint)bit >> 2) : ((uint)bit >> 5);
-        uint bit_index = (uint)bit & 31u;
+        uint word_index = (uint)bit >> 2;
         for (uint h = 0; h < p.num_hints; h++) {
             // Nonincreasing lens: every later hint is shorter too.
             if (gid >= lens[h]) {
                 break;
             }
-            int digit;
-            if (p.use_naf != 0u) {
-                uint word = scalars[h * (JK_NAF_DIGIT_SLOTS / 4u) + word_index];
-                digit = (int)(char)((word >> (((uint)bit & 3u) * 8u)) & 0xffu);
-            } else {
-                digit = (int)((scalars[h * FR_LIMBS + word_index] >> bit_index) & 1u);
-            }
+            uint word = scalars[h * (JK_NAF_DIGIT_SLOTS / 4u) + word_index];
+            int digit = (int)(char)((word >> (((uint)bit & 3u) * 8u)) & 0xffu);
             if (digit != 0) {
                 G1AffinePt q = g1_load_base(points, offsets[h] + gid);
                 if (!(fq_is_zero(q.x) && fq_is_zero(q.y))) {

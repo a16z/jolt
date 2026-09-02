@@ -61,10 +61,7 @@ pub use routines_hook::{
     RoutineHooksGuard,
 };
 pub use scheme::DoryScheme;
-pub use tier2::{
-    multi_miller_affine, multi_miller_prepared_pairs, one_hot_output_from_rows, DoryTier2Prep,
-    Tier2Accumulator,
-};
+pub use tier2::{multi_miller_affine, one_hot_output_from_rows, DoryTier2Prep, Tier2Accumulator};
 pub use types::{
     DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
 };

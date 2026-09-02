@@ -94,7 +94,6 @@ impl StreamingCommitment for crate::DoryScheme {
     fn begin(_setup: &Self::ProverSetup) -> Self::PartialCommitment {
         DoryPartialCommitment {
             row_commitments: Vec::new(),
-            scalar_affine_bases: None,
         }
     }
 
@@ -178,7 +177,7 @@ impl StreamingCommitment for crate::DoryScheme {
         );
 
         let row_commitment = ark_ec::scalar_mul::variable_base::msm_u64::<G1Projective>(
-            scalar_affine_bases(&mut partial.scalar_affine_bases, chunk.len(), setup),
+            srs_prefix(&setup.2, chunk.len()),
             chunk,
             true,
         );
@@ -202,7 +201,7 @@ impl StreamingCommitment for crate::DoryScheme {
         );
 
         let row_commitment = ark_ec::scalar_mul::variable_base::msm_i128::<G1Projective>(
-            scalar_affine_bases(&mut partial.scalar_affine_bases, chunk.len(), setup),
+            srs_prefix(&setup.2, chunk.len()),
             chunk,
             true,
         );
@@ -244,7 +243,7 @@ impl StreamingCommitment for crate::DoryScheme {
             "streaming: batch length ({count}) must be a multiple of the row width ({row_width})",
         );
 
-        let bases = scalar_affine_bases(&mut partial.scalar_affine_bases, row_width, setup);
+        let bases = srs_prefix(&setup.2, row_width);
         let commitments: Vec<Bn254G1> = (0..count / row_width)
             .into_par_iter()
             .map(|window| {
@@ -272,13 +271,7 @@ impl StreamingCommitment for crate::DoryScheme {
             row_width,
             setup.0.g1_vec.len(),
         );
-        if setup.2.len() >= row_width {
-            return srs_prefix(&setup.2, row_width).to_vec();
-        }
-        srs_prefix(&setup.0.g1_vec, row_width)
-            .par_iter()
-            .map(|base| base.0.into_affine())
-            .collect()
+        srs_prefix(&setup.2, row_width).to_vec()
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_process_one_hot_chunk")]
@@ -525,34 +518,6 @@ pub(crate) fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
         num_rows,
         setup.0.g2_vec.len(),
     );
-}
-
-/// Fill and borrow the partial commitment's affine-base cache. Takes the
-/// cache field (not the whole partial) so callers can hold the bases while
-/// appending to the sibling `row_commitments` field.
-fn scalar_affine_bases<'a>(
-    cache: &'a mut Option<Vec<G1Affine>>,
-    row_width: usize,
-    setup: &'a DoryProverSetup,
-) -> &'a [G1Affine] {
-    if setup.2.len() >= row_width {
-        return srs_prefix(&setup.2, row_width);
-    }
-    let bases = cache.get_or_insert_with(|| {
-        srs_prefix(&setup.0.g1_vec, row_width)
-            .iter()
-            .map(|base| base.0.into_affine())
-            .collect()
-    });
-    if bases.len() < row_width {
-        bases.extend(
-            srs_prefix(&setup.0.g1_vec, row_width)
-                .iter()
-                .skip(bases.len())
-                .map(|base| base.0.into_affine()),
-        );
-    }
-    srs_prefix(bases, row_width)
 }
 
 #[cfg(test)]
@@ -1027,16 +992,10 @@ mod tests {
         );
         assert_eq!(unprepared, prepared);
 
-        // Kill-switch fallback (`JOLT_DORY_SETUP_PREP=0` leaves the setup
-        // tables empty): per-pass preparation must produce the same bytes as
-        // the setup-owned tables.
+        // A setup whose prepared table does not cover the request falls back
+        // to per-pass preparation, which must produce the same bytes.
         let mut stripped_setup = prover_setup.clone();
         stripped_setup.1 = Default::default();
-        stripped_setup.2 = Default::default();
-        assert_eq!(
-            DoryScheme::begin_one_hot_column_major_stream(&stripped_setup, chunk_width),
-            DoryScheme::begin_one_hot_column_major_stream(&prover_setup, chunk_width),
-        );
         let fallback_prep = DoryScheme::prepare_tier2(&stripped_setup, one_hot_rows);
         let fallback = DoryScheme::finish_one_hot_column_major_chunks_prepared(
             &stripped_setup,

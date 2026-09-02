@@ -105,15 +105,14 @@ impl<'de> Deserialize<'de> for DoryProof {
 }
 
 /// Affine view of the full setup `g1_vec`, shared by every proof over one
-/// setup. Empty when `JOLT_DORY_SETUP_PREP=0`.
+/// setup.
 pub(crate) type AffineG1Table = std::sync::Arc<Vec<ark_bn254::G1Affine>>;
 
 /// The prover SRS plus its prove-path tables — the Miller-prepared G2 table
-/// and the affine G1 bases — built eagerly by `DoryScheme::setup_prover`
-/// (both empty under `JOLT_DORY_SETUP_PREP=0`). Owning the tables on the
-/// setup object — one setup = one URS — makes prefix-borrowing sound by
-/// construction, unlike dory-pcs's global prepared-point cache (see
-/// `DoryScheme::setup_prover`).
+/// and the affine G1 bases — built eagerly by `DoryScheme::setup_prover`.
+/// Owning the tables on the setup object — one setup = one URS — makes
+/// prefix-borrowing sound by construction, unlike dory-pcs's global
+/// prepared-point cache (see `DoryScheme::setup_prover`).
 #[derive(Clone)]
 pub struct DoryProverSetup(
     pub ArkworksProverSetup,
@@ -162,10 +161,6 @@ impl DoryHint {
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
     pub row_commitments: Vec<Bn254G1>,
-    /// Affine SRS bases cached lazily for the primitive-typed feed paths
-    /// (`feed_u64`/`feed_i128`), which call arkworks `msm_u64`/`msm_i128`
-    /// against affine bases. Grown on demand to the widest fed row.
-    pub(crate) scalar_affine_bases: Option<Vec<ark_bn254::G1Affine>>,
 }
 
 fn canonical_serialize<T: CanonicalSerialize, S: Serializer>(

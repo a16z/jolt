@@ -462,7 +462,6 @@ impl ResidentLoop {
         v2: &[ArkG2],
         g1: &[ArkG1],
         g2: &[ArkG2],
-        _rounds: usize,
     ) -> Result<Self, super::MetalError> {
         let context = MetalContext::global()?;
         let n = v1.len();
@@ -644,35 +643,12 @@ fn downcast(state: &mut ResidentRoundState) -> &mut ResidentLoop {
         .expect("resident Dory state type")
 }
 
-/// Merged-dispatch toggle for the reduce rounds' multi-pairings
-/// (`JOLT_MILLER_MERGE_DISPATCH=0` restores one hook call per pairing —
-/// the W3 shape). Merging a message's calls into one device dispatch
-/// (`multi_pair_device_batch`) exposes their thread SUM — the mid-ladder
-/// singles (4096/2048 pairs) sit under the device's saturation knee — and
-/// extends device service to rounds whose singles fall below the 2048-pair
-/// gate. Read per message; the benches A/B it in-process.
-fn merge_dispatch_enabled() -> bool {
-    !std::env::var("JOLT_MILLER_MERGE_DISPATCH").is_ok_and(|value| value.trim() == "0")
-}
-
-/// Round-0 D₂ shortcut toggle (`JOLT_DORY_R0_D2_MSM=0` restores the
-/// four-call pairing shape). With `v2 = Γ₂fin·scalars` (true only before the
-/// first challenge), D₂ halves collapse from n/2-pair multi-pairings to one
-/// Γ₁'-prefix MSM plus a single pairing each — the host arm's `compute_d2`
-/// identity `Π e(Γ₁'ᵢ, sᵢ·Γ₂fin) = e(Σ sᵢ·Γ₁'ᵢ, Γ₂fin)`. The GT value is
-/// equal by bilinearity and GT bytes are value-unique, so the transcript is
-/// unchanged; round 0 carries the largest pair count of the reduce, and this
-/// removes half of it.
-fn d2_msm_enabled() -> bool {
-    !std::env::var("JOLT_DORY_R0_D2_MSM").is_ok_and(|value| value.trim() == "0")
-}
-
 fn start(v1: &[ArkG1], v2: &[ArkG2], g1: &[ArkG1], g2: &[ArkG2]) -> Option<ResidentRoundStart> {
     let rounds = plan(v1.len());
     if rounds == 0 {
         return None;
     }
-    match ResidentLoop::start(v1, v2, g1, g2, rounds) {
+    match ResidentLoop::start(v1, v2, g1, g2) {
         Ok(state) => Some(ResidentRoundStart {
             state: Box::new(state),
             rounds,
@@ -701,19 +677,28 @@ fn first_message(
     let g1 = &state.g1()[..n2];
     let g2 = &state.g2()[..n2];
 
-    if let Some(scalars) = v2_scalars.filter(|_| d2_msm_enabled()) {
+    // Round-0 D₂ shortcut. With `v2 = Γ₂fin·scalars` (true only before the
+    // first challenge), each D₂ half collapses from an n/2-pair multi-pairing
+    // to one Γ₁'-prefix MSM plus a single pairing — the host arm's
+    // `compute_d2` identity `Π e(Γ₁'ᵢ, sᵢ·Γ₂fin) = e(Σ sᵢ·Γ₁'ᵢ, Γ₂fin)`. The
+    // GT value is equal by bilinearity and GT bytes are value-unique, so the
+    // transcript is unchanged; round 0 carries the largest pair count of the
+    // reduce, and this removes half of it.
+    if let Some(scalars) = v2_scalars {
         assert_eq!(scalars.len(), n, "v2_scalars must match the round width");
         let g2_fin = state.g2()[0];
         let (s_l, s_r) = scalars.split_at(n2);
+        // A message's multi-pairings go out as ONE device dispatch: the
+        // calls' thread SUM keeps the mid-ladder singles (4096/2048 pairs)
+        // above the device's saturation knee and serves rounds whose singles
+        // fall under the 2048-pair gate. `None` (gate or device failure)
+        // falls back to per-call CPU pairings.
         let d1_pairings = || {
-            if merge_dispatch_enabled() {
-                if let Some(mut gts) =
-                    super::miller::multi_pair_device_batch(&[(v1_l, g2), (v1_r, g2)])
-                {
-                    let d1_right = gts.pop().expect("two GTs");
-                    let d1_left = gts.pop().expect("two GTs");
-                    return (d1_left, d1_right);
-                }
+            if let Some(mut gts) = super::miller::multi_pair_device_batch(&[(v1_l, g2), (v1_r, g2)])
+            {
+                let d1_right = gts.pop().expect("two GTs");
+                let d1_left = gts.pop().expect("two GTs");
+                return (d1_left, d1_right);
             }
             join(
                 || InnerBN254::multi_pair_g2_setup(v1_l, g2),
@@ -760,19 +745,17 @@ fn first_message(
     }
 
     let pairings = || {
-        if merge_dispatch_enabled() {
-            if let Some(mut gts) = super::miller::multi_pair_device_batch(&[
-                (v1_l, g2),
-                (v1_r, g2),
-                (g1, v2_l),
-                (g1, v2_r),
-            ]) {
-                let d2_right = gts.pop().expect("four GTs");
-                let d2_left = gts.pop().expect("four GTs");
-                let d1_right = gts.pop().expect("four GTs");
-                let d1_left = gts.pop().expect("four GTs");
-                return ((d1_left, d1_right), (d2_left, d2_right));
-            }
+        if let Some(mut gts) = super::miller::multi_pair_device_batch(&[
+            (v1_l, g2),
+            (v1_r, g2),
+            (g1, v2_l),
+            (g1, v2_r),
+        ]) {
+            let d2_right = gts.pop().expect("four GTs");
+            let d2_left = gts.pop().expect("four GTs");
+            let d1_right = gts.pop().expect("four GTs");
+            let d1_left = gts.pop().expect("four GTs");
+            return ((d1_left, d1_right), (d2_left, d2_right));
         }
         join(
             || {
@@ -833,14 +816,11 @@ fn second_message(
     let (s1_l, s1_r) = s1.split_at(n2);
     let (s2_l, s2_r) = s2.split_at(n2);
     let pairings = || {
-        if merge_dispatch_enabled() {
-            if let Some(mut gts) =
-                super::miller::multi_pair_device_batch(&[(v1_l, v2_r), (v1_r, v2_l)])
-            {
-                let c_minus = gts.pop().expect("two GTs");
-                let c_plus = gts.pop().expect("two GTs");
-                return (c_plus, c_minus);
-            }
+        if let Some(mut gts) = super::miller::multi_pair_device_batch(&[(v1_l, v2_r), (v1_r, v2_l)])
+        {
+            let c_minus = gts.pop().expect("two GTs");
+            let c_plus = gts.pop().expect("two GTs");
+            return (c_plus, c_minus);
         }
         join(
             || InnerBN254::multi_pair(v1_l, v2_r),
@@ -912,7 +892,7 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    use super::super::testing::{device_probe_count, gpu_lock};
+    use super::super::testing::{device_probe_count, gpu_lock, miller_dispatch_count};
     use super::*;
 
     #[test]
@@ -950,7 +930,7 @@ mod tests {
         v2[2] = ArkG2(left_g2 - g2[2].0 * beta_inv.0);
         v2[n / 2 + 2] = ArkG2(-left_g2 * alpha_inv.0 - g2[n / 2 + 2].0 * beta_inv.0);
 
-        let mut state = ResidentLoop::start(&v1, &v2, &g1, &g2, 1).expect("resident loop starts");
+        let mut state = ResidentLoop::start(&v1, &v2, &g1, &g2).expect("resident loop starts");
         state.apply(&beta.0, &beta_inv.0, false);
 
         let expected_g1: Vec<ArkG1> = v1
@@ -981,16 +961,17 @@ mod tests {
         assert_eq!(state.v2(), expected_g2);
     }
 
-    /// Merged-dispatch reduce messages = per-call messages = the CPU trait
-    /// path (no hook installed in unit tests, so the unmerged arm IS the
-    /// CPU reference). Every GT and every MSM leg must be exact — these
-    /// values are absorbed into the transcript.
+    /// Device-served reduce messages (one merged multi-pairing dispatch per
+    /// message) against the CPU trait path, field by field — every GT and
+    /// every MSM leg is absorbed into the transcript. Probed: a silent CPU
+    /// fallback fails the dispatch count.
     #[test]
-    fn reduce_messages_merged_match_unmerged() {
+    fn reduce_messages_match_cpu_trait_path() {
         let _lock = gpu_lock();
         std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER_FLY", "1");
         let mut rng = ChaCha20Rng::seed_from_u64(0xd0_73);
         let n = 2048usize;
+        let n2 = n / 2;
         let mut v1: Vec<ArkG1> = (0..n)
             .map(|_| ArkG1(G1Projective::rand(&mut rng)))
             .collect();
@@ -1004,34 +985,50 @@ mod tests {
             .map(|_| ArkG2(G2Projective::rand(&mut rng)))
             .collect();
         v1[3] = ArkG1(G1Projective::zero());
-        v2[n / 2 + 5] = ArkG2(G2Projective::zero());
+        v2[n2 + 5] = ArkG2(G2Projective::zero());
         let s1: Vec<ArkFr> = (0..n).map(|_| ArkFr(Fr::rand(&mut rng))).collect();
         let s2: Vec<ArkFr> = (0..n).map(|_| ArkFr(Fr::rand(&mut rng))).collect();
 
-        let message_pair = |merge: &str| {
-            std::env::set_var("JOLT_MILLER_MERGE_DISPATCH", merge);
-            let mut state: ResidentRoundState =
-                Box::new(ResidentLoop::start(&v1, &v2, &g1, &g2, 1).expect("resident loop starts"));
-            let first = first_message(&mut state, &s1, &s2, None);
-            let second = second_message(&mut state, &s1, &s2);
-            (first, second)
-        };
-        let (first_merged, second_merged) = message_pair("1");
-        let (first_single, second_single) = message_pair("0");
-        std::env::remove_var("JOLT_MILLER_MERGE_DISPATCH");
+        let mut state: ResidentRoundState =
+            Box::new(ResidentLoop::start(&v1, &v2, &g1, &g2).expect("resident loop starts"));
+        let dispatches_before = miller_dispatch_count();
+        let first = first_message(&mut state, &s1, &s2, None);
+        let second = second_message(&mut state, &s1, &s2);
+        assert_eq!(
+            miller_dispatch_count() - dispatches_before,
+            2,
+            "one merged device dispatch per message"
+        );
+        std::env::remove_var("JOLT_METAL_MIN_TERMS_MILLER_FLY");
 
-        assert_eq!(first_merged.d1_left.0, first_single.d1_left.0);
-        assert_eq!(first_merged.d1_right.0, first_single.d1_right.0);
-        assert_eq!(first_merged.d2_left.0, first_single.d2_left.0);
-        assert_eq!(first_merged.d2_right.0, first_single.d2_right.0);
-        assert_eq!(first_merged.e1_beta.0, first_single.e1_beta.0);
-        assert_eq!(first_merged.e2_beta.0, first_single.e2_beta.0);
-        assert_eq!(second_merged.c_plus.0, second_single.c_plus.0);
-        assert_eq!(second_merged.c_minus.0, second_single.c_minus.0);
-        assert_eq!(second_merged.e1_plus.0, second_single.e1_plus.0);
-        assert_eq!(second_merged.e1_minus.0, second_single.e1_minus.0);
-        assert_eq!(second_merged.e2_plus.0, second_single.e2_plus.0);
-        assert_eq!(second_merged.e2_minus.0, second_single.e2_minus.0);
+        let (v1_l, v1_r) = v1.split_at(n2);
+        let (v2_l, v2_r) = v2.split_at(n2);
+        let (s1_l, s1_r) = s1.split_at(n2);
+        let (s2_l, s2_r) = s2.split_at(n2);
+        assert_eq!(
+            first.d1_left.0,
+            InnerBN254::multi_pair_g2_setup(v1_l, &g2[..n2]).0
+        );
+        assert_eq!(
+            first.d1_right.0,
+            InnerBN254::multi_pair_g2_setup(v1_r, &g2[..n2]).0
+        );
+        assert_eq!(
+            first.d2_left.0,
+            InnerBN254::multi_pair_g1_setup(&g1[..n2], v2_l).0
+        );
+        assert_eq!(
+            first.d2_right.0,
+            InnerBN254::multi_pair_g1_setup(&g1[..n2], v2_r).0
+        );
+        assert_eq!(first.e1_beta, JoltG1Routines::msm(&g1, &s2));
+        assert_eq!(first.e2_beta, JoltG2Routines::msm(&g2, &s1));
+        assert_eq!(second.c_plus.0, InnerBN254::multi_pair(v1_l, v2_r).0);
+        assert_eq!(second.c_minus.0, InnerBN254::multi_pair(v1_r, v2_l).0);
+        assert_eq!(second.e1_plus, JoltG1Routines::msm(v1_l, s2_r));
+        assert_eq!(second.e1_minus, JoltG1Routines::msm(v1_r, s2_l));
+        assert_eq!(second.e2_plus, JoltG2Routines::msm(v2_r, s1_l));
+        assert_eq!(second.e2_minus, JoltG2Routines::msm(v2_l, s1_r));
     }
 
     /// Round-0 D₂-shortcut first message = the four-pairing first message =
@@ -1071,7 +1068,7 @@ mod tests {
 
         let message = |v2_scalars: Option<&[ArkFr]>| {
             let mut state: ResidentRoundState =
-                Box::new(ResidentLoop::start(&v1, &v2, &g1, &g2, 1).expect("resident loop starts"));
+                Box::new(ResidentLoop::start(&v1, &v2, &g1, &g2).expect("resident loop starts"));
             first_message(&mut state, &s1, &s2, v2_scalars)
         };
         let shortcut = message(Some(&scalars));

@@ -36,40 +36,6 @@
 //! byte-identical; the i128 increments lift through the same
 //! canonical-Montgomery conversion on both sides. Pinned by this module's
 //! parity tests and the byte_diff metal arms.
-//!
-//! # Part 2 design — `combine_hints` windowed MSM (blocked on W3a's g1.metal)
-//!
-//! `DoryScheme::combine_hints` is stage 8's largest single ALU term
-//! (~328k plain double-and-add G1 muls ≈ 1.25 G field-muls @2^23; 2.19 s of
-//! the 6.42 s stage @2^22): `combined[row] = Σ_p scalar_p · hint_p[row]`
-//! over ~42 ragged hints — per row an independent ≤42-term MSM, 2^ν rows.
-//! Device design, once W3a's `g1.metal` (Fq CIOS + Jacobian a=0
-//! add/double/mixed-add) lands on gpu/metal-backend:
-//!
-//! 1. **Host-built gather schedule** (gather-not-scatter): flatten the ragged
-//!    hint matrix into CSR-like arrays — `points[]` (affine or Jacobian G1,
-//!    hint-major), `scalars[]` (one per hint), and per-row spans — so a
-//!    thread reads its row's (point, scalar-index) pairs contiguously and no
-//!    two threads write one bucket.
-//! 2. **Windowed buckets per row**: c-bit windows (c = 4 fits threadgroup
-//!    memory: 15 Jacobian buckets × 96 B = 1.4 KiB per window pass, or
-//!    thread-private for one window at a time), `⌈254/c⌉` passes per row
-//!    accumulating `bucket[digit] += point`; bucket reduction by the usual
-//!    suffix-sum, window combine by `c` doublings — all Jacobian, no
-//!    inversions on device.
-//! 3. **Row parallelism**: one threadgroup per row (2^ν ≈ 2^15 rows ≫
-//!    occupancy), threads split the row's hint terms, threadgroup-reduce
-//!    Jacobian partials (the W2 `jk_tg_sum` shape lifted to group adds).
-//! 4. **Batch-normalize on the host**: device returns Jacobian rows; host
-//!    runs one Montgomery-batch inversion to affine/projective-canonical
-//!    form. Parity: group-equality against `scalar_mul` per row PLUS
-//!    normalized-coordinate byte equality of the final `DoryHint` rows
-//!    (the wire object holds projective `Bn254G1` — normalize both sides
-//!    identically before comparing).
-//! 5. **Seam**: a `combine_hints` hook on the jolt-dory scheme (post-rebase,
-//!    W3a owns adjacent files today) delegating to a `jolt-kernels` device
-//!    routine when the metal context is live and `rows · hints` clears the
-//!    gate, CPU fallback otherwise — same fail-closed discipline as here.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -618,7 +584,6 @@ impl MultilinearPoly<Fr> for MetalTraceOpeningPoly {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use std::marker::PhantomData;
-    use std::time::Instant;
 
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_field::Ring;
@@ -741,10 +706,9 @@ mod tests {
     /// Synthetic full-width parity at a no-copy-eligible scale: every column
     /// family live, extreme increments (±, zero, `i128::MIN/MAX`), cold
     /// cycles, all 16 instruction selectors (two device dispatches), byte
-    /// equality against the CPU views, zero buffer copies for the column
-    /// streams, and a wall-clock print (NOT a benchmark).
+    /// equality against the CPU views, and zero buffer copies for the column
+    /// streams.
     #[test]
-    #[expect(clippy::print_stdout, reason = "timing sanity readout")]
     fn joint_opening_device_parity_at_2e18() {
         let _lock = gpu_lock();
         force_device_gate();
@@ -834,11 +798,9 @@ mod tests {
 
         let copies_before = copied_buffer_count();
         let rounds_before = device_probe_count();
-        let start = Instant::now();
         let device_folds: Vec<Vec<Fr>> = (0..ids.len())
             .map(|slot| engine.fold_for(slot, &left, sigma).unwrap())
             .collect();
-        let device_wall = start.elapsed();
         assert_eq!(
             device_probe_count() - rounds_before,
             1,
@@ -851,20 +813,14 @@ mod tests {
             "column streams were copied to the device"
         );
 
-        let start = Instant::now();
         for (slot, (id, cpu_view)) in ids.iter().zip(&cpu_views).enumerate() {
             let expected = cpu_view.fold_rows(&left, sigma);
             assert_eq!(device_folds[slot], expected, "{id:?}: fold diverged");
         }
-        let cpu_wall = start.elapsed();
         assert_ne!(
             device_folds[0],
             vec![Fr::from_u64(0); 1 << sigma],
             "degenerate fixture: dense fold is all zero"
-        );
-        println!(
-            "joint opening 2^{log_t}, {} slots: device {device_wall:?}, cpu {cpu_wall:?}",
-            ids.len()
         );
     }
 }
