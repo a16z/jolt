@@ -510,8 +510,8 @@ impl CommitmentScheme for AkitaScheme {
             !(params.one_hot_only && params.dense_only),
             "a setup cannot skip both backend flavors"
         );
-        if let Some(advice_schedule) = params.advice_schedule {
-            let _registered_rows = advice_schedule
+        if let Some(precommitted_schedule) = params.precommitted_schedule.as_ref() {
+            let _registered_rows = precommitted_schedule
                 .provision(params.one_hot_k)
                 .map_err(|error| invalid_setup(&error))?;
         }
@@ -568,7 +568,7 @@ impl CommitmentScheme for AkitaScheme {
             max_total_batch_polys: params.max_total_batch_polys,
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
-            advice_schedule: params.advice_schedule,
+            precommitted_schedule: params.precommitted_schedule,
             backend_cache: BackendVerifierCache::with_schedule_rows(),
         };
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
@@ -755,15 +755,31 @@ impl CommitmentScheme for AkitaScheme {
 }
 
 impl TransparentObjectSetup for AkitaScheme {
-    /// The singleton commitment-object setup convention (advice byte columns,
-    /// `ProgramOneHot`): one polynomial at `num_vars`, seeded by the object
-    /// plan's layout digest. Auxiliary packed objects use the sparse-unit/dense
-    /// flavor, so their setup omits the costly one-hot backend.
+    /// The singleton commitment-object setup convention for advice and direct
+    /// committed-program objects: one polynomial at `num_vars`, seeded by the
+    /// object plan's layout digest. Every bounded-dense object commits through
+    /// the dense flavor, so the costly one-hot backend setup is never built.
     fn transparent_object_setup(
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
         Self::setup(AkitaSetupParams::dense_only(num_vars, 1, layout_digest))
+    }
+
+    fn retag_transparent_object_setup(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+    ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
+        let _ = setup.dense_backend()?;
+        if setup.max_num_polys_per_commitment_group() != 1 || setup.max_total_batch_polys() != 1 {
+            return Err(invalid_batch(
+                "a transparent object setup must admit one polynomial",
+            ));
+        }
+        let mut retagged = setup.clone();
+        retagged.verifier.default_layout_digest = layout_digest;
+        let verifier = retagged.verifier.clone();
+        Ok((retagged, verifier))
     }
 }
 
@@ -859,7 +875,7 @@ mod tests {
             max_total_batch_polys: 1,
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
-            advice_schedule: None,
+            precommitted_schedule: None,
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -901,6 +917,26 @@ mod tests {
         let mut k_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
         append_verifier_setup(&mut k_transcript, &changed_k, AkitaBackendFlavor::Dense);
         assert_ne!(digest_transcript.state(), k_transcript.state());
+    }
+
+    #[test]
+    fn transparent_object_setup_reuses_backend_for_a_new_layout() {
+        let (base, _) =
+            <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(14, [3; 32]).unwrap();
+        let (retagged, verifier) =
+            <AkitaScheme as TransparentObjectSetup>::retag_transparent_object_setup(&base, [4; 32])
+                .unwrap();
+
+        assert!(Arc::ptr_eq(
+            base.backend_prover_setup.as_ref().unwrap(),
+            retagged.backend_prover_setup.as_ref().unwrap()
+        ));
+        assert!(Arc::ptr_eq(
+            base.prepared_backend_setup.as_ref().unwrap(),
+            retagged.prepared_backend_setup.as_ref().unwrap()
+        ));
+        assert_eq!(retagged.default_layout_digest(), [4; 32]);
+        assert_eq!(verifier.default_layout_digest(), [4; 32]);
     }
 
     fn one_hot_roundtrip(one_hot_k: usize) {
@@ -1004,12 +1040,13 @@ mod tests {
 
         use crate::configs::JoltOneHotK16;
         use crate::schedule_registry::{
-            self, AdviceScheduleParams, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+            self, PrecommittedScheduleParams, FIXTURE_K16_FINAL_NUM_VARS,
+            FIXTURE_TRUSTED_ADVICE_GROUP,
         };
 
         schedule_registry::reset_for_tests();
         let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.0;
-        let advice_schedule = AdviceScheduleParams::new(
+        let precommitted_schedule = PrecommittedScheduleParams::new(
             None,
             Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
             final_num_vars,
@@ -1020,7 +1057,7 @@ mod tests {
             2,
             [3; 32],
             AKITA_ONE_HOT_K16,
-            Some(advice_schedule),
+            Some(precommitted_schedule),
         ))
         .unwrap();
         let selection = schedule_registry::registered_rows::<JoltOneHotK16>()

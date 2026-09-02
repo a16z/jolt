@@ -136,7 +136,7 @@ Two corrections this table forced on our intuitions:
 | K=2^16 fusion (`log_k_chunk = 16`) | ~4.5 s | ones ×0.52, `n_a`→7 | chunk-65536 preset + regenerated schedules; u16 indices exist upstream |
 | ~~sparse-unit union on de-tiered backend~~ | ~~1–2 s?~~ | small-`num_vars` kernel constant | **measured DEAD below: 72 s commit / 112 s open at 33v** |
 | **committed-symbols mode (the optimal path)** | **~2.8 s stock, ~1 s with a bit-aware backend preset/kernel** | commit the bit-planes (2^23 cells, m ≈ 2^17) via the dense path: per symbol `n_a·D` mults/8 ≈ 144 add-eq vs one-hot's 384 (2.7× stock); unit-norm sizing + narrow-CRT accumulation close the rest | opening gains a degree-9 one-hot-evaluation sumcheck leg + bit-booleanity |
-| multi-group merge of advice/ProgramOneHot (orthogonal) | −0.5–1 s of opens | upstream #275 | protocol plumbing only |
+| grouped opening for advice + direct program objects | implemented | native precommitted-group batch | protocol plumbing only |
 
 ### The committed-symbols co-design, in one paragraph
 
@@ -193,7 +193,7 @@ floor against the measured breakdown (commit 7.5 + open 4.7 + reduction 1.9
 | one-hot accumulate vectorization (NEON, accumulator batching, narrow-CRT) | akita, kernel-only | commit → 2–3.5 s | medium-high (6× over arithmetic floor is measured) |
 | `n_a` sizing at 28v (6 → 5?) under the 138-bit tables | akita, config | ×0.83 on commit, partial on open | unknown — estimator question |
 | open-phase parallelization (~1.5× utilization today) | akita, same proof bytes | open → 1.5–2.5 s | medium |
-| multi-group merge of advice/ProgramOneHot (#275) | jolt plumbing | −0.5–1 s | high |
+| grouped opening for advice + direct program objects | jolt plumbing | implemented | measured by current pipeline |
 | ~~reduction sweep-halving (paired rounds)~~ | jolt | **measured neutral** — the sweep is bound by split-eq table accesses (4/position paired vs 2×2 single), not arithmetic; object-parallel rounds also measured neutral earlier. The reduction window (~1.9 s) is access-bound from every angle | — |
 | PIOP stage polish | jolt | −0.3–0.5 s | medium |
 
@@ -252,8 +252,9 @@ the lattice booleanity / hamming-weight-1 machinery becomes partially
 redundant (~1–2 s candidate), but it reshapes the claim flow feeding the
 leaves — its own iteration.
 
-**Phase 4 — multi-group merge (orthogonal).** Advice/ProgramOneHot into the same
-commitment via upstream #275 (~0.5–1 s of singleton opens).
+**Phase 4 — grouped opening (implemented).** Dense advice, direct bytecode
+chunks, and the program image are precommitted groups of the same native Akita
+opening as `OneHotTrace`.
 
 **Backend co-dev track (parallel, `../akita`):** audited schedule entries
 for the `(23, ~29)` dense keys; NEON on the one-hot accumulate (fallback
@@ -286,15 +287,17 @@ claim around that row. Stage 8 samples the slot selector only after binding
 the common point and all semantic evaluations, then opens the one physical
 polynomial directly.
 
-Auxiliary advice objects use the same fixed-prefix API as singleton objects.
-Committed-program bytecode columns are zero-prefix embedded at their widest
-suffix-compatible point; program-image bytes retain an independent singleton
-object. The earlier arbitrary-point reduction sumcheck has been deleted.
+Advice objects use the same fixed-prefix API as singleton dense word objects.
+Committed programs use one direct bounded-dense `BytecodeChunk(i)` object per
+chunk plus one direct `ProgramImageInit` object. Each logical polynomial is
+zero-prefix embedded only to Akita's physical arity floor. These objects join
+`OneHotTrace` in one role-bound grouped opening; no reconstruction sumcheck or
+separate auxiliary proof path remains.
 
 | piece | where |
 |---|---|
 | compact-source column assembly (`assemble_one_hot_trace`) | `jolt-prover-legacy/src/zkvm/packed.rs` |
-| prove pipeline (one physical OneHotTrace opening plus direct auxiliary openings) | `jolt-prover-legacy/src/zkvm/packed.rs` |
+| prove pipeline (one grouped opening over OneHotTrace and all precommitted objects) | `jolt-prover-legacy/src/zkvm/packed.rs` |
 | layout and point mapping (`address‖cycle` → `cycle‖address`) | `jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
 | fixed-capacity prefix selector reduction (`PrefixPackedLayout`) | `jolt-openings/src/prefix.rs` |
 | owned backend adapter (`commit_one_hot_group_owned`, `open_one_hot_group_from_hint`) | `jolt-akita/src/{scheme,adapters}.rs` |
@@ -328,15 +331,7 @@ jolt-side knobs are exhausted (see the floor table); what remains is:
 Identified during the 2026-07-14 simplification pass; each is a
 self-contained PR candidate.
 
-1. **Fold the byte-column reconstruction twins.** `advice_bytes.rs`
-   (untrusted + trusted) and `program_image_reconstruction.rs` are three
-   instances of one protocol object (γ-batched byte-column reconstruction
-   over `(byte ‖ place)` with a pre-bound word point), and the verifier's
-   `stage8/reconstruction.rs` mirrors all three. Parameterizing one instance
-   over `(kind, claim source)` is ~−350 lines prover-side and ~−300–400
-   verifier-side, and the bit-plane strategy will want the parameterized
-   form anyway.
-2. **Narrow the legacy prover's PCS bounds.** `JoltCpuProver` and its main
+1. **Narrow the legacy prover's PCS bounds.** `JoltCpuProver` and its main
    impl demand `StreamingCommitmentScheme + ZkEvalCommitment` for
    everything, so the packed path must stub both (the `AkitaPackedScheme`
    panic shims). The packed path only uses `gen_from_elf`,
@@ -345,7 +340,7 @@ self-contained PR candidate.
    and zk-eval shims and decouples future packed provers from the base
    commit pipeline. Deferred: the method-closure move is ~1,000 lines of
    shared-file surgery, wrong to bundle with other changes.
-3. Smaller items: `indexed_family` hoist in base `clear_claims` (~−40);
+2. Smaller items: `indexed_family` hoist in base `clear_claims` (~−40);
    stage-7 address-phase scheduling triplication (needs a shared trait or
    local macro — judged not clearly better today); `Arc`'d commitment bytes
    (clone cost is ~ms; churn not yet justified).

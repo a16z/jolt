@@ -30,7 +30,8 @@ default = ["host"]
 # jolt-verifier build errors on the combination).
 akita = [
   "dep:jolt-akita",
-  "jolt-claims?/akita",
+  "dep:jolt-claims",
+  "jolt-claims/akita",
   "dep:jolt-field",
   "jolt-field/solinas",
   "jolt-verifier/akita",

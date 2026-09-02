@@ -31,6 +31,9 @@ pub mod pow2_w;
 pub mod prefixes;
 pub mod range_check;
 pub mod range_check_aligned;
+pub mod shift_data_b;
+pub mod shift_data_h;
+pub mod shift_data_w;
 pub mod shift_right_bitmask;
 pub mod shift_right_bitmask_w;
 pub mod sign_extend_word;
@@ -78,6 +81,9 @@ use pow2::Pow2Table;
 use pow2_w::Pow2WTable;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
+use shift_data_b::ShiftDataBTable;
+use shift_data_h::ShiftDataHTable;
+use shift_data_w::ShiftDataWTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
 use shift_right_bitmask_w::ShiftRightBitmaskWTable;
 use sign_extend_word::SignExtendWordTable;
@@ -180,6 +186,9 @@ pub enum LookupTableKind<const XLEN: usize> {
     WindowMaskB(WindowMaskBTable<XLEN>),
     WindowMaskH(WindowMaskHTable<XLEN>),
     AlignAddr(AlignAddrTable<XLEN>),
+    ShiftDataB(ShiftDataBTable<XLEN>),
+    ShiftDataH(ShiftDataHTable<XLEN>),
+    ShiftDataW(ShiftDataWTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -240,6 +249,9 @@ macro_rules! dispatch {
             Self::WindowMaskB($t) => $expr,
             Self::WindowMaskH($t) => $expr,
             Self::AlignAddr($t) => $expr,
+            Self::ShiftDataB($t) => $expr,
+            Self::ShiftDataH($t) => $expr,
+            Self::ShiftDataW($t) => $expr,
         }
     };
 }

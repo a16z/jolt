@@ -172,12 +172,19 @@ where
     transcript.append(&LabelWithCount(b"akita_groups", group_count as u64));
     let groups = precommitted
         .iter()
-        .map(|entry| (entry.role.transcript_label(), true, &entry.claim))
-        .chain(std::iter::once((b"main_trace".as_slice(), false, main)));
-    for (index, (role, is_precommitted, claim)) in groups.enumerate() {
+        .map(|entry| (Some(entry.role), &entry.claim))
+        .chain(std::iter::once((None, main)));
+    for (index, (role, claim)) in groups.enumerate() {
         transcript.append(&U64Word(index as u64));
-        transcript.append_bytes(role);
-        transcript.append(&U64Word(u64::from(is_precommitted)));
+        if let Some(role) = role {
+            transcript.append_bytes(role.transcript_label());
+            if let Some(role_index) = role.transcript_index() {
+                transcript.append(&U64Word(role_index));
+            }
+        } else {
+            transcript.append_bytes(b"main_trace");
+        }
+        transcript.append(&U64Word(u64::from(role.is_some())));
         claim.commitment.append_to_transcript(transcript);
         transcript.append_values(b"akita_group_point", &claim.point);
         transcript.append(&LabelWithCount(
@@ -877,5 +884,69 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             },
         })
         .map_err(|_| OpeningsError::VerificationFailed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_openings::PrecommittedRole;
+
+    fn commitment(
+        backend_flavor: AkitaBackendFlavor,
+        num_vars: usize,
+        layout_digest: [u8; 32],
+        one_hot_k: usize,
+    ) -> AkitaCommitment {
+        AkitaCommitment {
+            backend_flavor,
+            layout_digest,
+            num_vars,
+            poly_count: 1,
+            one_hot_k,
+            backend_coeff_len: 0,
+            serialized_backend_bytes: Vec::new(),
+        }
+    }
+
+    fn claim(commitment: AkitaCommitment) -> GroupOpeningClaim<AkitaField, AkitaCommitment> {
+        GroupOpeningClaim::new(
+            commitment.clone(),
+            vec![AkitaField::zero(); commitment.num_vars],
+            vec![AkitaField::zero()],
+        )
+    }
+
+    #[test]
+    fn verifier_shape_enforces_the_260_group_limit() {
+        let layout_digest = [9; 32];
+        let mut setup = AkitaVerifierSetup {
+            max_num_vars: 34,
+            max_num_polys_per_commitment_group: 1,
+            max_total_batch_polys: 260,
+            default_layout_digest: layout_digest,
+            one_hot_k: AKITA_ONE_HOT_K256,
+            precommitted_schedule: None,
+            backend_cache: Default::default(),
+        };
+        let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);
+        let precommitted = (0_u64..259)
+            .map(|order| {
+                PrecommittedClaim::new(
+                    PrecommittedRole::new(order, b"precommitted", "precommitted"),
+                    claim(dense()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let main = claim(commitment(
+            AkitaBackendFlavor::OneHot,
+            34,
+            layout_digest,
+            AKITA_ONE_HOT_K256,
+        ));
+
+        assert!(validate_trace_batch_statement(&setup, &precommitted, &main).is_ok());
+        setup.max_total_batch_polys = 259;
+        assert!(validate_trace_batch_statement(&setup, &precommitted, &main).is_err());
     }
 }

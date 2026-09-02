@@ -14,7 +14,6 @@ use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_witness::JoltWitnessPlane;
 
-use super::reconstruction::prove_reconstruction;
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
 use super::witness::AdviceObject;
@@ -160,16 +159,6 @@ where
         witness,
         &mut transcript,
     )?;
-    let reconstruction = prove_reconstruction::<F, PCS, VC::Output, T>(
-        backend,
-        &mut session,
-        &checked,
-        &stage6b.clear_output,
-        &stage7.clear_output,
-        witness,
-        &mut transcript,
-    )?;
-
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
@@ -181,10 +170,9 @@ where
         preprocessing
             .committed_program
             .as_ref()
-            .map(|data| &data.program_one_hot),
+            .map(|data| &data.direct_program),
         &stage6b.clear_output,
         &stage7.clear_output,
-        &reconstruction.clear_output,
         &mut transcript,
     )?;
 
@@ -202,7 +190,6 @@ where
             stage6a_sumcheck_proof: stage6a.sumcheck_proof,
             stage6b_sumcheck_proof: stage6b.sumcheck_proof,
             stage7_sumcheck_proof: stage7.sumcheck_proof,
-            reconstruction_sumcheck_proof: reconstruction.sumcheck_proof,
         },
         joint_opening_proof,
         untrusted_advice_commitment: stage0
@@ -217,7 +204,6 @@ where
             stage6a: stage6a.claims,
             stage6b: stage6b.claims,
             stage7: stage7.claims,
-            reconstruction: reconstruction.claims,
         }),
         trace_length: config.trace_length,
         ram_K: config.ram_K,
