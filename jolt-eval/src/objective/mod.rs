@@ -6,6 +6,7 @@ pub mod performance;
 pub mod synthesis;
 pub mod telemetry;
 
+use code_quality::PROOF_SYSTEM_CRATE_DIRS;
 use std::fmt;
 
 /// Error during objective measurement.
@@ -75,13 +76,13 @@ impl StaticAnalysisObjective {
     pub fn all() -> Vec<Self> {
         vec![
             Self::Lloc(code_quality::lloc::LlocObjective {
-                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
             Self::CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective {
-                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
             Self::HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective {
-                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
         ]
     }
@@ -130,7 +131,7 @@ impl StaticAnalysisObjective {
     }
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
-        code_quality::PROOF_SYSTEM_CRATE_DIRS
+        PROOF_SYSTEM_CRATE_DIRS
     }
 }
 

@@ -6,7 +6,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_verifier::JoltVerifierPreprocessing;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 
 use crate::PreprocessingError;
@@ -42,8 +42,7 @@ impl<'de> Deserialize<'de> for JoltSharedPreprocessing {
         D: Deserializer<'de>,
     {
         let program = Arc::<JoltProgramPreprocessing>::deserialize(deserializer)?;
-        let preprocessing_digest =
-            full_preprocessing_digest(&program).map_err(serde::de::Error::custom)?;
+        let preprocessing_digest = full_preprocessing_digest(&program).map_err(Error::custom)?;
         Ok(Self {
             program,
             preprocessing_digest,
@@ -231,9 +230,9 @@ mod tests {
 /// (`crate::akita::witness::commit_program_one_hot`) so proving consumes
 /// them directly instead of re-deriving them per proof.
 #[derive(Clone)]
-#[cfg_attr(not(feature = "akita"), derive(Serialize, Deserialize))]
 #[cfg_attr(
     not(feature = "akita"),
+    derive(Serialize, Deserialize),
     serde(bound(
         serialize = "PCS::OpeningHint: Serialize",
         deserialize = "PCS::OpeningHint: serde::de::DeserializeOwned"
@@ -273,9 +272,9 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
 /// Dory preprocessing is serializable. Akita preprocessing retains backend
 /// setup and witness objects and must be regenerated in the proving process.
 #[derive(Clone)]
-#[cfg_attr(not(feature = "akita"), derive(Serialize, Deserialize))]
 #[cfg_attr(
     not(feature = "akita"),
+    derive(Serialize, Deserialize),
     serde(bound(
         serialize = "JoltVerifierPreprocessing<PCS, VC>: Serialize, PCS::ProverSetup: Serialize, CommittedProgramProverData<PCS>: Serialize",
         deserialize = "JoltVerifierPreprocessing<PCS, VC>: serde::de::DeserializeOwned, PCS::ProverSetup: serde::de::DeserializeOwned, CommittedProgramProverData<PCS>: serde::de::DeserializeOwned"

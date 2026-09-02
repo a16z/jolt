@@ -7,7 +7,7 @@ use common::{
     jolt_device::{MemoryConfig, MemoryLayout},
 };
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Literal, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     parse_macro_input, punctuated::Punctuated, token::Comma, Ident, ItemFn, Meta, PatType,
@@ -120,14 +120,13 @@ impl MacroBuilder {
     fn make_memory_config_fn(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let attributes = parse_attributes(&self.attr);
-        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
-        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_trusted_advice_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
+        let max_input_size = Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_trusted_advice_size = Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
         let max_untrusted_advice_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
-        let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
-        let heap_size = proc_macro2::Literal::u64_unsuffixed(attributes.heap_size);
+            Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
+        let stack_size = Literal::u64_unsuffixed(attributes.stack_size);
+        let heap_size = Literal::u64_unsuffixed(attributes.heap_size);
 
         let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
@@ -533,7 +532,7 @@ impl MacroBuilder {
 
     fn make_preprocess_shared_func(&self) -> TokenStream2 {
         let attributes = parse_attributes(&self.attr);
-        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
+        let max_trace_length = Literal::u64_unsuffixed(attributes.max_trace_length);
 
         let fn_name = self.get_func_name();
         let preprocess_shared_fn_name =
@@ -574,7 +573,7 @@ impl MacroBuilder {
 
     fn make_preprocess_committed_prover_func(&self) -> TokenStream2 {
         let attributes = parse_attributes(&self.attr);
-        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
+        let max_trace_length = Literal::u64_unsuffixed(attributes.max_trace_length);
 
         let fn_name = self.get_func_name();
         let preprocess_committed_fn_name =

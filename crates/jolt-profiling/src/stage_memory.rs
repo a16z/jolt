@@ -21,6 +21,7 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
+use crate::taxonomy::ROOT_SPAN;
 use crate::units::{format_memory_size, BYTES_PER_GIB};
 
 /// One tracked span's RSS at open, parked in the span's extensions.
@@ -54,7 +55,7 @@ static STAGE_MEMORY_ROWS: Mutex<RowLog> = Mutex::new(RowLog {
 
 /// The stage spans worth boundary-sampling.
 fn tracked(name: &str) -> bool {
-    name.starts_with("prove_stage") || name == crate::taxonomy::ROOT_SPAN
+    name.starts_with("prove_stage") || name == ROOT_SPAN
 }
 
 /// A `tracing_subscriber` layer sampling process RSS at stage-span

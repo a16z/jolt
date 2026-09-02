@@ -3,7 +3,9 @@ use std::ops::{Add, Mul, Sub};
 
 use crate::{challenge, derived, opening};
 
-use super::{JoltChallengeId, JoltDerivedId, JoltExpr, JoltPolynomialId, JoltRelationId};
+use super::{
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltPolynomialId, JoltRelationId,
+};
 
 /// A pointwise polynomial expression before a relation's claims are folded by
 /// its batching challenge.
@@ -40,7 +42,7 @@ impl UnbatchedClaimExpr {
         match self {
             Self::Constant(value) => JoltExpr::constant(F::from_i64(*value)),
             Self::Polynomial(polynomial) => {
-                opening(super::JoltOpeningId::polynomial(*polynomial, relation))
+                opening(JoltOpeningId::polynomial(*polynomial, relation))
             }
             Self::Add(lhs, rhs) => lhs.at_relation(relation) + rhs.at_relation(relation),
             Self::Mul(lhs, rhs) => lhs.at_relation(relation) * rhs.at_relation(relation),
