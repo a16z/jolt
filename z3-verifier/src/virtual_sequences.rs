@@ -608,8 +608,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             // Bitmask immediate: compute trailing_zeros, then scale the shift amount
             let shift_amt = operands.imm.trailing_zeros();
 
-            // Word instructions (SRLIW, SRAIW) encode as (base_shift + 32)
-            // Decompose shifts >= 32 to handle this pattern
+            // Preserve RV64 shifts of 32..63 across reduced verifier widths.
             let scaled_shift = if shift_amt >= 32 {
                 let base = (shift_amt - 32) & (cpu.word_bits - 1);
                 (cpu.word_bits + base) as u64
