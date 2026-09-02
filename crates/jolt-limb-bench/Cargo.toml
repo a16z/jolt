@@ -1,0 +1,31 @@
+[package]
+name = "jolt-limb-bench"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Measurement harness for the curve-wrapper limb-relation table (lane M2); not a production crate"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bincode = { workspace = true }
+jolt-crypto = { path = "../jolt-crypto" }
+jolt-field = { path = "../jolt-field" }
+jolt-hyperkzg = { path = "../jolt-hyperkzg" }
+jolt-openings = { path = "../jolt-openings" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-transcript = { path = "../jolt-transcript" }
+ark-bn254 = { workspace = true, features = ["curve"] }
+ark-ff = { workspace = true }
+num-bigint = { workspace = true, features = ["std"] }
+num-traits = { workspace = true }
+num-integer = { workspace = true }
+rayon = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
+
+[[bin]]
+name = "limb-relation"
+path = "src/main.rs"

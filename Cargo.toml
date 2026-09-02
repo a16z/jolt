@@ -53,6 +53,7 @@ members = [
   "crates/jolt-kernels-derive",
   "crates/jolt-prover",
   "crates/jolt-prover-legacy",
+  "crates/jolt-limb-bench",
   "tracer",
   "common",
   "jolt-platform",

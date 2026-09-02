@@ -3641,6 +3641,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-limb-bench"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "bincode 2.0.1",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-hyperkzg",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+]
+
+[[package]]
 name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
