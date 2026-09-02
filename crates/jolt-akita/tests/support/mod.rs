@@ -2,6 +2,7 @@ use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatchStatement,
     AkitaScheme, AkitaSetupParams,
 };
+use jolt_field::Ring;
 use jolt_openings::{CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, Polynomial};
 

@@ -1,25 +1,22 @@
-use akita_config::proof_optimized::fp128::Field as AkitaField;
-use akita_field::unreduced::{Fp128MulU64Accum, Fp128ProductAccum, HasUnreducedOps};
-
 use crate::signed::S256;
-use crate::Accumulator;
+use crate::{Accumulator, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Ring, Unreduced};
 
 /// Deferred-reduction accumulator for fp128 products.
 #[derive(Clone, Copy)]
-pub struct AkitaAccumulator(Fp128ProductAccum);
+pub struct Fp128Accumulator<const P: u128>(Fp128ProductAccum);
 
-impl Default for AkitaAccumulator {
+impl<const P: u128> Default for Fp128Accumulator<P> {
     #[inline(always)]
     fn default() -> Self {
-        Self(Fp128ProductAccum::ZERO)
+        Self(Fp128ProductAccum([0; 4]))
     }
 }
 
-impl Accumulator for AkitaAccumulator {
-    type Element = AkitaField;
+impl<const P: u128> Accumulator for Fp128Accumulator<P> {
+    type Element = Fp128<P>;
 
     #[inline(always)]
-    fn add(&mut self, value: AkitaField) {
+    fn add(&mut self, value: Fp128<P>) {
         self.0 += Fp128ProductAccum::from(value);
     }
 
@@ -29,42 +26,47 @@ impl Accumulator for AkitaAccumulator {
     }
 
     #[inline(always)]
-    fn reduce(self) -> AkitaField {
-        AkitaField::reduce_product_accum(self.0)
+    fn reduce(self) -> Fp128<P> {
+        Fp128::<P>::reduce_product(self.0)
     }
 
     #[inline(always)]
-    fn fmadd(&mut self, a: AkitaField, b: AkitaField) {
-        self.0 += a.mul_to_product_accum(b);
+    fn fmadd(&mut self, a: Fp128<P>, b: Fp128<P>) {
+        self.0 += a.mul_unreduced(b);
     }
 
     #[inline(always)]
-    fn fmadd_u64(&mut self, a: AkitaField, b: u64) {
+    fn fmadd_u64(&mut self, a: Fp128<P>, b: u64) {
         let product = a.mul_u64_unreduced(b);
         self.0 .0[0] += product.0[0];
         self.0 .0[1] += product.0[1];
         self.0 .0[2] += product.0[2];
     }
+
+    #[inline(always)]
+    fn fmadd_u128(&mut self, a: Fp128<P>, b: u128) {
+        self.0 += a.mul_unreduced(Fp128::<P>::from_u128(b));
+    }
 }
 
 /// Deferred-reduction accumulator for signed scalar products.
 #[derive(Clone, Copy)]
-pub struct AkitaSignedAccumulator {
+pub struct Fp128SignedAccumulator<const P: u128> {
     pos: Fp128MulU64Accum,
     neg: Fp128MulU64Accum,
 }
 
-impl Default for AkitaSignedAccumulator {
+impl<const P: u128> Default for Fp128SignedAccumulator<P> {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            pos: Fp128MulU64Accum::ZERO,
-            neg: Fp128MulU64Accum::ZERO,
+            pos: Fp128MulU64Accum([0; 3]),
+            neg: Fp128MulU64Accum([0; 3]),
         }
     }
 }
 
-impl AkitaSignedAccumulator {
+impl<const P: u128> Fp128SignedAccumulator<P> {
     #[inline(always)]
     fn accumulate(&mut self, term: Fp128MulU64Accum, is_positive: bool) {
         if is_positive {
@@ -75,29 +77,29 @@ impl AkitaSignedAccumulator {
     }
 
     #[inline(always)]
-    fn reduce_signed(self) -> AkitaField {
-        AkitaField::reduce_mul_u64_accum(self.pos) - AkitaField::reduce_mul_u64_accum(self.neg)
+    fn reduce_signed(self) -> Fp128<P> {
+        Fp128::<P>::reduce_small_product(self.pos) - Fp128::<P>::reduce_small_product(self.neg)
     }
 
     #[inline(always)]
-    fn product(value: AkitaField, magnitude: [u64; 4]) -> AkitaField {
+    fn product(value: Fp128<P>, magnitude: [u64; 4]) -> Fp128<P> {
         if magnitude[3] == 0 {
-            AkitaField::solinas_reduce(&value.mul_wide_limbs::<3, 5>([
+            Fp128::<P>::solinas_reduce(&value.mul_wide_limbs::<3, 5>([
                 magnitude[0],
                 magnitude[1],
                 magnitude[2],
             ]))
         } else {
-            AkitaField::solinas_reduce(&value.mul_wide_limbs::<4, 6>(magnitude))
+            Fp128::<P>::solinas_reduce(&value.mul_wide_limbs::<4, 6>(magnitude))
         }
     }
 }
 
-impl Accumulator for AkitaSignedAccumulator {
-    type Element = AkitaField;
+impl<const P: u128> Accumulator for Fp128SignedAccumulator<P> {
+    type Element = Fp128<P>;
 
     #[inline(always)]
-    fn add(&mut self, value: AkitaField) {
+    fn add(&mut self, value: Fp128<P>) {
         self.pos += Fp128MulU64Accum::from(value);
     }
 
@@ -108,38 +110,38 @@ impl Accumulator for AkitaSignedAccumulator {
     }
 
     #[inline(always)]
-    fn reduce(self) -> AkitaField {
+    fn reduce(self) -> Fp128<P> {
         self.reduce_signed()
     }
 
     #[inline(always)]
-    fn fmadd(&mut self, a: AkitaField, b: AkitaField) {
+    fn fmadd(&mut self, a: Fp128<P>, b: Fp128<P>) {
         self.add(a * b);
     }
 
     #[inline(always)]
-    fn fmadd_u64(&mut self, value: AkitaField, scalar: u64) {
+    fn fmadd_u64(&mut self, value: Fp128<P>, scalar: u64) {
         if scalar != 0 {
             self.accumulate(value.mul_u64_unreduced(scalar), true);
         }
     }
 
     #[inline(always)]
-    fn fmadd_i64(&mut self, value: AkitaField, scalar: i64) {
+    fn fmadd_i64(&mut self, value: Fp128<P>, scalar: i64) {
         if scalar != 0 {
             self.accumulate(value.mul_u64_unreduced(scalar.unsigned_abs()), scalar > 0);
         }
     }
 
     #[inline(always)]
-    fn fmadd_signed_u64(&mut self, value: AkitaField, magnitude: u64, is_positive: bool) {
+    fn fmadd_signed_u64(&mut self, value: Fp128<P>, magnitude: u64, is_positive: bool) {
         if magnitude != 0 {
             self.accumulate(value.mul_u64_unreduced(magnitude), is_positive);
         }
     }
 
     #[inline(always)]
-    fn fmadd_s256(&mut self, value: AkitaField, scalar: &S256) {
+    fn fmadd_s256(&mut self, value: Fp128<P>, scalar: &S256) {
         let magnitude = scalar.magnitude_limbs();
         if magnitude == [0; 4] {
             return;
@@ -158,14 +160,17 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
 
+    const TEST_MODULUS: u128 = u128::MAX - 274;
+    type TestField = Fp128<TEST_MODULUS>;
+
     #[test]
     fn ring_accumulator_matches_naive() {
         let mut rng = ChaCha20Rng::seed_from_u64(1);
-        let mut candidate = AkitaAccumulator::default();
-        let mut expected = NaiveAccumulator::<AkitaField>::default();
+        let mut candidate = Fp128Accumulator::<TEST_MODULUS>::default();
+        let mut expected = NaiveAccumulator::<TestField>::default();
         for _ in 0..16_384 {
-            let a = <AkitaField as Field>::random(&mut rng);
-            let b = <AkitaField as Field>::random(&mut rng);
+            let a = <TestField as Field>::random(&mut rng);
+            let b = <TestField as Field>::random(&mut rng);
             candidate.fmadd(a, b);
             expected.fmadd(a, b);
         }
@@ -175,10 +180,10 @@ mod tests {
     #[test]
     fn small_scalar_accumulator_matches_naive() {
         let mut rng = ChaCha20Rng::seed_from_u64(2);
-        let mut candidate = AkitaSignedAccumulator::default();
-        let mut expected = NaiveAccumulator::<AkitaField>::default();
+        let mut candidate = Fp128SignedAccumulator::<TEST_MODULUS>::default();
+        let mut expected = NaiveAccumulator::<TestField>::default();
         for index in 0..16_384 {
-            let value = <AkitaField as Field>::random(&mut rng);
+            let value = <TestField as Field>::random(&mut rng);
             let scalar = rng.next_u64() as i64;
             let scalar = if index % 2 == 0 { scalar } else { -scalar };
             candidate.fmadd_i64(value, scalar);
@@ -190,10 +195,10 @@ mod tests {
     #[test]
     fn signed_product_accumulator_matches_naive() {
         let mut rng = ChaCha20Rng::seed_from_u64(3);
-        let mut candidate = AkitaSignedAccumulator::default();
-        let mut expected = NaiveAccumulator::<AkitaField>::default();
+        let mut candidate = Fp128SignedAccumulator::<TEST_MODULUS>::default();
+        let mut expected = NaiveAccumulator::<TestField>::default();
         for index in 0..16_384 {
-            let value = <AkitaField as Field>::random(&mut rng);
+            let value = <TestField as Field>::random(&mut rng);
             let scalar = S256::new(
                 [
                     rng.next_u64(),
@@ -206,7 +211,7 @@ mod tests {
             candidate.fmadd_s256(value, &scalar);
             expected.fmadd_s256(value, &scalar);
         }
-        let value = <AkitaField as Field>::random(&mut rng);
+        let value = <TestField as Field>::random(&mut rng);
         candidate.fmadd_signed_u64(value, u64::MAX, false);
         expected.fmadd_signed_u64(value, u64::MAX, false);
         assert_eq!(candidate.reduce(), expected.reduce());
@@ -214,15 +219,15 @@ mod tests {
 
     #[test]
     fn accumulators_handle_add_and_zero() {
-        let value = AkitaField::from_u64(7);
-        let mut ring = AkitaAccumulator::default();
+        let value = TestField::from_u64(7);
+        let mut ring = Fp128Accumulator::<TEST_MODULUS>::default();
         ring.add(value);
         ring.fmadd_u64(value, 5);
-        assert_eq!(ring.reduce(), AkitaField::from_u64(42));
+        assert_eq!(ring.reduce(), TestField::from_u64(42));
 
-        let mut small = AkitaSignedAccumulator::default();
+        let mut small = Fp128SignedAccumulator::<TEST_MODULUS>::default();
         small.add(value);
         small.fmadd_i64(value, -1);
-        assert_eq!(small.reduce(), AkitaField::from_u64(0));
+        assert_eq!(small.reduce(), TestField::from_u64(0));
     }
 }

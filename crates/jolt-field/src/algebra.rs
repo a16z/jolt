@@ -11,6 +11,7 @@
 
 use num_traits::{One, Zero};
 use rand_core::RngCore;
+use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::iter::{Product, Sum};
@@ -494,15 +495,16 @@ impl<R: Ring> Accumulator for NaiveAccumulator<R> {
 }
 
 /// Everything Jolt's protocol stack requires of a scalar field: field
-/// algebra, a canonical transcript encoding, and an accumulator.
+/// algebra, a canonical transcript encoding, an accumulator, and serde
+/// wire serialization (canonical-checked, via [`impl_serde_bytes!`]).
 ///
 /// Blanket-implemented — implement the component traits and this follows.
-///
-/// The bundle deliberately does NOT require `Serialize + DeserializeOwned`
-/// while the temporary `akita` bootstrap edge exists: the pre-cutover
-/// `akita-field` type is foreign and cannot be given serde impls here.
-/// Restore the serde bounds when the akita cutover removes that edge; every
-/// first-party field type already implements them (`impl_serde_bytes!`).
-pub trait JoltField: Field + CanonicalEncoding + WithAccumulator {}
+pub trait JoltField:
+    Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned
+{
+}
 
-impl<T: Field + CanonicalEncoding + WithAccumulator> JoltField for T {}
+impl<T: Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned> JoltField
+    for T
+{
+}
