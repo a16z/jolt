@@ -112,11 +112,11 @@ mod sequence_tests {
 
     #[test]
     fn test_sha256_inline_rows_per_block() {
-        // Σ₀/Σ₁ are 3 rows each, σ₁ is 5; fixed-IV folds both round-0 Σ values.
+        // Σ₀/Σ₁ are 3 rows each, σ₀/σ₁ are 4; fixed-IV folds both round-0 Σ values.
         let (custom_iv_rows, custom_iv_histogram) = inline_rows(crate::SHA256_FUNCT3);
         let (fixed_iv_rows, fixed_iv_histogram) = inline_rows(crate::SHA256_INIT_FUNCT3);
-        assert_eq!(custom_iv_rows, 1996, "{custom_iv_histogram:?}");
-        assert_eq!(fixed_iv_rows, 1960, "{fixed_iv_histogram:?}");
+        assert_eq!(custom_iv_rows, 1900, "{custom_iv_histogram:?}");
+        assert_eq!(fixed_iv_rows, 1864, "{fixed_iv_histogram:?}");
     }
 
     #[test]
