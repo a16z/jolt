@@ -78,11 +78,16 @@ use tracer::{
         virtual_shift_data_h::VirtualShiftDataH,
         virtual_shift_data_w::VirtualShiftDataW,
         virtual_shift_right_bitmask::VirtualShiftRightBitmask,
+        virtual_shift_right_bitmask_w::VirtualShiftRightBitmaskW,
         virtual_sign_extend_word::VirtualSignExtendWord,
         virtual_sra::VirtualSRA,
         virtual_srai::VirtualSRAI,
+        virtual_sraiw::VirtualSRAIW,
+        virtual_sraw::VirtualSRAW,
         virtual_srl::VirtualSRL,
         virtual_srli::VirtualSRLI,
+        virtual_srliw::VirtualSRLIW,
+        virtual_srlw::VirtualSRLW,
         virtual_window_mask_b::VirtualWindowMaskB,
         virtual_window_mask_h::VirtualWindowMaskH,
         virtual_window_mask_w::VirtualWindowMaskW,
@@ -427,11 +432,23 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let shift = trailing_zeros(&rs2, cpu.bv_bits);
             cpu.x[operands.rd as usize] = rs1.bvashr(&shift);
         }
+        Instruction::VirtualSRAW(VirtualSRAW { operands, .. }) => {
+            let rs1 = cpu.word_extract(&cpu.x[operands.rs1 as usize]);
+            let rs2 = cpu.word_extract(&cpu.x[operands.rs2 as usize]);
+            let shift = trailing_zeros(&rs2, cpu.word_bits);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&rs1.bvashr(&shift));
+        }
         Instruction::VirtualSRL(VirtualSRL { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             let shift = trailing_zeros(&rs2, cpu.bv_bits);
             cpu.x[operands.rd as usize] = rs1.bvlshr(&shift);
+        }
+        Instruction::VirtualSRLW(VirtualSRLW { operands, .. }) => {
+            let rs1 = cpu.word_extract(&cpu.x[operands.rs1 as usize]);
+            let rs2 = cpu.word_extract(&cpu.x[operands.rs2 as usize]);
+            let shift = trailing_zeros(&rs2, cpu.word_bits);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&rs1.bvlshr(&shift));
         }
         Instruction::VirtualShiftRightBitmask(VirtualShiftRightBitmask { operands, .. }) => {
             let shift = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((cpu.bv_bits - 1) as u64);
@@ -441,6 +458,13 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = ones
                 .bvshl(shift.zero_ext(cpu.bv_bits))
                 .extract(cpu.bv_bits - 1, 0)
+        }
+        Instruction::VirtualShiftRightBitmaskW(VirtualShiftRightBitmaskW { operands, .. }) => {
+            let shift =
+                cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((cpu.word_bits - 1) as u64);
+            let word_bound = cpu.bv_u64(1u64 << cpu.word_bits);
+            let lower_bound = cpu.bv_u64(1).bvshl(&shift);
+            cpu.x[operands.rd as usize] = word_bound - lower_bound;
         }
         Instruction::LD(LD { operands, .. }) => {
             // Tracer LD truncates the immediate through i32 (see ld.rs).
@@ -584,8 +608,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             // Bitmask immediate: compute trailing_zeros, then scale the shift amount
             let shift_amt = operands.imm.trailing_zeros();
 
-            // Word instructions (SRLIW, SRAIW) encode as (base_shift + 32)
-            // Decompose shifts >= 32 to handle this pattern
+            // Preserve RV64 shifts of 32..63 across reduced verifier widths.
             let scaled_shift = if shift_amt >= 32 {
                 let base = (shift_amt - 32) & (cpu.word_bits - 1);
                 (cpu.word_bits + base) as u64
@@ -600,6 +623,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] =
                 cpu.sign_extend(&cpu.unsigned_data(&rs1).bvlshr(scaled_shift));
         }
+        Instruction::VirtualSRLIW(VirtualSRLIW { operands, .. }) => {
+            let rs1 = cpu.word_extract(&cpu.x[operands.rs1 as usize]);
+            let shift = operands.imm.trailing_zeros() & (cpu.word_bits - 1);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&rs1.bvlshr(shift as u64));
+        }
         Instruction::VirtualSRAI(VirtualSRAI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             // Bitmask immediate: compute trailing_zeros, then scale the shift amount
@@ -611,6 +639,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                 _ => shift_amt as u64 & (cpu.bv_bits - 1) as u64,
             };
             cpu.x[operands.rd as usize] = cpu.sign_extend(&rs1.bvashr(scaled_shift));
+        }
+        Instruction::VirtualSRAIW(VirtualSRAIW { operands, .. }) => {
+            let rs1 = cpu.word_extract(&cpu.x[operands.rs1 as usize]);
+            let shift = operands.imm.trailing_zeros() & (cpu.word_bits - 1);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&rs1.bvashr(shift as u64));
         }
         Instruction::XOR(XOR { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();

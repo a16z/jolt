@@ -275,6 +275,12 @@ fn modular_lookup_table_indices_match_prover_abi() {
             LookupTableKind::<XLEN>::ShiftDataW(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::ShiftDataW(Default::default())),
         ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTL1(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTL1(
+                Default::default(),
+            )),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());

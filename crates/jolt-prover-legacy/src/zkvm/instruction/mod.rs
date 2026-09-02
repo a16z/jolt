@@ -378,6 +378,9 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstruction::ShiftDataB(_) => LookupTables::ShiftDataB(Default::default()),
             JoltInstruction::ShiftDataH(_) => LookupTables::ShiftDataH(Default::default()),
             JoltInstruction::ShiftDataW(_) => LookupTables::ShiftDataW(Default::default()),
+            JoltInstructionKind::VirtualXORROTL1 => {
+                LookupTables::VirtualXORROTL1(Default::default())
+            }
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -533,7 +536,8 @@ define_rv64imac_trait_impls! {
         VirtualShiftRightBitmaskW, VirtualSRLW, VirtualSRLIW, VirtualSRAW, VirtualSRAIW,
         VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
         VirtualAlignAddr,
-        VirtualShiftDataB, VirtualShiftDataH, VirtualShiftDataW
+        VirtualShiftDataB, VirtualShiftDataH, VirtualShiftDataW,
+        VirtualXORROTL1
     ]
 }
 
@@ -614,6 +618,7 @@ pub mod virtual_window_mask_b;
 pub mod virtual_window_mask_h;
 pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
 pub mod xor;
