@@ -70,7 +70,7 @@ Mind the machine: the reference backend retains ~18 GiB regardless of scale
 and grows steeply with it — large-scale sweeps on the reference backend are
 for big-memory hosts; use `--backend optimized` above small scales.
 
-The span labels are a versioned public schema — taxonomy v1 lives in the
+The span labels are a versioned public schema — the current taxonomy lives in the
 `jolt-profiling` crate docs (`crates/jolt-profiling/src/taxonomy.rs`), the
 normative source for label names, level policy, and the hot-loop rule.
 

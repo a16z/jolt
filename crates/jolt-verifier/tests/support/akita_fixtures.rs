@@ -46,16 +46,21 @@ impl AkitaFixtureCase {
     }
 }
 
+/// The muldiv case: one `OneHotTrace` commitment object and no precommitted objects.
 pub fn akita_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_muldiv)
 }
 
+/// The advice case: both advice kinds, three commitment objects
+/// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`) in one grouped opening.
 pub fn akita_advice_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_advice)
 }
 
+/// The committed-program case: direct bytecode and program-image objects in
+/// the native grouped opening.
 pub fn akita_committed_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_committed_muldiv)

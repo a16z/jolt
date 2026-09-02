@@ -285,7 +285,6 @@ mod akita_tests {
             let config = derive_config(&run);
             let proved = prove_guest(run, config, true, &trusted);
             assert!(proved.proof.untrusted_advice_commitment.is_some());
-            assert!(proved.proof.joint_opening_proof.auxiliary.is_empty());
             verify(&proved).expect("advice proof must verify");
         }
     }
@@ -333,22 +332,17 @@ mod akita_tests {
         };
         verify(&proof).expect("committed Akita proof must verify");
 
-        let mut tampered = proof.clone();
-        tampered.joint_opening_proof.auxiliary.swap(0, 1);
-        assert!(verify(&tampered).is_err());
-        let mut tampered = proof.clone();
-        let _ = tampered.joint_opening_proof.auxiliary.pop();
-        assert!(verify(&tampered).is_err());
+        // A mutated direct bytecode claim breaks the grouped opening.
         let mut tampered = proof;
         let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
             panic!("Akita proofs carry clear claims");
         };
         claims
-            .reconstruction
-            .bytecode
+            .stage7
+            .bytecode_address_phase
             .as_mut()
-            .expect("bytecode reconstruction")
-            .pc_bytes[0] += AkitaField::from_u64(1);
+            .expect("committed proofs carry the bytecode address phase")
+            .chunks[0] += AkitaField::from_u64(1);
         assert!(verify(&tampered).is_err());
     }
 

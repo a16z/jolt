@@ -60,6 +60,13 @@ pub const fn committed_lane_vars() -> usize {
 /// `BytecodeChunk(i)`.
 pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
 
+pub const INVALID_COMMITTED_PROGRAM_IMMEDIATE: &str =
+    "committed-program immediate magnitude exceeds u64::MAX";
+
+pub const fn is_valid_committed_program_immediate(immediate: i128) -> bool {
+    immediate.unsigned_abs() <= u64::MAX as u128
+}
+
 /// Committed bytecode chunking is valid when the chunk count is a nonzero
 /// power of two no larger than [`MAX_COMMITTED_BYTECODE_CHUNK_COUNT`] that
 /// divides the power-of-two bytecode length.
@@ -651,6 +658,15 @@ mod tests {
             },
             JoltInstructionRow::default(),
         ]
+    }
+
+    #[test]
+    fn committed_program_immediate_boundaries_are_explicit() {
+        let limit = u64::MAX as i128;
+        assert!(is_valid_committed_program_immediate(limit));
+        assert!(is_valid_committed_program_immediate(-limit));
+        assert!(!is_valid_committed_program_immediate(1i128 << 64));
+        assert!(!is_valid_committed_program_immediate(-(1i128 << 64)));
     }
 
     #[test]

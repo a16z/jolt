@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use ark_serialize::CanonicalSerialize;
 use jolt_akita::{
-    AdviceScheduleParams, AkitaField, AkitaProverSetup, AkitaScheme, AkitaSetupParams,
-    AkitaVerifierSetup,
+    AkitaField, AkitaProverSetup, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
+    PrecommittedScheduleParams,
 };
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
-use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
+use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_transcript::LegacyBlake2bTranscript;
 use jolt_verifier::{
@@ -24,19 +24,12 @@ use crate::{
 };
 
 use super::one_hot_trace_setup_shape;
-use super::witness::{commit_advice, commit_program_one_hot, AdviceObject};
+use super::witness::{commit_advice, commit_direct_program, AdviceObject};
 
 pub type AkitaVc = NoVectorCommitment<AkitaField>;
 pub type AkitaTranscript = LegacyBlake2bTranscript<AkitaField>;
 pub type AkitaProverPreprocessing = JoltProverPreprocessing<AkitaScheme, AkitaVc>;
 pub type AkitaVerifierPreprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
-
-struct TraceSetups {
-    prover: AkitaProverSetup,
-    verifier: AkitaVerifierSetup,
-    untrusted_advice: Option<AkitaVerifierSetup>,
-    trusted_advice: Option<AkitaVerifierSetup>,
-}
 
 pub fn preprocess_full(
     program: JoltProgramPreprocessing,
@@ -52,67 +45,65 @@ pub fn preprocess_full_with_advice(
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     validate_trace_order(config)?;
-    let setups = trace_setups(&program, config, untrusted_advice, trusted_advice)?;
+    let (pcs_setup, verifier_setup) =
+        grouped_setup(&program, config, untrusted_advice, trusted_advice, &[])?;
     let preprocessing_digest = full_preprocessing_digest(&program)?;
-    let mut verifier = JoltVerifierPreprocessing::new(
+    let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Full(Arc::new(program)),
         preprocessing_digest,
-        setups.verifier,
+        verifier_setup,
         None,
     );
-    verifier.untrusted_advice_setup = setups.untrusted_advice;
-    verifier.trusted_advice_setup = setups.trusted_advice;
     Ok(JoltProverPreprocessing {
         verifier,
-        pcs_setup: setups.prover,
+        pcs_setup,
         committed_program: None,
     })
 }
 
-fn trace_setups(
+/// The grouped packed setup: the canonical `OneHotTrace` object plus every
+/// precommitted object (advice, then direct program objects) opened in one
+/// batch. Building it provisions the grouped schedule rows that commit,
+/// prove, and verify later resolve without planning.
+fn grouped_setup(
     program: &JoltProgramPreprocessing,
     config: &ProverConfig,
     untrusted_advice: bool,
     trusted_advice: bool,
-) -> Result<TraceSetups, PreprocessingError> {
+    direct_program_physical_vars: &[usize],
+) -> Result<(AkitaProverSetup, AkitaVerifierSetup), PreprocessingError> {
     let (shape, layout_digest, one_hot_k) =
         one_hot_trace_setup_shape(config, program.bytecode.code_size).map_err(|error| {
             PreprocessingError::InvalidConfiguration {
                 reason: error.to_string(),
             }
         })?;
-    let untrusted_shape = untrusted_advice
-        .then(|| advice_object_shape(program, JoltAdviceKind::Untrusted))
+    let untrusted_physical_vars = untrusted_advice
+        .then(|| advice_physical_num_vars(program, JoltAdviceKind::Untrusted))
         .transpose()?;
-    let trusted_shape = trusted_advice
-        .then(|| advice_object_shape(program, JoltAdviceKind::Trusted))
+    let trusted_physical_vars = trusted_advice
+        .then(|| advice_physical_num_vars(program, JoltAdviceKind::Trusted))
         .transpose()?;
-    let advice_count = usize::from(untrusted_advice) + usize::from(trusted_advice);
-    let params = if advice_count == 0 {
-        AkitaSetupParams::one_hot_only(shape.num_vars, shape.num_polys, layout_digest, one_hot_k)
-    } else {
-        AkitaSetupParams::one_hot_only_grouped(
+    let precommitted_count = usize::from(untrusted_physical_vars.is_some())
+        + usize::from(trusted_physical_vars.is_some())
+        + direct_program_physical_vars.len();
+    let precommitted_schedule = (precommitted_count > 0).then(|| {
+        PrecommittedScheduleParams::new(
+            untrusted_physical_vars,
+            trusted_physical_vars,
             shape.num_vars,
-            shape.num_polys,
-            shape.num_polys + advice_count,
-            layout_digest,
-            one_hot_k,
-            Some(AdviceScheduleParams::new(
-                untrusted_shape.map(|(num_vars, _)| num_vars),
-                trusted_shape.map(|(num_vars, _)| num_vars),
-                shape.num_vars,
-            )),
         )
-    };
-    let (prover, verifier) = AkitaScheme::setup(params)?;
-    Ok(TraceSetups {
-        prover,
-        verifier,
-        untrusted_advice: untrusted_shape
-            .map(transparent_verifier_setup)
-            .transpose()?,
-        trusted_advice: trusted_shape.map(transparent_verifier_setup).transpose()?,
-    })
+        .with_direct_program_physical_arities(direct_program_physical_vars.to_vec())
+    });
+    let params = AkitaSetupParams::one_hot_only_grouped(
+        shape.num_vars,
+        shape.num_polys,
+        shape.num_polys + precommitted_count,
+        layout_digest,
+        one_hot_k,
+        precommitted_schedule,
+    );
+    Ok(AkitaScheme::setup(params)?)
 }
 
 pub fn preprocess_committed(
@@ -137,45 +128,51 @@ pub fn preprocess_committed_with_advice(
             .ok_or_else(|| PreprocessingError::InvalidCommittedProgram {
                 reason: "entry address is absent from bytecode preprocessing".to_owned(),
             })?;
-    let program_one_hot = commit_program_one_hot::<AkitaScheme>(&program, bytecode_chunk_count)
-        .map_err(|error| PreprocessingError::InvalidCommittedProgram {
-            reason: error.to_string(),
-        })?;
-    let commitments = program_one_hot
+    let trace_order = config.trace_polynomial_order;
+    let direct_program =
+        commit_direct_program::<AkitaScheme>(&program, bytecode_chunk_count, trace_order).map_err(
+            |error| PreprocessingError::InvalidCommittedProgram {
+                reason: error.to_string(),
+            },
+        )?;
+    let direct_program_physical_vars: Vec<usize> = direct_program
         .objects
         .iter()
-        .map(|object| object.commitment.clone())
-        .collect();
-    let verifier_setups = program_one_hot
-        .objects
-        .iter()
-        .map(|object| AkitaScheme::verifier_setup(&object.setup))
+        .map(|object| object.plan.packing().packed_num_vars())
         .collect();
     let committed_program = CommittedProgramPreprocessing {
         meta: metadata,
         memory_layout: program.memory_layout.clone(),
         max_padded_trace_length: program.max_padded_trace_length,
-        program_one_hot_commitments: commitments,
+        direct_program_commitments: direct_program
+            .objects
+            .iter()
+            .map(|object| object.commitment.clone())
+            .collect(),
         bytecode_chunk_count,
+        trace_order,
     };
     let preprocessing_digest = committed_program_digest(&committed_program)?;
-    let setups = trace_setups(&program, config, untrusted_advice, trusted_advice)?;
-    let program = Arc::new(program);
-    let mut verifier = JoltVerifierPreprocessing::new(
+    let (pcs_setup, verifier_setup) = grouped_setup(
+        &program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        &direct_program_physical_vars,
+    )?;
+    let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Committed(committed_program),
         preprocessing_digest,
-        setups.verifier,
+        verifier_setup,
         None,
     );
-    verifier.untrusted_advice_setup = setups.untrusted_advice;
-    verifier.trusted_advice_setup = setups.trusted_advice;
-    verifier.program_one_hot_setups = verifier_setups;
     Ok(JoltProverPreprocessing {
         verifier,
-        pcs_setup: setups.prover,
+        pcs_setup,
         committed_program: Some(CommittedProgramProverData {
-            full: program,
-            program_one_hot,
+            full: Arc::new(program),
+            direct_program,
+            trace_order,
         }),
     })
 }
@@ -239,10 +236,11 @@ pub fn commit_trusted_advice(
     )
 }
 
-fn advice_object_shape(
+/// The physical arity of an advice object sized to the program's advice capacity.
+fn advice_physical_num_vars(
     program: &JoltProgramPreprocessing,
     kind: JoltAdviceKind,
-) -> Result<(usize, [u8; 32]), PreprocessingError> {
+) -> Result<usize, PreprocessingError> {
     let max_bytes = match kind {
         JoltAdviceKind::Trusted => program.memory_layout.max_trusted_advice_size,
         JoltAdviceKind::Untrusted => program.memory_layout.max_untrusted_advice_size,
@@ -252,7 +250,7 @@ fn advice_object_shape(
     })?;
     let word_vars = (max_bytes / 8).next_power_of_two().ilog2() as usize;
     advice_packing_plan(kind, word_vars)
-        .map(|plan| (plan.packing().packed_num_vars(), plan.layout_digest()))
+        .map(|plan| plan.packing().packed_num_vars())
         .map_err(|error| PreprocessingError::InvalidAdvice {
             reason: error.to_string(),
         })
@@ -267,19 +265,12 @@ fn validate_trace_order(config: &ProverConfig) -> Result<(), PreprocessingError>
     Ok(())
 }
 
-fn transparent_verifier_setup(
-    (num_vars, layout_digest): (usize, [u8; 32]),
-) -> Result<<AkitaScheme as CommitmentScheme>::VerifierSetup, PreprocessingError> {
-    AkitaScheme::transparent_object_setup(num_vars, layout_digest)
-        .map(|(_, verifier_setup)| verifier_setup)
-        .map_err(Into::into)
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::jolt_device::MemoryLayout;
     use jolt_akita::{AkitaCommitment, AkitaScheme};
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_riscv::RV64IMAC_JOLT;
     use jolt_verifier::CommittedProgramPreprocessing;
@@ -301,11 +292,12 @@ mod tests {
             meta: full.metadata().unwrap(),
             memory_layout: full.memory_layout,
             max_padded_trace_length: full.max_padded_trace_length,
-            program_one_hot_commitments: vec![
+            direct_program_commitments: vec![
                 AkitaCommitment::default(),
                 AkitaCommitment::default(),
             ],
             bytecode_chunk_count: 1,
+            trace_order: TracePolynomialOrder::CycleMajor,
         };
 
         assert_eq!(

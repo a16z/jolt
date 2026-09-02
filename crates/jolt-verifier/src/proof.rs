@@ -28,27 +28,8 @@ pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 /// opening proof at the unified point.
 #[cfg(not(feature = "akita"))]
 pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
-/// Akita proofs for the prefix-packed OneHotTrace polynomial and each
-/// independently pointed auxiliary object, in canonical object order.
 #[cfg(feature = "akita")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AkitaJointOpeningProof<P> {
-    pub main_batch: P,
-    pub auxiliary: Vec<P>,
-}
-
-#[cfg(feature = "akita")]
-impl<P> AkitaJointOpeningProof<P> {
-    pub fn new(main_batch: P, auxiliary: Vec<P>) -> Self {
-        Self {
-            main_batch,
-            auxiliary,
-        }
-    }
-}
-
-#[cfg(feature = "akita")]
-pub type JointOpeningProof<PCS> = AkitaJointOpeningProof<<PCS as CommitmentScheme>::Proof>;
+pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 
 #[expect(non_snake_case, reason = "Preserves the deployed proof field name.")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,9 +125,12 @@ impl<C> JoltCommitments<C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Clear claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common clear path."
+#[cfg_attr(
+    not(feature = "akita"),
+    expect(
+        clippy::large_enum_variant,
+        reason = "clear claims stay inline on the standard verifier's common path"
+    )
 )]
 #[serde(bound(
     serialize = "F: Serialize, ZkProof: Serialize",
@@ -180,10 +164,6 @@ pub struct ClearProofClaims<F: JoltField> {
     pub stage6a: stage6a::outputs::Stage6aOutputClaims<F>,
     pub stage6b: stage6b::outputs::Stage6bOutputClaims<F>,
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
-    /// The reconstruction phase's claims, at the head of the stage-8 region;
-    /// cells are present exactly when advice or a committed program is.
-    #[cfg(feature = "akita")]
-    pub reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,8 +186,4 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    /// The reconstruction phase, at the head of the stage-8 region; present
-    /// exactly when advice or a committed program is.
-    #[cfg(feature = "akita")]
-    pub reconstruction_sumcheck_proof: Option<SumcheckProof<F, VC::Output>>,
 }
