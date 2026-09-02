@@ -61,3 +61,11 @@ Wrapper prover < 1 s wall-clock on this Mac mini (M-series, 10 cores, 16 GiB, CP
 - P1-H 48ba761f (fable-max, read-only) planner: relation strategy, exact constraint count vs 2^18, public IO, Spartan fork, witness gen, lane split → .journals/plan-relation.md
 - P1-I 0273895c (fable-max, owns main worktree build) field-native Poseidon transcript + e2e Jolt proof with it + prover delta → specs/wrapper-transcript.md, .journals/lanes/transcript.md
 - P1-J a974320a (codex sol-xhigh, own worktree /Volumes/Dev/worktrees/jolt/wrap-gt-compress, branch wrap/gt-compress) compressed GT codec helpers + bytes table → .journals/lanes/gt-compress.md
+
+## 16:15 USER DECISION (binding) → plan v2 (offloading campaign). Poseidon lane I STOPPED. Fr-only+native-Dory design rejected. Blake2b transcript mandatory; Dory verified in-wrapper via offloading; <1 s AND single-digit KB.
+## Wave 1 lanes (measurement gates)
+- W1-K 995aaa4b (codex sol-xhigh, main worktree build) Blake2b-256 compression gadget on R1csBuilder — exact constraints/compression + legacy-transcript per-call hashing + hidden-segment totals @L=18/20 → .journals/lanes/blake2b-gadget.md
+- W1-L 2af7485f (fable-max, read-only) Dory offloading design study — explicit algebra, linear/nonlinear, minimal-knowledge argument, candidate designs w/ numbers, Pareto frontier → .journals/lanes/dory-offload-study.md
+- P1-H 48ba761f (planner) STEERED: Blake2b transcript (count compressions × B), Dory sub-circuit as parameter D
+- P1-J a974320a (gt-compress) continues (size floor for any GT-sending design)
+- Oracle (GPT-5.6 pro) on the Dory offloading question — pending dispatch
