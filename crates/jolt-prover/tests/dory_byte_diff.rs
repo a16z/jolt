@@ -1989,10 +1989,10 @@ mod chunk_boundary {
     /// One power past the streaming chunk (and past the other arms' cap).
     const MAX_PADDED_TRACE_LENGTH: usize = 1 << 17;
 
-    /// sha2 iterations landing the raw trace in `(2^16, 2^17]` at ~3396
-    /// cycles per inlined hash (the legacy perf harness's calibration), so
-    /// the padded trace is exactly 2^17 — asserted below.
-    const SHA2_ITERATIONS: u32 = 30;
+    /// sha2 iterations landing the raw trace in `(2^16, 2^17]` at ~2,120
+    /// cycles per inlined hash (96,410 raw rows, ≥30k of margin to either
+    /// power of two), so the padded trace is exactly 2^17 — asserted below.
+    const SHA2_ITERATIONS: u32 = 45;
 
     #[test]
     fn prover_matches_legacy_on_sha2_chain_across_collect_rows_chunks() {
@@ -2048,7 +2048,8 @@ mod chunk_boundary {
         assert_eq!(
             config.trace_length,
             1usize << 17,
-            "the chunk-boundary gate needs a 2^17 padded trace; retune SHA2_ITERATIONS",
+            "the chunk-boundary gate needs a 2^17 padded trace ({} raw rows); retune SHA2_ITERATIONS",
+            trace_output.trace.rows().len(),
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = Arc::new(TraceBackend::new(
