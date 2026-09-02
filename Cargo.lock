@@ -3867,7 +3867,6 @@ dependencies = [
  "allocative",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "bincode 2.0.1",
- "blake2 0.11.0-rc.6",
  "common",
  "jolt-akita",
  "jolt-blindfold",
