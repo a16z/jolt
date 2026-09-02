@@ -431,7 +431,7 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests may fail loudly")]
 mod tests {
-    use jolt_field::{Fr, RandomSampling};
+    use jolt_field::{Field, Fr};
     use jolt_openings::CommitmentScheme;
     use jolt_poly::Polynomial;
     use jolt_transcript::Transcript;
@@ -446,9 +446,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(73);
         let setup = DoryScheme::setup_prover(num_vars);
         let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-            .collect();
+        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
         let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &setup).unwrap();
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"compressed-dory");
