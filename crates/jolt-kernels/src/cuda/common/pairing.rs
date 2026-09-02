@@ -25,6 +25,7 @@ pub enum TowerProbe {
     Fq12Mul,
     Fq12Sqr,
     Fq12MulBy034,
+    Ell,
 }
 
 impl TowerProbe {
@@ -37,6 +38,24 @@ impl TowerProbe {
             Self::Fq12Mul => (2 * FQ12_LIMBS, FQ12_LIMBS),
             Self::Fq12Sqr => (FQ12_LIMBS, FQ12_LIMBS),
             Self::Fq12MulBy034 => (FQ12_LIMBS + 3 * FQ2_LIMBS, FQ12_LIMBS),
+            Self::Ell => (FQ12_LIMBS + 3 * FQ2_LIMBS + 2 * FQ_LIMBS, FQ12_LIMBS),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum G2StepProbe {
+    DoubleStep,
+    AddStep,
+    MulByChar,
+}
+
+impl G2StepProbe {
+    const fn widths(self) -> (usize, usize) {
+        match self {
+            Self::DoubleStep => (3 * FQ2_LIMBS, 12 * FQ2_LIMBS),
+            Self::AddStep => (5 * FQ2_LIMBS, 12 * FQ2_LIMBS),
+            Self::MulByChar => (2 * FQ2_LIMBS, 4 * FQ2_LIMBS),
         }
     }
 }
@@ -157,6 +176,7 @@ impl CudaKernelContext {
             TowerProbe::Fq12Mul => &self.fq12_mul_probe,
             TowerProbe::Fq12Sqr => &self.fq12_sqr_probe,
             TowerProbe::Fq12MulBy034 => &self.fq12_mul_by_034_probe,
+            TowerProbe::Ell => &self.ell_probe,
         };
         let mut builder = self.stream().launch_builder(function);
         let _ = builder.arg(&device_in);
@@ -169,6 +189,46 @@ impl CudaKernelContext {
         // `elements`, and the two are distinct allocations, so no thread aliases
         // another's write. Threads with `i >= count` return before any access.
         let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.download_u64(&device_out)
+    }
+
+    pub fn g2_step_probe(&self, op: G2StepProbe, input: &[u64]) -> Result<Vec<u64>, CudaError> {
+        let (in_width, out_width) = op.widths();
+        if in_width == 0 || !input.len().is_multiple_of(in_width) {
+            return Err(CudaError::LengthMismatch {
+                expected: in_width,
+                got: input.len(),
+            });
+        }
+        let elements = input.len() / in_width;
+        if elements == 0 {
+            return Ok(Vec::new());
+        }
+        let count = Self::count_of(elements)?;
+        let device_in = self.upload_u64_slice(input)?;
+        let mut device_out = self.alloc_u64(elements * out_width)?;
+        let function = match op {
+            G2StepProbe::DoubleStep => &self.g2_double_step_probe,
+            G2StepProbe::AddStep => &self.g2_add_step_probe,
+            G2StepProbe::MulByChar => &self.g2_mul_by_char_probe,
+        };
+        self.with_pairing_constants(|constants| {
+            let mut builder = self.stream().launch_builder(function);
+            let _ = builder.arg(&device_in);
+            let _ = builder.arg(&constants.values);
+            let _ = builder.arg(&mut device_out);
+            let _ = builder.arg(&count);
+            // SAFETY: thread `i < count` reads exactly the `in_width` u64s at
+            // `input[i * in_width]` plus the `PC_WORDS` pairing constants whose
+            // length is fixed at upload, and writes exactly the `out_width` u64s
+            // at `output[i * out_width]`. The upload holds `count * in_width`
+            // u64s and the allocation `count * out_width`, both sized above from
+            // the same `elements`, and the two are distinct allocations, so no
+            // thread aliases another's write. Threads with `i >= count` return
+            // before any access.
+            let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+            Ok(())
+        })?;
         self.download_u64(&device_out)
     }
 
@@ -995,6 +1055,118 @@ mod tests {
             probe_fq12(TowerProbe::Fq12MulBy034, &input),
             expected,
             "fq12_mul_by_034 diverged from arkworks"
+        );
+    }
+
+    fn fq2_scale(value: Fq2, scale: Fq) -> Fq2 {
+        Fq2::new(value.c0 * scale, value.c1 * scale)
+    }
+
+    fn probe_g2_step_pair(op: G2StepProbe, input: &[u64]) -> (Vec<Fq2>, Vec<Fq2>) {
+        let context = shared_context().expect("a CUDA device");
+        let (_, out_width) = op.widths();
+        let raw = context.g2_step_probe(op, input).expect("a g2 step probe");
+        let half = out_width / 2;
+        let mut plain = Vec::new();
+        let mut warp = Vec::new();
+        for chunk in raw.chunks_exact(out_width) {
+            plain.extend(chunk[..half].chunks_exact(FQ2_LIMBS).map(fq2));
+            warp.extend(chunk[half..].chunks_exact(FQ2_LIMBS).map(fq2));
+        }
+        (plain, warp)
+    }
+
+    fn g2_step_input(count: usize, parts: usize, rng: &mut ChaCha20Rng) -> Vec<u64> {
+        let mut input = Vec::new();
+        for _ in 0..count {
+            let mut emitted = 0;
+            while emitted < parts {
+                let point = G2Projective::rand(rng);
+                for value in [&point.x, &point.y, &point.z] {
+                    if emitted < parts {
+                        input.extend_from_slice(&fq2_words(value));
+                        emitted += 1;
+                    }
+                }
+            }
+        }
+        input
+    }
+
+    #[test]
+    fn ell_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_900);
+        let samples = tower_fq12_samples(&mut rng);
+        let parts = tower_fq2_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, value) in samples.iter().enumerate() {
+            let coeff0 = parts[index % parts.len()];
+            let coeff1 = parts[(index + 2) % parts.len()];
+            let coeff2 = parts[(index + 4) % parts.len()];
+            let px = Fq::rand(&mut rng);
+            let py = Fq::rand(&mut rng);
+            input.extend_from_slice(&fq12_words(value));
+            input.extend_from_slice(&fq2_words(&coeff0));
+            input.extend_from_slice(&fq2_words(&coeff1));
+            input.extend_from_slice(&fq2_words(&coeff2));
+            input.extend_from_slice(&px.0 .0);
+            input.extend_from_slice(&py.0 .0);
+            let sparse = Fq12::new(
+                Fq6::new(fq2_scale(coeff0, py), Fq2::ZERO, Fq2::ZERO),
+                Fq6::new(fq2_scale(coeff1, px), coeff2, Fq2::ZERO),
+            );
+            expected.push(*value * sparse);
+        }
+        assert_eq!(
+            probe_fq12(TowerProbe::Ell, &input),
+            expected,
+            "ell diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn g2_double_step_matches_the_warp_implementation() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(8_000);
+        let input = g2_step_input(12, 3, &mut rng);
+        let (plain, warp) = probe_g2_step_pair(G2StepProbe::DoubleStep, &input);
+        assert_eq!(
+            plain, warp,
+            "g2_double_step diverged from the mw_ implementation it mirrors"
+        );
+    }
+
+    #[test]
+    fn g2_add_step_matches_the_warp_implementation() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(8_100);
+        let input = g2_step_input(12, 5, &mut rng);
+        let (plain, warp) = probe_g2_step_pair(G2StepProbe::AddStep, &input);
+        assert_eq!(
+            plain, warp,
+            "g2_add_step diverged from the mw_ implementation it mirrors"
+        );
+    }
+
+    #[test]
+    fn g2_mul_by_char_matches_the_warp_implementation() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(8_200);
+        let input = g2_step_input(12, 2, &mut rng);
+        let (plain, warp) = probe_g2_step_pair(G2StepProbe::MulByChar, &input);
+        assert_eq!(
+            plain, warp,
+            "g2_mul_by_char diverged from the mw_ implementation it mirrors"
         );
     }
 }

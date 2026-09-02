@@ -829,3 +829,85 @@ extern "C" __global__ void fq12_mul_by_034_probe(const u64 *__restrict__ in,
     fq12_mul_by_034(a, a + FQ12_LIMBS, a + FQ12_LIMBS + FQ2_LIMBS,
                     a + FQ12_LIMBS + 2 * FQ2_LIMBS, out + (unsigned long long)i * FQ12_LIMBS);
 }
+
+extern "C" __global__ void ell_probe(const u64 *__restrict__ in, u64 *__restrict__ out,
+                                    unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const u64 *src = in + (unsigned long long)i * (FQ12_LIMBS + 3 * FQ2_LIMBS + 2 * LIMBS);
+    u64 f[FQ12_LIMBS];
+    for (int k = 0; k < FQ12_LIMBS; k++) f[k] = src[k];
+    ell(f, src + FQ12_LIMBS, src + FQ12_LIMBS + 3 * FQ2_LIMBS,
+        src + FQ12_LIMBS + 3 * FQ2_LIMBS + LIMBS);
+    u64 *dst = out + (unsigned long long)i * FQ12_LIMBS;
+    for (int k = 0; k < FQ12_LIMBS; k++) dst[k] = f[k];
+}
+
+extern "C" __global__ void g2_double_step_probe(const u64 *__restrict__ in,
+                                               const u64 *__restrict__ consts,
+                                               u64 *__restrict__ out, unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const u64 *src = in + (unsigned long long)i * 3 * FQ2_LIMBS;
+    u64 *dst = out + (unsigned long long)i * 12 * FQ2_LIMBS;
+    u64 rx[FQ2_LIMBS], ry[FQ2_LIMBS], rz[FQ2_LIMBS], coeff[3 * FQ2_LIMBS];
+
+    fq2_copy(src, rx);
+    fq2_copy(src + FQ2_LIMBS, ry);
+    fq2_copy(src + 2 * FQ2_LIMBS, rz);
+    g2_double_step(rx, ry, rz, consts, coeff);
+    fq2_copy(rx, dst);
+    fq2_copy(ry, dst + FQ2_LIMBS);
+    fq2_copy(rz, dst + 2 * FQ2_LIMBS);
+    for (int k = 0; k < 3 * FQ2_LIMBS; k++) dst[3 * FQ2_LIMBS + k] = coeff[k];
+
+    fq2_copy(src, rx);
+    fq2_copy(src + FQ2_LIMBS, ry);
+    fq2_copy(src + 2 * FQ2_LIMBS, rz);
+    mw_g2_double_step(rx, ry, rz, consts, coeff);
+    fq2_copy(rx, dst + 6 * FQ2_LIMBS);
+    fq2_copy(ry, dst + 7 * FQ2_LIMBS);
+    fq2_copy(rz, dst + 8 * FQ2_LIMBS);
+    for (int k = 0; k < 3 * FQ2_LIMBS; k++) dst[9 * FQ2_LIMBS + k] = coeff[k];
+}
+
+extern "C" __global__ void g2_add_step_probe(const u64 *__restrict__ in,
+                                            const u64 *__restrict__ consts,
+                                            u64 *__restrict__ out, unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const u64 *src = in + (unsigned long long)i * 5 * FQ2_LIMBS;
+    const u64 *qx = src + 3 * FQ2_LIMBS;
+    const u64 *qy = src + 4 * FQ2_LIMBS;
+    u64 *dst = out + (unsigned long long)i * 12 * FQ2_LIMBS;
+    u64 rx[FQ2_LIMBS], ry[FQ2_LIMBS], rz[FQ2_LIMBS], coeff[3 * FQ2_LIMBS];
+
+    fq2_copy(src, rx);
+    fq2_copy(src + FQ2_LIMBS, ry);
+    fq2_copy(src + 2 * FQ2_LIMBS, rz);
+    g2_add_step(rx, ry, rz, qx, qy, coeff);
+    fq2_copy(rx, dst);
+    fq2_copy(ry, dst + FQ2_LIMBS);
+    fq2_copy(rz, dst + 2 * FQ2_LIMBS);
+    for (int k = 0; k < 3 * FQ2_LIMBS; k++) dst[3 * FQ2_LIMBS + k] = coeff[k];
+
+    fq2_copy(src, rx);
+    fq2_copy(src + FQ2_LIMBS, ry);
+    fq2_copy(src + 2 * FQ2_LIMBS, rz);
+    mw_g2_add_step(rx, ry, rz, qx, qy, coeff);
+    fq2_copy(rx, dst + 6 * FQ2_LIMBS);
+    fq2_copy(ry, dst + 7 * FQ2_LIMBS);
+    fq2_copy(rz, dst + 8 * FQ2_LIMBS);
+    for (int k = 0; k < 3 * FQ2_LIMBS; k++) dst[9 * FQ2_LIMBS + k] = coeff[k];
+}
+
+extern "C" __global__ void g2_mul_by_char_probe(const u64 *__restrict__ in,
+                                               const u64 *__restrict__ consts,
+                                               u64 *__restrict__ out, unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const u64 *src = in + (unsigned long long)i * 2 * FQ2_LIMBS;
+    u64 *dst = out + (unsigned long long)i * 4 * FQ2_LIMBS;
+    g2_mul_by_char(src, src + FQ2_LIMBS, consts, dst, dst + FQ2_LIMBS);
+    mw_g2_mul_by_char(src, src + FQ2_LIMBS, consts, dst + 2 * FQ2_LIMBS, dst + 3 * FQ2_LIMBS);
+}
