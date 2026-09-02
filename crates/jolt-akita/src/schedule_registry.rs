@@ -20,6 +20,7 @@ use akita_types::{
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::planning::plan_schedule;
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -179,15 +180,7 @@ fn plan_row<Cfg: CommitmentConfig>(
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
 ) -> Result<ResolvedScheduleRow, AkitaError> {
     let policy = policy_of::<Cfg>();
-    let schedule = akita_planner::find_schedule(
-        key,
-        honest_fold_policy_of::<Cfg>(),
-        precommitted_honest_fold_policies,
-        &policy,
-        Cfg::ring_challenge_config,
-    )?
-    .schedule;
-    schedule.validate_structure()?;
+    let schedule = plan_schedule::<Cfg>(key, precommitted_honest_fold_policies)?;
     reject_setup_prefix_contributions(&schedule)?;
 
     let profiles = CommittedGroupBatchProfile {

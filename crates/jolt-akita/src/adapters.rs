@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt, io::Cursor, sync::Arc, sync::OnceLock};
+use std::{fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
@@ -10,7 +10,7 @@ use akita_types::{
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup,
 };
-use jolt_field::{CanonicalBytes, One, Zero};
+use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -50,7 +50,6 @@ pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
 pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
-pub(crate) type AkitaBackendSparsePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField>;
 pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaField>;
 pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
@@ -653,7 +652,6 @@ pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
     OneHot(Arc<[AkitaBackendOneHotPoly]>),
     TraceOneHot(TracePackedOneHot),
-    SparseUnit(Arc<[AkitaBackendSparsePoly]>),
 }
 
 impl Default for AkitaHintPolynomials {
@@ -665,7 +663,7 @@ impl Default for AkitaHintPolynomials {
 impl AkitaHintPolynomials {
     pub(crate) const fn backend_flavor(&self) -> AkitaBackendFlavor {
         match self {
-            Self::Dense(_) | Self::SparseUnit(_) => AkitaBackendFlavor::Dense,
+            Self::Dense(_) => AkitaBackendFlavor::Dense,
             Self::OneHot(_) | Self::TraceOneHot(_) => AkitaBackendFlavor::OneHot,
         }
     }
@@ -675,7 +673,6 @@ impl AkitaHintPolynomials {
             Self::Dense(_) => "dense",
             Self::OneHot(_) => "one_hot",
             Self::TraceOneHot(_) => "trace_one_hot",
-            Self::SparseUnit(_) => "sparse_unit",
         }
     }
 
@@ -684,7 +681,6 @@ impl AkitaHintPolynomials {
             Self::Dense(polys) => polys.len(),
             Self::OneHot(polys) => polys.len(),
             Self::TraceOneHot(_) => 1,
-            Self::SparseUnit(polys) => polys.len(),
         }
     }
 
@@ -696,7 +692,7 @@ impl AkitaHintPolynomials {
             Self::TraceOneHot(polynomial) => {
                 akita_prover::RootPolyMeta::onehot_chunk_size(polynomial)
             }
-            Self::Dense(_) | Self::SparseUnit(_) => None,
+            Self::Dense(_) => None,
         }
     }
 }
@@ -804,48 +800,6 @@ pub(crate) fn one_hot_setup_verifier(
             "unsupported Akita one-hot K={one_hot_k}"
         ))),
     }
-}
-
-pub(crate) fn sparse_unit_polynomial(
-    num_vars: usize,
-    indices: impl IntoIterator<Item = usize>,
-) -> Result<AkitaBackendSparsePoly, OpeningsError> {
-    let domain_size = domain_size(num_vars).ok_or_else(|| {
-        invalid_batch(format!(
-            "Akita sparse polynomial dimension {num_vars} exceeds usize bit width"
-        ))
-    })?;
-    if domain_size < AKITA_SOURCE_RING_DIMENSION {
-        return Err(invalid_batch(format!(
-            "Akita sparse polynomial domain {domain_size} is smaller than the minimum source ring dimension {AKITA_SOURCE_RING_DIMENSION}"
-        )));
-    }
-
-    let mut seen = BTreeSet::new();
-    let mut evals = vec![AkitaField::zero(); domain_size];
-    for index in indices {
-        if index >= domain_size {
-            return Err(invalid_batch(format!(
-                "Akita sparse polynomial index {index} outside domain size {domain_size}"
-            )));
-        }
-        if !seen.insert(index) {
-            return Err(invalid_batch(format!(
-                "Akita sparse polynomial index {index} appears more than once"
-            )));
-        }
-        let akita_index = jolt_to_akita_index(num_vars, index);
-        let eval = evals
-            .get_mut(akita_index)
-            .ok_or_else(|| invalid_batch("Akita sparse polynomial index reversal overflow"))?;
-        *eval = AkitaField::one();
-    }
-
-    AkitaBackendSparsePoly::from_field_evals(num_vars, evals).map_err(|error| {
-        invalid_batch(format!(
-            "Akita sparse polynomial construction failed: {error}"
-        ))
-    })
 }
 
 #[doc(hidden)]

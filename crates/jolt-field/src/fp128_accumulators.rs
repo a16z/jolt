@@ -1,16 +1,14 @@
-use core::marker::PhantomData;
-
 use crate::signed::S256;
 use crate::{Accumulator, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Ring, Unreduced};
 
 /// Deferred-reduction accumulator for fp128 products.
 #[derive(Clone, Copy)]
-pub struct Fp128Accumulator<const P: u128>(Fp128ProductAccum, PhantomData<Fp128<P>>);
+pub struct Fp128Accumulator<const P: u128>(Fp128ProductAccum);
 
 impl<const P: u128> Default for Fp128Accumulator<P> {
     #[inline(always)]
     fn default() -> Self {
-        Self(Fp128ProductAccum([0; 4]), PhantomData)
+        Self(Fp128ProductAccum([0; 4]))
     }
 }
 
@@ -56,7 +54,6 @@ impl<const P: u128> Accumulator for Fp128Accumulator<P> {
 pub struct Fp128SignedAccumulator<const P: u128> {
     pos: Fp128MulU64Accum,
     neg: Fp128MulU64Accum,
-    marker: PhantomData<Fp128<P>>,
 }
 
 impl<const P: u128> Default for Fp128SignedAccumulator<P> {
@@ -65,7 +62,6 @@ impl<const P: u128> Default for Fp128SignedAccumulator<P> {
         Self {
             pos: Fp128MulU64Accum([0; 3]),
             neg: Fp128MulU64Accum([0; 3]),
-            marker: PhantomData,
         }
     }
 }

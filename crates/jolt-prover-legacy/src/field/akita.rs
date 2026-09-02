@@ -327,12 +327,11 @@ fn elem_to_field(a: &BigInt<2>) -> AkitaField {
 /// value, which is equivalent modulo p by linearity of the final reduction.
 #[inline(always)]
 fn mul_mag_reduced<const M: usize>(a: AkitaField, mag: &BigInt<M>) -> AkitaField {
-    // Reduce the magnitude first, then multiply in the field: equal modulo p
-    // to reducing the full 2+M-limb product. The shared `jolt_field::Fp128`
-    // dropped the pre-cutover `mul_wide_limbs` specializations (this glue was
-    // their only consumer); `solinas_reduce` accepts ≤10 limbs, covering the
-    // M ∈ {3, 4} magnitudes callers pass (S160/S192/S256).
-    a * AkitaField::solinas_reduce(&mag.0)
+    match M {
+        0..=3 => AkitaField::solinas_reduce(&a.mul_wide_limbs::<M, 5>(mag.0)),
+        4 => AkitaField::solinas_reduce(&a.mul_wide_limbs::<M, 6>(mag.0)),
+        _ => a * AkitaField::solinas_reduce(&mag.0),
+    }
 }
 
 impl JoltField for AkitaFp128 {

@@ -229,8 +229,7 @@ impl AkitaNativeBatching {
                 AkitaHintPolynomials::Dense(polys) if polys.len() == 1 => Arc::clone(polys),
                 AkitaHintPolynomials::Dense(_)
                 | AkitaHintPolynomials::OneHot(_)
-                | AkitaHintPolynomials::TraceOneHot(_)
-                | AkitaHintPolynomials::SparseUnit(_) => {
+                | AkitaHintPolynomials::TraceOneHot(_) => {
                     return Err(invalid_batch(format!(
                         "Akita {} hint must retain one dense source",
                         entry.role.diagnostic_name()
@@ -253,9 +252,7 @@ impl AkitaNativeBatching {
             AkitaHintPolynomials::OneHot(polys) if polys.len() == 1 => {
                 GroupedRootSource::OneHot(Arc::clone(polys))
             }
-            AkitaHintPolynomials::Dense(_)
-            | AkitaHintPolynomials::OneHot(_)
-            | AkitaHintPolynomials::SparseUnit(_) => {
+            AkitaHintPolynomials::Dense(_) | AkitaHintPolynomials::OneHot(_) => {
                 return Err(invalid_batch(
                     "Akita main-trace hint must retain one one-hot source",
                 ))
@@ -533,9 +530,7 @@ fn validate_witness(
     }
     if matches!(
         hint.polynomials,
-        AkitaHintPolynomials::OneHot(_)
-            | AkitaHintPolynomials::TraceOneHot(_)
-            | AkitaHintPolynomials::SparseUnit(_)
+        AkitaHintPolynomials::OneHot(_) | AkitaHintPolynomials::TraceOneHot(_)
     ) && !polynomials.iter().all(|polynomial| polynomial.is_one_hot())
     {
         return Err(invalid_batch(format!(
@@ -597,40 +592,6 @@ where
         vec![backend_hint],
         vec![polynomials],
     )
-}
-
-/// Dense-flavor batched prove shared by the dense and sparse-unit paths —
-/// they differ only in the backend polynomial type, whose opening-view trait
-/// chain is too deep to name generically, hence a macro.
-macro_rules! prove_dense_backend {
-    ($setup:expr, $point:expr, $evaluations:expr, $polynomials:expr, $commitment:expr, $hint:expr, $transcript:expr) => {{
-        let backend_commitment = $commitment;
-        let opening = single_group_batch::<AkitaConfig, _>(
-            $point,
-            $evaluations,
-            $polynomials,
-            backend_commitment,
-            $hint,
-        )
-        .map_err(akita_error)?;
-        let selection = opening.selection();
-        let (backend_prover_setup, prepared_backend_setup) = $setup.dense_backend()?;
-        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
-        let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
-        let transcript = $transcript;
-        let proof = with_backend_pool(|| {
-            AkitaBackendScheme::batched_prove(
-                backend_prover_setup,
-                opening,
-                &releasing_stack,
-                transcript,
-                BasisMode::Lagrange,
-            )
-        })
-        .map_err(prove_failed)?;
-        (selection, proof)
-    }};
 }
 
 /// The one-hot backend consumes the point in reversed variable order and uses
@@ -746,15 +707,30 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         let (selection, backend_proof) = match &hint.polynomials {
             AkitaHintPolynomials::Dense(dense) => {
                 let refs = dense.iter().collect::<Vec<_>>();
-                prove_dense_backend!(
-                    setup,
+                let opening = single_group_batch::<AkitaConfig, _>(
                     point,
                     &evaluations,
                     &refs,
                     backend_commitment,
                     backend_hint,
-                    &mut akita_transcript
                 )
+                .map_err(akita_error)?;
+                let selection = opening.selection();
+                let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
+                let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+                let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
+                let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
+                let proof = with_backend_pool(|| {
+                    AkitaBackendScheme::batched_prove(
+                        backend_prover_setup,
+                        opening,
+                        &releasing_stack,
+                        &mut akita_transcript,
+                        BasisMode::Lagrange,
+                    )
+                })
+                .map_err(prove_failed)?;
+                (selection, proof)
             }
             AkitaHintPolynomials::OneHot(one_hot) => {
                 let refs = one_hot.iter().collect::<Vec<_>>();
@@ -779,18 +755,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                     backend_hint,
                     &mut akita_transcript,
                 )?
-            }
-            AkitaHintPolynomials::SparseUnit(sparse) => {
-                let refs = sparse.iter().collect::<Vec<_>>();
-                prove_dense_backend!(
-                    setup,
-                    point,
-                    &evaluations,
-                    &refs,
-                    backend_commitment,
-                    backend_hint,
-                    &mut akita_transcript
-                )
             }
         };
 

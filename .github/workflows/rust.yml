@@ -407,10 +407,7 @@ jobs:
       # (with live tampers) plus the four byte-diff ratchets asserting
       # wire-for-wire equality with the legacy packed prover.
       - name: Run jolt-prover tests with akita feature
-        # Each byte-diff arm retains both modular and legacy proof artifacts.
-        # Running four arms concurrently exhausts hosted-runner memory and
-        # causes the runner service to terminate the otherwise healthy suite.
-        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
