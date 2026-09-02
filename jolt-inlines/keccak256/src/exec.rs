@@ -1,12 +1,11 @@
-use crate::sequence_builder::{ROTATION_OFFSETS, ROUND_CONSTANTS};
+use crate::sequence_builder::{pi_destination, ROTATION_OFFSETS, ROUND_CONSTANTS};
+#[cfg(test)]
+use crate::RATE_IN_BYTES;
 use crate::{Keccak256State, NUM_LANES};
 
 // Host-side Keccak-256 implementation for reference and testing.
-#[cfg(all(test, feature = "host"))]
+#[cfg(test)]
 pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
-    // Keccak-256 parameters.
-    const RATE_IN_BYTES: usize = 136; // 1088-bit rate
-
     // NUM_LANES × 64-bit state lanes initialised to zero.
     let mut state = [0u64; NUM_LANES];
 
@@ -87,9 +86,7 @@ pub(crate) fn execute_rho_and_pi(state: &mut Keccak256State) {
     let mut b = [0u64; NUM_LANES];
     for x in 0..5 {
         for y in 0..5 {
-            let nx = y;
-            let ny = (2 * x + 3 * y) % 5;
-            // Definitely [x][y] here. That behavior allows the test to pass.
+            let (nx, ny) = pi_destination((x, y));
             b[nx + 5 * ny] = state[x + 5 * y].rotate_left(ROTATION_OFFSETS[x][y]);
         }
     }

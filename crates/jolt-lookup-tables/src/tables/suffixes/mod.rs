@@ -56,6 +56,7 @@ mod window_sign_pow2;
 mod x31_y0;
 mod xor;
 mod xor_rot;
+mod xor_rotl1;
 mod xor_rotw;
 
 use align_addr::AlignAddrSuffix;
@@ -108,6 +109,7 @@ use window_sign_pow2::WindowSignPow2Suffix;
 use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
+use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
 use xor_rotw::XorRotWSuffix;
 
 use jolt_field::JoltField;
@@ -191,6 +193,9 @@ pub enum Suffixes {
     OffsetScaleB,
     OffsetScaleH,
     OffsetScaleW,
+    XorRotL1Pairs,
+    TopYBit,
+    BottomXBit,
 }
 
 /// Total number of suffix variants.
@@ -216,6 +221,8 @@ impl Suffixes {
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
                 | Suffixes::WindowSign
+                | Suffixes::TopYBit
+                | Suffixes::BottomXBit
         )
     }
 
@@ -282,6 +289,9 @@ impl Suffixes {
             Suffixes::OffsetScaleB => OffsetScaleSuffix::<1>::suffix_mle(b),
             Suffixes::OffsetScaleH => OffsetScaleSuffix::<2>::suffix_mle(b),
             Suffixes::OffsetScaleW => OffsetScaleSuffix::<4>::suffix_mle(b),
+            Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
+            Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
+            Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
         }
     }
 
