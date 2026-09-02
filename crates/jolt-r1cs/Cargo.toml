@@ -20,6 +20,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 blake2.workspace = true
+blake3.workspace = true
 hex.workspace = true
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 rand_chacha = { workspace = true }

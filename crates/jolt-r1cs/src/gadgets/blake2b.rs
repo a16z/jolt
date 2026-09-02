@@ -2,7 +2,8 @@
 
 use jolt_field::JoltField;
 
-use crate::{LinearCombination, R1csBuilder, Variable};
+use super::bit::{xor_word, Bit};
+use crate::{LinearCombination, R1csBuilder};
 
 const WORD_BITS: usize = 64;
 const IV: [u64; 8] = [
@@ -31,82 +32,7 @@ const SIGMA: [[usize; 16]; 12] = [
 ];
 
 /// A boolean value backed by either a constant or an R1CS variable.
-#[derive(Clone, Copy, Debug)]
-pub struct Blake2bBit {
-    variable: Option<Variable>,
-    negated: bool,
-    value: bool,
-}
-
-impl Blake2bBit {
-    /// Allocates a boolean-constrained witness variable.
-    pub fn allocate<F: JoltField>(builder: &mut R1csBuilder<F>, value: bool) -> Self {
-        let variable = builder.alloc(F::from_u64(u64::from(value)));
-        let bit = LinearCombination::variable(variable);
-        builder.assert_product(
-            bit.clone(),
-            LinearCombination::one() - bit,
-            LinearCombination::zero(),
-        );
-        Self {
-            variable: Some(variable),
-            negated: false,
-            value,
-        }
-    }
-
-    /// Creates a constant boolean without allocating a variable.
-    pub const fn constant(value: bool) -> Self {
-        Self {
-            variable: None,
-            negated: false,
-            value,
-        }
-    }
-
-    /// Returns the assigned boolean value.
-    pub const fn value(self) -> bool {
-        self.value
-    }
-
-    fn allocate_unchecked<F: JoltField>(builder: &mut R1csBuilder<F>, value: bool) -> Self {
-        Self {
-            variable: Some(builder.alloc(F::from_u64(u64::from(value)))),
-            negated: false,
-            value,
-        }
-    }
-
-    fn not(mut self) -> Self {
-        self.value = !self.value;
-        if self.variable.is_some() {
-            self.negated = !self.negated;
-        }
-        self
-    }
-
-    fn linear_combination<F: JoltField>(self) -> LinearCombination<F> {
-        match (self.variable, self.negated) {
-            (None, _) => LinearCombination::constant(F::from_u64(u64::from(self.value))),
-            (Some(variable), false) => LinearCombination::variable(variable),
-            (Some(variable), true) => {
-                LinearCombination::one() - LinearCombination::variable(variable)
-            }
-        }
-    }
-
-    fn add_scaled<F: JoltField>(self, target: &mut LinearCombination<F>, scale: F) {
-        match (self.variable, self.negated, self.value) {
-            (None, _, true) => target.terms.push((Variable::ONE, scale)),
-            (None, _, false) => {}
-            (Some(variable), false, _) => target.terms.push((variable, scale)),
-            (Some(variable), true, _) => {
-                target.terms.push((Variable::ONE, scale));
-                target.terms.push((variable, -scale));
-            }
-        }
-    }
-}
+pub type Blake2bBit = Bit;
 
 /// A little-endian 64-bit BLAKE2b word.
 pub type Blake2bWord = [Blake2bBit; WORD_BITS];
@@ -126,57 +52,6 @@ pub fn word_value(word: &Blake2bWord) -> u64 {
     word.iter().enumerate().fold(0, |value, (bit, assigned)| {
         value | (u64::from(assigned.value()) << bit)
     })
-}
-
-fn xor_bit<F: JoltField>(
-    builder: &mut R1csBuilder<F>,
-    lhs: Blake2bBit,
-    rhs: Blake2bBit,
-) -> Blake2bBit {
-    match (lhs.variable, rhs.variable) {
-        (None, None) => Blake2bBit::constant(lhs.value ^ rhs.value),
-        (None, Some(_)) => {
-            if lhs.value {
-                rhs.not()
-            } else {
-                rhs
-            }
-        }
-        (Some(_), None) => {
-            if rhs.value {
-                lhs.not()
-            } else {
-                lhs
-            }
-        }
-        (Some(lhs_variable), Some(rhs_variable)) if lhs_variable == rhs_variable => {
-            Blake2bBit::constant(lhs.negated ^ rhs.negated)
-        }
-        (Some(_), Some(_)) => {
-            let output_bit = Blake2bBit::allocate_unchecked(builder, lhs.value ^ rhs.value);
-            let lhs = lhs.linear_combination();
-            let rhs = rhs.linear_combination();
-            let output = output_bit.linear_combination();
-            builder.assert_product(
-                lhs.clone().scale(F::from_u64(2)),
-                rhs.clone(),
-                lhs + rhs - output,
-            );
-            output_bit
-        }
-    }
-}
-
-#[expect(
-    clippy::indexing_slicing,
-    reason = "word construction visits exactly the 64 indices of both inputs"
-)]
-fn xor_word<F: JoltField>(
-    builder: &mut R1csBuilder<F>,
-    lhs: &Blake2bWord,
-    rhs: &Blake2bWord,
-) -> Blake2bWord {
-    std::array::from_fn(|bit| xor_bit(builder, lhs[bit], rhs[bit]))
 }
 
 fn rotate_right(mut word: Blake2bWord, amount: usize) -> Blake2bWord {
@@ -380,7 +255,7 @@ mod tests {
     use rand_core::{RngCore, SeedableRng};
 
     use super::*;
-    use crate::ConstraintMatrices;
+    use crate::{ConstraintMatrices, Variable};
 
     fn digest_gadget(
         builder: &mut R1csBuilder<Fr>,

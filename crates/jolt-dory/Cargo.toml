@@ -24,14 +24,22 @@ ark-ec = { workspace = true }
 ark-serialize = { workspace = true }
 
 [dev-dependencies]
+ark-ff = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
+num-bigint = { workspace = true }
+num-integer = { workspace = true }
+num-traits = { workspace = true }
 serde_json = { workspace = true }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true }
 
 [[bench]]
 name = "dory"
+harness = false
+
+[[bench]]
+name = "deferred_check_counts"
 harness = false
 
 [package.metadata.cargo-machete]
