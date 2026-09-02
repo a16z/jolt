@@ -53,6 +53,7 @@ use window_sign_pow2::WindowSignPow2Prefix;
 use word_msb::WordMsbPrefix;
 use xor::XorPrefix;
 use xor_rot::XorRotPrefix;
+use xor_rotl1::{XorRotL1AccPrefix, XorRotL1StraddlePrefix, XorRotL1WrapPrefix};
 use xor_rotw::XorRotWPrefix;
 
 pub mod align_addr;
@@ -98,6 +99,7 @@ pub mod window_sign_pow2;
 pub mod word_msb;
 pub mod xor;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
@@ -206,6 +208,9 @@ pub enum Prefixes {
     OffsetScaleH,
     OffsetScaleW,
     AlignAddr,
+    XorRotL1Acc,
+    XorRotL1Straddle,
+    XorRotL1Wrap,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -289,6 +294,11 @@ impl Prefixes {
             Prefixes::XorRotW22 => XorRotWPrefix::<XLEN, 22>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRotW19 => XorRotWPrefix::<XLEN, 19>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRotW6 => XorRotWPrefix::<XLEN, 6>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotL1Acc => XorRotL1AccPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotL1Straddle => {
+                XorRotL1StraddlePrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::XorRotL1Wrap => XorRotL1WrapPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LessThan => LessThanPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LeftOperandIsZero => {
@@ -541,6 +551,19 @@ impl Prefixes {
                 j,
                 suffix_len,
             ),
+            Prefixes::XorRotL1Acc => {
+                XorRotL1AccPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
+            }
+            Prefixes::XorRotL1Straddle => XorRotL1StraddlePrefix::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::XorRotL1Wrap => {
+                XorRotL1WrapPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
+            }
             Prefixes::Eq => {
                 EqPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
             }
