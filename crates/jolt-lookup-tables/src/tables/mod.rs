@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn proof_format_indices_are_stable() {
-        const EXPECTED: [&str; 51] = [
+        const EXPECTED: [&str; 54] = [
             "RangeCheck",
             "RangeCheckAligned",
             "And",
@@ -401,6 +401,9 @@ mod tests {
             "WindowMaskB",
             "WindowMaskH",
             "AlignAddr",
+            "ShiftDataB",
+            "ShiftDataH",
+            "ShiftDataW",
         ];
 
         let actual = LookupTableKind::<64>::iter()
