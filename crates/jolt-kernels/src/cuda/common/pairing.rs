@@ -12,6 +12,35 @@ use super::msm::FQ_LIMBS;
 
 pub const FQ12_LIMBS: usize = 12 * FQ_LIMBS;
 
+pub const FQ2_LIMBS: usize = 2 * FQ_LIMBS;
+
+pub const FQ6_LIMBS: usize = 6 * FQ_LIMBS;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TowerProbe {
+    Fq6Mul,
+    Fq6MulBy01,
+    Fq6MulByFq2,
+    Fq6MulByNonresidue,
+    Fq12Mul,
+    Fq12Sqr,
+    Fq12MulBy034,
+}
+
+impl TowerProbe {
+    const fn widths(self) -> (usize, usize) {
+        match self {
+            Self::Fq6Mul => (2 * FQ6_LIMBS, FQ6_LIMBS),
+            Self::Fq6MulBy01 => (FQ6_LIMBS + 2 * FQ2_LIMBS, FQ6_LIMBS),
+            Self::Fq6MulByFq2 => (FQ6_LIMBS + FQ2_LIMBS, FQ6_LIMBS),
+            Self::Fq6MulByNonresidue => (FQ6_LIMBS, FQ6_LIMBS),
+            Self::Fq12Mul => (2 * FQ12_LIMBS, FQ12_LIMBS),
+            Self::Fq12Sqr => (FQ12_LIMBS, FQ12_LIMBS),
+            Self::Fq12MulBy034 => (FQ12_LIMBS + 3 * FQ2_LIMBS, FQ12_LIMBS),
+        }
+    }
+}
+
 const PC_WORDS: usize = 28;
 
 const PRODUCT_BLOCK: u32 = 32;
@@ -105,6 +134,44 @@ impl CudaKernelContext {
         })
     }
 
+    pub fn tower_probe(&self, op: TowerProbe, input: &[u64]) -> Result<Vec<u64>, CudaError> {
+        let (in_width, out_width) = op.widths();
+        if in_width == 0 || !input.len().is_multiple_of(in_width) {
+            return Err(CudaError::LengthMismatch {
+                expected: in_width,
+                got: input.len(),
+            });
+        }
+        let elements = input.len() / in_width;
+        if elements == 0 {
+            return Ok(Vec::new());
+        }
+        let count = Self::count_of(elements)?;
+        let device_in = self.upload_u64_slice(input)?;
+        let mut device_out = self.alloc_u64(elements * out_width)?;
+        let function = match op {
+            TowerProbe::Fq6Mul => &self.fq6_mul_probe,
+            TowerProbe::Fq6MulBy01 => &self.fq6_mul_by_01_probe,
+            TowerProbe::Fq6MulByFq2 => &self.fq6_mul_by_fq2_probe,
+            TowerProbe::Fq6MulByNonresidue => &self.fq6_mul_by_nonresidue_probe,
+            TowerProbe::Fq12Mul => &self.fq12_mul_probe,
+            TowerProbe::Fq12Sqr => &self.fq12_sqr_probe,
+            TowerProbe::Fq12MulBy034 => &self.fq12_mul_by_034_probe,
+        };
+        let mut builder = self.stream().launch_builder(function);
+        let _ = builder.arg(&device_in);
+        let _ = builder.arg(&mut device_out);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads exactly the `in_width` u64s at
+        // `input[i * in_width]` and writes exactly the `out_width` u64s at
+        // `output[i * out_width]`. The upload holds `count * in_width` u64s and
+        // the allocation `count * out_width`, both sized above from the same
+        // `elements`, and the two are distinct allocations, so no thread aliases
+        // another's write. Threads with `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.download_u64(&device_out)
+    }
+
     pub fn multi_miller_batch(
         &self,
         g1: &CudaSlice<u64>,
@@ -115,6 +182,16 @@ impl CudaKernelContext {
         if segments.len().saturating_mul(count) <= MILLER_WARP_MAX_PAIRS {
             return self.multi_miller_warp_batch(g1, g2, segments, count);
         }
+        self.multi_miller_block_batch(g1, g2, segments, count)
+    }
+
+    pub fn multi_miller_block_batch(
+        &self,
+        g1: &CudaSlice<u64>,
+        g2: &CudaSlice<u64>,
+        segments: &[(usize, usize)],
+        count: usize,
+    ) -> Result<Vec<u64>, CudaError> {
         if count == 0 || segments.is_empty() {
             return Err(CudaError::InvariantViolation {
                 reason: "a multi-Miller batch needs at least one segment and one pair",
@@ -397,6 +474,37 @@ mod tests {
         fq12(&limbs)
     }
 
+    fn device_miller_block(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
+        let context = shared_context().expect("a CUDA device");
+        let g1: Vec<u64> = ps.iter().flat_map(g1_words).collect();
+        let g2: Vec<u64> = qs.iter().flat_map(g2_words).collect();
+        let device_g1 = context.upload_raw_u64(&g1).unwrap();
+        let device_g2 = context.upload_raw_u64(&g2).unwrap();
+        let limbs = context
+            .multi_miller_block_batch(&device_g1, &device_g2, &[(0, 0)], ps.len())
+            .unwrap();
+        fq12(&limbs)
+    }
+
+    fn device_miller_block_segments(
+        ps: &[G1Projective],
+        qs: &[G2Projective],
+        count: usize,
+    ) -> Vec<Fq12> {
+        let context = shared_context().expect("a CUDA device");
+        let g1: Vec<u64> = ps.iter().flat_map(g1_words).collect();
+        let g2: Vec<u64> = qs.iter().flat_map(g2_words).collect();
+        let device_g1 = context.upload_raw_u64(&g1).unwrap();
+        let device_g2 = context.upload_raw_u64(&g2).unwrap();
+        let segments: Vec<(usize, usize)> = (0..ps.len() / count)
+            .map(|segment| (segment * count, segment * count))
+            .collect();
+        let limbs = context
+            .multi_miller_block_batch(&device_g1, &device_g2, &segments, count)
+            .unwrap();
+        limbs.chunks_exact(FQ12_LIMBS).map(fq12).collect()
+    }
+
     fn device_miller_warp_segments(
         ps: &[G1Projective],
         qs: &[G2Projective],
@@ -525,5 +633,368 @@ mod tests {
                 "the Miller loop diverged for {count} pairs, above the warp threshold"
             );
         }
+    }
+
+    #[test]
+    fn multi_miller_warp_matches_arkworks_above_the_block_threshold() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_400);
+        for count in [MILLER_WARP_MAX_PAIRS + 1, 2 * MILLER_WARP_MAX_PAIRS] {
+            let ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+            let qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller_warp(&ps, &qs);
+            assert_eq!(
+                got, expected,
+                "the warp Miller loop diverged for {count} pairs, above the block threshold"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_block_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        for (index, (ps, qs)) in shapes(5_800).into_iter().enumerate() {
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller_block(&ps, &qs);
+            assert_eq!(
+                got,
+                expected,
+                "the block Miller loop diverged for shape {index} of {} pairs",
+                ps.len()
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_block_matches_arkworks_at_exactly_full_blocks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_600);
+        for count in [256usize, 512, 1024] {
+            let ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+            let qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller_block(&ps, &qs);
+            assert_eq!(
+                got, expected,
+                "the block Miller loop diverged for {count} pairs, an exact multiple of the block width"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_block_matches_arkworks_at_partially_filled_blocks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_800);
+        for count in [255usize, 257, 385, 513, 1023] {
+            let ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+            let qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+            let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+            let got = device_miller_block(&ps, &qs);
+            assert_eq!(
+                got, expected,
+                "the block Miller loop diverged for {count} pairs, a partially filled last block"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_miller_block_matches_arkworks_on_degenerate_shapes_at_scale() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_000);
+        let count = MILLER_WARP_MAX_PAIRS + 44;
+        let mut ps: Vec<G1Projective> = (0..count).map(|_| G1Projective::rand(&mut rng)).collect();
+        let mut qs: Vec<G2Projective> = (0..count).map(|_| G2Projective::rand(&mut rng)).collect();
+        for slot in (0..count).step_by(37) {
+            ps[slot] = G1Projective::default();
+        }
+        for slot in (5..count).step_by(41) {
+            qs[slot] = G2Projective::default();
+        }
+        for slot in (1..count).step_by(17) {
+            ps[slot] = ps[slot].into_affine().into();
+            qs[slot] = qs[slot].into_affine().into();
+        }
+        let expected = Bn254::multi_miller_loop(ps.clone(), qs.clone()).0;
+        let got = device_miller_block(&ps, &qs);
+        assert_eq!(
+            got, expected,
+            "the block Miller loop diverged on {count} pairs carrying identity and affine points"
+        );
+    }
+
+    #[test]
+    fn multi_miller_block_segments_match_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(6_200);
+        for (count, segments) in [(1usize, 2usize), (1, 4), (3, 3), (5, 2), (33, 2), (129, 3)] {
+            let ps: Vec<G1Projective> = (0..count * segments)
+                .map(|_| G1Projective::rand(&mut rng))
+                .collect();
+            let qs: Vec<G2Projective> = (0..count * segments)
+                .map(|_| G2Projective::rand(&mut rng))
+                .collect();
+            let expected: Vec<Fq12> = (0..segments)
+                .map(|segment| {
+                    let span = segment * count..(segment + 1) * count;
+                    Bn254::multi_miller_loop(ps[span.clone()].to_vec(), qs[span].to_vec()).0
+                })
+                .collect();
+            let got = device_miller_block_segments(&ps, &qs, count);
+            assert_eq!(
+                got, expected,
+                "the block Miller loop diverged for {segments} segments of {count} pairs"
+            );
+        }
+    }
+
+    fn fq2_words(value: &Fq2) -> Vec<u64> {
+        let mut out = Vec::with_capacity(FQ2_LIMBS);
+        out.extend_from_slice(&value.c0.0 .0);
+        out.extend_from_slice(&value.c1.0 .0);
+        out
+    }
+
+    fn fq6_words(value: &Fq6) -> Vec<u64> {
+        let mut out = Vec::with_capacity(FQ6_LIMBS);
+        for part in [&value.c0, &value.c1, &value.c2] {
+            out.extend_from_slice(&fq2_words(part));
+        }
+        out
+    }
+
+    fn fq12_words(value: &Fq12) -> Vec<u64> {
+        let mut out = Vec::with_capacity(FQ12_LIMBS);
+        out.extend_from_slice(&fq6_words(&value.c0));
+        out.extend_from_slice(&fq6_words(&value.c1));
+        out
+    }
+
+    fn fq6_of(words: &[u64]) -> Fq6 {
+        Fq6::new(
+            fq2(&words[..FQ2_LIMBS]),
+            fq2(&words[FQ2_LIMBS..2 * FQ2_LIMBS]),
+            fq2(&words[2 * FQ2_LIMBS..]),
+        )
+    }
+
+    fn tower_fq2_samples(rng: &mut ChaCha20Rng) -> Vec<Fq2> {
+        let mut samples = vec![
+            Fq2::ZERO,
+            Fq2::ONE,
+            -Fq2::ONE,
+            Fq2::new(Fq::ZERO, Fq::ONE),
+            Fq2::new(-Fq::ONE, Fq::ZERO),
+            Fq2::new(-Fq::ONE, -Fq::ONE),
+        ];
+        samples.extend((0..6).map(|_| Fq2::rand(rng)));
+        samples
+    }
+
+    fn tower_fq6_samples(rng: &mut ChaCha20Rng) -> Vec<Fq6> {
+        let parts = tower_fq2_samples(rng);
+        (0..parts.len())
+            .map(|index| {
+                Fq6::new(
+                    parts[index],
+                    parts[(index + 1) % parts.len()],
+                    parts[(index + 2) % parts.len()],
+                )
+            })
+            .collect()
+    }
+
+    fn tower_fq12_samples(rng: &mut ChaCha20Rng) -> Vec<Fq12> {
+        let parts = tower_fq6_samples(rng);
+        (0..parts.len())
+            .map(|index| Fq12::new(parts[index], parts[(index + 1) % parts.len()]))
+            .collect()
+    }
+
+    fn probe_fq6(op: TowerProbe, input: &[u64]) -> Vec<Fq6> {
+        let context = shared_context().expect("a CUDA device");
+        let got = context.tower_probe(op, input).expect("a tower probe");
+        got.chunks_exact(FQ6_LIMBS).map(fq6_of).collect()
+    }
+
+    fn probe_fq12(op: TowerProbe, input: &[u64]) -> Vec<Fq12> {
+        let context = shared_context().expect("a CUDA device");
+        let got = context.tower_probe(op, input).expect("a tower probe");
+        got.chunks_exact(FQ12_LIMBS).map(fq12).collect()
+    }
+
+    #[test]
+    fn fq6_mul_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_100);
+        let samples = tower_fq6_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, left) in samples.iter().enumerate() {
+            let right = samples[(index + 3) % samples.len()];
+            input.extend_from_slice(&fq6_words(left));
+            input.extend_from_slice(&fq6_words(&right));
+            expected.push(*left * right);
+        }
+        assert_eq!(
+            probe_fq6(TowerProbe::Fq6Mul, &input),
+            expected,
+            "fq6_mul diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq6_mul_by_01_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_200);
+        let samples = tower_fq6_samples(&mut rng);
+        let parts = tower_fq2_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, left) in samples.iter().enumerate() {
+            let c0 = parts[index % parts.len()];
+            let c1 = parts[(index + 4) % parts.len()];
+            input.extend_from_slice(&fq6_words(left));
+            input.extend_from_slice(&fq2_words(&c0));
+            input.extend_from_slice(&fq2_words(&c1));
+            expected.push(*left * Fq6::new(c0, c1, Fq2::ZERO));
+        }
+        assert_eq!(
+            probe_fq6(TowerProbe::Fq6MulBy01, &input),
+            expected,
+            "fq6_mul_by_01 diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq6_mul_by_fq2_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_300);
+        let samples = tower_fq6_samples(&mut rng);
+        let parts = tower_fq2_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, left) in samples.iter().enumerate() {
+            let scale = parts[(index + 2) % parts.len()];
+            input.extend_from_slice(&fq6_words(left));
+            input.extend_from_slice(&fq2_words(&scale));
+            expected.push(*left * Fq6::new(scale, Fq2::ZERO, Fq2::ZERO));
+        }
+        assert_eq!(
+            probe_fq6(TowerProbe::Fq6MulByFq2, &input),
+            expected,
+            "fq6_mul_by_fq2 diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq6_mul_by_nonresidue_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_400);
+        let samples = tower_fq6_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for value in &samples {
+            input.extend_from_slice(&fq6_words(value));
+            expected.push(*value * Fq6::new(Fq2::ZERO, Fq2::ONE, Fq2::ZERO));
+        }
+        assert_eq!(
+            probe_fq6(TowerProbe::Fq6MulByNonresidue, &input),
+            expected,
+            "fq6_mul_by_nonresidue diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq12_mul_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_500);
+        let samples = tower_fq12_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, left) in samples.iter().enumerate() {
+            let right = samples[(index + 5) % samples.len()];
+            input.extend_from_slice(&fq12_words(left));
+            input.extend_from_slice(&fq12_words(&right));
+            expected.push(*left * right);
+        }
+        assert_eq!(
+            probe_fq12(TowerProbe::Fq12Mul, &input),
+            expected,
+            "fq12_mul diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq12_sqr_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_600);
+        let samples = tower_fq12_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for value in &samples {
+            input.extend_from_slice(&fq12_words(value));
+            expected.push(value.square());
+        }
+        assert_eq!(
+            probe_fq12(TowerProbe::Fq12Sqr, &input),
+            expected,
+            "fq12_sqr diverged from arkworks"
+        );
+    }
+
+    #[test]
+    fn fq12_mul_by_034_matches_arkworks() {
+        if shared_context().is_none() {
+            return;
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(7_700);
+        let samples = tower_fq12_samples(&mut rng);
+        let parts = tower_fq2_samples(&mut rng);
+        let mut input = Vec::new();
+        let mut expected = Vec::new();
+        for (index, value) in samples.iter().enumerate() {
+            let c0 = parts[index % parts.len()];
+            let c3 = parts[(index + 3) % parts.len()];
+            let c4 = parts[(index + 5) % parts.len()];
+            input.extend_from_slice(&fq12_words(value));
+            input.extend_from_slice(&fq2_words(&c0));
+            input.extend_from_slice(&fq2_words(&c3));
+            input.extend_from_slice(&fq2_words(&c4));
+            let sparse = Fq12::new(
+                Fq6::new(c0, Fq2::ZERO, Fq2::ZERO),
+                Fq6::new(c3, c4, Fq2::ZERO),
+            );
+            expected.push(*value * sparse);
+        }
+        assert_eq!(
+            probe_fq12(TowerProbe::Fq12MulBy034, &input),
+            expected,
+            "fq12_mul_by_034 diverged from arkworks"
+        );
     }
 }
