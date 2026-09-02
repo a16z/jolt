@@ -21,18 +21,27 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
+use crate::memory::phys_footprint;
 use crate::units::{format_memory_size, BYTES_PER_GIB};
 
-/// One tracked span's RSS at open, parked in the span's extensions.
+/// One tracked span's RSS (and footprint, where the OS ledger exists) at
+/// open, parked in the span's extensions.
 #[derive(Clone, Copy)]
-struct RssAtOpen(u64);
+struct RssAtOpen {
+    rss: u64,
+    footprint: Option<u64>,
+}
 
-/// One closed stage span's boundary RSS samples, in close order.
+/// One closed stage span's boundary memory samples, in close order.
+/// `footprint_*` is macOS `phys_footprint` (see
+/// [`crate::memory::PhysFootprint`]); `None` off macOS.
 #[derive(Clone, Copy, Debug)]
 pub struct StageMemoryRow {
     pub stage: &'static str,
     pub rss_open_bytes: u64,
     pub rss_close_bytes: u64,
+    pub footprint_open_bytes: Option<u64>,
+    pub footprint_close_bytes: Option<u64>,
 }
 
 /// Cap on retained rows: a prove records ~11 rows, so this covers ~90
@@ -78,8 +87,10 @@ where
             return;
         }
         let Some(stats) = memory_stats() else { return };
-        span.extensions_mut()
-            .insert(RssAtOpen(stats.physical_mem as u64));
+        span.extensions_mut().insert(RssAtOpen {
+            rss: stats.physical_mem as u64,
+            footprint: phys_footprint().map(|fp| fp.current_bytes),
+        });
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
@@ -88,14 +99,16 @@ where
             return;
         }
         let opened = span.extensions().get::<RssAtOpen>().copied();
-        let Some(RssAtOpen(rss_open_bytes)) = opened else {
+        let Some(open) = opened else {
             return;
         };
         let Some(stats) = memory_stats() else { return };
         let row = StageMemoryRow {
             stage: span.name(),
-            rss_open_bytes,
+            rss_open_bytes: open.rss,
             rss_close_bytes: stats.physical_mem as u64,
+            footprint_open_bytes: open.footprint,
+            footprint_close_bytes: phys_footprint().map(|fp| fp.current_bytes),
         };
         // An instant event for the Chrome/Perfetto trace, anchoring the
         // boundary RSS next to the stage's slice.
@@ -103,6 +116,8 @@ where
             stage = row.stage,
             rss_open_gib = row.rss_open_bytes as f64 / BYTES_PER_GIB,
             rss_close_gib = row.rss_close_bytes as f64 / BYTES_PER_GIB,
+            footprint_open_gib = row.footprint_open_bytes.unwrap_or(0) as f64 / BYTES_PER_GIB,
+            footprint_close_gib = row.footprint_close_bytes.unwrap_or(0) as f64 / BYTES_PER_GIB,
             "stage_rss"
         );
         let mut log = STAGE_MEMORY_ROWS.lock().unwrap_or_else(|e| e.into_inner());
@@ -138,12 +153,20 @@ pub fn report_stage_memory() {
     if rows.is_empty() {
         return;
     }
-    println!("Per-stage RSS at span boundaries (start → end, Δ retained):");
+    println!("Per-stage RSS [footprint] at span boundaries (start → end, Δ retained):");
     for row in rows {
         let open_gib = row.rss_open_bytes as f64 / BYTES_PER_GIB;
         let close_gib = row.rss_close_bytes as f64 / BYTES_PER_GIB;
+        let footprint = match (row.footprint_open_bytes, row.footprint_close_bytes) {
+            (Some(open), Some(close)) => format!(
+                "  [{} → {}]",
+                format_memory_size(open as f64 / BYTES_PER_GIB),
+                format_memory_size(close as f64 / BYTES_PER_GIB),
+            ),
+            _ => String::new(),
+        };
         println!(
-            "  {:<14} {:>10} → {:>10}  (Δ {:>10})",
+            "  {:<14} {:>10} → {:>10}  (Δ {:>10}){footprint}",
             row.stage,
             format_memory_size(open_gib),
             format_memory_size(close_gib),

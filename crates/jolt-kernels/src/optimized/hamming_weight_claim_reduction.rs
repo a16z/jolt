@@ -11,7 +11,10 @@
 //!   accumulates ALL `N = instruction_d + bytecode_d + ram_d` pushforwards
 //!   against ONE shared `eq(r_cycle)` table (every stage-6b claim family
 //!   lives at the same cycle point), replacing the reference tier's `N`
-//!   independent `O(K_chunk·T)` folds over materialized one-hot grids.
+//!   independent `O(K_chunk·T)` folds over materialized one-hot grids. The
+//!   non-Akita walk reuses booleanity's split-eq deferred buckets: inner
+//!   weights enter by addition, and the outer eq multiplication occurs once
+//!   per bucket.
 //! - **One-hot weight fusion**: the base protocol's three per-polynomial claim
 //!   weights `γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k)` are one
 //!   combined multilinear `W_i(k)` (the Hamming-weight leg's constant-1 rides
@@ -22,6 +25,8 @@
 
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
 #[cfg(feature = "akita")]
@@ -40,13 +45,14 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 #[cfg(feature = "akita")]
-use jolt_witness::witnesses::BalancedIncColumn;
-use jolt_witness::witnesses::RaChunkSelector;
+use jolt_witness::witnesses::{BalancedIncColumn, RaChunkSelector};
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "akita", feature = "parallel"))]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::InstructionCycleRow;
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+#[cfg(not(feature = "akita"))]
+use super::one_hot_pushforward::{parallel_outer_bits, split_eq_pushforwards, ColumnSelector};
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
     RoundProgress,
@@ -55,15 +61,142 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Per-family chunk selectors in canonical layout order.
+/// All `N` pushforwards from one pass over the shared stage-5 rows, in
+/// canonical (instruction, bytecode, RAM) order. The cycle-eq weight is
+/// computed from split tables `eq(r, j) = eq(r[..hi], j_hi) ·
+/// eq(r[hi..], j_lo)`. Outer blocks stay at four per Rayon worker so the
+/// deferred inner-bucket accumulation removes per-row field multiplication
+/// without starving parallelism.
+#[cfg(not(feature = "akita"))]
+fn pushforwards<F: JoltField>(
+    rows: &[InstructionCycleRow],
+    r_cycle: &[F],
+    layout: JoltRaPolynomialLayout,
+    chunk_bits: usize,
+) -> Result<Vec<Vec<F>>, KernelError<F>> {
+    let selectors = ColumnSelector::for_layout(layout, chunk_bits)?;
+    Ok(split_eq_pushforwards(
+        rows,
+        &selectors,
+        1usize << chunk_bits,
+        r_cycle,
+        parallel_outer_bits(r_cycle.len()),
+    ))
+}
+
+#[cfg(all(feature = "bench-utils", not(feature = "akita")))]
+pub mod bench {
+    use std::sync::Arc;
+
+    use jolt_field::{Fr, Ring};
+
+    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+
+    use super::pushforwards;
+    use crate::optimized::instruction_read_raf::InstructionCycleRow;
+    use crate::reference::views::eq_table;
+
+    const LOG_T: usize = 22;
+    const CHUNK_BITS: usize = 8;
+    const FAMILY_COUNTS: (usize, usize, usize) = (16, 2, 3);
+
+    pub struct HammingWeightPushforwardFixture {
+        rows: Arc<[InstructionCycleRow]>,
+        r_cycle: Vec<Fr>,
+        layout: JoltRaPolynomialLayout,
+        expected: Vec<Vec<Fr>>,
+    }
+
+    impl HammingWeightPushforwardFixture {
+        pub fn production_geometry() -> Self {
+            let rows: Arc<[InstructionCycleRow]> = (0..1usize << LOG_T)
+                .map(|cycle| {
+                    let x = cycle as u128;
+                    let lookup_index = x
+                        .wrapping_mul(0x9e37_79b9_7f4a_7c15_6a09_e667_f3bc_c909)
+                        .rotate_left((cycle & 127) as u32);
+                    let mapped_pc = (cycle % 17 != 0)
+                        .then_some((cycle.wrapping_mul(13) ^ (cycle >> 3)) & 0xffff);
+                    let ram_address = (cycle % 5 != 0)
+                        .then_some(((cycle.wrapping_mul(29) ^ (cycle >> 5)) & 0x00ff_ffff) as u64);
+                    InstructionCycleRow::new(lookup_index, None, false, mapped_pc, ram_address)
+                })
+                .collect::<Vec<_>>()
+                .into();
+            let r_cycle = (0..LOG_T)
+                .map(|i| Fr::from_u64(0x100 + 17 * i as u64))
+                .collect::<Vec<_>>();
+            let Ok(layout) =
+                JoltRaPolynomialLayout::new(FAMILY_COUNTS.0, FAMILY_COUNTS.1, FAMILY_COUNTS.2)
+            else {
+                std::process::abort();
+            };
+            let expected = reference_pushforwards(&rows, &r_cycle, layout);
+            let fixture = Self {
+                rows,
+                r_cycle,
+                layout,
+                expected,
+            };
+            assert_eq!(fixture.compute(), fixture.expected);
+            fixture
+        }
+
+        pub fn compute(&self) -> Vec<Vec<Fr>> {
+            let Ok(output) = pushforwards(&self.rows, &self.r_cycle, self.layout, CHUNK_BITS)
+            else {
+                std::process::abort();
+            };
+            output
+        }
+    }
+
+    fn reference_pushforwards(
+        rows: &[InstructionCycleRow],
+        r_cycle: &[Fr],
+        layout: JoltRaPolynomialLayout,
+    ) -> Vec<Vec<Fr>> {
+        let k_chunk = 1 << CHUNK_BITS;
+        let total = layout.total();
+        let mut out = (0..total)
+            .map(|_| vec![Fr::from_u64(0); k_chunk])
+            .collect::<Vec<_>>();
+        for (row, weight) in rows.iter().zip(eq_table(r_cycle)) {
+            let mut slot = 0;
+            for index in 0..layout.instruction() {
+                let shift = (layout.instruction() - 1 - index) * CHUNK_BITS;
+                out[slot][((row.lookup_index >> shift) & 0xff) as usize] += weight;
+                slot += 1;
+            }
+            for index in 0..layout.bytecode() {
+                let pc = row.mapped_pc().unwrap_or_default();
+                let shift = (layout.bytecode() - 1 - index) * CHUNK_BITS;
+                out[slot][(pc >> shift) & 0xff] += weight;
+                slot += 1;
+            }
+            for index in 0..layout.ram() {
+                if let Some(address) = row.remapped_ram_address() {
+                    let shift = (layout.ram() - 1 - index) * CHUNK_BITS;
+                    out[slot][(address as usize >> shift) & 0xff] += weight;
+                }
+                slot += 1;
+            }
+        }
+        out
+    }
+}
+
+/// Per-family chunk selectors in canonical layout order, plus the packed
+/// balanced-inc digit/carry columns the lattice mode appends.
+#[cfg(feature = "akita")]
 struct FamilySelectors {
     instruction: Vec<RaChunkSelector>,
     bytecode: Vec<RaChunkSelector>,
     ram: Vec<RaChunkSelector>,
-    #[cfg(feature = "akita")]
     balanced_inc: Vec<BalancedIncColumn>,
 }
 
+#[cfg(feature = "akita")]
 impl FamilySelectors {
     fn new<F: JoltField>(
         counts: (usize, usize, usize),
@@ -80,30 +213,24 @@ impl FamilySelectors {
             instruction: family(counts.0)?,
             bytecode: family(counts.1)?,
             ram: family(counts.2)?,
-            #[cfg(feature = "akita")]
             balanced_inc: Vec::new(),
         })
     }
 }
 
 /// All `N` pushforwards from one bundle walk against the shared cycle-eq
-/// table, in canonical (instruction, bytecode, RAM) order.
+/// table, in canonical (instruction, bytecode, RAM, balanced-inc) order.
+#[cfg(feature = "akita")]
 fn pushforwards<F: JoltField>(
     rows: &[InstructionCycleRow],
     eq_cycle: &[F],
     selectors: &FamilySelectors,
     k_chunk: usize,
 ) -> Vec<Vec<F>> {
-    let total = selectors.instruction.len() + selectors.bytecode.len() + selectors.ram.len() + {
-        #[cfg(feature = "akita")]
-        {
-            selectors.balanced_inc.len()
-        }
-        #[cfg(not(feature = "akita"))]
-        {
-            0
-        }
-    };
+    let total = selectors.instruction.len()
+        + selectors.bytecode.len()
+        + selectors.ram.len()
+        + selectors.balanced_inc.len();
     let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
         let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
         for j in range {
@@ -124,7 +251,6 @@ fn pushforwards<F: JoltField>(
                 }
                 slot += 1;
             }
-            #[cfg(feature = "akita")]
             for column in &selectors.balanced_inc {
                 partial[slot][row.fused_inc_row(*column)] += eq;
                 slot += 1;
@@ -163,6 +289,210 @@ fn pushforwards<F: JoltField>(
 /// optimized kernel.
 pub struct OptimizedHammingWeightClaimReduction;
 
+/// The `N` pushforward/weight table pairs of the fused summand
+/// `Σ_i G_i·W_i`, as built by [`build_hamming_weight_tables`] — shared
+/// between the optimized kernel and its Metal twin (which concatenates the
+/// pairs into two flat device tables).
+pub(crate) struct HammingWeightTables<F> {
+    pub(crate) rounds: usize,
+    /// Pushforwards `G_i`, canonical layout order.
+    pub(crate) g_tables: Vec<Vec<F>>,
+    /// Combined claim weights `W_i`, index-aligned with `g_tables`.
+    pub(crate) weight_tables: Vec<Vec<F>>,
+    pub(crate) output_openings: Vec<JoltOpeningId>,
+}
+
+pub(crate) fn build_hamming_weight_tables<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: &ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
+) -> Result<HammingWeightTables<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let layout = dimensions.layout;
+    let r_cycle = relation.r_cycle();
+    let r_address = relation.r_address();
+    let virtualization_points = relation.virtualization_points();
+    if r_address.len() != dimensions.log_k_chunk || virtualization_points.len() != layout.total() {
+        return Err(KernelError::InvariantViolation {
+            reason: "hamming reduction reference point shapes disagree with the layout",
+        });
+    }
+    let k_chunk = 1usize << dimensions.log_k_chunk;
+    let cycles = 1usize << r_cycle.len();
+
+    // The three hot-address lanes (lookup index, mapped PC, RAM address) are
+    // exactly the shared stage-5 rows the record walk co-produced — reclaim
+    // them instead of re-walking the trace.
+    let rows = shared_instruction_rows(session, witness, cycles)?;
+
+    #[cfg(not(feature = "akita"))]
+    let g_tables = pushforwards(&rows, r_cycle, layout, dimensions.log_k_chunk)?;
+    #[cfg(feature = "akita")]
+    let g_tables = {
+        let eq_cycle = eq_table(r_cycle);
+        let mut selectors = FamilySelectors::new(
+            (layout.instruction(), layout.bytecode(), layout.ram()),
+            dimensions.log_k_chunk,
+        )?;
+        selectors
+            .balanced_inc
+            .extend((0..dimensions.chunking().chunk_count()).map(|index| {
+                BalancedIncColumn::Digit {
+                    width: dimensions.log_k_chunk,
+                    index,
+                }
+            }));
+        selectors.balanced_inc.push(BalancedIncColumn::Carry {
+            width: dimensions.log_k_chunk,
+        });
+        let mut g_evals = pushforwards(&rows, &eq_cycle, &selectors, k_chunk);
+        let (ra_evals, increment_evals) = g_evals.split_at_mut(layout.total());
+        for table in ra_evals
+            .iter_mut()
+            .take(layout.instruction() + layout.bytecode())
+            .chain(increment_evals)
+        {
+            table[0] = F::zero();
+        }
+        g_evals
+    };
+
+    let eq_bool = eq_table(r_address);
+    #[cfg(not(feature = "akita"))]
+    let weight_tables: Vec<Vec<F>> = {
+        // W_i(k) = γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k).
+        let gamma_powers = gamma_powers(inputs.challenges.gamma, 3 * layout.total());
+        virtualization_points
+            .iter()
+            .enumerate()
+            .map(|(i, point)| {
+                if point.len() != dimensions.log_k_chunk {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "hamming virtualization point has the wrong variable count",
+                    });
+                }
+                let eq_virt = eq_table(point);
+                Ok((0..k_chunk)
+                    .map(|k| {
+                        gamma_powers[3 * i]
+                            + gamma_powers[3 * i + 1] * eq_bool[k]
+                            + gamma_powers[3 * i + 2] * eq_virt[k]
+                    })
+                    .collect())
+            })
+            .collect::<Result<_, _>>()?
+    };
+
+    // Instruction and bytecode use the paper's digit-zero recentering;
+    // RAM keeps the base three-leg reduction. Increment columns are
+    // recentered and followed by the fused decode power.
+    #[cfg(feature = "akita")]
+    let weight_tables: Vec<Vec<F>> = {
+        let chunk_count = dimensions.chunking().chunk_count();
+        let ra_terms = layout
+            .polynomials()
+            .map(|polynomial| match polynomial {
+                JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => 2,
+                JoltRaPolynomial::Ram(_) => 3,
+            })
+            .sum::<usize>();
+        let decode_power = ra_terms + chunk_count + 1;
+        let gamma_powers = gamma_powers(inputs.challenges.gamma, decode_power + 1);
+        let at_digit_zero = |point: &[F]| {
+            point
+                .iter()
+                .fold(F::one(), |acc, coordinate| acc * (F::one() - *coordinate))
+        };
+        let eq_bool_digit_zero = at_digit_zero(r_address);
+        let mut weights = Vec::with_capacity(layout.total() + chunk_count + 1);
+        let mut power = 0;
+        for (i, polynomial) in layout.polynomials().enumerate() {
+            let point = &virtualization_points[i];
+            if point.len() != dimensions.log_k_chunk {
+                return Err(KernelError::InvariantViolation {
+                    reason: "hamming virtualization point has the wrong variable count",
+                });
+            }
+            let eq_virt = eq_table(point);
+            match polynomial {
+                JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
+                    let eq_virt_digit_zero = at_digit_zero(point);
+                    weights.push(
+                        (0..k_chunk)
+                            .map(|k| {
+                                gamma_powers[power] * (eq_bool[k] - eq_bool_digit_zero)
+                                    + gamma_powers[power + 1] * (eq_virt[k] - eq_virt_digit_zero)
+                            })
+                            .collect(),
+                    );
+                    power += 2;
+                }
+                JoltRaPolynomial::Ram(_) => {
+                    weights.push(
+                        (0..k_chunk)
+                            .map(|k| {
+                                gamma_powers[power]
+                                    + gamma_powers[power + 1] * eq_bool[k]
+                                    + gamma_powers[power + 2] * eq_virt[k]
+                            })
+                            .collect(),
+                    );
+                    power += 3;
+                }
+            }
+        }
+        debug_assert_eq!(power, ra_terms);
+        let balanced_values = (0..k_chunk)
+            .map(|row| balanced_inc_value(&boolean_point_msb::<F>(dimensions.log_k_chunk, row)))
+            .collect::<Vec<_>>();
+        for index in 0..chunk_count {
+            let offset = ra_terms + index;
+            let decode_scale =
+                gamma_powers[decode_power] * dimensions.chunking().place_value::<F>(index);
+            weights.push(
+                (0..k_chunk)
+                    .map(|k| {
+                        gamma_powers[offset] * (eq_bool[k] - eq_bool_digit_zero)
+                            + decode_scale * balanced_values[k]
+                    })
+                    .collect(),
+            );
+        }
+        let carry_offset = ra_terms + chunk_count;
+        let decode_scale = gamma_powers[decode_power] * F::pow2(64);
+        weights.push(
+            (0..k_chunk)
+                .map(|k| {
+                    gamma_powers[carry_offset] * (eq_bool[k] - eq_bool_digit_zero)
+                        + decode_scale * balanced_values[k]
+                })
+                .collect(),
+        );
+        weights
+    };
+
+    let output_openings: Vec<JoltOpeningId> = layout
+        .openings(JoltRelationId::HammingWeightClaimReduction)
+        .collect();
+    #[cfg(feature = "akita")]
+    let mut output_openings = output_openings;
+    #[cfg(feature = "akita")]
+    {
+        output_openings.extend(
+            (0..dimensions.chunking().chunk_count()).map(reduced_balanced_inc_digit_opening),
+        );
+        output_openings.push(reduced_balanced_inc_carry_opening());
+    }
+
+    Ok(HammingWeightTables {
+        rounds: relation.rounds(),
+        g_tables,
+        weight_tables,
+        output_openings,
+    })
+}
+
 impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
     for OptimizedHammingWeightClaimReduction
 {
@@ -173,193 +503,16 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
     {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let layout = dimensions.layout;
-        let r_cycle = relation.r_cycle();
-        let r_address = relation.r_address();
-        let virtualization_points = relation.virtualization_points();
-        if r_address.len() != dimensions.log_k_chunk
-            || virtualization_points.len() != layout.total()
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "hamming reduction reference point shapes disagree with the layout",
-            });
-        }
-        let k_chunk = 1usize << dimensions.log_k_chunk;
-        let cycles = 1usize << r_cycle.len();
-
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        let eq_cycle = eq_table(r_cycle);
-        let selectors = FamilySelectors::new(
-            (layout.instruction(), layout.bytecode(), layout.ram()),
-            dimensions.log_k_chunk,
-        )?;
-        #[cfg(feature = "akita")]
-        let mut selectors = selectors;
-        #[cfg(feature = "akita")]
-        {
-            selectors
-                .balanced_inc
-                .extend((0..dimensions.chunking().chunk_count()).map(|index| {
-                    BalancedIncColumn::Digit {
-                        width: dimensions.log_k_chunk,
-                        index,
-                    }
-                }));
-            selectors.balanced_inc.push(BalancedIncColumn::Carry {
-                width: dimensions.log_k_chunk,
-            });
-        }
-        let g_evals = pushforwards(&rows, &eq_cycle, &selectors, k_chunk);
-        #[cfg(feature = "akita")]
-        let mut g_evals = g_evals;
-        #[cfg(feature = "akita")]
-        {
-            let (ra_evals, increment_evals) = g_evals.split_at_mut(layout.total());
-            for table in ra_evals
-                .iter_mut()
-                .take(layout.instruction() + layout.bytecode())
-                .chain(increment_evals)
-            {
-                table[0] = F::zero();
-            }
-        }
-        let g_tables = g_evals.into_iter().map(Polynomial::new).collect();
-
-        #[cfg(not(feature = "akita"))]
-        let gamma_powers = gamma_powers(inputs.challenges.gamma, 3 * layout.total());
-        let eq_bool = eq_table(r_address);
-        #[cfg(not(feature = "akita"))]
-        let weight_tables: Vec<Polynomial<F>> = virtualization_points
-            .iter()
-            .enumerate()
-            .map(|(i, point)| {
-                if point.len() != dimensions.log_k_chunk {
-                    return Err(KernelError::InvariantViolation {
-                        reason: "hamming virtualization point has the wrong variable count",
-                    });
-                }
-                let eq_virt = eq_table(point);
-                Ok(Polynomial::new(
-                    (0..k_chunk)
-                        .map(|k| {
-                            gamma_powers[3 * i]
-                                + gamma_powers[3 * i + 1] * eq_bool[k]
-                                + gamma_powers[3 * i + 2] * eq_virt[k]
-                        })
-                        .collect(),
-                ))
-            })
-            .collect::<Result<_, _>>()?;
-
-        // Instruction and bytecode use the paper's digit-zero recentering;
-        // RAM keeps the base three-leg reduction. Increment columns are
-        // recentered and followed by the fused decode power.
-        #[cfg(feature = "akita")]
-        let weight_tables: Vec<Polynomial<F>> = {
-            let chunk_count = dimensions.chunking().chunk_count();
-            let ra_terms = layout
-                .polynomials()
-                .map(|polynomial| match polynomial {
-                    JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => 2,
-                    JoltRaPolynomial::Ram(_) => 3,
-                })
-                .sum::<usize>();
-            let decode_power = ra_terms + chunk_count + 1;
-            let gamma_powers = gamma_powers(inputs.challenges.gamma, decode_power + 1);
-            let at_digit_zero = |point: &[F]| {
-                point
-                    .iter()
-                    .fold(F::one(), |acc, coordinate| acc * (F::one() - *coordinate))
-            };
-            let eq_bool_digit_zero = at_digit_zero(r_address);
-            let mut weights = Vec::with_capacity(layout.total() + chunk_count + 1);
-            let mut power = 0;
-            for (i, polynomial) in layout.polynomials().enumerate() {
-                let point = &virtualization_points[i];
-                if point.len() != dimensions.log_k_chunk {
-                    return Err(KernelError::InvariantViolation {
-                        reason: "hamming virtualization point has the wrong variable count",
-                    });
-                }
-                let eq_virt = eq_table(point);
-                match polynomial {
-                    JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
-                        let eq_virt_digit_zero = at_digit_zero(point);
-                        weights.push(Polynomial::new(
-                            (0..k_chunk)
-                                .map(|k| {
-                                    gamma_powers[power] * (eq_bool[k] - eq_bool_digit_zero)
-                                        + gamma_powers[power + 1]
-                                            * (eq_virt[k] - eq_virt_digit_zero)
-                                })
-                                .collect(),
-                        ));
-                        power += 2;
-                    }
-                    JoltRaPolynomial::Ram(_) => {
-                        weights.push(Polynomial::new(
-                            (0..k_chunk)
-                                .map(|k| {
-                                    gamma_powers[power]
-                                        + gamma_powers[power + 1] * eq_bool[k]
-                                        + gamma_powers[power + 2] * eq_virt[k]
-                                })
-                                .collect(),
-                        ));
-                        power += 3;
-                    }
-                }
-            }
-            debug_assert_eq!(power, ra_terms);
-            let balanced_values = (0..k_chunk)
-                .map(|row| balanced_inc_value(&boolean_point_msb::<F>(dimensions.log_k_chunk, row)))
-                .collect::<Vec<_>>();
-            for index in 0..chunk_count {
-                let offset = ra_terms + index;
-                let decode_scale =
-                    gamma_powers[decode_power] * dimensions.chunking().place_value::<F>(index);
-                weights.push(Polynomial::new(
-                    (0..k_chunk)
-                        .map(|k| {
-                            gamma_powers[offset] * (eq_bool[k] - eq_bool_digit_zero)
-                                + decode_scale * balanced_values[k]
-                        })
-                        .collect(),
-                ));
-            }
-            let carry_offset = ra_terms + chunk_count;
-            let decode_scale = gamma_powers[decode_power] * F::pow2(64);
-            weights.push(Polynomial::new(
-                (0..k_chunk)
-                    .map(|k| {
-                        gamma_powers[carry_offset] * (eq_bool[k] - eq_bool_digit_zero)
-                            + decode_scale * balanced_values[k]
-                    })
-                    .collect(),
-            ));
-            weights
-        };
-
-        let output_openings: Vec<JoltOpeningId> = layout
-            .openings(JoltRelationId::HammingWeightClaimReduction)
-            .collect();
-        #[cfg(feature = "akita")]
-        let mut output_openings = output_openings;
-        #[cfg(feature = "akita")]
-        {
-            output_openings.extend(
-                (0..dimensions.chunking().chunk_count()).map(reduced_balanced_inc_digit_opening),
-            );
-            output_openings.push(reduced_balanced_inc_carry_opening());
-        }
-
+        let tables = build_hamming_weight_tables(session, witness, &inputs)?;
         Ok(Box::new(HammingWeightKernel {
-            progress: RoundProgress::new(relation.rounds()),
-            g_tables,
-            weight_tables,
-            output_openings,
+            progress: RoundProgress::new(tables.rounds),
+            g_tables: tables.g_tables.into_iter().map(Polynomial::new).collect(),
+            weight_tables: tables
+                .weight_tables
+                .into_iter()
+                .map(Polynomial::new)
+                .collect(),
+            output_openings: tables.output_openings,
         }))
     }
 }

@@ -44,6 +44,7 @@ use super::instruction_ra_virtualization::{
 use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
+use crate::config::BooleanityAnchor;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
 use crate::stages::stage1::Stage1Output;
@@ -77,6 +78,7 @@ pub struct Stage6bBuildParts<'a, F: JoltField> {
     pub bytecode_table_rows: Option<&'a [JoltInstructionRow]>,
     pub carried: &'a Stage6aCarriedChallenges<F>,
     pub eta: Option<F>,
+    pub booleanity_anchor: BooleanityAnchor,
     pub stage1_cycle_binding: Vec<F>,
     pub stage2_points: &'a Stage2BatchOutputPoints<F>,
     pub stage3_points: &'a Stage3OutputPoints<F>,
@@ -199,6 +201,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             bytecode_table_rows,
             carried: stage6a.challenges(),
             eta,
+            booleanity_anchor: proof.protocol.booleanity_anchor,
             stage1_cycle_binding,
             stage2_points: stage2.batch_output_points(),
             stage3_points: stage3.output_points(),
@@ -225,6 +228,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             bytecode_table_rows,
             carried,
             eta,
+            booleanity_anchor,
             stage1_cycle_binding,
             stage2_points,
             stage3_points,
@@ -396,14 +400,21 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 reason: error.to_string(),
             })?;
         // The little-endian reference cycle is construction geometry (the
-        // reversed stage-5 instruction cycle, no draw of its own), so it is
-        // rederived from the stage-5 point rather than carried with the
+        // reversed anchor source: the stage-5 instruction cycle or the
+        // stage-1 cycle binding, no draw of its own), so it is rederived from
+        // the anchor-selected upstream point rather than carried with the
         // stage-6a draws.
+        let booleanity_reference_cycle: Vec<F> = match booleanity_anchor {
+            BooleanityAnchor::Stage5Instruction => {
+                stage5_instruction_cycle.iter().rev().copied().collect()
+            }
+            BooleanityAnchor::Stage1CycleV1 => stage1_cycle_binding.iter().rev().copied().collect(),
+        };
         let booleanity = Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address,
             carried.booleanity.reference_address.clone(),
-            stage5_instruction_cycle.iter().rev().copied().collect(),
+            booleanity_reference_cycle,
         );
         let ram_hamming_booleanity =
             RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding);

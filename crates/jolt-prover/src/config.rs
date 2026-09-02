@@ -13,6 +13,7 @@ use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TraceP
 use jolt_field::JoltField;
 use jolt_program::execution::{RamAccess, TraceRow};
 use jolt_riscv::JoltTraceRow;
+use jolt_verifier::config::BooleanityAnchor;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -51,6 +52,16 @@ pub struct ProverConfig {
     /// preprocessing bakes this order into its chunk commitments — it must
     /// be chosen before preprocessing and match here (stage 0 checks).
     pub trace_polynomial_order: TracePolynomialOrder,
+    /// Which transcript-prior point anchors the booleanity `eq` factor
+    /// (echoed into `JoltProof::protocol`). Transparent derivation picks
+    /// [`BooleanityAnchor::Stage1CycleV1`] — known four stages before it is
+    /// consumed, so the address-phase pushforward builds in the background
+    /// during stage 5. ZK builds pin [`BooleanityAnchor::Stage5Instruction`]:
+    /// BlindFold's booleanity constraints are baked against the legacy
+    /// anchor and the verifier fail-closes on any other zk combination. The
+    /// byte-diff harness overwrites this with the legacy anchor to stay
+    /// wire-equal with `jolt-prover-legacy`.
+    pub booleanity_anchor: BooleanityAnchor,
 }
 
 impl ProverConfig {
@@ -153,6 +164,10 @@ impl ProverConfig {
             rw_config: read_write_config(log_T, ram_K.ilog2() as usize),
             one_hot_config: one_hot_config(log_T),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
+            #[cfg(not(feature = "zk"))]
+            booleanity_anchor: BooleanityAnchor::Stage1CycleV1,
+            #[cfg(feature = "zk")]
+            booleanity_anchor: BooleanityAnchor::Stage5Instruction,
         })
     }
 

@@ -18,8 +18,7 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::VerifierError;
 use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, RandomAccessRows, RowSource, StreamConsumer, WitnessBundle,
-    WitnessError,
+    stream_witnesses, RandomAccessRows, RowSource, StreamConsumer, WitnessBundle, WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -425,36 +424,6 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
     }
 }
 
-/// Sum `task(0), …, task(tasks − 1)` elementwise (each yields a `len`-sized
-/// vector), failing fast on the first error.
-pub(crate) fn try_par_sum_vecs<F: JoltField, E: Send>(
-    tasks: usize,
-    len: usize,
-    task: impl Fn(usize) -> Result<Vec<F>, E> + Send + Sync,
-) -> Result<Vec<F>, E> {
-    let merge = |mut left: Vec<F>, right: Vec<F>| {
-        for (left, right) in left.iter_mut().zip(right) {
-            *left += right;
-        }
-        left
-    };
-    #[cfg(feature = "parallel")]
-    {
-        (0..tasks).into_par_iter().map(task).try_reduce(
-            || vec![F::zero(); len],
-            |left, right| Ok(merge(left, right)),
-        )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut folded = vec![F::zero(); len];
-        for index in 0..tasks {
-            folded = merge(folded, task(index)?);
-        }
-        Ok(folded)
-    }
-}
-
 /// Assemble a round message from evaluations at `{0, 2, 3, .., degree}`,
 /// recovering `s(1) = previous_claim − s(0)` — exactly the evaluation vector
 /// the reference tier computes directly (its own round check pins
@@ -657,6 +626,7 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
 /// — binding acts linearly on the `j_lo` tensor factor. (jolt-poly's
 /// `LtPolynomial` binds high-to-low only, so the low-to-high variant lives
 /// here.)
+#[derive(Clone)]
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -756,65 +726,6 @@ impl<F: JoltField> SplitLt<F> {
                 table[0]
             }
             Self::Split { .. } => unreachable!("split state always has lo variables to bind"),
-        }
-    }
-}
-
-/// Where a kernel's typed rows live: a slice-backed witness serves an
-/// owning handle and every pass re-extracts its windows on the fly — the
-/// materialized row vector never exists; re-emulating sources retain the
-/// collected rows. The generic twin of the spartan-outer kernel's store,
-/// for every carry-style typed-row consumer.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "B")
-)]
-pub(crate) enum BundleStore<B> {
-    /// The witness plane owns these rows; it reports them itself.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    Owned(RandomAccessRows),
-    Retained(
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<B>,
-    ),
-}
-
-impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
-    /// Resolve for a witness plane: the owning handle when the source is
-    /// slice-backed (and covers the cycle domain), a materialized collect
-    /// otherwise.
-    pub(crate) fn resolve<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Self, crate::KernelError<F>> {
-        match witness.random_access() {
-            Some(rows) if cycles <= rows.cycles() => Ok(Self::Owned(rows)),
-            _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
-        }
-    }
-
-    pub(crate) fn access(&self) -> BundleAccess<'_, B> {
-        match self {
-            Self::Owned(rows) => BundleAccess::View(rows),
-            Self::Retained(rows) => BundleAccess::Retained(rows),
-        }
-    }
-}
-
-/// One pass's borrowed row provider over a [`BundleStore`].
-pub(crate) enum BundleAccess<'a, B> {
-    View(&'a RandomAccessRows),
-    Retained(&'a [B]),
-}
-
-impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
-    /// The typed row at cycle `t` — an extraction window over a slice-backed
-    /// source, an indexed copy from a retained vector. Pure per index.
-    #[inline]
-    pub(crate) fn row(&self, t: usize) -> Result<B, WitnessError> {
-        match self {
-            Self::View(view) => view.window(t),
-            Self::Retained(rows) => Ok(rows[t]),
         }
     }
 }

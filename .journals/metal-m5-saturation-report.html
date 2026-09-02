@@ -1,0 +1,3229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0f16">
+<title>Metal M5 Saturation — Canonical Report</title>
+<style>
+/* Pika HTML reports — canonical single-file design system. */
+:root {
+  --bg: #0d0f16;
+  --bg-deep: #090b12;
+  --surface: rgba(44, 48, 66, 0.48);
+  --surface-2: rgba(48, 53, 73, 0.42);
+  --surface-soft: rgba(34, 37, 50, 0.42);
+  --surface-solid: #151824;
+  --inset: rgba(13, 15, 23, 0.68);
+  --hair: rgba(255, 255, 255, 0.075);
+  --hair-2: rgba(255, 255, 255, 0.12);
+  --hair-bright: rgba(255, 255, 255, 0.18);
+  --row-line: rgba(255, 255, 255, 0.055);
+  --text: #eceef6;
+  --text-2: #a0a4b8;
+  --text-3: #73788d;
+  --green: #9ed072;
+  --yellow: #e7c664;
+  --blue: #76cce0;
+  --purple: #b39df3;
+  --red: #fc5d7c;
+  --orange: #f39660;
+  --serif:
+    "Iowan Old Style", "Palatino Linotype", Palatino, "Hoefler Text", ui-serif, Georgia, serif;
+  --body: "Iowan Old Style", Charter, Georgia, "Palatino Linotype", ui-serif, serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --onum: oldstyle-nums proportional-nums;
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 22px;
+  --s6: 30px;
+  --s7: 44px;
+  --s8: 64px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 19px;
+  --r-xl: 24px;
+  --r-2xl: 30px;
+  --r-full: 999px;
+  --maxw: 1120px;
+  --nav-h: 58px;
+  --blur: blur(18px) saturate(155%);
+  --shadow-card:
+    inset 0 1px 0 rgba(255, 255, 255, 0.085), inset 0 -1px 0 rgba(0, 0, 0, 0.16),
+    0 1px 2px rgba(3, 5, 11, 0.34), 0 14px 34px -20px rgba(3, 5, 12, 0.74),
+    0 34px 72px -52px rgba(3, 5, 12, 0.9);
+  --shadow-float:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 2px 8px rgba(3, 5, 11, 0.34),
+    0 22px 52px -18px rgba(3, 5, 12, 0.72);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* Sampled damped spring from a physical simulation: restrained ~4% overshoot,
+     then a quick settle. Keep this provenance when retuning the samples. */
+  --ease-spring: linear(
+    0,
+    0.012,
+    0.058,
+    0.142,
+    0.252,
+    0.378,
+    0.508,
+    0.632,
+    0.743,
+    0.837,
+    0.911,
+    0.967,
+    1.005,
+    1.027,
+    1.037,
+    1.038,
+    1.033,
+    1.026,
+    1.018,
+    1.01,
+    1.004,
+    1,
+    0.997,
+    1
+  );
+}
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+/* Keep horizontal overflow containment on the root. Putting overflow-x on body
+   coerces overflow-y to auto in WebKit and creates an iOS touch-scroll trap. */
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+  background: var(--bg);
+}
+body {
+  min-height: 100%;
+  font: 17px/1.6 var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Ambient blooms give glass luminance to refract. Their alpha must stay <= .10;
+   stronger blooms become decorative accent fields and break the cool canvas. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(70% 44% at 80% -8%, rgba(118, 204, 224, 0.055), transparent 72%),
+    radial-gradient(58% 40% at 8% 3%, rgba(179, 157, 243, 0.035), transparent 76%),
+    linear-gradient(180deg, #11131c 0%, var(--bg) 52%, var(--bg-deep) 100%);
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.18;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
+}
+img,
+svg {
+  display: block;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+button {
+  font: inherit;
+}
+b,
+strong {
+  font-weight: 680;
+}
+::selection {
+  background: rgba(118, 204, 224, 0.22);
+}
+.wrap {
+  width: min(var(--maxw), 100%);
+  margin-inline: auto;
+  padding-inline: max(clamp(20px, 4.5vw, 48px), env(safe-area-inset-left));
+}
+.num {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.mono {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+.muted {
+  color: var(--text-2);
+}
+.pos {
+  color: var(--green);
+}
+.neg {
+  color: var(--red);
+}
+code,
+kbd,
+.hash {
+  font-family: var(--mono);
+  font-size: 0.84em;
+  letter-spacing: -0.012em;
+  font-variant-ligatures: none;
+}
+.hash {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.prose {
+  max-width: 64ch;
+  font: 17px/1.7 var(--body);
+  font-variant-numeric: var(--onum);
+  text-wrap: pretty;
+}
+.prose + .prose {
+  margin-top: var(--s3);
+}
+.card {
+  position: relative;
+  background: linear-gradient(145deg, rgba(53, 58, 78, 0.5), rgba(35, 39, 55, 0.43));
+  border: 1px solid var(--hair);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.035),
+    transparent 22%,
+    transparent 78%,
+    rgba(255, 255, 255, 0.012)
+  );
+  mask: linear-gradient(#000, #000);
+}
+.card--pad {
+  padding: var(--s5);
+}
+.card--soft {
+  background: var(--surface-soft);
+}
+.hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding-block: clamp(74px, 14vh, 148px) clamp(48px, 7vw, 86px);
+}
+.hero::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: min(88%, 960px);
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, var(--hair-2), transparent);
+}
+.hero--img {
+  min-height: min(90svh, 780px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-top: 0;
+}
+.hero__media {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+}
+.hero__media img,
+.hero__media svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hero__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(10, 11, 17, 0.66),
+    rgba(10, 11, 17, 0.08) 34%,
+    transparent 52%,
+    rgba(13, 15, 22, 0.62) 86%,
+    var(--bg)
+  );
+}
+.hero__inner {
+  position: relative;
+  z-index: 1;
+}
+.kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 13px;
+  font-size: 11.5px;
+  font-weight: 720;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.kicker::before {
+  content: "";
+  width: 28px;
+  height: 1px;
+  background: var(--kc, var(--blue));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--kc, var(--blue)) 28%, transparent);
+}
+.hero h1 {
+  max-width: 960px;
+  margin: 0.31em 0 0.18em;
+  font: 580 clamp(46px, 8.8vw, 96px)/0.96 var(--serif);
+  letter-spacing: -0.026em;
+  text-wrap: balance;
+  text-shadow: 0 10px 42px rgba(0, 0, 0, 0.36);
+}
+.hero h1 .thin {
+  font-weight: 450;
+  font-style: italic;
+  color: var(--text-2);
+}
+.hero__sub {
+  max-width: 39em;
+  font: clamp(17px, 2.1vw, 20px)/1.58 var(--body);
+  color: #c9cddd;
+  font-variant-numeric: var(--onum);
+  text-wrap: pretty;
+}
+.hero__sub b {
+  color: var(--text);
+  font-weight: 700;
+}
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: clamp(28px, 4vw, 40px);
+}
+.stat {
+  min-width: 126px;
+  padding: 14px 17px 13px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  background: rgba(45, 50, 68, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 18px 36px -28px rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(16px) saturate(145%);
+}
+.stat .n {
+  display: block;
+  font-size: 24px;
+  font-weight: 710;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+}
+.stat .l {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.135em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+section {
+  scroll-margin-top: calc(var(--nav-h) + 18px);
+}
+.toc {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid var(--hair);
+  background: linear-gradient(180deg, rgba(13, 15, 22, 0.9), rgba(13, 15, 22, 0.72));
+  backdrop-filter: blur(22px) saturate(165%);
+}
+.toc__track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: min(var(--maxw), 100%);
+  margin: auto;
+  padding: 9px max(clamp(14px, 4.5vw, 48px), env(safe-area-inset-left));
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+.toc__track::-webkit-scrollbar {
+  display: none;
+}
+.toc-ind {
+  position: absolute;
+  top: 9px;
+  left: 0;
+  height: 39px;
+  border: 1px solid rgba(118, 204, 224, 0.28);
+  border-radius: 12px;
+  opacity: 0;
+  background: rgba(118, 204, 224, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    transform 0.48s var(--ease-spring),
+    width 0.48s var(--ease-spring),
+    opacity 0.22s;
+  will-change: transform;
+  pointer-events: none;
+}
+.tp {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 650;
+  transition:
+    color 0.2s,
+    transform 0.16s var(--ease-out);
+}
+.tp:hover,
+.tp.on {
+  color: var(--text);
+}
+.tp:active {
+  transform: scale(0.96);
+}
+.tp:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.tp .pdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pc, var(--text-3));
+}
+.block {
+  padding-block: clamp(54px, 8vw, 92px);
+}
+.block > * + * {
+  margin-top: var(--s5);
+}
+.sec-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s5);
+  flex-wrap: wrap;
+  margin-bottom: clamp(26px, 4vw, 38px);
+}
+.eyebrow {
+  margin-bottom: 10px;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 760;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.sec-head h2 {
+  max-width: 760px;
+  font: 580 clamp(30px, 4.8vw, 46px)/1.03 var(--serif);
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+.sec-head p {
+  max-width: 40em;
+  margin-top: 10px;
+  color: var(--text-2);
+  font: 17px/1.66 var(--body);
+  font-variant-numeric: var(--onum);
+  text-wrap: pretty;
+}
+.two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s4);
+}
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s3);
+}
+.kpi {
+  overflow: hidden;
+  min-height: 154px;
+  padding: 20px 21px 18px;
+  border-radius: var(--r-lg);
+}
+.kpi::after {
+  content: "";
+  position: absolute;
+  inset: -35px -20px auto;
+  height: 105px;
+  opacity: 0.13;
+  background: radial-gradient(ellipse at 50% 0, var(--kpi-c, var(--blue)), transparent 65%);
+  pointer-events: none;
+}
+.kpi .kl {
+  position: relative;
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.kpi .kv {
+  position: relative;
+  margin-top: 21px;
+  font-size: clamp(29px, 3.3vw, 39px);
+  font-weight: 740;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, var(--text), rgba(236, 238, 246, 0.66));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.kpi--pos .kv {
+  background: linear-gradient(180deg, #d7edc2, var(--green));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.kpi--neg .kv {
+  background: linear-gradient(180deg, #ffc0ce, var(--red));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.kpi .kd {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 11px;
+  font-size: 11.5px;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+}
+.kpi .kd .arr {
+  width: 0;
+  height: 0;
+  border-inline: 4px solid transparent;
+}
+.kpi .up {
+  color: var(--green);
+}
+.kpi .up .arr {
+  border-bottom: 6px solid currentColor;
+}
+.kpi .down {
+  color: var(--red);
+}
+.kpi .down .arr {
+  border-top: 6px solid currentColor;
+}
+.kpi .vs {
+  color: var(--text-3);
+  font-weight: 520;
+}
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 8px;
+  padding: 18px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--bc, #8f96aa) 28%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bc, #8f96aa) 9%, transparent);
+  color: var(--bc, var(--text-2));
+  font-size: 9.5px;
+  font-weight: 780;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.badge--green {
+  --bc: var(--green);
+}
+.badge--yellow {
+  --bc: var(--yellow);
+}
+.badge--blue {
+  --bc: var(--blue);
+}
+.badge--purple {
+  --bc: var(--purple);
+}
+.badge--red {
+  --bc: var(--red);
+}
+.badge--orange {
+  --bc: var(--orange);
+}
+.badge--dim {
+  --bc: #9399ad;
+}
+.chipm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 670;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chipm svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+}
+.callout-stack {
+  display: grid;
+  gap: 10px;
+}
+.callout {
+  --cc: var(--blue);
+  padding: 16px 18px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--cc) 6%, var(--surface-soft)),
+    rgba(31, 34, 47, 0.36)
+  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+.callout .cl {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 7px;
+  color: var(--cc);
+  font-size: 9.5px;
+  font-weight: 790;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.callout .cl::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cc) 30%, transparent), transparent);
+}
+.callout p {
+  color: var(--text-2);
+  font: 16px/1.62 var(--body);
+  font-variant-numeric: var(--onum);
+  text-wrap: pretty;
+}
+.callout p b {
+  color: var(--text);
+}
+.callout--info {
+  --cc: var(--blue);
+}
+.callout--warn {
+  --cc: var(--orange);
+}
+.callout--danger {
+  --cc: var(--red);
+}
+.callout--done {
+  --cc: var(--green);
+}
+.callout--note {
+  --cc: var(--yellow);
+}
+.timeline {
+  display: grid;
+}
+.tl {
+  display: grid;
+  grid-template-columns: 92px 28px 1fr;
+  column-gap: 14px;
+}
+.tl .tt {
+  padding-top: 21px;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 640;
+  font-variant-numeric: tabular-nums;
+}
+.tspine {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.tspine::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto;
+  width: 1px;
+  background: linear-gradient(var(--row-line), var(--hair-2), var(--row-line));
+}
+.tl:first-child .tspine::before {
+  top: 22px;
+}
+.tl:last-child .tspine::before {
+  bottom: auto;
+  height: 22px;
+}
+.tdot {
+  position: relative;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 23px;
+  border: 2px solid color-mix(in srgb, var(--tc, var(--blue)) 55%, var(--bg));
+  border-radius: 50%;
+  background: var(--tc, var(--blue));
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--tc, var(--blue)) 10%, transparent);
+}
+.tcard {
+  margin: 7px 0 13px;
+  padding: 16px 18px;
+  border-radius: var(--r-lg);
+}
+.tcard .th {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.tcard .th b {
+  font-size: 14px;
+  font-weight: 680;
+}
+.tcard p {
+  color: var(--text-2);
+  font: 16px/1.58 var(--body);
+  font-variant-numeric: var(--onum);
+  text-wrap: pretty;
+}
+.tl--green {
+  --tc: var(--green);
+}
+.tl--yellow {
+  --tc: var(--yellow);
+}
+.tl--blue {
+  --tc: var(--blue);
+}
+.tl--purple {
+  --tc: var(--purple);
+}
+.tl--red {
+  --tc: var(--red);
+}
+.tl--orange {
+  --tc: var(--orange);
+}
+.tblwrap {
+  overflow: hidden;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.tbl th,
+.tbl td {
+  padding: 15px 20px;
+  text-align: left;
+  border-bottom: 1px solid var(--row-line);
+  vertical-align: top;
+}
+.tbl thead th {
+  padding-block: 13px;
+  color: var(--text-3);
+  background: rgba(8, 10, 17, 0.2);
+  font-size: 9.5px;
+  font-weight: 760;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.tbl tbody tr:last-child td {
+  border-bottom: 0;
+}
+.tbl tbody tr {
+  transition: background 0.18s;
+}
+.tbl tbody tr:hover {
+  background: rgba(255, 255, 255, 0.022);
+}
+.tbl .k {
+  font-weight: 650;
+}
+.tbl .r {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tbl .hi {
+  color: var(--blue);
+  font-weight: 720;
+  white-space: nowrap;
+}
+.tbl .sub {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.tbl tr.hl td {
+  background: rgba(118, 204, 224, 0.045);
+}
+.tbl-cards {
+  display: none;
+}
+.pbar {
+  display: grid;
+  gap: 8px;
+}
+.pbar + .pbar {
+  margin-top: 17px;
+}
+.pbar .pl {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.pbar .pl b,
+.pbar .pv {
+  color: var(--text);
+  font-weight: 670;
+  font-variant-numeric: tabular-nums;
+}
+.pbar .pg {
+  color: var(--text-3);
+  font-weight: 500;
+}
+.pbar .track {
+  position: relative;
+  height: 7px;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  background: rgba(7, 9, 15, 0.62);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.56),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+.pbar .fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--w, 0%);
+  overflow: hidden;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fc, var(--green)) 56%, transparent),
+    var(--fc, var(--green))
+  );
+  box-shadow: 0 0 12px color-mix(in srgb, var(--fc, var(--green)) 28%, transparent);
+  transform: translateX(-101%);
+  transition: transform 1s var(--ease-out);
+}
+.pbar .fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 62%
+  );
+  transform: translateX(-130%);
+}
+.in .pbar .fill,
+.pbar.in .fill {
+  transform: none;
+}
+.in .pbar .fill::after,
+.pbar.in .fill::after {
+  animation: fill-sheen 0.8s 0.78s var(--ease-out) forwards;
+}
+@keyframes fill-sheen {
+  to {
+    transform: translateX(130%);
+  }
+}
+.pbar--green {
+  --fc: var(--green);
+}
+.pbar--yellow {
+  --fc: var(--yellow);
+}
+.pbar--blue {
+  --fc: var(--blue);
+}
+.pbar--purple {
+  --fc: var(--purple);
+}
+.pbar--red {
+  --fc: var(--red);
+}
+.pbar--orange {
+  --fc: var(--orange);
+}
+.rings {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s3);
+}
+.ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 12px 17px;
+  border-radius: var(--r-lg);
+}
+.rwrap {
+  position: relative;
+  width: 112px;
+  height: 112px;
+}
+.ring svg {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+.rtrack,
+.rval {
+  fill: none;
+  stroke-width: 8;
+}
+.rtrack {
+  stroke: rgba(255, 255, 255, 0.055);
+}
+.rval {
+  stroke: var(--rc, var(--green));
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--rc, var(--green)) 42%, transparent));
+  transition: stroke-dashoffset 1.15s var(--ease-out);
+}
+.rcenter {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+.rn {
+  font-size: 23px;
+  font-weight: 730;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.rs {
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 9px;
+  font-weight: 720;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.rlabel {
+  margin-top: 7px;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 640;
+}
+.ring--green {
+  --rc: var(--green);
+}
+.ring--yellow {
+  --rc: var(--yellow);
+}
+.ring--blue {
+  --rc: var(--blue);
+}
+.ring--purple {
+  --rc: var(--purple);
+}
+.ring--red {
+  --rc: var(--red);
+}
+.ring--orange {
+  --rc: var(--orange);
+}
+.bars {
+  display: flex;
+  align-items: stretch;
+  gap: clamp(7px, 1.4vw, 14px);
+  height: 220px;
+  padding: 22px 22px 14px;
+}
+.bcol {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+.bval {
+  text-align: center;
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transform: translateY(3px);
+  transition:
+    opacity 0.35s,
+    transform 0.45s var(--ease-out);
+}
+.btrack {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  overflow: hidden;
+  border-radius: 8px 8px 5px 5px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(0, 0, 0, 0.06));
+}
+.bfill {
+  width: 100%;
+  height: var(--h, 50%);
+  border-radius: 7px 7px 4px 4px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bc2, var(--blue)) 88%, #fff 4%),
+    color-mix(in srgb, var(--bc2, var(--blue)) 52%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 0 16px -6px color-mix(in srgb, var(--bc2, var(--blue)) 42%, transparent);
+  transform: translateY(103%);
+  transition: transform 0.82s var(--ease-out);
+}
+.blabel {
+  text-align: center;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 9.5px;
+  font-weight: 720;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.in .bfill,
+.bars.in .bfill {
+  transform: none;
+}
+.in .bval,
+.bars.in .bval {
+  opacity: 1;
+  transform: none;
+}
+.bcol:nth-child(2) {
+  --delay: 45ms;
+}
+.bcol:nth-child(3) {
+  --delay: 90ms;
+}
+.bcol:nth-child(4) {
+  --delay: 135ms;
+}
+.bcol:nth-child(5) {
+  --delay: 180ms;
+}
+.bcol:nth-child(6) {
+  --delay: 225ms;
+}
+.bcol:nth-child(7) {
+  --delay: 270ms;
+}
+.bcol:nth-child(8) {
+  --delay: 315ms;
+}
+.bcol:nth-child(9) {
+  --delay: 360ms;
+}
+.bcol:nth-child(10) {
+  --delay: 405ms;
+}
+.bcol:nth-child(11) {
+  --delay: 450ms;
+}
+.bcol:nth-child(12) {
+  --delay: 495ms;
+}
+.bfill {
+  transition-delay: var(--delay, 0ms);
+}
+.bval {
+  transition-delay: calc(var(--delay, 0ms) + 430ms);
+}
+.b--green {
+  --bc2: var(--green);
+}
+.b--yellow {
+  --bc2: var(--yellow);
+}
+.b--blue {
+  --bc2: var(--blue);
+}
+.b--purple {
+  --bc2: var(--purple);
+}
+.b--red {
+  --bc2: var(--red);
+}
+.b--orange {
+  --bc2: var(--orange);
+}
+.chartcard {
+  padding: 22px 22px 16px;
+}
+.chead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.chead b {
+  font-size: 14px;
+  font-weight: 680;
+}
+.legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 620;
+}
+.legend i {
+  width: 15px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--lc, var(--blue));
+}
+.chart {
+  width: 100%;
+  height: auto;
+}
+.grid {
+  stroke: rgba(255, 255, 255, 0.05);
+  stroke-width: 1;
+}
+.axis {
+  fill: var(--text-3);
+  font: 10px var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+.chart-area {
+  opacity: 0;
+  transition: opacity 0.7s 0.35s;
+}
+.chart-line {
+  fill: none;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chart-goal {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 7;
+  opacity: 0;
+  transition: opacity 0.5s 0.72s;
+}
+.chart-dot {
+  opacity: 0;
+  transform: scale(0.3);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition:
+    opacity 0.28s,
+    transform 0.48s var(--ease-spring);
+}
+.in .chart-area {
+  opacity: 1;
+}
+.in .chart-goal {
+  opacity: 0.68;
+}
+.in .chart-dot {
+  opacity: 1;
+  transform: scale(1);
+}
+.chart-dot:nth-of-type(2) {
+  transition-delay: 0.5s;
+}
+.chart-dot:nth-of-type(3) {
+  transition-delay: 0.57s;
+}
+.chart-dot:nth-of-type(4) {
+  transition-delay: 0.64s;
+}
+.chart-dot:nth-of-type(5) {
+  transition-delay: 0.71s;
+}
+.chart-dot:nth-of-type(6) {
+  transition-delay: 0.78s;
+}
+.chart-dot:nth-of-type(7) {
+  transition-delay: 0.85s;
+}
+.chart-dot:nth-of-type(8) {
+  transition-delay: 0.92s;
+}
+.route {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding: 24px 22px 19px;
+}
+.rstop {
+  display: flex;
+  flex: 0 0 76px;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  text-align: center;
+}
+.rdot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--rc2, var(--blue));
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--rc2, var(--blue)) 10%, transparent);
+}
+.rcode {
+  font-size: 15px;
+  font-weight: 740;
+  letter-spacing: 0.03em;
+}
+.rmeta {
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 620;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+.rstop--green {
+  --rc2: var(--green);
+}
+.rstop--orange {
+  --rc2: var(--orange);
+}
+.rstop--purple {
+  --rc2: var(--purple);
+}
+.rstop--yellow {
+  --rc2: var(--yellow);
+}
+.rleg {
+  display: flex;
+  flex: 1 1 70px;
+  min-width: 52px;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+}
+.rline {
+  width: 100%;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, var(--hair-2) 0 7px, transparent 7px 13px);
+}
+.rlab {
+  color: var(--text-3);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.spines {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s3);
+}
+.spine {
+  overflow: hidden;
+  padding: 21px 22px 20px;
+}
+.snum {
+  display: flex;
+  align-items: baseline;
+  gap: 11px;
+  margin-bottom: 10px;
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 740;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.sfig {
+  color: var(--sc, var(--blue));
+  font: italic 500 42px/0.72 var(--serif);
+  letter-spacing: 0;
+  font-variant-numeric: var(--onum);
+}
+.spine h3 {
+  font: 580 22px/1.1 var(--serif);
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+.splace {
+  margin-top: 5px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.scorner {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  padding: 5px 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-full);
+  background: rgba(9, 11, 18, 0.28);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 640;
+  font-variant-numeric: tabular-nums;
+}
+.sblurb {
+  margin-top: 15px;
+  color: #c5c9d8;
+  font: 16px/1.63 var(--body);
+  font-variant-numeric: var(--onum);
+  text-wrap: pretty;
+}
+.smeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 15px;
+}
+.spine--green {
+  --sc: var(--green);
+}
+.spine--yellow {
+  --sc: var(--yellow);
+}
+.spine--blue {
+  --sc: var(--blue);
+}
+.spine--purple {
+  --sc: var(--purple);
+}
+.spine--red {
+  --sc: var(--red);
+}
+.spine--orange {
+  --sc: var(--orange);
+}
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s3);
+}
+.gallery figure {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  background: var(--inset);
+  box-shadow: var(--shadow-card);
+}
+.gallery img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4/3;
+  object-fit: cover;
+  outline: 1px solid rgba(255, 255, 255, 0.08);
+  outline-offset: -1px;
+  transition:
+    transform 0.7s var(--ease-out),
+    filter 0.7s;
+}
+.gallery figure:hover img {
+  transform: scale(1.025);
+  filter: saturate(1.04);
+}
+.gallery figcaption {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 40px 15px 13px;
+  background: linear-gradient(transparent, rgba(8, 10, 16, 0.82));
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 650;
+  text-shadow: 0 1px 10px #000;
+}
+.gallery figcaption .sub {
+  display: block;
+  margin-top: 2px;
+  color: #aeb3c4;
+  font-size: 10.5px;
+  font-weight: 520;
+}
+.figure img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+}
+.figure figcaption {
+  margin-top: 9px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* ---------------- LIGHTBOX ---------------- */
+/* JS builds one overlay per page and auto-binds every .gallery figure and
+   .figure. Open is a shared-element morph from the tapped thumbnail (FLIP with
+   a counter-scaled inner image so the cover-crop resolves into the full frame —
+   transform/opacity only, 60fps). Close = × button, Esc, scrim tap, or swipe-up
+   with follow-and-release physics. No markup needed beyond the gallery/figure. */
+.lb {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  touch-action: none;
+}
+.lb.open {
+  display: block;
+}
+.lb__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 8, 13, 0.94);
+  opacity: 0;
+  transition: opacity 0.32s ease;
+}
+.lb.in .lb__scrim {
+  opacity: 1;
+}
+/* The frame is the morphing rect: sized to the final fitted image, then
+   transformed to match the thumbnail at open. The corner radius rides the
+   scale on purpose; pinning it reads more mechanical, not less. */
+.lb__frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  transform-origin: top left;
+  will-change: transform;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.6);
+  transition:
+    transform 0.46s var(--ease-spring),
+    opacity 0.3s ease;
+  cursor: zoom-out;
+}
+.lb__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: center;
+  will-change: transform;
+  transition: transform 0.46s var(--ease-spring);
+}
+.lb__close {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  right: calc(14px + env(safe-area-inset-right));
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-full);
+  background: rgba(20, 23, 34, 0.55);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.28s ease,
+    transform 0.12s ease;
+}
+.lb.in .lb__close {
+  opacity: 1;
+}
+.lb__close:active {
+  transform: scale(0.94);
+}
+.lb__close:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--blue);
+}
+.lb__close svg {
+  width: 17px;
+  height: 17px;
+}
+.lb__cap {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  text-align: center;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+.lb.in .lb__cap {
+  opacity: 1;
+}
+.gallery figure,
+.figure img {
+  cursor: zoom-in;
+}
+html.lb-lock,
+html.lb-lock body {
+  overflow: hidden;
+}
+.fold {
+  overflow: hidden;
+  border-radius: var(--r-lg);
+}
+.fold + .fold {
+  margin-top: 10px;
+}
+.fold summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 14px;
+  font-weight: 650;
+  transition:
+    background 0.18s,
+    transform 0.14s;
+}
+.fold summary::-webkit-details-marker {
+  display: none;
+}
+.fold summary:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.fold summary:active {
+  transform: scale(0.992);
+}
+.fold summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+.fcaret {
+  display: grid;
+  flex: 0 0 25px;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: rgba(7, 9, 15, 0.26);
+  transition: transform 0.4s var(--ease-spring);
+}
+.fcaret svg {
+  width: 12px;
+  height: 12px;
+  color: var(--text-2);
+}
+.fold[open] .fcaret {
+  transform: rotate(90deg);
+}
+.fhint {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.fbody {
+  padding: 1px 18px 18px 55px;
+  color: var(--text-2);
+  font: 16px/1.64 var(--body);
+  font-variant-numeric: var(--onum);
+  text-wrap: pretty;
+}
+.fold[open] .fbody {
+  animation: fold-in 0.35s var(--ease-out);
+}
+@keyframes fold-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+.checklist {
+  padding: 9px;
+}
+.chk {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.18s,
+    transform 0.14s;
+}
+.chk + .chk {
+  border-top: 1px solid var(--row-line);
+  border-radius: 0;
+}
+.chk:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.chk:active {
+  transform: scale(0.992);
+}
+.chk:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+.box {
+  display: grid;
+  flex: 0 0 21px;
+  width: 21px;
+  height: 21px;
+  margin-top: 1px;
+  place-items: center;
+  border: 1px solid var(--hair-2);
+  border-radius: 7px;
+  background: rgba(6, 8, 14, 0.25);
+  transition:
+    background 0.22s,
+    border-color 0.22s,
+    transform 0.35s var(--ease-spring);
+}
+.box svg {
+  width: 12px;
+  height: 12px;
+  color: #10180b;
+  opacity: 0;
+  transform: scale(0.3);
+  transition:
+    opacity 0.18s,
+    transform 0.34s var(--ease-spring);
+}
+.ctext {
+  font-size: 14px;
+  text-wrap: pretty;
+  transition: color 0.18s;
+}
+.chk.done .box {
+  border-color: var(--green);
+  background: var(--green);
+  transform: scale(1.04);
+}
+.chk.done .box svg {
+  opacity: 1;
+  transform: scale(1);
+}
+.chk.done .ctext {
+  color: var(--text-3);
+}
+.verdict {
+  --vc: var(--blue);
+  overflow: hidden;
+  padding: 28px 30px;
+}
+.verdict::after {
+  content: "";
+  position: absolute;
+  inset: -50px -10% auto;
+  height: 140px;
+  opacity: 0.11;
+  background: radial-gradient(ellipse at 50% 0, var(--vc), transparent 66%);
+  pointer-events: none;
+}
+.vlabel {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 13px;
+  color: var(--vc);
+  font-size: 9.5px;
+  font-weight: 790;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.vlabel::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--vc) 30%, transparent), transparent);
+}
+.verdict blockquote {
+  position: relative;
+  max-width: 42em;
+  font: 500 clamp(19px, 2.5vw, 25px)/1.42 var(--serif);
+  letter-spacing: -0.009em;
+  text-wrap: pretty;
+}
+.vwho {
+  position: relative;
+  margin-top: 14px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+.verdict--green {
+  --vc: var(--green);
+}
+.verdict--red {
+  --vc: var(--red);
+}
+.verdict--yellow {
+  --vc: var(--yellow);
+}
+.verdict--blue {
+  --vc: var(--blue);
+}
+footer {
+  padding-block: 42px max(62px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--hair);
+  color: var(--text-3);
+  font-size: 12px;
+}
+.fwrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ftop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ftop::before {
+  content: "";
+  width: 28px;
+  height: 1px;
+  background: var(--hair-2);
+}
+.ft-title {
+  color: var(--text);
+  font: 580 18px var(--serif);
+}
+.srcs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.srcs a {
+  padding: 6px 11px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-2);
+  transition:
+    color 0.18s,
+    border-color 0.18s,
+    transform 0.14s;
+}
+.srcs a:hover {
+  color: var(--text);
+  border-color: var(--hair-2);
+}
+.srcs a:active {
+  transform: scale(0.96);
+}
+.fmeta {
+  color: var(--text-3);
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+/* Headerless lead-in: the quiet opener used instead of .hero. */
+.lead {
+  padding-top: var(--s4);
+}
+.lead__slug {
+  margin-bottom: var(--s3);
+  font: 600 12px/1 var(--sans);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lead-c, var(--orange));
+}
+.lead__title {
+  margin-bottom: var(--s4);
+  font: 600 clamp(28px, 6vw, 46px) / 1.06 var(--serif);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.lead__title .thin {
+  font-weight: 300;
+  font-style: italic;
+  color: var(--text-2);
+}
+.lead__sub {
+  max-width: 60ch;
+}
+/* Motion grammar: editorial heads settle; cards lift; timelines travel horizontally. */
+.reveal {
+  --rx: 0px;
+  --ry: 14px;
+  --rs: 0.985;
+  transition:
+    opacity 0.58s var(--ease-soft),
+    transform 0.72s var(--ease-out);
+  will-change: opacity, transform;
+}
+.reveal[data-reveal="settle"],
+.sec-head.reveal {
+  --ry: 10px;
+  --rs: 1;
+}
+.reveal[data-reveal="slide"],
+.tl.reveal {
+  --rx: 14px;
+  --ry: 0px;
+  --rs: 1;
+}
+.reveal[data-reveal="scale"],
+.kpi.reveal,
+.ring.reveal,
+.spine.reveal,
+.gallery figure.reveal {
+  --ry: 9px;
+  --rs: 0.965;
+}
+.reveal.in {
+  will-change: auto;
+}
+html.anim .reveal:not(.in) {
+  opacity: 0;
+  transform: translate3d(var(--rx), var(--ry), 0) scale(var(--rs));
+}
+.hero .kicker,
+.hero h1,
+.hero__sub,
+.hero .stats {
+  opacity: 0;
+  animation: hero-settle 0.82s var(--ease-out) forwards;
+}
+.hero h1 {
+  animation-delay: 0.07s;
+}
+.hero__sub {
+  animation-delay: 0.16s;
+}
+.hero .stats {
+  animation-delay: 0.25s;
+}
+@keyframes hero-settle {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.14);
+  }
+}
+@media (min-width: 700px) {
+  :root {
+    --blur: blur(22px) saturate(165%);
+  }
+}
+@media (max-width: 900px) {
+  .kpis,
+  .rings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .spines {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tl {
+    grid-template-columns: 68px 26px 1fr;
+  }
+}
+@media (max-width: 680px) {
+  :root {
+    --nav-h: 56px;
+  }
+  .wrap {
+    padding-inline: max(18px, env(safe-area-inset-left));
+  }
+  .hero {
+    padding-block: 68px 50px;
+  }
+  .hero h1 {
+    font-size: clamp(44px, 14vw, 64px);
+    line-height: 0.98;
+  }
+  .hero__sub {
+    font-size: 17px;
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .stat {
+    min-width: 0;
+  }
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+  .kpis {
+    gap: 10px;
+  }
+  .kpi {
+    min-height: 143px;
+    padding: 18px 17px 16px;
+  }
+  .tl {
+    grid-template-columns: 48px 22px 1fr;
+    column-gap: 9px;
+  }
+  .tl .tt {
+    font-size: 10px;
+  }
+  .tcard {
+    padding: 14px;
+  }
+  .tblwrap.has-cards {
+    display: none;
+  }
+  .tbl-cards {
+    display: grid;
+    gap: 9px;
+  }
+  .tbc {
+    padding: 15px 16px;
+    border-radius: var(--r-lg);
+  }
+  .tbc-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .tbc-k {
+    font-size: 14px;
+    font-weight: 650;
+  }
+  .tbc-v {
+    color: var(--blue);
+    font-weight: 720;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .tbc-sub {
+    margin-top: 5px;
+    color: var(--text-2);
+    font-size: 12.5px;
+  }
+  .rings {
+    gap: 10px;
+  }
+  .ring {
+    padding-inline: 8px;
+  }
+  .bars {
+    height: 186px;
+    padding: 18px 13px 12px;
+  }
+  .bval {
+    font-size: 9px;
+  }
+  .route {
+    padding-inline: 16px;
+  }
+  .spines,
+  .gallery {
+    grid-template-columns: 1fr;
+  }
+  .fold summary {
+    display: grid;
+    grid-template-columns: 25px 1fr;
+    column-gap: 12px;
+  }
+  .fhint {
+    grid-column: 2;
+    margin: 1px 0 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .fbody {
+    padding-left: 18px;
+  }
+  .verdict {
+    padding: 23px 20px;
+  }
+  .figure--pan {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .figure--pan img {
+    width: auto;
+    max-width: none;
+    height: 170px;
+  }
+}
+@media (max-width: 420px) {
+  .kpis {
+    grid-template-columns: 1fr;
+  }
+  .kpi {
+    min-height: 132px;
+  }
+  .rings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rwrap {
+    width: 100px;
+    height: 100px;
+  }
+  .scorner {
+    position: static;
+    display: inline-flex;
+    margin-bottom: 14px;
+  }
+  .spine .snum {
+    clear: both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  html.anim .reveal:not(.in),
+  .reveal,
+  .hero .kicker,
+  .hero h1,
+  .hero__sub,
+  .hero .stats {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .pbar .fill,
+  .bfill {
+    transform: none !important;
+  }
+  .bval,
+  .chart-area,
+  .chart-goal,
+  .chart-dot {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .chart-line {
+    stroke-dasharray: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+}
+/* ── Code blocks: Sonokai Andromeda editor surface + syntax theme ────────── */
+.codeblock {
+  --sk-bg: #2b2d3a;
+  --sk-bg-2: #262834;
+  --sk-fg: #e1e3e4;
+  --sk-grey: #7e8294;
+  --sk-red: #fb617e;
+  --sk-green: #9ed06c;
+  --sk-yellow: #edc763;
+  --sk-blue: #6dcae8;
+  --sk-purple: #bb97ee;
+  --sk-orange: #f89860;
+  position: relative;
+  margin: var(--s4) 0 0;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--sk-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 12px 30px -22px rgba(3, 5, 12, 0.85);
+  overflow: hidden;
+}
+.codeblock__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 9px 14px;
+  background: var(--sk-bg-2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.codeblock__dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex: none;
+  opacity: 0.9;
+}
+.codeblock__dot--r { background: var(--sk-red); }
+.codeblock__dot--y { background: var(--sk-yellow); }
+.codeblock__dot--g { background: var(--sk-green); }
+.codeblock__file {
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  color: var(--sk-grey);
+  overflow-wrap: anywhere;
+}
+.codeblock__lang {
+  margin-left: auto;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--sk-blue);
+  opacity: 0.85;
+  flex: none;
+}
+.codeblock pre {
+  margin: 0;
+  padding: 15px 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.codeblock code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.62;
+  letter-spacing: -0.01em;
+  color: var(--sk-fg);
+  font-variant-ligatures: none;
+  white-space: pre;
+  tab-size: 4;
+}
+@media (max-width: 540px) {
+  .codeblock code { font-size: 13.5px; }
+}
+
+/* Token colors — Sonokai Andromeda */
+.tok-comment { color: var(--sk-grey); font-style: italic; }
+.tok-string  { color: var(--sk-yellow); }
+.tok-number  { color: var(--sk-purple); }
+.tok-bool    { color: var(--sk-purple); }
+.tok-keyword { color: var(--sk-red); }
+.tok-self    { color: var(--sk-orange); }
+.tok-fn      { color: var(--sk-green); }
+.tok-macro   { color: var(--sk-blue); }
+.tok-type    { color: var(--sk-blue); }
+.tok-attr    { color: var(--sk-orange); }
+.tok-life    { color: var(--sk-orange); }
+.tok-punct   { color: var(--sk-fg); }
+.tok-op      { color: var(--sk-red); }
+/* Document variant — one reading column for linear documents (specs, RFCs,
+   design docs, PR explainers). Inlined after base.css in skeleton-document.html;
+   activated by <body class="doc">. Prose self-limits its measure; code blocks,
+   callouts, and tables span the full column. */
+body.doc {
+  --maxw: 1100px;
+}
+.doc .block {
+  padding-block: clamp(38px, 5.5vw, 64px);
+}
+.doc main h2 {
+  font: 580 clamp(27px, 4.2vw, 38px) / 1.08 var(--serif);
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+.doc .block > * + h2 {
+  margin-top: clamp(44px, 6vw, 64px);
+}
+.doc main h3 {
+  font: 620 clamp(20px, 2.6vw, 24px) / 1.22 var(--serif);
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+.doc .block > * + h3 {
+  margin-top: clamp(30px, 4.5vw, 44px);
+}
+.doc main h4 {
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.doc .block > * + h4 {
+  margin-top: var(--s6);
+}
+.doc .prose {
+  max-width: none;
+  font-size: clamp(17px, 1.6vw, 18px);
+  line-height: 1.72;
+}
+.doc .prose + .prose {
+  margin-top: var(--s4);
+}
+.doc ul.prose,
+.doc ol.prose {
+  padding-left: 1.35em;
+}
+.doc .prose li + li {
+  margin-top: 0.5em;
+}
+.doc .prose li::marker {
+  color: var(--text-3);
+}
+.doc .prose a,
+.doc .callout a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--hair-bright);
+  text-underline-offset: 0.22em;
+  transition:
+    color 0.18s,
+    text-decoration-color 0.18s;
+}
+.doc .prose a:hover,
+.doc .callout a:hover {
+  color: var(--blue);
+  text-decoration-color: currentColor;
+}
+.doc hr {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(90deg, var(--hair-2), transparent);
+}
+/* ── Report-specific overrides (optional) go here ── */
+</style>
+<script>
+(function () {
+  try {
+    document.documentElement.classList.add("anim");
+  } catch {}
+  function revealAll() {
+    try {
+      var els = document.getElementsByClassName("reveal");
+      for (var i = 0; i < els.length; i++) els[i].classList.add("in");
+    } catch {}
+  }
+  function check() {
+    if (!window.__pikaReportArmed) revealAll();
+  }
+  function arm() {
+    setTimeout(check, 1400);
+    setTimeout(check, 3200);
+  }
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", arm, { once: true });
+  else arm();
+})();
+</script>
+</head>
+<body class="doc">
+
+<header class="hero">
+  <div class="wrap hero__inner">
+    <span class="kicker" style="--kc:var(--purple)">Jolt · Metal M5 saturation campaign · canonical report</span>
+    <h1>One report, <span class="thin">checked against the metal</span></h1>
+    <p class="hero__sub">Replaces the four Aug-4 audit/journal files. Every per-stage claim re-derived from the raw monitor trace, command-buffer audit, and stage source code — <b>four of nine stage subjects in the prior audit were misattributed</b>; the numbers themselves were honest. Current through the wave-2 gate: <b>69.63 s / 1.928&nbsp;MHz padded at 2²⁷</b>.</p>
+    <div class="stats">
+      <div class="stat"><span class="n num">69.63 s</span><span class="l">2²⁷ flagship (wave-2)</span></div>
+      <div class="stat"><span class="n num">−2.14 s</span><span class="l">vs 71.77 s baseline</span></div>
+      <div class="stat"><span class="n num">4/9</span><span class="l">stage labels wrong in prior audit</span></div>
+      <div class="stat"><span class="n num">0</span><span class="l">fabricated numbers found</span></div>
+    </div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <div class="toc__track" id="tocTrack">
+    <span class="toc-ind"></span>
+    <a class="tp" href="#factcheck" data-target="factcheck" style="--pc:var(--red)"><span class="pdot"></span>Fact-check</a>
+    <a class="tp" href="#attribution" data-target="attribution" style="--pc:var(--blue)"><span class="pdot"></span>Stage attribution</a>
+    <a class="tp" href="#gpu" data-target="gpu" style="--pc:var(--purple)"><span class="pdot"></span>How the GPU works</a>
+    <a class="tp" href="#campaign" data-target="campaign" style="--pc:var(--green)"><span class="pdot"></span>Waves 1–2</a>
+    <a class="tp" href="#wave3" data-target="wave3" style="--pc:var(--orange)"><span class="pdot"></span>Wave-3 surface</a>
+    <a class="tp" href="#verdict" data-target="verdict" style="--pc:var(--yellow)"><span class="pdot"></span>Verdict</a>
+  </div>
+</nav>
+
+<main>
+
+<section id="factcheck"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">01 · Adversarial fact-check</p>
+    <h2>The numbers were real. The names were invented.</h2>
+    <p>Every table cell in the prior audit traces to <code>metal-sat-attribution-plan.md</code> and was independently re-derived here from <code>monitor-2to27-20260804.json</code>. The stage <em>subject labels</em> were not taken from that report — they were guessed, and four are wrong.</p>
+  </div></div>
+
+  <h3>Confirmed misattributions</h3>
+  <p class="prose">Ground truth is the stage module docs (<code class="hash">crates/jolt-prover/src/stages/stage*.rs</code>) and the raw trace's member→span map (which <code>prove_round</code> spans fire inside which <code>prove_stage*</code> span).</p>
+
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Stage</th><th>Prior audit said</th><th>Actually is (trace-verified)</th><th>Why it matters</th></tr></thead>
+      <tbody>
+        <tr><td class="k">st4</td><td class="neg">“Instruction RAF”</td><td>Registers read/write checking + RAM Val check</td><td class="sub">Instruction read+RAF runs in st5. A reader targeting st4's host gap would open the wrong sumcheck.</td></tr>
+        <tr><td class="k">st5</td><td class="neg">“Booleanity/RAM”</td><td>Instruction read+RAF (312 round spans, 9.7 s of 14.7) + RamRA CR + Registers Val</td><td class="sub">Booleanity lives in 6a/6b. st5 is now the #1 wave-3 target — under its audit name you'd hunt the wrong kernels.</td></tr>
+        <tr><td class="k">st6b</td><td class="neg">“Bytecode RAF”</td><td>11-member cycle-phase batch: BytecodeRRC 5.6 s, RamRA + InstrRA virtualization, Booleanity, IncCR (prepare 1.79 s), Hamming, 4 precommitted members</td><td class="sub">Names one member of eleven. The −9.33 s wave-2 fix landed in the members the label hides (RA-virt/Bool adoption).</td></tr>
+        <tr><td class="k">st7</td><td class="neg">“Output checks”</td><td>Hamming-weight claim reduction — 99.7% is <code>HWCR::prepare</code> (1.887 of 1.893 s)</td><td class="sub">RAM output check is a stage-2 member. The wave-2 st7 fix was a Hamming pushforward rebuild.</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <div class="callout callout--done reveal">
+    <span class="cl">Verified clean</span>
+    <p>Recomputed from the raw trace: stage walls, GPU/CPU utilization (±0.7 pp, left-hold convention), sampled-zero runs (st3 2.48 s, st4 4.76 s total / 2.58 s max, st6b 10.60 s total, st7 1.62 s — all bracketed by raw-span vs held-sample conventions), 646 CBs × 133.8 µs = 86 ms launch ceiling, 357→162 GB/s (−55%) contention probe, 11.30 Gmul/s roof, address-major &gt;68× kill, radix-4 bind 1.51–1.98×. <b>Nothing fabricated.</b></p>
+  </div>
+
+  <div class="callout callout--info reveal">
+    <span class="cl">Audit beat journal once</span>
+    <p>The campaign journal claims a st7 zero-run of <span class="num">2.11 s</span> — impossible inside a 1.89 s stage. The attribution report shows it is a <em>boundary</em> run extending into st8; the audit correctly used the in-stage 1.615 s. Journal text is the sloppier artifact on this point.</p>
+  </div>
+
+  <div class="callout callout--warn reveal">
+    <span class="cl">Ranking deviation</span>
+    <p>The audit promoted st0 scheduling to bet #1 and “recommended next action” — <em>deviating from its own source</em>, which ranked st4/st6b above it. Wave-2 killed the st0 door within hours (bimodality is ambient device power/clock state: 3.8→22.5 s solo commit at constant CPU time — no walk, no scheduling defect), while st6b, ranked #2 at “2–5%”, delivered 13%. The one editorial judgment the audit added on top of its source was wrong in both directions.</p>
+  </div>
+
+  <h3>The four files</h3>
+  <ul class="prose">
+    <li><code class="hash">/tmp/metal-m5-saturation-audit-20260804.html</code> — v1, still carries the later-withdrawn stage-4 “1.2–2.2 s” radix-4 candidate (built on cycle bits misread as address bits).</li>
+    <li><code class="hash">/tmp/metal-m5-saturation-audit-20260804-final.html</code> — v2 after the r4-pin correction; byte-identical to the worktree copy. The correction itself was honest and prompt.</li>
+    <li><code class="hash">/tmp/metal-saturation-journal-*.md</code> ×2 — stale snapshots of the live worktree journal at wave-1 close.</li>
+  </ul>
+  <p class="prose">All four are superseded by this document; the /tmp copies are deleted.</p>
+</div></section>
+
+<section id="attribution"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">02 · Corrected stage attribution</p>
+    <h2>What each stage is, what limits it, what happened to it</h2>
+    <p>Monitor columns from the wave-1 2²⁷ attribution run (80.99 s wall); “now” = wave-2 record run (69.63 s). GPU% is a time-weighted <code>ioreg</code> activity sample, not an ALU counter.</p>
+  </div></div>
+
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Stage</th><th>Actual contents</th><th class="r">GPU%</th><th class="r">zero&nbsp;s</th><th class="r">baseline</th><th class="r">now</th><th>Limiting resource (evidence in §3)</th></tr></thead>
+      <tbody>
+        <tr><td class="k">st0</td><td class="sub">FS preamble + witness commitment (Dory streaming) over hoisted CPU trace-record walk</td><td class="r num">79.4</td><td class="r num">0.6</td><td class="r num">12.08</td><td class="r num">17.98</td><td class="sub">Shared memory fabric + <b>ambient device power state</b> (±5 s bimodality, exists with zero co-runner)</td></tr>
+        <tr><td class="k">st1</td><td class="sub">Spartan outer uni-skip + outer remainder</td><td class="r num">77.1</td><td class="r num">0.9</td><td class="r num">4.46</td><td class="r num">5.45</td><td class="sub">Host prepare/glue at 2.2 cores; GPU% contaminated by adjacent device work</td></tr>
+        <tr><td class="k">st2</td><td class="sub">Product uni-skip + 5-member batch (RamRWC, product remainder, InstrCR, RamRAF, <b>RAM output check</b>)</td><td class="r num">48.3</td><td class="r num">1.3</td><td class="r num">2.78</td><td class="r num">2.98</td><td class="sub">Mixed host prepare / device rounds</td></tr>
+        <tr><td class="k">st3</td><td class="sub">SpartanShift + InstructionInput + RegistersCR</td><td class="r num">16.1</td><td class="r num">2.5</td><td class="r num">2.40</td><td class="r num">2.30</td><td class="sub">Host-serial round 0 (<code>native_q_evals</code> 2.14 s) — cut by <code>jk_instr_input_q0</code> (w2, 8.4–9.2× isolated)</td></tr>
+        <tr class="hl"><td class="k">st4</td><td class="sub">Registers read/write checking + RAM Val check</td><td class="r num">40.2</td><td class="r num">4.8</td><td class="r num">8.77</td><td class="r num">9.52</td><td class="sub">Host/device alternation: device message → host <code>scanned_offsets</code>+alloc → bind, every round; RegistersRWC::prepare 2.45 s</td></tr>
+        <tr class="hl"><td class="k">st5</td><td class="sub">Instruction read+RAF (d=6) + RamRA CR + Registers Val</td><td class="r num">77.6</td><td class="r num">2.1</td><td class="r num">14.22</td><td class="r num">14.81</td><td class="sub">Device-dominated scan/reduce; ALU-vs-bandwidth unresolved (no HW counters) — wave-3 lane harnessing</td></tr>
+        <tr><td class="k">st6a</td><td class="sub">Bytecode RAF + booleanity address phases</td><td class="r num">—</td><td class="r num">0</td><td class="r num">0.25</td><td class="r num">0.19</td><td class="sub">Negligible</td></tr>
+        <tr><td class="k">st6b</td><td class="sub">11-member cycle batch: BytecodeRRC, Booleanity, RamHamming, RamRA+InstrRA virt, IncCR, precommitted CRs</td><td class="r num">34.5</td><td class="r num">10.6</td><td class="r num">16.35</td><td class="r num">7.02</td><td class="sub">Was: synchronous adoption allocation (3× <code>jk_ra_materialize</code>, 28.5 GiB fresh ping-pong, blocked≈2×gpu). <b>Fixed w2: −9.33 s.</b> NOT bandwidth (dense streams ≈0.3 s at roof)</td></tr>
+        <tr><td class="k">st7</td><td class="sub">Hamming-weight claim reduction + precommitted address phases</td><td class="r num">13.5</td><td class="r num">1.6</td><td class="r num">1.91</td><td class="r num">1.33</td><td class="sub">Pure host-serial prepare (99.7%) — rebuilt on split-eq pushforward (w2, 1.71×)</td></tr>
+        <tr><td class="k">st8</td><td class="sub">Joint batched Dory opening (Miller loops / pairings)</td><td class="r num">86.6</td><td class="r num">0.8</td><td class="r num">8.51</td><td class="r num">7.99</td><td class="sub">ALU + occupancy: per-pair cost collapses until 4k–8k threads exposed; insensitive to CPU memory soak</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <div class="callout callout--note reveal">
+    <span class="cl">Ambient caveat</span>
+    <p>The wave-2 record run carries ≈<span class="num">+8.4 s</span> of ambient penalty on untouched stages (st0 17.98 vs 12.08 baseline; both fresh runs sat near 18 s). Same trunk in a baseline-quality st0 window models ≈<span class="num">64 s</span>. All wave-2 A/B claims were same-window interleaved per the campaign bench rule; cross-window stage deltas here are labeled as such.</p>
+  </div>
+</div></section>
+
+<section id="gpu"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">03 · How the GPU actually works</p>
+    <h2>The M5 Max, mechanically, and how we read it blind</h2>
+    <p>Requested explainer. What the machine is, what the four limiting regimes mean physically, and how each is identified from the instruments this host actually has.</p>
+  </div></div>
+
+  <h3>The machine</h3>
+  <p class="prose">The M5 Max GPU is a tiled array of <b>GPU cores</b> sharing one LPDDR memory system and a system-level cache (SLC) with the CPU — <b>unified memory</b>: same silicon carries CPU loads and GPU streams, so they can starve each other (measured: concurrent CPU field-mul cuts GPU streaming 357→162 GB/s, −55%, while the CPU side loses 45%).</p>
+  <p class="prose">Work arrives as <b>threadgroups</b>, dispatched from command buffers. Each core executes threads in <b>SIMD-groups of 32</b> in lockstep. A core keeps many SIMD-groups <em>resident</em> simultaneously and switches between them every cycle — that residency is <b>occupancy</b>, and it is the only latency-hiding mechanism: when one SIMD-group stalls on a memory load, another issues. Residency is capped by whichever runs out first: registers per thread, threadgroup memory, or simply too few threads in the dispatch.</p>
+  <p class="prose">Measured roofs for this silicon (wave-1 microbenches): <b>11.30&nbsp;Gmont-mul/s</b> compute; <b>485&nbsp;GB/s</b> best isolated stream, <b>357&nbsp;GB/s</b> sustained under contention; empty command-buffer round trip <b>133.8&nbsp;µs</b>.</p>
+
+  <h3>The four regimes</h3>
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Regime</th><th>What is physically saturated</th><th>Fingerprint on this host</th></tr></thead>
+      <tbody>
+        <tr><td class="k">ALU-bound</td><td class="sub">Every SIMD issue slot doing arithmetic; memory system idle-ish</td><td class="sub">Achieved mul/s ≈ 11.30 G roof · unchanged under co-run memory soak (Miller: 82.4→82.1 ms) · flat scaling once occupied</td></tr>
+        <tr><td class="k">Bandwidth-bound</td><td class="sub">DRAM/SLC bytes per second at the fabric roof; ALUs wait</td><td class="sub">Achieved GB/s ≈ 357–485 roof · co-running CPU memory traffic slows the kernel (−55%) and vice versa · more threads don't help</td></tr>
+        <tr><td class="k">Occupancy-limited</td><td class="sub">Too few resident SIMD-groups to hide latency; both ALU and fabric under-used</td><td class="sub">Per-item cost collapses as exposed threads grow (Miller: improves until 4k–8k threads) · tail sumcheck rounds shrink below device width</td></tr>
+        <tr><td class="k">Host-serial</td><td class="sub">Nothing queued: GPU idle while one CPU function runs</td><td class="sub">Sampled-zero GPU windows with a covering CPU span (st7: <code>HWCR::prepare</code> 1.887 s of a 1.893 s stage) · launch cost ruled out globally (646 CBs ⇒ 86 ms ceiling, 0.44%)</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <h3>Reading it blind</h3>
+  <p class="prose">This host has no <code>xctrace</code>/Instruments; public Metal exposes only timestamp counters — no ALU-occupancy, SIMD-utilization, cache-miss, or DRAM-byte counters. So regime identification triangulates: <code>ioreg</code> device-active samples (~4/s) for idle windows, command-buffer GPU timestamps for queue/execution split, controlled roof microbenches for ceilings, thread-scaling sweeps for occupancy, and co-run contention probes for fabric sharing. A multi-second exact-zero sample run rejects device occupancy; a high GPU% does <em>not</em> prove ALU saturation — this is exactly the relabeling the audit was checked for and did not commit.</p>
+
+  <h3>Our stages on the taxonomy</h3>
+  <ul class="prose">
+    <li><b>st0 — fabric contention + ambient clock.</b> GPU commit streams while the hoisted CPU record walk (13.3 s span) shares the memory system. The ±5 s bimodality survives with the walk removed (solo commit 3.8→22.5 s, constant utime) ⇒ device power/clock state, unfixable in-process. Contention is real but secondary and tracks co-runner <em>residency</em>, not intensity.</li>
+    <li><b>st3, st7 — host-serial, now largely cut.</b> Single CPU functions covering sampled-zero windows; both got device or parallel rebuilds in wave 2.</li>
+    <li><b>st4 — host/device ping-pong.</b> Not one big gap but a per-round alternation (message → host scan/alloc → bind), 4.8 s held-zero across 51 CBs. The wave-3 lane owns the W2B device-prepare salvage (−64.6% cool @2²⁵ in isolation) plus wait/scan fusion.</li>
+        <li><b>st5 — device-saturated, regime unresolved.</b> 77.6% active, InstrReadRAF d=6 rounds dominate. ALU vs bandwidth genuinely unknown without counters; the wave-3 lane's harness must report achieved mul/s against the 11.30 G roof.</li>
+    <li><b>st6b — was allocation/sync, not bandwidth.</b> Its dense streams cost ≈0.3 s at roof against a 16.35 s stage; the mass was three serialized synchronous adoption materializations writing 28.5 GiB of fresh pages. Deferred+fused adoption (one detached CB at T/16) took it to 7.02 s. Residual: gather arithmetic, per-round waits, shrinking-tail occupancy.</li>
+    <li><b>st8 — ALU/occupancy.</b> 86.6% active, Miller-loop pairing math near the compute roof, insensitive to memory soak, and per-pair cost collapsing until 4k–8k threads are exposed ⇒ dispatch geometry, not bytes. Wave-3 lane on occupancy/packing.</li>
+  </ul>
+</div></section>
+
+<section id="campaign"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">04 · Waves 1–2</p>
+    <h2>Kills, retains, and the certified gate</h2>
+  </div></div>
+
+  <h3>Wave 1 — scoping (all doors priced, most killed)</h3>
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Door</th><th>Verdict</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Radix-4 fused rounds, 3d message + ordinary Dory</td><td class="neg">KILL (unsound)</td><td class="sub">Pro-model counterexample U=XY: digit interpolation ≠ MLE binding away from nodes. Sound 6d prototype retained with tamper test.</td></tr>
+        <tr><td class="k">Metal bind4 kernel</td><td class="pos">RETAIN (isolated)</td><td class="sub">1.51–1.98× vs two binary binds at 2²⁴; algebraic shape + tamper rejection proven; not in the live prover.</td></tr>
+        <tr><td class="k">Global address-major layout</td><td class="neg">KILL</td><td class="sub">2²² A/B: 3.52 s cycle-major vs &gt;240 s (terminated) ⇒ &gt;68× floor.</td></tr>
+        <tr><td class="k">st4 radix-4 on unchanged CSR</td><td class="neg">KILL</td><td class="sub">Leading 7 vars are cycle bits, not address bits; 1.2–2.2 s estimate withdrawn (audit v1→v2 correction).</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <h3>Wave 2 — five lanes, three landed, two killed with mechanism</h3>
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Lane</th><th>Result</th><th class="r">Modeled</th><th class="r">Certified @2²⁷</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td class="k">st6b deferred+fused adoption (Rav + Bool drivers)</td><td class="sub">Adoption rides next message as ONE detached CB; begin_round 64.3→0.47 ms; fresh alloc 28.5→14.25 GiB</td><td class="r num">−1…−2 s</td><td class="r hi num">−9.33 s (16.35→7.02)</td></tr>
+        <tr><td class="k">st7 split-eq pushforward</td><td class="sub">1.71× isolated, non-overlapping CIs</td><td class="r num">−0.78 s</td><td class="r num">−0.58 s</td></tr>
+        <tr><td class="k">st3 <code>jk_instr_input_q0</code></td><td class="sub">8.4–9.2× isolated on round 0</td><td class="r num">−0.40 s</td><td class="r num">−0.10 s (ambient-masked)</td></tr>
+        <tr><td class="k">st0 scheduling matrix</td><td class="neg">KILL — bimodality is ambient power state; every in-process fix null or harmful</td><td class="r num">—</td><td class="r num">harness retained</td></tr>
+        <tr><td class="k">st4 address-first (Gate 1)</td><td class="neg">KILL — both arms &gt;42× over the 0.15 s kill line; radix-4 loses to binary</td><td class="r num">(was 1.5–2.5 s)</td><td class="r num">salvage: normative Val convention + parity suite</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <div class="callout callout--done reveal">
+    <span class="cl">Gate</span>
+    <p><b>Full battery green</b> (clippy both modes · muldiv host+zk · legacy 444/444 + zk 480 + akita 445 · verifier 85/85 · metal union 77/77). Certification: 2²⁵ <b>19.01 s / −2.3 GiB RSS</b>; 2²⁷ <b>69.63 s / 1.928 MHz</b> (second run; first hit a bad st0 window at 72.93 s — disagreement third run sanctioned). Net −2.14 s while absorbing ≈+8.4 s ambient on untouched stages.</p>
+  </div>
+
+  <p class="prose">The st6b result is the campaign's one large win and it validates the corrected attribution: the fix targeted allocation/synchronization in the members the old audit's “Bytecode RAF” label obscured, and beat its own model 5–9×. Tail-mode fuel (fresh-allocation volume) was halved twice, killing the 100 s close mode's mechanism.</p>
+</div></section>
+
+<section id="wave3"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">05 · Wave-3 surface</p>
+    <h2>Where the 69.63 s lives now</h2>
+    <p>Post-gate stage mass, lanes running under the single-kernel harness doctrine + night mandate (prepare→GPU sweep).</p>
+  </div></div>
+
+  <div class="kpis" data-stagger="55">
+    <div class="kpi card" style="--kpi-c:var(--orange)"><div class="kl">st5 InstrReadRAF</div><div class="kv"><span class="num">14.8 s</span></div><div class="kd"><span class="vs">lane: kernel harness + ALU/occupancy max</span></div></div>
+    <div class="kpi card" style="--kpi-c:var(--orange)"><div class="kl">st4 RegistersRWC</div><div class="kv"><span class="num">9.5 s</span></div><div class="kd"><span class="vs">lane: W2B prepare salvage + wait/scan fusion</span></div></div>
+    <div class="kpi card" style="--kpi-c:var(--orange)"><div class="kl">st8 Dory/Miller</div><div class="kv"><span class="num">8.0 s</span></div><div class="kd"><span class="vs">lane: dispatch geometry / occupancy</span></div></div>
+    <div class="kpi card" style="--kpi-c:var(--blue)"><div class="kl">st6b residual</div><div class="kv"><span class="num">7.0 s</span></div><div class="kd"><span class="vs">parked: gather + waits + tail</span></div></div>
+  </div>
+
+  <ul class="prose">
+    <li><b>st0 17.98 s</b> is ambient-dominated; the in-process door is killed. Only exotic salvage (bg12 + starvation guard) remains, fail-unsafe, needs explicit mandate.</li>
+    <li>Prepare-sweep lane hunting every ≥0.2 s host prepare slice; expected #1: st6b <code>IncCR::prepare</code> 1.79 s, untouched by the adoption fixes.</li>
+    <li>Parked protocol doors: typed-Dory st6b/st7 packing (oracle GO, must re-price post-fix), st1 packing (await attribution). st1 5.45 s residual unowned.</li>
+  </ul>
+</div></section>
+
+<section id="verdict"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">06 · Honest verdict</p>
+    <h2>Was the reporting agent bullshitting?</h2>
+  </div></div>
+
+  <div class="verdict card verdict--yellow reveal">
+    <span class="vlabel">Verdict</span>
+    <blockquote>No fabrication, real measurement discipline, sloppy presentation. Every number survives independent recomputation from raw artifacts, conventions were declared, and the wave-1 self-correction (withdrawing the stage-4 estimate) was honest. But the user-facing HTML invented four of nine stage subjects instead of copying them from its own source report, promoted the one next-bet its source ranked lower — which died within hours — and left four redundant files behind.</blockquote>
+    <div class="vwho">Basis: raw monitor JSON recompute · stage source code · member→span trace map · lane reports · wave-2 certification</div>
+  </div>
+
+  <ul class="prose">
+    <li><b>Right:</b> the core thesis (“not one roof; host serialization + fabric contention, not missing dispatches”) — wave-2 outcomes confirmed it. Zero-run ledger, launch-ceiling math, roofs, contention probes: all reproducible. Refusing to relabel <code>ioreg</code>% as ALU saturation was correct rigor.</li>
+    <li><b>Sloppy:</b> stage subjects written from a generic zkVM pipeline memory rather than the evidence one directory over; st0 promoted to bet #1 against its own source's ranking; st6b's 2–5% estimate low by ~3×; four artifact files where one belongs.</li>
+    <li><b>Misleading (mildly):</b> only the labels. Anyone navigating by protocol member — which is how the wave-2/3 lanes actually work — would have been sent to the wrong code for st4, st5, st6b, and st7. The campaign avoided damage because the lanes worked from the journal and lane reports, not the HTML.</li>
+  </ul>
+</div></section>
+
+</main>
+
+<footer><div class="wrap fwrap">
+  <div class="ftop"><span class="ft-title">Metal M5 saturation — canonical report</span></div>
+  <div class="srcs"><a href="#">.journals/metal-saturation.md</a><a href="#">lane-reports/ (20 files)</a><a href="#" class="hash">artifacts/monitor-2to27-20260804.json</a><a href="#">crates/jolt-prover/src/stages/</a></div>
+  <p class="fmeta">Generated Aug 5, 2026 · supersedes all four Aug-4 audit/journal snapshots · Pika</p>
+</div></footer>
+
+
+<script>
+(function () {
+  "use strict";
+  var reduce = !!(
+    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+  var toArray = function (x) {
+    return Array.prototype.slice.call(x || []);
+  };
+  var querySelf = function (scope, selector) {
+    var list = toArray(scope.querySelectorAll(selector));
+    if (scope.matches && scope.matches(selector)) list.unshift(scope);
+    return list;
+  };
+
+  function setRevealKind(el) {
+    if (el.hasAttribute("data-reveal")) return;
+    if (el.matches(".sec-head,.callout,.verdict,.chartcard,.bars,.route,.tblwrap,.checklist,.fold"))
+      el.setAttribute("data-reveal", "settle");
+    else if (el.matches(".tl")) el.setAttribute("data-reveal", "slide");
+    else if (el.matches(".kpi,.ring,.spine,.gallery figure,.tbc"))
+      el.setAttribute("data-reveal", "scale");
+  }
+  try {
+    toArray(document.querySelectorAll("[data-stagger]")).forEach(function (group) {
+      var step = parseInt(group.getAttribute("data-stagger"), 10) || 55;
+      toArray(group.children).forEach(function (child, index) {
+        child.classList.add("reveal");
+        setRevealKind(child);
+        if (!reduce) child.style.transitionDelay = Math.min(index * step, 480) + "ms";
+      });
+    });
+    toArray(document.querySelectorAll(".reveal")).forEach(setRevealKind);
+  } catch {}
+
+  function runCountup(el) {
+    if (el.__counted) return;
+    el.__counted = true;
+    var target = parseFloat(el.getAttribute("data-countup")) || 0;
+    var decimals = parseInt(el.getAttribute("data-dec"), 10) || 0;
+    var duration = parseInt(el.getAttribute("data-dur"), 10) || 900;
+    var prefix = el.getAttribute("data-prefix") || "",
+      suffix = el.getAttribute("data-suffix") || "";
+    var format = function (value) {
+      return (
+        prefix +
+        value.toLocaleString("en-US", {
+          minimumFractionDigits: decimals,
+          maximumFractionDigits: decimals,
+        }) +
+        suffix
+      );
+    };
+    if (reduce) {
+      el.textContent = format(target);
+      return;
+    }
+    var start = null;
+    function tick(now) {
+      if (start === null) start = now;
+      var p = Math.min((now - start) / duration, 1),
+        eased = 1 - Math.pow(1 - p, 4);
+      el.textContent = format(target * eased);
+      if (p < 1) requestAnimationFrame(tick);
+      else el.textContent = format(target);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function buildRing(el) {
+    if (el.__ring) return;
+    el.__ring = true;
+    var value = parseFloat(el.getAttribute("data-value")) || 0,
+      max = parseFloat(el.getAttribute("data-max")) || 100;
+    var fraction = Math.max(0, Math.min(value / max, 1)),
+      radius = 46,
+      circumference = 2 * Math.PI * radius,
+      ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 110 110");
+    svg.setAttribute("aria-hidden", "true");
+    ["rtrack", "rval"].forEach(function (className) {
+      var circle = document.createElementNS(ns, "circle");
+      circle.setAttribute("cx", "55");
+      circle.setAttribute("cy", "55");
+      circle.setAttribute("r", String(radius));
+      circle.setAttribute("class", className);
+      if (className === "rval") {
+        circle.setAttribute("stroke-dasharray", circumference.toFixed(2));
+        circle.setAttribute(
+          "stroke-dashoffset",
+          reduce ? (circumference * (1 - fraction)).toFixed(2) : circumference.toFixed(2),
+        );
+        el.__arc = circle;
+        el.__arcTarget = (circumference * (1 - fraction)).toFixed(2);
+      }
+      svg.appendChild(circle);
+    });
+    var wrap = el.querySelector(".rwrap");
+    if (wrap) wrap.insertBefore(svg, wrap.firstChild);
+  }
+  function fillRing(el) {
+    if (!el.__arc || el.__filled) return;
+    el.__filled = true;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        el.__arc.setAttribute("stroke-dashoffset", el.__arcTarget);
+      });
+    });
+  }
+  try {
+    toArray(document.querySelectorAll(".ring")).forEach(buildRing);
+  } catch {}
+
+  function armChart(svg) {
+    if (svg.__armed) return;
+    svg.__armed = true;
+    toArray(svg.querySelectorAll(".chart-line")).forEach(function (path) {
+      try {
+        var length = path.getTotalLength();
+        if (!reduce) {
+          path.style.strokeDasharray = String(length);
+          path.style.strokeDashoffset = String(length);
+        }
+      } catch {}
+    });
+  }
+  function drawChart(svg) {
+    if (svg.__drawn) return;
+    svg.__drawn = true;
+    if (reduce) return;
+    toArray(svg.querySelectorAll(".chart-line")).forEach(function (path) {
+      path.style.transition = "stroke-dashoffset 1.25s cubic-bezier(.22,1,.36,1)";
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          path.style.strokeDashoffset = "0";
+        });
+      });
+    });
+  }
+  try {
+    toArray(document.querySelectorAll("svg.chart")).forEach(armChart);
+  } catch {}
+
+  function activate(scope) {
+    try {
+      querySelf(scope, "[data-countup]").forEach(runCountup);
+      querySelf(scope, ".ring").forEach(fillRing);
+      querySelf(scope, "svg.chart").forEach(drawChart);
+    } catch {}
+  }
+  function show(el) {
+    if (el.classList.contains("in")) return;
+    el.classList.add("in");
+    activate(el);
+  }
+
+  try {
+    var reveals = toArray(document.querySelectorAll(".reveal"));
+    window.__pikaReportArmed = true;
+    if (reduce || !("IntersectionObserver" in window)) reveals.forEach(show);
+    else {
+      var observer = new IntersectionObserver(
+        function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              show(entry.target);
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { rootMargin: "0px 0px -7% 0px", threshold: 0.045 },
+      );
+      reveals.forEach(function (el) {
+        observer.observe(el);
+      });
+      function rescue() {
+        var vh = window.innerHeight || 0;
+        reveals.forEach(function (el) {
+          var rect = el.getBoundingClientRect();
+          if (rect.bottom > 0 && rect.top < vh * 1.04) show(el);
+        });
+      }
+      requestAnimationFrame(function () {
+        requestAnimationFrame(rescue);
+      });
+      setTimeout(rescue, 1800);
+      setTimeout(rescue, 4200);
+    }
+  } catch {
+    toArray(document.getElementsByClassName("reveal")).forEach(function (el) {
+      el.classList.add("in");
+      activate(el);
+    });
+    window.__pikaReportArmed = true;
+  }
+
+  try {
+    var track = document.getElementById("tocTrack");
+    if (track) {
+      var indicator = track.querySelector(".toc-ind"),
+        links = toArray(track.querySelectorAll("a.tp")),
+        lookup = {},
+        current = "";
+      links.forEach(function (link) {
+        lookup[link.dataset.target] = link;
+      });
+      function translucent(rgb, alpha) {
+        var values = rgb.match(/[\d.]+/g);
+        return values && values.length >= 3
+          ? "rgba(" + values[0] + "," + values[1] + "," + values[2] + "," + alpha + ")"
+          : "";
+      }
+      function place(link) {
+        if (!link || !indicator) return;
+        indicator.style.width = link.offsetWidth + "px";
+        indicator.style.transform = "translate3d(" + link.offsetLeft + "px,0,0)";
+        indicator.style.opacity = "1";
+        var dot = link.querySelector(".pdot"),
+          color = dot && getComputedStyle(dot).backgroundColor;
+        if (color) {
+          indicator.style.background = translucent(color, 0.1);
+          indicator.style.borderColor = translucent(color, 0.3);
+        }
+      }
+      function center(link) {
+        var left = Math.max(0, link.offsetLeft - (track.clientWidth - link.offsetWidth) / 2);
+        try {
+          track.scrollTo({ left: left, behavior: reduce ? "auto" : "smooth" });
+        } catch {
+          track.scrollLeft = left;
+        }
+      }
+      function setActive(id, doCenter) {
+        if (!lookup[id] || id === current) return;
+        current = id;
+        links.forEach(function (link) {
+          link.classList.toggle("on", link === lookup[id]);
+          link.setAttribute("aria-current", link === lookup[id] ? "true" : "false");
+        });
+        place(lookup[id]);
+        if (doCenter) center(lookup[id]);
+      }
+      var lock = false,
+        timer = 0;
+      function lockSpy() {
+        lock = true;
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          lock = false;
+        }, 900);
+      }
+      links.forEach(function (link) {
+        link.addEventListener("click", function () {
+          lockSpy();
+          setActive(link.dataset.target, true);
+        });
+      });
+      var sections = links
+        .map(function (link) {
+          return document.getElementById(link.dataset.target);
+        })
+        .filter(Boolean);
+      if ("IntersectionObserver" in window) {
+        var sectionObserver = new IntersectionObserver(
+          function (entries) {
+            if (lock) return;
+            var visible = entries
+              .filter(function (entry) {
+                return entry.isIntersecting;
+              })
+              .sort(function (a, b) {
+                return b.intersectionRatio - a.intersectionRatio;
+              });
+            if (visible[0]) setActive(visible[0].target.id, true);
+          },
+          { rootMargin: "-38% 0px -54% 0px", threshold: [0, 0.1, 0.4] },
+        );
+        sections.forEach(function (section) {
+          sectionObserver.observe(section);
+        });
+      }
+      if (links[0]) setActive(links[0].dataset.target, false);
+      window.addEventListener(
+        "resize",
+        function () {
+          if (current) place(lookup[current]);
+        },
+        { passive: true },
+      );
+      window.addEventListener(
+        "load",
+        function () {
+          if (current) place(lookup[current]);
+        },
+        { once: true },
+      );
+    }
+  } catch {}
+
+  /* lightbox: tap any .gallery figure / .figure image to morph it full-screen.
+     Shared-element FLIP: the frame morphs from the thumbnail rect while a
+     counter-scaled inner image resolves the cover-crop into the full frame.
+     Close = × button, Esc, scrim tap, or swipe-up (follow-and-release). */
+  try {
+    var lbFigures = toArray(document.querySelectorAll(".gallery figure, figure.figure"));
+    if (lbFigures.length) {
+      var lb = document.createElement("div");
+      lb.className = "lb";
+      lb.setAttribute("role", "dialog");
+      lb.setAttribute("aria-modal", "true");
+      lb.setAttribute("aria-label", "Photo viewer");
+      lb.innerHTML =
+        '<div class="lb__scrim"></div>' +
+        '<div class="lb__frame"><img class="lb__img" alt=""></div>' +
+        '<p class="lb__cap"></p>' +
+        '<button class="lb__close" type="button" aria-label="Close photo">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ' +
+        'stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
+      document.body.appendChild(lb);
+      var lbFrame = lb.querySelector(".lb__frame"),
+        lbImg = lb.querySelector(".lb__img"),
+        lbCap = lb.querySelector(".lb__cap"),
+        lbCloseBtn = lb.querySelector(".lb__close");
+      var lbThumb = null,
+        lbFit = null,
+        lbBusy = false,
+        lbPrevFocus = null;
+
+      function lbFitRect(nw, nh) {
+        var vw = window.innerWidth,
+          vh = window.innerHeight,
+          pad = Math.min(vw, vh) < 700 ? 14 : 36;
+        var scale = Math.min((vw - pad * 2) / nw, (vh - pad * 2) / nh);
+        var w = nw * scale,
+          h = nh * scale;
+        return { x: (vw - w) / 2, y: (vh - h) / 2, w: w, h: h };
+      }
+      /* Transforms matching the thumbnail rect; inner counter-scale keeps the
+         visible pixels identical to the thumbnail's object-fit:cover crop. */
+      function lbThumbTransforms(rect) {
+        var sx = rect.width / lbFit.w,
+          sy = rect.height / lbFit.h,
+          cover = Math.max(sx, sy);
+        return {
+          frame:
+            "translate3d(" + rect.left + "px," + rect.top + "px,0) scale(" + sx + "," + sy + ")",
+          img: "scale(" + cover / sx + "," + cover / sy + ")",
+        };
+      }
+      function lbSetOpenTransforms() {
+        lbFrame.style.transform = "translate3d(" + lbFit.x + "px," + lbFit.y + "px,0) scale(1,1)";
+        lbImg.style.transform = "scale(1,1)";
+      }
+      function lbNoTransition(on) {
+        var value = on ? "none" : "";
+        lbFrame.style.transition = value;
+        lbImg.style.transition = value;
+        lb.querySelector(".lb__scrim").style.transition = value;
+      }
+
+      function lbOpen(fig) {
+        if (lbBusy || lb.classList.contains("open")) return;
+        var img = fig.querySelector("img");
+        if (!img) return;
+        var rect = img.getBoundingClientRect();
+        if (!rect.width) return;
+        lbThumb = img;
+        var nw = img.naturalWidth || rect.width,
+          nh = img.naturalHeight || rect.height;
+        lbFit = lbFitRect(nw, nh);
+        lbImg.src = img.currentSrc || img.src;
+        lbImg.alt = img.alt || "";
+        var cap = fig.querySelector("figcaption");
+        lbCap.textContent = cap ? (cap.childNodes[0] ? cap.childNodes[0].textContent : "") : "";
+        lbFrame.style.width = lbFit.w + "px";
+        lbFrame.style.height = lbFit.h + "px";
+        lbFrame.style.opacity = "1";
+        var from = lbThumbTransforms(rect);
+        lbNoTransition(true);
+        lbFrame.style.transform = from.frame;
+        lbImg.style.transform = from.img;
+        lb.classList.add("open");
+        document.documentElement.classList.add("lb-lock");
+        img.style.visibility = "hidden";
+        lbPrevFocus = document.activeElement;
+        void lbFrame.offsetWidth;
+        lbNoTransition(false);
+        if (reduce) {
+          lbSetOpenTransforms();
+          lb.classList.add("in");
+        } else {
+          requestAnimationFrame(function () {
+            lb.classList.add("in");
+            lbSetOpenTransforms();
+          });
+        }
+        try {
+          lbCloseBtn.focus({ preventScroll: true });
+        } catch {}
+      }
+
+      function lbCleanup() {
+        lb.classList.remove("open", "in");
+        document.documentElement.classList.remove("lb-lock");
+        if (lbThumb) lbThumb.style.visibility = "";
+        lbThumb = null;
+        lbBusy = false;
+        lbFrame.style.opacity = "1";
+        if (lbPrevFocus && lbPrevFocus.focus) {
+          try {
+            lbPrevFocus.focus({ preventScroll: true });
+          } catch {}
+        }
+      }
+      function lbAfterTransition(done) {
+        if (reduce) {
+          done();
+          return;
+        }
+        var finished = false;
+        var finish = function () {
+          if (finished) return;
+          finished = true;
+          lbFrame.removeEventListener("transitionend", finish);
+          done();
+        };
+        lbFrame.addEventListener("transitionend", finish);
+        setTimeout(finish, 560);
+      }
+      function lbClose() {
+        if (lbBusy || !lb.classList.contains("open")) return;
+        lbBusy = true;
+        lb.classList.remove("in");
+        var rect = lbThumb && lbThumb.getBoundingClientRect();
+        var visible =
+          rect && rect.width && rect.bottom > 0 && rect.top < (window.innerHeight || 0);
+        if (visible) {
+          var to = lbThumbTransforms(rect);
+          lbFrame.style.transform = to.frame;
+          lbImg.style.transform = to.img;
+        } else {
+          lbFrame.style.opacity = "0";
+        }
+        lbAfterTransition(lbCleanup);
+      }
+      /* swipe-up flyout: keep the drag's momentum, fade the frame */
+      function lbFling(dy) {
+        if (lbBusy) return;
+        lbBusy = true;
+        lb.classList.remove("in");
+        lbFrame.style.transition = "transform 0.3s ease-out, opacity 0.3s ease-out";
+        lbFrame.style.transform =
+          "translate3d(" + lbFit.x + "px," + (lbFit.y + dy - 420) + "px,0) scale(0.9,0.9)";
+        lbFrame.style.opacity = "0";
+        lbAfterTransition(lbCleanup);
+      }
+
+      lbFigures.forEach(function (fig) {
+        fig.addEventListener("click", function () {
+          lbOpen(fig);
+        });
+      });
+      lbCloseBtn.addEventListener("click", function (event) {
+        event.stopPropagation();
+        lbClose();
+      });
+      lb.querySelector(".lb__scrim").addEventListener("click", lbClose);
+      lbFrame.addEventListener("click", lbClose);
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && lb.classList.contains("open")) lbClose();
+      });
+
+      var dragY = 0,
+        dragStartY = 0,
+        dragLastY = 0,
+        dragLastT = 0,
+        dragVel = 0,
+        dragging = false;
+      lb.addEventListener(
+        "touchstart",
+        function (event) {
+          if (!lb.classList.contains("in") || lbBusy || event.touches.length !== 1) return;
+          dragging = true;
+          dragY = 0;
+          dragStartY = dragLastY = event.touches[0].clientY;
+          dragLastT = event.timeStamp;
+          dragVel = 0;
+          lbNoTransition(true);
+        },
+        { passive: true },
+      );
+      lb.addEventListener(
+        "touchmove",
+        function (event) {
+          if (!dragging) return;
+          event.preventDefault();
+          var y = event.touches[0].clientY,
+            dt = event.timeStamp - dragLastT;
+          if (dt > 0) dragVel = (y - dragLastY) / dt;
+          dragLastY = y;
+          dragLastT = event.timeStamp;
+          dragY = y - dragStartY;
+          /* upward follows 1:1; downward rubber-bands */
+          var follow = dragY < 0 ? dragY : dragY * 0.22;
+          var shrink = 1 - Math.min(Math.abs(follow) / 1500, 0.1);
+          lbFrame.style.transform =
+            "translate3d(" +
+            lbFit.x +
+            "px," +
+            (lbFit.y + follow) +
+            "px,0) scale(" +
+            shrink +
+            "," +
+            shrink +
+            ")";
+          lb.querySelector(".lb__scrim").style.opacity = String(
+            Math.max(0.25, 1 - Math.abs(follow) / 380),
+          );
+        },
+        { passive: false },
+      );
+      lb.addEventListener("touchend", function () {
+        if (!dragging) return;
+        dragging = false;
+        var flung = dragY < -90 || (dragY < -24 && dragVel < -0.55);
+        lbNoTransition(false);
+        lb.querySelector(".lb__scrim").style.opacity = "";
+        if (flung) lbFling(dragY);
+        else if (lb.classList.contains("in")) lbSetOpenTransforms();
+        dragY = 0;
+      });
+      lb.addEventListener("touchcancel", function () {
+        if (!dragging) return;
+        dragging = false;
+        dragY = 0;
+        lbNoTransition(false);
+        lb.querySelector(".lb__scrim").style.opacity = "";
+        if (lb.classList.contains("in")) lbSetOpenTransforms();
+      });
+      window.addEventListener(
+        "resize",
+        function () {
+          if (!lb.classList.contains("in") || lbBusy || !lbThumb) return;
+          lbFit = lbFitRect(
+            lbThumb.naturalWidth || lbFit.w,
+            lbThumb.naturalHeight || lbFit.h,
+          );
+          lbFrame.style.width = lbFit.w + "px";
+          lbFrame.style.height = lbFit.h + "px";
+          lbNoTransition(true);
+          lbSetOpenTransforms();
+          void lbFrame.offsetWidth;
+          lbNoTransition(false);
+        },
+        { passive: true },
+      );
+    }
+  } catch {}
+
+  try {
+    toArray(document.querySelectorAll(".checklist")).forEach(function (list) {
+      var key = list.getAttribute("data-key") || "report-checklist",
+        buttons = toArray(list.querySelectorAll(".chk")),
+        saved = {};
+      try {
+        saved = JSON.parse(localStorage.getItem(key) || "{}");
+      } catch {
+        saved = {};
+      }
+      buttons.forEach(function (button, index) {
+        if (saved[index]) button.classList.add("done");
+        button.setAttribute("aria-pressed", button.classList.contains("done") ? "true" : "false");
+        button.addEventListener("click", function () {
+          button.classList.toggle("done");
+          var done = button.classList.contains("done");
+          button.setAttribute("aria-pressed", done ? "true" : "false");
+          saved[index] = done;
+          try {
+            localStorage.setItem(key, JSON.stringify(saved));
+          } catch {}
+        });
+      });
+    });
+  } catch {}
+})();
+</script>
+<script>
+/* Sonokai Andromeda Rust highlighter — self-contained, no deps, no CDN.
+   Tokenizes each `.codeblock code` block on load and rebuilds it with
+   <span class="tok-*"> wrappers. Fail-safe: on any error the original
+   plaintext is left untouched (still fully readable). */
+(function () {
+  var KEYWORDS = {
+    as: 1, async: 1, await: 1, break: 1, const: 1, continue: 1, crate: 1,
+    dyn: 1, else: 1, enum: 1, extern: 1, fn: 1, for: 1, if: 1, impl: 1,
+    in: 1, let: 1, loop: 1, match: 1, mod: 1, move: 1, mut: 1, pub: 1,
+    ref: 1, return: 1, static: 1, struct: 1, super: 1, trait: 1, type: 1,
+    unsafe: 1, use: 1, where: 1, while: 1, box: 1, union: 1
+  };
+  var SELFKW = { self: 1, Self: 1 };
+  var BOOLKW = { true: 1, false: 1 };
+  var PRIMS = {
+    u8: 1, u16: 1, u32: 1, u64: 1, u128: 1, usize: 1,
+    i8: 1, i16: 1, i32: 1, i64: 1, i128: 1, isize: 1,
+    f32: 1, f64: 1, bool: 1, char: 1, str: 1
+  };
+
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function span(cls, txt) {
+    return '<span class="' + cls + '">' + esc(txt) + "</span>";
+  }
+
+  function highlight(src) {
+    var out = "";
+    var i = 0;
+    var n = src.length;
+    var prevWord = ""; // last identifier/keyword, surviving only whitespace
+    while (i < n) {
+      var rest = src.slice(i);
+      var m;
+
+      // whitespace (preserves prevWord so `fn name` context works)
+      if ((m = /^\s+/.exec(rest))) { out += esc(m[0]); i += m[0].length; continue; }
+      var pw = prevWord;
+      prevWord = "";
+
+      // line comment
+      if ((m = /^\/\/[^\n]*/.exec(rest))) { out += span("tok-comment", m[0]); i += m[0].length; continue; }
+      // block comment
+      if ((m = /^\/\*[\s\S]*?\*\//.exec(rest))) { out += span("tok-comment", m[0]); i += m[0].length; continue; }
+      // attribute  #[...] / #![...]
+      if ((m = /^#!?\[[^\]]*\]/.exec(rest))) { out += span("tok-attr", m[0]); i += m[0].length; continue; }
+      // raw / byte-raw string  r"..." r#"..."# br##"..."##
+      if ((m = /^b?r(#*)"[\s\S]*?"\1/.exec(rest))) { out += span("tok-string", m[0]); i += m[0].length; continue; }
+      // string / byte string (with escapes)
+      if ((m = /^b?"(?:\\.|[^"\\])*"/.exec(rest))) { out += span("tok-string", m[0]); i += m[0].length; continue; }
+      // char / byte char literal  'a' '\n' b'x' — but not lifetimes: a
+      // closing quote must follow exactly one char (or escape)
+      if ((m = /^b?'(?:\\.|[^'\\])'/.exec(rest))) { out += span("tok-string", m[0]); i += m[0].length; continue; }
+      // lifetime  'a  '_  'static
+      if ((m = /^'[a-zA-Z_][a-zA-Z0-9_]*/.exec(rest))) { out += span("tok-life", m[0]); i += m[0].length; continue; }
+      // number (hex/bin/dec/float with exponent, optional type suffix)
+      if ((m = /^(?:0x[0-9a-fA-F_]+|0b[01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d[\d_]*)?)(?:[uif](?:8|16|32|64|128|size)?)?\b/.exec(rest))) {
+        out += span("tok-number", m[0]); i += m[0].length; continue;
+      }
+      // macro  ident!  (but not `ident !=`)
+      if ((m = /^[a-zA-Z_][a-zA-Z0-9_]*!(?!=)/.exec(rest))) { out += span("tok-macro", m[0]); i += m[0].length; continue; }
+      // identifier / keyword
+      if ((m = /^[a-zA-Z_][a-zA-Z0-9_]*/.exec(rest))) {
+        var w = m[0];
+        var after = src.slice(i + w.length);
+        if (KEYWORDS[w]) out += span("tok-keyword", w);
+        else if (SELFKW[w]) out += span("tok-self", w);
+        else if (BOOLKW[w]) out += span("tok-bool", w);
+        else if (PRIMS[w]) out += span("tok-type", w);
+        else if (pw === "fn") out += span("tok-fn", w);                // def, incl. generic fns
+        else if (/^\s*\(/.test(after)) out += span("tok-fn", w);       // call
+        else if (/^[A-Z]/.test(w)) out += span("tok-type", w);         // Type / Enum
+        else out += esc(w);
+        prevWord = w;
+        i += w.length;
+        continue;
+      }
+      // operators
+      if ((m = /^(?:->|=>|::|==|!=|<=|>=|&&|\|\||\+=|-=|\*=|[-+*\/%<>=&|!])/.exec(rest))) {
+        out += span("tok-op", m[0]); i += m[0].length; continue;
+      }
+      // punctuation
+      if ((m = /^[{}()\[\];,.:?@#]/.exec(rest))) { out += span("tok-punct", m[0]); i += m[0].length; continue; }
+      // anything else
+      out += esc(src[i]);
+      i += 1;
+    }
+    return out;
+  }
+
+  function run() {
+    var blocks = document.querySelectorAll(".codeblock code");
+    for (var k = 0; k < blocks.length; k++) {
+      try {
+        var el = blocks[k];
+        var text = el.textContent; // browser has already decoded entities
+        el.innerHTML = highlight(text);
+      } catch (e) { /* leave plaintext */ }
+    }
+  }
+
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", run, { once: true });
+  else run();
+})();
+</script>
+</body>
+</html>

@@ -80,7 +80,8 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         let columns = RamAccessColumns::shared(session, witness, log_t)?;
         columns.validate_addresses(1usize << ram_log_k)?;
 
-        let inc_table: Vec<F> = witness.oracle_table(ram_inc_val_check().polynomial_id())?;
+        let inc_table: Vec<F> = tracing::info_span!("RamVal::inc_column")
+            .in_scope(|| witness.oracle_table(ram_inc_val_check().polynomial_id()))?;
         if inc_table.len() != 1usize << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: format!("{:?}", ram_inc_val_check()),
@@ -131,9 +132,10 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            tracing::info_span!("RamVal::bind").in_scope(|| self.bind(challenge));
         }
 
+        let _span = tracing::info_span!("RamVal::message").entered();
         let half = self.inc.len() / 2;
         let inc = self.inc.evals();
         let evals = triple_product_round_evals(

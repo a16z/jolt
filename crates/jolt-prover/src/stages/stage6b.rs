@@ -125,6 +125,7 @@ where
         bytecode_table_rows,
         carried,
         eta: draws.eta,
+        booleanity_anchor: config.booleanity_anchor,
         stage1_cycle_binding,
         stage2_points: &stage2.output_points,
         stage3_points: &stage3.output_points,

@@ -14,6 +14,7 @@ use jolt_field::JoltField;
 use super::booleanity::BooleanityAddressPhase;
 use super::bytecode_read_raf::{bytecode_stage_points, BytecodeReadRafAddressPhase};
 use super::outputs::Stage6aSumchecks;
+use crate::config::BooleanityAnchor;
 use crate::stages::stage2::Stage2BatchOutputPoints;
 use crate::stages::stage3::outputs::Stage3OutputPoints;
 use crate::stages::stage4::outputs::Stage4OutputPoints;
@@ -28,11 +29,27 @@ pub struct Stage6aBuildParts<'a, F: JoltField> {
     pub committed_chunk_bits: usize,
     pub committed_program: bool,
     pub entry_bytecode_index: usize,
+    pub booleanity_anchor: BooleanityAnchor,
     pub stage1_cycle_binding: &'a [F],
     pub stage2_points: &'a Stage2BatchOutputPoints<F>,
     pub stage3_points: &'a Stage3OutputPoints<F>,
     pub stage4_points: &'a Stage4OutputPoints<F>,
     pub stage5_points: &'a Stage5OutputPoints<F>,
+}
+
+/// The booleanity reference-cycle source for `anchor`, in the big-endian
+/// order the relation reverses. Single-sourced here so the prover's
+/// background pushforward build, both batch builders, and the verifier can
+/// never disagree on the point.
+pub fn booleanity_reference_cycle_source<F: JoltField>(
+    anchor: BooleanityAnchor,
+    stage1_cycle_binding: &[F],
+    stage5_points: &Stage5OutputPoints<F>,
+) -> Vec<F> {
+    match anchor {
+        BooleanityAnchor::Stage5Instruction => stage5_points.instruction_r_cycle().to_vec(),
+        BooleanityAnchor::Stage1CycleV1 => stage1_cycle_binding.to_vec(),
+    }
 }
 
 impl<F: JoltField> Stage6aSumchecks<F> {
@@ -47,6 +64,7 @@ impl<F: JoltField> Stage6aSumchecks<F> {
             committed_chunk_bits,
             committed_program,
             entry_bytecode_index,
+            booleanity_anchor,
             stage1_cycle_binding,
             stage2_points,
             stage3_points,
@@ -75,7 +93,11 @@ impl<F: JoltField> Stage6aSumchecks<F> {
             booleanity: BooleanityAddressPhase::new(
                 booleanity_dimensions,
                 stage5_points.instruction_r_address(),
-                stage5_points.instruction_r_cycle().to_vec(),
+                booleanity_reference_cycle_source(
+                    booleanity_anchor,
+                    stage1_cycle_binding,
+                    stage5_points,
+                ),
             ),
         })
     }

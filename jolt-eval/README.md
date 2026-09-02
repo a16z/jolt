@@ -13,9 +13,10 @@ The motivation is twofold:
 - A `libfuzzer_sys` fuzz target (via the `fuzz_invariant!` macro)
 - A "red team" harness for AI agents to try to find a violation
 
-**Objectives** are measurable properties of the codebase. They come in two flavors:
+**Objectives** are measurable properties of the codebase. They come in three flavors:
 - **Code quality** (static analysis) — measured via `rust-code-analysis`: LLOC, cognitive complexity, Halstead bugs
 - **Performance** (benchmarks) — measured via Criterion: polynomial binding, end-to-end prover time
+- **Instruction count** (microbenchmarks) — measured via iai-callgrind: isolated deterministic kernels
 
 **Objective functions** combine one or more objectives into a single scalar that the optimizer minimizes. They are declared as `const` structs with a name, input objectives, and an evaluate function.
 
@@ -43,6 +44,7 @@ The motivation is twofold:
 |---|---|
 | `bind_parallel_low_to_high` | `DensePolynomial::bind_parallel` with LowToHigh binding (2^20 evaluations) |
 | `bind_parallel_high_to_low` | `DensePolynomial::bind_parallel` with HighToLow binding (2^20 evaluations) |
+| `hamming_weight_pushforward` | Stage-7 one-hot pushforward (2^22 rows, production 8-bit/16-2-3 geometry) |
 | `naive_sort_time` | Wall-clock time of the `naive_sort` function in `jolt-eval/src/sort_targets.rs` |
 | `prover_time_fibonacci_100` | End-to-end prover time for `fibonacci(100)` |
 | `prover_time_sha2_chain_100` | End-to-end prover time for 100 iterations of SHA-256 chain |
@@ -114,6 +116,21 @@ cargo run -p jolt-eval --bin measure-objectives -- \
 Callgrind bench targets keep an explicit `path = "benches/callgrind/..."`
 in `Cargo.toml`; `sync_targets.sh` regenerates those entries alongside the
 Criterion ones.
+
+### Metal single-kernel scaffold
+
+`benches/metal/metal_fr_bind.rs` is the GPU timing template: setup and buffer
+wrapping outside the timed loop; one synchronous dispatch per sample; a
+shared GPU lock. Run it on macOS with:
+
+```bash
+cargo bench -p jolt-eval --features metal --bench metal_fr_bind
+```
+
+Metal kernels use Criterion wall time because Callgrind observes host
+instructions, not device instructions. Copy the scaffold into
+`benches/metal/`, replace `KernelId`, params, buffers, and thread count, then
+run `sync_targets.sh`.
 
 ### Objective functions
 

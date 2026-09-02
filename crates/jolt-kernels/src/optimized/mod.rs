@@ -32,6 +32,14 @@ use crate::commitment::ModeStreamingCommitment;
 
 use crate::JoltBackend;
 
+/// Serializes the background prepare builds (booleanity, bytecode): each
+/// spawned worker holds this token for the duration of its capped-pool walk,
+/// so at most one background pool competes with the foreground stage at a
+/// time. Prepares only ever JOIN worker handles (never lock the token), so
+/// no deadlock is possible; a poisoned token (panicked worker) is taken
+/// anyway — the fallback path there is the inline rebuild.
+pub(crate) static BACKGROUND_BUILD_TOKEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod commitment;
@@ -41,7 +49,9 @@ pub mod instruction_claim_reduction;
 pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
-mod lazy_ra;
+pub(crate) mod lazy_ra;
+pub(crate) mod lifetime_trace;
+pub(crate) mod one_hot_pushforward;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod ram_hamming_booleanity;
@@ -50,16 +60,17 @@ pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
-mod ram_trace;
+pub(crate) mod ram_trace;
 pub mod ram_val_check;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;
-mod rw_matrix;
+pub(crate) mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
-mod support;
+pub(crate) mod support;
+pub mod trace_record;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;

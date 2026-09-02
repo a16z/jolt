@@ -74,6 +74,50 @@ where
     PCS::finish_one_hot_column_major_chunks(setup, one_hot_k, chunks)
 }
 
+/// Finish a streamed dense commitment in the compiled proof mode, reusing a
+/// tier-2 preparation in clear mode (the hiding path has no prepared
+/// variant; the preparation is simply unused there).
+pub fn finish_streamed_prepared<PCS>(
+    partial: PCS::PartialCommitment,
+    setup: &PCS::ProverSetup,
+    prep: &PCS::Tier2Prep,
+) -> (PCS::Output, PCS::OpeningHint)
+where
+    PCS: ModeStreamingCommitment,
+{
+    #[cfg(feature = "zk")]
+    {
+        let _ = prep;
+        PCS::finish_zk_with_hint(partial, setup)
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        PCS::finish_with_hint_prepared(partial, setup, prep)
+    }
+}
+
+/// Finish a streamed column-major one-hot commitment in the compiled proof
+/// mode, reusing a tier-2 preparation in clear mode.
+pub fn finish_streamed_one_hot_prepared<PCS>(
+    setup: &PCS::ProverSetup,
+    one_hot_k: usize,
+    chunks: &[PCS::OneHotChunkCommitment],
+    prep: &PCS::Tier2Prep,
+) -> (PCS::Output, PCS::OpeningHint)
+where
+    PCS: ModeStreamingCommitment,
+{
+    #[cfg(feature = "zk")]
+    {
+        let _ = prep;
+        PCS::finish_zk_one_hot_column_major_chunks(setup, one_hot_k, chunks)
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        PCS::finish_one_hot_column_major_chunks_prepared(setup, one_hot_k, chunks, prep)
+    }
+}
+
 /// The shared embedding grid every witness polynomial is committed in:
 /// `2^⌈total_vars/2⌉` columns, where `total_vars` is the maximum over the
 /// one-hot main matrix (`log_k_chunk + log_t`) and any precommitted-candidate

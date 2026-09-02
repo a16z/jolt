@@ -9,16 +9,39 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
 };
 use jolt_witness::JoltWitnessOracle;
 
+#[cfg(feature = "parallel")]
+use super::super::trace_record::TraceRecord;
+#[cfg(feature = "parallel")]
+use super::rows::{build_register_tables_parallel, build_register_tables_serial};
 use super::sparse::{IndexedSparseEntry, SmallLutIndex};
 use super::test_support::{
     assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture, TraceFixture,
 };
 use super::OptimizedRegistersReadWrite;
+#[cfg(feature = "parallel")]
+use crate::ProofSession;
 
 #[test]
 fn indexed_entry_keeps_fp128_layout_compact() {
     assert_eq!(core::mem::size_of::<SmallLutIndex>(), 1);
     assert_eq!(core::mem::size_of::<IndexedSparseEntry<[u64; 2]>>(), 40);
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_prepare_build_matches_serial() {
+    structured_fixture(257).with_plane(9, |backend| {
+        let mut session = ProofSession::default();
+        let record = TraceRecord::shared::<Fr>(&mut session, backend, 9).unwrap();
+        let serial = build_register_tables_serial::<Fr>(&record.registers);
+        let parallel = build_register_tables_parallel::<Fr>(&record.registers, 17);
+
+        assert_eq!(parallel.entries, serial.entries);
+        assert_eq!(parallel.inc, serial.inc);
+        assert_eq!(parallel.rs1_indices, serial.rs1_indices);
+        assert_eq!(parallel.rs2_indices, serial.rs2_indices);
+        assert_eq!(parallel.rd_indices, serial.rd_indices);
+    });
 }
 
 fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {

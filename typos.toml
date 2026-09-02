@@ -1,7 +1,8 @@
 [files]
+# vendor/ is byte-exact third-party source; never spell-check it.
 # golden_bytes.rs is hex fixture data (byte-encoding pins); hex substrings
 # trigger false positives ("ede", "ba").
-extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
+extend-exclude = ["patches/*.patch", "vendor/", "crates/jolt-field/tests/golden_bytes.rs"]
 
 [default.extend-words]
 "groth" = "groth"
@@ -25,6 +26,9 @@ extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
 # (A_tru, A_unt) in the packed (Akita) prove path docs.
 "tru" = "tru"
 "unt" = "unt"
+# "Hom" is homogeneous-projective (G2Hom / arkworks G2HomProjective) in the
+# Miller-loop kernels.
+"Hom" = "Hom"
 
 [type.ocaml.extend-words]
 # HOL Light tactic identifiers.

@@ -15,7 +15,59 @@ use crate::scheme::{
     ark_to_jolt_fr, ark_to_jolt_g1, ark_to_jolt_g1_vec, ark_to_jolt_gt, commit_rows_tier_2,
     jolt_fr_to_ark, jolt_g1_vec_to_ark, srs_prefix, ArkFr,
 };
-use crate::types::{DoryCommitment, DoryHint, DoryPartialCommitment, DoryProverSetup};
+use crate::tier2::{commit_rows_tier_2_prepared, DoryTier2Prep};
+use crate::types::{
+    AffineG1Table, DoryCommitment, DoryHint, DoryPartialCommitment, DoryProverSetup,
+};
+
+/// Affine view of the full setup `g1_vec` — the eager setup-owned table.
+pub(crate) fn affine_g1_table(
+    setup: &dory::backends::arkworks::ArkworksProverSetup,
+) -> AffineG1Table {
+    std::sync::Arc::new(
+        setup
+            .g1_vec
+            .par_iter()
+            .map(|base| base.0.into_affine())
+            .collect(),
+    )
+}
+
+/// Reorder per-window chunk commitments into the tier-2 row layout: row
+/// `k · chunk_count + window` holds window `window`'s `k`-th partial sum.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "chunk lengths are asserted equal to one_hot_k above the walk"
+)]
+fn transpose_one_hot_rows(one_hot_k: usize, chunks: &[Vec<Bn254G1>]) -> Vec<Bn254G1> {
+    assert!(
+        one_hot_k != 0,
+        "streaming one-hot: one_hot_k must be nonzero",
+    );
+    assert!(
+        !chunks.is_empty(),
+        "streaming one-hot: cannot finish an empty chunk list",
+    );
+    for chunk in chunks {
+        assert_eq!(
+            chunk.len(),
+            one_hot_k,
+            "streaming one-hot: chunk row count must match one_hot_k",
+        );
+    }
+
+    let chunk_count = chunks.len();
+    let mut row_commitments = vec![Bn254G1::default(); chunk_count * one_hot_k];
+    row_commitments
+        .par_chunks_mut(chunk_count)
+        .enumerate()
+        .for_each(|(row, row_commitments)| {
+            for (chunk_index, chunk) in chunks.iter().enumerate() {
+                row_commitments[chunk_index] = chunk[row];
+            }
+        });
+    row_commitments
+}
 
 impl crate::DoryScheme {
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish_zk")]
@@ -220,6 +272,9 @@ impl StreamingCommitment for crate::DoryScheme {
             row_width,
             setup.0.g1_vec.len(),
         );
+        if setup.2.len() >= row_width {
+            return srs_prefix(&setup.2, row_width).to_vec();
+        }
         srs_prefix(&setup.0.g1_vec, row_width)
             .par_iter()
             .map(|base| base.0.into_affine())
@@ -294,6 +349,47 @@ impl StreamingCommitment for crate::DoryScheme {
         chunks: &[Self::OneHotChunkCommitment],
     ) -> (Self::Output, Self::OpeningHint) {
         finish_one_hot_column_major_chunks::<dory::Transparent>(setup, one_hot_k, chunks)
+    }
+
+    type Tier2Prep = DoryTier2Prep;
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::prepare_tier2", fields(max_rows))]
+    fn prepare_tier2(setup: &Self::ProverSetup, max_rows: usize) -> DoryTier2Prep {
+        DoryTier2Prep::new(setup, max_rows)
+    }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish_with_hint")]
+    fn finish_with_hint_prepared(
+        partial: Self::PartialCommitment,
+        setup: &Self::ProverSetup,
+        prep: &DoryTier2Prep,
+    ) -> (Self::Output, Self::OpeningHint) {
+        validate_row_count(partial.row_commitments.len(), setup);
+        let ark_rows = jolt_g1_vec_to_ark(partial.row_commitments);
+        let (tier_2, commit_blind) =
+            commit_rows_tier_2_prepared::<dory::Transparent>(&ark_rows, setup, prep);
+        (
+            DoryCommitment(ark_to_jolt_gt(&tier_2)),
+            DoryHint::new(ark_to_jolt_g1_vec(ark_rows), ark_to_jolt_fr(&commit_blind)),
+        )
+    }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish_one_hot")]
+    fn finish_one_hot_column_major_chunks_prepared(
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Self::OneHotChunkCommitment],
+        prep: &DoryTier2Prep,
+    ) -> (Self::Output, Self::OpeningHint) {
+        let row_commitments = transpose_one_hot_rows(one_hot_k, chunks);
+        validate_row_count(row_commitments.len(), setup);
+        let ark_rows = jolt_g1_vec_to_ark(row_commitments);
+        let (tier_2, commit_blind) =
+            commit_rows_tier_2_prepared::<dory::Transparent>(&ark_rows, setup, prep);
+        (
+            DoryCommitment(ark_to_jolt_gt(&tier_2)),
+            DoryHint::new(ark_to_jolt_g1_vec(ark_rows), ark_to_jolt_fr(&commit_blind)),
+        )
     }
 }
 
@@ -418,7 +514,7 @@ fn one_hot_chunk_commitments(
     row_commitments
 }
 
-fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
+pub(crate) fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
     assert!(
         num_rows.is_power_of_two(),
         "streaming: row count ({num_rows}) must be a power of two",
@@ -437,8 +533,11 @@ fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
 fn scalar_affine_bases<'a>(
     cache: &'a mut Option<Vec<G1Affine>>,
     row_width: usize,
-    setup: &DoryProverSetup,
+    setup: &'a DoryProverSetup,
 ) -> &'a [G1Affine] {
+    if setup.2.len() >= row_width {
+        return srs_prefix(&setup.2, row_width);
+    }
     let bases = cache.get_or_insert_with(|| {
         srs_prefix(&setup.0.g1_vec, row_width)
             .iter()
@@ -889,5 +988,76 @@ mod tests {
         );
 
         assert_eq!(serial, batched);
+    }
+    /// The setup-owned prepared-G2/affine tables must produce byte-identical
+    /// commitments and hints to the per-call-preparation originals, for both
+    /// the one-hot and the dense-row tier-2 paths, including when the prep
+    /// covers more rows than a finish consumes (increment columns pair
+    /// against a prefix of the one-hot columns' preparation).
+    #[test]
+    fn prepared_finishes_match_unprepared() {
+        let trace_rows = 16usize;
+        let one_hot_k = 4usize;
+        let num_vars = (trace_rows * one_hot_k).ilog2() as usize;
+        let chunk_width = 1usize << num_vars.div_ceil(2);
+        let prover_setup = DoryScheme::setup_prover(num_vars);
+        let indices: Vec<Option<usize>> = (0..trace_rows)
+            .map(|cycle| (cycle % 5 != 4).then_some(cycle % one_hot_k))
+            .collect();
+
+        let mut context = DoryScheme::begin_one_hot_column_major_stream(&prover_setup, chunk_width);
+        let chunks = DoryScheme::process_one_hot_chunks_with(
+            &mut context,
+            &prover_setup,
+            one_hot_k,
+            |index| indices[index],
+            indices.len(),
+            chunk_width,
+        );
+        let one_hot_rows = chunks.len() * one_hot_k;
+        let prep = DoryScheme::prepare_tier2(&prover_setup, one_hot_rows);
+
+        let unprepared =
+            DoryScheme::finish_one_hot_column_major_chunks(&prover_setup, one_hot_k, &chunks);
+        let prepared = DoryScheme::finish_one_hot_column_major_chunks_prepared(
+            &prover_setup,
+            one_hot_k,
+            &chunks,
+            &prep,
+        );
+        assert_eq!(unprepared, prepared);
+
+        // Kill-switch fallback (`JOLT_DORY_SETUP_PREP=0` leaves the setup
+        // tables empty): per-pass preparation must produce the same bytes as
+        // the setup-owned tables.
+        let mut stripped_setup = prover_setup.clone();
+        stripped_setup.1 = Default::default();
+        stripped_setup.2 = Default::default();
+        assert_eq!(
+            DoryScheme::begin_one_hot_column_major_stream(&stripped_setup, chunk_width),
+            DoryScheme::begin_one_hot_column_major_stream(&prover_setup, chunk_width),
+        );
+        let fallback_prep = DoryScheme::prepare_tier2(&stripped_setup, one_hot_rows);
+        let fallback = DoryScheme::finish_one_hot_column_major_chunks_prepared(
+            &stripped_setup,
+            one_hot_k,
+            &chunks,
+            &fallback_prep,
+        );
+        assert_eq!(unprepared, fallback);
+
+        let mut rng = ChaCha20Rng::seed_from_u64(4242);
+        let dense_rows = chunks.len();
+        let mut partial = DoryScheme::begin(&prover_setup);
+        for _ in 0..dense_rows {
+            let row: Vec<Fr> = (0..chunk_width)
+                .map(|_| <Fr as Field>::random(&mut rng))
+                .collect();
+            DoryScheme::feed(&mut partial, &row, &prover_setup);
+        }
+        let unprepared = DoryScheme::finish_with_hint(partial.clone(), &prover_setup);
+        // The dense finish pairs against a strict prefix of the prep.
+        let prepared = DoryScheme::finish_with_hint_prepared(partial, &prover_setup, &prep);
+        assert_eq!(unprepared, prepared);
     }
 }

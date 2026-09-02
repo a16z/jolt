@@ -128,11 +128,10 @@ fn canonical_setup_log_n(max_num_vars: usize) -> usize {
 }
 
 impl DoryScheme {
-    #[tracing::instrument(skip_all, name = "DoryScheme::setup_prover", fields(max_num_vars))]
-    pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
+    fn raw_setup(max_num_vars: usize) -> ArkworksProverSetup {
         let canonical_max_num_vars = canonical_setup_log_n(max_num_vars);
         #[cfg(not(target_arch = "wasm32"))]
-        let setup = {
+        {
             // dory persists a freshly OsRng-generated URS with an unlocked
             // truncating write, so concurrent processes generate different
             // random SRS and last-writer-wins. A single run calls setup more
@@ -140,24 +139,47 @@ impl DoryScheme {
             // sibling process's, diverging the generators mid-proof.
             let _urs_lock = crate::urs_lock::lock_urs_cache();
             ArkworksProverSetup::new_from_urs(canonical_max_num_vars)
-        };
+        }
         #[cfg(target_arch = "wasm32")]
-        let setup = ArkworksProverSetup::new(canonical_max_num_vars);
+        ArkworksProverSetup::new(canonical_max_num_vars)
+    }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::setup_prover", fields(max_num_vars))]
+    pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
+        let setup = Self::raw_setup(max_num_vars);
 
         // Deliberately NOT priming dory's global prepared-point cache (the
         // legacy prover does): the cache only grows and its consumers
         // prefix-match blindly, so any process touching two setup sizes —
         // the URS seeds generators on the exact size — silently pairs
-        // against the wrong generators. The saving is ~0.2 s wall of G2
-        // Miller preprocessing per 2^20 proof; not worth the footgun.
-        DoryProverSetup(setup)
+        // against the wrong generators. The setup-owned table below gives
+        // the same saving without the footgun: it lives and dies with this
+        // one setup object, so a prefix of it always matches this URS.
+        let (prepared_g2, affine_g1) = if crate::tier2::setup_prep_enabled() {
+            // A balanced matrix layout gives any committable poly
+            // (≤ max_num_vars vars) at most 2^floor(max_num_vars/2) tier-2
+            // rows, but the even-padded SRS carries 2^ceil(max_num_vars/2)
+            // G2 generators — preparing the unconsumed half would double
+            // the table's memory (~16.7 kB per prepared point, ~2 GiB dead
+            // weight @2^27) for rows no finish ever pairs against. A
+            // larger request falls back to per-pass preparation in
+            // `DoryTier2Prep::new`.
+            let consumed_rows = (1usize << (max_num_vars / 2)).min(setup.g2_vec.len());
+            (
+                crate::tier2::prepare_g2_table(&setup, consumed_rows),
+                crate::streaming::affine_g1_table(&setup),
+            )
+        } else {
+            Default::default()
+        };
+        DoryProverSetup(setup, prepared_g2, affine_g1)
     }
 
-    /// Derives the verifier SRS (a subset of the prover SRS).
+    /// Derives the verifier SRS (a subset of the prover SRS; skips the
+    /// prover-only prepared-G2 table).
     #[tracing::instrument(skip_all, name = "DoryScheme::setup_verifier", fields(max_num_vars))]
     pub fn setup_verifier(max_num_vars: usize) -> DoryVerifierSetup {
-        let prover_setup = Self::setup_prover(max_num_vars);
-        DoryVerifierSetup(prover_setup.0.to_verifier_setup())
+        DoryVerifierSetup(Self::raw_setup(max_num_vars).to_verifier_setup())
     }
 
     fn commit_with_mode<P, M>(
@@ -326,6 +348,15 @@ impl AdditivelyHomomorphic for DoryScheme {
     fn combine_hints(hints: Vec<Self::OpeningHint>, scalars: &[Self::Field]) -> Self::OpeningHint {
         assert_eq!(hints.len(), scalars.len());
         assert!(!hints.is_empty(), "combine_hints: empty hint set");
+
+        // A device backend may have installed an accelerated combiner
+        // (group-equal results by construction); it declines calls it cannot
+        // serve and this path remains the arithmetic of record.
+        if let Some(hook) = crate::hint_hook::combine_hints_hook() {
+            if let Some(combined) = hook(&hints, scalars) {
+                return combined;
+            }
+        }
 
         // Hints may be ragged: a polynomial narrower than the shared
         // commitment grid commits fewer rows, and its zero-embedding's
@@ -610,10 +641,21 @@ impl<S: MultilinearPoly<Fr> + ?Sized> DoryPolynomial<ArkFr> for DorySourceAdapte
 }
 
 impl<S: MultilinearPoly<Fr> + ?Sized> MultilinearLagrange<ArkFr> for DorySourceAdapter<'_, S> {
+    #[tracing::instrument(skip_all, name = "DorySourceAdapter::vector_matrix_product")]
     fn vector_matrix_product(&self, left_vec: &[ArkFr], _nu: usize, sigma: usize) -> Vec<ArkFr> {
         let native_left: Vec<Fr> = left_vec.iter().map(ark_to_jolt_fr).collect();
         let result = self.source.fold_rows(&native_left, sigma);
         result.iter().map(jolt_fr_to_ark).collect()
+    }
+
+    #[tracing::instrument(skip_all, name = "DorySourceAdapter::compute_evaluation_vectors")]
+    fn compute_evaluation_vectors(
+        &self,
+        point: &[ArkFr],
+        nu: usize,
+        sigma: usize,
+    ) -> (Vec<ArkFr>, Vec<ArkFr>) {
+        dory::primitives::poly::compute_left_right_vectors(point, nu, sigma)
     }
 }
 

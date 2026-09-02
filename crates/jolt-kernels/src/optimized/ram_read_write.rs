@@ -28,7 +28,6 @@
 //! the address rounds is a data-structure choice with no effect on the round
 //! polynomials, so this kernel binds all `log_K` address rounds sparse.
 
-use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
@@ -102,6 +101,47 @@ impl<F: JoltField> Phase<F> {
         SumcheckError::MissingEvaluationSource {
             kind: "RAM read-write phase state",
         }
+    }
+}
+
+#[cfg(feature = "metal")]
+impl<F: JoltField> RamReadWriteKernel<F> {
+    /// Resume the optimized kernel from an exactly bound cycle-phase state.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the full mid-flight state maps directly onto kernel fields"
+    )]
+    pub(crate) fn from_cycle_state(
+        matrix: CycleMajorMatrix<F>,
+        gruen: GruenSplitEqPolynomial<F>,
+        inc: Polynomial<F>,
+        val_init: Polynomial<F>,
+        gamma: F,
+        log_t: usize,
+        log_k: usize,
+        cycle_rounds_bound: usize,
+    ) -> Result<Self, SumcheckError<F>> {
+        let mut kernel = Self {
+            phase: Some(Phase::Cycle { matrix, gruen }),
+            inc,
+            val_init,
+            gamma,
+            log_t,
+            log_k,
+        };
+        if cycle_rounds_bound == log_t {
+            let Some(Phase::Cycle { matrix, gruen }) = kernel.phase.take() else {
+                return Err(Phase::error());
+            };
+            kernel.phase = Some(Phase::Address {
+                matrix: matrix.into_address_major(),
+                merged_eq: gruen.merge(),
+            });
+            if log_k == 0 {
+                kernel.finalize()?;
+            }
+        }
+        Ok(kernel)
     }
 }
 
@@ -312,7 +352,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
             })
             .collect();
 
-        let inc = Polynomial::new(witness.oracle_table(ram_inc().polynomial_id())?);
+        let inc = Polynomial::new(values.inc_column::<F>());
         let val_final = witness.oracle_table(JoltPolynomialId::Virtual(
             JoltVirtualPolynomial::RamValFinal,
         ))?;
@@ -343,7 +383,7 @@ mod tests {
     use std::sync::Arc;
 
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
-    use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
+    use jolt_claims::protocols::jolt::geometry::ram::{ram_inc, ram_ra, ram_val};
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
@@ -427,7 +467,7 @@ mod tests {
                 },
             )
             .unwrap();
-            assert!(session.state::<RamAccessValues>().is_none());
+            assert!(session.state::<std::sync::Arc<RamAccessValues>>().is_none());
             assert!(session.state::<Arc<RamAccessColumns>>().is_some());
 
             let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k);

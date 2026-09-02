@@ -27,7 +27,8 @@
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
-use jolt_field::{Accumulator, JoltField};
+use jolt_field::signed::S256;
+use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -42,7 +43,8 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
+use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
+use super::trace_record::{RecordRows, TraceRecord};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -53,7 +55,7 @@ const NUM_TABLES: usize = 5;
 /// One cycle's five reduced instruction operands as native scalars — the
 /// compact backing of the γ-combined table build and the post-hoc
 /// output-claim walk.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct InstructionOperandRow {
     pub lookup_output: LookupOutput,
     pub left_lookup_operand: LeftLookupOperand,
@@ -65,6 +67,9 @@ pub struct InstructionOperandRow {
 impl InstructionOperandRow {
     /// The row's five operand values as field elements, in output-claim
     /// declaration order — the exact entries the dense reduced tables hold.
+    /// Production paths accumulate the native scalars unreduced instead;
+    /// the parity tests build their reference tables through this.
+    #[cfg(test)]
     #[inline]
     fn field_values<F: JoltField>(&self) -> [F; NUM_TABLES] {
         [
@@ -86,16 +91,15 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
 {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
     {
-        let rows: Vec<InstructionOperandRow> =
-            collect_rows(witness, 1usize << inputs.relation.tau_low().len())?;
+        let record = TraceRecord::shared(session, witness, inputs.relation.tau_low().len())?;
         Ok(Box::new(OptimizedInstructionClaimReductionKernel::new(
             inputs.relation.tau_low(),
-            rows,
+            RecordRows::Record(record),
             inputs.challenges.gamma,
         )?))
     }
@@ -113,16 +117,17 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     combined: Polynomial<F>,
     /// Native per-cycle operand values, kept for the post-hoc output-claim
     /// walk.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-    rows: Vec<InstructionOperandRow>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    rows: RecordRows<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bound_challenges: Vec<F>,
 }
+
 impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
-    pub fn new(
+    pub(crate) fn new(
         tau_low: &[F],
-        rows: Vec<InstructionOperandRow>,
+        rows: RecordRows<InstructionOperandRow>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let log_t = tau_low.len();
@@ -173,9 +178,12 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             acc.reduce()
         };
         #[cfg(feature = "parallel")]
-        let combined: Vec<F> = rows.par_iter().map(combine).collect();
+        let combined: Vec<F> = (0..rows.len())
+            .into_par_iter()
+            .map(|t| combine(&rows.row(t)))
+            .collect();
         #[cfg(not(feature = "parallel"))]
-        let combined: Vec<F> = rows.iter().map(combine).collect();
+        let combined: Vec<F> = (0..rows.len()).map(|t| combine(&rows.row(t))).collect();
 
         Ok(Self {
             progress: RoundProgress::new(log_t),
@@ -187,7 +195,10 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
     }
 
     /// The five individual bound operand values: multilinear evaluations of
-    /// the native rows at the bound point, one split-eq-weighted walk.
+    /// the native rows at the bound point, one split-eq-weighted walk. The
+    /// operands accumulate unreduced (`fmadd_s256`, one Barrett reduce per
+    /// `e_hi` block ≡ the same sum mod p) instead of one Montgomery
+    /// conversion + field multiply per lane per cycle.
     fn operand_claims(&self) -> [F; NUM_TABLES] {
         let reversed: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
         let split = reversed.len() / 2;
@@ -197,16 +208,19 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         let lo_len = e_lo.len();
 
         let block = |idx_hi: usize| -> [F; NUM_TABLES] {
-            let mut sums = [F::zero(); NUM_TABLES];
+            let mut sums: [<F as WithAccumulator>::SignedProductAccumulator; NUM_TABLES] =
+                Default::default();
             let start = idx_hi * lo_len;
-            for (row, &weight) in self.rows[start..start + lo_len].iter().zip(&e_lo) {
-                let values = row.field_values::<F>();
-                for (sum, value) in sums.iter_mut().zip(values) {
-                    *sum += weight * value;
-                }
+            for (t, &weight) in (start..start + lo_len).zip(&e_lo) {
+                let row = self.rows.row(t);
+                sums[0].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));
+                sums[1].fmadd_s256(weight, &S256::from_u64(row.left_lookup_operand.0));
+                sums[2].fmadd_s256(weight, &S256::from_u128(row.right_lookup_operand.0));
+                sums[3].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
+                sums[4].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
             }
             let e_hi_eval = e_hi[idx_hi];
-            sums.map(|sum| e_hi_eval * sum)
+            sums.map(|sum| e_hi_eval * sum.reduce())
         };
         let merge = |mut left: [F; NUM_TABLES], right: [F; NUM_TABLES]| {
             for (left, right) in left.iter_mut().zip(right) {
@@ -461,8 +475,12 @@ mod tests {
         )
         .unwrap();
 
-        let mut optimized =
-            OptimizedInstructionClaimReductionKernel::new(&tau_low, rows, gamma).unwrap();
+        let mut optimized = OptimizedInstructionClaimReductionKernel::new(
+            &tau_low,
+            super::super::trace_record::RecordRows::Collected(rows),
+            gamma,
+        )
+        .unwrap();
 
         // True input claim: the full hypercube sum of the summand.
         let eq = eq_table(&tau_low);

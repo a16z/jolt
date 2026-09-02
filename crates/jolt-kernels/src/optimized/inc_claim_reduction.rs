@@ -20,7 +20,6 @@
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
-use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::JoltField;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -44,51 +43,69 @@ use crate::{
 /// optimized kernel.
 pub struct OptimizedIncClaimReduction;
 
-impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduction {
-    fn prepare(
-        &self,
-        _session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
-    ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let cycle_points = relation.cycle_points();
-        for point in cycle_points {
-            if point.len() != relation.rounds() {
-                return Err(KernelError::InvariantViolation {
-                    reason: "increment reduction cycle point has the wrong variable count",
-                });
-            }
-        }
-        let cycles = 1usize << relation.rounds();
+/// The four dense round tables of the paired-eq-fused summand
+/// `A·RamInc + B·RdInc`, as built by [`build_inc_tables`] — shared between
+/// the optimized kernel and its Metal twin (which serves the same tables
+/// from unified-memory buffers).
+pub(crate) struct IncTables<F> {
+    pub(crate) rounds: usize,
+    pub(crate) ram_inc: Vec<F>,
+    pub(crate) rd_inc: Vec<F>,
+    pub(crate) ram_weights: Vec<F>,
+    pub(crate) rd_weights: Vec<F>,
+}
 
-        let gamma = inputs.challenges.gamma;
-        let gamma_squared = gamma * gamma;
-        // A = eq(ram rw) + γ·eq(ram val); B = γ²·eq(reg rw) + γ³·eq(reg val).
-        let combine = |first: &[F], first_scale: F, second: &[F], second_scale: F| -> Vec<F> {
-            let mut table = scaled_eq_table(first, first_scale);
-            let scaled = scaled_eq_table(second, second_scale);
-            #[cfg(feature = "parallel")]
-            table
-                .par_iter_mut()
-                .zip(scaled.par_iter())
-                .for_each(|(acc, term)| *acc += *term);
-            #[cfg(not(feature = "parallel"))]
-            table
-                .iter_mut()
-                .zip(scaled.iter())
-                .for_each(|(acc, term)| *acc += *term);
-            table
-        };
-        let ram_weights = combine(cycle_points[0], F::one(), cycle_points[1], gamma);
-        let rd_weights = combine(
+pub(crate) fn validate_inc_relation<F: JoltField>(
+    relation: &IncClaimReduction<F>,
+) -> Result<usize, KernelError<F>> {
+    for point in relation.cycle_points() {
+        if point.len() != relation.rounds() {
+            return Err(KernelError::InvariantViolation {
+                reason: "increment reduction cycle point has the wrong variable count",
+            });
+        }
+    }
+    Ok(1usize << relation.rounds())
+}
+
+pub(crate) fn build_inc_weights<F: JoltField>(
+    cycle_points: [&[F]; 4],
+    gamma: F,
+) -> (Vec<F>, Vec<F>) {
+    let gamma_squared = gamma * gamma;
+    // A = eq(ram rw) + γ·eq(ram val); B = γ²·eq(reg rw) + γ³·eq(reg val).
+    let combine = |first: &[F], first_scale: F, second: &[F], second_scale: F| -> Vec<F> {
+        let mut table = scaled_eq_table(first, first_scale);
+        let scaled = scaled_eq_table(second, second_scale);
+        #[cfg(feature = "parallel")]
+        table
+            .par_iter_mut()
+            .zip(scaled.par_iter())
+            .for_each(|(acc, term)| *acc += *term);
+        #[cfg(not(feature = "parallel"))]
+        table
+            .iter_mut()
+            .zip(scaled.iter())
+            .for_each(|(acc, term)| *acc += *term);
+        table
+    };
+    (
+        combine(cycle_points[0], F::one(), cycle_points[1], gamma),
+        combine(
             cycle_points[2],
             gamma_squared,
             cycle_points[3],
             gamma_squared * gamma,
-        );
+        ),
+    )
+}
 
-        let dense = |id: JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
+pub(crate) fn materialize_inc_columns<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<(Vec<F>, Vec<F>), KernelError<F>> {
+    let dense =
+        |id: jolt_claims::protocols::jolt::JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
             let table = witness.oracle_table(id.polynomial_id())?;
             if table.len() != cycles {
                 return Err(KernelError::TableSizeMismatch {
@@ -99,13 +116,42 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
             }
             Ok(table)
         };
+    Ok((dense(ram_inc_reduced())?, dense(rd_inc_reduced())?))
+}
 
+pub(crate) fn build_inc_tables<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: &ProverInputs<'_, F, IncClaimReduction<F>>,
+) -> Result<IncTables<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let cycle_points = relation.cycle_points();
+    let cycles = validate_inc_relation(relation)?;
+    let (ram_weights, rd_weights) = build_inc_weights(cycle_points, inputs.challenges.gamma);
+    let (ram_inc, rd_inc) = materialize_inc_columns(witness, cycles)?;
+
+    Ok(IncTables {
+        rounds: relation.rounds(),
+        ram_inc,
+        rd_inc,
+        ram_weights,
+        rd_weights,
+    })
+}
+
+impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduction {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
+        let tables = build_inc_tables(witness, &inputs)?;
         Ok(Box::new(IncKernel {
-            progress: RoundProgress::new(relation.rounds()),
-            ram_inc: Polynomial::new(dense(ram_inc_reduced())?),
-            rd_inc: Polynomial::new(dense(rd_inc_reduced())?),
-            ram_weights: Polynomial::new(ram_weights),
-            rd_weights: Polynomial::new(rd_weights),
+            progress: RoundProgress::new(tables.rounds),
+            ram_inc: Polynomial::new(tables.ram_inc),
+            rd_inc: Polynomial::new(tables.rd_inc),
+            ram_weights: Polynomial::new(tables.ram_weights),
+            rd_weights: Polynomial::new(tables.rd_weights),
         }))
     }
 }

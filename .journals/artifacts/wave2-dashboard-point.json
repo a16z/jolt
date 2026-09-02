@@ -1,0 +1,11 @@
+{
+  "series": "jolt-metal-m5-sha2chain",
+  "wave": 2,
+  "date": "2026-08-05",
+  "commit_base": "88b063db3",
+  "branch": "scratch/metal-saturation",
+  "flagship_2e27": {"prove_s": 69.63, "padded_khz": 1927.6, "peak_rss_gib": 76.77, "prev_s": 71.77, "prev_khz": 1870.0, "delta_s": -2.14},
+  "cert_2e25": {"prove_s": 19.01, "padded_khz": 1764.7, "peak_rss_gib": 25.16, "prev_s": 19.67, "prev_rss_gib": 27.42},
+  "stage_vector_2e27": {"st0": 17.981, "st1": 5.451, "st2": 2.975, "st3": 2.304, "st4": 9.523, "st5": 14.806, "st6a": 0.189, "st6b": 7.016, "st7": 1.334, "st8": 7.985},
+  "notes": "st6b 16.35->7.02 (-9.33, deferred+fused Rav/Bool adoption); st7 -0.58 (split-eq pushforward); st8 -0.53; both fresh runs carry ~+6s st0 ambient penalty vs baseline window; second run 72.93s in worse window with st6b still 8.80"
+}

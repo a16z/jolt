@@ -144,6 +144,9 @@ pub enum PerformanceObjective {
     MulI64(performance::field_mul::MulI64Objective),
     MulU128(performance::field_mul::MulU128Objective),
     MulI128(performance::field_mul::MulI128Objective),
+    HammingWeightPushforward(
+        performance::hamming_weight_pushforward::HammingWeightPushforwardObjective,
+    ),
 }
 
 impl PerformanceObjective {
@@ -156,6 +159,9 @@ impl PerformanceObjective {
             Self::MulI64(performance::field_mul::MulI64Objective),
             Self::MulU128(performance::field_mul::MulU128Objective),
             Self::MulI128(performance::field_mul::MulI128Objective),
+            Self::HammingWeightPushforward(
+                performance::hamming_weight_pushforward::HammingWeightPushforwardObjective,
+            ),
         ]
     }
 
@@ -168,6 +174,7 @@ impl PerformanceObjective {
             Self::MulI64(o) => o.name(),
             Self::MulU128(o) => o.name(),
             Self::MulI128(o) => o.name(),
+            Self::HammingWeightPushforward(o) => o.name(),
         }
     }
 
@@ -180,6 +187,7 @@ impl PerformanceObjective {
             Self::MulI64(o) => o.units(),
             Self::MulU128(o) => o.units(),
             Self::MulI128(o) => o.units(),
+            Self::HammingWeightPushforward(o) => o.units(),
         }
     }
 
@@ -192,6 +200,7 @@ impl PerformanceObjective {
             Self::MulI64(o) => o.description(),
             Self::MulU128(o) => o.description(),
             Self::MulI128(o) => o.description(),
+            Self::HammingWeightPushforward(o) => o.description(),
         }
     }
 
@@ -202,6 +211,10 @@ impl PerformanceObjective {
             Self::MulU64(_) | Self::MulI64(_) | Self::MulU128(_) | Self::MulI128(_) => {
                 &["crates/jolt-field/"]
             }
+            Self::HammingWeightPushforward(_) => &[
+                "crates/jolt-kernels/src/optimized/hamming_weight_claim_reduction.rs",
+                "crates/jolt-kernels/src/optimized/booleanity.rs",
+            ],
         }
     }
 }
@@ -226,6 +239,7 @@ pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
 pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
 pub use performance::field_mul::{MUL_I128, MUL_I64, MUL_U128, MUL_U64};
+pub use performance::hamming_weight_pushforward::HAMMING_WEIGHT_PUSHFORWARD;
 pub use performance::naive_sort::NAIVE_SORT_TIME;
 
 impl OptimizationObjective {
@@ -279,7 +293,7 @@ impl OptimizationObjective {
     }
 
     pub fn is_perf(&self) -> bool {
-        matches!(self, Self::Performance(_))
+        matches!(self, Self::Performance(_) | Self::Callgrind(_))
     }
 
     /// Parses a string-keyed objective (`telemetry:...` / `callgrind:...`).
