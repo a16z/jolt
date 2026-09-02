@@ -4,7 +4,7 @@
 //! prover-controlled Jolt proof. Validate both against Akita's trusted
 //! schedule before a backend deserializer can reserve payload-sized buffers.
 
-use akita_config::{effective_batched_schedule, CommitmentConfig};
+use akita_config::{derive_transcript_grinding_plan, effective_batched_schedule, CommitmentConfig};
 use akita_pcs::AkitaError;
 use akita_schedules::ResolvedScheduleRow;
 use akita_types::{
@@ -302,7 +302,9 @@ fn validate_proof_shape(
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), OpeningsError> {
-    let expected = canonical_proof_shape(schedule, layout, AkitaConfig::EXT_DEGREE)
+    let grinding_plan = derive_transcript_grinding_plan::<AkitaConfig>(schedule, layout)
+        .map_err(|err| invalid_batch(format!("Akita grinding plan is invalid: {err}")))?;
+    let expected = canonical_proof_shape(schedule, layout, AkitaConfig::EXT_DEGREE, &grinding_plan)
         .map_err(|err| invalid_batch(format!("Akita schedule proof shape is invalid: {err}")))?;
     if *shape != expected {
         return Err(invalid_batch(
@@ -427,12 +429,26 @@ mod tests {
     }
 
     #[test]
-    fn canonical_shape_passes_and_forged_count_rejects() {
+    fn canonical_shape_passes_and_forged_fields_reject() {
         let (_, _, layout, resolved) = resolved_dense(16, 2);
-        let mut shape =
-            canonical_proof_shape(resolved.schedule(), &layout, AkitaConfig::EXT_DEGREE)
-                .expect("canonical shape");
+        let grinding_plan =
+            derive_transcript_grinding_plan::<AkitaConfig>(resolved.schedule(), &layout)
+                .expect("grinding plan");
+        let mut shape = canonical_proof_shape(
+            resolved.schedule(),
+            &layout,
+            AkitaConfig::EXT_DEGREE,
+            &grinding_plan,
+        )
+        .expect("canonical shape");
         validate_proof_shape(&shape, resolved.schedule(), &layout).expect("valid shape");
+
+        shape.nonce_stream_bits ^= 1;
+        let err = validate_proof_shape(&shape, resolved.schedule(), &layout)
+            .expect_err("forged grinding stream width must reject");
+        assert!(err.to_string().contains("resolved schedule"));
+
+        shape.nonce_stream_bits ^= 1;
         shape.root.opening_payload_coeffs = 1 << 25;
         let encoded = serialize_akita(&shape).expect("serialize shape");
         let decoded = deserialize_akita::<AkitaBackendProofShape>(&encoded, &()).expect("shape");

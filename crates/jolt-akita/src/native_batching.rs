@@ -890,6 +890,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_field::Zero;
     use jolt_openings::PrecommittedRole;
 
     fn commitment(
