@@ -88,7 +88,7 @@ sparse (line) mul = 39C, line mul with dedicated representation = 30C; Granger�
 | Final exponentiation replaced by residue check (prover supplies c with x·c^r = y; merged into Miller loop) | saves ≈ 687 K of the 1.39 M | Novakovic–Eagen, "On Proving Pairings", eprint 2024/640; gnark `AssertFinalExponentiationIsOne` |
 | G2 scalar mul (254-bit, affine, Fq2) | ≈ 15 K C ≈ 1.7 M (lookups) **(est.)** | ≈ 254 × 20 Fq2 mul; G1 scalar mul ≈ 1/3 of that |
 | arkworks `r1cs-std` `EmulatedFpVar` (formerly `NonNativeFieldVar`) | no BN254-specific published count; ≈ 1000× native for 256-bit emulation over BLS12-381 Fr (constraint-optimised mode) | eprint 2022/1079 Table 1; measure with `cs.num_constraints()` |
-| halo2-lib (Axiom) BN254 pairing, PLONKish with lookup range checks (3×88-bit limbs) | benchmark table not retrieved (README fetch 404) — order 10^6 advice cells at k≈19–20 **(unverified)** | <https://github.com/axiom-crypto/halo2-lib> `halo2-ecc` |
+| halo2-lib (Axiom) BN254 pairing, PLONKish with lookup range checks (3 limbs × 88–91 bits, `lookup_bits` 13–21) | bench configs: degree 22 with 1 advice column … degree 19 with 6 advice columns → ≈ 3–4 M advice cells **(est. from config, not the CSV)** | <https://github.com/axiom-crypto/halo2-lib> `halo2-ecc/configs/bn254/bench_pairing.config`; results in `src/bn254/results/pairing_bench.csv` |
 | Nova/CycleFold deferral | 0 pairings in-circuit; one scalar mul on the other curve ≈ 1,000–1,500 gates | see §3(a) |
 
 Which numbers assume lookups: every gnark and halo2-lib figure does (gnark Groth16 via its commitment extension +
@@ -240,3 +240,118 @@ of 10^6–10^8 constraints that is 10^7–10^9 field ops (~0.1–10 s native; no
 On-chain reference for the pairing side: MicroNova's full Solidity verifier (HyperKZG + MicroSpartan + deferred
 Grumpkin check) ≈ 2.2 M gas; Jolt book's own pre-Dory estimate for a HyperKZG Jolt verifier was ~2 M gas and
 "a couple of dozen KBs" (<https://jolt.a16zcrypto.com/future/on-chain-verifier.html>).
+
+## 5. Jolt-specific prior art
+
+### In-repo today (origin/main 756bddce3)
+
+- `examples/recursion/`: the naive "run the Jolt verifier as a RISC-V guest" harness (added by PR #891, merged
+  2025-08-21; `cargo run -p recursion generate --example fibonacci`, `… verify --example fibonacci --embed`). Verifier
+  cost in-guest ≈ 1.4–1.9 B RV64 cycles (`recursion_references.md`), "~1.5 billion" (recursion-2 `spec.md`) — not
+  viable without assist. `book/src/roadmap/recursion.md` and `book/src/roadmap/on-chain-verifier.md` are stubs
+  ("under construction").
+- Transcript: `transcript-poseidon` features exist in `jolt-sdk` / `jolt-prover-legacy`; `specs/jolt-transcript-spongefish.md`
+  adds a `PoseidonSponge` (light-poseidon, circom-compatible BN254 params, 254-bit challenges) to `crates/jolt-transcript`.
+  No HyperKZG in main (legacy `poly/commitment/` = dory, hyrax, pedersen, mock); `crates/jolt-hyperkzg` exists only on the 08 branch.
+- Jolt book "future/folding" plan (<https://jolt.a16zcrypto.com/future/folding.html>): Nova over BN254 verifying
+  sum-check proofs natively + HyperNova-style folding of evaluation claims (one scalar mul per folded claim,
+  offloaded to Grumpkin via CycleFold).
+
+### In-repo history
+
+- **`jolt-evm-verifier/`** (Foundry project; `forge init` 2024-06-26 `7ee273ff2`, deleted 2025-07-17 in "The Big
+  Refactor" `35803be97`). Solidity subprotocols: `HyperKZG.sol`, `SpartanVerifier.sol`, `SumcheckVerifier.sol`,
+  `GrandProductVerifier.sol`, `FiatShamirTranscript.sol`, `Fr.sol`, `R1CSMatrix.sol`, tests + Rust example
+  generators. README: "NEITHER COMPLETE NOR REVIEWED FOR SECURITY". Subprotocol level only — never a full Jolt
+  verifier; no standalone a16z repo of that name exists (GitHub search: none). Matches the Nov-2024 a16z update
+  ("alpeh_v and Matteo Mer … significant progress toward a Solidity implementation").
+- **`transpiler/`** (Groth16 wrapper via gnark; commits Feb 2026, removed 2026-06-24 in "Strip jolt-core into
+  jolt-prover-legacy (#1632)", 28 files / 7,670 lines; recover with `git show 072998fb9^:transpiler/`). Symbolic
+  execution of the verifier with `MleAst` → target-agnostic AST bundle → gnark Go circuit + witness → Groth16
+  (`transpiler/go`). Covers stages 1–7 ("all sumcheck verification, including AdviceClaimReduction"); "Stage 8
+  (PCS/Dory) is not transpiled because pairing operations are too expensive in-circuit"; PCS boundary stubbed by an
+  `AstCommitmentScheme`; proofs "MUST use Poseidon transcript". This is the closest existing Fr-only wrapper; its
+  README gives no constraint counts.
+
+### Public statements on proof size / on-chain verification (a16z)
+
+- Apr 2024 FAQ (<https://a16zcrypto.com/posts/article/faqs-on-jolts-initial-implementation/>): Hyrax proofs
+  "3–10 MBs today … a couple of dozen KBs" with Zeromorph/HyperKZG ("logarithmically many G1 operations and 3
+  pairing evaluations"); "Building Jolt": Jolt verifier "can be implemented in Circom to produce constant-sized
+  Groth16 proofs".
+- Jolt book on-chain page (HyperKZG era, <https://jolt.a16zcrypto.com/future/on-chain-verifier.html>): ~150 scalar
+  muls + 2 pairings ≈ 1 M gas, ≈ 40 KB calldata, "about 2 million gas" total.
+- Nov 2024 update (<https://a16zcrypto.com/posts/article/jolt-an-update/>): proofs "approximately 200 kilobytes, with
+  potential future reductions to 25 kilobytes"; Solidity verifier in progress.
+- Mar 2026 ZK post (<https://a16zcrypto.com/posts/article/zkvm-jolt-zero-knowledge/>): "proof sizes of about
+  50 KB"; ZK adds 3 KB, "no SNARK recursion or wrapping".
+- Issue #209 (open since 2024-03-25, "Implement on-chain verifier"): IC-canister port reported "JoltPreprocessing
+  50MB, proof 500KB+" (2024, Hyrax era).
+- Jolt-b (eprint 2024/1131, third party): argues Hyrax's O(√N) verification "makes the recursive verification of a
+  Jolt proof impractical" — the same argument applies to a Hyrax-over-Grumpkin assist proof if size is the goal.
+
+### Branch `alberto/prover-stack/08-wrapper-verifier` (framing only; lane A deep-reads)
+
+Thirteen commits on top of main (June 2026, +61,985 / −1,729 lines; specs by Markos Georghiades, 2026-05-21) that
+build the *verifier side* of exactly our target: `crates/jolt-wrapper-verifier` (generic configured-verifier R1CS
+builder, in-circuit Poseidon-Fr transcript replay, variable-challenge sumcheck R1CS, claim lowering, Spartan +
+HyperKZG verifier stages, optional BlindFold/committed-ZK stage), `crates/jolt-hyperkzg` (+ ZK openings,
+`specs/hyperkzg-zk.md`), `crates/jolt-hyrax` (Grumpkin Pedersen rows), `crates/jolt-dory-assist-verifier`
+(`specs/dory-assist-protocol.md`, 2,870 lines: GT exp/mul, G1/G2 scalar-mul/add and Miller-loop "operation-family"
+rows, prefix-packed into one Hyrax opening; final exponentiation and pairing equality checked natively), `jolt-r1cs`
+non-native Fq, `jolt-claims` formulas, plus `specs/wrapper-protocol.md`, `selected-verifier-integration.md`,
+`field-inline-protocol.md`, and `recursion_references.md` (map of the a16z recursion paper and Quang's branches).
+Design facts that bind us: the wrapped inner proof must use the Poseidon transcript; "ordinary Dory verifier inside
+wrapper R1CS" and "pairing final exponentiation inside the Dory-assist SNARK" are explicitly out of scope; the
+production wrapper *prover* "is intentionally deferred until shared prover machinery lands". Statement: private
+witness = transparent Jolt proof + verifier intermediates, public = IO, preprocessing digest, config digest.
+
+### Branch `alberto/feat/recursion-2` (framing only)
+
+Dec 2025 – Jan 2026 work on the old `jolt-core` layout (no merge base with current main): `jolt-core/src/zkvm/recursion/`
+("Jolt Recursion via SNARK Composition", `spec.md`). Verifier-in-guest where the Dory-expensive operations (G1/G2
+scalar mul, GT exp, GT mul, multi-pairing) become *hints*, proven by a bespoke Fq-native SNARK: stage 1 packed
+GT-exponentiation sumcheck (base-4 digits, quotient technique `a(X)·b(X) = c(X) + Q(X)·p(X)` on Fq12 = Fq[X]/(p),
+degree 7, 11 rounds), stage 2 batched constraint sumchecks (shift, reduction, GT mul, G1 scalar mul), stage 3 direct
+evaluation, stage 4 jagged transform, stage 5 jagged assist, then one Hyrax-over-Grumpkin opening. Depends on
+`quangvdao/dory` branch `quang/feat/recursion` (stage-8 PCS hint API). Targets "<10 million cycles" vs "~1.5
+billion"; "polynomials per GT exp 1,024 → 5, proof-size contribution ~32 KB → ~160 B". Continued in `quangvdao/jolt`
+`quang/recursion-temp` (2026-02-03: Miller loop proven, final exponentiation still external) and
+`LayerZero-Research/dory` `lz-recursion`. Companion paper "Efficient Recursion for the Jolt zkVM"
+(`markosg04/recursion-paper`, not public): extended verifier 171–198 M RV64 cycles; "the final pairing check was not
+yet fully proved inside the recursion SNARK".
+
+### Transcript cost (cross-cutting, resolves kill-list item 2)
+
+Poseidon (t=3, BN254, x^5) ≈ 240–243 R1CS constraints per permutation (bkomuves/hash-circuits; Poseidon paper
+params); Blake2s = 21,006 constraints per compression (Zcash Sapling, via Reinforced Concrete Table), Blake2b ≈ 2×
+**(est.)**; Keccak-f[1600] ≈ 146–151 K (vocdoni/keccak256-circom). A Jolt verifier absorbs ~10^3–10^4 field
+elements (each round: 3–8 coefficients in, 1 challenge out) → Poseidon transcript ≈ 0.5–2 M constraints **(est.)**,
+Blake2b ≈ 50–200 M **(est.)**. The wrapper therefore requires inner proofs produced with `transcript-poseidon`,
+as both the transpiler and the 08 branch require.
+
+## Decision inputs
+
+Assumptions: inner Jolt proof at 2^20–2^24 cycles, one batched Dory opening with σ ≈ 12–15 reduce rounds; Fr
+verifier logic (≈ 30 sumchecks, ≈ 1,000 rounds, Poseidon transcript) ≈ **1–3 M** constraints **(est.)** in every
+architecture; Spartan + HyperKZG outer proof sized from §4 (compressed G1); C = emulated Fq mul cost (§2).
+
+| Architecture | In-circuit constraints (order of magnitude) | Wrapped proof size | Verifier cost | Engineering size |
+|---|---|---|---|---|
+| **A. Full in-circuit Dory incl. pairing** (Fr R1CS, non-native Fq) | Fr logic 1–3 M + Dory GT/G1/G2 multi-exps ≈ 0.8 M C → **≈ 90 M** with lookup-style range checks (Jolt Spartan has none today) / **≈ 0.8 B** plain R1CS + pairing 1.4–2.8 M (or residue check) **(est.)** | Spartan+HyperKZG at 2^27–2^30: **≈ 8–9 KiB**; +1–3 KB if SPARK added | ℓ+7 G1 + 2 pairings (+ O(nnz) ≈ 10^8–10^9 field ops without SPARK) | XL: Fq12 tower + multi-exp gadgets + range-check/lookup machinery; prover over 10^8–10^9 constraints (hours, tens of GB) **(est.)** |
+| **B. In-circuit GT folding, pairing deferred as public output** | A minus the pairing: **≈ 87 M / 0.8 B (est.)** | A + ≈ 1.9 KB public GT/G1/G2 elements (or 1 hash) | A + one native 4-way multi-pairing | XL (GT multi-exp is the cost centre, ≈ 97 % of A remains) |
+| **C. Fr-only circuit + native Dory verification of the one batched opening** | **1–3 M (est.)** | Spartan+HyperKZG ≈ 6–6.5 KiB **+ the Dory opening proof itself** ≈ (6σ+7)·384 B + (3σ+3)·(32+64) B ≈ **35–40 KB** at σ≈14 (paper §6.1 formula) → **≈ 40–45 KB total**, i.e. roughly today's ~50 KB (lane C measures the real split) | native Dory: ≈ 10σ GT exps + 4-way multi-pairing (~10–20 ms) + HyperKZG | M: transpiler-shaped; 08 branch already has the verifier side |
+| **D. 2-cycle: Fq-native Dory assist over Grumpkin** (a16z recursion design) | Fr logic 1–3 M + Fq-native assist relations (GT exp/mul, G1/G2, Miller loop) over a dense witness of ~2^20–2^24 Fq **(est.)**; final exp + pairing native | assist sumchecks few KB + Hyrax opening O(√n) = **32–128 KB (est.)**; IPA instead → log-size but O(n) Grumpkin MSM verifier; MicroNova-style re-wrap of the Grumpkin opening into the BN254 circuit (+≈1.7 M constraints) → **≈ 10 KB** | HyperKZG + 1 multi-pairing + final exp + Hyrax/IPA (or none after re-wrap) | XL, but partially exists (`recursion-2`, `quang/recursion-temp`, 08's `jolt-dory-assist-verifier`/`jolt-hyrax`) |
+| **E. (outside spec) inner Jolt with HyperKZG PCS, PCS check deferred as public output** | **1–3 M (est.)**, zero Fq arithmetic | ≈ 6–7 KiB + ≈ 1.1 KB (ℓ+7 ≈ 35 G1) deferred elements | ≈ 40 G1 scalar muls + 2 pairings natively (~2 M gas class) | L: new PCS for Jolt (SRS 2^28+ for one-hot polys, loses pay-per-bit, slower prover) |
+
+Reading: single-digit KB with Dory kept is only reachable by A/B (10^8–10^9-constraint circuit) or D-with-re-wrap
+(largest engineering, half-built in branches); C is the cheap build but lands at ~40–45 KB because the Dory
+opening proof is most of a Jolt proof; E is the only Fr-only route to single-digit KB and changes the inner PCS.
+B is strictly ≤ A, so if Fr-circuit Dory is chosen the pairing should be deferred and the fight is the GT
+multi-exponentiation (Straus sharing ≈ 2× over independent exps; torus/direct-Fq12 `Eval` tricks ≈ 1.5–3× more;
+lookup-based range checks ≈ 6–10× — all needed to stay below ~10^8).
+
+Numbers lanes B/C must pin before `.journals/plan.md`: σ (Dory reduce rounds) and exact GT/G1/G2 op counts at
+2^20–2^24; byte split of the Jolt proof (Dory opening vs sumcheck rounds vs commitments); transcript absorb count;
+constraint count of the Fr-only verifier logic (rebuild the transpiler's AST bundle or count from the 08 branch's
+`r1cs_protocols` tests).
