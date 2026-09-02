@@ -13,10 +13,9 @@ pub struct Keccak256 {
     state: [u64; 25],
     /// Buffer for incomplete blocks.
     buffer: [u64; RATE_IN_U64],
-    /// Number of bytes in the buffer.
+    /// Number of bytes in the buffer, always below `RATE_IN_BYTES`: `update`
+    /// absorbs the buffer the moment it fills.
     buffer_len: usize,
-    /// Whether at least one block has been permuted into the state.
-    initialized: bool,
 }
 
 impl Keccak256 {
@@ -27,7 +26,6 @@ impl Keccak256 {
             state: [0; 25],
             buffer: [0; RATE_IN_U64],
             buffer_len: 0,
-            initialized: false,
         }
     }
 
@@ -40,19 +38,11 @@ impl Keccak256 {
 
         let mut offset = 0;
 
-        // Absorb input into the buffer
         if self.buffer_len > 0 {
-            let needed = RATE_IN_BYTES - self.buffer_len;
-            let to_copy = needed.min(input.len());
-
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    input.as_ptr(),
-                    self.buffer.as_mut_ptr().cast::<u8>().add(self.buffer_len),
-                    to_copy,
-                );
-            }
-
+            let buffer_len = self.buffer_len;
+            let to_copy = (RATE_IN_BYTES - buffer_len).min(input.len());
+            self.buffer_bytes()[buffer_len..buffer_len + to_copy]
+                .copy_from_slice(&input[..to_copy]);
             self.buffer_len += to_copy;
             offset += to_copy;
 
@@ -61,128 +51,54 @@ impl Keccak256 {
             }
         }
 
-        // Process complete blocks
-        while offset + RATE_IN_BYTES <= input.len() {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    input.as_ptr().add(offset),
-                    self.buffer.as_mut_ptr().cast(),
-                    RATE_IN_BYTES,
-                );
-            }
-            self.buffer_len = RATE_IN_BYTES;
-            self.absorb_buffer();
-            offset += RATE_IN_BYTES;
-        }
-
-        // Buffer any remaining input
-        let remaining = input.len() - offset;
-        if remaining > 0 {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    input.as_ptr().add(offset),
-                    self.buffer.as_mut_ptr().cast(),
-                    remaining,
-                );
-            }
-            self.buffer_len = remaining;
+        // Complete blocks are absorbed straight from `input`; only the tail
+        // is staged in the buffer.
+        let remaining = absorb_full_blocks(&mut self.state, &input[offset..]);
+        if !remaining.is_empty() {
+            self.buffer_bytes()[..remaining.len()].copy_from_slice(remaining);
+            self.buffer_len = remaining.len();
         }
     }
 
     /// Reads hash digest and consumes the hasher.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; HASH_LEN] {
-        // Pad the message. Keccak uses `0x01` padding.
-        // If buffer_len == RATE_IN_BYTES-1 both markers land in the same byte (0x01 | 0x80 = 0x81)
-        unsafe {
-            let buffer = self.buffer.as_mut_ptr().cast::<u8>();
-            *buffer.add(self.buffer_len) = 0x01;
-            if self.buffer_len + 1 < RATE_IN_BYTES {
-                core::ptr::write_bytes(
-                    buffer.add(self.buffer_len + 1),
-                    0,
-                    RATE_IN_BYTES - self.buffer_len - 1,
-                );
-            }
-            *buffer.add(RATE_IN_BYTES - 1) |= 0x80;
-        }
+        // Keccak padding is `0x01 .. 0x80`; both markers share a byte when
+        // `buffer_len == RATE_IN_BYTES - 1` (0x81).
+        let buffer_len = self.buffer_len;
+        let bytes = self.buffer_bytes();
+        bytes[buffer_len] = 0x01;
+        bytes[buffer_len + 1..].fill(0);
+        bytes[RATE_IN_BYTES - 1] |= 0x80;
 
         self.absorb_buffer();
-
-        let mut hash = [0u8; HASH_LEN];
-
-        #[cfg(target_endian = "little")]
-        {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    self.state.as_ptr() as *const u8,
-                    hash.as_mut_ptr(),
-                    HASH_LEN,
-                );
-            }
-        }
-
-        #[cfg(target_endian = "big")]
-        {
-            // For big-endian, convert each u64 to little-endian bytes
-            for i in 0..HASH_LEN / 8 {
-                let bytes = self.state[i].to_le_bytes();
-                hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
-            }
-        }
-
-        hash
+        to_bytes(self.state)
     }
 
     /// Computes Keccak-256 hash in one call.
     /// Optimized for virtual cycles by avoiding intermediate buffer for final block.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; HASH_LEN] {
-        let len = input.len();
         let mut state = [0u64; 25];
-
-        // Process complete 136-byte blocks
-        let full_blocks = len / RATE_IN_BYTES;
-        let mut offset = 0;
-
-        let is_aligned = (input.as_ptr() as usize).is_multiple_of(8);
-        if full_blocks > 0 {
-            if is_aligned {
-                absorb_aligned_first(&mut state, &input[..RATE_IN_BYTES]);
-            } else {
-                absorb_unaligned_first(&mut state, &input[..RATE_IN_BYTES]);
-            }
-            offset = RATE_IN_BYTES;
-        }
-
-        if is_aligned {
-            for _ in 1..full_blocks {
-                absorb_aligned(&mut state, &input[offset..offset + RATE_IN_BYTES]);
-                offset += RATE_IN_BYTES;
-            }
-        } else {
-            for _ in 1..full_blocks {
-                absorb_unaligned(&mut state, &input[offset..offset + RATE_IN_BYTES]);
-                offset += RATE_IN_BYTES;
-            }
-        }
-
-        // Final block with Keccak padding - use direct absorb
-        let remaining = len - offset;
-        absorb_final(&mut state, &input[offset..], remaining);
+        let remaining = absorb_full_blocks(&mut state, input);
+        absorb_final(&mut state, remaining);
         to_bytes(state)
     }
 
-    /// Absorbs a full block from the internal buffer into the state.
+    #[inline(always)]
+    fn buffer_bytes(&mut self) -> &mut [u8; RATE_IN_BYTES] {
+        // SAFETY: `[u64; RATE_IN_U64]` is exactly `RATE_IN_BYTES` initialized
+        // bytes and `u8` has no alignment requirement.
+        unsafe { &mut *self.buffer.as_mut_ptr().cast() }
+    }
+
+    /// Absorbs the full block held in `buffer` into the state.
     #[inline(always)]
     fn absorb_buffer(&mut self) {
-        if self.initialized {
-            unsafe {
-                keccak256_absorb_permute(self.state.as_mut_ptr(), self.buffer.as_ptr().cast());
-            }
-        } else {
-            absorb_words_first(&mut self.state, &self.buffer);
-            self.initialized = true;
+        // SAFETY: both arrays are 8-byte aligned fields of `self`, so they
+        // are distinct and correctly sized for the inline's contract.
+        unsafe {
+            keccak256_absorb_permute(self.state.as_mut_ptr(), self.buffer.as_ptr().cast());
         }
         self.buffer_len = 0;
     }
@@ -194,165 +110,106 @@ impl Default for Keccak256 {
     }
 }
 
-/// Convert state to output hash bytes.
+/// The first `HASH_LEN` bytes of the state, lanes serialized little-endian.
 #[inline(always)]
 fn to_bytes(state: [u64; 25]) -> [u8; HASH_LEN] {
     let mut hash = [0u8; HASH_LEN];
-
-    #[cfg(target_endian = "little")]
-    {
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                state.as_ptr() as *const u8,
-                hash.as_mut_ptr(),
-                HASH_LEN,
-            );
-        }
+    for (out, lane) in hash.chunks_exact_mut(size_of::<u64>()).zip(state) {
+        out.copy_from_slice(&lane.to_le_bytes());
     }
-
-    #[cfg(target_endian = "big")]
-    {
-        for i in 0..HASH_LEN / 8 {
-            let bytes = state[i].to_le_bytes();
-            hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
-        }
-    }
-
     hash
 }
 
-/// Absorb a 136-byte aligned block into state.
-/// Caller must ensure the block pointer is 8-byte aligned.
+/// Absorbs every complete rate block of `input` and returns the unabsorbed
+/// tail (shorter than `RATE_IN_BYTES`).
+///
+/// 8-byte-aligned input feeds the fused inline directly from the caller's
+/// memory; unaligned input is staged through an aligned stack copy per block.
+/// The block stride is a multiple of 8, so alignment is decided once.
 #[inline(always)]
-fn absorb_aligned(state: &mut [u64; 25], block: &[u8]) {
-    unsafe {
-        keccak256_absorb_permute(state.as_mut_ptr(), block.as_ptr());
+fn absorb_full_blocks<'a>(state: &mut [u64; 25], input: &'a [u8]) -> &'a [u8] {
+    let mut blocks = input.chunks_exact(RATE_IN_BYTES);
+    if (input.as_ptr() as usize).is_multiple_of(8) {
+        for block in &mut blocks {
+            // SAFETY: `block` is `RATE_IN_BYTES` readable bytes at an 8-byte
+            // aligned address; `state` is a distinct `[u64; 25]`.
+            unsafe { keccak256_absorb_permute(state.as_mut_ptr(), block.as_ptr()) };
+        }
+    } else {
+        for block in &mut blocks {
+            let mut aligned = [0u64; RATE_IN_U64];
+            // SAFETY: `block` and `aligned` are both `RATE_IN_BYTES` long, the
+            // copy target is a fresh local, and `aligned` is 8-byte aligned.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    block.as_ptr(),
+                    aligned.as_mut_ptr().cast(),
+                    RATE_IN_BYTES,
+                );
+                keccak256_absorb_permute(state.as_mut_ptr(), aligned.as_ptr().cast());
+            }
+        }
     }
+    blocks.remainder()
 }
 
+/// Pads the final partial block (`input.len() < RATE_IN_BYTES`) and absorbs it.
 #[inline(always)]
-fn absorb_words_first(state: &mut [u64; 25], block: &[u64; RATE_IN_U64]) {
-    for (lane, block_lane) in state.iter_mut().zip(block) {
-        *lane ^= u64::from_le(*block_lane);
-    }
-    unsafe {
-        keccak_f(state.as_mut_ptr());
-    }
-}
-
-#[inline(always)]
-fn absorb_aligned_first(state: &mut [u64; 25], block: &[u8]) {
-    let block = unsafe { &*block.as_ptr().cast::<[u64; RATE_IN_U64]>() };
-    absorb_words_first(state, block);
-}
-
-#[inline(always)]
-fn absorb_unaligned_first(state: &mut [u64; 25], block: &[u8]) {
-    let mut aligned = [0u64; RATE_IN_U64];
-    unsafe {
-        core::ptr::copy_nonoverlapping(block.as_ptr(), aligned.as_mut_ptr().cast(), RATE_IN_BYTES);
-    }
-    absorb_words_first(state, &aligned);
-}
-
-/// Absorb a 136-byte unaligned block into state.
-/// Safe for any alignment.
-#[inline(always)]
-fn absorb_unaligned(state: &mut [u64; 25], block: &[u8]) {
-    let mut aligned = [0u64; RATE_IN_U64];
-    unsafe {
-        core::ptr::copy_nonoverlapping(block.as_ptr(), aligned.as_mut_ptr().cast(), RATE_IN_BYTES);
-        keccak256_absorb_permute(state.as_mut_ptr(), aligned.as_ptr().cast());
-    }
-}
-
-/// Absorb final block with padding directly into state.
-#[inline(always)]
-fn absorb_final(state: &mut [u64; 25], input: &[u8], len: usize) {
+fn absorb_final(state: &mut [u64; 25], input: &[u8]) {
     let mut block = [0u64; RATE_IN_U64];
-    unsafe {
-        core::ptr::copy_nonoverlapping(input.as_ptr(), block.as_mut_ptr().cast(), len);
-        let block_bytes = block.as_mut_ptr().cast::<u8>();
-        *block_bytes.add(len) = 0x01;
-        *block_bytes.add(RATE_IN_BYTES - 1) |= 0x80;
-    }
-    absorb_words_first(state, &block);
+    // SAFETY: `[u64; RATE_IN_U64]` is exactly `RATE_IN_BYTES` initialized
+    // bytes and `u8` has no alignment requirement.
+    let bytes: &mut [u8; RATE_IN_BYTES] = unsafe { &mut *block.as_mut_ptr().cast() };
+    bytes[..input.len()].copy_from_slice(input);
+    bytes[input.len()] = 0x01;
+    bytes[RATE_IN_BYTES - 1] |= 0x80;
+    // SAFETY: `block` is a fresh 8-byte aligned local distinct from `state`.
+    unsafe { keccak256_absorb_permute(state.as_mut_ptr(), block.as_ptr().cast()) };
 }
 
 /// Absorbs one Keccak-256 rate block and applies Keccak-f[1600].
 ///
-/// # Safety
-/// - `state` must point to 25 writable `u64` words and be 8-byte aligned.
-/// - `block` must point to 136 readable bytes and be 8-byte aligned.
-/// - The two memory regions must not overlap.
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
-pub unsafe fn keccak256_absorb_permute(state: *mut u64, block: *const u8) {
-    use crate::{INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT7};
-    core::arch::asm!(
-        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
-        opcode = const INLINE_OPCODE,
-        funct3 = const KECCAK256_ABSORB_PERMUTE_FUNCT3,
-        funct7 = const KECCAK256_FUNCT7,
-        rs1 = in(reg) state,
-        rs2 = in(reg) block,
-        options(nostack)
-    );
-}
-
-#[cfg(feature = "host")]
-/// Host reference implementation of [`keccak256_absorb_permute`].
+/// On RISC-V guests this is the fused inline; with the `host` feature it is
+/// the reference implementation.
 ///
 /// # Safety
 /// - `state` must point to 25 writable `u64` words and be 8-byte aligned.
 /// - `block` must point to 136 readable bytes and be 8-byte aligned.
 /// - The two memory regions must not overlap.
 pub unsafe fn keccak256_absorb_permute(state: *mut u64, block: *const u8) {
-    let state = &mut *state.cast::<[u64; 25]>();
-    let block = &*block.cast::<[u64; RATE_IN_U64]>();
-    for (lane, block_lane) in state.iter_mut().zip(block) {
-        *lane ^= u64::from_le(*block_lane);
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    {
+        use crate::{INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT7};
+        core::arch::asm!(
+            ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+            opcode = const INLINE_OPCODE,
+            funct3 = const KECCAK256_ABSORB_PERMUTE_FUNCT3,
+            funct7 = const KECCAK256_FUNCT7,
+            rs1 = in(reg) state,
+            rs2 = in(reg) block,
+            options(nostack)
+        );
     }
-    crate::exec::execute_keccak_f(state);
-}
-
-#[cfg(all(
-    not(feature = "host"),
-    not(any(target_arch = "riscv32", target_arch = "riscv64"))
-))]
-pub unsafe fn keccak256_absorb_permute(_state: *mut u64, _block: *const u8) {
-    panic!("keccak256_absorb_permute requires RISC-V target or host feature");
-}
-
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
-unsafe fn keccak_f(state: *mut u64) {
-    use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7};
-    core::arch::asm!(
-        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, x0",
-        opcode = const INLINE_OPCODE,
-        funct3 = const KECCAK256_FUNCT3,
-        funct7 = const KECCAK256_FUNCT7,
-        rs1 = in(reg) state,
-        options(nostack)
-    );
-}
-
-#[cfg(feature = "host")]
-unsafe fn keccak_f(state: *mut u64) {
-    crate::exec::execute_keccak_f(&mut *state.cast());
-}
-
-#[cfg(all(
-    not(feature = "host"),
-    not(any(target_arch = "riscv32", target_arch = "riscv64"))
-))]
-unsafe fn keccak_f(_state: *mut u64) {
-    panic!("keccak_f requires RISC-V target or host feature");
+    #[cfg(feature = "host")]
+    {
+        let state = &mut *state.cast::<[u64; 25]>();
+        let block = &*block.cast::<[u64; RATE_IN_U64]>();
+        for (lane, block_lane) in state.iter_mut().zip(block) {
+            *lane ^= u64::from_le(*block_lane);
+        }
+        crate::exec::execute_keccak_f(state);
+    }
+    #[cfg(all(
+        not(feature = "host"),
+        not(any(target_arch = "riscv32", target_arch = "riscv64"))
+    ))]
+    {
+        let _ = (state, block);
+        panic!("keccak256_absorb_permute requires RISC-V target or host feature");
+    }
 }
 
 #[cfg(all(test, feature = "host"))]

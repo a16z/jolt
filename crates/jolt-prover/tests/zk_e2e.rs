@@ -332,13 +332,15 @@ mod zk {
 
     // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
     const KECCAK_ROTRI_ROWS: usize = 576;
-    // 300 bytes drive every `Keccak256::digest` inline path: a first block
-    // (plain permutation), one fused absorb-permute block, and a padded final block.
+    // The `&[u8]` guest input sits behind postcard's 2-byte length prefix, so
+    // `digest` takes its unaligned path: two fused absorb-permute blocks staged
+    // through stack copies, then a padded final block. The clear-mode byte-diff
+    // suite pins the aligned path through `sha3_aligned`.
     const SHA3_INPUT_LEN: usize = 300;
     const SHA3_PERMUTATIONS: usize = 3;
 
     fn prove_guest_zk(
-        guest_name: &str,
+        mut program: host::Program,
         inputs: Vec<u8>,
         backend: JoltBackend<Fr, DoryScheme>,
         inspect_trace: impl FnOnce(&[TraceRow]),
@@ -347,8 +349,6 @@ mod zk {
         common::jolt_device::JoltDevice,
         support::Proof,
     ) {
-        let mut program = host::Program::new(guest_name);
-
         // Legacy host preprocessing carries the program metadata and — under
         // the zk feature — the BlindFold vector-commitment setup.
         let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
@@ -408,7 +408,7 @@ mod zk {
         support::Proof,
     ) {
         prove_guest_zk(
-            "muldiv-guest",
+            host::Program::new("muldiv-guest"),
             postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
             backend,
             |_| {},
@@ -448,8 +448,10 @@ mod zk {
         support::with_zk_stack(|| {
             let message: Vec<u8> = (0..SHA3_INPUT_LEN).map(|i| i as u8).collect();
             let inputs = postcard::to_stdvec(&message).expect("serialize input");
+            let mut program = host::Program::new("sha3-guest");
+            program.set_func("sha3");
             let (preprocessing, public_io, proof) = prove_guest_zk(
-                "sha3-guest",
+                program,
                 inputs,
                 JoltBackend::<Fr, DoryScheme>::optimized(),
                 |rows| {
@@ -461,7 +463,7 @@ mod zk {
                             })
                             .count(),
                         KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
-                        "first, fused-absorb, and final Keccak permutations must be expanded into the modular trace",
+                        "two unaligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
                     );
                 },
             );
