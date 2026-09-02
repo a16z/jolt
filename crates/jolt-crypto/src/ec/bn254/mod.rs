@@ -225,6 +225,7 @@ mod msm;
 
 #[doc(hidden)]
 pub mod batch_addition;
+pub mod bit_columns;
 #[doc(hidden)]
 pub mod glv;
 
