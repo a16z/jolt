@@ -1,14 +1,10 @@
 pub mod advice;
 pub mod bytecode;
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub mod bytecode_reconstruction;
 pub mod hamming_weight;
 pub mod increments;
 pub mod instruction_lookups;
 mod precommitted;
 pub mod program_image;
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub mod program_image_reconstruction;
 pub mod ram_ra;
 pub mod registers;
 
@@ -18,10 +14,6 @@ pub use advice::{
 };
 pub use bytecode::{
     BytecodeClaimReductionParams, BytecodeClaimReductionProver, BytecodeClaimReductionVerifier,
-};
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub use bytecode_reconstruction::{
-    BytecodeReconstructionSumcheckParams, BytecodeReconstructionSumcheckProver,
 };
 #[cfg(feature = "prover")]
 pub use hamming_weight::HammingWeightClaimReductionProver;
@@ -43,10 +35,6 @@ pub use precommitted::{
 pub use program_image::{
     ProgramImageClaimReductionParams, ProgramImageClaimReductionProver,
     ProgramImageClaimReductionVerifier,
-};
-#[cfg(all(feature = "prover", feature = "akita"))]
-pub use program_image_reconstruction::{
-    ProgramImageReconstructionSumcheckParams, ProgramImageReconstructionSumcheckProver,
 };
 pub use ram_ra::{
     RaReductionParams, RamRaClaimReductionSumcheckProver, RamRaClaimReductionSumcheckVerifier,

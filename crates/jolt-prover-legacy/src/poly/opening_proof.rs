@@ -166,15 +166,6 @@ pub enum SumcheckId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
-    /// Lattice/packed mode: the fused-inc virtualization phase between
-    /// stage 5 and the stage-6 address phase.
-    /// Lattice/packed mode: aligns the fused increment with stage 6b.
-    /// Lattice/packed mode: the bytecode chunk reconstruction of the
-    /// stage-8 reconstruction phase.
-    BytecodeChunkReconstruction,
-    /// Lattice/packed mode: the program-image byte reconstruction of the
-    /// stage-8 reconstruction phase.
-    ProgramImageReconstruction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

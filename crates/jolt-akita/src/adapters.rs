@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
 use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
-use crate::schedule_registry::AdviceScheduleParams;
+use crate::schedule_registry::PrecommittedScheduleParams;
 use crate::trace_onehot::TracePackedOneHot;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
@@ -102,13 +102,13 @@ pub struct AkitaSetupParams {
     /// one-hot commitment object never touches it.
     pub(crate) one_hot_only: bool,
     /// When set, only the dense flavor's backend setup is built — the one-hot
-    /// flavor dominates the setup cost (~30x the dense flavor at advice
-    /// shapes), and a sparse-unit or dense commitment object never touches it.
+    /// flavor dominates the setup cost at these shapes, and a bounded-dense
+    /// commitment object never touches it.
     pub(crate) dense_only: bool,
     /// Recipe for the dynamic grouped rows accepted by this setup. Unlike the
     /// process-local row cache, this metadata survives verifier serialization.
-    #[serde(default)]
-    pub(crate) advice_schedule: Option<AdviceScheduleParams>,
+    #[serde(default, rename = "advice_schedule")]
+    pub(crate) precommitted_schedule: Option<PrecommittedScheduleParams>,
 }
 
 impl AkitaSetupParams {
@@ -125,7 +125,7 @@ impl AkitaSetupParams {
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
             dense_only: false,
-            advice_schedule: None,
+            precommitted_schedule: None,
         }
     }
 
@@ -146,7 +146,7 @@ impl AkitaSetupParams {
             one_hot_k,
             one_hot_only: true,
             dense_only: false,
-            advice_schedule: None,
+            precommitted_schedule: None,
         }
     }
 
@@ -158,7 +158,7 @@ impl AkitaSetupParams {
         max_total_batch_polys: usize,
         default_layout_digest: AkitaLayoutDigest,
         one_hot_k: usize,
-        advice_schedule: Option<AdviceScheduleParams>,
+        precommitted_schedule: Option<PrecommittedScheduleParams>,
     ) -> Self {
         Self {
             max_num_vars,
@@ -168,14 +168,12 @@ impl AkitaSetupParams {
             one_hot_k,
             one_hot_only: true,
             dense_only: false,
-            advice_schedule,
+            precommitted_schedule,
         }
     }
 
-    /// Setup parameters for a commitment object that only ever commits and
-    /// opens through the dense flavor (sparse-unit or dense polynomials, e.g.
-    /// the advice byte columns and the precommitted program): skips building
-    /// the one-hot backend setup of the same shape.
+    /// Setup parameters for objects that use only the dense flavor, omitting
+    /// the one-hot backend setup.
     pub fn dense_only(
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
@@ -189,7 +187,7 @@ impl AkitaSetupParams {
             one_hot_k: AKITA_ONE_HOT_K256,
             one_hot_only: false,
             dense_only: true,
-            advice_schedule: None,
+            precommitted_schedule: None,
         }
     }
 
@@ -287,8 +285,8 @@ pub struct AkitaVerifierSetup {
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    #[serde(default)]
-    pub(crate) advice_schedule: Option<AdviceScheduleParams>,
+    #[serde(default, rename = "advice_schedule")]
+    pub(crate) precommitted_schedule: Option<PrecommittedScheduleParams>,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
 }
@@ -332,7 +330,8 @@ impl AkitaVerifierSetup {
     /// Restores dynamic rows before schedule resolution or lazy key derivation.
     pub(crate) fn ensure_schedule_rows(&self) -> Result<(), OpeningsError> {
         let result = self.backend_cache.schedule_rows.get_or_init(|| {
-            self.advice_schedule
+            self.precommitted_schedule
+                .as_ref()
                 .map_or(Ok(()), |params| {
                     params.provision(self.one_hot_k).map(|_| ())
                 })

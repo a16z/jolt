@@ -3,7 +3,7 @@
 //! non-homomorphic PCS. Design: `specs/lattice-claims.md`.
 //!
 //! This module names facts only — the canonical OneHotTrace selector layout,
-//! auxiliary fixed-prefix layouts, extra relations,
+//! precommitted fixed-prefix layouts, extra relations,
 //! and final-opening map. Witness generation, transcripts, and stage
 //! orchestration live in the verifier and prover crates.
 //!
@@ -11,7 +11,7 @@
 //!
 //! Nothing lattice-specific; everything is inherited:
 //!
-//! - Auxiliary packing layer (`jolt-openings`): a packed object holds **logical
+//! - Precommitted packing layer (`jolt-openings`): a packed object holds **logical
 //!   polynomials** in **slots**; a slot has a **prefix** and `num_vars`, and
 //!   a logical point is the packed point's suffix.
 //! - Per family the dimensions keep their existing names: `(address ‖
@@ -26,7 +26,7 @@
 //!   polynomial, one claim remains that no relation consumes. In base mode
 //!   the stage-8 RLC batch settles it; in lattice mode the semantic
 //!   OneHotTrace claims are reduced at a random selector and the single
-//!   physical polynomial is opened once. Auxiliary columns use packed-slot
+//!   physical polynomial is opened once. Precommitted columns use packed-slot
 //!   claims.
 
 pub mod geometry;
@@ -38,9 +38,10 @@ pub use geometry::{
 };
 pub mod strategy;
 pub use packing::{
-    advice_packing_plan, one_hot_trace_columns, precommitted_packing_plan, OneHotTraceShape,
-    PrecommittedPackingPlan, PrecommittedPackingShape, PrefixPackedObjectPlan,
-    ADVICE_MAX_PHYSICAL_VARS, ADVICE_MIN_PHYSICAL_VARS,
+    advice_packing_plan, committed_program_packing_plan, one_hot_trace_columns,
+    precommitted_packing_plan, OneHotTraceShape, PrecommittedPackingPlan, PrecommittedPackingShape,
+    PrefixPackedObjectPlan, ADVICE_MAX_PHYSICAL_VARS, ADVICE_MIN_PHYSICAL_VARS,
+    DIRECT_PROGRAM_MAX_PHYSICAL_VARS,
 };
 pub use strategy::{
     OneHotTraceColumnRanges, OneHotTraceLayout, OneHotTraceLayoutPlan, OneHotTraceSetupShape,
