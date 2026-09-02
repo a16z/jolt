@@ -92,3 +92,95 @@ neither E nor the algebra: T1 as (G-step,bit) rows = 56·32·C_tot = 3.5M rows �
 Reshaping only lowers P at the same E/P as column packing does, with a harder relation (bit-level ripple carries, rotation as row shifts).
 **Decision: keep the M2/M3 row shapes; pack k columns per polynomial** (P = ⌈163/k⌉ + ⌈73/k⌉ + 1: k=1 → 237, k=8 → 32, k=16 → 17; the packed
 poly's extra log k variables are the column index; opening size k·2^18).
+
+## 3. Claims and the single opening (bytes-driven design of the sumcheck stream)
+
+- **Stage A** (rows, 18 rounds): batched T1 row sumcheck (deg 3), T2 row sumcheck (deg 5 at s=3), Spartan outer (14 rounds, scaled 2^4) →
+  one point r_A. Round poly = max degree 5 → compressed **5 coefficients = 160 B/round → 2,880 B**.
+- **Stage B** (28 rounds, deg ≤3): *column batching* replaces per-column claims — the verifier needs Φ_T(T(r_A,·)) for a fixed polynomial
+  Φ of the K column values; write it as a tensor form Σ_{j1..jD} Q̃_D(j1..jD)·Π T(r_A,j_i) with D = degree in columns (T1: 2 → 16 rounds;
+  T2 range part: 4 → 28 rounds), each round degree 2 (Q̃ multilinear × one T), ending in D column-point claims T(r_A,s_i); + wiring S2
+  (18 rounds, deg 3) + Spartan inner (14, deg 2) in the same batch → **28 × 3 × 32 = 2,688 B**. Verifier evaluates Q̃(s_1..s_D) natively from the
+  sparse constraint list (T1 ≈230 terms × 16 mults ≈ 3.7k; T2 ≈ 8k mults). Saves 163+73 claims = 7.5 KB.
+- **Stage C** (22 rounds, deg 2): reduce the packed-poly claims at the D+2 points {(r_A,s_i), (u*,·), r_y} to one point → **1,408 B**. With the
+  Dory-assist staging invariant (every stage-B instance's suffix challenges = r_A's) stage C disappears (−1.4 KB) but stage B's independent points
+  are exactly what column batching needs → kept.
+- **Per-poly claims vanish**: the verifier needs T(r,s) = Σ_i eq(s_poly,i)·Poly_i(r,s_col) — open the *eq-weighted* homomorphic combination
+  Σ_i eq(s_poly,i)·C_i (P ecAdd/ecMul natively; on EVM P ecMul) at one point with one claimed value. Residual claims ≈ 12 Fr (Spartan az/bz/cz,
+  W(r_y), packed evaluations at the D+2 points before stage C) = 384 B.
+- **Opening** ℓ = 18 + log k: proof (ℓ+1) G1 + 3ℓ Fr (`hyperkzg/src/types.rs:92-96`): k=1 2,304 B · k=8 2,688 · k=16 2,816. Two openings instead of
+  stage C: +2.7 KB, −1.4 KB rounds, +2.7 s prover @k=8 → no.
+
+## 4. Candidate designs — bytes / gas / prover (L=20; L=18 differs by −1 round per stage ≈ −250 B and −5% prover)
+
+Gas model (given): pairing 45k + 34k/pair · ecMul 6k · ecAdd 150 · keccak 30 + 6/word · Blake2b-F precompile (EIP-152) ≈ 12 gas + ≈1k call
+overhead per compression (est.) · Fr op ≈50 · calldata 16 B⁻¹ · base 21k. G1 on EVM = 64 B uncompressed (on-chain decompression ≈ modexp ≥1.3k >
+the 512 gas of 32 extra bytes).
+
+### D0 — current measured shape (lanes M2/M3), for reference
+| item | bytes | notes |
+|---|---:|---|
+| commitments + per-column claims, ≈237 columns × 64 B | 15,168 | 64 B/column (M2 §3) |
+| round polys: T1 S1/S2/S3 17×(4+3+3)×32; T2 17×8×32 (s=6) + wiring/reduction 17×2×2×32; Spartan (14×3+3+14×2+1)×32 | ≈12,300 | separate sumchecks |
+| HyperKZG 2^17 + IO 896 | 3,093 | |
+| **total** | **≈30.5 KB** (orchestrator's ≈26 KB assumed 8.6 KB of rounds) | **prover 2.5 s @2^17 shapes; ≈5.3 s full statement (both tables 2^18, k=1)** |
+
+### D1 — single layer, size-optimized (§3 stream, k-packing, s=3 → deg 5)
+| item | k=1 | k=8 | k=16 |
+|---|---:|---:|---:|
+| P commitments × 32 | 7,584 | 1,024 | 544 |
+| rounds A+B+C (2,880 + 2,688 + 1,408) | 6,976 | 6,976 | 6,976 |
+| residual claims 12 Fr | 384 | 384 | 384 |
+| HyperKZG opening (ℓ = 18/21/22) | 2,304 | 2,688 | 2,816 |
+| public outputs 28 Fr | 896 | 896 | 896 |
+| **proof bytes** | **18,144 (17.7 KB)** | **11,968 (11.7 KB)** | **11,616 (11.3 KB)** |
+| prover (layer 1, s=3) | 6.3 s | 8.7 s | 11.4 s |
+| native verifier | 0.4 s (O(rows) wiring (a)) | 0.4 s | 0.4 s |
+Rounds are 60% of D1. s=6 (deg 8) → +1,728 B, −1.3 s. Lever L1 (drop stage C by staging) −1.4 KB only if column batching is replaced by per-column
+claims (+7.5 KB) — not a lever here.
+
+### D2 — D1 + KZG-committed round polynomials
+Each round: commitment [s_i] (32 B) + s_i(0) and s_i(r_i) (64 B) instead of deg coefficients; one BDFG batched multi-point opening (2 G1 = 64 B) for all
+68 rounds, folded into the HyperKZG pairing check by a random scalar (still 2 pairings). Rounds 6,976 → 68×96 + 64 = **6,592**?? — no: deg-5
+rounds save 64 B each (160→96), deg-3 rounds 0, deg-2 rounds lose 32 → A 18×64 = −1,152, B 28×0, C 22×(−32) = +704 → net **−448 B**. Sending only
+s_i(r_i) and checking s_i(0)+s_i(1)=c_i via an opening of s_i(X)+s_i(1−X) doubles the opened set — the standard "commit rounds" saving is real only
+for degree ≥ 4. **D2 saves 448 B (k=16 → 11.2 KB), not ≥1 KB → rejected**; the 8.8 KB figure in §0 assumed 64 B/round and is corrected here to
+11.2 KB. Univariate skip on stage A (first round degree 5·2^4 over 16 boolean vars folded): −4 rounds × 160 + 1 × 81·32 = +1.9 KB → no.
+
+### D3 — two layers, layer 2 = Spartan + HyperKZG (universal SRS)
+Layer-2 R1CS: Blake3 FS re-hash of the layer-1 proof (k=8: 11,968 B = 187 blocks × 15,536 = **2.90M**), sumcheck algebra 68 rounds × (deg+3) ≈ 600,
+Φ_T1/Φ_T2 via sparse Q̃ ≈ 12k, digit-selector MLE ≈ 20k, structural wiring kernels ≈ 10k, HyperKZG fold checks 63, Dory Fr scalars ≈ 600 →
+**m ≈ 2.95M → 2^22**. Layer-1 HyperKZG pairing deferred: 21 G1 exposed as public inputs (decompressed natively → 84 Fr limbs, free).
+| item | bytes |
+|---|---:|
+| Spartan 3m+3+2n+1+3n = 180 Fr @m=n=22 | 5,760 |
+| W commitment + HyperKZG 2^22 (22 G1 + 66 Fr) | 32 + 2,816 |
+| deferred 21 G1 (compressed) + public outputs (Jolt 896 + layer-2 ≈128) | 672 + 1,024 |
+| **total** | **10,304 (10.1 KB)** — not 8.3 KB (§0 omitted the deferred points and IO) |
+Prover: layer 1 7.7 s + Spartan 2.95M × 2.4 µs = 7.1 s + HyperKZG 2^22 commit ≈2.3 + open 5.4 → **≈22.5 s**. Native verifier: O(nnz) ≈ 9M mults ≈ 0.1 s
++ 2 openings' pairings. On-chain impossible without SPARK (3 sparse matrices, memory checking: +≈3 KB, +2 stages; Fr ops on-chain ≈ 20k → ≥1M gas est.).
+D3 is dominated by D1(k=16) on bytes (10.1 vs 11.3 KB is a 1.2 KB gain for +11 s) — keep only if a universal-setup recursion layer is wanted.
+
+### D4 — two layers, layer 2 = Groth16 (top rank)
+Layer 2 = Groth16 circuit over the D3 R1CS **minus** nothing on the algebra, **plus** on-chain binding: a Blake2b digest (EIP-152 on-chain) of
+(deferred 21 G1 x-coordinates 672 B ‖ Jolt IO ≈100 B) → 7 compressions × 52,416 = **0.37M**; exposed public inputs: digest (1 Fr), B(u_j) (3 Fr),
+r, q, d (3 Fr), Jolt `preprocessing_digest`-derived state (1 Fr) → 8 Fr. Circuit **≈3.35M constraints** (2.90M FS hash + 0.37M binding + 0.06M algebra).
+| item | bytes (wire / EVM calldata) | gas (est.) |
+|---|---:|---:|
+| Groth16 A,B,C | 128 / 256 | pairing 4 pairs 45k+136k = 181k; vk_x 8 ecMul + 8 ecAdd = 49k |
+| deferred layer-1 HyperKZG: com 20 G1 + w 1 G1 | 672 / 1,344 | L,R MSM ≈24 ecMul + 24 ecAdd = 148k; 2-pair pairing 113k |
+| public inputs 8 Fr | 256 / 256 | (in vk_x above); Fr scalar derivation ≈100 ops = 5k |
+| Jolt IO (app-defined, e.g. 100 B) | 100 / 100 | binding digest: Blake2b-F ×7 ≈ 8k (Keccak alt.: 0.3k gas, +0.9M constraints) |
+| calldata ≈1,960 B; base | | 31k + 21k |
+| **total** | **1,156 B wire / ≈1.96 KB calldata** | **≈556k** |
+Prover: layer 1 (k=8) 7.7 s + Groth16 3.35M × g µs/constraint (g unmeasured; rapidsnark/gnark class 1–3 µs on 10 cores → 3.4–10 s) → **≈11–18 s**;
+CRS: circuit-specific (one per Jolt profile {L, K, σ, N}), size ≈ 3.35M × 3 G1 ≈ 0.6 GB. HyperKZG needs a universal 2^21 SRS (Hermez ptau).
+k choice for D4: k=1 → +205 G1 hashed (+6.6 KB → +1.6M constraints), k=16 → −480 B hashed (−0.12M) for +2.7 s opening → **k=8**.
+
+### D5 — D1 verified directly on-chain (no recursion)
+Needs a Keccak layer-1 transcript (EVM-native), SPARK for Spartan's A/B/C (or none: the 47k-row R1CS has nnz ≈ 150k → 7.5M gas as Fr ops) and
+succinct wiring (§W (b)). Bytes ≈ D1(k=16) 11.3 KB + SPARK ≈ 3 KB + committed digit/wiring data ≈ 2 KB ≈ **17 KB**. Gas: calldata 17 KB → 272k;
+Keccak over 11 KB → ≈9k; sumcheck rounds 68 × 8 Fr ops = 27k; Q̃ evaluations 12k ops = 600k; digit-selector MLE 20k ops = 1.0M; structural
+kernels 10k ops = 0.5M; SPARK checks ≈ 5k ops = 250k; eq-weighted commitment combination 17 ecMul = 102k; HyperKZG 24 ecMul + 2 pairings = 261k →
+**≈3.0M gas**. The O(10^4) public-matrix evaluations are intrinsic to sumcheck-over-tables verification; no single-layer on-chain design
+gets under ≈1.5M gas. Ranked last.
