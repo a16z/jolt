@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{
     JoltOpeningId,
 };
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 

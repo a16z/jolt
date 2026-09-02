@@ -1,6 +1,6 @@
 //! registers read-write checking symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::registers::{
@@ -92,14 +92,14 @@ impl SymbolicSumcheck for ReadWriteChecking {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(RegistersReadWriteChallenge::Gamma);
         opening(rd_write_value_claim())
             + gamma.clone() * opening(rs1_value_claim())
             + gamma.clone().pow(2) * opening(rs2_value_claim())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(RegistersReadWriteChallenge::Gamma);
         let eq_cycle = derived(RegistersReadWritePublic::EqCycle);
         eq_cycle.clone() * opening(rd_wa_read_write()) * opening(rd_inc_read_write())
@@ -119,7 +119,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 7, 2, 1)

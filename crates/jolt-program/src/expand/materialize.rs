@@ -17,7 +17,7 @@ use crate::expand::{
 };
 
 pub(super) const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
-pub(super) const MAX_INLINE_ROWS_PER_SOURCE: usize = u16::MAX as usize + 1;
+pub(super) const MAX_INLINE_ROWS_PER_SOURCE: usize = u16::MAX as usize;
 
 type StampSequenceFn = fn(
     Vec<JoltInstructionRow>,
@@ -289,24 +289,32 @@ impl<Id: TempBindingId, const N: usize> TempBindings<Id, N> {
 
     fn bind(&mut self, temp: Id, allocated: u8) -> Result<(), ExpansionError> {
         let index = temp.index();
-        if self.slots[index].is_some() {
+        let slot = self
+            .slots
+            .get_mut(index)
+            .ok_or(ExpansionError::TooManyTemporaryRegisters { actual: index + 1 })?;
+        if slot.is_some() {
             return Err(ExpansionError::DuplicateTemporaryRegister { index });
         }
-        self.slots[index] = Some(allocated);
+        *slot = Some(allocated);
         Ok(())
     }
 
     fn get(&self, temp: Id) -> Result<u8, ExpansionError> {
         let index = temp.index();
-        self.slots[index].ok_or(ExpansionError::UnallocatedTemporaryRegister { index })
+        self.slots
+            .get(index)
+            .copied()
+            .flatten()
+            .ok_or(ExpansionError::UnallocatedTemporaryRegister { index })
     }
 
     fn take(&mut self, temp: Id) -> Result<u8, ExpansionError> {
         let index = temp.index();
-        match self.slots[index].take() {
-            Some(register) => Ok(register),
-            None => Err(ExpansionError::UnallocatedTemporaryRegister { index }),
-        }
+        self.slots
+            .get_mut(index)
+            .and_then(Option::take)
+            .ok_or(ExpansionError::UnallocatedTemporaryRegister { index })
     }
 
     fn first_leaked(&self) -> Option<usize> {
@@ -434,6 +442,11 @@ impl SequenceMaterializer {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
+
     use jolt_riscv::{
         JoltInstructionKind, NormalizedOperands, SourceInstructionRow, RV64IMAC_JOLT,
     };

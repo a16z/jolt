@@ -14,7 +14,7 @@
 //! forward pass over the constraint matrices solves them in emission order.
 //! Unconstrained slots are the layout's zero padding.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_r1cs::SparseRow;
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomain, SumcheckDomainSpec};
 use rand_core::RngCore;
@@ -31,7 +31,7 @@ pub struct AssignedBlindFoldWitness<F> {
     pub blindings: Vec<F>,
 }
 
-impl<F: Field, Com> BlindFoldProtocol<F, Com> {
+impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
     /// Assemble the witness rows and blinds for [`crate::prove`] from the
     /// per-stage committed sumcheck witnesses and domains (in protocol stage
     /// order) and the final-opening evaluation scalars/blinds (in
@@ -249,6 +249,10 @@ impl<F: Field, Com> BlindFoldProtocol<F, Com> {
     /// row with its blind: retained round blinds, retained output-claim
     /// blinds, fresh blinds for auxiliary rows, zero for padding (padding
     /// rows are all-zero, so their Pedersen commitment is the identity).
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "the row-grid slice bounds derive from the same WitnessDimensions that sized the flat witness vector"
+    )]
     fn slice_rows<R: RngCore>(
         &self,
         witness: Vec<F>,
@@ -301,7 +305,7 @@ impl<F: Field, Com> BlindFoldProtocol<F, Com> {
     }
 }
 
-fn assign<F: Field>(
+fn assign<F: JoltField>(
     witness: &mut [Option<F>],
     index: usize,
     value: F,
@@ -321,7 +325,7 @@ fn assign<F: Field>(
 /// *after* its operands, so a single forward pass assigns each in turn; the
 /// equality constraints (round sums, claim bindings, final openings) have a
 /// zero C side and are skipped — they are checks, not definitions.
-fn solve_products<F: Field>(
+fn solve_products<F: JoltField>(
     a: &[SparseRow<F>],
     b: &[SparseRow<F>],
     c: &[SparseRow<F>],
@@ -352,12 +356,18 @@ fn solve_products<F: Field>(
         else {
             return Err(ProverError::UnsolvableProduct { constraint });
         };
-        witness[*target] = Some(product);
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "the `witness.get(*target)` guard above skips out-of-bounds targets"
+        )]
+        {
+            witness[*target] = Some(product);
+        }
     }
     Ok(())
 }
 
-fn evaluate_sparse<F: Field>(row: &SparseRow<F>, witness: &[Option<F>]) -> Option<F> {
+fn evaluate_sparse<F: JoltField>(row: &SparseRow<F>, witness: &[Option<F>]) -> Option<F> {
     row.iter()
         .map(|&(index, coefficient)| {
             witness
@@ -369,7 +379,7 @@ fn evaluate_sparse<F: Field>(row: &SparseRow<F>, witness: &[Option<F>]) -> Optio
         .sum()
 }
 
-fn evaluate_at<F: Field>(coefficients: &[F], point: F) -> F {
+fn evaluate_at<F: JoltField>(coefficients: &[F], point: F) -> F {
     coefficients
         .iter()
         .rev()

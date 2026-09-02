@@ -12,7 +12,7 @@
 use core::marker::PhantomData;
 
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckProof;
 #[cfg(not(feature = "zk"))]
@@ -36,7 +36,7 @@ pub type ModeRecorder<'a, F, VC> =
 /// A proved uni-skip round in the compiled mode: the wire proof, the
 /// reduction challenge, and the prover-internal output claim (absorbed by the
 /// clear arm, committed and retained by the ZK arm).
-pub struct ProvedUniskipMode<F: Field, C> {
+pub struct ProvedUniskipMode<F: JoltField, C> {
     pub proof: SumcheckProof<F, C>,
     pub challenge: F,
     pub output_claim: F,
@@ -151,7 +151,7 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
     clippy::type_complexity,
     reason = "the pair is the two halves of RecordedSumcheck, nothing more"
 )]
-pub(crate) fn split_recorded<F: Field, C>(
+pub(crate) fn split_recorded<F: JoltField, C>(
     recorded: RecordedSumcheck<F, C>,
 ) -> Result<(SumcheckProof<F, C>, CommittedSumcheckWitness<F>), ProverError<F>> {
     let witness = recorded

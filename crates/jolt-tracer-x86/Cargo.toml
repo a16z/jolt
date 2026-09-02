@@ -31,8 +31,7 @@ jolt-riscv = { workspace = true }
 tracer = { workspace = true, features = ["std"] }
 
 [target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
-dynasm = "3.2"
-dynasmrt = "3.2"
+dynasmrt = "5.1"
 iai-callgrind = { workspace = true, optional = true }
 jolt-platform = { workspace = true, features = ["std"] }
 libc = "0.2"

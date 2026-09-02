@@ -13,7 +13,7 @@ pub(in crate::expand) fn expand_srai(
     let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.emit_i(
-        JoltInstructionKind::VirtualSRAI,
+        Kind::VirtualSRAI,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         bitmask as i128,

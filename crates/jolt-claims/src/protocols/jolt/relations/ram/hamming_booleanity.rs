@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::ram_hamming_weight;
@@ -38,7 +38,7 @@ impl<C> Default for RamHammingBooleanityInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<F> {
+impl<F: JoltField> InputClaims<F> for RamHammingBooleanityInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -82,11 +82,11 @@ impl SymbolicSumcheck for HammingBooleanity {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let eq_cycle = derived(RamHammingBooleanityPublic::EqCycle);
         let h = opening(ram_hamming_weight());
         eq_cycle * (h.clone() * h.clone() - h)
@@ -97,7 +97,7 @@ impl SymbolicSumcheck for HammingBooleanity {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

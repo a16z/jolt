@@ -8,7 +8,7 @@
 //!
 //! These cases separate commitment time from opening-proof time. The sparse
 //! logical case preserves Jolt's row-major `k=256` one-hot representation, so
-//! `AkitaScheme` should route to Akita's native `D64OneHot` backend. The sparse materialized case
+//! `AkitaScheme` should route to Akita's native adaptive one-hot backend. The sparse materialized case
 //! uses the same one-hot data expanded into a dense evaluation table, forcing
 //! the slower dense path and making the expected sparse speedup visible. The
 //! `akita_prover` groups use the same Akita-order data without Jolt commitment
@@ -34,31 +34,27 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use akita_config::{
-    proof_optimized::fp128::{D64Dense as AkitaConfig, D64OneHot as AkitaOneHotConfig},
-    CommitmentConfig,
-};
+use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, ComputeBackendSetup, CpuBackend};
 use akita_prover::{
     AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, OneHotPoly,
-    ProverOpeningData,
+    PreparedProverGroup, SelectedProverOpeningData,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims,
+    AkitaCommitmentHint, BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
+    configs::{JoltDenseBounded as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
     AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
-use jolt_field::{Field, Fr, FromPrimitiveInt};
+use jolt_field::{Fr, JoltField, Ring};
 use jolt_openings::{
-    prove_packed_openings, BatchOpeningScheme, CommitmentScheme, EvaluationClaim,
-    PackedOpeningProof, PackedProverGroup, PackedProverObject, PrefixPackedStatement,
-    PrefixPacking, VerifierOpeningClaim,
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, PrefixPackedClaims, PrefixPackedLayout,
+    VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -72,7 +68,7 @@ const DEFAULT_TRACE_NUM_VARS: usize = 20;
 
 type BackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 type OneHotBackendScheme = AkitaCommitmentScheme<AkitaOneHotConfig>;
-type BackendCommitment = Commitment<AkitaField>;
+type BackendCommitment = CommittedGroup<AkitaField>;
 type BackendDensePoly = DensePoly<AkitaField>;
 type BackendHint = AkitaCommitmentHint<AkitaField>;
 type BackendSetup = BackendProverSetup<AkitaField>;
@@ -92,9 +88,6 @@ enum BatchId {
 impl BatchId {
     const ALL: [Self; BATCH_POLYS] = [Self::Poly0, Self::Poly1, Self::Poly2, Self::Poly3];
 }
-
-type AkitaPackedStatement = PrefixPackedStatement<AkitaField, BatchId, jolt_akita::AkitaCommitment>;
-type AkitaPackedProof = PackedOpeningProof<AkitaField, <AkitaScheme as CommitmentScheme>::Proof>;
 
 #[derive(Clone, Copy)]
 enum DataPath {
@@ -156,9 +149,9 @@ struct AkitaBatchCase {
     evaluations: Vec<AkitaField>,
     native_setup: <AkitaScheme as CommitmentScheme>::ProverSetup,
     packed_pcs_setup: <AkitaScheme as CommitmentScheme>::ProverSetup,
-    packing: PrefixPacking<BatchId>,
+    packing: PrefixPackedLayout<BatchId>,
     packed_polynomial: Polynomial<AkitaField>,
-    packed_claims: Vec<(BatchId, EvaluationClaim<AkitaField>)>,
+    packed_claims: PrefixPackedClaims<AkitaField>,
 }
 
 fn configure_group(
@@ -233,15 +226,18 @@ fn criterion_filter_matches(group_name: &str) -> bool {
     })
 }
 
-fn field<F: FromPrimitiveInt>(value: u64) -> F {
+fn field<F: Ring>(value: u64) -> F {
     F::from_u64(value)
 }
 
-fn deterministic_dense_poly<F: Field>(num_vars: usize) -> Polynomial<F> {
+fn deterministic_dense_poly<F: JoltField>(num_vars: usize) -> Polynomial<F> {
     deterministic_dense_poly_with_offset(num_vars, 0)
 }
 
-fn deterministic_dense_poly_with_offset<F: Field>(num_vars: usize, offset: u64) -> Polynomial<F> {
+fn deterministic_dense_poly_with_offset<F: JoltField>(
+    num_vars: usize,
+    offset: u64,
+) -> Polynomial<F> {
     let len = 1usize << num_vars;
     let evals = (0..len)
         .map(|i| field::<F>(((i as u64 * 17 + offset * 19 + 5) % 31) + 1))
@@ -249,7 +245,7 @@ fn deterministic_dense_poly_with_offset<F: Field>(num_vars: usize, offset: u64) 
     Polynomial::new(evals)
 }
 
-fn deterministic_point<F: Field>(num_vars: usize) -> Vec<F> {
+fn deterministic_point<F: JoltField>(num_vars: usize) -> Vec<F> {
     (0..num_vars)
         .map(|i| field::<F>(((i as u64 * 7 + 11) % 97) + 2))
         .collect()
@@ -263,7 +259,7 @@ fn sparse_one_hot(num_vars: usize) -> OneHotPolynomial {
     OneHotPolynomial::new(AKITA_ONE_HOT_K256, indices)
 }
 
-fn materialize_sparse<F: Field>(poly: &OneHotPolynomial) -> Polynomial<F> {
+fn materialize_sparse<F: JoltField>(poly: &OneHotPolynomial) -> Polynomial<F> {
     let mut evals = vec![F::zero(); 1usize << poly.num_vars()];
     <OneHotPolynomial as MultilinearPoly<F>>::for_each_one(poly, &mut |index| {
         evals[index] = F::one();
@@ -273,21 +269,30 @@ fn materialize_sparse<F: Field>(poly: &OneHotPolynomial) -> Polynomial<F> {
 
 fn materialize_packed(
     polynomials: &[(BatchId, Polynomial<AkitaField>)],
-) -> (PrefixPacking<BatchId>, Polynomial<AkitaField>) {
-    let packing = PrefixPacking::new(
-        polynomials
-            .iter()
-            .map(|(id, polynomial)| (*id, polynomial.num_vars())),
+) -> (PrefixPackedLayout<BatchId>, Polynomial<AkitaField>) {
+    let logical_num_vars = polynomials
+        .first()
+        .expect("packed batch is nonempty")
+        .1
+        .num_vars();
+    assert!(polynomials
+        .iter()
+        .all(|(_, polynomial)| polynomial.num_vars() == logical_num_vars));
+    let packing = PrefixPackedLayout::new(
+        logical_num_vars,
+        BATCH_POLYS,
+        polynomials.iter().map(|(id, _)| *id),
     )
-    .expect("valid prefix packing");
-    let packed_len = 1usize << packing.packed_num_vars;
+    .expect("valid fixed prefix packing");
+    let packed_len = 1usize << packing.packed_num_vars();
     let mut packed_evaluations = vec![AkitaField::zero(); packed_len];
 
     for (id, polynomial) in polynomials {
-        let slot = &packing[id];
-        let offset = slot.prefix_index() << slot.num_vars;
         for (local_index, evaluation) in polynomial.evals().iter().copied().enumerate() {
-            packed_evaluations[offset + local_index] = evaluation;
+            let packed_index = packing
+                .packed_index(id, local_index)
+                .expect("logical index lies in the fixed prefix slot");
+            packed_evaluations[packed_index] = evaluation;
         }
     }
 
@@ -317,12 +322,12 @@ fn akita_case(num_vars: usize) -> AkitaCase {
         AkitaScheme::setup(AkitaSetupParams::new(num_vars, NUM_POLYS, LAYOUT_DIGEST)).unwrap();
     let backend_prover = BackendScheme::setup_prover(num_vars, NUM_POLYS)
         .expect("Akita backend setup should succeed");
-    let backend_prepared = CpuBackend
+    let backend_prepared = CpuBackend::DEFAULT
         .prepare_setup(&backend_prover)
         .expect("Akita backend setup preparation should succeed");
     let one_hot_backend_prover = OneHotBackendScheme::setup_prover(num_vars, NUM_POLYS)
         .expect("Akita one-hot backend setup should succeed");
-    let one_hot_backend_prepared = CpuBackend
+    let one_hot_backend_prepared = CpuBackend::DEFAULT
         .prepare_setup(&one_hot_backend_prover)
         .expect("Akita one-hot backend setup preparation should succeed");
     let backend_dense_poly = make_backend_dense_poly(&dense_poly);
@@ -390,12 +395,9 @@ fn akita_batch_case(logical_num_vars: usize) -> AkitaBatchCase {
         .map(|polynomial| polynomial.evaluate(&logical_point))
         .collect::<Vec<_>>();
     let (packing, packed_polynomial) = materialize_packed(&id_polynomials);
-    assert_eq!(packing.packed_num_vars, physical_num_vars);
-    let packed_claims = BatchId::ALL
-        .iter()
-        .zip(&evaluations)
-        .map(|(&id, &evaluation)| (id, EvaluationClaim::new(logical_point.clone(), evaluation)))
-        .collect::<Vec<_>>();
+    assert_eq!(packing.packed_num_vars(), physical_num_vars);
+    let packed_claims =
+        PrefixPackedClaims::new(LAYOUT_DIGEST, logical_point.clone(), evaluations.clone());
     let (native_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
         logical_num_vars,
         BATCH_POLYS,
@@ -471,28 +473,21 @@ fn packed_batch_commit(case: &AkitaBatchCase) -> (jolt_akita::AkitaCommitment, A
     AkitaScheme::commit(black_box(&case.packed_polynomial), &case.packed_pcs_setup).unwrap()
 }
 
-fn packed_batch_statement(
-    case: &AkitaBatchCase,
-    commitment: jolt_akita::AkitaCommitment,
-) -> AkitaPackedStatement {
-    PrefixPackedStatement::new(commitment, case.packed_claims.clone())
-}
-
 fn packed_batch_open(
     case: &AkitaBatchCase,
-    commitment: jolt_akita::AkitaCommitment,
     hint: AkitaProverHint,
-) -> AkitaPackedProof {
+) -> <AkitaScheme as CommitmentScheme>::Proof {
     let mut transcript = Blake2bTranscript::new(b"jolt-akita/packed-batch-bench");
-    let statement = packed_batch_statement(case, commitment);
-    prove_packed_openings::<AkitaScheme, BatchId, _>(
-        vec![PackedProverObject {
-            packing: &case.packing,
-            statement: &statement,
-            polynomial: &case.packed_polynomial,
-            setup: &case.packed_pcs_setup,
-        }],
-        vec![PackedProverGroup::singleton(0, Some(hint))],
+    let physical = case
+        .packing
+        .reduce_claims(&case.packed_claims, &mut transcript)
+        .expect("fixed prefix claim should reduce");
+    AkitaScheme::open(
+        &case.packed_polynomial,
+        physical.point.as_slice(),
+        physical.value,
+        &case.packed_pcs_setup,
+        Some(hint),
         &mut transcript,
     )
     .expect("packed batch proof should succeed")
@@ -560,17 +555,19 @@ fn akita_prover_commit_dense(
     poly: &BackendDensePoly,
 ) -> (BackendCommitment, BackendHint) {
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &setup.dense_prepared,
         setup.dense_prover.expanded.as_ref(),
     )
     .expect("uniform backend stack");
-    BackendScheme::commit(
+    let output = BackendScheme::commit(
         &setup.dense_prover,
         black_box(std::slice::from_ref(poly)),
         &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
-    .expect("Akita backend dense commit should succeed")
+    .expect("Akita backend dense commit should succeed");
+    (output.committed_group, output.hint)
 }
 
 fn akita_prover_commit_one_hot(
@@ -578,34 +575,37 @@ fn akita_prover_commit_one_hot(
     poly: &BackendOneHotPoly,
 ) -> (BackendCommitment, BackendHint) {
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &setup.one_hot_prepared,
         setup.one_hot_prover.expanded.as_ref(),
     )
     .expect("uniform backend stack");
-    OneHotBackendScheme::commit(
+    let output = OneHotBackendScheme::commit(
         &setup.one_hot_prover,
         black_box(std::slice::from_ref(poly)),
         &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
-    .expect("Akita backend one-hot commit should succeed")
+    .expect("Akita backend one-hot commit should succeed");
+    (output.committed_group, output.hint)
 }
 
-fn akita_prover_claims<'a, P>(
+fn akita_prover_claims<'a, Cfg, P>(
     point: &[AkitaField],
     evaluations: Vec<AkitaField>,
     polynomials: &'a [&'a P],
     commitment: &BackendCommitment,
     hint: BackendHint,
-) -> ProverOpeningData<'a, AkitaField, P, AkitaField> {
-    let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
-        evaluations,
-        commitment.clone(),
-    )
-    .expect("prover group claims");
-    let claims = OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("prover claims");
-    ProverOpeningData::new(claims, vec![hint], vec![polynomials]).expect("prover opening data")
+) -> SelectedProverOpeningData<'a, AkitaField, PreparedProverGroup<'a, P>, AkitaField>
+where
+    Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
+    P: akita_prover::RootPolyMeta<AkitaField>,
+{
+    let group = PolynomialGroupClaims::new(point.to_vec(), evaluations, commitment.clone())
+        .expect("prover group claims");
+    let claims = OpeningClaims::from_groups(vec![group]).expect("prover claims");
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, vec![hint], vec![polynomials])
+        .expect("prover opening data")
 }
 
 fn akita_prover_open_dense(
@@ -616,7 +616,7 @@ fn akita_prover_open_dense(
     hint: BackendHint,
 ) -> akita_types::AkitaBatchedProof<AkitaField, AkitaField> {
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &case.akita_prover_setup.dense_prepared,
         case.akita_prover_setup.dense_prover.expanded.as_ref(),
     )
@@ -625,7 +625,13 @@ fn akita_prover_open_dense(
     let mut transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/native-bench");
     BackendScheme::batched_prove(
         &case.akita_prover_setup.dense_prover,
-        akita_prover_claims(&case.point, vec![evaluation], &poly_refs, &commitment, hint),
+        akita_prover_claims::<AkitaConfig, _>(
+            &case.point,
+            vec![evaluation],
+            &poly_refs,
+            &commitment,
+            hint,
+        ),
         &stack,
         &mut transcript,
         BasisMode::Lagrange,
@@ -641,7 +647,7 @@ fn akita_prover_open_one_hot(
     hint: BackendHint,
 ) -> akita_types::AkitaBatchedProof<AkitaField, AkitaField> {
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &case.akita_prover_setup.one_hot_prepared,
         case.akita_prover_setup.one_hot_prover.expanded.as_ref(),
     )
@@ -651,7 +657,7 @@ fn akita_prover_open_one_hot(
     let mut transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/native-bench");
     OneHotBackendScheme::batched_prove(
         &case.akita_prover_setup.one_hot_prover,
-        akita_prover_claims(
+        akita_prover_claims::<AkitaOneHotConfig, _>(
             &backend_point,
             vec![evaluation],
             &poly_refs,
@@ -1067,11 +1073,11 @@ fn bench_akita_packed_open(c: &mut Criterion) {
         let mut group = c.benchmark_group(group_name);
         configure_group(&mut group, physical_num_vars);
         let case = akita_batch_case(logical_num_vars);
-        let (commitment, hint) = packed_batch_commit(&case);
+        let (_, hint) = packed_batch_commit(&case);
         group.bench_function(BenchmarkId::from_parameter("packed_prove"), |b| {
             b.iter_batched(
-                || (commitment.clone(), hint.clone()),
-                |(commitment, hint)| black_box(packed_batch_open(&case, commitment, hint)),
+                || hint.clone(),
+                |hint| black_box(packed_batch_open(&case, hint)),
                 BatchSize::SmallInput,
             );
         });

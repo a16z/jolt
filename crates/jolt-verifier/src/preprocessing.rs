@@ -2,6 +2,8 @@
 
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::JoltRelationId;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
@@ -27,13 +29,14 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub bytecode_chunk_commitments: Vec<PCS::Output>,
     #[cfg(not(feature = "akita"))]
     pub program_image_commitment: PCS::Output,
-    /// The one packed `ProgramOneHot` commitment covering every bytecode lane
-    /// sub-column and the program image bytes (the per-chunk/image commitment
-    /// pair does not exist on the packed path).
+    /// Direct bounded-dense program objects in canonical order: indexed
+    /// bytecode chunks, then the program image.
     #[cfg(feature = "akita")]
-    pub program_one_hot_commitment: PCS::Output,
+    pub direct_program_commitments: Vec<PCS::Output>,
     #[cfg(feature = "akita")]
     pub bytecode_chunk_count: usize,
+    #[cfg(feature = "akita")]
+    pub trace_order: TracePolynomialOrder,
 }
 
 impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
@@ -169,17 +172,9 @@ where
     pub program: ProgramPreprocessing<PCS>,
     pub preprocessing_digest: [u8; 32],
     /// The main PCS setup: every per-polynomial opening on the homomorphic
-    /// build, the `OneHotTrace` object on the `akita` build (whose remaining
-    /// objects carry their own shape-exact setups below).
+    /// build, or the complete grouped opening on the `akita` build.
     pub pcs_setup: PCS::VerifierSetup,
     pub vc_setup: Option<VC::Setup>,
-    #[cfg(feature = "akita")]
-    pub untrusted_advice_setup: Option<PCS::VerifierSetup>,
-    #[cfg(feature = "akita")]
-    pub trusted_advice_setup: Option<PCS::VerifierSetup>,
-    /// Committed-program mode: the `ProgramOneHot` object setup.
-    #[cfg(feature = "akita")]
-    pub program_one_hot_setup: Option<PCS::VerifierSetup>,
 }
 
 impl<PCS, VC> JoltVerifierPreprocessing<PCS, VC>
@@ -198,12 +193,6 @@ where
             preprocessing_digest,
             pcs_setup,
             vc_setup,
-            #[cfg(feature = "akita")]
-            untrusted_advice_setup: None,
-            #[cfg(feature = "akita")]
-            trusted_advice_setup: None,
-            #[cfg(feature = "akita")]
-            program_one_hot_setup: None,
         }
     }
 }

@@ -53,7 +53,6 @@ jolt-r1cs.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
-jolt-utils.workspace = true
 jolt-verifier-derive.workspace = true
 num-traits.workspace = true
 serde.workspace = true

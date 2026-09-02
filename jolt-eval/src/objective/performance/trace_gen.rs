@@ -19,6 +19,9 @@ pub struct TraceGenSetup {
 /// Builds the guest and constructs the modular-seam artifacts without tracing.
 pub fn build_trace_setup<G: GuestConfig>(guest: &G) -> (JoltProgram, TraceInputs) {
     let mut host_program = Program::new(guest.package());
+    if let Some(func) = guest.func() {
+        host_program.set_func(func);
+    }
     let mut memory_config = guest.memory_config();
     host_program.set_memory_config(memory_config);
     let program = host_program

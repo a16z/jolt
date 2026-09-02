@@ -1,6 +1,6 @@
 //! Increment claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::increments::{
@@ -84,11 +84,11 @@ impl SymbolicSumcheck for ClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         inc_consumers_input(challenge(IncClaimReductionChallenge::Gamma))
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(IncClaimReductionChallenge::Gamma);
 
         let ram_output_coeff = derived(IncClaimReductionPublic::EqRamReadWrite)
@@ -105,7 +105,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ram::{ram_inc, ram_inc_val_check};
     use crate::protocols::jolt::geometry::registers::{rd_inc_read_write, rd_inc_val_evaluation};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

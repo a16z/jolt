@@ -1,6 +1,6 @@
 //! Jolt committed-polynomial proof and final-opening orders.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::dimensions::TracePolynomialOrder;
@@ -83,23 +83,8 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
         JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
 
-        JoltCommittedPolynomial::UnsignedIncChunk(_) | JoltCommittedPolynomial::UnsignedIncMsb => {
-            JoltRelationId::HammingWeightClaimReduction
-        }
-        JoltCommittedPolynomial::UntrustedAdviceBytes => {
-            JoltRelationId::UntrustedAdviceReconstruction
-        }
-        JoltCommittedPolynomial::TrustedAdviceBytes => JoltRelationId::TrustedAdviceReconstruction,
-        JoltCommittedPolynomial::ProgramImageBytes => JoltRelationId::ProgramImageReconstruction,
-        JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
-        | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
-        | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
-        | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
-        | JoltCommittedPolynomial::BytecodeRafFlag { .. }
-        | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
-        | JoltCommittedPolynomial::BytecodeImmBytes { .. } => {
-            JoltRelationId::BytecodeChunkReconstruction
-        }
+        JoltCommittedPolynomial::BalancedIncDigit(_)
+        | JoltCommittedPolynomial::BalancedIncCarry => JoltRelationId::HammingWeightClaimReduction,
         #[cfg(feature = "implicit-carry")]
         JoltCommittedPolynomial::Carry => JoltRelationId::CarryClaimReduction,
     }
@@ -108,7 +93,7 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
 /// Lagrange factor for embedding a smaller polynomial's opening into the
 /// top-left block of the unified final opening point: `1` on variables the
 /// embedded point binds, `1 - r` on the rest.
-pub fn commitment_embedding_scale<F: Field>(
+pub fn commitment_embedding_scale<F: JoltField>(
     opening_point: &[F],
     embedded_opening_point: &[F],
 ) -> F {
@@ -132,7 +117,7 @@ pub fn commitment_embedding_scale<F: Field>(
 
 /// Inputs to [`final_opening_point`], gathered from earlier verification
 /// stages.
-pub struct FinalOpeningPointInputs<'a, F: Field> {
+pub struct FinalOpeningPointInputs<'a, F: JoltField> {
     pub log_t: usize,
     pub log_k_chunk: usize,
     pub trace_order: TracePolynomialOrder,
@@ -153,7 +138,7 @@ pub struct FinalOpeningPointInputs<'a, F: Field> {
 /// agree). Otherwise the point is assembled from the stage 6 cycle challenges
 /// and the stage 7 address challenges in the order the active trace layout
 /// expects.
-pub fn final_opening_point<F: Field>(
+pub fn final_opening_point<F: JoltField>(
     inputs: FinalOpeningPointInputs<'_, F>,
 ) -> Result<Vec<F>, JoltFormulaPointError> {
     let native_main_vars = inputs.log_t + inputs.log_k_chunk;
@@ -211,7 +196,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn layout() -> JoltRaPolynomialLayout {
         JoltRaPolynomialLayout::new(2, 1, 2).unwrap_or_else(|error| {

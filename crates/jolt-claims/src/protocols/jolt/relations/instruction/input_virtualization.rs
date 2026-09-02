@@ -15,7 +15,7 @@ use crate::protocols::jolt::{
 };
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 /// Produced instruction-input virtualization openings (the left/right operand
 /// selector flags and their operand values), all sharing the single
@@ -99,13 +99,13 @@ impl SymbolicSumcheck for InputVirtualization {
         INPUT_VIRTUALIZATION_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(right_instruction_input_product())
             + challenge(InstructionInputChallenge::Gamma)
                 * opening(left_instruction_input_product())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(InstructionInputPublic::EqProduct)
             * opening(right_operand_is_rs2())
             * opening(rs2_value())
@@ -127,7 +127,7 @@ impl SymbolicSumcheck for InputVirtualization {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

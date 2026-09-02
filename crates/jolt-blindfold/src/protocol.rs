@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use jolt_crypto::HomomorphicCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_r1cs::{ConstraintMatrices, R1csBuilder, Variable};
 use jolt_sumcheck::{CommittedOutputClaims, CommittedSumcheckConsistency};
 
@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct BlindFoldProtocol<F: Field, Com> {
+pub struct BlindFoldProtocol<F: JoltField, Com> {
     pub sumcheck_consistency: Vec<CommittedSumcheckConsistency<F, Com>>,
     pub committed_output_claims: Vec<CommittedOutputClaims<Com>>,
     pub r1cs: ConstraintMatrices<F>,
@@ -60,7 +60,7 @@ pub struct FinalOpeningWitnessCoordinates {
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field,
+    F: JoltField,
 {
     pub fn builder<O, P, Ch>() -> BlindFoldProtocolBuilder<F, O, Com, P, Ch> {
         BlindFoldProtocolBuilder::new()
@@ -69,7 +69,7 @@ where
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field + Clone,
+    F: JoltField + Clone,
     Com: Clone,
 {
     pub(crate) fn from_parts<O, P, Ch>(
@@ -103,7 +103,7 @@ where
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field,
+    F: JoltField,
     Com: Clone + HomomorphicCommitment<F>,
 {
     pub fn committed_relaxed_instance(
@@ -166,7 +166,7 @@ where
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field,
+    F: JoltField,
 {
     pub fn validate_cross_term_error_rows(
         &self,
@@ -236,7 +236,7 @@ where
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: Field,
+    F: JoltField,
     Com: Clone + HomomorphicCommitment<F>,
 {
     pub fn random_relaxed_instance(
@@ -310,7 +310,7 @@ where
 
 impl<F, O, Com, P, Ch> BlindFoldStatement<F, O, Com, P, Ch>
 where
-    F: Field + Clone,
+    F: JoltField + Clone,
     O: Clone + PartialEq,
     Com: Clone,
     P: Clone + PartialEq,
@@ -443,7 +443,7 @@ where
 }
 
 impl Layout {
-    fn dimensions<F: Field, Com>(
+    fn dimensions<F: JoltField, Com>(
         &self,
         r1cs: &ConstraintMatrices<F>,
         sumcheck_consistency: &[CommittedSumcheckConsistency<F, Com>],
@@ -563,7 +563,7 @@ fn pad_rows<F, Com>(
     name: &'static str,
 ) -> Result<(), RelaxedError>
 where
-    F: Field,
+    F: JoltField,
     Com: Clone + HomomorphicCommitment<F>,
 {
     if rows.len() > target_len {
@@ -606,6 +606,7 @@ fn checked_sum(
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use crate::{
@@ -613,7 +614,7 @@ mod tests {
     };
     use jolt_claims::{constant, opening, Expr};
     use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_sumcheck::{
         CommittedOutputClaims, CommittedRound, CommittedSumcheckProof, SumcheckDomainSpec,
         SumcheckError, SumcheckStatement,

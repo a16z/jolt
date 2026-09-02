@@ -1,6 +1,6 @@
 //! Spartan shift symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -107,7 +107,7 @@ impl SymbolicSumcheck for Shift {
         SHIFT_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(SpartanShiftChallenge::Gamma);
         let base = opening(next_unexpanded_pc_outer())
             + gamma.clone() * opening(next_pc_outer())
@@ -126,7 +126,7 @@ impl SymbolicSumcheck for Shift {
         }
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(SpartanShiftChallenge::Gamma);
         let outer_terms = opening(unexpanded_pc_shift())
             + gamma.clone() * opening(pc_shift())
@@ -147,7 +147,7 @@ impl SymbolicSumcheck for Shift {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn gamma_power(gamma: Fr, exponent: usize) -> Fr {
         let mut value = Fr::from_u64(1);

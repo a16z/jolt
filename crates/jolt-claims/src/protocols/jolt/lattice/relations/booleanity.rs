@@ -4,7 +4,7 @@
 //! sharing a relation id across mode variants: the full/committed bytecode
 //! read-raf pair.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::opening;
@@ -18,7 +18,7 @@ use crate::protocols::jolt::relations::booleanity::{
 use crate::protocols::jolt::{JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId};
 use crate::{OutputClaims, SymbolicSumcheck};
 
-use super::super::geometry::{LatticeGeometryError, UnsignedIncChunking};
+use super::super::geometry::{BalancedIncChunking, LatticeGeometryError};
 
 /// The base booleanity dimensions plus the inc chunking they imply: the chunk
 /// width equals `log_k_chunk` by the shared-final-point invariant, so it is
@@ -26,26 +26,31 @@ use super::super::geometry::{LatticeGeometryError, UnsignedIncChunking};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LatticeBooleanityDimensions {
     pub base: BooleanityDimensions,
-    chunking: UnsignedIncChunking,
+    chunking: BalancedIncChunking,
 }
 
 impl LatticeBooleanityDimensions {
     pub fn new(base: BooleanityDimensions) -> Result<Self, LatticeGeometryError> {
         Ok(Self {
             base,
-            chunking: UnsignedIncChunking::new(base.log_k_chunk)?,
+            chunking: BalancedIncChunking::new(base.log_k_chunk)?,
         })
     }
 
-    pub fn chunking(self) -> UnsignedIncChunking {
+    pub fn chunking(self) -> BalancedIncChunking {
         self.chunking
     }
 }
 
 /// Every boolean-checked opening at the booleanity point: the base `Ra`
-/// families, unsigned-inc chunks, and increment MSB at the same full
-/// `(r_address || r_cycle)` point. The MSB column is a strict one-hot column
-/// whose hot address is zero or one.
+/// families, increment digits, and the increment carry at the same full
+/// `(r_address || r_cycle)` point. The carry column is a strict one-hot column
+/// over the same `K` rows as the digits, decoding to the signed carry above
+/// bit 63. WARNING: the honest encoder only ever uses rows `0`, `1`, and
+/// `K - 1` (value `-1`), but nothing enforces that — booleanity plus the
+/// column sum pin the carry only to the full alphabet `[-K/2, K/2)`. Do not
+/// rely on the narrow set; see the range note in [`super::hamming_weight`].
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -59,14 +64,14 @@ pub struct LatticeBooleanityOutputClaims<C> {
     pub bytecode_ra: Vec<C>,
     #[opening(committed = RamRa)]
     pub ram_ra: Vec<C>,
-    #[opening(committed = UnsignedIncChunk)]
-    pub unsigned_inc_chunks: Vec<C>,
-    #[opening(committed = UnsignedIncMsb)]
-    pub unsigned_inc_msb: C,
+    #[opening(committed = BalancedIncDigit)]
+    pub balanced_inc_digits: Vec<C>,
+    #[opening(committed = BalancedIncCarry)]
+    pub balanced_inc_carry: C,
 }
 
 /// The base booleanity fold extended past the `Ra` families with the
-/// unsigned-inc chunk polynomials and the msb; the formula itself is the
+/// increment digit polynomials and the carry; the formula itself is the
 /// shared [`booleanity_output`] helper, so the two mode variants cannot
 /// diverge.
 pub struct LatticeBooleanity {
@@ -99,11 +104,11 @@ impl SymbolicSumcheck for LatticeBooleanity {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         booleanity_output(lattice_booleanity_output_openings(self.shape))
     }
 }
@@ -111,8 +116,8 @@ impl SymbolicSumcheck for LatticeBooleanity {
 /// The cycle-phase split of the lattice booleanity sumcheck, mirroring the
 /// base `BooleanityCyclePhase`: same `BooleanityAddrClaim` intermediate input
 /// (the address phase is column-agnostic, so the base `BooleanityAddressPhase`
-/// serves both modes), with the output fold extended over the unsigned-inc
-/// chunk and msb polynomials.
+/// serves both modes), with the output fold extended over the increment
+/// digit and carry polynomials.
 #[derive(Clone)]
 pub struct LatticeBooleanityCyclePhase {
     shape: LatticeBooleanityDimensions,
@@ -144,38 +149,38 @@ impl SymbolicSumcheck for LatticeBooleanityCyclePhase {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(booleanity_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         booleanity_output(lattice_booleanity_output_openings(self.shape))
     }
 }
 
 /// The boolean-checked openings in canonical order: base `Ra` families, then
-/// the chunk polynomials, then the msb.
+/// the digit polynomials, then the carry.
 pub fn lattice_booleanity_output_openings(
     dimensions: LatticeBooleanityDimensions,
 ) -> Vec<JoltOpeningId> {
     let mut openings = booleanity_output_openings(dimensions.base.layout);
     openings.extend(
-        (0..dimensions.chunking().chunk_count()).map(booleanity_unsigned_inc_chunk_opening),
+        (0..dimensions.chunking().chunk_count()).map(booleanity_balanced_inc_digit_opening),
     );
-    openings.push(booleanity_unsigned_inc_msb_opening());
+    openings.push(booleanity_balanced_inc_carry_opening());
     openings
 }
 
-pub fn booleanity_unsigned_inc_chunk_opening(index: usize) -> JoltOpeningId {
+pub fn booleanity_balanced_inc_digit_opening(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
-        JoltCommittedPolynomial::UnsignedIncChunk(index),
+        JoltCommittedPolynomial::BalancedIncDigit(index),
         JoltRelationId::Booleanity,
     )
 }
 
-pub fn booleanity_unsigned_inc_msb_opening() -> JoltOpeningId {
+pub fn booleanity_balanced_inc_carry_opening() -> JoltOpeningId {
     JoltOpeningId::committed(
-        JoltCommittedPolynomial::UnsignedIncMsb,
+        JoltCommittedPolynomial::BalancedIncCarry,
         JoltRelationId::Booleanity,
     )
 }
@@ -188,7 +193,7 @@ mod tests {
     use crate::protocols::jolt::{
         BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltDerivedId,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> LatticeBooleanityDimensions {
         let layout = JoltRaPolynomialLayout::new(1, 0, 0).unwrap();
@@ -199,7 +204,7 @@ mod tests {
     fn chunking_is_derived_from_the_shared_chunk_size() {
         assert_eq!(
             dimensions().chunking(),
-            UnsignedIncChunking::new(32).unwrap()
+            BalancedIncChunking::new(32).unwrap()
         );
         let layout = JoltRaPolynomialLayout::new(1, 0, 0).unwrap();
         assert_eq!(
@@ -215,7 +220,7 @@ mod tests {
         let instruction_ra = Fr::from_u64(3);
         let chunk_0 = Fr::from_u64(5);
         let chunk_1 = Fr::from_u64(7);
-        let msb = Fr::from_u64(11);
+        let carry = Fr::from_u64(11);
         let gamma = Fr::from_u64(13);
         let eq_address_cycle = Fr::from_u64(17);
         let zero = Fr::from_u64(0);
@@ -230,9 +235,9 @@ mod tests {
                 {
                     instruction_ra
                 }
-                id if id == booleanity_unsigned_inc_chunk_opening(0) => chunk_0,
-                id if id == booleanity_unsigned_inc_chunk_opening(1) => chunk_1,
-                id if id == booleanity_unsigned_inc_msb_opening() => msb,
+                id if id == booleanity_balanced_inc_digit_opening(0) => chunk_0,
+                id if id == booleanity_balanced_inc_digit_opening(1) => chunk_1,
+                id if id == booleanity_balanced_inc_carry_opening() => carry,
                 _ => zero,
             },
             |id| match *id {
@@ -255,7 +260,7 @@ mod tests {
                 * (square(instruction_ra)
                     + gamma_2 * square(chunk_0)
                     + gamma_4 * square(chunk_1)
-                    + gamma_6 * square(msb))
+                    + gamma_6 * square(carry))
         );
     }
 
@@ -281,9 +286,9 @@ mod tests {
                     JoltCommittedPolynomial::InstructionRa(0),
                     JoltRelationId::Booleanity,
                 ),
-                booleanity_unsigned_inc_chunk_opening(0),
-                booleanity_unsigned_inc_chunk_opening(1),
-                booleanity_unsigned_inc_msb_opening(),
+                booleanity_balanced_inc_digit_opening(0),
+                booleanity_balanced_inc_digit_opening(1),
+                booleanity_balanced_inc_carry_opening(),
             ]
         );
     }

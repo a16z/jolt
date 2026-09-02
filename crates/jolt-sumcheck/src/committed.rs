@@ -1,7 +1,7 @@
 //! Committed sumcheck round messages.
 
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 use rand_core::RngCore;
@@ -104,14 +104,14 @@ impl<F: Copy, C: Clone> CommittedSumcheckConsistency<F, C> {
 /// precommitted claim-reduction phases) bind the leading challenges and need
 /// their offset supplied explicitly via [`Self::try_instance_point_at`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BatchedCommittedSumcheckConsistency<F: Field, C> {
+pub struct BatchedCommittedSumcheckConsistency<F: JoltField, C> {
     pub consistency: CommittedSumcheckConsistency<F, C>,
     pub batching_coefficients: Vec<F>,
     pub max_num_vars: usize,
     pub max_degree: usize,
 }
 
-impl<F: Field, C> BatchedCommittedSumcheckConsistency<F, C> {
+impl<F: JoltField, C> BatchedCommittedSumcheckConsistency<F, C> {
     /// Returns the tail-aligned default offset (`max_num_vars - num_vars`)
     /// for an instance with `num_vars` — the suffix start when the instance's
     /// dummy rounds are front-loaded. Head-aligned instances must not use
@@ -205,7 +205,7 @@ impl<F> CommittedSumcheckWitness<F> {
 /// caller owns the randomness source, so a fixed seed reproduces the proof.
 pub struct CommittedSumcheckBuilder<'a, F, VC, R>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
     R: RngCore,
 {
@@ -217,7 +217,7 @@ where
 
 impl<'a, F, VC, R> CommittedSumcheckBuilder<'a, F, VC, R>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
     R: RngCore,
 {
@@ -309,7 +309,7 @@ pub struct CommittedRoundWitness<F> {
     pub blinding: F,
 }
 
-impl<F: Field> CommittedRoundWitness<F> {
+impl<F: JoltField> CommittedRoundWitness<F> {
     pub fn commit<VC>(
         &self,
         setup: &VC::Setup,

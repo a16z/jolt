@@ -8,9 +8,7 @@ jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::c
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#2
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenge_vector#1
 jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge_scalar#0
-jolt-openings::packing.rs::packed_opening_challenges::challenge_scalar#2
-jolt-openings::packing.rs::packed_opening_challenges::challenge_scalar_powers#1
-jolt-openings::packing.rs::verify_reduction_sumcheck::challenge_scalar#1
+jolt-openings::prefix.rs::PrefixPackedLayout<Id>::reduce_claims::challenge_vector#5
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_scalar_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_scalar_powers#0
 jolt-r1cs::lowering.rs::lower_claim_expr::challenge#0
@@ -39,9 +37,6 @@ jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge_scalar#
 jolt-verifier::stages/stage6b/batch.rs::Stage6bDraws<F>::draw::challenge_scalar#3
 jolt-verifier::stages/stage6b/outputs.rs::Stage6bSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage7/outputs.rs::Stage7Sumchecks::<generated>::batching_coefficient[*]
-jolt-verifier::stages/stage8/reconstruction.rs::ReconstructionSumchecks::<generated>::batching_coefficient[*]
-jolt-verifier::stages/stage8/reconstruction.rs::UntrustedAdviceReconstructionInstance<F>::draw_challenges::challenge_scalar#1
-jolt-verifier::stages/stage8/reconstruction.rs::UntrustedAdviceReconstructionInstance<F>::draw_challenges::challenge_vector#0
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_scalar_powers#0
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_scalar_powers#4
 jolt-verifier::stages/uniskip.rs::draw_spartan_outer_tau::challenge_vector#0

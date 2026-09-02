@@ -178,7 +178,7 @@ fn blindfold_proof_shape(
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn committed_round_rows<F, C>(proof: &SumcheckProof<F, C>) -> usize
 where
-    F: jolt_field::Field,
+    F: jolt_field::JoltField,
 {
     proof
         .as_committed()
@@ -190,7 +190,7 @@ where
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn committed_output_claim_rows<F, C>(proof: &SumcheckProof<F, C>) -> usize
 where
-    F: jolt_field::Field,
+    F: jolt_field::JoltField,
 {
     proof
         .as_committed()

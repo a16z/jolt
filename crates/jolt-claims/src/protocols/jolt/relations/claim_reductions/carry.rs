@@ -7,7 +7,7 @@
 //!   sum_t [eq(r_product, t) + gamma * eq(r_shift, t) + gamma^2 * eq(0, t)] * Carry(t)
 //!     = carry_product + gamma * carry_shift + gamma^2 * 0
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -82,13 +82,13 @@ impl SymbolicSumcheck for CarryReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(CarryClaimReductionChallenge::Gamma);
         opening(super::super::super::geometry::spartan::carry_product())
             + gamma * opening(super::super::super::geometry::spartan::carry_shift())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(CarryClaimReductionChallenge::Gamma);
         let combined_eq = derived(CarryClaimReductionPublic::EqCarryProduct)
             + gamma.clone() * derived(CarryClaimReductionPublic::EqCarryShift)

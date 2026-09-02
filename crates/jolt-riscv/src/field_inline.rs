@@ -229,6 +229,10 @@ pub const fn is_field_inline_jolt(kind: crate::JoltInstructionKind) -> bool {
     field_inline_jolt_op(kind).is_some()
 }
 
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "fail-closed selector: non-field-inline instructions map to None"
+)]
 pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Option<FieldInlineOp> {
     match kind {
         crate::SourceInstruction::FieldAdd(_) => Some(FieldInlineOp::Add),
@@ -243,6 +247,10 @@ pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Optio
     }
 }
 
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "fail-closed selector: non-field-inline instructions map to None"
+)]
 pub const fn field_inline_jolt_op(kind: crate::JoltInstructionKind) -> Option<FieldInlineOp> {
     match kind {
         crate::JoltInstruction::FieldAdd(_) => Some(FieldInlineOp::Add),

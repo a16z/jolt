@@ -101,151 +101,10 @@ pub const fn input_column(input_index: usize) -> Option<usize> {
 /// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
-use crate::constraint::{ConstraintMatrixEvalError, SparseRow};
-use jolt_claims::protocols::jolt::{
-    geometry::spartan::{
-        SpartanOuterClaimError, SpartanOuterDimensions, SpartanOuterLinearForms,
-        SpartanOuterRemainderPlan,
-    },
-    SpartanOuterPublic,
-};
+use crate::constraint::SparseRow;
 use jolt_field::Field;
-use thiserror::Error as ThisError;
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
-
-/// Errors while deriving the RV64 Spartan outer remainder claim.
-#[derive(Clone, Debug, ThisError, PartialEq, Eq)]
-pub enum Rv64SpartanOuterRemainderError {
-    /// The remainder proof did not produce the stream-selector challenge.
-    #[error("missing Spartan outer remainder stream challenge")]
-    MissingStreamChallenge,
-    /// A `jolt-claims` Spartan outer formula parameter was invalid.
-    #[error("{0}")]
-    Claim(#[from] SpartanOuterClaimError),
-    /// The RV64 R1CS input cannot be represented by a matrix column.
-    #[error("R1CS input index {index} has no matrix column")]
-    MissingInputColumn {
-        /// R1CS input index.
-        index: usize,
-    },
-    /// R1CS matrix evaluation failed.
-    #[error("{0}")]
-    Matrix(#[from] ConstraintMatrixEvalError),
-    /// The provided opening vector did not match the expected R1CS input count.
-    #[error("opening length mismatch: expected {expected}, got {got}")]
-    OpeningLengthMismatch {
-        /// Expected number of input openings.
-        expected: usize,
-        /// Actual number of input openings.
-        got: usize,
-    },
-    /// RV64 equality rows should not contribute to the C linear form.
-    #[error("RV64 equality rows unexpectedly contribute to the C linear form")]
-    UnexpectedCContribution,
-}
-
-/// Coefficients needed to evaluate the RV64 Spartan outer remainder claim.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Rv64SpartanOuterRemainder<F: Field> {
-    tau_kernel: F,
-    linear_forms: SpartanOuterLinearForms<F>,
-}
-
-/// Fiat-Shamir challenges used to derive the RV64 Spartan outer remainder claim.
-#[derive(Clone, Copy, Debug)]
-pub struct Rv64SpartanOuterRemainderChallenges<'a, F> {
-    pub tau: &'a [F],
-    pub uniskip: F,
-    pub remainder: &'a [F],
-}
-
-impl<F: Field> Rv64SpartanOuterRemainder<F> {
-    /// Derives the verifier-side remainder claim coefficients for RV64.
-    pub fn new(
-        dimensions: &SpartanOuterDimensions,
-        challenges: Rv64SpartanOuterRemainderChallenges<'_, F>,
-    ) -> Result<Self, Rv64SpartanOuterRemainderError> {
-        let plan = SpartanOuterRemainderPlan::from_dimensions(dimensions);
-        let Some((&r_stream, _)) = challenges.remainder.split_first() else {
-            return Err(Rv64SpartanOuterRemainderError::MissingStreamChallenge);
-        };
-
-        let row_weights = plan.row_weights(challenges.uniskip, r_stream)?;
-        let input_indices = plan.r1cs_input_indices()?;
-        let columns: Vec<_> = input_indices
-            .into_iter()
-            .map(|index| {
-                input_column(index)
-                    .ok_or(Rv64SpartanOuterRemainderError::MissingInputColumn { index })
-            })
-            .collect::<Result<_, _>>()?;
-
-        let matrices = rv64_spartan_outer_constraints::<F>();
-        let weighted = matrices.weighted_columns(&row_weights, &columns)?;
-        let constant_contributions =
-            matrices.public_column_contributions(&row_weights, const_column(), F::one())?;
-        if !constant_contributions.c.is_zero() {
-            return Err(Rv64SpartanOuterRemainderError::UnexpectedCContribution);
-        }
-        let tau_kernel =
-            plan.tau_kernel(challenges.tau, challenges.uniskip, challenges.remainder)?;
-
-        Ok(Self {
-            tau_kernel,
-            linear_forms: SpartanOuterLinearForms {
-                az_coefficients: weighted.a,
-                bz_coefficients: weighted.b,
-                az_constant: constant_contributions.a,
-                bz_constant: constant_contributions.b,
-            },
-        })
-    }
-
-    /// Evaluates the expected unbatched output claim from ordered R1CS openings.
-    pub fn expected_output_claim(
-        &self,
-        r1cs_input_openings: &[F],
-    ) -> Result<F, Rv64SpartanOuterRemainderError> {
-        let expected = self.linear_forms.az_coefficients.len();
-        if r1cs_input_openings.len() != expected {
-            return Err(Rv64SpartanOuterRemainderError::OpeningLengthMismatch {
-                expected,
-                got: r1cs_input_openings.len(),
-            });
-        }
-
-        Ok(self.tau_kernel
-            * eval_linear_form(
-                &self.linear_forms.az_coefficients,
-                self.linear_forms.az_constant,
-                r1cs_input_openings,
-            )
-            * eval_linear_form(
-                &self.linear_forms.bz_coefficients,
-                self.linear_forms.bz_constant,
-                r1cs_input_openings,
-            ))
-    }
-
-    pub fn public_claims(
-        &self,
-        dimensions: &SpartanOuterDimensions,
-    ) -> Result<Vec<(SpartanOuterPublic, F)>, Rv64SpartanOuterRemainderError> {
-        SpartanOuterRemainderPlan::from_dimensions(dimensions)
-            .public_claims(self.tau_kernel, &self.linear_forms)
-            .map_err(Into::into)
-    }
-}
-
-fn eval_linear_form<F: Field>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
-    coefficients
-        .iter()
-        .zip(inputs)
-        .fold(constant, |acc, (&coefficient, &input)| {
-            acc + coefficient * input
-        })
-}
 
 /// Helper: sparse row from `[(variable_index, coefficient)]` pairs.
 ///
@@ -639,9 +498,10 @@ pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may unwind via panic")]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use num_traits::Zero;
 
     /// A no-op cycle: const=1, all else zero. All eq-conditional guards
@@ -698,46 +558,6 @@ mod tests {
             .expect("const column evaluates");
 
         assert!(contributions.c.is_zero());
-    }
-
-    #[test]
-    fn outer_remainder_expected_claim_matches_public_coefficients() {
-        let dimensions = SpartanOuterDimensions::rv64(1);
-        let tau = [Fr::from_u64(0), Fr::from_u64(0), Fr::from_i64(-4)];
-        let remainder_challenges = [Fr::from_u64(0), Fr::from_u64(0)];
-        let formula = Rv64SpartanOuterRemainder::new(
-            &dimensions,
-            Rv64SpartanOuterRemainderChallenges {
-                tau: &tau,
-                uniskip: Fr::from_i64(-4),
-                remainder: &remainder_challenges,
-            },
-        )
-        .expect("remainder formula derives");
-        let openings = (1..=NUM_R1CS_INPUTS)
-            .map(|value| Fr::from_u64(value as u64))
-            .collect::<Vec<_>>();
-        let expected = formula
-            .expected_output_claim(&openings)
-            .expect("opening length matches");
-
-        let mut tau_kernel = Fr::zero();
-        let mut az_form = Fr::zero();
-        let mut bz_form = Fr::zero();
-        for (public, value) in formula
-            .public_claims(&dimensions)
-            .expect("public coefficients derive")
-        {
-            match public {
-                SpartanOuterPublic::TauKernel => tau_kernel = value,
-                SpartanOuterPublic::AzWeight(index) => az_form += value * openings[index],
-                SpartanOuterPublic::BzWeight(index) => bz_form += value * openings[index],
-                SpartanOuterPublic::AzConstant => az_form += value,
-                SpartanOuterPublic::BzConstant => bz_form += value,
-            }
-        }
-
-        assert_eq!(expected, tau_kernel * az_form * bz_form);
     }
 
     #[test]

@@ -102,7 +102,11 @@ The verifier searches for non-deterministic transitions. We verify that the tran
 
 ## Interpreting Results
 
-When the test suite runs (`cargo test -p z3-verifier -- --nocapture`), it outputs `SAT` or `UNSAT`. A `SAT` result indicates a failure in verification.
+When the test suite runs (`cargo nextest run -p z3-verifier`), it outputs `SAT` or `UNSAT`. A `SAT` result indicates a failure in verification. Each `Solver::check` call carries a fixed timeout and random seed (`Z3_TIMEOUT_MS`, `Z3_RANDOM_SEED` in `lib.rs`); a call that times out fails its test with "Solver failed/timed out, result inconclusive" rather than hanging the run.
+
+## Nightly CI
+
+A scheduled workflow (`.github/workflows/z3-nightly.yml`) runs a subset of the suite nightly against a hermetic Z3 built from pinned vendored source (the crate's `vendored-z3` feature), and files a GitHub issue on failure. Its scope is narrower than the full suite: the non-`#[ignore]`d virtual-sequence proofs plus the per-instruction R1CS determinism checks, and a second step that runs the signed DIV/REM/DIVW/REMW proofs at `Z3_VERIFIER_BV_BITS=8` (non-terminating at 64 bits, milliseconds at 8 — see Bit-Width Scaling below). The div/rem family at 64-bit width, the unsigned div/rem and mulh sequences, memory/atomic/CSR expansions, and registered inlines are not covered. It can also be run on demand via `workflow_dispatch` after changes to `tracer/`, `crates/jolt-program/`, or `z3-verifier/`.
 
 ## Bit-Width Scaling (Virtual Sequences)
 
@@ -111,7 +115,7 @@ Some virtual sequences (notably those involving division/remainder or high-half 
 Set `Z3_VERIFIER_BV_BITS` to a power of two in `[8, 64]` (default: `64`):
 
 ```bash
-Z3_VERIFIER_BV_BITS=8 cargo test -p z3-verifier virtual_sequences -- --nocapture
+Z3_VERIFIER_BV_BITS=8 cargo nextest run -p z3-verifier virtual_sequences
 ```
 
 ### 1. Correctness Failures (Logic Bugs)

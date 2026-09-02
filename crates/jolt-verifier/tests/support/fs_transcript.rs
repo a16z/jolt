@@ -6,7 +6,7 @@
 
 use std::{any::Any, cell::RefCell, collections::BTreeMap, sync::Arc};
 
-use jolt_field::{Field, FromPrimitiveInt};
+use jolt_field::{Field, Ring};
 use jolt_transcript::Transcript;
 use jolt_verifier::fs_audit::{self, FsScope};
 
@@ -112,7 +112,7 @@ fn next_id(counters: &mut BTreeMap<FsScope, usize>, kind: ChallengeKind) -> Chal
 
 fn draw<F>(kind: ChallengeKind, produce: impl FnOnce() -> Vec<F>) -> Vec<F>
 where
-    F: Field,
+    F: Field + 'static,
 {
     let actual = produce();
     SESSION.with(|slot| {
@@ -169,7 +169,7 @@ impl<T: Default> Default for AuditTranscript<T> {
 impl<T> Transcript for AuditTranscript<T>
 where
     T: Transcript,
-    T::Challenge: Field,
+    T::Challenge: Field + 'static,
 {
     type Challenge = T::Challenge;
 
@@ -225,7 +225,7 @@ where
 /// Runs `verify` with challenge recording enabled.
 pub fn record_challenges<F, R>(verify: impl FnOnce() -> R) -> (R, ChallengeTape<F>)
 where
-    F: Field,
+    F: Field + 'static,
 {
     SESSION.with(|slot| {
         assert!(
@@ -271,7 +271,7 @@ pub fn replay_challenges<F, R>(
     verify: impl FnOnce() -> R,
 ) -> ReplayResult<R>
 where
-    F: Field,
+    F: Field + 'static,
 {
     let records = tape
         .records

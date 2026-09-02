@@ -131,6 +131,7 @@ use xori::XORI;
 use virtual_advice::VirtualAdvice;
 use virtual_advice_len::VirtualAdviceLen;
 use virtual_advice_load::VirtualAdviceLoad;
+use virtual_align_addr::VirtualAlignAddr;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use virtual_assert_lte::VirtualAssertLTE;
@@ -138,10 +139,12 @@ use virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use virtual_change_divisor::VirtualChangeDivisor;
-use virtual_change_divisor_w::VirtualChangeDivisorW;
 use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
+use virtual_muliw::VirtualMULIW;
+use virtual_negate_if::VirtualNegateIf;
+use virtual_pext::VirtualPext;
+use virtual_pext_signed::VirtualPextSigned;
 use virtual_pow2::VirtualPow2;
 use virtual_pow2_w::VirtualPow2W;
 use virtual_pow2i::VirtualPow2I;
@@ -149,15 +152,30 @@ use virtual_pow2i_w::VirtualPow2IW;
 use virtual_rev8w::VirtualRev8W;
 use virtual_rotri::VirtualROTRI;
 use virtual_rotriw::VirtualROTRIW;
+use virtual_shift_data_b::VirtualShiftDataB;
+use virtual_shift_data_h::VirtualShiftDataH;
+use virtual_shift_data_w::VirtualShiftDataW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
+use virtual_shift_right_bitmask_w::VirtualShiftRightBitmaskW;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
 use virtual_sign_extend_word::VirtualSignExtendWord;
 use virtual_sra::VirtualSRA;
 use virtual_srai::VirtualSRAI;
+use virtual_sraiw::VirtualSRAIW;
+use virtual_sraw::VirtualSRAW;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
+use virtual_srliw::VirtualSRLIW;
+use virtual_srlw::VirtualSRLW;
+use virtual_window_mask_b::VirtualWindowMaskB;
+use virtual_window_mask_h::VirtualWindowMaskH;
+use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
-use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
+use virtual_xor_rotl1::VirtualXORROTL1;
+use virtual_xor_rotw::{
+    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
+    VirtualXORROTW7, VirtualXORROTW8,
+};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 #[cfg(feature = "implicit-carry")]
 use {addc::ADDC, mulc::MULC};
@@ -322,6 +340,7 @@ pub mod sw;
 pub mod virtual_advice;
 pub mod virtual_advice_len;
 pub mod virtual_advice_load;
+pub mod virtual_align_addr;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -329,11 +348,13 @@ pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_muliw;
+pub mod virtual_negate_if;
+pub mod virtual_pext;
+pub mod virtual_pext_signed;
 pub mod virtual_pow2;
 pub mod virtual_pow2_w;
 pub mod virtual_pow2i;
@@ -341,14 +362,26 @@ pub mod virtual_pow2i_w;
 pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
+pub mod virtual_shift_data_b;
+pub mod virtual_shift_data_h;
+pub mod virtual_shift_data_w;
 pub mod virtual_shift_right_bitmask;
+pub mod virtual_shift_right_bitmask_w;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend_word;
 pub mod virtual_sra;
 pub mod virtual_srai;
+pub mod virtual_sraiw;
+pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_srliw;
+pub mod virtual_srlw;
+pub mod virtual_window_mask_b;
+pub mod virtual_window_mask_h;
+pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
 pub mod xor;
@@ -2377,7 +2410,7 @@ mod tests {
     #[test]
     fn source_only_tracer_conversion_does_not_fabricate_final_kind() {
         let source = SourceInstruction::new(
-            SourceInstructionKind::ADDW,
+            SourceInstructionKind::MULH,
             SourceInstructionRow {
                 address: 0x1234,
                 operands: NormalizedOperands {
@@ -2393,13 +2426,13 @@ mod tests {
 
         let instruction = Instruction::try_from_source_instruction(source).unwrap();
         assert!(instruction.try_jolt_instruction_row().is_err());
-        let Instruction::ADDW(addw) = instruction else {
-            panic!("expected ADDW tracer instruction");
+        let Instruction::MULH(mulh) = instruction else {
+            panic!("expected MULH tracer instruction");
         };
-        assert_eq!(addw.address, 0x1234);
-        assert_eq!(addw.virtual_sequence_remaining, None);
-        assert!(!addw.is_first_in_sequence);
-        assert!(addw.is_compressed);
+        assert_eq!(mulh.address, 0x1234);
+        assert_eq!(mulh.virtual_sequence_remaining, None);
+        assert!(!mulh.is_first_in_sequence);
+        assert!(mulh.is_compressed);
     }
 
     #[test]

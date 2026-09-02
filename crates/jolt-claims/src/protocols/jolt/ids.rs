@@ -1,4 +1,5 @@
 use derive_more::From;
+use jolt_openings::PrecommittedRole;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
@@ -38,10 +39,6 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
-    UntrustedAdviceReconstruction,
-    TrustedAdviceReconstruction,
-    ProgramImageReconstruction,
-    BytecodeChunkReconstruction,
     /// Reduces the committed `Carry` openings (product virtualization, shift,
     /// and the `carry_init` all-zeros point) to one final opening.
     #[cfg(feature = "implicit-carry")]
@@ -159,8 +156,14 @@ pub enum HammingWeightClaimReductionChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
+    /// Packed path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
+    /// weight of a Booleanity leg (`specs/digit-zero-virtualization.md`).
+    EqBooleanityAtDigitZero,
     EqVirtualization(usize),
-    IdentityAtAddress,
+    /// Packed path: `eq(r_virtualization_address_i, 0)` — the digit-zero
+    /// baseline weight of a virtualization leg.
+    EqVirtualizationAtDigitZero(usize),
+    BalancedIncValueAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -190,6 +193,16 @@ pub enum BytecodeReadRafPublic {
 pub enum JoltAdviceKind {
     Trusted,
     Untrusted,
+}
+
+impl JoltAdviceKind {
+    /// Role descriptor for the final heterogeneous Akita opening.
+    pub const fn precommitted_role(self) -> PrecommittedRole {
+        match self {
+            Self::Untrusted => PrecommittedRole::new(0, b"untrusted_advice", "untrusted-advice"),
+            Self::Trusted => PrecommittedRole::new(1, b"trusted_advice", "trusted-advice"),
+        }
+    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -314,70 +327,6 @@ pub enum InstructionRaVirtualizationPublic {
     EqCycle,
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UntrustedAdviceReconstructionChallenge {
-    Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UntrustedAdviceReconstructionPublic {
-    /// `eq` over the full `(byte ‖ place ‖ word)` domain at the bound point —
-    /// weights the booleanity leg.
-    EqBytePlaceWord,
-    /// `eq` over the `(place ‖ word)` sub-domain at the bound point — weights
-    /// the per-byte-place hamming leg (byte variables are summed, not
-    /// eq-bound).
-    EqPlaceWord,
-    /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
-    /// evaluation at the bound `(byte ‖ place)` coordinates — decodes the
-    /// one-hot entries into the little-endian word value.
-    ByteDecode,
-    /// `eq` of the bound word coordinates against the advice claim
-    /// reduction's word point — reduces the incoming word claim to this
-    /// relation's bound point.
-    EqWord,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum TrustedAdviceReconstructionPublic {
-    /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
-    /// evaluation at the bound `(byte ‖ place)` coordinates (the word point
-    /// is fixed by the incoming claim, so no `eq` derived is needed).
-    ByteDecode,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum ProgramImageReconstructionPublic {
-    /// The [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
-    /// evaluation at the bound `(byte ‖ place)` coordinates (the word point
-    /// is fixed by the incoming claim).
-    ByteDecode,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum BytecodeChunkReconstructionChallenge {
-    Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum BytecodeChunkReconstructionPublic {
-    /// The register-selector block of `eq(r_lane)` weights as a 5-variable
-    /// multilinear, evaluated at the bound register coordinates.
-    RegisterSelectorWeight(BytecodeRegisterLane),
-    /// A single `eq(r_lane)` weight — the direct (0/1 flag) lanes, indexed by
-    /// lane position in the committed lane layout.
-    LaneWeight(usize),
-    /// The lookup-selector block of `eq(r_lane)` weights, evaluated at the
-    /// bound table-index coordinates.
-    LookupSelectorWeight,
-    /// The unexpanded-pc lane weight times the [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
-    /// evaluation at the bound `(byte ‖ place)` coordinates.
-    PcByteDecode,
-    /// The imm lane weight times the [`byte_decode_weight`](crate::protocols::jolt::lattice::geometry::byte_decode_weight)
-    /// evaluation at the bound `(byte ‖ place)` coordinates.
-    ImmByteDecode,
-}
-
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
@@ -399,25 +348,10 @@ pub enum JoltChallengeId {
     InstructionInput(InstructionInputChallenge),
     InstructionReadRaf(InstructionReadRafChallenge),
     InstructionRaVirtualization(InstructionRaVirtualizationChallenge),
-    UntrustedAdviceReconstruction(UntrustedAdviceReconstructionChallenge),
-    BytecodeChunkReconstruction(BytecodeChunkReconstructionChallenge),
 }
 
-/// The register-selector lanes of a bytecode row, in committed lane order.
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum BytecodeRegisterLane {
-    Rs1,
-    Rs2,
-    Rd,
-}
-
-impl BytecodeRegisterLane {
-    pub const ALL: [Self; 3] = [Self::Rs1, Self::Rs2, Self::Rd];
-}
-
-/// WARNING: `Ord` is protocol data — the lattice `PrefixPacking` assigns
-/// slots by `(num_vars, Ord)` order, so reordering variants silently changes
-/// the packed witness layout.
+/// Lattice layouts supply an explicit canonical identifier order; `Ord` is
+/// used only for keyed lookup and does not assign physical slots.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltCommittedPolynomial {
     RdInc,
@@ -431,52 +365,12 @@ pub enum JoltCommittedPolynomial {
     ProgramImageInit,
     // Lattice-mode committed polynomials (slots of the packed witness); base
     // mode never constructs these. Appended for codec stability.
-    UnsignedIncChunk(usize),
-    UnsignedIncMsb,
-    TrustedAdviceBytes,
-    UntrustedAdviceBytes,
-    // Lattice-mode precommitted bytecode decompositions: the per-lane one-hot /
-    // flag / byte decompositions of `BytecodeChunk(chunk)`, plus the program
-    // image byte encoding. Their claims are produced by the reconstruction
-    // relations.
-    BytecodeRegisterSelector {
-        chunk: usize,
-        lane: BytecodeRegisterLane,
-    },
-    BytecodeCircuitFlag {
-        chunk: usize,
-        flag: usize,
-    },
-    BytecodeInstructionFlag {
-        chunk: usize,
-        flag: usize,
-    },
-    BytecodeLookupSelector {
-        chunk: usize,
-    },
-    BytecodeRafFlag {
-        chunk: usize,
-    },
-    BytecodeUnexpandedPcBytes {
-        chunk: usize,
-    },
-    BytecodeImmBytes {
-        chunk: usize,
-    },
-    ProgramImageBytes,
+    BalancedIncDigit(usize),
+    BalancedIncCarry,
     /// The row's incoming implicit carry (previous row's carry-out); dense
     /// u64 column. Appended last: `Ord` is protocol data (see above).
     #[cfg(feature = "implicit-carry")]
     Carry,
-}
-
-impl JoltCommittedPolynomial {
-    pub fn advice_bytes(kind: JoltAdviceKind) -> Self {
-        match kind {
-            JoltAdviceKind::Trusted => Self::TrustedAdviceBytes,
-            JoltAdviceKind::Untrusted => Self::UntrustedAdviceBytes,
-        }
-    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -630,10 +524,6 @@ pub enum JoltDerivedId {
     InstructionInput(InstructionInputPublic),
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
-    UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
-    TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
-    ProgramImageReconstruction(ProgramImageReconstructionPublic),
-    BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
     /// Test-only derived id for toy relations that define their own
     /// `derive_output_term`. Gated on `any(test, feature = "test-utils")`
     /// rather than `test` alone because `cfg(test)` is per-crate: a downstream
@@ -667,5 +557,15 @@ mod tests {
                 relation,
             }
         );
+    }
+
+    #[test]
+    fn advice_precommit_roles_fix_order_and_transcript_tags() {
+        let untrusted = JoltAdviceKind::Untrusted.precommitted_role();
+        let trusted = JoltAdviceKind::Trusted.precommitted_role();
+
+        assert!(untrusted.order() < trusted.order());
+        assert_eq!(untrusted.transcript_label(), b"untrusted_advice");
+        assert_eq!(trusted.transcript_label(), b"trusted_advice");
     }
 }

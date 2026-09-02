@@ -24,7 +24,7 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -35,7 +35,7 @@ use crate::VerifierError;
 /// sumcheck. (Verifier-side constructor for the moved
 /// [`InstructionClaimReductionInputClaims`] — it reads the verifier-only
 /// [`Stage1ClearOutput`], so it cannot live in `jolt-claims`.)
-pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
+pub fn instruction_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> InstructionClaimReductionInputClaims<F> {
     let outer = &stage1.output_values.outer_remainder;
@@ -49,12 +49,12 @@ pub fn instruction_claim_reduction_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct InstructionClaimReduction<F: Field> {
+pub struct InstructionClaimReduction<F: JoltField> {
     symbolic: relations::claim_reductions::instruction::ClaimReduction,
     tau_low: Vec<F>,
 }
 
-impl<F: Field> InstructionClaimReduction<F> {
+impl<F: JoltField> InstructionClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, tau_low: Vec<F>) -> Self {
         Self {
             symbolic: relations::claim_reductions::instruction::ClaimReduction::new(
@@ -76,7 +76,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
     type Symbolic = relations::claim_reductions::instruction::ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {

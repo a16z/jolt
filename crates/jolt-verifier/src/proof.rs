@@ -4,7 +4,7 @@ use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{Commitment, VectorCommitment};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
@@ -28,18 +28,8 @@ pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 /// opening proof at the unified point.
 #[cfg(not(feature = "akita"))]
 pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
-/// The Akita OneHotTrace opening is native and same-point. Only auxiliary packed
-/// objects retain the generic reduction proof.
 #[cfg(feature = "akita")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AkitaJointOpeningProof<F, P> {
-    pub one_hot_trace: P,
-    pub auxiliary: Option<jolt_openings::PackedOpeningProof<F, P>>,
-}
-
-#[cfg(feature = "akita")]
-pub type JointOpeningProof<PCS> =
-    AkitaJointOpeningProof<<PCS as CommitmentScheme>::Field, <PCS as CommitmentScheme>::Proof>;
+pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 
 #[expect(
     non_snake_case,
@@ -144,9 +134,12 @@ impl<C> JoltCommitments<C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Clear claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common clear path."
+#[cfg_attr(
+    not(feature = "akita"),
+    expect(
+        clippy::large_enum_variant,
+        reason = "clear claims stay inline on the standard verifier's common path"
+    )
 )]
 #[serde(bound(
     serialize = "F: Serialize, ZkProof: Serialize",
@@ -154,7 +147,7 @@ impl<C> JoltCommitments<C> {
 ))]
 pub enum JoltProofClaims<F, ZkProof>
 where
-    F: Field,
+    F: JoltField,
 {
     Clear(ClearProofClaims<F>),
     Zk { blindfold_proof: ZkProof },
@@ -162,7 +155,7 @@ where
 
 impl<F, ZkProof> JoltProofClaims<F, ZkProof>
 where
-    F: Field,
+    F: JoltField,
 {
     pub const fn is_zk(&self) -> bool {
         matches!(self, Self::Zk { .. })
@@ -171,7 +164,7 @@ where
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct ClearProofClaims<F: Field> {
+pub struct ClearProofClaims<F: JoltField> {
     pub stage1: stage1::outputs::Stage1OutputClaims<F>,
     pub stage2: stage2::outputs::Stage2OutputClaims<F>,
     pub stage3: stage3::outputs::Stage3OutputClaims<F>,
@@ -180,10 +173,6 @@ pub struct ClearProofClaims<F: Field> {
     pub stage6a: stage6a::outputs::Stage6aOutputClaims<F>,
     pub stage6b: stage6b::outputs::Stage6bOutputClaims<F>,
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
-    /// The reconstruction phase's claims, at the head of the stage-8 region;
-    /// cells are present exactly when advice or a committed program is.
-    #[cfg(feature = "akita")]
-    pub reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,7 +182,7 @@ pub struct ClearProofClaims<F: Field> {
 ))]
 pub struct JoltStageProofs<F, VC>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     pub stage1_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,
@@ -206,8 +195,4 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    /// The reconstruction phase, at the head of the stage-8 region; present
-    /// exactly when advice or a committed program is.
-    #[cfg(feature = "akita")]
-    pub reconstruction_sumcheck_proof: Option<SumcheckProof<F, VC::Output>>,
 }

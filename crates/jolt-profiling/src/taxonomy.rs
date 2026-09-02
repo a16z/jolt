@@ -1,5 +1,5 @@
 //! The versioned span taxonomy for the modular prover — **the normative
-//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 1).
+//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 2).
 //!
 //! One instrumentation layer, two renderings: the same `tracing` span stream
 //! becomes both the Perfetto-viewable chrome trace and the machine-queryable
@@ -32,9 +32,13 @@
 //! siblings: `prove_uniskip_clear` → `prove_uniskip_committed` and
 //! `HomomorphicBatch::prove_batch` → `HomomorphicBatch::prove_batch_zk`.
 //! Exactly one of each pair fires per prove — [`always_present_spans`] takes
-//! the [`ProverMode`] and returns the matching presence set. Every other
-//! label is mode-neutral (the sumcheck engine's `prove_batch` differs only
-//! in its recorder, not its function).
+//! the [`ProverMode`] and returns the matching presence set. The `akita`
+//! feature swaps the commitment seams wholesale: the packed prover commits
+//! one native `OneHotTrace` group in stage 0 (no `commit_witness` stream, no
+//! homomorphic stage-8 batch) and discharges it with a native same-point
+//! opening after stage 7:
+//! [`AKITA_MODE_SPANS`]. Every other label is mode-neutral (the sumcheck
+//! engine's `prove_batch` differs only in its recorder, not its function).
 //!
 //! # Level policy
 //!
@@ -73,7 +77,7 @@
 //!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
-pub const TAXONOMY_VERSION: u32 = 1;
+pub const TAXONOMY_VERSION: u32 = 2;
 
 /// The whole-run root span (`crates/jolt-prover/src/prover.rs`). Named
 /// `jolt_prover::prove` rather than bare `prove`, which jolt-dory uses for an
@@ -120,6 +124,9 @@ pub const SUMCHECK_ENGINE_SPANS: [&str; 2] = ["prove_batch", "sumcheck_round"];
 /// prove regardless of workload. Emitted by the stage recipes in
 /// `jolt-prover` at the slot call boundaries — not by any backend impl — so
 /// every backend genuinely inherits them by implementing the same traits.
+/// The [`UNISKIP_SEAM_SPANS`] tail is mode-neutral; the head is the
+/// homomorphic path's commit/opening seams (the packed path swaps them for
+/// [`AKITA_MODE_SPANS`]).
 pub const KERNEL_SEAM_SPANS: [&str; 6] = [
     "commit_witness",
     "SpartanOuterUniskip::prepare",
@@ -127,6 +134,16 @@ pub const KERNEL_SEAM_SPANS: [&str; 6] = [
     "SpartanProductUniskip::prepare",
     "SpartanProductUniskip::first_round_poly",
     "JointOpeningPolynomials::prepare",
+];
+
+/// The mode-neutral uni-skip slot boundaries — [`KERNEL_SEAM_SPANS`] minus
+/// the homomorphic commit/opening seams; the packed prover fires exactly
+/// these.
+pub const UNISKIP_SEAM_SPANS: [&str; 4] = [
+    "SpartanOuterUniskip::prepare",
+    "SpartanOuterUniskip::first_round_poly",
+    "SpartanProductUniskip::prepare",
+    "SpartanProductUniskip::first_round_poly",
 ];
 
 /// Kernel-seam spans that fire only on proves whose guest consumes advice.
@@ -155,15 +172,30 @@ pub const ZK_MODE_SPANS: [&str; 2] = [
     "HomomorphicBatch::prove_batch_zk",
 ];
 
+/// Packed-mode (`akita` feature) seams: the `OneHotTrace` column assembly
+/// and native group commit at stage 0, plus the native grouped stage-8
+/// opening. The packed prover keeps `prove_uniskip_clear` (its recorders are
+/// clear; `akita` and `zk` are mutually exclusive) and fires no `commit_witness` /
+/// `stream_witnesses` / `JointOpeningPolynomials::prepare` /
+/// `HomomorphicBatch::*`.
+pub const AKITA_MODE_SPANS: [&str; 4] = [
+    "assemble_one_hot_trace",
+    "akita_main_commit_with_precommitted",
+    "akita_main_batched_prove",
+    "prove_uniskip_clear",
+];
+
 /// Which compiled prover emitted a trace: the `zk` feature swaps the
 /// [`CLEAR_MODE_SPANS`] seams for their [`ZK_MODE_SPANS`] siblings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProverMode {
     Clear,
     Zk,
+    /// The packed (lattice) prover — transparent by construction.
+    Akita,
 }
 
-/// Every v1 label that fires on all proves of the given mode: the presence
+/// Every v2 label that fires on all proves of the given mode: the presence
 /// set the `jolt-prover` profiling smoke test asserts against a freshly
 /// emitted trace.
 ///
@@ -176,11 +208,23 @@ pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
     labels.extend(STAGE_SPANS);
     labels.extend(DRIVER_BATCH_SPANS);
     labels.extend(SUMCHECK_ENGINE_SPANS);
-    labels.extend(KERNEL_SEAM_SPANS);
-    labels.extend(WITNESS_AND_OPENING_SPANS);
+    match mode {
+        ProverMode::Clear | ProverMode::Zk => {
+            labels.extend(KERNEL_SEAM_SPANS);
+            labels.extend(WITNESS_AND_OPENING_SPANS);
+        }
+        // The packed prover streams no witness commit and runs no
+        // homomorphic joint opening; its bundle collection and oracle reads
+        // still fire (stage-0 assembly, the naive kernels).
+        ProverMode::Akita => {
+            labels.extend(UNISKIP_SEAM_SPANS);
+            labels.extend(["collect_bundles", "TraceBackend::oracle_table"]);
+        }
+    }
     labels.extend(match mode {
-        ProverMode::Clear => CLEAR_MODE_SPANS,
-        ProverMode::Zk => ZK_MODE_SPANS,
+        ProverMode::Clear => CLEAR_MODE_SPANS.as_slice(),
+        ProverMode::Zk => ZK_MODE_SPANS.as_slice(),
+        ProverMode::Akita => AKITA_MODE_SPANS.as_slice(),
     });
     labels
 }

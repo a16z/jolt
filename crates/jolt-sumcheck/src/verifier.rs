@@ -1,6 +1,6 @@
 //! Sumcheck verifier: checks round polynomials against the claimed sum.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::UnivariatePolynomial;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
@@ -93,7 +93,7 @@ impl SumcheckVerifier {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: Field,
+        F: JoltField,
         T: Transcript<Challenge = F>,
     {
         if proof.round_polynomials.len() != claim.num_vars {
@@ -176,7 +176,7 @@ impl SumcheckVerifier {
 
 impl<F> CompressedSumcheckProof<F>
 where
-    F: Field,
+    F: JoltField,
 {
     pub fn verify<T>(
         &self,

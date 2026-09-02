@@ -11,7 +11,7 @@ use jolt_claims::protocols::{
     },
     jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId},
 };
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_program::{
     execution::{
         JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,

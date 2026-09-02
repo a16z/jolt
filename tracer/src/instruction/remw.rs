@@ -38,20 +38,18 @@ impl RISCVTrace for REMW {
         let x = cpu.x[self.operands.rs1 as usize] as i32;
         let y = cpu.x[self.operands.rs2 as usize] as i32;
 
-        let (quotient, remainder) = if y == 0 {
-            (-1i32, x.unsigned_abs())
+        let quotient_magnitude = if y == 0 {
+            0
         } else if y == -1 && x == i32::MIN {
-            (i32::MIN, 0) //overflow
+            1 << 31
         } else {
-            let quotient = x / y;
-            let remainder = x % y;
-            (quotient, remainder.unsigned_abs())
+            (x / y).unsigned_abs() as u64
         };
 
         super::trace_inline_sequence_with_advice(
             &Instruction::from(*self),
             cpu,
-            &[quotient as u64, remainder as u64],
+            &[quotient_magnitude],
             trace,
         );
     }

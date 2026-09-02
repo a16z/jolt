@@ -2,8 +2,8 @@
 
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackend<T> {
-    pub(crate) fn materialize_register_read_write_virtual<F: Field>(
+impl<T: TraceSource> TraceBackend<T> {
+    pub(crate) fn materialize_register_read_write_virtual<F: JoltField>(
         &self,
         id: JoltVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
@@ -22,7 +22,6 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         let cycles = checked_pow2(self.config.log_t)?;
         let register_count = checked_pow2(REGISTER_ADDRESS_BITS)?;
         let mut values = jolt_utils::unsafe_allocate_zero_vec(register_count * cycles);
-        let mut trace = self.trace.trace.clone();
 
         if id == JoltVirtualPolynomial::RegistersVal {
             let mut state = vec![0u64; register_count];
@@ -31,28 +30,28 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                     values[register * cycles + cycle] = F::from_u64(value);
                 }
 
-                let Some(row) = trace.next_row() else {
+                let Some(row) = self.trace.trace.get(cycle) else {
                     continue;
                 };
-                if let Some(write) = row.registers.rd {
-                    let register = usize::from(write.register);
+                if let Some(register) = row.rd_index() {
+                    let register = usize::from(register);
                     if register >= register_count {
-                        return Err(invalid_register_address(write.register));
+                        return Err(invalid_register_address(register as u8));
                     }
-                    state[register] = write.post_value;
+                    state[register] = row.rd_write_value();
                 }
             }
             return Ok(values);
         }
 
         for cycle in 0..cycles {
-            let Some(row) = trace.next_row() else {
+            let Some(row) = self.trace.trace.get(cycle) else {
                 break;
             };
             let register = match id {
-                JoltVirtualPolynomial::Rs1Ra => row.registers.rs1.map(|read| read.register),
-                JoltVirtualPolynomial::Rs2Ra => row.registers.rs2.map(|read| read.register),
-                JoltVirtualPolynomial::RdWa => row.registers.rd.map(|write| write.register),
+                JoltVirtualPolynomial::Rs1Ra => row.rs1_index(),
+                JoltVirtualPolynomial::Rs2Ra => row.rs2_index(),
+                JoltVirtualPolynomial::RdWa => row.rd_index(),
                 _ => None,
             };
             if let Some(register) = register {

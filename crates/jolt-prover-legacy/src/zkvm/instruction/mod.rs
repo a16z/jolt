@@ -306,8 +306,13 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstruction::VirtualZeroExtendWord(_) => {
                 LookupTables::LowerHalfWord(Default::default())
             }
-            JoltInstruction::VirtualSignExtendWord(_) => {
-                LookupTables::SignExtendHalfWord(Default::default())
+            JoltInstructionKind::ADDW
+            | JoltInstructionKind::ADDIW
+            | JoltInstructionKind::SUBW
+            | JoltInstructionKind::MULW
+            | JoltInstructionKind::VirtualMULIW
+            | JoltInstruction::VirtualSignExtendWord(_) => {
+                LookupTables::SignExtendWord(Default::default())
             }
             JoltInstructionKind::VirtualPow2 | JoltInstructionKind::VirtualPow2I => {
                 LookupTables::Pow2(Default::default())
@@ -328,11 +333,8 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             }
             JoltInstructionKind::VirtualROTRI => LookupTables::VirtualROTR(Default::default()),
             JoltInstructionKind::VirtualROTRIW => LookupTables::VirtualROTRW(Default::default()),
-            JoltInstruction::VirtualChangeDivisor(_) => {
-                LookupTables::VirtualChangeDivisor(Default::default())
-            }
-            JoltInstruction::VirtualChangeDivisorW(_) => {
-                LookupTables::VirtualChangeDivisorW(Default::default())
+            JoltInstruction::VirtualNegateIf(_) => {
+                LookupTables::VirtualNegateIf(Default::default())
             }
             JoltInstructionKind::VirtualAssertMulUNoOverflow => {
                 LookupTables::MulUNoOverflow(Default::default())
@@ -360,6 +362,36 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             }
             JoltInstructionKind::VirtualXORROTW7 => {
                 LookupTables::VirtualXORROTW7(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW22 => {
+                LookupTables::VirtualXORROTW22(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW19 => {
+                LookupTables::VirtualXORROTW19(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROTW6 => {
+                LookupTables::VirtualXORROTW6(Default::default())
+            }
+            JoltInstruction::WindowMaskW(_) => LookupTables::WindowMaskW(Default::default()),
+            JoltInstruction::PextSigned(_) => LookupTables::PextSigned(Default::default()),
+            JoltInstruction::VirtualShiftRightBitmaskW(_) => {
+                LookupTables::ShiftRightBitmaskW(Default::default())
+            }
+            JoltInstructionKind::VirtualSRLW | JoltInstructionKind::VirtualSRLIW => {
+                LookupTables::VirtualSRLW(Default::default())
+            }
+            JoltInstructionKind::VirtualSRAW | JoltInstructionKind::VirtualSRAIW => {
+                LookupTables::VirtualSRAW(Default::default())
+            }
+            JoltInstruction::Pext(_) => LookupTables::Pext(Default::default()),
+            JoltInstruction::WindowMaskB(_) => LookupTables::WindowMaskB(Default::default()),
+            JoltInstruction::WindowMaskH(_) => LookupTables::WindowMaskH(Default::default()),
+            JoltInstruction::AlignAddr(_) => LookupTables::AlignAddr(Default::default()),
+            JoltInstruction::ShiftDataB(_) => LookupTables::ShiftDataB(Default::default()),
+            JoltInstruction::ShiftDataH(_) => LookupTables::ShiftDataH(Default::default()),
+            JoltInstruction::ShiftDataW(_) => LookupTables::ShiftDataW(Default::default()),
+            JoltInstructionKind::VirtualXORROTL1 => {
+                LookupTables::VirtualXORROTL1(Default::default())
             }
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
@@ -521,20 +553,27 @@ macro_rules! define_rv64imac_trait_impls {
 
 define_rv64imac_trait_impls! {
     instructions: [
-        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        ADD, ADDI, ADDIW, ADDW, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
-        SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
+        MULW, SLT, SLTI, SLTIU, SLTU, SUB, SUBW, SD, XOR, XORI,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment,
         VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
-        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
-        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualPow2,
-        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualNegateIf, VirtualAssertMulUNoOverflow,
+        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualMULIW,
+        VirtualPow2, VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+        VirtualXORROTW22, VirtualXORROTW19, VirtualXORROTW6,
+        VirtualWindowMaskW, VirtualPextSigned,
+        VirtualShiftRightBitmaskW, VirtualSRLW, VirtualSRLIW, VirtualSRAW, VirtualSRAIW,
+        VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
+        VirtualAlignAddr,
+        VirtualShiftDataB, VirtualShiftDataH, VirtualShiftDataW,
+        VirtualXORROTL1,
         #[cfg(feature = "implicit-carry")]
         ADDC,
         #[cfg(feature = "implicit-carry")]
@@ -546,6 +585,8 @@ pub mod add;
 #[cfg(feature = "implicit-carry")]
 pub mod addc;
 pub mod addi;
+pub mod addiw;
+pub mod addw;
 pub mod and;
 pub mod andi;
 pub mod andn;
@@ -567,6 +608,7 @@ pub mod mul;
 #[cfg(feature = "implicit-carry")]
 pub mod mulc;
 pub mod mulhu;
+pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod sd;
@@ -575,9 +617,11 @@ pub mod slti;
 pub mod sltiu;
 pub mod sltu;
 pub mod sub;
+pub mod subw;
 pub mod virtual_advice;
 pub mod virtual_advice_len;
 pub mod virtual_advice_load;
+pub mod virtual_align_addr;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -585,11 +629,13 @@ pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_muliw;
+pub mod virtual_negate_if;
+pub mod virtual_pext;
+pub mod virtual_pext_signed;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
 pub mod virtual_pow2iw;
@@ -597,14 +643,26 @@ pub mod virtual_pow2w;
 pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
+pub mod virtual_shift_data_b;
+pub mod virtual_shift_data_h;
+pub mod virtual_shift_data_w;
 pub mod virtual_shift_right_bitmask;
+pub mod virtual_shift_right_bitmask_w;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend_word;
 pub mod virtual_sra;
 pub mod virtual_srai;
+pub mod virtual_sraiw;
+pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_srliw;
+pub mod virtual_srlw;
+pub mod virtual_window_mask_b;
+pub mod virtual_window_mask_h;
+pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
 pub mod xor;

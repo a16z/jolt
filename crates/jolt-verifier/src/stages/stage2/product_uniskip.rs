@@ -22,7 +22,7 @@ use jolt_claims::protocols::jolt::{
     SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::lagrange::centered_lagrange_evals;
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 
@@ -33,7 +33,7 @@ use crate::VerifierError;
 /// Wire the three consumed Spartan-outer opening *values* from the stage 1 outer
 /// output. Only the values feed the input claim (the uni-skip's output point comes
 /// from its own sumcheck point), so the input points are left empty.
-pub fn product_uniskip_input_values_from_stage1<F: Field>(
+pub fn product_uniskip_input_values_from_stage1<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> ProductUniskipInputClaims<F> {
     let outer = &stage1.output_values.outer_remainder;
@@ -47,12 +47,12 @@ pub fn product_uniskip_input_values_from_stage1<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct ProductUniskip<F: Field> {
+pub struct ProductUniskip<F: JoltField> {
     symbolic: relations::spartan::ProductUniskip,
     tau_high: F,
 }
 
-impl<F: Field> ProductUniskip<F> {
+impl<F: JoltField> ProductUniskip<F> {
     pub fn new(dimensions: SpartanProductDimensions, tau_high: F) -> Self {
         Self {
             symbolic: relations::spartan::ProductUniskip::new(dimensions),
@@ -68,7 +68,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for ProductUniskip<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
     type Symbolic = relations::spartan::ProductUniskip;
 
     fn symbolic(&self) -> &Self::Symbolic {

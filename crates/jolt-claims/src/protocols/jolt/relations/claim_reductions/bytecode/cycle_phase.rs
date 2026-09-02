@@ -1,6 +1,6 @@
 //! Cycle phase of the two-phase committed-bytecode claim-reduction relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use super::BytecodeReductionShape;
@@ -83,7 +83,7 @@ impl SymbolicSumcheck for CyclePhase {
         TWO_PHASE_DEGREE_BOUND
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let eta = challenge(BytecodeClaimReductionChallenge::Eta);
         let mut input = JoltExpr::zero();
         for stage in 0..NUM_BYTECODE_VAL_STAGES {
@@ -92,7 +92,7 @@ impl SymbolicSumcheck for CyclePhase {
         input
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let (dimensions, chunk_count) = self.shape;
         if dimensions.has_address_phase() {
             opening(cycle_phase_intermediate_opening())
@@ -107,7 +107,7 @@ mod tests {
     use super::*;
 
     use crate::protocols::jolt::{BooleanityChallenge, PrecommittedReductionDimensions};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -117,7 +117,7 @@ mod tests {
     fn cycle_phase_batches_staged_openings_by_eta() {
         let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
         let eta = fr(31);
-        let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13)];
+        let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13), fr(17)];
         let zero = fr(0);
 
         let cycle = CyclePhase::new((dimensions, 2));
@@ -137,8 +137,8 @@ mod tests {
         );
         let mut expected_input = zero;
         let mut eta_power = fr(1);
-        for claim in stage_claims {
-            expected_input += eta_power * claim;
+        for claim in stage_claims.iter().take(NUM_BYTECODE_VAL_STAGES) {
+            expected_input += eta_power * *claim;
             eta_power *= eta;
         }
         assert_eq!(input, expected_input);

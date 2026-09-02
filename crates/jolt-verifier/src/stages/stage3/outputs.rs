@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 3 verification.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::SumcheckBatch;
@@ -30,13 +30,13 @@ pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 /// copies equal their sources.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-pub struct Stage3Sumchecks<F: Field> {
+pub struct Stage3Sumchecks<F: JoltField> {
     pub shift: SpartanShift<F>,
     pub instruction_input: InstructionInput<F>,
     pub registers_claim_reduction: RegistersClaimReduction<F>,
 }
 
-impl<F: Field> Stage3OutputPoints<F> {
+impl<F: JoltField> Stage3OutputPoints<F> {
     /// The shift relation's shared opening point (every shift output carries it).
     pub fn shift_opening_point(&self) -> &[F] {
         self.shift.unexpanded_pc()
@@ -45,7 +45,7 @@ impl<F: Field> Stage3OutputPoints<F> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct Stage3ClearOutput<F: Field> {
+pub struct Stage3ClearOutput<F: JoltField> {
     /// The produced stage-3 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage3OutputClaims<F>,
@@ -55,7 +55,7 @@ pub struct Stage3ClearOutput<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3ZkOutput<F: Field, C> {
+pub struct Stage3ZkOutput<F: JoltField, C> {
     pub challenges: Stage3Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
@@ -65,12 +65,12 @@ pub struct Stage3ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage3Output<F: Field, C> {
+pub enum Stage3Output<F: JoltField, C> {
     Clear(Stage3ClearOutput<F>),
     Zk(Stage3ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage3Output<F, C> {
+impl<F: JoltField, C> Stage3Output<F, C> {
     /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage3OutputPoints<F> {
         match self {
@@ -96,11 +96,15 @@ impl<F: Field, C> Stage3Output<F, C> {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::ConcreteSumcheck;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

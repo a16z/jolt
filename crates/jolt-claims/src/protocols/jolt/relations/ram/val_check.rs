@@ -1,6 +1,6 @@
 //! RAM value-check symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::{
@@ -132,7 +132,7 @@ impl SymbolicSumcheck for RamValCheck {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma));
         let mut init = derived(JoltDerivedId::from(RamValCheckPublic::InitEval));
         for contribution in &self.shape.contributions {
@@ -144,7 +144,7 @@ impl SymbolicSumcheck for RamValCheck {
             - (JoltExpr::one() + gamma) * init
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma))
             * opening(ram_inc_val_check())
             * opening(ram_ra_val_check())
@@ -154,7 +154,7 @@ impl SymbolicSumcheck for RamValCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)

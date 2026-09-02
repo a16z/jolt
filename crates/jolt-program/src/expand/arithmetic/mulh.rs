@@ -16,43 +16,38 @@ pub(in crate::expand) fn expand_mulh(
     let v_tmp = asm.allocate()?;
 
     asm.emit_i(
-        JoltInstructionKind::VirtualMovsign,
+        Kind::VirtualMovsign,
         v_sx.operand(),
         reg(rs1(instruction)?),
         0,
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualMovsign,
+        Kind::VirtualMovsign,
         v_sy.operand(),
         reg(rs2(instruction)?),
         0,
     );
     asm.emit_r(
-        JoltInstructionKind::MUL,
+        Kind::MUL,
         v_sx.operand(),
         v_sx.operand(),
         reg(rs2(instruction)?),
     );
     asm.emit_r(
-        JoltInstructionKind::MUL,
+        Kind::MUL,
         v_sy.operand(),
         v_sy.operand(),
         reg(rs1(instruction)?),
     );
     asm.emit_r(
-        JoltInstructionKind::MULHU,
+        Kind::MULHU,
         v_tmp.operand(),
         reg(rs1(instruction)?),
         reg(rs2(instruction)?),
     );
+    asm.emit_r(Kind::ADD, v_tmp.operand(), v_tmp.operand(), v_sx.operand());
     asm.emit_r(
-        JoltInstructionKind::ADD,
-        v_tmp.operand(),
-        v_tmp.operand(),
-        v_sx.operand(),
-    );
-    asm.emit_r(
-        JoltInstructionKind::ADD,
+        Kind::ADD,
         reg(rd(instruction)?),
         v_tmp.operand(),
         v_sy.operand(),

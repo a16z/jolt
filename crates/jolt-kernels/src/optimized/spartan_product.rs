@@ -24,10 +24,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::signed::{S128, S192, S256};
-use jolt_field::{
-    Field, SignedProductAccumulator as _, SignedScalarAccumulator as _,
-    WithSignedProductAccumulator, WithSmallScalarAccumulator,
-};
+use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
@@ -107,55 +104,85 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     out
 }
 
-impl SpartanProductRow {
-    /// `left(node) · right(node)` for one cycle at every extended node, as exact
-    /// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
-    /// (the i128 lane), product `< 2^196` — inside `S256`.
-    /// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
-    /// loop (its integer Lagrange build is not free at `2^23` calls).
-    fn extended_products(
-        &self,
-        coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
-    ) -> [S256; EXTENDED_SIZE] {
-        let mut out = [S256::zero(); EXTENDED_SIZE];
-        let left_lanes = [
-            i128::from(self.left_instruction_input.0),
-            i128::from(self.lookup_output.0),
-            i128::from(self.jump_flag.0),
-        ];
-        let right_wide = S192::from_i128(self.right_instruction_input.0);
-        let right_flags = [
-            i64::from(self.branch_flag.0),
-            1 - i64::from(self.next_is_noop.0),
-        ];
-        for (slot, coefficients) in out.iter_mut().zip(coefficients) {
-            let mut left: i128 = 0;
-            for (lane, &c) in left_lanes.iter().zip(coefficients) {
-                left += i128::from(c) * lane;
-            }
-            let mut right = S192::from_i64(coefficients[0]).mul_trunc::<3, 3>(&right_wide);
-            right +=
-                S192::from_i64(coefficients[1] * right_flags[0] + coefficients[2] * right_flags[1]);
-            *slot = S128::from_i128(left).mul_trunc::<3, 4>(&right);
+/// `left(node) · right(node)` for one cycle at every extended node, as exact
+/// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
+/// (the i128 lane), product `< 2^196` — inside `S256`.
+/// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
+/// loop (its integer Lagrange build is not free at `2^23` calls).
+fn extended_products(
+    row: &SpartanProductRow,
+    coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
+) -> [S256; EXTENDED_SIZE] {
+    let mut out = [S256::zero(); EXTENDED_SIZE];
+    let left_lanes = [
+        i128::from(row.left_instruction_input.0),
+        i128::from(row.lookup_output.0),
+        i128::from(row.jump_flag.0),
+    ];
+    let right_wide = S192::from_i128(row.right_instruction_input.0);
+    let right_flags = [
+        i64::from(row.branch_flag.0),
+        1 - i64::from(row.next_is_noop.0),
+    ];
+    for (slot, coefficients) in out.iter_mut().zip(coefficients) {
+        let mut left: i128 = 0;
+        for (lane, &c) in left_lanes.iter().zip(coefficients) {
+            left += i128::from(c) * lane;
         }
-        out
+        let mut right = S192::from_i64(coefficients[0]).mul_trunc::<3, 3>(&right_wide);
+        right +=
+            S192::from_i64(coefficients[1] * right_flags[0] + coefficients[2] * right_flags[1]);
+        *slot = S128::from_i128(left).mul_trunc::<3, 4>(&right);
     }
+    out
 }
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
 /// challenge vector, and all extended-node values of `t1`.
-struct SpartanProductCarry<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct SpartanProductCarry<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau_low: Vec<F>,
-    rows: BundleStore<F, SpartanProductRow>,
+    rows: BundleStore<SpartanProductRow>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     t1_values: Vec<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(SpartanProductCarry, |carry| {
-    use crate::backend::vec_heap_bytes;
-    vec_heap_bytes(&carry.tau_low) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
-});
+/// Extended-node evaluations of
+/// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
+fn extended_t1_values<F: JoltField>(
+    rows: &BundleAccess<'_, SpartanProductRow>,
+    tau_low: &[F],
+) -> Result<Vec<F>, WitnessError> {
+    let split = tau_low.len() / 2;
+    let (out_point, in_point) = tau_low.split_at(split);
+    let e_out = EqPolynomial::<F>::evals(out_point, None);
+    let e_in = EqPolynomial::<F>::evals(in_point, None);
+    let in_len = e_in.len();
+    let coefficients = extension_coefficients();
+
+    let block = |x_out: usize| -> Result<Vec<F>, WitnessError> {
+        let mut accumulators: Vec<<F as WithAccumulator>::SignedProductAccumulator> =
+            vec![Default::default(); EXTENDED_SIZE];
+        for (x_in, &e) in e_in.iter().enumerate() {
+            let row = rows.row(x_out * in_len + x_in)?;
+            let products = extended_products(&row, &coefficients);
+            for (accumulator, product) in accumulators.iter_mut().zip(&products) {
+                accumulator.fmadd_s256(e, product);
+            }
+        }
+        Ok(accumulators
+            .into_iter()
+            .map(|accumulator| e_out[x_out] * accumulator.reduce())
+            .collect())
+    };
+    try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, block)
+}
 
 /// The stage-2 product uni-skip front. `prepare` runs on `τ_low` only;
 /// `τ_high` arrives as the single late challenge of `first_round_poly`.
@@ -165,7 +192,7 @@ impl OptimizedProductUniskip {
     /// The post-collection half of [`UniskipKernel::prepare`], shared with
     /// the in-module parity tests.
     #[cfg(test)]
-    fn prepare_from_rows<F: Field>(
+    fn prepare_from_rows<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
@@ -180,18 +207,18 @@ impl OptimizedProductUniskip {
     }
 
     /// The store-generic half of `prepare`.
-    fn prepare_from_store<F: Field>(
+    fn prepare_from_store<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
-        rows: BundleStore<F, SpartanProductRow>,
+        rows: BundleStore<SpartanProductRow>,
     ) -> Result<(), KernelError<F>> {
         if tau_low.len() != log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "Spartan product tau_low must carry log_t challenges",
             });
         }
-        let t1_values = Self::extended_t1_values(&rows.access()?, tau_low)?;
+        let t1_values = extended_t1_values(&rows.access(), tau_low)?;
         session.park(SpartanProductCarry {
             log_t,
             tau_low: tau_low.to_vec(),
@@ -200,40 +227,9 @@ impl OptimizedProductUniskip {
         });
         Ok(())
     }
-
-    /// Extended-node evaluations of
-    /// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
-    fn extended_t1_values<F: Field>(
-        rows: &BundleAccess<'_, SpartanProductRow>,
-        tau_low: &[F],
-    ) -> Result<Vec<F>, WitnessError> {
-        let split = tau_low.len() / 2;
-        let (out_point, in_point) = tau_low.split_at(split);
-        let e_out = EqPolynomial::<F>::evals(out_point, None);
-        let e_in = EqPolynomial::<F>::evals(in_point, None);
-        let in_len = e_in.len();
-        let coefficients = extension_coefficients();
-
-        try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, |x_out| {
-            let mut accumulators: Vec<
-                <F as WithSignedProductAccumulator>::SignedProductAccumulator,
-            > = vec![Default::default(); EXTENDED_SIZE];
-            for (x_in, &e) in e_in.iter().enumerate() {
-                let row = rows.row(x_out * in_len + x_in)?;
-                let products = row.extended_products(&coefficients);
-                for (accumulator, product) in accumulators.iter_mut().zip(&products) {
-                    accumulator.fmadd_s256(e, product);
-                }
-            }
-            Ok(accumulators
-                .into_iter()
-                .map(|accumulator| e_out[x_out] * accumulator.reduce())
-                .collect())
-        })
-    }
 }
 
-impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip {
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip {
     #[tracing::instrument(skip_all, name = "SpartanProductUniskip::prepare")]
     fn prepare(
         &self,
@@ -242,7 +238,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
         tau_low: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = BundleStore::resolve(session, witness, 1usize << log_t)?;
+        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
         Self::prepare_from_store(session, log_t, tau_low, rows)
     }
 
@@ -279,7 +275,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
 /// the linear-time round kernel.
 pub struct OptimizedProductRemainder;
 
-impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemainder {
+impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemainder {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -298,31 +294,26 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemaind
 
 /// The linear-time product remainder rounds over the cycle domain
 /// (bound `LowToHigh`).
-struct ProductRemainderKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
-    rows: BundleStore<F, SpartanProductRow>,
+    rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
+    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     lagrange_weights: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ProductRemainderKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    poly_heap_bytes(&kernel.left)
-        + poly_heap_bytes(&kernel.right)
-        + vec_heap_bytes(&kernel.scratch)
-        + kernel.split_eq.heap_bytes()
-        + kernel.challenges.heap_bytes()
-        + kernel.rows.heap_bytes()
-        + vec_heap_bytes(&kernel.lagrange_weights)
-});
-
-impl<F: Field> ProductRemainderKernel<F> {
+impl<F: JoltField> ProductRemainderKernel<F> {
     fn prepare(
         carry: SpartanProductCarry<F>,
         inputs: &ProverInputs<'_, F, ProductRemainder<F>>,
@@ -362,15 +353,14 @@ impl<F: Field> ProductRemainderKernel<F> {
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
         let width = 2 * in_len;
-        let access = rows.access()?;
+        let access = rows.access();
         let weights_ref = &weights;
         let cell = |row: &SpartanProductRow| -> (F, F) {
-            let mut left_acc = <F as WithSmallScalarAccumulator>::SmallScalarAccumulator::default();
+            let mut left_acc = <F as WithAccumulator>::SmallScalarAccumulator::default();
             left_acc.fmadd_u64(weights_ref[0], row.left_instruction_input.0);
             left_acc.fmadd_u64(weights_ref[1], row.lookup_output.0);
             left_acc.fmadd_u64(weights_ref[2], u64::from(row.jump_flag.0));
-            let mut right_acc =
-                <F as WithSignedProductAccumulator>::SignedProductAccumulator::default();
+            let mut right_acc = <F as WithAccumulator>::SignedProductAccumulator::default();
             right_acc.fmadd_s256(
                 weights_ref[0],
                 &S256::from_i128(row.right_instruction_input.0),
@@ -458,17 +448,16 @@ impl<F: Field> ProductRemainderKernel<F> {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
         let cycles = weights.len();
-        let access = self.rows.access()?;
+        let access = self.rows.access();
 
         let block_size = 1usize << 12;
         let blocks = cycles.div_ceil(block_size);
         let block = |index: usize| -> Result<Vec<F>, WitnessError> {
             let start = index * block_size;
             let end = (start + block_size).min(cycles);
-            let mut words: [<F as WithSignedProductAccumulator>::SignedProductAccumulator; 3] =
+            let mut words: [<F as WithAccumulator>::SignedProductAccumulator; 3] =
                 [Default::default(), Default::default(), Default::default()];
-            let mut flags: [<F as WithSmallScalarAccumulator>::SmallScalarAccumulator; 5] =
-                Default::default();
+            let mut flags: [<F as WithAccumulator>::SmallScalarAccumulator; 5] = Default::default();
             for (t, &weight) in (start..end).zip(&weights[start..end]) {
                 let row = access.row(t)?;
                 words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
@@ -497,7 +486,7 @@ impl<F: Field> ProductRemainderKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
         self.challenges.total()
     }
@@ -511,8 +500,6 @@ impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        // Round 0's endpoints were fused into the materialization pass; later
-        // rounds sample them over the remaining (lo, hi) pairs.
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
             None => self.split_eq.product_endpoints(&self.left, &self.right),
@@ -528,7 +515,7 @@ impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
     type Relation = ProductRemainder<F>;
 
     fn output_claims(
@@ -571,6 +558,7 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
         let ids = std::iter::once(SpartanProductVirtualizationPublic::TauKernel)
             .chain((0..DOMAIN).map(SpartanProductVirtualizationPublic::LagrangeWeight));
         for public_id in ids {
+            let id = JoltDerivedId::from(public_id);
             let got = match public_id {
                 SpartanProductVirtualizationPublic::TauKernel => self.split_eq.current_scalar(),
                 SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
@@ -580,7 +568,7 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
             };
             pin_derived_term_if_derived(
                 relation,
-                JoltDerivedId::from(public_id),
+                id,
                 input_points,
                 output_points,
                 challenges,
@@ -600,7 +588,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage2::product_remainder::{
         product_remainder_input_values_from_uniskip_output, ProductRemainderInputClaims,
     };

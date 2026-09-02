@@ -66,6 +66,7 @@ clap.workspace = true
 common = { workspace = true, default-features = false }
 postcard.workspace = true
 addr2line.workspace = true
+rayon.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["strum"]

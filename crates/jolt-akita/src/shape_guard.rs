@@ -11,17 +11,21 @@
 //! mismatches *before* any shape-backed allocation happens, so verifier
 //! memory stays proportional to the bytes the prover actually supplied.
 
-use akita_config::effective_batched_schedule;
+use akita_config::{effective_batched_schedule, CommitmentConfig};
+use akita_pcs::AkitaError;
+use akita_schedules::ResolvedScheduleRow;
 use akita_types::{
-    sumcheck_rounds, CommittedGroupParams, DigitRangePlan, ExtensionOpeningReductionShape,
-    FoldSchedule, LevelProofShape, NextWitnessBindingShape, OpeningClaimsLayout,
-    RecursiveFoldParams, TerminalLevelProofShape,
+    relation_rhs_layout_for, sumcheck_rounds, CommittedGroupParams, CommittedGroupProfile,
+    CompressionChainPlan, DigitRangePlan, ExtensionOpeningReductionShape, FoldSchedule,
+    LevelProofShape, NextWitnessBindingShape, OpeningClaimsLayout, OpeningScheduleSelection,
+    PolynomialGroupLayout, RecursiveFoldParams, TerminalLevelProofShape,
 };
 
 use crate::adapters::{
-    deserialize_akita, invalid_batch, AkitaBackendCommitment, AkitaBackendFlavor,
-    AkitaBackendProof, AkitaBackendProofShape, AkitaBatchProof, AkitaCommitment, AkitaConfig,
-    AkitaField, AkitaOneHotK16Config, AkitaOneHotK256Config, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    deserialize_akita, invalid_batch, AkitaBackendCommitment, AkitaBackendCommitmentPayload,
+    AkitaBackendFlavor, AkitaBackendProof, AkitaBackendProofShape, AkitaBatchProof,
+    AkitaCommitment, AkitaConfig, AkitaField, AkitaOneHotK16Config, AkitaOneHotK256Config,
+    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use jolt_openings::OpeningsError;
 
@@ -30,6 +34,19 @@ use jolt_openings::OpeningsError;
 /// magnitude of margin while keeping worst-case shape-blob deserialization
 /// allocations trivial.
 const MAX_PROOF_SHAPE_BYTES: usize = 16 * 1024;
+const SCHEDULE_SELECTION_BYTES: usize = 32;
+
+fn deserialize_selection(
+    proof: &AkitaBatchProof,
+) -> Result<OpeningScheduleSelection, OpeningsError> {
+    if proof.serialized_schedule_selection.len() != SCHEDULE_SELECTION_BYTES {
+        return Err(invalid_batch(format!(
+            "Akita schedule selection is {} bytes but the protocol requires {SCHEDULE_SELECTION_BYTES}",
+            proof.serialized_schedule_selection.len()
+        )));
+    }
+    deserialize_akita::<OpeningScheduleSelection>(&proof.serialized_schedule_selection, &())
+}
 
 /// Fold sumcheck round counts are `log2(ring_dim) + log2(witness columns)`,
 /// far below 64 for any representable witness.
@@ -59,16 +76,29 @@ pub(crate) fn deserialize_checked_backend_payload(
     proof: &AkitaBatchProof,
     statement_len: usize,
     backend_point: &[AkitaField],
-) -> Result<(AkitaBackendCommitment, AkitaBackendProof), OpeningsError> {
+) -> Result<
+    (
+        OpeningScheduleSelection,
+        AkitaBackendCommitment,
+        AkitaBackendProof,
+    ),
+    OpeningsError,
+> {
     let layout = OpeningClaimsLayout::new(backend_point.len(), statement_len)
         .map_err(|err| invalid_batch(format!("Akita opening layout is invalid: {err}")))?;
-    let schedule = resolve_schedule(commitment, &layout, backend_point)?;
+    let selection = deserialize_selection(proof)?;
+    let resolved = resolve_schedule(commitment, selection, &layout, backend_point)?;
+    let schedule = resolved.schedule();
 
-    validate_commitment_len(commitment, &schedule, &layout)?;
-    let backend_commitment = deserialize_akita::<AkitaBackendCommitment>(
+    validate_commitment_len(commitment, schedule, &layout)?;
+    let backend_payload = deserialize_akita::<AkitaBackendCommitmentPayload>(
         &commitment.serialized_backend_bytes,
         &commitment.backend_coeff_len,
     )?;
+    // The commitment profile comes from the trusted resolved row; the proof
+    // supplies only the payload coefficients.
+    let backend_commitment =
+        AkitaBackendCommitment::new(resolved.profiles().final_group, backend_payload);
 
     if proof.serialized_akita_proof_shape.len() > MAX_PROOF_SHAPE_BYTES {
         return Err(invalid_batch(format!(
@@ -78,33 +108,171 @@ pub(crate) fn deserialize_checked_backend_payload(
     }
     let proof_shape =
         deserialize_akita::<AkitaBackendProofShape>(&proof.serialized_akita_proof_shape, &())?;
-    validate_proof_shape(&proof_shape, &schedule)?;
+    validate_proof_shape(&proof_shape, schedule)?;
     let backend_proof =
         deserialize_akita::<AkitaBackendProof>(&proof.serialized_akita_proof, &proof_shape)?;
-    Ok((backend_commitment, backend_proof))
+    Ok((resolved.selection(), backend_commitment, backend_proof))
 }
 
-/// Resolves the same schedule the backend verifier will replay for this
+/// Guard and decode the ordered grouped root in public order
+/// `[dense precommits.., final streamed one-hot]`.
+pub(crate) fn deserialize_checked_grouped_backend_payload(
+    precommitted: &[&AkitaCommitment],
+    main: &AkitaCommitment,
+    proof: &AkitaBatchProof,
+    main_backend_point: &[AkitaField],
+    one_hot_k: usize,
+) -> Result<
+    (
+        OpeningScheduleSelection,
+        Vec<AkitaBackendCommitment>,
+        AkitaBackendCommitment,
+        AkitaBackendProof,
+    ),
+    OpeningsError,
+> {
+    let selection = deserialize_selection(proof)?;
+    let mut group_layouts = precommitted
+        .iter()
+        .map(|commitment| PolynomialGroupLayout::new(commitment.num_vars, commitment.poly_count))
+        .collect::<Vec<_>>();
+    group_layouts.push(PolynomialGroupLayout::new(main.num_vars, main.poly_count));
+    let layout = OpeningClaimsLayout::from_groups(group_layouts)
+        .map_err(|err| invalid_batch(format!("Akita grouped opening layout is invalid: {err}")))?;
+    let resolved = match one_hot_k {
+        AKITA_ONE_HOT_K256 => resolve_grouped_schedule::<AkitaOneHotK256Config>(
+            selection,
+            &layout,
+            main_backend_point,
+        ),
+        AKITA_ONE_HOT_K16 => {
+            resolve_grouped_schedule::<AkitaOneHotK16Config>(selection, &layout, main_backend_point)
+        }
+        _ => return Err(invalid_batch("unsupported grouped one-hot configuration")),
+    }
+    .map_err(|err| invalid_batch(format!("Akita grouped schedule resolution failed: {err}")))?;
+    let profiles = resolved.profiles();
+
+    let mut precommitted_backend = Vec::with_capacity(precommitted.len());
+    for (commitment, profile) in precommitted.iter().zip(profiles.precommitteds.iter()) {
+        validate_commitment_profile_len(commitment, profile)?;
+        let payload = deserialize_akita::<AkitaBackendCommitmentPayload>(
+            &commitment.serialized_backend_bytes,
+            &commitment.backend_coeff_len,
+        )?;
+        precommitted_backend.push(AkitaBackendCommitment::new(*profile, payload));
+    }
+    validate_commitment_profile_len(main, &profiles.final_group)?;
+    let main_payload = deserialize_akita::<AkitaBackendCommitmentPayload>(
+        &main.serialized_backend_bytes,
+        &main.backend_coeff_len,
+    )?;
+    let main_backend = AkitaBackendCommitment::new(profiles.final_group, main_payload);
+
+    if proof.serialized_akita_proof_shape.len() > MAX_PROOF_SHAPE_BYTES {
+        return Err(invalid_batch(format!(
+            "Akita proof shape blob is {} bytes but the protocol cap is {MAX_PROOF_SHAPE_BYTES}",
+            proof.serialized_akita_proof_shape.len()
+        )));
+    }
+    let proof_shape =
+        deserialize_akita::<AkitaBackendProofShape>(&proof.serialized_akita_proof_shape, &())?;
+    validate_proof_shape(&proof_shape, resolved.schedule())?;
+    let backend_proof =
+        deserialize_akita::<AkitaBackendProof>(&proof.serialized_akita_proof, &proof_shape)?;
+    Ok((
+        resolved.selection(),
+        precommitted_backend,
+        main_backend,
+        backend_proof,
+    ))
+}
+
+fn resolve_grouped_schedule<Cfg>(
+    selection: OpeningScheduleSelection,
+    layout: &OpeningClaimsLayout,
+    main_backend_point: &[AkitaField],
+) -> Result<ResolvedScheduleRow, AkitaError>
+where
+    Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
+{
+    Cfg::resolve_schedule_selection(selection)
+        .and_then(|row| effective_batched_schedule::<Cfg>(row, layout, main_backend_point))
+}
+
+fn validate_commitment_profile_len(
+    commitment: &AkitaCommitment,
+    profile: &CommittedGroupProfile,
+) -> Result<(), OpeningsError> {
+    let source_coefficients = profile
+        .outer_commit_matrix
+        .output_rank()
+        .checked_mul(profile.outer_commit_matrix.ring_dimension())
+        .ok_or_else(|| invalid_batch("Akita commitment coefficient count overflows"))?;
+    let expected_coeff_len = CompressionChainPlan::for_complete_source(
+        profile.outer_commit_matrix.sis_table_key().modulus_profile,
+        source_coefficients,
+    )
+    .map_err(|err| {
+        invalid_batch(format!(
+            "Akita commitment compression plan is invalid: {err}"
+        ))
+    })?
+    .terminal_coefficients();
+    if commitment.backend_coeff_len != expected_coeff_len {
+        return Err(invalid_batch(format!(
+            "Akita commitment declares {} backend coefficients but its frozen profile requires {expected_coeff_len}",
+            commitment.backend_coeff_len
+        )));
+    }
+    let expected_bytes = expected_coeff_len
+        .checked_mul(field_elem_bytes())
+        .ok_or_else(|| invalid_batch("Akita commitment byte size overflows"))?;
+    if commitment.serialized_backend_bytes.len() != expected_bytes {
+        return Err(invalid_batch(format!(
+            "Akita commitment has {} serialized bytes but its frozen profile requires {expected_bytes}",
+            commitment.serialized_backend_bytes.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Selects the generated row for one single-group statement key and validates
+/// its opening geometry, mirroring the backend verifier's own resolution.
+fn resolve_schedule_row<Cfg>(
+    selection: OpeningScheduleSelection,
+    layout: &OpeningClaimsLayout,
+    backend_point: &[AkitaField],
+) -> Result<ResolvedScheduleRow, AkitaError>
+where
+    Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
+{
+    let resolved = Cfg::resolve_schedule_selection(selection)?;
+    effective_batched_schedule::<Cfg>(resolved, layout, backend_point)
+}
+
+/// Resolves the same schedule row the backend verifier will replay for this
 /// statement, dispatching on the commitment's (already-validated) flavor.
 fn resolve_schedule(
     commitment: &AkitaCommitment,
+    selection: OpeningScheduleSelection,
     layout: &OpeningClaimsLayout,
     backend_point: &[AkitaField],
-) -> Result<FoldSchedule, OpeningsError> {
+) -> Result<ResolvedScheduleRow, OpeningsError> {
     let schedule = match commitment.backend_flavor {
         AkitaBackendFlavor::Dense => {
-            effective_batched_schedule::<AkitaConfig>(layout, backend_point)
+            resolve_schedule_row::<AkitaConfig>(selection, layout, backend_point)
         }
         AkitaBackendFlavor::OneHot => match commitment.one_hot_k {
             AKITA_ONE_HOT_K16 => {
-                effective_batched_schedule::<AkitaOneHotK16Config>(layout, backend_point)
+                resolve_schedule_row::<AkitaOneHotK16Config>(selection, layout, backend_point)
             }
             AKITA_ONE_HOT_K256 => {
-                effective_batched_schedule::<AkitaOneHotK256Config>(layout, backend_point)
+                resolve_schedule_row::<AkitaOneHotK256Config>(selection, layout, backend_point)
             }
-            other => {
+            one_hot_k => {
                 return Err(invalid_batch(format!(
-                    "Akita one-hot chunk size must be 16 or 256, got {other}"
+                    "unsupported Akita one-hot K={one_hot_k}"
                 )))
             }
         },
@@ -142,20 +310,20 @@ fn validate_commitment_len(
     Ok(())
 }
 
-/// Mirrors the backend verifier's suffix replay: the commitment rows are the
-/// final group's B block of the root relation matrix, decoded at the B-role
-/// ring dimension.
+/// Mirrors the backend verifier's root replay: the commitment payload is the
+/// final group's compressed B image, whose exact transmitted coefficient
+/// count comes from the relation layout's compression plan for the group.
 fn expected_commitment_coeff_len(
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<usize, OpeningsError> {
     let root_params = &schedule.root.params.final_group.commitment;
-    let rows = root_params
-        .commitment_row_range(layout, 0)
-        .map_err(|err| invalid_batch(format!("Akita schedule layout error: {err}")))?
-        .len();
-    rows.checked_mul(root_params.role_dims().d_b())
-        .ok_or_else(|| invalid_batch("Akita commitment coefficient count overflows"))
+    let relation = relation_rhs_layout_for(root_params, layout)
+        .map_err(|err| invalid_batch(format!("Akita schedule layout error: {err}")))?;
+    let plan = relation
+        .compression_plan_for_group(0)
+        .map_err(|err| invalid_batch(format!("Akita schedule layout error: {err}")))?;
+    Ok(plan.terminal_coefficients())
 }
 
 fn field_elem_bytes() -> usize {
@@ -186,8 +354,12 @@ fn validate_proof_shape(
         schedule.root.output_witness_len,
         schedule.recursive_folds.first().map(|step| &step.params),
     )?;
-    for (index, level_shape) in shape.recursive_folds.iter().enumerate() {
-        let step = &schedule.recursive_folds[index];
+    for (index, (level_shape, step)) in shape
+        .recursive_folds
+        .iter()
+        .zip(schedule.recursive_folds.iter())
+        .enumerate()
+    {
         validate_level_shape(
             level_shape,
             &step.params.witness,
@@ -213,15 +385,14 @@ fn validate_level_shape(
 ) -> Result<(), OpeningsError> {
     validate_ext_reduction_shape(shape.extension_opening_reduction.as_ref())?;
 
-    let expected_v_coeffs = params
-        .open_commit_matrix
-        .output_rank()
-        .checked_mul(params.role_dims().d_d())
-        .ok_or_else(|| invalid_batch("Akita v coefficient count overflows"))?;
-    if shape.v_coeffs != expected_v_coeffs {
+    let expected_opening_payload_coeffs = params
+        .opening_payload_geometry()
+        .map_err(|err| invalid_batch(format!("Akita schedule error: {err}")))?
+        .transmitted_coefficients();
+    if shape.opening_payload_coeffs != expected_opening_payload_coeffs {
         return Err(invalid_batch(format!(
-            "Akita level shape declares {} v coefficients but the schedule requires {expected_v_coeffs}",
-            shape.v_coeffs
+            "Akita level shape declares {} opening payload coefficients but the schedule requires {expected_opening_payload_coeffs}",
+            shape.opening_payload_coeffs
         )));
     }
 
@@ -233,23 +404,26 @@ fn validate_level_shape(
     }
     let expected_stage1 = DigitRangePlan::new(1usize << params.log_basis_open)
         .map_err(|err| invalid_batch(format!("Akita schedule error: {err}")))?
-        .stage_shapes(rounds);
-    if shape.stage1_stages != expected_stage1 {
+        .proof_shapes_for_route(rounds, params.inner_commit_matrix.security_route())
+        .map_err(|err| invalid_batch(format!("Akita schedule error: {err}")))?;
+    if shape.stage1_stages != expected_stage1.0 {
         return Err(invalid_batch(
             "Akita level shape stage-1 tree does not match the scheduled stages",
         ));
     }
+    if shape.stage1_norm != expected_stage1.1 {
+        return Err(invalid_batch(
+            "Akita level shape stage-1 norm proof does not match the scheduled security route",
+        ));
+    }
 
     match (successor, shape.next_witness_binding) {
-        (Some(next), NextWitnessBindingShape::OuterCommitment { coeffs }) => {
+        (Some(next), NextWitnessBindingShape::OuterPayload { coeffs }) => {
             let expected_next_commit = next
                 .witness
-                .outer_commit_matrix
-                .output_rank()
-                .checked_mul(next.witness.role_dims().d_b())
-                .ok_or_else(|| {
-                    invalid_batch("Akita next-commitment coefficient count overflows")
-                })?;
+                .outer_payload_geometry()
+                .map_err(|err| invalid_batch(format!("Akita schedule error: {err}")))?
+                .transmitted_coefficients();
             if coeffs != expected_next_commit {
                 return Err(invalid_batch(format!(
                     "Akita level shape declares {coeffs} next-commitment coefficients but the schedule requires {expected_next_commit}",
@@ -336,6 +510,7 @@ mod tests {
 
     use super::*;
     use crate::adapters::serialize_akita;
+    use akita_types::AkitaScheduleLookupKey;
 
     fn dense_commitment(num_vars: usize, poly_count: usize) -> AkitaCommitment {
         AkitaCommitment {
@@ -353,6 +528,27 @@ mod tests {
         (0..num_vars as u64).map(AkitaField::from_u64).collect()
     }
 
+    fn test_selection(num_vars: usize, poly_count: usize) -> OpeningScheduleSelection {
+        AkitaConfig::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::new(num_vars, poly_count),
+        ))
+        .expect("test schedule")
+        .selection()
+    }
+
+    fn test_resolve_schedule(
+        commitment: &AkitaCommitment,
+        layout: &OpeningClaimsLayout,
+        point: &[AkitaField],
+    ) -> Result<ResolvedScheduleRow, OpeningsError> {
+        resolve_schedule(
+            commitment,
+            test_selection(commitment.num_vars, commitment.poly_count),
+            layout,
+            point,
+        )
+    }
+
     /// The honest proof shape the schedule prescribes, built from the same
     /// step params the validator checks against.
     fn scheduled_proof_shape(schedule: &FoldSchedule) -> AkitaBackendProofShape {
@@ -360,18 +556,27 @@ mod tests {
                      output_witness_len: usize,
                      successor: Option<&RecursiveFoldParams>| {
             let rounds = sumcheck_rounds(params.d_a(), output_witness_len);
+            let stage1 = DigitRangePlan::new(1usize << params.log_basis_open)
+                .expect("scheduled range basis")
+                .proof_shapes_for_route(rounds, params.inner_commit_matrix.security_route())
+                .expect("scheduled stage-1 shape");
             LevelProofShape {
                 extension_opening_reduction: None,
-                v_coeffs: params.open_commit_matrix.output_rank() * params.role_dims().d_d(),
-                stage1_stages: DigitRangePlan::new(1usize << params.log_basis_open)
-                    .expect("scheduled range basis")
-                    .stage_shapes(rounds),
+                opening_payload_coeffs: params
+                    .opening_payload_geometry()
+                    .expect("scheduled opening payload geometry")
+                    .transmitted_coefficients(),
+                stage1_stages: stage1.0,
+                stage1_norm: stage1.1,
                 stage2_sumcheck_proof: vec![STAGE2_SUMCHECK_DEGREE; rounds],
                 stage3_sumcheck: None,
                 next_witness_binding: match successor {
-                    Some(next) => NextWitnessBindingShape::OuterCommitment {
-                        coeffs: next.witness.outer_commit_matrix.output_rank()
-                            * next.witness.role_dims().d_b(),
+                    Some(next) => NextWitnessBindingShape::OuterPayload {
+                        coeffs: next
+                            .witness
+                            .outer_payload_geometry()
+                            .expect("scheduled outer payload geometry")
+                            .transmitted_coefficients(),
                     },
                     None => NextWitnessBindingShape::TerminalInnerState,
                 },
@@ -407,7 +612,7 @@ mod tests {
 
     #[test]
     fn forged_commitment_coeff_len_rejects_before_deserialization() {
-        let num_vars = 13;
+        let num_vars = 16;
         let point = point(num_vars);
         let mut commitment = dense_commitment(num_vars, 2);
         // A honest-shape claim would be a few thousand coefficients; forge the
@@ -415,6 +620,8 @@ mod tests {
         commitment.backend_coeff_len = 1 << 25;
         let proof = AkitaBatchProof {
             statement_bridge: Vec::new(),
+            serialized_schedule_selection: serialize_akita(&test_selection(num_vars, 2))
+                .expect("serialize selection"),
             serialized_akita_proof_shape: Vec::new(),
             serialized_akita_proof: Vec::new(),
         };
@@ -428,11 +635,13 @@ mod tests {
 
     #[test]
     fn commitment_byte_length_must_match_coeff_len() {
-        let num_vars = 13;
+        let num_vars = 16;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let mut commitment = dense_commitment(num_vars, 2);
-        let schedule = resolve_schedule(&commitment, &layout, &point).expect("schedule");
+        let schedule = test_resolve_schedule(&commitment, &layout, &point)
+            .expect("schedule")
+            .into_schedule();
         let expected = expected_commitment_coeff_len(&schedule, &layout).expect("coeff len");
         commitment.backend_coeff_len = expected;
         // Correct declared count, truncated byte buffer: the deserializer
@@ -440,6 +649,8 @@ mod tests {
         commitment.serialized_backend_bytes = vec![0u8; field_elem_bytes()];
         let proof = AkitaBatchProof {
             statement_bridge: Vec::new(),
+            serialized_schedule_selection: serialize_akita(&test_selection(num_vars, 2))
+                .expect("serialize selection"),
             serialized_akita_proof_shape: Vec::new(),
             serialized_akita_proof: Vec::new(),
         };
@@ -450,16 +661,20 @@ mod tests {
 
     #[test]
     fn oversized_proof_shape_blob_rejects() {
-        let num_vars = 13;
+        let num_vars = 16;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let mut commitment = dense_commitment(num_vars, 2);
-        let schedule = resolve_schedule(&commitment, &layout, &point).expect("schedule");
+        let schedule = test_resolve_schedule(&commitment, &layout, &point)
+            .expect("schedule")
+            .into_schedule();
         let coeff_len = expected_commitment_coeff_len(&schedule, &layout).expect("coeff len");
         commitment.backend_coeff_len = coeff_len;
         commitment.serialized_backend_bytes = vec![0u8; coeff_len * field_elem_bytes()];
         let proof = AkitaBatchProof {
             statement_bridge: Vec::new(),
+            serialized_schedule_selection: serialize_akita(&test_selection(num_vars, 2))
+                .expect("serialize selection"),
             serialized_akita_proof_shape: vec![0u8; MAX_PROOF_SHAPE_BYTES + 1],
             serialized_akita_proof: Vec::new(),
         };
@@ -473,22 +688,26 @@ mod tests {
 
     #[test]
     fn scheduled_shape_passes_validation() {
-        let num_vars = 13;
+        let num_vars = 16;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let commitment = dense_commitment(num_vars, 2);
-        let schedule = resolve_schedule(&commitment, &layout, &point).expect("schedule");
+        let schedule = test_resolve_schedule(&commitment, &layout, &point)
+            .expect("schedule")
+            .into_schedule();
         let shape = scheduled_proof_shape(&schedule);
         validate_proof_shape(&shape, &schedule).expect("scheduled shape must validate");
     }
 
     #[test]
     fn forged_shape_counts_reject_against_schedule() {
-        let num_vars = 13;
+        let num_vars = 16;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let mut commitment = dense_commitment(num_vars, 2);
-        let schedule = resolve_schedule(&commitment, &layout, &point).expect("schedule");
+        let schedule = test_resolve_schedule(&commitment, &layout, &point)
+            .expect("schedule")
+            .into_schedule();
         let coeff_len = expected_commitment_coeff_len(&schedule, &layout).expect("coeff len");
         commitment.backend_coeff_len = coeff_len;
         commitment.serialized_backend_bytes = vec![0u8; coeff_len * field_elem_bytes()];
@@ -497,9 +716,11 @@ mod tests {
         // upstream cap; the schedule comparison must reject it without the
         // proof body ever being deserialized.
         let mut forged = scheduled_proof_shape(&schedule);
-        forged.root.v_coeffs = 1 << 25;
+        forged.root.opening_payload_coeffs = 1 << 25;
         let proof = AkitaBatchProof {
             statement_bridge: Vec::new(),
+            serialized_schedule_selection: serialize_akita(&test_selection(num_vars, 2))
+                .expect("serialize selection"),
             serialized_akita_proof_shape: serialize_akita(&forged).expect("serialize shape"),
             serialized_akita_proof: Vec::new(),
         };
@@ -513,11 +734,13 @@ mod tests {
 
     #[test]
     fn forged_terminal_payload_budget_rejects_against_schedule() {
-        let num_vars = 13;
+        let num_vars = 16;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let commitment = dense_commitment(num_vars, 2);
-        let schedule = resolve_schedule(&commitment, &layout, &point).expect("schedule");
+        let schedule = test_resolve_schedule(&commitment, &layout, &point)
+            .expect("schedule")
+            .into_schedule();
 
         // Forge the terminal Golomb `z` payload budget past the scheduled
         // upper bound; the admits check must reject before any payload-sized

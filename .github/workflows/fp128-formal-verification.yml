@@ -1,0 +1,117 @@
+name: Fp128 formal verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fp128-formal-verification.yml"
+      - "crates/jolt-field/**"
+      - "proofs/hol-light/**"
+      - "scripts/check_fp128_proof_artifacts.py"
+      - "scripts/tests/test_check_fp128_proof_artifacts.py"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+  pull_request:
+    paths:
+      - ".github/workflows/fp128-formal-verification.yml"
+      - "crates/jolt-field/**"
+      - "proofs/hol-light/**"
+      - "scripts/check_fp128_proof_artifacts.py"
+      - "scripts/tests/test_check_fp128_proof_artifacts.py"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fp128-asm-fuzz-aarch64:
+    name: Differential fuzz AArch64 assembly
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Compare assembly with portable arithmetic
+        working-directory: crates/jolt-field
+        run: cargo +nightly fuzz run --target aarch64-unknown-linux-gnu fp128_asm_differential -- -max_total_time=120
+
+  fp128-asm-fuzz-x86-64-bmi2-adx:
+    name: Differential fuzz x86-64 BMI2+ADX assembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Require BMI2 and ADX
+        run: |
+          grep -Eq '(^|[[:space:]])bmi2([[:space:]]|$)' /proc/cpuinfo
+          grep -Eq '(^|[[:space:]])adx([[:space:]]|$)' /proc/cpuinfo
+      - name: Compare assembly with portable arithmetic
+        working-directory: crates/jolt-field
+        env:
+          RUSTFLAGS: -C target-feature=+bmi2,+adx
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu fp128_asm_differential -- -max_total_time=120
+
+  fp128-proof:
+    name: Prove ${{ matrix.label }} add, sub, and mul
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: aarch64
+            label: AArch64
+            runner: ubuntu-24.04-arm
+          - architecture: x86_64
+            label: x86-64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install proof dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libgmp-dev libpcre2-dev libstring-shellquote-perl llvm ocaml opam xdot
+          opam init --disable-sandboxing --yes
+
+      - name: Check out pinned proof libraries
+        run: |
+          git clone https://github.com/jrh13/hol-light.git "$RUNNER_TEMP/hol-light"
+          git -C "$RUNNER_TEMP/hol-light" checkout 433477862bb90b328a593e012e09390e99b2439b
+          git clone https://github.com/awslabs/s2n-bignum.git "$RUNNER_TEMP/s2n-bignum"
+          git -C "$RUNNER_TEMP/s2n-bignum" checkout ac31a43db30953037abd1b64b540e65cf31f4c67
+
+      - name: Build HOL Light as an OCaml module
+        working-directory: ${{ runner.temp }}/hol-light
+        run: |
+          make switch-5
+          eval "$(opam env --switch . --set-switch)"
+          HOLLIGHT_USE_MODULE=1 make -j2
+
+      - name: Check public bytes and run HOL Light proofs
+        env:
+          HOL_LIGHT_DIR: ${{ runner.temp }}/hol-light
+          S2N_BIGNUM_DIR: ${{ runner.temp }}/s2n-bignum
+        run: ./proofs/hol-light/check.sh all ${{ matrix.architecture }} --clean

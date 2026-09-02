@@ -125,7 +125,7 @@ cfg-if = { workspace = true }
 riscv = { workspace = true }
 zeroos = { workspace = true, default-features = false, features = [
   "arch-riscv",
-  "alloc-linked-list",
+  "memory",
 ] }
 
 [target.'cfg(all(target_arch = "riscv64", target_os = "none"))'.dependencies]
@@ -138,4 +138,5 @@ zeroos = { workspace = true, default-features = false, features = [
 zeroos = { workspace = true, default-features = false, features = [
   "os-linux",
   "runtime-musl",
+  "alloc-linked-list",
 ] }

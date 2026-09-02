@@ -1,13 +1,13 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{virtual_sign_extend_word::VirtualSignExtendWord, RISCVCycle};
 
-use crate::zkvm::lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, LookupTables};
+use crate::zkvm::lookup_table::{sign_extend_word::SignExtendWordTable, LookupTables};
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSignExtendWord {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(SignExtendHalfWordTable.into())
+        Some(SignExtendWordTable.into())
     }
 }
 

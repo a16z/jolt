@@ -16,7 +16,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, CarryClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, EqPolynomial};
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -27,7 +27,7 @@ use crate::stages::{
 use crate::VerifierError;
 
 /// Wire the two consumed `Carry` opening *values*. Clear-only.
-pub fn carry_claim_reduction_input_values_from_upstream<F: Field>(
+pub fn carry_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage3: &Stage3OutputClaims<F>,
 ) -> CarryClaimReductionInputClaims<F> {
@@ -38,7 +38,7 @@ pub fn carry_claim_reduction_input_values_from_upstream<F: Field>(
 }
 
 /// Wire the two consumed `Carry` opening *points*. ZK-agnostic.
-pub fn carry_claim_reduction_input_points_from_upstream<F: Field>(
+pub fn carry_claim_reduction_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage3: &Stage3OutputPoints<F>,
 ) -> CarryClaimReductionInputClaims<Vec<F>> {
@@ -49,13 +49,13 @@ pub fn carry_claim_reduction_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct CarryClaimReduction<F: Field> {
+pub struct CarryClaimReduction<F: JoltField> {
     symbolic: relations::claim_reductions::carry::CarryReduction,
     product_cycle: Vec<F>,
     shift_cycle: Vec<F>,
 }
 
-impl<F: Field> CarryClaimReduction<F> {
+impl<F: JoltField> CarryClaimReduction<F> {
     pub fn new(
         trace_dimensions: TraceDimensions,
         product_cycle: Vec<F>,
@@ -76,7 +76,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for CarryClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for CarryClaimReduction<F> {
     type Symbolic = relations::claim_reductions::carry::CarryReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {

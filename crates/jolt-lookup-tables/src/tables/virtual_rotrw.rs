@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -34,7 +34,7 @@ impl<const XLEN: usize> LookupTable for VirtualROTRWTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         assert_eq!(r.len() % 2, 0, "r must have even length");
         assert_eq!(r.len() / 2, XLEN, "r must have length 2 * XLEN");
@@ -79,7 +79,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualROTRWTable<XL
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [right_shift_w_helper, right_shift_w, left_shift_w, one] = suffixes.try_into().unwrap();
         prefixes[Prefixes::RightShiftW] * right_shift_w_helper

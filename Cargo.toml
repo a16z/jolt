@@ -41,7 +41,6 @@ members = [
   "crates/jolt-witness",
   "crates/jolt-witness-derive",
   "crates/jolt-dory",
-  "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
   "crates/jolt-tracer-x86",
   "crates/jolt-transcript",
@@ -152,11 +151,8 @@ log.workspace = true
 env_logger.workspace = true
 zeroos-build.workspace = true
 
-ark-bn254.workspace = true
-
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-prover-legacy = { workspace = true, features = ["default"] }
-common = { workspace = true, features = ["std"] }
 
 [profile.test]
 opt-level = 3
@@ -284,20 +280,30 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b
   "sha3",
 ] }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.4.1", features = [
+dory = { package = "dory-pcs", version = "0.4.2", features = [
   "backends",
   "cache",
   "disk-persistence",
   "zk",
 ] }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
+# `akita-transcript` hard-errors unless exactly one backend is selected, and
+# every akita crate disables its own defaults, so the backend must be named here.
+# `akita-pcs` fans the feature out across the whole graph; `akita-config` covers
+# `jolt-field --features akita`, the one entry point that does not go through it.
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "2322d485bac3efd21014b34dda6a600cd9d6ae1a", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -367,13 +373,13 @@ pprof = { version = "0.15", features = [
 prost = "0.14"
 
 # Parsing
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.39.1", features = [
+object = { version = "0.40.0", features = [
   "build_core",
   "elf",
 ], default-features = false }
@@ -395,7 +401,7 @@ iai-callgrind = "0.16.1"
 # Runner summary structs only, as the schema oracle for the callgrind
 # objective's JSON parser (jolt-eval dev-dependency).
 iai-callgrind-runner = "0.16.1"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 
 # Logging
 log = { version = "0.4" }
@@ -428,7 +434,6 @@ jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
-jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }

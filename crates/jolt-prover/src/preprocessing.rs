@@ -4,23 +4,37 @@ use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::JoltVerifierPreprocessing;
 
+#[cfg(feature = "akita")]
+use crate::akita::witness::DirectProgramObjects;
+
 /// The prover-retained committed-program data: the verifier's preprocessing
-/// carries only the chunk/image COMMITMENTS in committed mode, but the prover
+/// carries only the program COMMITMENTS in committed mode, but the prover
 /// still needs the full program (witness generation, the bytecode stage-value
 /// folds, the reduction chunk grids, the stage-8 materialization) and the
-/// commitments' opening hints (the stage-8 joint opening). Mirrors legacy's
+/// commitments' opening material (the stage-8 openings). Mirrors legacy's
 /// `CommittedProgramProverData`.
+///
+/// On the packed (`akita`) build the per-chunk/image plans and hints are
+/// retained in direct bounded-dense program objects built at preprocessing
+/// time, so proving consumes them directly instead of re-deriving them.
 #[derive(Clone)]
 pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     pub full: JoltProgramPreprocessing,
     /// One opening hint per committed bytecode chunk, in chunk order.
+    #[cfg(not(feature = "akita"))]
     pub bytecode_chunk_hints: Vec<PCS::OpeningHint>,
+    #[cfg(not(feature = "akita"))]
     pub program_image_hint: PCS::OpeningHint,
+    /// Direct program objects in canonical order (bytecode chunks, then
+    /// program image); their commitments must match the verifier
+    /// preprocessing's `direct_program_commitments` (stage 0 checks
+    /// fail-closed).
+    #[cfg(feature = "akita")]
+    pub direct_program: DirectProgramObjects<PCS>,
     /// The trace order the chunk commitments' coefficient grids were built
-    /// under at preprocessing time (legacy couples the two through one
-    /// process-global layout). Stage 0 rejects a proof config whose order
-    /// disagrees — the chunk tables stages 6b/8 rebuild would transpose
-    /// against the absorbed commitments and fail only at verification.
+    /// under at preprocessing time. Stage 0 rejects a proof config whose
+    /// order disagrees because the reduction point would address the
+    /// committed grid in the wrong order.
     pub trace_order: TracePolynomialOrder,
 }
 

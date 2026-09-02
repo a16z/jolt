@@ -1,6 +1,6 @@
 //! Address phase of the two-phase program-image (initial RAM) claim-reduction relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
@@ -67,11 +67,11 @@ impl SymbolicSumcheck for AddressPhase {
         TWO_PHASE_DEGREE_BOUND
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(cycle_phase_program_image_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         final_output_expr()
     }
 }
@@ -81,7 +81,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::claim_reductions::program_image::final_program_image_opening;
     use crate::protocols::jolt::ProgramImageClaimReductionPublic;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

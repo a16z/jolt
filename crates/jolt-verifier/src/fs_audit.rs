@@ -26,8 +26,6 @@ pub enum FsScope {
     Stage6b,
     /// Stage 7.
     Stage7,
-    /// Akita reconstruction.
-    Reconstruction,
     /// Final opening checks.
     Stage8,
     /// BlindFold verification.

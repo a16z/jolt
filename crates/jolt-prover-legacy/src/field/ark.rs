@@ -199,6 +199,12 @@ impl JoltField for ark_bn254::Fr {
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        let mut reversed = bytes.to_vec();
+        reversed.reverse();
+        Self::from_bytes(&reversed)
+    }
+
     #[inline]
     fn num_bits(&self) -> u32 {
         <Self as PrimeField>::into_bigint(*self).num_bits()

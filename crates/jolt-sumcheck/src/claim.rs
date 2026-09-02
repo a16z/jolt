@@ -1,6 +1,6 @@
 //! Sumcheck claim: the public statement that the protocol proves.
 
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 pub use jolt_openings::EvaluationClaim;
 
@@ -26,7 +26,7 @@ impl SumcheckStatement {
     }
 }
 
-impl<F: FieldCore> From<&SumcheckClaim<F>> for SumcheckStatement {
+impl<F: Field> From<&SumcheckClaim<F>> for SumcheckStatement {
     fn from(claim: &SumcheckClaim<F>) -> Self {
         Self {
             num_vars: claim.num_vars,
@@ -46,7 +46,7 @@ impl<F: FieldCore> From<&SumcheckClaim<F>> for SumcheckStatement {
 ///   For a product of $k$ multilinear polynomials, `degree = k`.
 /// * `claimed_sum` -- the value $C$ that the prover claims the sum equals.
 #[derive(Clone, Debug)]
-pub struct SumcheckClaim<F: FieldCore> {
+pub struct SumcheckClaim<F: Field> {
     /// Number of Boolean variables in the summation.
     pub num_vars: usize,
     /// Maximum degree of each round polynomial.
@@ -55,7 +55,7 @@ pub struct SumcheckClaim<F: FieldCore> {
     pub claimed_sum: F,
 }
 
-impl<F: FieldCore> SumcheckClaim<F> {
+impl<F: Field> SumcheckClaim<F> {
     /// Construct a sumcheck claim.
     ///
     /// # Panics

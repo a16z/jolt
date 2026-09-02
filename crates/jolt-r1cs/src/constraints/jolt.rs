@@ -1,6 +1,6 @@
 //! Compile-time Jolt R1CS composition.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel, CenteredIntegerDomainError},
     EqPolynomial,
@@ -151,7 +151,7 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
 ];
 
-pub fn spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
+pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let constraints = rv64::rv64_spartan_outer_constraints();
     #[cfg(feature = "field-inline")]
     {
@@ -166,7 +166,7 @@ pub fn spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
     }
 }
 
-pub fn trace_constraints<F: Field>() -> ConstraintMatrices<F> {
+pub fn trace_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let constraints = rv64::rv64_trace_constraints();
     #[cfg(feature = "field-inline")]
     {
@@ -181,18 +181,32 @@ pub fn trace_constraints<F: Field>() -> ConstraintMatrices<F> {
     }
 }
 
-pub fn spartan_outer_row_weights<F: Field>(
+pub fn spartan_outer_row_weights<F: JoltField>(
     uniskip: F,
     stream: F,
 ) -> Result<Vec<F>, CenteredIntegerDomainError> {
     let lagrange_weights = centered_lagrange_evals(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, uniskip)?;
+    // The row-group arrays are typed to the domain size, so only a short
+    // weight vector could make the zips below drop rows silently.
+    debug_assert_eq!(lagrange_weights.len(), SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
     let mut weights = vec![F::zero(); SPARTAN_OUTER_ROW_COUNT];
 
-    for (index, &row) in SPARTAN_OUTER_FIRST_GROUP_ROWS.iter().enumerate() {
-        weights[row] += (F::one() - stream) * lagrange_weights[index];
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "SPARTAN_OUTER_FIRST_GROUP_ROWS entries are compile-time constants below SPARTAN_OUTER_ROW_COUNT"
+    )]
+    for (&row, &lagrange_weight) in SPARTAN_OUTER_FIRST_GROUP_ROWS.iter().zip(&lagrange_weights) {
+        weights[row] += (F::one() - stream) * lagrange_weight;
     }
-    for (index, &row) in SPARTAN_OUTER_SECOND_GROUP_ROWS.iter().enumerate() {
-        weights[row] += stream * lagrange_weights[index];
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "SPARTAN_OUTER_SECOND_GROUP_ROWS entries are compile-time constants below SPARTAN_OUTER_ROW_COUNT"
+    )]
+    for (&row, &lagrange_weight) in SPARTAN_OUTER_SECOND_GROUP_ROWS
+        .iter()
+        .zip(&lagrange_weights)
+    {
+        weights[row] += stream * lagrange_weight;
     }
 
     Ok(weights)
@@ -242,7 +256,7 @@ pub enum JoltSpartanOuterRemainderError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct JoltSpartanOuterRemainder<F: Field> {
+pub struct JoltSpartanOuterRemainder<F: JoltField> {
     tau_kernel: F,
     az_coefficients: Vec<F>,
     bz_coefficients: Vec<F>,
@@ -257,7 +271,7 @@ pub struct JoltSpartanOuterRemainderChallenges<'a, F> {
     pub remainder: &'a [F],
 }
 
-impl<F: Field> JoltSpartanOuterRemainder<F> {
+impl<F: JoltField> JoltSpartanOuterRemainder<F> {
     pub fn new(
         challenges: JoltSpartanOuterRemainderChallenges<'_, F>,
     ) -> Result<Self, JoltSpartanOuterRemainderError> {
@@ -325,7 +339,7 @@ impl<F: Field> JoltSpartanOuterRemainder<F> {
     }
 }
 
-fn spartan_outer_tau_kernel<F: Field>(
+fn spartan_outer_tau_kernel<F: JoltField>(
     tau: &[F],
     uniskip: F,
     remainder_challenges: &[F],
@@ -338,15 +352,18 @@ fn spartan_outer_tau_kernel<F: Field>(
         });
     }
 
-    let tau_high = tau[tau.len() - 1];
+    // `tau` is non-empty: `tau.len() == expected >= 1` is checked above.
+    let Some((&tau_high, tau_low)) = tau.split_last() else {
+        return Err(JoltSpartanOuterRemainderError::ChallengeLengthMismatch { expected, got: 0 });
+    };
     let tau_high_bound_r0 =
         centered_lagrange_kernel(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, tau_high, uniskip)?;
     let mut reversed_challenges = remainder_challenges.to_vec();
     reversed_challenges.reverse();
-    Ok(tau_high_bound_r0 * EqPolynomial::<F>::mle(&tau[..tau.len() - 1], &reversed_challenges))
+    Ok(tau_high_bound_r0 * EqPolynomial::<F>::mle(tau_low, &reversed_challenges))
 }
 
-fn eval_linear_form<F: Field>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
+fn eval_linear_form<F: JoltField>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
     coefficients
         .iter()
         .zip(inputs)
@@ -388,7 +405,7 @@ pub const fn field_inline_input_column(input_index: usize) -> Option<usize> {
 }
 
 #[cfg(feature = "field-inline")]
-fn append_field_inline_columns<F: Field>(
+fn append_field_inline_columns<F: JoltField>(
     base: ConstraintMatrices<F>,
     extension: ConstraintMatrices<F>,
 ) -> ConstraintMatrices<F> {
@@ -406,7 +423,7 @@ fn append_field_inline_columns<F: Field>(
 }
 
 #[cfg(feature = "field-inline")]
-fn remap_rows<F: Field>(rows: Vec<SparseRow<F>>) -> Vec<SparseRow<F>> {
+fn remap_rows<F: JoltField>(rows: Vec<SparseRow<F>>) -> Vec<SparseRow<F>> {
     rows.into_iter()
         .map(|row| {
             row.into_iter()
@@ -428,7 +445,10 @@ fn remap_field_inline_column(column: usize) -> usize {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests may unwind via panic")]
+#[cfg_attr(
+    feature = "field-inline",
+    expect(clippy::expect_used, reason = "tests may unwind via panic")
+)]
 mod tests {
     use super::*;
     #[cfg(feature = "field-inline")]
@@ -439,11 +459,7 @@ mod tests {
         },
         FieldInlineOpFlag, FieldInlineVirtualPolynomial,
     };
-    #[cfg(not(feature = "field-inline"))]
-    use jolt_claims::protocols::jolt::{
-        geometry::spartan::SpartanOuterDimensions, SpartanOuterPublic,
-    };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use num_traits::Zero;
 
@@ -500,86 +516,6 @@ mod tests {
             spartan_outer_opening_columns(),
             (rv64::V_LEFT_INSTRUCTION_INPUT..=rv64::NUM_R1CS_INPUTS).collect::<Vec<_>>()
         );
-    }
-
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn default_spartan_outer_remainder_matches_rv64() {
-        let dimensions = SpartanOuterDimensions::rv64(3);
-        let tau = [
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(4),
-            Fr::from_u64(5),
-            Fr::from_u64(6),
-        ];
-        let remainder = [
-            Fr::from_u64(7),
-            Fr::from_u64(8),
-            Fr::from_u64(9),
-            Fr::from_u64(10),
-        ];
-        let openings = (1..=rv64::NUM_R1CS_INPUTS as u64)
-            .map(Fr::from_u64)
-            .collect::<Vec<_>>();
-
-        let rv64_remainder = rv64::Rv64SpartanOuterRemainder::new(
-            &dimensions,
-            rv64::Rv64SpartanOuterRemainderChallenges {
-                tau: &tau,
-                uniskip: Fr::from_u64(11),
-                remainder: &remainder,
-            },
-        )
-        .expect("RV64 remainder derives");
-        let composed_remainder =
-            JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-                tau: &tau,
-                uniskip: Fr::from_u64(11),
-                remainder: &remainder,
-            })
-            .expect("composed remainder derives");
-
-        assert_eq!(
-            composed_remainder
-                .expected_output_claim(&openings)
-                .expect("composed output claim evaluates"),
-            rv64_remainder
-                .expected_output_claim(&openings)
-                .expect("RV64 output claim evaluates")
-        );
-
-        let composed_public = composed_remainder.public_coefficients();
-        let rv64_public = rv64_remainder
-            .public_claims(&dimensions)
-            .expect("RV64 public coefficients derive");
-        assert_eq!(composed_public.len(), rv64_public.len());
-        for ((composed_id, composed_value), (rv64_id, rv64_value)) in
-            composed_public.into_iter().zip(rv64_public)
-        {
-            let ids_match = match (composed_id, rv64_id) {
-                (JoltSpartanOuterPublic::TauKernel, SpartanOuterPublic::TauKernel) => true,
-                (
-                    JoltSpartanOuterPublic::AzWeight(index),
-                    SpartanOuterPublic::AzWeight(rv64_index),
-                ) => {
-                    assert_eq!(index, rv64_index);
-                    true
-                }
-                (
-                    JoltSpartanOuterPublic::BzWeight(index),
-                    SpartanOuterPublic::BzWeight(rv64_index),
-                ) => {
-                    assert_eq!(index, rv64_index);
-                    true
-                }
-                (JoltSpartanOuterPublic::AzConstant, SpartanOuterPublic::AzConstant) => true,
-                (JoltSpartanOuterPublic::BzConstant, SpartanOuterPublic::BzConstant) => true,
-                _ => false,
-            };
-            assert!(ids_match, "public coefficient kind mismatch");
-            assert_eq!(composed_value, rv64_value);
-        }
     }
 
     #[cfg(feature = "field-inline")]
@@ -645,6 +581,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
     fn field_inline_spartan_openings_match_appended_column_order() {
         assert_eq!(
             FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
@@ -739,6 +676,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
     fn field_inline_composed_constraints_share_constant_column() {
         let composed = trace_constraints::<Fr>();
         let mut witness = vec![Fr::zero(); composed.num_vars];

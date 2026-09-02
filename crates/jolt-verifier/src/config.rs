@@ -1,9 +1,10 @@
 //! Verifier-selected protocol configuration.
 //!
-//! Both protocol axes are fixed at compile time — the `zk` feature selects
-//! BlindFold, the `akita` feature selects the packed commitment mode — so one
-//! compiled verifier runs exactly one protocol. A proof self-describes its
-//! axes and [`validate_proof_config`] rejects a mismatch fail-closed.
+//! The protocol choices are fixed at compile time: `zk` selects BlindFold,
+//! while `akita` selects packed commitments and little-endian scalar
+//! challenges. One compiled verifier therefore runs exactly one protocol. A
+//! proof self-describes these choices and [`validate_proof_config`] rejects a
+//! mismatch fail-closed.
 
 use serde::{Deserialize, Serialize};
 
@@ -40,15 +41,23 @@ pub enum CommitmentConfig {
     /// Per-polynomial commitments, RLC batch opening (requires additive
     /// homomorphism).
     Homomorphic,
-    /// Packed one-hot witnesses per commitment object, reduction-sumcheck
-    /// batch opening (no homomorphism required).
+    /// Packed one-hot trace and dense advice commitments with heterogeneous
+    /// Akita opening and verification.
     Packed,
+}
+
+/// Byte order used to decode scalar Fiat-Shamir challenges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScalarChallengeEndianness {
+    Big,
+    Little,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
     pub commitment: CommitmentConfig,
+    pub scalar_challenge_endianness: ScalarChallengeEndianness,
     /// The ISA axis: present only in implicit-carry builds so the feature-off
     /// wire format is unchanged. Cross-build proofs fail closed at
     /// deserialization (the config frames differ).
@@ -74,6 +83,7 @@ impl JoltProtocolConfig {
                 ZkConfig::Transparent
             },
             commitment: SELECTED_COMMITMENT_CONFIG,
+            scalar_challenge_endianness: SELECTED_SCALAR_CHALLENGE_ENDIANNESS,
             #[cfg(feature = "implicit-carry")]
             isa: IsaConfig::Rv64imacImplicitCarry,
         }
@@ -92,10 +102,19 @@ pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Packe
 #[cfg(not(feature = "akita"))]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Homomorphic;
 
+#[cfg(feature = "akita")]
+pub const SELECTED_SCALAR_CHALLENGE_ENDIANNESS: ScalarChallengeEndianness =
+    ScalarChallengeEndianness::Little;
+
+#[cfg(not(feature = "akita"))]
+pub const SELECTED_SCALAR_CHALLENGE_ENDIANNESS: ScalarChallengeEndianness =
+    ScalarChallengeEndianness::Big;
+
 /// The one protocol this build verifies.
 pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
     zk: SELECTED_ZK_CONFIG,
     commitment: SELECTED_COMMITMENT_CONFIG,
+    scalar_challenge_endianness: SELECTED_SCALAR_CHALLENGE_ENDIANNESS,
     #[cfg(feature = "implicit-carry")]
     isa: IsaConfig::Rv64imacImplicitCarry,
 };
@@ -112,4 +131,20 @@ pub fn validate_proof_config(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_scalar_challenge_endianness_mismatch() {
+        let mut proof_config = JOLT_VERIFIER_CONFIG;
+        proof_config.scalar_challenge_endianness = match proof_config.scalar_challenge_endianness {
+            ScalarChallengeEndianness::Big => ScalarChallengeEndianness::Little,
+            ScalarChallengeEndianness::Little => ScalarChallengeEndianness::Big,
+        };
+
+        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, proof_config).is_err());
+    }
 }

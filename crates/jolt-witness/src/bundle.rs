@@ -1,7 +1,7 @@
 //! Consumer bundles: a consumer's witness data flow, stated as a type.
 
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
 use crate::witnesses::WitnessEnv;
 use crate::WitnessError;
@@ -32,7 +32,7 @@ pub trait WitnessBundle: Sized {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_riscv::CircuitFlags;
 
     use super::WitnessBundle;

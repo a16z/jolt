@@ -12,13 +12,13 @@
 //! `H(state ‖ 28 zero bytes ‖ n_rounds_be ‖ payload)` — pinned by the
 //! parity test at the bottom of this file.
 
-use jolt_field::TranscriptChallenge;
+use jolt_field::CanonicalEncoding;
 use jolt_transcript::{LegacyBlake2bTranscript, Transcript as VerifierTranscript};
 
 use super::Transcript;
 use crate::field::JoltField;
 
-impl<Challenge: TranscriptChallenge> Transcript for LegacyBlake2bTranscript<Challenge> {
+impl<Challenge: CanonicalEncoding> Transcript for LegacyBlake2bTranscript<Challenge> {
     fn new(label: &'static [u8]) -> Self {
         // Identical label framing on both engines: the label is right-padded
         // with zeros into one 32-byte block and hashed as the initial state.
@@ -76,8 +76,7 @@ impl<Challenge: TranscriptChallenge> Transcript for LegacyBlake2bTranscript<Chal
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F {
         let mut buf = [0u8; 16];
         self.raw_challenge_bytes(&mut buf);
-        buf.reverse();
-        F::from_bytes(&buf)
+        F::from_scalar_challenge_bytes(&buf)
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {

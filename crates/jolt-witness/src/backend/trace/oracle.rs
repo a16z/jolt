@@ -24,9 +24,6 @@ use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 /// never derived from the execution trace.
 pub(crate) const COMMITTED_PROGRAM_REASON: &str =
     "committed-program polynomial served from preprocessing, not the execution trace";
-/// Lattice-mode slots of the packed witness; base mode never constructs them.
-pub(crate) const LATTICE_REASON: &str =
-    "lattice-mode packed-witness polynomial; base mode never constructs it";
 /// Openings produced by kernels during proving (owned by the proof session).
 pub(crate) const PROTOCOL_INTERMEDIATE_REASON: &str =
     "protocol intermediate produced during proving, never served by a witness backend";
@@ -49,7 +46,7 @@ fn not_served(id: JoltPolynomialId, reason: &'static str) -> WitnessError {
     }
 }
 
-impl<T: TraceSource + Clone> TraceBackend<T> {
+impl<T: TraceSource> TraceBackend<T> {
     pub(crate) fn shape_of(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         use JoltCommittedPolynomial as C;
         use JoltVirtualPolynomial as V;
@@ -100,18 +97,11 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::UnsignedIncChunk(_)
-                | C::UnsignedIncMsb
-                | C::TrustedAdviceBytes
-                | C::UntrustedAdviceBytes
-                | C::BytecodeRegisterSelector { .. }
-                | C::BytecodeCircuitFlag { .. }
-                | C::BytecodeInstructionFlag { .. }
-                | C::BytecodeLookupSelector { .. }
-                | C::BytecodeRafFlag { .. }
-                | C::BytecodeUnexpandedPcBytes { .. }
-                | C::BytecodeImmBytes { .. }
-                | C::ProgramImageBytes => Err(not_served(id, LATTICE_REASON)),
+                C::BalancedIncDigit(index) => {
+                    require_index(index, self.balanced_inc_digit_count()?)?;
+                    Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
+                }
+                C::BalancedIncCarry => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => Ok(Shape::new(self.ram_read_write_log_rows()?, Dense)),
@@ -164,13 +154,24 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 | V::ProgramImageInitContributionRw => {
                     Err(not_served(id, PROTOCOL_INTERMEDIATE_REASON))
                 }
-                V::FusedInc => Err(not_served(id, LATTICE_REASON)),
+                V::FusedInc => Ok(Shape::new(self.trace_log_rows(), Compact)),
             },
         }
     }
+
+    fn balanced_inc_digit_count(&self) -> Result<usize, WitnessError> {
+        jolt_claims::protocols::jolt::lattice::BalancedIncChunking::new(
+            self.config.one_hot.committed_chunk_bits(),
+        )
+        .map(|chunking| chunking.chunk_count())
+        .map_err(|error| WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: error.to_string(),
+        })
+    }
 }
 
-impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> {
+impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         self.shape_of(id)
     }
@@ -208,18 +209,17 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::UnsignedIncChunk(_)
-                | C::UnsignedIncMsb
-                | C::TrustedAdviceBytes
-                | C::UntrustedAdviceBytes
-                | C::BytecodeRegisterSelector { .. }
-                | C::BytecodeCircuitFlag { .. }
-                | C::BytecodeInstructionFlag { .. }
-                | C::BytecodeLookupSelector { .. }
-                | C::BytecodeRafFlag { .. }
-                | C::BytecodeUnexpandedPcBytes { .. }
-                | C::BytecodeImmBytes { .. }
-                | C::ProgramImageBytes => Err(not_served(id, LATTICE_REASON)),
+                C::BalancedIncDigit(index) => self.materialize_balanced_inc_one_hot(
+                    crate::witnesses::BalancedIncColumn::Digit {
+                        width: self.config.one_hot.committed_chunk_bits(),
+                        index,
+                    },
+                ),
+                C::BalancedIncCarry => self.materialize_balanced_inc_one_hot(
+                    crate::witnesses::BalancedIncColumn::Carry {
+                        width: self.config.one_hot.committed_chunk_bits(),
+                    },
+                ),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => self.materialize_ram_read_write_virtual(virtual_id),
@@ -274,7 +274,7 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 | V::ProgramImageInitContributionRw => {
                     Err(not_served(id, PROTOCOL_INTERMEDIATE_REASON))
                 }
-                V::FusedInc => Err(not_served(id, LATTICE_REASON)),
+                V::FusedInc => self.materialize_cycle::<F, crate::witnesses::FusedInc>(),
             },
         }
     }

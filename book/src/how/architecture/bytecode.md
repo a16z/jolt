@@ -6,7 +6,7 @@ To prove the correctness of these lookups, we use the [Shout](../twist-shout.md)
 
 One distinguishing feature of the bytecode Shout instance is that we have multiple instances of the read-checking and $\widetilde{\textsf{raf}}$-evaluation sumchecks.
 Intuitively, the bytecode serves as the "ground truth" of what's being executed, so one would expect many virtual polynomial claims to eventually lead back to the bytecode.
-And this holds in practice –– in the Jolt sumcheck [DAG](./architecture/architecture.md##sumchecks-as-nodes) diagram, we see that there are five stages of read-checking claims pointing to the bytecode read-checking node, and two $\widetilde{\textsf{raf}}$ evaluation claims folded into stages 1 and 3.
+And this holds in practice –– in the Jolt sumcheck [DAG](./architecture.md#sumchecks-as-nodes) diagram, we see that there are five stages of read-checking claims pointing to the bytecode read-checking node, and two $\widetilde{\textsf{raf}}$ evaluation claims folded into stages 1 and 3.
 
 Each stage has its own unique opening point, so having in-edges of different colors implies that multiple instances of that sumcheck must be run in [parallel](../optimizations/batched-sumcheck.md) to prove the different claims.
 

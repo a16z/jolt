@@ -25,7 +25,7 @@ pub use jolt_claims::protocols::jolt::relations::spartan::{
 };
 use jolt_claims::protocols::jolt::{relations, JoltDerivedId, JoltRelationId, SpartanOuterPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_r1cs::constraints::jolt::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
 };
@@ -36,7 +36,7 @@ use crate::VerifierError;
 /// Wire the consumed opening *value* from the Spartan outer uni-skip's reduced output
 /// claim: only the value feeds the input claim (the output point comes from this
 /// relation's own sumcheck point).
-pub fn outer_remainder_input_values_from_uniskip_output<F: Field>(
+pub fn outer_remainder_input_values_from_uniskip_output<F: JoltField>(
     uniskip_output_claim: F,
 ) -> OuterRemainderInputClaims<F> {
     OuterRemainderInputClaims {
@@ -57,11 +57,17 @@ struct OuterRemainderCoefficients<F> {
     bz_constant: F,
 }
 
-impl<F: Field> OuterRemainderCoefficients<F> {
+impl<F: JoltField> OuterRemainderCoefficients<F> {
     fn from_public_coefficients(
         variable_count: usize,
         coefficients: Vec<(JoltSpartanOuterPublic, F)>,
-    ) -> Self {
+    ) -> Result<Self, VerifierError> {
+        fn weight_index_failed(side: &str, index: usize, variable_count: usize) -> VerifierError {
+            public_input_failed(format!(
+                "Spartan outer {side} weight index {index} exceeds the variable count \
+                 {variable_count}"
+            ))
+        }
         let mut tau_kernel = F::zero();
         let mut az_weights = vec![F::zero(); variable_count];
         let mut bz_weights = vec![F::zero(); variable_count];
@@ -70,19 +76,27 @@ impl<F: Field> OuterRemainderCoefficients<F> {
         for (id, value) in coefficients {
             match id {
                 JoltSpartanOuterPublic::TauKernel => tau_kernel = value,
-                JoltSpartanOuterPublic::AzWeight(index) => az_weights[index] = value,
-                JoltSpartanOuterPublic::BzWeight(index) => bz_weights[index] = value,
+                JoltSpartanOuterPublic::AzWeight(index) => {
+                    *az_weights
+                        .get_mut(index)
+                        .ok_or_else(|| weight_index_failed("Az", index, variable_count))? = value;
+                }
+                JoltSpartanOuterPublic::BzWeight(index) => {
+                    *bz_weights
+                        .get_mut(index)
+                        .ok_or_else(|| weight_index_failed("Bz", index, variable_count))? = value;
+                }
                 JoltSpartanOuterPublic::AzConstant => az_constant = value,
                 JoltSpartanOuterPublic::BzConstant => bz_constant = value,
             }
         }
-        Self {
+        Ok(Self {
             tau_kernel,
             az_weights,
             bz_weights,
             az_constant,
             bz_constant,
-        }
+        })
     }
 
     fn resolve(&self, id: SpartanOuterPublic) -> Option<F> {
@@ -97,7 +111,7 @@ impl<F: Field> OuterRemainderCoefficients<F> {
 }
 
 #[derive(Clone)]
-pub struct OuterRemainder<F: Field> {
+pub struct OuterRemainder<F: JoltField> {
     symbolic: relations::spartan::OuterRemainder,
     variable_count: usize,
     /// The stage-1 `tau` draw and the uni-skip reduction challenge — two of the
@@ -115,7 +129,7 @@ pub struct OuterRemainder<F: Field> {
     coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
 }
 
-impl<F: Field> OuterRemainder<F> {
+impl<F: JoltField> OuterRemainder<F> {
     pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
         let variable_count = dimensions.variables().len();
         Self {
@@ -151,12 +165,13 @@ impl<F: Field> OuterRemainder<F> {
                 remainder: bound_point,
             })
             .map_err(public_input_failed)?;
-            let _ = self
-                .coefficients
-                .set(OuterRemainderCoefficients::from_public_coefficients(
-                    self.variable_count,
-                    formula.public_coefficients(),
-                ));
+            let coefficients = OuterRemainderCoefficients::from_public_coefficients(
+                self.variable_count,
+                formula.public_coefficients(),
+            )?;
+            // An already-set cell means another call initialized it from the
+            // same deterministic inputs; discarding the Err keeps first-write-wins.
+            drop(self.coefficients.set(coefficients));
         }
         self.coefficients
             .get()
@@ -171,7 +186,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
     type Symbolic = relations::spartan::OuterRemainder;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -260,12 +275,16 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::OutputClaims;
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::jolt::JoltOpeningId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     /// The produced `OuterRemainderOutputClaims` field (declaration) order is the
     /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so the generated absorb

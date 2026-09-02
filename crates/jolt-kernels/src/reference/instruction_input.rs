@@ -15,7 +15,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::{
     rs1_value, rs2_value, unexpanded_pc,
 };
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::JoltWitnessPlane;
@@ -25,7 +25,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, InstructionInput<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

@@ -32,7 +32,8 @@ akita = [
   "dep:akita-config",
   "dep:akita-field",
   "dep:jolt-akita",
-  "jolt-claims?/akita",
+  "dep:jolt-claims",
+  "jolt-claims/akita",
   "jolt-field/akita",
   "jolt-verifier/akita",
 ]

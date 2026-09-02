@@ -9,8 +9,8 @@
 //!
 //! - The stream delivers *superchunks* (many `row_width` windows at once), so
 //!   one extraction pass fans out to a `(column × window)` rayon grid via the
-//!   [`StreamingCommitment`] batch entry points (`feed_i128_rows_with`,
-//!   `process_one_hot_chunks_with`).
+//!   [`StreamingCommitment`] batch entry points (`feed_i128_rows`,
+//!   `process_one_hot_chunks`).
 //! - Tier-2 finishes (one multi-pairing per column) run in parallel across
 //!   columns.
 //!
@@ -20,43 +20,28 @@
 //! commits delegate to the reference kernel unchanged.
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-
-use crate::commitment::{finish_streamed, finish_streamed_one_hot, ModeStreamingCommitment};
 use jolt_witness::{
-    stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, RowSource, StreamConsumer,
+    stream_witnesses, JoltWitnessOracle, RandomAccessRows, RowSource, StreamConsumer, WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "parallel")]
-use super::rows::RandomAccessRows;
 use crate::commitment::{
-    CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
+    finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
+    CommittedColumnsWitness, ModeStreamingCommitment, WitnessCommitment,
 };
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 
-/// Superchunk ceiling — the measured 64-thread optimum. The dominant
-/// stage-0 wall cost on a many-core host is the per-superchunk join (its
-/// critical path is one window's serial MSM), so fewer, larger superchunks
-/// win: 2^17 → 2^21 measured 59.3s → 41.1s whole-prove at 2^25 on 64
-/// threads.
+/// Superchunk ceiling — the measured 64-thread optimum.
 #[cfg(feature = "parallel")]
 const SUPERCHUNK_CYCLES_MAX: usize = 1 << 21;
 
-/// Cycles per superchunk, scaled to the pool: the measured optimum allots
-/// 2^15 cycles per thread at the 64-thread point, and a smaller pool has
-/// proportionally fewer concurrent Dory windows to keep busy. The only
-/// staging that scales with the superchunk is the extracted bundle buffer
-/// (80 B/cycle — [`CommittedColumnsWitness`] is three 16-byte scalars plus
-/// two niche-free 16-byte `Option`s — × two reused buffers ≈ 320 MiB at the
-/// 2^21 ceiling), a needless reservation on a 10-core host; columns feed
-/// the commit windows by closure. The floor keeps the pre-many-core default
-/// (2^17). Superchunk size never reaches the wire: per column the fed
-/// windows, their order, and the finish calls are identical at any size
-/// (pinned by the whole-trace and single-window arms of the module test).
+/// Cycles per superchunk, scaled to the pool. The extracted bundle is 80
+/// bytes per cycle and the pipeline retains two buffers, so applying the
+/// 64-thread optimum to every host needlessly reserves about 320 MiB.
 fn superchunk_cycles() -> usize {
     #[cfg(feature = "parallel")]
     {
@@ -66,24 +51,25 @@ fn superchunk_cycles() -> usize {
     }
     #[cfg(not(feature = "parallel"))]
     {
-        // Serial builds have no join to amortize; the floor minimizes
-        // staging.
         1 << 17
     }
 }
 
+#[cfg(feature = "parallel")]
+const COLLECT_PAR_CHUNK: usize = 1 << 12;
+
 impl<F, PCS> CommitWitness<F, PCS> for OptimizedBackend
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     // The backend-neutral `commit_witness` span lives at the stage-0 call
-    // boundary (see the reference kernel) — no per-impl span, or the label
-    // would double-count under this backend.
+    // site. A per-implementation span with the same label would double its
+    // aggregated duration in profiling summaries.
     fn commit_witness(
         &self,
         session: &mut ProofSession,
-        source: &dyn JoltWitnessPlane<F>,
+        source: &dyn RowSource,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
@@ -118,14 +104,14 @@ where
 /// it to force multi-delivery sequencing; production uses
 /// [`superchunk_cycles`]).
 fn commit_streaming<F, PCS>(
-    source: &dyn JoltWitnessPlane<F>,
+    source: &dyn RowSource,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
     superchunk_cycles: usize,
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
@@ -138,8 +124,10 @@ where
     // against the commit grid of the current one; re-emulating sources
     // alternate the two phases through the sequential walk.
     #[cfg(feature = "parallel")]
-    if let Some(access) = RandomAccessRows::new(source, cycles)? {
-        return commit_pipelined(&access, ids, grid, setup, superchunk);
+    if let Some(access) = source.random_access() {
+        if cycles <= access.cycles() {
+            return commit_pipelined(&access, ids, grid, setup, superchunk);
+        }
     }
     commit_streamed(source, ids, grid, setup, superchunk)
 }
@@ -154,7 +142,7 @@ fn commit_streamed<F, PCS>(
     superchunk: usize,
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
@@ -164,10 +152,7 @@ where
         &kinds, row_width, grid, setup,
     ),);
     stream_witnesses(source, 0..cycles, superchunk, &mut consumers)?;
-    Ok(WitnessCommitment::<PCS>::package(
-        consumers.0.finish(setup),
-        ids,
-    ))
+    Ok(package::<F, PCS>(consumers.0.finish(setup), ids))
 }
 
 /// The pipelined commit pass over a slice-backed source: while the column
@@ -177,15 +162,41 @@ where
 /// the chunk walk's — the pipeline only overlaps extraction with group
 /// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
+fn collect_range_into(
+    access: &RandomAccessRows,
+    range: std::ops::Range<usize>,
+    out: &mut Vec<CommittedColumnsWitness>,
+) -> Result<(), WitnessError> {
+    out.clear();
+    let start = range.start;
+    let count = range.end - start;
+    out.reserve(count);
+    let spare = &mut out.spare_capacity_mut()[..count];
+    spare
+        .par_chunks_mut(COLLECT_PAR_CHUNK)
+        .enumerate()
+        .try_for_each(|(chunk, destination)| {
+            let base = start + chunk * COLLECT_PAR_CHUNK;
+            for (offset, slot) in destination.iter_mut().enumerate() {
+                let _ = slot.write(access.window(base + offset)?);
+            }
+            Ok::<_, WitnessError>(())
+        })?;
+    // SAFETY: every slot was initialized above; the row type is `Copy`.
+    unsafe { out.set_len(count) };
+    Ok(())
+}
+
+#[cfg(feature = "parallel")]
 fn commit_pipelined<F, PCS>(
-    access: &RandomAccessRows<'_>,
+    access: &RandomAccessRows,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
     superchunk: usize,
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
@@ -196,13 +207,13 @@ where
     let mut front: Vec<CommittedColumnsWitness> = Vec::new();
     let mut back: Vec<CommittedColumnsWitness> = Vec::new();
     let mut end = superchunk.min(cycles);
-    super::rows::collect_range_into(access, 0..end, &mut front)?;
+    collect_range_into(access, 0..end, &mut front)?;
     loop {
         let next_end = (end + superchunk).min(cycles);
         let (fill, ()) = rayon::join(
             || {
                 if end < next_end {
-                    super::rows::collect_range_into(access, end..next_end, &mut back).map(|()| true)
+                    collect_range_into(access, end..next_end, &mut back).map(|()| true)
                 } else {
                     Ok(false)
                 }
@@ -215,25 +226,27 @@ where
         core::mem::swap(&mut front, &mut back);
         end = next_end;
     }
-    Ok(WitnessCommitment::<PCS>::package(state.finish(setup), ids))
+    Ok(package::<F, PCS>(state.finish(setup), ids))
 }
 
-impl<PCS: CommitmentScheme + ModeStreamingCommitment> WitnessCommitment<PCS> {
-    /// Zips finished per-column outputs back to their polynomial ids.
-    fn package(
-        outputs: Vec<(PCS::Output, PCS::OpeningHint)>,
-        ids: &[JoltCommittedPolynomial],
-    ) -> Vec<WitnessCommitment<PCS>> {
-        outputs
-            .into_iter()
-            .zip(ids)
-            .map(|((commitment, hint), &id)| WitnessCommitment {
-                id,
-                commitment,
-                hint,
-            })
-            .collect()
-    }
+/// Zips finished per-column outputs back to their polynomial ids.
+fn package<F, PCS>(
+    outputs: Vec<(PCS::Output, PCS::OpeningHint)>,
+    ids: &[JoltCommittedPolynomial],
+) -> Vec<WitnessCommitment<PCS>>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
+{
+    outputs
+        .into_iter()
+        .zip(ids)
+        .map(|((commitment, hint), &id)| WitnessCommitment {
+            id,
+            commitment,
+            hint,
+        })
+        .collect()
 }
 
 /// One column's in-progress commitment — the reference kernel's states,
@@ -253,14 +266,15 @@ enum ColumnCommitState<PCS: ModeStreamingCommitment> {
 /// The superchunked commit consumer: every column advances over the same
 /// window sequence as the reference kernel, columns in parallel and windows
 /// in parallel inside each batch call.
-struct BatchedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> {
+struct BatchedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
+{
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     row_width: usize,
     setup: &'a PCS::ProverSetup,
 }
 
-impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
     BatchedColumns<'a, F, PCS>
 {
     fn begin(
@@ -313,7 +327,7 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
     }
 }
 
-impl<F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> StreamConsumer
+impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> StreamConsumer
     for BatchedColumns<'_, F, PCS>
 {
     type Witness = CommittedColumnsWitness;
@@ -368,9 +382,9 @@ mod tests {
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_witness::JoltWitnessPlane;
+    use jolt_witness::RowSource;
 
-    use super::{commit_streamed, commit_streaming, RandomAccessRows};
+    use super::{commit_streamed, commit_streaming};
     use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
     use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
     use crate::{OptimizedBackend, ProofSession, ReferenceBackend};
@@ -438,7 +452,7 @@ mod tests {
                 "fixture must exercise the streaming path with multiple windows"
             );
             let setup = DoryScheme::setup_prover(grid.total_vars);
-            let source: &dyn JoltWitnessPlane<Fr> = witness;
+            let source: &dyn RowSource = witness;
 
             let reference = <ReferenceBackend as CommitWitness<Fr, DoryScheme>>::commit_witness(
                 &ReferenceBackend,
@@ -475,9 +489,7 @@ mod tests {
             assert_same_commitments(&reference, &streamed);
             #[cfg(feature = "parallel")]
             {
-                let access = RandomAccessRows::new(source, 1usize << shape.log_t)
-                    .unwrap()
-                    .unwrap();
+                let access = source.random_access().unwrap();
                 let pipelined = super::commit_pipelined::<Fr, DoryScheme>(
                     &access,
                     &ids,

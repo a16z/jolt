@@ -384,17 +384,14 @@ impl RISCVTrace for INLINE {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_riscv::JoltInstructionKind as Kind;
 
     const TEST_INLINE_WORD: u32 = 0xfc00_602b;
     fn test_sequence(
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        asm.emit_vshift_i::<jolt_riscv::instructions::VirtualRotriw>(
-            5,
-            operands.rs1,
-            0xffff_ffff_0000_0000,
-        );
+        asm.emit_i(Kind::VirtualROTRIW, 5, operands.rs1, 0xffff_ffff_0000_0000);
         asm.finalize()
     }
 

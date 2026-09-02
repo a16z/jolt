@@ -81,7 +81,7 @@ pub fn prove<
         trusted_advice_commitment,
         trusted_advice_hint,
         None,
-    );
+    )?;
     let io_device = prover.program_io.clone();
     let (proof, debug_info) = prover.prove()?;
     output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);

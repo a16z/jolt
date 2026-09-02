@@ -7,64 +7,6 @@ use rayon::prelude::*;
 
 use super::Bn254G1;
 
-/// Performs batch addition of G1 affine points using Montgomery's inversion trick.
-#[cfg(test)]
-fn batch_g1_additions_affine(bases: &[G1Affine], indices: &[usize]) -> G1Affine {
-    if indices.is_empty() {
-        return G1Affine::identity();
-    }
-
-    if indices.len() == 1 {
-        return bases[indices[0]];
-    }
-
-    let mut points: Vec<G1Affine> = Vec::with_capacity(indices.len());
-    points.extend(indices.iter().map(|&i| bases[i]));
-
-    while points.len() > 1 {
-        let current_len = points.len();
-        let pairs_count = current_len / 2;
-        let has_odd = current_len % 2 == 1;
-
-        let denominators: Vec<_> = (0..pairs_count)
-            .into_par_iter()
-            .map(|i| {
-                let p1 = points[i * 2];
-                let p2 = points[i * 2 + 1];
-                p2.x - p1.x
-            })
-            .collect();
-
-        let mut inverses = denominators;
-        ark_ff::fields::batch_inversion(&mut inverses);
-        debug_assert!(
-            inverses.iter().all(|inv| !inv.is_zero()),
-            "batch addition requires distinct x-coordinates per pair",
-        );
-
-        let mut new_points: Vec<G1Affine> = (0..pairs_count)
-            .into_par_iter()
-            .zip(inverses.par_iter())
-            .map(|(i, inv)| {
-                let p1 = points[i * 2];
-                let p2 = points[i * 2 + 1];
-                let lambda = (p2.y - p1.y) * inv;
-                let x3 = lambda * lambda - p1.x - p2.x;
-                let y3 = lambda * (p1.x - x3) - p1.y;
-                G1Affine::new_unchecked(x3, y3)
-            })
-            .collect();
-
-        if has_odd {
-            new_points.push(points[current_len - 1]);
-        }
-
-        points = new_points;
-    }
-
-    points[0]
-}
-
 /// Performs multiple batch additions of G1 points in parallel,
 /// sharing a single batch inversion across all sets per round.
 ///
@@ -79,13 +21,7 @@ pub fn batch_g1_additions_multi(bases: &[Bn254G1], indices_sets: &[Vec<usize>]) 
         return vec![];
     }
 
-    // SAFETY: Bn254G1 is #[repr(transparent)] over G1Projective — identical layout.
-    let projective: &[ark_bn254::G1Projective] = unsafe {
-        std::slice::from_raw_parts(
-            bases.as_ptr().cast::<ark_bn254::G1Projective>(),
-            bases.len(),
-        )
-    };
+    let projective: &[ark_bn254::G1Projective] = Bn254G1::as_inner_slice(bases);
     let affines = ark_bn254::G1Projective::normalize_batch(projective);
 
     batch_g1_additions_multi_affine_inner(&affines, indices_sets)
@@ -122,6 +58,10 @@ fn batch_g1_additions_multi_affine_inner(
         return vec![];
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "in-bounds indices are a documented precondition of the public API"
+    )]
     let mut working_sets: Vec<Vec<G1Affine>> = indices_sets
         .par_iter()
         .map(|indices| {
@@ -145,6 +85,10 @@ fn batch_g1_additions_multi_affine_inner(
         let mut all_denominators = Vec::with_capacity(total_pairs);
         let mut pair_info = Vec::with_capacity(total_pairs);
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "pair_idx < set.len() / 2, so both pair indices are in bounds"
+        )]
         for (set_idx, set) in working_sets.iter().enumerate() {
             let pairs_in_set = set.len() / 2;
             for pair_idx in 0..pairs_in_set {
@@ -167,6 +111,11 @@ fn batch_g1_additions_multi_affine_inner(
             .map(|set| Vec::with_capacity(set.len().div_ceil(2)))
             .collect();
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "pair_info entries were enumerated from these same sets, and \
+                      new_working_sets has one entry per working set"
+        )]
         for ((set_idx, pair_idx), inv) in pair_info.iter().zip(inverses.iter()) {
             let set = &working_sets[*set_idx];
             let p1 = set[*pair_idx * 2];
@@ -177,6 +126,11 @@ fn batch_g1_additions_multi_affine_inner(
             new_working_sets[*set_idx].push(G1Affine::new_unchecked(x3, y3));
         }
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "odd length makes the last element valid, and new_working_sets \
+                      has one entry per working set"
+        )]
         for (set_idx, set) in working_sets.iter().enumerate() {
             if set.len() % 2 == 1 {
                 new_working_sets[set_idx].push(set[set.len() - 1]);
@@ -186,44 +140,33 @@ fn batch_g1_additions_multi_affine_inner(
         working_sets = new_working_sets;
     }
 
-    working_sets.into_iter().map(|set| set[0]).collect()
+    // Every working set is non-empty by construction (empty index sets become
+    // `[identity]`), and the identity is the correct sum of an empty set anyway.
+    working_sets
+        .into_iter()
+        .map(|set| set.first().copied().unwrap_or_else(G1Affine::identity))
+        .collect()
 }
 
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use ark_ec::AffineRepr;
     use ark_std::rand::RngCore;
     use ark_std::UniformRand;
 
     #[test]
-    fn test_batch_addition_correctness() {
+    fn multi_handles_empty_and_singleton_sets() {
         let mut rng = ark_std::test_rng();
-        let bases: Vec<G1Affine> = (0..10).map(|_| G1Affine::rand(&mut rng)).collect();
-        let indices = vec![2, 3, 4, 5, 6, 7];
+        let bases: Vec<G1Affine> = (0..4).map(|_| G1Affine::rand(&mut rng)).collect();
 
-        let batch_result = batch_g1_additions_affine(&bases, &indices);
+        assert!(batch_g1_additions_multi_affine(&bases, &[]).is_empty());
 
-        let mut expected = G1Affine::identity();
-        for &idx in &indices {
-            expected = (expected + bases[idx]).into();
-        }
-        assert_eq!(batch_result, expected);
-    }
-
-    #[test]
-    fn test_empty_indices() {
-        let bases: Vec<G1Affine> = vec![G1Affine::generator(); 5];
-        let result = batch_g1_additions_affine(&bases, &[]);
-        assert_eq!(result, G1Affine::identity());
-    }
-
-    #[test]
-    fn test_single_index() {
-        let mut rng = ark_std::test_rng();
-        let bases: Vec<G1Affine> = (0..5).map(|_| G1Affine::rand(&mut rng)).collect();
-        let result = batch_g1_additions_affine(&bases, &[2]);
-        assert_eq!(result, bases[2]);
+        let results = batch_g1_additions_multi_affine(&bases, &[vec![], vec![2], vec![0, 3]]);
+        assert_eq!(results[0], G1Affine::identity());
+        assert_eq!(results[1], bases[2]);
+        let pair_sum: G1Affine = (bases[0] + bases[3]).into();
+        assert_eq!(results[2], pair_sum);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 1 verification.
 
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,7 @@ use crate::VerifierError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct Stage1OutputClaims<F: Field> {
+pub struct Stage1OutputClaims<F: JoltField> {
     pub uniskip_output_claim: F,
     pub outer: Stage1BatchOutputClaims<F>,
 }
@@ -36,7 +36,7 @@ pub struct Stage1OutputClaims<F: Field> {
 /// the point and the first `derive_output_term` call builds the table.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-pub struct Stage1BatchSumchecks<F: Field> {
+pub struct Stage1BatchSumchecks<F: JoltField> {
     /// On the prove side the remainder kernel is minted from the state the
     /// uni-skip slot parked in the proof session, through its regular
     /// universal backend slot.
@@ -54,14 +54,14 @@ pub struct Stage1BatchSumchecks<F: Field> {
 /// coefficient is likewise
 /// read from `remainder_consistency` on the ZK path.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage1Challenges<F: Field> {
+pub struct Stage1Challenges<F: JoltField> {
     pub tau: Vec<F>,
     pub uniskip_challenge: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct Stage1ClearOutput<F: Field> {
+pub struct Stage1ClearOutput<F: JoltField> {
     /// The produced remainder opening *values* (wire form). The opening point is
     /// derived from the remainder's sumcheck point; later stages read values through
     /// `.outer_remainder.<field>`.
@@ -72,7 +72,7 @@ pub struct Stage1ClearOutput<F: Field> {
     pub output_points: Stage1BatchOutputPoints<F>,
 }
 
-impl<F: Field> Stage1ClearOutput<F> {
+impl<F: JoltField> Stage1ClearOutput<F> {
     /// The raw (un-reversed) Spartan outer remainder reduction point: the
     /// clear path stores the openings at the REVERSED point
     /// (`derive_opening_points`), so this reverses it back. All 35 stage-1
@@ -114,7 +114,7 @@ fn empty_remainder_point(stage: JoltRelationId) -> VerifierError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage1ZkOutput<F: Field, C> {
+pub struct Stage1ZkOutput<F: JoltField, C> {
     pub challenges: Stage1Challenges<F>,
     pub uniskip_consistency: CommittedSumcheckConsistency<F, C>,
     pub uniskip_output_claims: CommittedOutputClaimOutput<C>,
@@ -127,12 +127,12 @@ pub struct Stage1ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage1Output<F: Field, C> {
+pub enum Stage1Output<F: JoltField, C> {
     Clear(Stage1ClearOutput<F>),
     Zk(Stage1ZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage1Output<F, C> {
+impl<F: JoltField, C> Stage1Output<F, C> {
     /// The raw (un-reversed) Spartan outer remainder sumcheck reduction point,
     /// available regardless of proving mode. The remainder is a singleton batch, so
     /// the clear-path bound point and the ZK committed round challenges are the same

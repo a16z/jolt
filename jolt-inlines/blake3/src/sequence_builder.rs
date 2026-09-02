@@ -8,69 +8,30 @@
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
 use crate::{
-    CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT,
-    IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
+    CHAINING_VALUE_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT, IV,
+    MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
 };
 use jolt_inlines_sdk::host::{
-    instruction::{
-        ld::LD,
-        lui::LUI,
-        lw::LW,
-        srli::SRLI,
-        virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
-        virtual_zero_extend_word::VirtualZeroExtendWord,
-    },
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
-    Value::{Imm, Reg},
+    InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice,
 };
+use jolt_inlines_sdk::jolt_asm;
 
-/// Number of virtual registers needed for the general compression builder.
-/// Layout: v[0..15] + m[0..15] + h[0..7] + counter[0..1] + block_len + flags + temp
-pub const NEEDED_REGISTERS: usize = 45;
-
-/// Number of virtual registers needed for the keyed64 builder (smaller footprint).
-/// Layout: v[0..15] + m[0..15] only (no separate h/counter/flags banks, no temp regs).
-pub const NEEDED_REGISTERS_KEYED64: usize = 32;
+/// Layout: v[0..15] + m[0..15] only (no separate h/counter/flags banks, no temp regs):
+/// inputs load directly into their `v` slots and the chaining value is produced
+/// in place via `v[i] ^= v[i+8]`.
+pub const NEEDED_REGISTERS: usize = 32;
 
 /// Virtual register layout:
 /// - vr[0..15]:  Internal state `v`
 /// - vr[16..31]: Message block `m`
-/// - vr[32..39]: Chaining value `h`
-/// - vr[40..41]: Counter values
-/// - vr[42]:     Input bytes length
-/// - vr[43]:     Flags
-/// - vr[44]:     Temporary register 1
-/// - vr[45]:     Temporary register 2 (for paired store)
 const INTERNAL_STATE_VR_START: usize = 0;
 const MSG_BLOCK_START_VR: usize = 16;
-const CV_START_VR: usize = 32;
-const COUNTER_START_VR: usize = 40;
-const INPUT_BYTES_VR: usize = 42;
-const FLAG_VR: usize = 43;
-const TEMP_VR: usize = 44;
 
 struct Blake3SequenceBuilder {
     asm: InlineExpansionBuilder,
     round: u8,
     vr: [InlineRegister; NEEDED_REGISTERS],
-    operands: InlineOperands,
-}
-
-/// Keyed64-only sequence builder with a smaller VR footprint.
-///
-/// This builder is separate from `Blake3SequenceBuilder` because:
-/// 1. It uses only 32 VRs (vs 46), reducing `finalize_inline` zeroing overhead.
-/// 2. It loads key directly into v[0..7] (no separate CV bank).
-/// 3. Its `g_function` uses in-place adds (no temp register needed).
-///
-/// Virtual register layout:
-/// - vr[0..15]:  Internal state `v`
-/// - vr[16..31]: Message block `m` (left||right)
-struct Blake3Keyed64SequenceBuilder {
-    asm: InlineExpansionBuilder,
-    round: u8,
-    vr: [InlineRegister; NEEDED_REGISTERS_KEYED64],
     operands: InlineOperands,
 }
 
@@ -80,216 +41,6 @@ impl Blake3SequenceBuilder {
         operands: InlineOperands,
     ) -> Result<Self, ExpansionError> {
         let vr = asm.allocate_inline_array::<NEEDED_REGISTERS>()?;
-        Ok(Blake3SequenceBuilder {
-            asm,
-            round: 0,
-            vr,
-            operands,
-        })
-    }
-
-    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        // Compression mode:
-        // - Load chaining value (key) from rs1
-        // - Load message from rs2
-        // - Load counter, block_len, flags from rs2 tail
-        self.load_chaining_value();
-        self.load_message_blocks();
-        self.load_counter();
-        self.load_input_len_and_flags();
-
-        self.initialize_internal_state();
-
-        for round in 0..NUM_ROUNDS {
-            self.round = round;
-            self.blake3_round();
-        }
-
-        // Finalize: h[i] = v[i] ^ v[i+8]
-        self.finalize_state();
-
-        // Store state
-        self.store_state();
-
-        self.asm.release_many(self.vr);
-        self.asm.finalize()
-    }
-
-    fn initialize_internal_state(&mut self) {
-        // v[0..7] = chaining value (loaded from memory via rs1)
-        for i in 0..CHAINING_VALUE_LEN {
-            self.asm.xor(
-                Reg(*self.vr[CV_START_VR + i]),
-                Imm(0),
-                *self.vr[INTERNAL_STATE_VR_START + i],
-            );
-        }
-
-        // v[8..11] = IV[0..3]
-        for (i, val) in IV.iter().enumerate().take(4) {
-            self.asm
-                .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
-        }
-
-        // v[12..15] = counter, block_len, flags (loaded from memory)
-        self.asm.xor(
-            Reg(*self.vr[COUNTER_START_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 12],
-        );
-        self.asm.xor(
-            Reg(*self.vr[COUNTER_START_VR + 1]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 13],
-        );
-        self.asm.xor(
-            Reg(*self.vr[INPUT_BYTES_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 14],
-        );
-        self.asm.xor(
-            Reg(*self.vr[FLAG_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 15],
-        );
-    }
-
-    /// Execute one round of BLAKE3 compression
-    fn blake3_round(&mut self) {
-        let msg_schedule_round = &MSG_SCHEDULE[self.round as usize];
-
-        // Column step: apply G function to columns
-        self.g_function(0, 4, 8, 12, msg_schedule_round[0], msg_schedule_round[1]);
-        self.g_function(1, 5, 9, 13, msg_schedule_round[2], msg_schedule_round[3]);
-        self.g_function(2, 6, 10, 14, msg_schedule_round[4], msg_schedule_round[5]);
-        self.g_function(3, 7, 11, 15, msg_schedule_round[6], msg_schedule_round[7]);
-
-        // Diagonal step: apply G function to diagonals
-        self.g_function(0, 5, 10, 15, msg_schedule_round[8], msg_schedule_round[9]);
-        self.g_function(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
-        self.g_function(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
-        self.g_function(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
-    }
-
-    fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
-        let va = *self.vr[a];
-        let vb = *self.vr[b];
-        let vc = *self.vr[c];
-        let vd = *self.vr[d];
-        let mx = *self.vr[MSG_BLOCK_START_VR + x];
-        let my = *self.vr[MSG_BLOCK_START_VR + y];
-        let temp1 = *self.vr[TEMP_VR];
-
-        // v[a] = v[a] + v[b] + m[x]
-        self.asm.add(Reg(va), Reg(vb), temp1);
-        self.asm.add(Reg(temp1), Reg(mx), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
-
-        // v[a] = v[a] + v[b] + m[y]
-        self.asm.add(Reg(va), Reg(vb), temp1);
-        self.asm.add(Reg(temp1), Reg(my), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
-    }
-
-    fn finalize_state(&mut self) {
-        for i in 0..CHAINING_VALUE_LEN {
-            let hi = *self.vr[CV_START_VR + i];
-            let vi = *self.vr[INTERNAL_STATE_VR_START + i];
-            let vi8 = *self.vr[INTERNAL_STATE_VR_START + i + 8];
-            self.asm.xor(Reg(vi), Reg(vi8), hi);
-        }
-    }
-
-    fn store_state(&mut self) {
-        for i in 0..CHAINING_VALUE_LEN / 2 {
-            self.asm.store_paired_u32(
-                self.operands.rs1,
-                (i * 2) as i64 * 4,
-                *self.vr[CV_START_VR + i * 2],
-                *self.vr[CV_START_VR + i * 2 + 1],
-            );
-        }
-    }
-
-    fn load_data_range_paired(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        debug_assert!(
-            count.is_multiple_of(2),
-            "count must be even for paired loading"
-        );
-        let temp = *self.vr[TEMP_VR];
-        for i in 0..count / 2 {
-            self.asm.load_paired_u32(
-                temp,
-                base_register,
-                (memory_offset_start + i * 2) as i64 * 4,
-                *self.vr[vr_start + i * 2],
-                *self.vr[vr_start + i * 2 + 1],
-            );
-        }
-    }
-
-    fn load_chaining_value(&mut self) {
-        // Use paired loading for chaining value (8 u32 = 4 pairs)
-        self.load_data_range_paired(self.operands.rs1, 0, CV_START_VR, CHAINING_VALUE_LEN);
-    }
-
-    fn load_message_blocks(&mut self) {
-        // Use paired loading for message blocks (16 u32 = 8 pairs)
-        self.load_data_range_paired(self.operands.rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
-    }
-
-    fn load_counter(&mut self) {
-        self.asm.load_u32_range(
-            self.operands.rs2,
-            MSG_BLOCK_LEN as i64 * 4,
-            &self.vr[COUNTER_START_VR..COUNTER_START_VR + COUNTER_LEN],
-        );
-    }
-
-    fn load_input_len_and_flags(&mut self) {
-        // input length
-        self.asm.emit_ld::<LW>(
-            *self.vr[INPUT_BYTES_VR],
-            self.operands.rs2,
-            (MSG_BLOCK_LEN + COUNTER_LEN) as i64 * 4,
-        );
-        // flag
-        self.asm.emit_ld::<LW>(
-            *self.vr[FLAG_VR],
-            self.operands.rs2,
-            (MSG_BLOCK_LEN + COUNTER_LEN + 1) as i64 * 4,
-        );
-    }
-}
-
-impl Blake3Keyed64SequenceBuilder {
-    fn new(
-        mut asm: InlineExpansionBuilder,
-        operands: InlineOperands,
-    ) -> Result<Self, ExpansionError> {
-        let vr = asm.allocate_inline_array::<NEEDED_REGISTERS_KEYED64>()?;
         Ok(Self {
             asm,
             round: 0,
@@ -298,47 +49,53 @@ impl Blake3Keyed64SequenceBuilder {
         })
     }
 
-    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        // Load key from rs3/rd directly into v[0..7]
-        self.load_data_range_paired(self.operands.rs3, 0, INTERNAL_STATE_VR_START, 8);
-        // Load left (32 bytes) from rs1 as message[0..7]
-        self.load_data_range_paired(self.operands.rs1, 0, MSG_BLOCK_START_VR, 8);
-        // Load right (32 bytes) from rs2 as message[8..15]
-        self.load_data_range_paired(self.operands.rs2, 0, MSG_BLOCK_START_VR + 8, 8);
-
+    fn build_general(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let output_register = self.operands.rs1;
+        // Compression mode:
+        // - Load chaining value (key) from rs1 directly into v[0..7]
+        self.load_data_range_paired_dirty(
+            self.operands.rs1,
+            0,
+            INTERNAL_STATE_VR_START,
+            CHAINING_VALUE_LEN,
+        );
+        // - Load message from rs2 into m[0..15]
+        self.load_data_range_paired_dirty(self.operands.rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
+        // - Load counter, block_len, flags from rs2 tail directly into v[12..15]
+        self.load_data_range_paired_dirty(
+            self.operands.rs2,
+            MSG_BLOCK_LEN * 4,
+            INTERNAL_STATE_VR_START + 12,
+            4,
+        );
         self.initialize_internal_state();
-
-        for round in 0..NUM_ROUNDS {
-            self.round = round;
-            self.blake3_round();
-        }
-
-        // Finalize for this inline: v[i] = v[i] ^ v[i+8], store v[0..7] to rs3/rd.
-        for i in 0..CHAINING_VALUE_LEN {
-            let vi = *self.vr[INTERNAL_STATE_VR_START + i];
-            let vi8 = *self.vr[INTERNAL_STATE_VR_START + i + 8];
-            self.asm.xor(Reg(vi), Reg(vi8), vi);
-        }
-
-        for i in 0..CHAINING_VALUE_LEN / 2 {
-            self.asm.store_paired_u32(
-                self.operands.rs3,
-                (i * 2) as i64 * 4,
-                *self.vr[INTERNAL_STATE_VR_START + i * 2],
-                *self.vr[INTERNAL_STATE_VR_START + i * 2 + 1],
-            );
-        }
-
-        self.asm.release_many(self.vr);
-        self.asm.finalize()
+        self.compress_and_store(output_register)
     }
 
-    fn initialize_internal_state(&mut self) {
-        // v[8..11] = IV[0..3]
-        for (i, val) in IV.iter().enumerate().take(4) {
-            self.asm
-                .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
-        }
+    fn build_keyed64(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        let output_register = self.operands.rs3;
+        // Load key from rs3/rd directly into v[0..7]
+        self.load_data_range_paired_dirty(
+            self.operands.rs3,
+            0,
+            INTERNAL_STATE_VR_START,
+            CHAINING_VALUE_LEN,
+        );
+        // Load left (32 bytes) from rs1 as message[0..7]
+        self.load_data_range_paired_dirty(
+            self.operands.rs1,
+            0,
+            MSG_BLOCK_START_VR,
+            CHAINING_VALUE_LEN,
+        );
+        // Load right (32 bytes) from rs2 as message[8..15]
+        self.load_data_range_paired_dirty(
+            self.operands.rs2,
+            0,
+            MSG_BLOCK_START_VR + CHAINING_VALUE_LEN,
+            CHAINING_VALUE_LEN,
+        );
+        self.initialize_internal_state();
 
         // v[12..15] = counter, block_len, flags
         // Keyed64: matches blake3::keyed_hash for 64-byte input
@@ -348,11 +105,54 @@ impl Blake3Keyed64SequenceBuilder {
         // Inline virtual registers are cleared by `finalize_inline`, so newly allocated
         // inline registers start at 0 across inline calls.
         self.asm
-            .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 14], 64);
-        self.asm.emit_u::<LUI>(
+            .emit_u(Kind::LUI, *self.vr[INTERNAL_STATE_VR_START + 14], 64);
+        self.asm.emit_u(
+            Kind::LUI,
             *self.vr[INTERNAL_STATE_VR_START + 15],
             (FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH) as u64,
         );
+
+        self.compress_and_store(output_register)
+    }
+
+    fn initialize_internal_state(&mut self) {
+        // v[8..11] = IV[0..3]
+        for (i, val) in IV.iter().enumerate().take(4) {
+            self.asm
+                .emit_u(Kind::LUI, *self.vr[CHAINING_VALUE_LEN + i], *val as u64);
+        }
+    }
+
+    fn compress_and_store(
+        mut self,
+        output_register: u8,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        for round in 0..NUM_ROUNDS {
+            self.round = round;
+            self.blake3_round();
+        }
+
+        // Finalize: h[i] = v[i] ^ v[i+8], produced in place in v[0..7]
+        for i in 0..CHAINING_VALUE_LEN {
+            let vi = *self.vr[INTERNAL_STATE_VR_START + i];
+            let vi8 = *self.vr[INTERNAL_STATE_VR_START + i + CHAINING_VALUE_LEN];
+            jolt_asm!(self.asm, {
+                xor vi, vi, vi8;
+            });
+        }
+
+        // Store state
+        for i in 0..CHAINING_VALUE_LEN / 2 {
+            self.asm.store_paired_u32(
+                output_register,
+                (i * 2) as i64 * 4,
+                *self.vr[INTERNAL_STATE_VR_START + i * 2],
+                *self.vr[INTERNAL_STATE_VR_START + i * 2 + 1],
+            );
+        }
+
+        self.asm.release_many(self.vr);
+        self.asm.finalize()
     }
 
     /// Execute one round of BLAKE3 compression
@@ -381,65 +181,41 @@ impl Blake3Keyed64SequenceBuilder {
         let mx = *self.vr[MSG_BLOCK_START_VR + x];
         let my = *self.vr[MSG_BLOCK_START_VR + y];
 
-        // v[a] = v[a] + v[b] + m[x]
-        self.asm.add(Reg(va), Reg(vb), va);
-        self.asm.add(Reg(va), Reg(mx), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
-
-        // v[a] = v[a] + v[b] + m[y]
-        self.asm.add(Reg(va), Reg(vb), va);
-        self.asm.add(Reg(va), Reg(my), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
+        jolt_asm!(self.asm, {
+            // v[a] = v[a] + v[b] + m[x]
+            add va, va, vb;
+            add va, va, mx;
+            // v[d] = rotr32(v[d] ^ v[a], 16)
+            xorrotw16 vd, vd, va;
+            // v[c] = v[c] + v[d]
+            add vc, vc, vd;
+            // v[b] = rotr32(v[b] ^ v[c], 12)
+            xorrotw12 vb, vb, vc;
+            // v[a] = v[a] + v[b] + m[y]
+            add va, va, vb;
+            add va, va, my;
+            // v[d] = rotr32(v[d] ^ v[a], 8)
+            xorrotw8 vd, vd, va;
+            // v[c] = v[c] + v[d]
+            add vc, vc, vd;
+            // v[b] = rotr32(v[b] ^ v[c], 7)
+            xorrotw7 vb, vb, vc;
+        });
     }
 
-    /// Load two u32 values from an 8-byte aligned address using a single LD.
-    /// Uses `vr_hi` as the temporary 64-bit container (no extra scratch register).
-    fn load_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        // Load 64 bits (2 x u32) into vr_hi temporarily.
-        self.asm.emit_ld::<LD>(vr_hi, base, offset);
-
-        // Extract low 32 bits: zero-extend word.
-        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_hi, 0);
-
-        // Extract high 32 bits: shift right by 32 (in place).
-        self.asm.emit_i::<SRLI>(vr_hi, vr_hi, 32);
-    }
-
-    fn load_data_range_paired(
+    fn load_data_range_paired_dirty(
         &mut self,
         base_register: u8,
         memory_offset_start: usize,
         vr_start: usize,
         count: usize,
     ) {
-        debug_assert!(
-            count.is_multiple_of(2),
-            "count must be even for paired loading"
+        // WARNING: upper bits remain dirty until 32-bit XOR-rotate or paired-store masking.
+        self.asm.load_paired_u32_range_dirty(
+            base_register,
+            memory_offset_start as i64,
+            &self.vr[vr_start..vr_start + count],
         );
-        for i in 0..count / 2 {
-            self.load_paired_u32(
-                base_register,
-                (memory_offset_start + i * 2) as i64 * 4,
-                *self.vr[vr_start + i * 2],
-                *self.vr[vr_start + i * 2 + 1],
-            );
-        }
     }
 }
 
@@ -457,7 +233,7 @@ impl InlineOp for Blake3Compression {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Blake3SequenceBuilder::new(asm, operands)?.build()
+        Blake3SequenceBuilder::new(asm, operands)?.build_general()
     }
 }
 
@@ -475,7 +251,7 @@ impl InlineOp for Blake3Keyed64Compression {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Blake3Keyed64SequenceBuilder::new(asm, operands)?.build()
+        Blake3SequenceBuilder::new(asm, operands)?.build_keyed64()
     }
 }
 

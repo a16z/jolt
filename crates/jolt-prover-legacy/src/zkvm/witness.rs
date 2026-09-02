@@ -46,37 +46,16 @@ pub enum CommittedPolynomial {
     UntrustedAdvice,
     /// Program image (initial RAM image) polynomial for committed program mode.
     ProgramImageInit,
-    /// One-hot chunk column `j` of the fused unsigned increment stream
+    /// One-hot digit column `j` of the fused increment's balanced radix-`K`
+    /// decomposition; the decoded digit is centered in `[-K/2, K/2)`
     /// (lattice/packed mode only; a slot of the packed witness `W`).
-    UnsignedIncChunk(usize),
-    /// Boolean msb column of the fused unsigned increment stream
+    BalancedIncDigit(usize),
+    /// One-hot column carrying the signed carry above bit 63 of that
+    /// decomposition — a signed digit, not a bit. The honest encoder only
+    /// produces `{-1, 0, 1}`; the protocol pins it to the same `[-K/2, K/2)`
+    /// alphabet as the digits
     /// (lattice/packed mode only; a slot of the packed witness `W`).
-    UnsignedIncMsb,
-    /// One-hot register selector `(chunk, lane)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot). Lane
-    /// order is rs1, rs2, rd.
-    BytecodeRegisterSelector(usize, usize),
-    /// Boolean circuit-flag column `(chunk, flag)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeCircuitFlag(usize, usize),
-    /// Boolean instruction-flag column `(chunk, flag)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeInstructionFlag(usize, usize),
-    /// One-hot lookup-table selector of a precommitted bytecode chunk
-    /// (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeLookupSelector(usize),
-    /// Boolean RAF flag column of a precommitted bytecode chunk
-    /// (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeRafFlag(usize),
-    /// Byte one-hot decomposition of a chunk's unexpanded PCs
-    /// (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeUnexpandedPcBytes(usize),
-    /// Byte one-hot decomposition of a chunk's canonical immediate field
-    /// bytes (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeImmBytes(usize),
-    /// Byte one-hot decomposition of the program image words
-    /// (lattice/packed mode; a `ProgramOneHot` slot).
-    ProgramImageBytes,
+    BalancedIncCarry,
     /// The row's incoming implicit carry (the previous row's carry-out).
     /// Dense u64 column; grounds the implicit-carry chain in the claim DAG.
     /// Appended last for serialization-tag stability.
@@ -195,16 +174,7 @@ impl CommittedPolynomial {
             | CommittedPolynomial::BytecodeChunk(_) => {
                 panic!("Precommitted polynomials should not use streaming witness generation")
             }
-            CommittedPolynomial::BytecodeRegisterSelector(..)
-            | CommittedPolynomial::BytecodeCircuitFlag(..)
-            | CommittedPolynomial::BytecodeInstructionFlag(..)
-            | CommittedPolynomial::BytecodeLookupSelector(_)
-            | CommittedPolynomial::BytecodeRafFlag(_)
-            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
-            | CommittedPolynomial::BytecodeImmBytes(_)
-            | CommittedPolynomial::ProgramImageBytes
-            | CommittedPolynomial::UnsignedIncChunk(_)
-            | CommittedPolynomial::UnsignedIncMsb => {
+            CommittedPolynomial::BalancedIncDigit(_) | CommittedPolynomial::BalancedIncCarry => {
                 panic!("Lattice columns commit through the packed witness, not per-polynomial streaming")
             }
         }
@@ -293,7 +263,7 @@ impl CommittedPolynomial {
                 ))
             }
             #[cfg(feature = "prover")]
-            CommittedPolynomial::UnsignedIncChunk(_) | CommittedPolynomial::UnsignedIncMsb => {
+            CommittedPolynomial::BalancedIncDigit(_) | CommittedPolynomial::BalancedIncCarry => {
                 panic!(
                     "OneHotTrace columns commit through the packed witness, not generate_witness"
                 )
@@ -304,28 +274,8 @@ impl CommittedPolynomial {
             | CommittedPolynomial::BytecodeChunk(_) => {
                 panic!("Precommitted polynomials should not use generate_witness")
             }
-            #[cfg(feature = "prover")]
-            CommittedPolynomial::BytecodeRegisterSelector(..)
-            | CommittedPolynomial::BytecodeCircuitFlag(..)
-            | CommittedPolynomial::BytecodeInstructionFlag(..)
-            | CommittedPolynomial::BytecodeLookupSelector(_)
-            | CommittedPolynomial::BytecodeRafFlag(_)
-            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
-            | CommittedPolynomial::BytecodeImmBytes(_)
-            | CommittedPolynomial::ProgramImageBytes => {
-                panic!("ProgramOneHot sub-columns commit through the packed precommitted witness, not generate_witness")
-            }
             #[cfg(not(feature = "prover"))]
-            CommittedPolynomial::BytecodeRegisterSelector(..)
-            | CommittedPolynomial::BytecodeCircuitFlag(..)
-            | CommittedPolynomial::BytecodeInstructionFlag(..)
-            | CommittedPolynomial::BytecodeLookupSelector(_)
-            | CommittedPolynomial::BytecodeRafFlag(_)
-            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
-            | CommittedPolynomial::BytecodeImmBytes(_)
-            | CommittedPolynomial::ProgramImageBytes
-            | CommittedPolynomial::UnsignedIncChunk(_)
-            | CommittedPolynomial::UnsignedIncMsb => {
+            CommittedPolynomial::BalancedIncDigit(_) | CommittedPolynomial::BalancedIncCarry => {
                 panic!("Lattice columns require the prover feature")
             }
         }
@@ -336,7 +286,7 @@ impl CommittedPolynomial {
             CommittedPolynomial::InstructionRa(_)
             | CommittedPolynomial::BytecodeRa(_)
             | CommittedPolynomial::RamRa(_)
-            | CommittedPolynomial::UnsignedIncChunk(_) => Some(one_hot_params.k_chunk),
+            | CommittedPolynomial::BalancedIncDigit(_) => Some(one_hot_params.k_chunk),
             _ => None,
         }
     }

@@ -3,17 +3,21 @@
 # pinned vendored source (`vendored-z3`), so results don't depend on runner
 # packages or on whatever z3-src happens to be current.
 #
-# SCOPE — this suite is narrower than "the expansion pipeline". It runs 83 of
-# the crate's 103 tests:
-#   * 32 virtual-sequence proofs (16 mnemonics x correctness+consistency):
-#     ADDIW ADDW MULW SUBW and the twelve shifts. Exhaustive over register
+# SCOPE — this suite is narrower than "the expansion pipeline". The main step
+# runs 86 of the crate's 106 tests:
+#   * 34 virtual-sequence proofs (17 mnemonics x correctness+consistency):
+#     ADDIW ADDW LW MULW SUBW and the twelve shifts. Exhaustive over register
 #     values, but at one fixed operand assignment (rd=x1, rs1=x2, rs2=x3,
 #     imm=1234), so immediate-form sequences are proved at a single shift
 #     amount and the rd=x0 expansion path is never taken.
-#   * 51 per-instruction R1CS/product-constraint determinism checks.
-# NOT covered: the 10 #[ignore]d div/rem/mulh sequences (non-terminating under
-# the 64-bit model), all memory/atomic/LR-SC/CSR/trap expansions, and the
-# registered inlines.
+#   * 52 per-instruction R1CS/product-constraint determinism checks.
+# A second step runs the signed DIV/REM/DIVW/REMW proofs (8 of the 20
+# #[ignore]d div/rem/mulh tests) at Z3_VERIFIER_BV_BITS=8: non-terminating
+# under the 64-bit model, but at 8 bits they discharge in milliseconds and
+# still prove that arbitrary advice cannot yield a wrong or non-unique result.
+# NOT covered: the div/rem family at 64-bit width, the unsigned div/rem and
+# mulh sequences at any width, all memory/atomic/LR-SC/CSR/trap expansions
+# (except LW), and the registered inlines.
 #
 # Nightly-only by design: the vendored Z3 build is too slow for the PR-blocking
 # path, and the obligations only move when expansions or the z3 model change.
@@ -55,6 +59,19 @@ jobs:
         timeout-minutes: 75
         # --locked so the pinned z3-src in Cargo.lock is what actually gets built.
         run: cargo nextest run -p z3-verifier --features vendored-z3 --locked --cargo-quiet --no-fail-fast
+      - name: Run signed DIV/REM proofs at 8-bit width
+        # `!cancelled()` (not the default `success()`) so a main-suite failure
+        # doesn't hide this step's verdict; the reporting step below covers both.
+        # Generous budget: the build is cached from the step above and the eight
+        # obligations discharge in under a second at this width.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        env:
+          Z3_VERIFIER_BV_BITS: 8
+        run: >-
+          cargo nextest run -p z3-verifier --features vendored-z3 --locked
+          --cargo-quiet --no-fail-fast --run-ignored=only
+          -E 'test(/test_(DIV|DIVW|REM|REMW)_(correctness|consistency)$/)'
       - name: File failure issue
         if: failure()
         env:

@@ -21,7 +21,7 @@
 use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_claims::NoChallenges;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -41,7 +41,7 @@ use crate::{
 /// Slot front for the stage-6b RAM Hamming-weight booleanity member.
 pub struct OptimizedRamHammingBooleanity;
 
-impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHammingBooleanity {
+impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHammingBooleanity {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -83,18 +83,17 @@ impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHamming
     }
 }
 
-struct OptimizedRamHammingBooleanityKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct OptimizedRamHammingBooleanityKernel<F: JoltField> {
     progress: RoundProgress,
     eq: GruenSplitEqPolynomial<F>,
     hamming: Polynomial<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedRamHammingBooleanityKernel, |kernel| {
-    kernel.eq.heap_bytes() + crate::backend::poly_heap_bytes(&kernel.hamming)
-});
-
-impl<F: Field> OptimizedRamHammingBooleanityKernel<F> {
+impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.eq.bind(challenge);
         self.hamming
@@ -103,7 +102,7 @@ impl<F: Field> OptimizedRamHammingBooleanityKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -138,7 +137,7 @@ impl<F: Field> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> {
     type Relation = RamHammingBooleanity<F>;
 
     fn output_claims(
@@ -177,7 +176,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     use super::*;
     use crate::optimized::booleanity::testing::{test_challenge, with_booleanity_backend};

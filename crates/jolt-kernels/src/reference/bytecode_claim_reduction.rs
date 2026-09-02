@@ -16,7 +16,7 @@
 use jolt_claims::protocols::jolt::{
     BytecodeClaimReductionLayout, JoltCommittedPolynomial, PrecommittedReductionLayout,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_riscv::JoltInstructionRow;
 use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 
@@ -29,7 +29,7 @@ use crate::committed_program::{build_committed_bytecode_chunk_coeffs, chunk_inde
 use crate::precommitted_reduction::{permute_tables, CycleReductionKernel};
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
-impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -49,7 +49,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for ReferenceBac
 
 /// The committed-bytecode reduction's cycle-phase kernel — see the module doc
 /// for the value/eq/aux table construction.
-fn bytecode_reduction_kernel<F: Field>(
+fn bytecode_reduction_kernel<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,
     bytecode: &[JoltInstructionRow],

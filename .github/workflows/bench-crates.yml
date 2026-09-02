@@ -1,17 +1,32 @@
 name: Benchmark modular crates
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "crates/**"
   pull_request:
     branches: [main]
+    # Only paths that can change the benched code: the four benched crates,
+    # their sole in-repo dependency (jolt-utils), and the build/toolchain inputs.
     paths:
-      - "crates/**"
+      - "crates/jolt-crypto/**"
+      - "crates/jolt-field/**"
+      - "crates/jolt-poly/**"
+      - "crates/jolt-transcript/**"
+      - "crates/jolt-utils/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/bench-crates.yml"
+      - "scripts/ci/bench_comment.py"
+
+permissions:
+  contents: read
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
+  # Every CPU observed in the hosted x64 fleet (Xeon 8370C/8573C, EPYC 7763/9V74)
+  # supports BMI2+ADX+AVX2. Without these flags the fp128 mulx/adx asm and the
+  # packed SIMD kernels are compile-time dead code and the benches time fallbacks.
+  RUSTFLAGS: -C target-feature=+bmi2,+adx,+avx2
 
 concurrency:
   group: bench-crates-${{ github.head_ref || github.ref }}
@@ -21,78 +36,75 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     name: Criterion benchmarks
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          # Depth 2 reaches both parents of the synthetic merge commit, so the
+          # base leg can check out the exact main tip this PR merges against.
+          fetch-depth: 2
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install critcmp
-        run: cargo install critcmp --locked
-
-      # On main push: save baseline
-      - name: Run benchmarks (baseline)
-        if: github.event_name == 'push'
-        run: >
-          cargo bench
-          -p jolt-crypto
-          -p jolt-field
-          -p jolt-poly
-          -p jolt-transcript
-          --bench '*'
-          -- --save-baseline main_run
-
-      - name: Upload baseline
-        if: github.event_name == 'push'
-        uses: actions/upload-artifact@v7
-        with:
-          name: criterion-baseline
-          path: target/criterion/
-          retention-days: 30
-
-      # On PR: compare against baseline
-      - name: Download baseline
-        if: github.event_name == 'pull_request'
-        uses: dawidd6/action-download-artifact@v21
-        with:
-          name: criterion-baseline
-          path: target/criterion/
-          branch: main
-          workflow: bench-crates.yml
-          if_no_artifact_found: warn
-
-      - name: Run benchmarks (PR)
-        if: github.event_name == 'pull_request'
-        run: >
-          cargo bench
-          -p jolt-crypto
-          -p jolt-field
-          -p jolt-poly
-          -p jolt-transcript
-          --bench '*'
-          -- --save-baseline pr_run
-
-      - name: Compare benchmarks
-        if: github.event_name == 'pull_request'
-        id: critcmp
+      - name: Resolve base and head
+        id: refs
         run: |
-          if ls target/criterion/*/main_run/ &>/dev/null; then
-            OUTPUT=$(critcmp main_run pr_run --threshold 5 2>&1) || true
-            echo "comparison<<EOF" >> "$GITHUB_OUTPUT"
-            echo "$OUTPUT" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-          fi
+          git rev-parse --verify -q HEAD^2 >/dev/null || { echo "::error::expected the PR merge commit, got a non-merge HEAD"; exit 1; }
+          { echo "merge=$(git rev-parse HEAD)"; echo "base=$(git rev-parse HEAD^1)"; echo "head=$(git rev-parse HEAD^2)"; } >> "$GITHUB_OUTPUT"
+
+      # Base and PR are benchmarked back-to-back on the SAME runner. Comparing
+      # against a stored main baseline measured on a different VM flagged most of
+      # the suite on unrelated PRs: the hosted x64 fleet mixes CPU models, which
+      # alone shifts wall time by 14% (median) to 34% (p90) between runs.
+      #
+      # The base leg always runs first. On the validation run (no code change
+      # between legs) the second leg came out ~0.2% faster (median; 42 of 57
+      # non-zero rows) — a systematic lean far below the 10% threshold. Don't
+      # tighten the threshold to a few percent without switching to an
+      # alternating (A/B/A) order.
+      - name: Run benchmarks (base, then PR)
+        env:
+          BASE: ${{ steps.refs.outputs.base }}
+          MERGE: ${{ steps.refs.outputs.merge }}
+        run: |
+          for leg in "$BASE base_run" "$MERGE pr_run"; do
+            read -r sha baseline <<< "$leg"
+            echo "::group::$baseline @ $sha"
+            git checkout --quiet "$sha"
+            cargo bench \
+              -p jolt-crypto \
+              -p jolt-field \
+              -p jolt-poly \
+              -p jolt-transcript \
+              --features jolt-field/solinas,jolt-field/asm \
+              --bench '*' \
+              -- --save-baseline "$baseline" --noplot
+            echo "::endgroup::"
+          done
+
+      # Bolds the faster run per benchmark and colors the Δ of entries whose
+      # delta exceeds the noise threshold (see NOISE_THRESHOLD in the script).
+      - name: Render comparison
+        run: |
+          python3 scripts/ci/bench_comment.py ${{ steps.refs.outputs.base }} ${{ steps.refs.outputs.head }} > "$RUNNER_TEMP/bench-comment.md"
+          cat "$RUNNER_TEMP/bench-comment.md"
 
       - name: Post benchmark comparison
-        if: github.event_name == 'pull_request' && steps.critcmp.outputs.comparison != '' && github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         uses: actions/github-script@v9
         with:
           script: |
-            const marker = '<!-- bench-crates -->';
-            const body = `${marker}\n## Benchmark comparison (crates)\n\n\`\`\`\n${process.env.COMPARISON}\n\`\`\``;
-            const { data: comments } = await github.rest.issues.listComments({
+            const fs = require('fs');
+            const body = fs.readFileSync(process.env.COMMENT_PATH, 'utf8');
+            // The renderer owns the comment body; its first line is the
+            // sticky-comment marker used to find the comment to update.
+            const marker = body.split('\n', 1)[0];
+            const comments = await github.paginate(github.rest.issues.listComments, {
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
+              per_page: 100,
             });
             const existing = comments.find(c => c.body.includes(marker));
             if (existing) {
@@ -111,4 +123,4 @@ jobs:
               });
             }
         env:
-          COMPARISON: ${{ steps.critcmp.outputs.comparison }}
+          COMMENT_PATH: ${{ runner.temp }}/bench-comment.md

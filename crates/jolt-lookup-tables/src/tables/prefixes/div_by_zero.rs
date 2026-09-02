@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 
@@ -6,7 +6,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum DivByZeroPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for DivByZeroPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for DivByZeroPrefix {
     fn default_checkpoint() -> F {
         F::one()
     }

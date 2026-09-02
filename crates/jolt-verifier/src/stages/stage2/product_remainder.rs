@@ -17,7 +17,7 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId, SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
     try_eq_mle,
@@ -29,7 +29,7 @@ use crate::VerifierError;
 
 /// Wire the consumed opening *value* from the product uni-skip's reduced output
 /// claim (the output point comes from this relation's own sumcheck point).
-pub fn product_remainder_input_values_from_uniskip_output<F: Field>(
+pub fn product_remainder_input_values_from_uniskip_output<F: JoltField>(
     product_uniskip_output_claim: F,
 ) -> ProductRemainderInputClaims<F> {
     ProductRemainderInputClaims {
@@ -37,7 +37,7 @@ pub fn product_remainder_input_values_from_uniskip_output<F: Field>(
     }
 }
 
-impl<F: Field> ProductRemainder<F> {
+impl<F: JoltField> ProductRemainder<F> {
     pub fn uniskip_challenge(&self) -> F {
         self.uniskip_challenge
     }
@@ -48,14 +48,14 @@ impl<F: Field> ProductRemainder<F> {
 }
 
 #[derive(Clone)]
-pub struct ProductRemainder<F: Field> {
+pub struct ProductRemainder<F: JoltField> {
     symbolic: relations::spartan::ProductRemainder,
     uniskip_challenge: F,
     tau_high: F,
     tau_low: Vec<F>,
 }
 
-impl<F: Field> ProductRemainder<F> {
+impl<F: JoltField> ProductRemainder<F> {
     pub fn new(
         dimensions: SpartanProductDimensions,
         uniskip_challenge: F,
@@ -78,7 +78,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
     type Symbolic = relations::spartan::ProductRemainder;
 
     fn symbolic(&self) -> &Self::Symbolic {

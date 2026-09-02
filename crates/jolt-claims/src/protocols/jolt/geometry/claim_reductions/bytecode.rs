@@ -9,7 +9,7 @@
 //! Mirrors `jolt-prover-legacy`'s `zkvm/claim_reductions/bytecode.rs` and the
 //! committed-bytecode geometry of `zkvm/bytecode/chunks.rs`.
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
@@ -61,6 +61,13 @@ pub const fn committed_lane_vars() -> usize {
 /// Maximum chunk count representable by the `u8` proof serialization of
 /// `BytecodeChunk(i)`.
 pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
+
+pub const INVALID_COMMITTED_PROGRAM_IMMEDIATE: &str =
+    "committed-program immediate magnitude exceeds u64::MAX";
+
+pub const fn is_valid_committed_program_immediate(immediate: i128) -> bool {
+    immediate.unsigned_abs() <= u64::MAX as u128
+}
 
 /// Committed bytecode chunking is valid when the chunk count is a nonzero
 /// power of two no larger than [`MAX_COMMITTED_BYTECODE_CHUNK_COUNT`] that
@@ -221,7 +228,7 @@ impl BytecodeClaimReductionLayout {
     /// Split the full bytecode address point (the `BytecodeReadRafAddrClaim`
     /// opening point) into per-chunk eq weights over the dropped high bits and
     /// the chunk-local cycle point shared by all chunks.
-    pub fn split_address_point<F: Field>(
+    pub fn split_address_point<F: JoltField>(
         &self,
         r_bc_full: &[F],
     ) -> Result<BytecodeAddressPoint<F>, JoltFormulaPointError> {
@@ -249,7 +256,7 @@ impl BytecodeClaimReductionLayout {
     /// challenges. Lets the cycle-phase relation object's `resolve_public`
     /// recover the weights from the opening point it produced in
     /// `derive_opening_points`.
-    pub fn cycle_phase_final_output_weights_at_opening_point<F: Field>(
+    pub fn cycle_phase_final_output_weights_at_opening_point<F: JoltField>(
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
@@ -264,7 +271,7 @@ impl BytecodeClaimReductionLayout {
 
     /// `ChunkOutputWeight(i)` values when the reduction completes in the
     /// address phase.
-    pub fn address_phase_final_output_weights<F: Field>(
+    pub fn address_phase_final_output_weights<F: JoltField>(
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         cycle_var_challenges: &[F],
@@ -281,7 +288,7 @@ impl BytecodeClaimReductionLayout {
     /// cycle/sumcheck challenges. Lets the stage 7 relation object's
     /// `resolve_public` recover the weights from the opening point it produced in
     /// `derive_opening_points`.
-    pub fn address_phase_final_output_weights_at_opening_point<F: Field>(
+    pub fn address_phase_final_output_weights_at_opening_point<F: JoltField>(
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
@@ -294,7 +301,7 @@ impl BytecodeClaimReductionLayout {
     /// Evaluate the gamma-weighted lane selector against the chunk opening
     /// point: `(sum_lane lane_weights[lane] * eq(r_lane)[lane]) * eq(r_cycle,
     /// r_bc)`, with the lane/cycle split determined by the trace layout.
-    fn eq_combined<F: Field>(
+    fn eq_combined<F: JoltField>(
         &self,
         inputs: &BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
@@ -340,7 +347,7 @@ impl BytecodeClaimReductionLayout {
         Ok(lane_weight_eval * eq_cycle)
     }
 
-    fn chunk_output_weights<F: Field>(
+    fn chunk_output_weights<F: JoltField>(
         &self,
         chunk_rbc_weights: &[F],
         scale: F,
@@ -399,7 +406,7 @@ pub struct BytecodeLaneWeightInputs<'a, F> {
 /// Fold the five staged bytecode read-RAF combinations into one weight per
 /// committed lane, so `sum_lane weights[lane] * lane_value(row, lane)` equals
 /// `sum_stage eta^stage * stage_value(row)` for every bytecode row.
-pub fn lane_weights<F: Field>(
+pub fn lane_weights<F: JoltField>(
     inputs: BytecodeLaneWeightInputs<'_, F>,
 ) -> Result<Vec<F>, JoltFormulaPointError> {
     require_len(inputs.stage1_gammas, BYTECODE_STAGE_GAMMA_COUNTS[0])?;
@@ -503,7 +510,7 @@ pub fn lane_weights<F: Field>(
 
 pub(crate) fn final_output_expr<F>(chunk_count: usize) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut output = JoltExpr::zero();
     for chunk_idx in 0..chunk_count {
@@ -566,7 +573,7 @@ mod tests {
     use super::super::super::bytecode::{read_raf_public_values, BytecodeReadRafEvaluationInputs};
     use super::*;
     use crate::protocols::jolt::JoltPolynomialId;
-    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_field::{Field, Fr, Ring};
     use jolt_lookup_tables::InstructionLookupTable;
     use jolt_riscv::{
         instructions::Noop, Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionKind,
@@ -657,6 +664,15 @@ mod tests {
             },
             JoltInstructionRow::default(),
         ]
+    }
+
+    #[test]
+    fn committed_program_immediate_boundaries_are_explicit() {
+        let limit = u64::MAX as i128;
+        assert!(is_valid_committed_program_immediate(limit));
+        assert!(is_valid_committed_program_immediate(-limit));
+        assert!(!is_valid_committed_program_immediate(1i128 << 64));
+        assert!(!is_valid_committed_program_immediate(-(1i128 << 64)));
     }
 
     #[test]

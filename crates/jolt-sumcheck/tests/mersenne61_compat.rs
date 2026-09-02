@@ -15,9 +15,8 @@ use std::{
 };
 
 use jolt_field::{
-    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize,
-    FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator,
-    RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
+    AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring,
+    WithAccumulator,
 };
 use jolt_sumcheck::{
     BooleanHypercube, ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier,
@@ -198,9 +197,8 @@ impl<'a> Product<&'a Mersenne61> for Mersenne61 {
 }
 
 impl AdditiveGroup for Mersenne61 {}
-impl RingCore for Mersenne61 {}
 
-impl Invertible for Mersenne61 {
+impl Field for Mersenne61 {
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             None
@@ -208,11 +206,13 @@ impl Invertible for Mersenne61 {
             Some(self.pow(MODULUS - 2))
         }
     }
+
+    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
+        Self::from_u64(rng.next_u64())
+    }
 }
 
-impl FieldCore for Mersenne61 {}
-
-impl FromPrimitiveInt for Mersenne61 {
+impl Ring for Mersenne61 {
     fn from_u64(v: u64) -> Self {
         Self::reduce_u128(v as u128)
     }
@@ -238,58 +238,60 @@ impl FromPrimitiveInt for Mersenne61 {
     }
 }
 
-impl RandomSampling for Mersenne61 {
-    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
-        Self::from_u64(rng.next_u64())
-    }
-}
-
 impl CanonicalBytes for Mersenne61 {
+    const NUM_BYTES: usize = 8;
+
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), 8);
         out.copy_from_slice(&self.0.to_le_bytes());
     }
 }
 
-impl ReducingBytes for Mersenne61 {
-    fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
+impl CanonicalEncoding for Mersenne61 {
+    const MODULUS_BITS: u32 = 61;
+
+    fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut buf = [0u8; 16];
         let len = bytes.len().min(16);
         buf[..len].copy_from_slice(&bytes[..len]);
         Self::from_u128(u128::from_le_bytes(buf))
     }
-}
 
-impl TranscriptChallenge for Mersenne61 {
-    fn from_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_le_bytes_mod_order(bytes)
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        let arr: [u8; 8] = bytes.try_into().ok()?;
+        Self::from_u128_checked(u64::from_le_bytes(arr) as u128)
     }
-}
 
-impl FixedByteSize for Mersenne61 {
-    const NUM_BYTES: usize = 8;
-}
+    fn to_u128_checked(&self) -> Option<u128> {
+        Some(self.0 as u128)
+    }
 
-impl FixedBytes<8> for Mersenne61 {}
+    fn to_u64_checked(&self) -> Option<u64> {
+        Some(self.0)
+    }
 
-impl CanonicalBitLength for Mersenne61 {
+    fn from_u128_checked(v: u128) -> Option<Self> {
+        (v < MODULUS as u128).then_some(Self(v as u64))
+    }
+
+    fn from_u128_reduced(v: u128) -> Self {
+        Self::reduce_u128(v)
+    }
+
     fn num_bits(&self) -> u32 {
         u64::BITS - self.0.leading_zeros()
     }
-}
 
-impl CanonicalU64 for Mersenne61 {
-    fn to_canonical_u64_checked(&self) -> Option<u64> {
-        Some(self.0)
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self::from_bytes_le_reduced(bytes)
     }
 }
 
 impl WithAccumulator for Mersenne61 {
     type Accumulator = NaiveAccumulator<Mersenne61>;
+    type SmallScalarAccumulator = NaiveAccumulator<Mersenne61>;
+    type SignedProductAccumulator = NaiveAccumulator<Mersenne61>;
 }
-
-impl MulPow2 for Mersenne61 {}
-impl MulPrimitiveInt for Mersenne61 {}
 
 #[derive(Clone, Debug)]
 struct LinearRound {

@@ -19,7 +19,7 @@ use jolt_riscv::SourceInstructionKind;
 
 use super::state::{AdviceCompute, AdviceJob, GuestState};
 use emitter::EmitterSet;
-use jolt_riscv::JoltInstructionRow;
+use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow};
 
 /// One compiled code body (fast or record) with its dispatch table.
 struct CompiledBody {
@@ -67,6 +67,21 @@ impl CompiledProgram {
         let rows = &program.expanded_bytecode;
         if rows.is_empty() {
             return Err(TraceError::Backend("program has no expanded bytecode"));
+        }
+        // VirtualPextSigned and VirtualPext use `pext` (PextSigned also
+        // `popcnt`); refuse on CPUs without them rather than fault at run
+        // time. Gated per program so pext-free guests keep compiling on
+        // pre-BMI2 hosts.
+        let uses_pext = rows
+            .iter()
+            .any(|row| matches!(row.instruction_kind, Kind::PextSigned(_) | Kind::Pext(_)));
+        if uses_pext
+            && (!std::arch::is_x86_feature_detected!("bmi2")
+                || !std::arch::is_x86_feature_detected!("popcnt"))
+        {
+            return Err(TraceError::Backend(
+                "jolt-tracer-x86 requires BMI2 (pext) and POPCNT support",
+            ));
         }
 
         // Source rows keyed by address: the expanded bytecode erases the source
@@ -196,7 +211,7 @@ impl Emitter {
 
     /// A group's rows are all emitted: record how many `VirtualAdvice` slots
     /// it consumed on its job, so the runtime helper can check the computed
-    /// value count against it. Div computations provide exactly two values,
+    /// value count against it. Div computations provide exactly one value,
     /// which makes over-consumption a compile-time error.
     fn finish_advice_group(&mut self) -> Result<(), TraceError> {
         let Some(index) = self.current_advice_job.take() else {
@@ -204,7 +219,7 @@ impl Emitter {
         };
         let job = &mut self.advice_jobs[index];
         job.advice_rows = self.advice_slot;
-        if matches!(job.compute, AdviceCompute::Div { .. }) && job.advice_rows > 2 {
+        if matches!(job.compute, AdviceCompute::Div { .. }) && job.advice_rows > 1 {
             return Err(TraceError::Backend(
                 "DIV/REM group consumes more advice values than its computation provides",
             ));
@@ -348,10 +363,12 @@ impl AdviceCompute {
         let (rs1, rs2) = (row.operands.rs1, row.operands.rs2);
         // Codes mirror the tracer's per-variant advice formulas (helpers.rs).
         let code = match source.kind() {
-            S::Div(_) | S::Rem(_) => 0u8,
-            S::DivW(_) | S::RemW(_) => 1,
-            S::DivU(_) | S::RemU(_) => 2,
-            S::DivUW(_) | S::RemUW(_) => 3,
+            S::Div(_) => 0u8,
+            S::Rem(_) => 1,
+            S::DivW(_) => 2,
+            S::RemW(_) => 3,
+            S::DivU(_) | S::RemU(_) => 4,
+            S::DivUW(_) | S::RemUW(_) => 5,
             S::InlineDispatch(_) => {
                 let inline = row
                     .inline

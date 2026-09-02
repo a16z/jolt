@@ -9,12 +9,13 @@
 //! All tables are generic over `const XLEN: usize`. The supported word sizes
 //! are `XLEN = 64` (production) and `XLEN = 8` (full-hypercube tests).
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::traits::LookupTable;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
@@ -23,13 +24,19 @@ pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
+pub mod pext;
+pub mod pext_signed;
 pub mod pow2;
 pub mod pow2_w;
 pub mod prefixes;
 pub mod range_check;
 pub mod range_check_aligned;
+pub mod shift_data_b;
+pub mod shift_data_h;
+pub mod shift_data_w;
 pub mod shift_right_bitmask;
-pub mod sign_extend_half_word;
+pub mod shift_right_bitmask_w;
+pub mod sign_extend_word;
 pub mod sign_mask;
 pub mod signed_greater_than_equal;
 pub mod signed_less_than;
@@ -40,21 +47,27 @@ pub mod unsigned_less_than_equal;
 pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_unsigned_remainder;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
+pub mod virtual_negate_if;
 pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
 pub mod virtual_sra;
+pub mod virtual_sraw;
 pub mod virtual_srl;
+pub mod virtual_srlw;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
+pub mod window_mask_b;
+pub mod window_mask_h;
+pub mod window_mask_w;
 pub mod word_alignment;
 pub mod xor;
 
 pub use prefixes::{PrefixEval, Prefixes};
 pub use suffixes::{SuffixEval, Suffixes};
 
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
@@ -63,12 +76,18 @@ use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
+use pext::PextTable;
+use pext_signed::PextSignedTable;
 use pow2::Pow2Table;
 use pow2_w::Pow2WTable;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
+use shift_data_b::ShiftDataBTable;
+use shift_data_h::ShiftDataHTable;
+use shift_data_w::ShiftDataWTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
-use sign_extend_half_word::SignExtendHalfWordTable;
+use shift_right_bitmask_w::ShiftRightBitmaskWTable;
+use sign_extend_word::SignExtendWordTable;
 use sign_mask::SignMaskTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
@@ -78,15 +97,20 @@ use unsigned_less_than_equal::UnsignedLessThanEqualTable;
 use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
-use virtual_change_divisor::VirtualChangeDivisorTable;
-use virtual_change_divisor_w::VirtualChangeDivisorWTable;
+use virtual_negate_if::VirtualNegateIfTable;
 use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualROTRTable;
 use virtual_rotrw::VirtualROTRWTable;
 use virtual_sra::VirtualSRATable;
+use virtual_sraw::VirtualSRAWTable;
 use virtual_srl::VirtualSRLTable;
+use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
+use virtual_xor_rotl1::VirtualXORROTL1Table;
 use virtual_xor_rotw::VirtualXORROTWTable;
+use window_mask_b::WindowMaskBTable;
+use window_mask_h::WindowMaskHTable;
+use window_mask_w::WindowMaskWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
@@ -133,7 +157,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
     WordAlignment(WordAlignmentTable<XLEN>),
     LowerHalfWord(LowerHalfWordTable<XLEN>),
-    SignExtendHalfWord(SignExtendHalfWordTable<XLEN>),
+    SignExtendWord(SignExtendWordTable<XLEN>),
     Pow2(Pow2Table<XLEN>),
     Pow2W(Pow2WTable<XLEN>),
     ShiftRightBitmask(ShiftRightBitmaskTable<XLEN>),
@@ -142,8 +166,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualSRA(VirtualSRATable<XLEN>),
     VirtualROTR(VirtualROTRTable<XLEN>),
     VirtualROTRW(VirtualROTRWTable<XLEN>),
-    VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
-    VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
+    VirtualNegateIf(VirtualNegateIfTable<XLEN>),
     MulUNoOverflow(MulUNoOverflowTable<XLEN>),
     VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
@@ -153,6 +176,22 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTW12(VirtualXORROTWTable<XLEN, 12>),
     VirtualXORROTW8(VirtualXORROTWTable<XLEN, 8>),
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
+    WindowMaskW(WindowMaskWTable<XLEN>),
+    PextSigned(PextSignedTable<XLEN>),
+    VirtualXORROTW22(VirtualXORROTWTable<XLEN, 22>),
+    VirtualXORROTW19(VirtualXORROTWTable<XLEN, 19>),
+    VirtualXORROTW6(VirtualXORROTWTable<XLEN, 6>),
+    ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
+    VirtualSRLW(VirtualSRLWTable<XLEN>),
+    VirtualSRAW(VirtualSRAWTable<XLEN>),
+    Pext(PextTable<XLEN>),
+    WindowMaskB(WindowMaskBTable<XLEN>),
+    WindowMaskH(WindowMaskHTable<XLEN>),
+    AlignAddr(AlignAddrTable<XLEN>),
+    ShiftDataB(ShiftDataBTable<XLEN>),
+    ShiftDataH(ShiftDataHTable<XLEN>),
+    ShiftDataW(ShiftDataWTable<XLEN>),
+    VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -182,7 +221,7 @@ macro_rules! dispatch {
             Self::HalfwordAlignment($t) => $expr,
             Self::WordAlignment($t) => $expr,
             Self::LowerHalfWord($t) => $expr,
-            Self::SignExtendHalfWord($t) => $expr,
+            Self::SignExtendWord($t) => $expr,
             Self::Pow2($t) => $expr,
             Self::Pow2W($t) => $expr,
             Self::ShiftRightBitmask($t) => $expr,
@@ -191,8 +230,7 @@ macro_rules! dispatch {
             Self::VirtualSRA($t) => $expr,
             Self::VirtualROTR($t) => $expr,
             Self::VirtualROTRW($t) => $expr,
-            Self::VirtualChangeDivisor($t) => $expr,
-            Self::VirtualChangeDivisorW($t) => $expr,
+            Self::VirtualNegateIf($t) => $expr,
             Self::MulUNoOverflow($t) => $expr,
             Self::VirtualXORROT32($t) => $expr,
             Self::VirtualXORROT24($t) => $expr,
@@ -202,6 +240,22 @@ macro_rules! dispatch {
             Self::VirtualXORROTW12($t) => $expr,
             Self::VirtualXORROTW8($t) => $expr,
             Self::VirtualXORROTW7($t) => $expr,
+            Self::WindowMaskW($t) => $expr,
+            Self::PextSigned($t) => $expr,
+            Self::VirtualXORROTW22($t) => $expr,
+            Self::VirtualXORROTW19($t) => $expr,
+            Self::VirtualXORROTW6($t) => $expr,
+            Self::ShiftRightBitmaskW($t) => $expr,
+            Self::VirtualSRLW($t) => $expr,
+            Self::VirtualSRAW($t) => $expr,
+            Self::Pext($t) => $expr,
+            Self::WindowMaskB($t) => $expr,
+            Self::WindowMaskH($t) => $expr,
+            Self::AlignAddr($t) => $expr,
+            Self::ShiftDataB($t) => $expr,
+            Self::ShiftDataH($t) => $expr,
+            Self::ShiftDataW($t) => $expr,
+            Self::VirtualXORROTL1($t) => $expr,
         }
     };
 }
@@ -230,7 +284,7 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
     pub fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         dispatch!(self, t => t.evaluate_mle(r))
     }
@@ -243,7 +297,11 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
         dispatch!(self, t => PrefixSuffixDecomposition::prefixes(t))
     }
 
-    pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    pub fn combine<F: JoltField>(
+        &self,
+        prefixes: &[PrefixEval<F>],
+        suffixes: &[SuffixEval<F>],
+    ) -> F {
         dispatch!(self, t => PrefixSuffixDecomposition::combine(t, prefixes, suffixes))
     }
 }
@@ -265,13 +323,16 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Def
     fn suffixes(&self) -> &'static [Suffixes];
 
     /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 
-    /// Generate a random lookup index for testing.
+    /// Generate a random lookup index inside the table's valid input domain,
+    /// for testing.
     ///
     /// The default returns a uniform random `u128` masked to `2 * XLEN` bits.
-    /// Tables with constrained input domains (e.g., shift/rotate tables that expect
-    /// bitmask-shaped right operands) should override this.
+    /// Tables with constrained input domains (e.g., shift/rotate tables that
+    /// expect bitmask-shaped right operands) override this; off-domain
+    /// indices are unreachable in real traces, and the prefix-suffix
+    /// decomposition only matches `materialize_entry` on the valid domain.
     #[cfg(test)]
     fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         let raw: u128 = rand::Rng::gen(rng);

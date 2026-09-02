@@ -1,5 +1,7 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
@@ -7,7 +9,9 @@ use jolt_program::execution::{
     RamWrite as ProgramRamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError,
     TraceInputs, TraceOutput, TraceRow,
 };
-use jolt_riscv::JoltInstructionRow;
+use jolt_program::preprocess::BytecodePreprocessing;
+use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
+use rayon::prelude::*;
 
 use common::jolt_device::JoltDevice;
 
@@ -15,6 +19,7 @@ use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
 use crate::instruction::{Cycle, RAMAccess};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
+use crate::trace_row::{cycle_to_trace_row, CycleConversionError};
 
 #[derive(Default, Debug, Clone)]
 pub struct TracerBackend {
@@ -31,16 +36,35 @@ impl TracerBackend {
             elf_path: Some(elf_path),
         }
     }
-}
 
-impl ExecutionBackend for TracerBackend {
-    type Trace = OwnedTrace;
-
-    fn trace(
+    /// Executes the program and builds proof rows directly, without first
+    /// allocating the wider execution rows.
+    pub fn trace_compact(
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+        bytecode: &BytecodePreprocessing,
+    ) -> Result<TraceOutput<Arc<Vec<JoltTraceRow>>>, CompactTraceError> {
+        let execution = self.trace_execution(program, inputs)?;
+        let mut rows = collect_rows(execution.cycles, |cycle| {
+            cycle_to_trace_row(&cycle, bytecode)
+        })?;
+        while rows.last() == Some(&JoltTraceRow::default()) {
+            rows.pop();
+        }
+        Ok(TraceOutput::new(
+            Arc::new(rows),
+            execution.device,
+            Some(execution.final_memory),
+            Some(execution.advice_tape),
+        ))
+    }
+
+    fn trace_execution(
+        &self,
+        program: &JoltProgram,
+        inputs: TraceInputs,
+    ) -> Result<TraceExecution, TraceError> {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
@@ -54,19 +78,92 @@ impl ExecutionBackend for TracerBackend {
             &inputs.memory_config,
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
+        Ok(TraceExecution {
+            cycles,
+            final_memory: MemoryImage {
+                bytes: final_memory.materialized_nonzero_bytes(),
+            },
+            device,
+            advice_tape: advice_tape.into_bytes(),
+        })
+    }
+}
 
-        let rows = cycles
-            .into_iter()
-            .map(trace_row_from_cycle)
-            .collect::<Result<Vec<_>, _>>()?;
+#[derive(Debug, thiserror::Error)]
+pub enum CompactTraceError {
+    #[error(transparent)]
+    Trace(#[from] TraceError),
+    #[error(transparent)]
+    Row(#[from] CycleConversionError),
+}
+
+struct TraceExecution {
+    cycles: Vec<Cycle>,
+    final_memory: MemoryImage,
+    device: JoltDevice,
+    advice_tape: Vec<u8>,
+}
+
+impl ExecutionBackend for TracerBackend {
+    type Trace = OwnedTrace;
+
+    fn trace(
+        &mut self,
+        program: &JoltProgram,
+        inputs: TraceInputs,
+    ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+        let execution = self.trace_execution(program, inputs)?;
+        let rows = collect_rows(execution.cycles, trace_row_from_cycle)?;
         Ok(TraceOutput::new(
             OwnedTrace::new(rows),
-            device,
-            Some(MemoryImage {
-                bytes: final_memory.materialized_nonzero_bytes(),
-            }),
-            Some(advice_tape.into_bytes()),
+            execution.device,
+            Some(execution.final_memory),
+            Some(execution.advice_tape),
         ))
+    }
+}
+
+const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
+
+fn collect_rows<R, E>(
+    cycles: Vec<Cycle>,
+    convert: impl Fn(Cycle) -> Result<R, E> + Sync,
+) -> Result<Vec<R>, E>
+where
+    R: Default + Send,
+    E: Send + Sync,
+{
+    let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
+    let _span = tracing::info_span!(
+        "trace_rows_from_cycles",
+        rows = cycles.len(),
+        workers = if parallel {
+            rayon::current_num_threads()
+        } else {
+            1
+        }
+    )
+    .entered();
+    if !parallel {
+        return cycles.into_iter().map(convert).collect();
+    }
+
+    // Rayon's fallible collector creates temporary shard vectors. Capturing the
+    // error out of band keeps collection indexed and writes into one allocation.
+    let error = OnceLock::new();
+    let rows = cycles
+        .into_par_iter()
+        .map(|cycle| match convert(cycle) {
+            Ok(row) => row,
+            Err(worker_error) => {
+                let _ = error.set(worker_error);
+                R::default()
+            }
+        })
+        .collect();
+    match error.into_inner() {
+        Some(worker_error) => Err(worker_error),
+        None => Ok(rows),
     }
 }
 

@@ -2,11 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::Instruction;
-
 use super::{
     format::{format_i::FormatI, normalize_imm},
-    Cycle, RISCVInstruction, RISCVTrace,
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -27,8 +25,4 @@ impl ADDIW {
     }
 }
 
-impl RISCVTrace for ADDIW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
-    }
-}
+impl RISCVTrace for ADDIW {}

@@ -334,11 +334,12 @@ mod tests {
     #[test]
     fn target_legality_rejects_source_only_rows() {
         assert!(RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::ADD));
+        assert!(RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::ADDW));
         assert!(RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::LD));
         assert!(RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::VirtualAssertEQ));
 
         assert_eq!(SourceInstructionKind::Unimpl.jolt_kind(), None);
-        assert_eq!(SourceInstructionKind::ADDW.jolt_kind(), None);
+        assert_eq!(SourceInstructionKind::MULH.jolt_kind(), None);
         assert_eq!(SourceInstructionKind::LW.jolt_kind(), None);
         assert_eq!(SourceInstructionKind::SW.jolt_kind(), None);
         assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
@@ -358,7 +359,10 @@ mod tests {
             RV64IM_JOLT.source_dense_index(SourceInstructionKind::AMOADDW),
             None
         );
-        assert_eq!(SourceInstructionKind::ADDW.jolt_kind(), None);
+        assert_eq!(
+            SourceInstructionKind::ADDW.jolt_kind(),
+            Some(JoltInstructionKind::ADDW)
+        );
 
         let supported = JoltInstructionKind::ALL
             .iter()

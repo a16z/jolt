@@ -1,7 +1,7 @@
 //! Shared witness-view and table helpers for the per-relation kernels.
 
 use jolt_claims::protocols::jolt::JoltOpeningId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 #[cfg(feature = "parallel")]
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -17,7 +17,7 @@ use crate::KernelError;
 const PAR_THRESHOLD: usize = 1 << 10;
 
 /// Materialize a dense field-element table of the oracle behind `opening`.
-pub(crate) fn dense_view<F: Field>(
+pub(crate) fn dense_view<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
 ) -> Result<Vec<F>, KernelError<F>> {
@@ -25,14 +25,14 @@ pub(crate) fn dense_view<F: Field>(
 }
 
 /// `eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index MSB).
-pub(crate) fn eq_table<F: Field>(point: &[F]) -> Vec<F> {
+pub(crate) fn eq_table<F: JoltField>(point: &[F]) -> Vec<F> {
     EqPolynomial::evals(point, None)
 }
 
 /// Fold the address dimension of an address-major `(K × T)` oracle grid by the
 /// eq weights of `point` (big-endian, `K = 2^point.len()`):
 /// `out[j] = Σ_k eq(point, k) · grid[(k << log_t) | j]`.
-pub(crate) fn address_fold<F: Field>(
+pub(crate) fn address_fold<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
     log_t: usize,
@@ -64,7 +64,7 @@ pub(crate) fn address_fold<F: Field>(
 /// Fold the cycle dimension of an address-major `(K × T)` oracle grid by the
 /// eq weights of `point` (big-endian, `T = 2^point.len()`):
 /// `out[k] = Σ_j eq(point, j) · grid[(k << log_t) | j]`.
-pub(crate) fn cycle_fold<F: Field>(
+pub(crate) fn cycle_fold<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
     log_k: usize,
@@ -96,7 +96,7 @@ pub(crate) fn cycle_fold<F: Field>(
 /// Tile `base` `copies` times: the `(address ‖ cycle)`-indexed replication of a
 /// cycle-indexed table across the address dimension (address bits are the high
 /// bits of the joint index).
-pub(crate) fn tile<F: Field>(base: &[F], copies: usize) -> Vec<F> {
+pub(crate) fn tile<F: JoltField>(base: &[F], copies: usize) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if !base.is_empty() && base.len() * copies >= PAR_THRESHOLD {
         let mut out: Vec<F> = unsafe_allocate_zero_vec(base.len() * copies);
@@ -113,7 +113,7 @@ pub(crate) fn tile<F: Field>(base: &[F], copies: usize) -> Vec<F> {
 
 /// Replicate a cycle-indexed table across the stream bit at the index LSB
 /// (`out[(t << 1) | s] = base[t]`).
-pub(crate) fn replicate_stream_lsb<F: Field>(base: &[F]) -> Vec<F> {
+pub(crate) fn replicate_stream_lsb<F: JoltField>(base: &[F]) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if base.len() >= PAR_THRESHOLD {
         let mut out: Vec<F> = unsafe_allocate_zero_vec(base.len() * 2);
@@ -135,7 +135,7 @@ pub(crate) fn replicate_stream_lsb<F: Field>(base: &[F]) -> Vec<F> {
 
 /// A per-stream constant table over the `(cycle ‖ stream)` domain with the
 /// stream bit at the index LSB (`out[(t << 1) | s] = values[s]`).
-pub(crate) fn stream_pair_lsb<F: Field>(values: [F; 2], cycles: usize) -> Vec<F> {
+pub(crate) fn stream_pair_lsb<F: JoltField>(values: [F; 2], cycles: usize) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if cycles >= PAR_THRESHOLD {
         let mut out: Vec<F> = unsafe_allocate_zero_vec(cycles * 2);
@@ -159,7 +159,7 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         JoltOpeningId, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
 
     use super::{address_fold, cycle_fold, dense_view};

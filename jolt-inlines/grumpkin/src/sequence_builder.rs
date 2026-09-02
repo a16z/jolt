@@ -29,22 +29,20 @@ impl GrumpkinDivAdv {
         let a = load_field_element_limbs(ctx, a_addr)?;
         let b_addr = ctx.register(operands.rs2 as usize);
         let b = load_field_element_limbs(ctx, b_addr)?;
+        // A zero divisor has no inverse, so no advice can satisfy `b * c == a`
+        // for `a != 0`. Emit `c = 0` instead of aborting trace generation: the
+        // guest-side check in `div_assume_nonzero` then spoils the proof, which
+        // is the contract a guest calling `div` with a zero divisor expects.
         let limbs = if is_base_field {
             let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
-            (arr_to_fq(&b)
+            arr_to_fq(&b)
                 .inverse()
-                .expect("Attempted to invert zero in grumpkin base field")
-                * arr_to_fq(&a))
-            .0
-             .0
+                .map_or([0u64; 4], |b_inv| (b_inv * arr_to_fq(&a)).0 .0)
         } else {
             let arr_to_fr = |a: &[u64; 4]| Fr::new_unchecked(BigInt(*a));
-            (arr_to_fr(&b)
+            arr_to_fr(&b)
                 .inverse()
-                .expect("Attempted to invert zero in grumpkin scalar field")
-                * arr_to_fr(&a))
-            .0
-             .0
+                .map_or([0u64; 4], |b_inv| (b_inv * arr_to_fr(&a)).0 .0)
         };
         Ok(FieldElementAdvice { limbs })
     }

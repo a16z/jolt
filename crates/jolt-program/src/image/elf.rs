@@ -113,13 +113,13 @@ fn decode_text_section(
     let mut offset = 0;
     while offset < raw_data.len() {
         let address = section_address + offset as u64;
-        if offset + 1 >= raw_data.len() {
+        let Some(&[b0, b1]) = raw_data.get(offset..offset + 2) else {
             return Err(ProgramError::MalformedImage(
                 "truncated instruction halfword",
             ));
-        }
+        };
 
-        let first_halfword = u16::from_le_bytes([raw_data[offset], raw_data[offset + 1]]);
+        let first_halfword = u16::from_le_bytes([b0, b1]);
         if (first_halfword & 0b11) != 0b11 {
             if first_halfword != 0 {
                 let word = uncompress_rv64_instruction(first_halfword);
@@ -130,18 +130,13 @@ fn decode_text_section(
             continue;
         }
 
-        if offset + 3 >= raw_data.len() {
+        let Some(&[b0, b1, b2, b3]) = raw_data.get(offset..offset + 4) else {
             return Err(ProgramError::MalformedImage(
                 "truncated RV64 instruction word",
             ));
-        }
+        };
 
-        let word = u32::from_le_bytes([
-            raw_data[offset],
-            raw_data[offset + 1],
-            raw_data[offset + 2],
-            raw_data[offset + 3],
-        ]);
+        let word = u32::from_le_bytes([b0, b1, b2, b3]);
         let instruction = super::decode::decode_instruction(word, address, false, profile)?;
         instructions.push(instruction);
         offset += 4;

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use jolt_field::{Field, Fr};
+use jolt_field::{Fr, JoltField};
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
@@ -1041,8 +1041,7 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
 ];
 
 /// The Akita-path claim cells: the read-raf fused-inc opening, lattice
-/// Booleanity, the fused Stage-7 Hamming reduction, and the stage-8
-/// reconstruction leaves. All active: the fixture-driven sweep in
+/// Booleanity, and the fused Stage-7 Hamming reduction. All active: the fixture-driven sweep in
 /// `soundness/tampering/akita.rs` (`every_clear_claim_wire_rejects_offset`)
 /// offsets every clear-claim scalar of the real packed-prover fixtures and
 /// asserts each offset rejects.
@@ -1057,68 +1056,36 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         "the lattice read-raf cycle output fold rejects an offset fused-inc opening",
     ),
     checked_standard(
-        "stage6.claims.booleanity.unsigned_inc_chunks",
-        "claims.stage6b.booleanity.unsigned_inc_chunks",
+        "stage6.claims.booleanity.balanced_inc_digits",
+        "claims.stage6b.booleanity.balanced_inc_digits",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "the lattice booleanity output fold covers every chunk cell",
     ),
     checked_standard(
-        "stage6.claims.booleanity.unsigned_inc_msb",
-        "claims.stage6b.booleanity.unsigned_inc_msb",
+        "stage6.claims.booleanity.balanced_inc_carry",
+        "claims.stage6b.booleanity.balanced_inc_carry",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "the lattice booleanity output fold covers the msb cell",
+        "the lattice booleanity output fold covers the carry cell",
     ),
     checked_standard(
-        "stage7.claims.hamming_weight_claim_reduction.unsigned_inc_chunks",
-        "claims.stage7.hamming_weight_claim_reduction.unsigned_inc_chunks",
+        "stage7.claims.hamming_weight_claim_reduction.balanced_inc_digits",
+        "claims.stage7.hamming_weight_claim_reduction.balanced_inc_digits",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "the hamming-weight reduction final-claim fold covers every increment chunk",
     ),
     checked_standard(
-        "stage7.claims.hamming_weight_claim_reduction.unsigned_inc_msb",
-        "claims.stage7.hamming_weight_claim_reduction.unsigned_inc_msb",
+        "stage7.claims.hamming_weight_claim_reduction.balanced_inc_carry",
+        "claims.stage7.hamming_weight_claim_reduction.balanced_inc_carry",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "the hamming-weight reduction final-claim fold covers the increment MSB",
-    ),
-    checked_standard(
-        "reconstruction.claims.untrusted_advice",
-        "claims.reconstruction.untrusted_advice",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the untrusted advice leaf",
-    ),
-    checked_standard(
-        "reconstruction.claims.trusted_advice",
-        "claims.reconstruction.trusted_advice",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the trusted advice leaf",
-    ),
-    checked_standard(
-        "reconstruction.claims.bytecode",
-        "claims.reconstruction.bytecode",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers every bytecode lane leaf",
-    ),
-    checked_standard(
-        "reconstruction.claims.program_image",
-        "claims.reconstruction.program_image",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the program image leaf",
+        "the hamming-weight reduction final-claim fold covers the increment carry",
     ),
 ];
 
@@ -1372,18 +1339,11 @@ fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>)
     }
 }
 
-pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
+pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
     let zero = F::zero();
     let optional = fill_optionals.then_some(zero);
 
     ClearProofClaims {
-        #[cfg(feature = "akita")]
-        reconstruction: jolt_verifier::stages::stage8::reconstruction::ReconstructionOutputClaims {
-            untrusted_advice: None,
-            trusted_advice: None,
-            bytecode: None,
-            program_image: None,
-        },
         stage1: stage1::outputs::Stage1OutputClaims {
             uniskip_output_claim: zero,
             outer: stage1::outputs::Stage1BatchOutputClaims {
@@ -1554,8 +1514,8 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     instruction_ra: vec![zero],
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
-                    unsigned_inc_chunks: vec![zero],
-                    unsigned_inc_msb: zero,
+                    balanced_inc_digits: vec![zero],
+                    balanced_inc_carry: zero,
                 },
             ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
@@ -1601,9 +1561,9 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
                     #[cfg(feature = "akita")]
-                    unsigned_inc_chunks: vec![zero],
+                    balanced_inc_digits: vec![zero],
                     #[cfg(feature = "akita")]
-                    unsigned_inc_msb: zero,
+                    balanced_inc_carry: zero,
                 },
             trusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::TrustedAdviceAddressPhaseOutputClaims {

@@ -7,7 +7,7 @@
 //! `ProgramImageInit` commitment over the shared precommitted schedule.
 //! Mirrors `jolt-prover-legacy`'s `zkvm/claim_reductions/program_image.rs`.
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_utils::log2_power_of_two;
 
 use crate::{derived, opening};
@@ -85,7 +85,7 @@ impl ProgramImageClaimReductionLayout {
     /// `FinalScale` value when the reduction completes in the cycle phase
     /// (i.e. no active address-phase rounds remain). `r_addr_rw` is the RAM
     /// address component of the `RamVal` opening from RAM read-write checking.
-    pub fn cycle_phase_final_output_scale<F: Field>(
+    pub fn cycle_phase_final_output_scale<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         challenges: &[F],
@@ -102,7 +102,7 @@ impl ProgramImageClaimReductionLayout {
     /// opening point, rather than re-deriving it from the sumcheck challenges.
     /// Lets the cycle-phase relation object's `resolve_public` recover the scale
     /// from the opening point it produced in `derive_opening_points`.
-    pub fn cycle_phase_scale_at_opening_point<F: Field>(
+    pub fn cycle_phase_scale_at_opening_point<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         opening_point: &[F],
@@ -116,7 +116,7 @@ impl ProgramImageClaimReductionLayout {
     }
 
     /// `FinalScale` value when the reduction completes in the address phase.
-    pub fn address_phase_final_output_scale<F: Field>(
+    pub fn address_phase_final_output_scale<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         cycle_var_challenges: &[F],
@@ -132,7 +132,7 @@ impl ProgramImageClaimReductionLayout {
     /// opening point, rather than re-deriving it from the cycle/sumcheck
     /// challenges. Lets the stage 7 relation object's `resolve_public` recover the
     /// scale from the opening point it produced in `derive_opening_points`.
-    pub fn address_phase_scale_at_opening_point<F: Field>(
+    pub fn address_phase_scale_at_opening_point<F: JoltField>(
         &self,
         r_addr_rw: &[F],
         opening_point: &[F],
@@ -151,7 +151,7 @@ impl PrecommittedReductionLayout for ProgramImageClaimReductionLayout {
 
 pub(crate) fn final_output_expr<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     derived(JoltDerivedId::from(
         ProgramImageClaimReductionPublic::FinalScale,
@@ -202,7 +202,7 @@ pub fn final_program_image_opening() -> JoltOpeningId {
 /// `carry_use` (y-bit 0 produced output 1, consuming the incoming carry).
 /// Window bits at and above `m` are fixed to zero, so `r_y = 0` there. The
 /// final carry-out is dropped, i.e. addresses wrap mod `2^ell`.
-fn eval_shifted_eq_poly_at_opening_point<F: Field>(
+fn eval_shifted_eq_poly_at_opening_point<F: JoltField>(
     r_addr_be: &[F],
     start_index: usize,
     opening_point_be: &[F],
@@ -242,7 +242,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
 
     fn fr(value: u64) -> Fr {

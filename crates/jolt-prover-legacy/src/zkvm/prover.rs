@@ -237,6 +237,8 @@ impl<
         ProofTranscript: Transcript,
     > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
 {
+    /// Traces the guest and constructs a prover; see [`Self::gen_from_trace`]
+    /// for the error condition.
     #[expect(
         clippy::too_many_arguments,
         reason = "prover construction mirrors public inputs and advice channels"
@@ -250,7 +252,7 @@ impl<
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         advice_tape: Option<tracer::AdviceTape>,
-    ) -> Self {
+    ) -> Result<Self, jolt_verifier::VerifierError> {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
             max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
@@ -324,6 +326,12 @@ impl<
         )
     }
 
+    /// Constructs a prover from an execution trace.
+    ///
+    /// Returns [`VerifierError::InvalidTraceLength`] when the padded trace
+    /// exceeds the preprocessing's `max_padded_trace_length` — a
+    /// `Result` rather than a panic so FFI hosts (where unwinding across the
+    /// boundary is undefined behavior) can reject oversized traces cleanly.
     pub fn gen_from_trace(
         preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
         lazy_trace: LazyTraceIterator,
@@ -332,7 +340,7 @@ impl<
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
-    ) -> Self {
+    ) -> Result<Self, jolt_verifier::VerifierError> {
         // Truncate trailing zero bytes from outputs. Both prover and verifier
         // apply the same truncation so the proof is internally consistent.
         // See the corresponding comment in JoltVerifier::new().
@@ -352,11 +360,15 @@ impl<
         };
         let max_padded_trace_length = preprocessing.shared.max_padded_trace_length;
         if padded_trace_len > max_padded_trace_length {
-            panic!(
+            tracing::error!(
                 "Execution trace length ({unpadded_trace_len} cycles, padded to {padded_trace_len}) \
                 exceeds max_trace_length ({max_padded_trace_length}) configured in MemoryConfig. \
                 Increase max_trace_length to at least {padded_trace_len}."
             );
+            return Err(jolt_verifier::VerifierError::InvalidTraceLength {
+                got: padded_trace_len,
+                max: max_padded_trace_length,
+            });
         }
 
         trace.resize(padded_trace_len, Cycle::NoOp);
@@ -406,7 +418,7 @@ impl<
             preprocessing.pedersen_generators(MAX_BLINDFOLD_GENERATORS)
         };
 
-        Self {
+        Ok(Self {
             preprocessing,
             program_io,
             lazy_trace,
@@ -437,7 +449,7 @@ impl<
             blindfold_accumulator: crate::subprotocols::blindfold::BlindFoldAccumulator::new(),
             #[cfg(not(feature = "zk"))]
             _curve: std::marker::PhantomData,
-        }
+        })
     }
 
     #[cfg(not(feature = "akita"))]
@@ -2979,12 +2991,48 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
             .expect("prover should produce verifier-native proof");
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
+    }
+
+    #[test]
+    #[serial]
+    fn oversized_trace_returns_error() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&100u32).unwrap();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (shared_preprocessing, _program_data) = test_shared_preprocessing(
+            bytecode,
+            init_memory_state,
+            e_entry,
+            io_device.memory_layout.clone(),
+            256,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let result = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        assert!(matches!(
+            result,
+            Err(jolt_verifier::VerifierError::InvalidTraceLength { .. })
+        ));
     }
 
     #[test]
@@ -3016,7 +3064,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
 
         assert!(
             prover.padded_trace_len <= (1 << log_chunk),
@@ -3038,6 +3087,7 @@ mod tests {
         DoryGlobals::reset();
 
         let mut program = host::Program::new("sha3-guest");
+        program.set_func("sha3");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3062,7 +3112,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3111,7 +3162,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3169,7 +3221,8 @@ mod tests {
             Some(trusted_commitment),
             Some(trusted_hint),
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3231,7 +3284,8 @@ mod tests {
             Some(trusted_commitment),
             Some(trusted_hint),
             final_memory_state,
-        );
+        )
+        .unwrap();
 
         // Trace is tiny but advice is max-sized
         assert!(prover.unpadded_trace_len < 8192);
@@ -3288,7 +3342,8 @@ mod tests {
             Some(trusted_commitment),
             Some(trusted_hint),
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3347,7 +3402,8 @@ mod tests {
             Some(trusted_commitment),
             Some(trusted_hint),
             final_memory_state,
-        );
+        )
+        .unwrap();
 
         assert!(prover.padded_trace_len <= 1024, "test expects small trace");
 
@@ -3435,7 +3491,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3472,7 +3529,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3490,7 +3548,7 @@ mod tests {
     fn sha2_chain_dory_perf() {
         use std::time::Instant;
 
-        const CYCLES_PER_SHA256: f64 = 3396.0;
+        const CYCLES_PER_SHA256: f64 = 2968.0;
         let log_t: usize = std::env::var("PERF_LOG_T")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -3560,7 +3618,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         eprintln!(
             "trace length: {} (padded 2^{})",
             prover.trace.len(),
@@ -3660,7 +3719,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3678,7 +3738,7 @@ mod tests {
                 mutate(claims);
                 tampered
             };
-        let one = <jolt_field::Fr as jolt_field::FromPrimitiveInt>::from_u64(1);
+        let one = <jolt_field::Fr as jolt_field::Ring>::from_u64(1);
         assert!(
             canonical_verify_result(
                 &prover_preprocessing,
@@ -3822,7 +3882,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3864,7 +3925,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3922,7 +3984,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -3963,7 +4026,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()
@@ -4110,7 +4174,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let (jolt_proof, _) = prover.prove_parts();
 
         println!("\n=== BlindFold R1CS Satisfaction Test (All 7 Stages) ===\n");
@@ -4232,7 +4297,8 @@ mod tests {
             None,
             None,
             final_memory_state,
-        );
+        )
+        .unwrap();
 
         let (proof, _) = prover
             .prove()
@@ -4276,7 +4342,8 @@ mod tests {
             None,
             None,
             final_memory_state,
-        );
+        )
+        .unwrap();
         let (proof, _) = prover
             .prove()
             .expect("prover should produce verifier-native proof");
@@ -4315,7 +4382,8 @@ mod tests {
             None,
             None,
             final_memory_state,
-        );
+        )
+        .unwrap();
         let (proof, _) = prover
             .prove()
             .expect("prover should produce verifier-native proof");
@@ -4496,7 +4564,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (proof, _debug_info) = prover
             .prove()
@@ -4544,7 +4613,8 @@ mod tests {
             Some(trusted_commitment),
             Some(trusted_hint),
             None,
-        );
+        )
+        .unwrap();
         let io_device = prover.program_io.clone();
         let (jolt_proof, _debug_info) = prover
             .prove()

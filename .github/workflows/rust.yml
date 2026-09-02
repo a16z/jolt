@@ -45,6 +45,39 @@ jobs:
       - name: taplo fmt --check
         run: taplo fmt --check
 
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history (blobs lazily fetched) so the diff-scoped rules can
+      # resolve an exact merge base; see scripts/check_style_invariants.py.
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: check style invariants
+        run: python3 scripts/check_style_invariants.py --base "origin/${{ github.base_ref || 'main' }}"
+
+  field-stack:
+    name: Shared field feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Require one jolt-field identity (bootstrap akita-field pin allowed)
+        run: scripts/check-shared-field-identity.sh
+      - name: Check no backend
+        run: cargo check -p jolt-field --no-default-features
+      - name: Check BN254 backend
+        run: cargo check -p jolt-field --no-default-features --features bn254
+      - name: Test Solinas backend
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas --cargo-quiet
+      - name: Test parallel Solinas backend
+        run: cargo nextest run -p jolt-field --no-default-features --features solinas,parallel --cargo-quiet
+      - name: Check combined backends
+        run: cargo check -p jolt-field --no-default-features --features bn254,solinas
+
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -79,6 +112,12 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
       - name: cargo clippy -p jolt-prover-legacy --features akita
         run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
+      # The modular prover's packed (Akita) path: lint alone and with
+      # prover-fixtures so the acceptance suites keep compiling.
+      - name: cargo clippy -p jolt-prover --features akita
+        run: cargo clippy -p jolt-prover --all-targets --features akita
+      - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
+        run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
       # The profiling feature gates the profile harness bin and smoke test.
       # The smoke test cannot RUN in CI yet (reference-backend memory — see
       # the NOTE above the legacy test jobs), but everything behind the
@@ -87,6 +126,12 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features profiling
       - name: cargo clippy -p jolt-prover --features profiling,allocative
         run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
+      # The packed profile harness: the same bin/smoke test driving
+      # akita::prove. Lint both flamegraph modes, like the Dory pair above.
+      - name: cargo clippy -p jolt-prover --features akita,profiling
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling
+      - name: cargo clippy -p jolt-prover --features akita,profiling,allocative
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,allocative
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
@@ -447,6 +492,11 @@ jobs:
       # Akita lattice PCS (the release-only perf harness stays ignored).
       - name: Run jolt-prover-legacy tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features akita
+      # The MODULAR packed-prover acceptance suites: the five e2e analogs
+      # (with live tampers) plus the four byte-diff ratchets asserting
+      # wire-for-wire equality with the legacy packed prover.
+      - name: Run jolt-prover tests with akita feature
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
@@ -491,7 +541,7 @@ jobs:
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
       # by fixtures the real packed prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
 
   typos:
     runs-on: ubuntu-latest
@@ -835,9 +885,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: Run extractor tests
         working-directory: ./zklean-extractor
-        run: cargo test
+        run: cargo nextest run --cargo-quiet
 
   compile-extracted-lean:
     name: Compile extracted Lean

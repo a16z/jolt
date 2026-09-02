@@ -1,6 +1,6 @@
 //! The cycle phase of the bytecode read-RAF symbolic sumcheck.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use super::{BytecodeReadRafCycleShape, BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims};
 use crate::protocols::jolt::geometry::bytecode::{
@@ -54,11 +54,11 @@ impl SymbolicSumcheck for ReadRafCyclePhase {
         self.shape.0.num_committed_ra_polys() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(bytecode_read_raf_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_cycle_output(self.shape.0, self.shape.1)
     }
 }

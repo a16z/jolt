@@ -82,10 +82,42 @@ mod exec_functions {
 }
 
 mod sequence_tests {
+    use std::collections::BTreeMap;
+
     use crate::sequence_builder::{Sha256Compression, Sha256CompressionInitial};
     use jolt_inlines_sdk::{
         assert_edge_cases_match_reference, assert_random_cases_match_reference,
     };
+    use tracer::{
+        instruction::Instruction,
+        utils::{
+            inline_test_harness::InlineTestHarness, virtual_registers::VirtualRegisterAllocator,
+        },
+    };
+
+    fn inline_rows(funct3: u32) -> (usize, BTreeMap<&'static str, usize>) {
+        let instruction = InlineTestHarness::create_default_instruction(
+            crate::INLINE_OPCODE,
+            funct3,
+            crate::SHA256_FUNCT7,
+        );
+        let sequence = instruction.inline_sequence(&VirtualRegisterAllocator::default());
+        let mut histogram = BTreeMap::new();
+        for instruction in &sequence {
+            let mnemonic: &'static str = <&Instruction>::into(instruction);
+            *histogram.entry(mnemonic).or_default() += 1;
+        }
+        (sequence.len(), histogram)
+    }
+
+    #[test]
+    fn test_sha256_inline_rows_per_block() {
+        // Σ₀/Σ₁ are 3 rows each, σ₀/σ₁ are 4; fixed-IV folds both round-0 Σ values.
+        let (custom_iv_rows, custom_iv_histogram) = inline_rows(crate::SHA256_FUNCT3);
+        let (fixed_iv_rows, fixed_iv_histogram) = inline_rows(crate::SHA256_INIT_FUNCT3);
+        assert_eq!(custom_iv_rows, 1900, "{custom_iv_histogram:?}");
+        assert_eq!(fixed_iv_rows, 1864, "{fixed_iv_histogram:?}");
+    }
 
     #[test]
     fn test_sha256_direct_execution() {
@@ -110,6 +142,8 @@ mod sequence_tests {
 
 mod sdk_tests {
     use crate::sdk::Sha256;
+    use sha2::{Digest, Sha256 as RefSha256};
+
     #[test]
     fn test_sha256_sdk_digest() {
         // Test vector for "abc"
@@ -177,8 +211,6 @@ mod sdk_tests {
 
     #[test]
     fn test_sha256_aligned_vs_unaligned() {
-        use sha2::{Digest, Sha256 as RefSha256};
-
         // Test various sizes including block boundary (64 bytes)
         let test_sizes = [
             0, 1, 3, 4, 7, 8, 31, 32, 55, 56, 63, 64, 65, 100, 128, 256, 512, 1024, 2048,

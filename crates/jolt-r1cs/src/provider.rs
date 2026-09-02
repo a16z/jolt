@@ -5,7 +5,7 @@
 //!
 //! Used internally by `ProverData` — not a standalone `BufferProvider`.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::column::R1csColumn;
 use crate::key::R1csKey;
@@ -25,14 +25,23 @@ pub struct SpartanChallenges<F> {
 /// Handles `PolySource::R1cs(column)`: Az, Bz, Cz (sparse matvec),
 /// CombinedRow (linear combination with Spartan challenges), and
 /// Variable(i) column extraction from the per-cycle witness vector.
-pub struct R1csSource<'a, F: Field> {
+pub struct R1csSource<'a, F: JoltField> {
     key: &'a R1csKey<F>,
     witness: &'a [F],
     challenges: Option<SpartanChallenges<F>>,
 }
 
-impl<'a, F: Field> R1csSource<'a, F> {
+impl<'a, F: JoltField> R1csSource<'a, F> {
+    /// # Panics
+    ///
+    /// Panics if the witness length does not match the key's padded layout
+    /// (`num_cycles * num_vars_padded`).
     pub fn new(key: &'a R1csKey<F>, witness: &'a [F]) -> Self {
+        assert_eq!(
+            witness.len(),
+            key.total_cols(),
+            "witness length must match the padded layout (num_cycles * num_vars_padded)"
+        );
         Self {
             key,
             witness,
@@ -54,17 +63,20 @@ impl<'a, F: Field> R1csSource<'a, F> {
     fn compute_matvec(&self, matrix: &[Vec<(usize, F)>]) -> Vec<F> {
         let k_pad = self.key.num_constraints_padded;
         let v_pad = self.key.num_vars_padded;
-        let total = self.key.num_cycles * k_pad;
-        let mut result = vec![F::zero(); total];
+        let mut result = vec![F::zero(); self.key.total_rows()];
 
         let compute_cycle = |(c, chunk): (usize, &mut [F])| {
             let w_base = c * v_pad;
-            for (k, row) in matrix.iter().enumerate() {
+            for (slot, row) in chunk.iter_mut().zip(matrix) {
                 let mut acc = F::zero();
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "witness covers num_cycles * v_pad entries and column indices are below num_vars <= v_pad by the ConstraintMatrices invariant"
+                )]
                 for &(j, coeff) in row {
                     acc += coeff * self.witness[w_base + j];
                 }
-                chunk[k] = acc;
+                *slot = acc;
             }
         };
 
@@ -120,6 +132,10 @@ impl<'a, F: Field> R1csSource<'a, F> {
                 );
                 let v_pad = self.key.num_vars_padded;
                 let mut out = Vec::with_capacity(self.key.num_cycles);
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "var_idx < num_vars <= v_pad is asserted above and witness covers num_cycles * v_pad entries"
+                )]
                 let fill = |dst: &mut [F]| {
                     #[cfg(feature = "parallel")]
                     {
@@ -144,10 +160,11 @@ impl<'a, F: Field> R1csSource<'a, F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use num_traits::{One, Zero};
 
     #[test]
@@ -176,6 +193,34 @@ mod tests {
         let az = source.compute_matvec(&key.matrices.a);
         assert_eq!(az[0], Fr::from_u64(3));
         assert_eq!(az[key.num_constraints_padded], Fr::from_u64(5));
+    }
+
+    fn two_cycle_key() -> R1csKey<Fr> {
+        let one = Fr::one();
+        let m = ConstraintMatrices::new(
+            1,
+            3,
+            vec![vec![(1, one)]],
+            vec![vec![(1, one)]],
+            vec![vec![(2, one)]],
+        );
+        R1csKey::new(m, 2)
+    }
+
+    #[test]
+    #[should_panic(expected = "witness length must match the padded layout")]
+    fn new_rejects_short_witness() {
+        let key = two_cycle_key();
+        let witness = vec![Fr::zero(); key.total_cols() - 1];
+        let _ = R1csSource::new(&key, &witness);
+    }
+
+    #[test]
+    #[should_panic(expected = "witness length must match the padded layout")]
+    fn new_rejects_oversized_witness() {
+        let key = two_cycle_key();
+        let witness = vec![Fr::zero(); key.total_cols() + 1];
+        let _ = R1csSource::new(&key, &witness);
     }
 
     #[test]

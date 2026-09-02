@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -25,7 +25,7 @@ impl<const XLEN: usize, const ROTATION: u32> LookupTable for VirtualXORROTWTable
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
@@ -51,6 +51,9 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             12 => &[Prefixes::XorRotW12],
             8 => &[Prefixes::XorRotW8],
             7 => &[Prefixes::XorRotW7],
+            22 => &[Prefixes::XorRotW22],
+            19 => &[Prefixes::XorRotW19],
+            6 => &[Prefixes::XorRotW6],
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
@@ -62,12 +65,15 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             8 => &[Suffixes::One, Suffixes::XorRotW8],
             12 => &[Suffixes::One, Suffixes::XorRotW12],
             16 => &[Suffixes::One, Suffixes::XorRotW16],
+            22 => &[Suffixes::One, Suffixes::XorRotW22],
+            19 => &[Suffixes::One, Suffixes::XorRotW19],
+            6 => &[Suffixes::One, Suffixes::XorRotW6],
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, xor_rot] = suffixes.try_into().unwrap();
@@ -76,6 +82,9 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             8 => prefixes[Prefixes::XorRotW8] * one + xor_rot,
             12 => prefixes[Prefixes::XorRotW12] * one + xor_rot,
             16 => prefixes[Prefixes::XorRotW16] * one + xor_rot,
+            22 => prefixes[Prefixes::XorRotW22] * one + xor_rot,
+            19 => prefixes[Prefixes::XorRotW19] * one + xor_rot,
+            6 => prefixes[Prefixes::XorRotW6] * one + xor_rot,
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
@@ -146,5 +155,50 @@ mod tests {
     #[test]
     fn mle_full_hypercube_rotw16() {
         mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 16>>();
+    }
+
+    #[test]
+    fn mle_random_rotw22() {
+        mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 22>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rotw22() {
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 22>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rotw22() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 22>>();
+    }
+
+    #[test]
+    fn mle_random_rotw19() {
+        mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 19>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rotw19() {
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 19>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rotw19() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 19>>();
+    }
+
+    #[test]
+    fn mle_random_rotw6() {
+        mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 6>>();
+    }
+
+    #[test]
+    fn prefix_suffix_rotw6() {
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 6>>();
+    }
+
+    #[test]
+    fn mle_full_hypercube_rotw6() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 6>>();
     }
 }

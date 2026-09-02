@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
@@ -33,7 +33,7 @@ use crate::{ProverError, StageProver as _};
 
 /// Stage 1's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
-pub struct Stage1ProverOutput<F: Field, C> {
+pub struct Stage1ProverOutput<F: JoltField, C> {
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage1OutputClaims<F>,
@@ -55,7 +55,7 @@ pub fn prove_stage1<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -97,9 +97,11 @@ where
         ),
     };
 
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,

@@ -358,10 +358,7 @@ macro_rules! source_extension_for_marker {
     (VirtualHostIO) => {
         Some(SourceExtension::JoltCustom)
     };
-    (VirtualChangeDivisor) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualZeroExtendWord) => {
@@ -380,6 +377,9 @@ macro_rules! source_extension_for_marker {
         Some(SourceExtension::JoltCustom)
     };
     (MulI) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (MulIW) => {
         Some(SourceExtension::JoltCustom)
     };
     (Pow2) => {
@@ -415,6 +415,33 @@ macro_rules! source_extension_for_marker {
     (VirtualSrli) => {
         Some(SourceExtension::JoltCustom)
     };
+    (WindowMaskW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (PextSigned) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (Pext) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (WindowMaskB) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (WindowMaskH) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (ShiftDataB) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (ShiftDataH) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (ShiftDataW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (AlignAddr) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (VirtualXorRot32) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -437,6 +464,33 @@ macro_rules! source_extension_for_marker {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualXorRotW7) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotW22) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotW19) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotW6) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualShiftRightBitmaskW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSrlw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSrliw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSraw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSraiw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRotL1) => {
         Some(SourceExtension::JoltCustom)
     };
     (FieldAdd) => {
@@ -797,10 +851,7 @@ macro_rules! source_side_effects_for_marker {
     (VirtualAdviceLen) => {
         false
     };
-    (VirtualChangeDivisor) => {
-        false
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         false
     };
     (VirtualZeroExtendWord) => {
@@ -819,6 +870,9 @@ macro_rules! source_side_effects_for_marker {
         false
     };
     (MulI) => {
+        false
+    };
+    (MulIW) => {
         false
     };
     (Pow2) => {
@@ -854,6 +908,33 @@ macro_rules! source_side_effects_for_marker {
     (VirtualSrli) => {
         false
     };
+    (WindowMaskW) => {
+        false
+    };
+    (PextSigned) => {
+        false
+    };
+    (Pext) => {
+        false
+    };
+    (WindowMaskB) => {
+        false
+    };
+    (WindowMaskH) => {
+        false
+    };
+    (ShiftDataB) => {
+        false
+    };
+    (ShiftDataH) => {
+        false
+    };
+    (ShiftDataW) => {
+        false
+    };
+    (AlignAddr) => {
+        false
+    };
     (VirtualXorRot32) => {
         false
     };
@@ -876,6 +957,33 @@ macro_rules! source_side_effects_for_marker {
         false
     };
     (VirtualXorRotW7) => {
+        false
+    };
+    (VirtualXorRotW22) => {
+        false
+    };
+    (VirtualXorRotW19) => {
+        false
+    };
+    (VirtualXorRotW6) => {
+        false
+    };
+    (VirtualShiftRightBitmaskW) => {
+        false
+    };
+    (VirtualSrlw) => {
+        false
+    };
+    (VirtualSrliw) => {
+        false
+    };
+    (VirtualSraw) => {
+        false
+    };
+    (VirtualSraiw) => {
+        false
+    };
+    (VirtualXorRotL1) => {
         false
     };
     (FieldAdd) => {
@@ -917,6 +1025,12 @@ macro_rules! jolt_target_extension_for_marker {
     (Addi) => {
         Some(JoltTargetExtension::IntegerCore)
     };
+    (AddiW) => {
+        Some(JoltTargetExtension::IntegerCore)
+    };
+    (AddW) => {
+        Some(JoltTargetExtension::IntegerCore)
+    };
     (And) => {
         Some(JoltTargetExtension::IntegerCore)
     };
@@ -950,6 +1064,9 @@ macro_rules! jolt_target_extension_for_marker {
     (Sub) => {
         Some(JoltTargetExtension::IntegerCore)
     };
+    (SubW) => {
+        Some(JoltTargetExtension::IntegerCore)
+    };
     (Xor) => {
         Some(JoltTargetExtension::IntegerCore)
     };
@@ -957,6 +1074,9 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::IntegerCore)
     };
     (Mul) => {
+        Some(JoltTargetExtension::IntegerMultiply)
+    };
+    (MulW) => {
         Some(JoltTargetExtension::IntegerMultiply)
     };
     (MulHU) => {
@@ -1028,10 +1148,7 @@ macro_rules! jolt_target_extension_for_marker {
     (AssertMulUNoOverflow) => {
         Some(JoltTargetExtension::VirtualAssertions)
     };
-    (VirtualChangeDivisor) => {
-        Some(JoltTargetExtension::VirtualArithmetic)
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (VirtualZeroExtendWord) => {
@@ -1050,6 +1167,9 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (MulI) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (MulIW) => {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (Pow2) => {
@@ -1082,6 +1202,33 @@ macro_rules! jolt_target_extension_for_marker {
     (VirtualSrli) => {
         Some(JoltTargetExtension::VirtualShifts)
     };
+    (WindowMaskW) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (PextSigned) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (Pext) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (WindowMaskB) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (WindowMaskH) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (ShiftDataB) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (ShiftDataH) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (ShiftDataW) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (AlignAddr) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
     (Andn) => {
         Some(JoltTargetExtension::BitManipulation)
     };
@@ -1110,6 +1257,33 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRotW7) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRotW22) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRotW19) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRotW6) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualShiftRightBitmaskW) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSrlw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSrliw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSraw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualSraiw) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (VirtualXorRotL1) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (FieldAdd) => {
@@ -1223,6 +1397,12 @@ macro_rules! jolt_side_effects_for_marker {
     (Addi) => {
         false
     };
+    (AddiW) => {
+        false
+    };
+    (AddW) => {
+        false
+    };
     (And) => {
         false
     };
@@ -1241,6 +1421,9 @@ macro_rules! jolt_side_effects_for_marker {
     (Mul) => {
         // See the Add arm: carry-out makes rd=x0 MUL observable feature-on.
         cfg!(feature = "implicit-carry")
+    };
+    (MulW) => {
+        false
     };
     (MulHU) => {
         false
@@ -1264,6 +1447,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (Sub) => {
+        false
+    };
+    (SubW) => {
         false
     };
     (Xor) => {
@@ -1299,10 +1485,7 @@ macro_rules! jolt_side_effects_for_marker {
     (VirtualAdviceLen) => {
         false
     };
-    (VirtualChangeDivisor) => {
-        false
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         false
     };
     (VirtualZeroExtendWord) => {
@@ -1321,6 +1504,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (MulI) => {
+        false
+    };
+    (MulIW) => {
         false
     };
     (Pow2) => {
@@ -1356,6 +1542,33 @@ macro_rules! jolt_side_effects_for_marker {
     (VirtualSrli) => {
         false
     };
+    (WindowMaskW) => {
+        false
+    };
+    (PextSigned) => {
+        false
+    };
+    (Pext) => {
+        false
+    };
+    (WindowMaskB) => {
+        false
+    };
+    (WindowMaskH) => {
+        false
+    };
+    (ShiftDataB) => {
+        false
+    };
+    (ShiftDataH) => {
+        false
+    };
+    (ShiftDataW) => {
+        false
+    };
+    (AlignAddr) => {
+        false
+    };
     (VirtualXorRot32) => {
         false
     };
@@ -1378,6 +1591,33 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRotW7) => {
+        false
+    };
+    (VirtualXorRotW22) => {
+        false
+    };
+    (VirtualXorRotW19) => {
+        false
+    };
+    (VirtualXorRotW6) => {
+        false
+    };
+    (VirtualShiftRightBitmaskW) => {
+        false
+    };
+    (VirtualSrlw) => {
+        false
+    };
+    (VirtualSrliw) => {
+        false
+    };
+    (VirtualSraw) => {
+        false
+    };
+    (VirtualSraiw) => {
+        false
+    };
+    (VirtualXorRotL1) => {
         false
     };
 }
@@ -1681,12 +1921,12 @@ macro_rules! define_jolt_instruction_kind {
         }
 
         impl SourceInstructionKind {
-            pub const fn from_jolt_kind(kind: JoltInstructionKind) -> Option<Self> {
+            pub const fn from_jolt_kind(kind: JoltInstructionKind) -> Self {
                 match kind {
-                    JoltInstruction::Noop(_) => Some(SourceInstruction::Noop(Noop(()))),
+                    JoltInstruction::Noop(_) => SourceInstruction::Noop(Noop(())),
                     $(
                         $(#[$meta])*
-                        JoltInstruction::$marker(_) => Some(SourceInstruction::$marker($marker(()))),
+                        JoltInstruction::$marker(_) => SourceInstruction::$marker($marker(())),
                     )*
                 }
             }
@@ -1708,11 +1948,48 @@ macro_rules! define_jolt_instruction_kind {
                 JoltInstruction::Noop(Noop(()))
             }
         }
+
+        impl From<JoltInstructionKind> for SourceInstructionKind {
+            fn from(kind: JoltInstructionKind) -> Self {
+                Self::from_jolt_kind(kind)
+            }
+        }
     };
 }
 
 crate::for_each_instruction_kind!(define_source_instruction_kind);
 crate::for_each_jolt_instruction_kind!(define_jolt_instruction_kind);
+
+impl SourceInstructionKind {
+    /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ADVICE: Self = SourceInstruction::VirtualAdvice(VirtualAdvice(()));
+
+    /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
+        SourceInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+    /// Value form of `VirtualSignExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_SIGN_EXTEND_WORD: Self =
+        SourceInstruction::VirtualSignExtendWord(VirtualSignExtendWord(()));
+    /// Value form of `VirtualNegateIf`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_NEGATE_IF: Self = SourceInstruction::VirtualNegateIf(VirtualNegateIf(()));
+}
+
+impl JoltInstructionKind {
+    /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ADVICE: Self = JoltInstruction::VirtualAdvice(VirtualAdvice(()));
+
+    /// Value form of `VirtualRev8W`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_REV8_W: Self = JoltInstruction::VirtualRev8W(VirtualRev8W(()));
+
+    /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
+        JoltInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+    /// Value form of `VirtualSignExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_SIGN_EXTEND_WORD: Self =
+        JoltInstruction::VirtualSignExtendWord(VirtualSignExtendWord(()));
+    /// Value form of `VirtualNegateIf`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_NEGATE_IF: Self = JoltInstruction::VirtualNegateIf(VirtualNegateIf(()));
+}
 
 #[cfg(feature = "serialization")]
 impl Serialize for SourceInstructionKind {
@@ -1925,7 +2202,10 @@ mod tests {
             SourceInstruction::VirtualHostIO(VirtualHostIO(())).jolt_kind(),
             Some(JoltInstruction::VirtualHostIO(VirtualHostIO(())))
         );
-        assert_eq!(SourceInstructionKind::ADDW.jolt_kind(), None);
+        assert_eq!(
+            SourceInstructionKind::ADDW.jolt_kind(),
+            Some(JoltInstructionKind::ADDW)
+        );
         assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
         assert_eq!(SourceInstructionKind::Unimpl.jolt_kind(), None);
     }
@@ -1942,6 +2222,10 @@ mod tests {
 
     #[cfg(feature = "serialization")]
     #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside a Result-returning test"
+    )]
     fn serde_uses_source_names_and_final_tags() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             serde_json::to_string(&SourceInstructionKind::ADDW)?,

@@ -6,7 +6,7 @@
 //!
 //! ```ignore
 //! #[derive(SumcheckBatch)]
-//! struct Stage5Sumchecks<F: Field> {
+//! struct Stage5Sumchecks<F: JoltField> {
 //!     instruction_read_raf:     InstructionReadRaf<F>,
 //!     ram_ra_claim_reduction:   RamRaClaimReduction<F>,
 //!     registers_val_evaluation: RegistersValEvaluation<F>,
@@ -110,6 +110,23 @@
 //! stay internal to `jolt-sumcheck`.
 //!
 //! See `specs/sumcheck-batch-derive.md`.
+
+// In the jolt-verifier runtime closure: stricter panic and unsafe discipline
+// than the workspace lints (specs/verifier-closure-lints.md).
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::indexing_slicing
+)]
+// wildcard_enum_match_arm is omitted: this crate matches foreign syn AST enums,
+// where wildcard fallbacks to Err/None are the correct, version-stable idiom.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -1150,7 +1167,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     let driver_impl = quote! {
-        impl<#f: ::jolt_field::Field> #name<#f> {
+        impl<#f: ::jolt_field::JoltField> #name<#f> {
             #draw_challenges_method
 
             #begin_batch_method
@@ -1169,7 +1186,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // holds the wire *values* (`Inputs<F>` / `Outputs<F>`); `*Points` holds the
     // derived opening points (`Inputs<Vec<F>>` / `Outputs<Vec<F>>`). Only the
     // `OutputClaims` (values) aggregate is serialized (the wire form), so it alone
-    // derives serde. `F: Field` does not imply the serde traits, so the bounds are
+    // derives serde. `F: JoltField` does not imply the serde traits, so the bounds are
     // spelled explicitly (the workspace convention for claim structs), fully
     // qualified so call sites need no serde imports.
     let serialize_bound = format!("{f}: ::serde::Serialize");
@@ -1177,12 +1194,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #input_claims_name<#f: ::jolt_field::Field> {
+        #vis struct #input_claims_name<#f: ::jolt_field::JoltField> {
             #(#input_claims_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #input_points_name<#f: ::jolt_field::Field> {
+        #vis struct #input_points_name<#f: ::jolt_field::JoltField> {
             #(#input_points_fields,)*
         }
 
@@ -1194,24 +1211,24 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[derive(Clone, Debug, PartialEq, Eq, ::serde::Serialize, ::serde::Deserialize)]
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
         #[serde(bound(serialize = #serialize_bound, deserialize = #deserialize_bound))]
-        #vis struct #output_claims_name<#f: ::jolt_field::Field> {
+        #vis struct #output_claims_name<#f: ::jolt_field::JoltField> {
             #(#output_claims_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-        #vis struct #output_points_name<#f: ::jolt_field::Field> {
+        #vis struct #output_points_name<#f: ::jolt_field::JoltField> {
             #(#output_points_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
         #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-        #vis struct #challenges_name<#f: ::jolt_field::Field> {
+        #vis struct #challenges_name<#f: ::jolt_field::JoltField> {
             #(#challenge_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #batching_coefficients_name<#f: ::jolt_field::Field> {
+        #vis struct #batching_coefficients_name<#f: ::jolt_field::JoltField> {
             #(#batching_coefficient_fields,)*
         }
 

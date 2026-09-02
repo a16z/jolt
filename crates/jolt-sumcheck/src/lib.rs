@@ -19,6 +19,7 @@
 //! | [`proof`] | [`ClearProof`], [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`prover`] | [`ProveRounds`], [`prove_batch`], and the uni-skip provers — the prove-side engine |
+//! | [`prover`] | [`RoundScheduler`] / [`SequentialRounds`] — the per-round member-traversal seam |
 //! | [`recorder`] | [`SumcheckRecorder`] — the clear/ZK proof-recording seam |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
@@ -65,6 +66,22 @@
 //! ```
 //!
 
+// In the jolt-verifier runtime closure: stricter panic and unsafe discipline
+// than the workspace lints (specs/verifier-closure-lints.md).
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::indexing_slicing,
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
+
 pub mod batch;
 pub mod claim;
 pub mod committed;
@@ -79,6 +96,8 @@ pub mod round_proof;
 pub mod scalar;
 pub mod verifier;
 
+#[cfg(test)]
+mod round_scheduler_tests;
 #[cfg(test)]
 mod tests;
 
@@ -111,8 +130,9 @@ pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, Sumche
 pub use error::SumcheckError;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 pub use prover::{
-    prove_batch, prove_uniskip_clear, prove_uniskip_committed, ProveRounds, ProvedBatch,
-    ProvedUniskip, ProvedUniskipCommitted,
+    prove_batch, prove_uniskip_clear, prove_uniskip_committed, MemberFinish, MemberRound,
+    ProveRounds, ProvedBatch, ProvedUniskip, ProvedUniskipCommitted, RoundScheduler,
+    SequentialRounds,
 };
 #[cfg(feature = "r1cs")]
 pub use r1cs::{

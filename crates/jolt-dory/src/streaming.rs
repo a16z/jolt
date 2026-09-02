@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use crate::routines::JoltG1Routines;
 use crate::scheme::{
     ark_to_jolt_fr, ark_to_jolt_g1, ark_to_jolt_g1_vec, ark_to_jolt_gt, commit_rows_tier_2,
-    jolt_fr_to_ark, jolt_g1_vec_to_ark, ArkFr,
+    jolt_fr_to_ark, jolt_g1_vec_to_ark, srs_prefix, ArkFr,
 };
 use crate::types::{DoryCommitment, DoryHint, DoryPartialCommitment, DoryProverSetup};
 
@@ -63,7 +63,7 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
 
-        let g1_bases = &setup.0.g1_vec[..chunk.len()];
+        let g1_bases = srs_prefix(&setup.0.g1_vec, chunk.len());
         let scalars: Vec<ArkFr> = chunk.iter().map(jolt_fr_to_ark).collect();
         let row_commitment = JoltG1Routines::msm(g1_bases, &scalars);
         partial.row_commitments.push(ark_to_jolt_g1(row_commitment));
@@ -220,7 +220,7 @@ impl StreamingCommitment for crate::DoryScheme {
             row_width,
             setup.0.g1_vec.len(),
         );
-        setup.0.g1_vec[..row_width]
+        srs_prefix(&setup.0.g1_vec, row_width)
             .par_iter()
             .map(|base| base.0.into_affine())
             .collect()
@@ -342,8 +342,13 @@ fn finish_one_hot_column_major_chunks<M: dory::Mode>(
         .par_chunks_mut(chunk_count)
         .enumerate()
         .for_each(|(row, row_commitments)| {
-            for (chunk_index, chunk) in chunks.iter().enumerate() {
-                row_commitments[chunk_index] = chunk[row];
+            for (row_commitment, chunk) in row_commitments.iter_mut().zip(chunks) {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "every chunk is asserted to have one_hot_k rows and par_chunks_mut(chunk_count) yields one_hot_k row slices"
+                )]
+                let value = chunk[row];
+                *row_commitment = value;
             }
         });
     validate_row_count(row_commitments.len(), setup);
@@ -392,11 +397,15 @@ fn one_hot_chunk_commitments(
                 hot_row < one_hot_k,
                 "streaming one-hot: hot row {hot_row} outside k={one_hot_k}",
             );
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "hot_row < one_hot_k is asserted above and indices_per_k has one_hot_k buckets"
+            )]
             indices_per_k[hot_row].push(column);
         }
     }
 
-    let additions = batch_g1_additions_multi_affine(&bases[..chunk.len()], &indices_per_k);
+    let additions = batch_g1_additions_multi_affine(srs_prefix(bases, chunk.len()), &indices_per_k);
     let mut row_commitments = vec![Bn254G1::default(); one_hot_k];
     for (row_commitment, (indices, addition)) in row_commitments
         .iter_mut()
@@ -431,27 +440,29 @@ fn scalar_affine_bases<'a>(
     setup: &DoryProverSetup,
 ) -> &'a [G1Affine] {
     let bases = cache.get_or_insert_with(|| {
-        setup.0.g1_vec[..row_width]
+        srs_prefix(&setup.0.g1_vec, row_width)
             .iter()
             .map(|base| base.0.into_affine())
             .collect()
     });
     if bases.len() < row_width {
         bases.extend(
-            setup.0.g1_vec[bases.len()..row_width]
+            srs_prefix(&setup.0.g1_vec, row_width)
                 .iter()
+                .skip(bases.len())
                 .map(|base| base.0.into_affine()),
         );
     }
-    &bases[..row_width]
+    srs_prefix(bases, row_width)
 }
 
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
+    #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
-    use jolt_field::FromPrimitiveInt;
-    use jolt_field::RandomSampling;
+    use jolt_field::Field;
+    use jolt_field::Ring;
     use jolt_openings::{
         CommitmentScheme, StreamingCommitment, ZkOpeningScheme, ZkStreamingCommitment,
     };
@@ -474,7 +485,7 @@ mod tests {
         let prover_setup = DoryScheme::setup_prover(num_vars);
 
         let evals: Vec<Fr> = (0..num_rows * num_cols)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
 
         let poly = jolt_poly::Polynomial::new(evals.clone());
@@ -492,7 +503,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"stream-open");
@@ -549,7 +560,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"u64-stream-open");
@@ -614,7 +625,7 @@ mod tests {
 
         let mut rng = ChaCha20Rng::seed_from_u64(313);
         let point = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect::<Vec<_>>();
         let eval = Fr::from_u64(0);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zero-zk-open");
@@ -721,7 +732,7 @@ mod tests {
 
         let mut rng = ChaCha20Rng::seed_from_u64(317);
         let point = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect::<Vec<_>>();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"one-hot-zk-open");
@@ -784,7 +795,7 @@ mod tests {
         );
 
         let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
         let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"i128-stream-open");

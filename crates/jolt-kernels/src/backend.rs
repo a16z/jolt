@@ -8,13 +8,14 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "allocative")]
+use jolt_poly::Polynomial;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
@@ -53,11 +54,21 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
+use jolt_sumcheck::RoundScheduler;
+
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::uniskip::UniskipKernel;
 use crate::KernelError;
+
+/// Factory behind [`JoltBackend::round_scheduler`]: stage fronts mint one
+/// scheduler per stage via `build`. Takes [`ProofSession`] so a device
+/// traversal shares the carry its kernels park in `prepare`, and so
+/// per-proof state cannot leak onto the long-lived backend.
+pub trait BuildRoundScheduler<F: JoltField> {
+    fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
+}
 
 /// The universal backend trait behind [`JoltBackend`]'s naive-served slots:
 /// mint the [`SumcheckKernel`] that proves `R`, from the proof session, the
@@ -87,7 +98,7 @@ use crate::KernelError;
 /// surfaces the same distant way.
 pub trait PrepareKernel<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -109,15 +120,17 @@ where
 /// `Box<dyn PrepareKernel<F, R>>`, reached by type through the
 /// `#[derive(KernelSlots)]`-emitted delegating [`PrepareKernel`] impls; the
 /// remaining slots are the bespoke non-sumcheck duties (commit streaming, the
-/// uni-skip fronts, the advice opening evaluation, the joint opening).
+/// uni-skip fronts, the advice opening evaluation, the joint opening, and the
+/// round-traversal factory).
 #[derive(KernelSlots)]
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
+    pub round_scheduler: Box<dyn BuildRoundScheduler<F>>,
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
     pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,
@@ -159,7 +172,7 @@ where
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// Open the proof-scoped session that slot state lives in. One session
@@ -216,46 +229,52 @@ fn visit_carry<T: Any + allocative::Allocative>(
     }
 }
 
-/// Allocator-reserved bytes behind a `Vec` of flat elements. Field elements
-/// carry no per-element heap (true of every production field), so parked
-/// kernels can size their tables arithmetically — no `F: Allocative` bound
-/// leaking into the generic reference impls that park them.
+/// Heap visitation the derive cannot reach: containers keyed by a foreign
+/// type without an `Allocative` impl. Everything else visits through
+/// `#[derive(Allocative)]`, with scalar tables routed to
+/// [`jolt_poly::visit_scalars`] so no `F: Allocative` bound leaks into the
+/// generic reference impls that park these kernels.
+///
+/// Sized arithmetically from `capacity()`; the key's own bytes ride along
+/// with the tuple spine.
 #[cfg(feature = "allocative")]
-pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
-    v.capacity() * size_of::<T>()
+pub(crate) fn visit_keyed_polys<K, T>(
+    tables: &Vec<(K, Vec<Polynomial<T>>)>,
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    visitor.visit_simple(
+        allocative::Key::new("spine"),
+        tables.capacity() * size_of::<(K, Vec<Polynomial<T>>)>(),
+    );
+    visitor.visit_simple(
+        allocative::Key::new("tables"),
+        tables
+            .iter()
+            .map(|(_, polys)| {
+                polys.capacity() * size_of::<Polynomial<T>>()
+                    + polys
+                        .iter()
+                        .map(|poly| poly.len() * size_of::<T>())
+                        .sum::<usize>()
+            })
+            .sum(),
+    );
 }
 
+/// [`visit_keyed_polys`] for prefix–suffix table pairs.
 #[cfg(feature = "allocative")]
-pub(crate) fn arc_vec_heap_bytes<T>(v: &Arc<Vec<T>>) -> usize {
-    size_of::<Vec<T>>() + v.capacity() * size_of::<T>()
+pub(crate) fn visit_scalar_pairs<T>(
+    pairs: &[(Vec<T>, Vec<T>)],
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    visitor.visit_simple(
+        allocative::Key::new("elements"),
+        pairs
+            .iter()
+            .map(|(p, q)| (p.capacity() + q.capacity()) * size_of::<T>())
+            .sum(),
+    );
 }
-
-/// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
-/// inner reservation.
-#[cfg(feature = "allocative")]
-pub(crate) fn nested_vec_heap_bytes<T>(v: &Vec<Vec<T>>) -> usize {
-    v.capacity() * size_of::<Vec<T>>()
-        + v.iter()
-            .map(|inner| inner.capacity() * size_of::<T>())
-            .sum::<usize>()
-}
-
-/// Heap bytes behind a dense polynomial's evaluation table, by `len()` —
-/// [`Polynomial`](jolt_poly::Polynomial) exposes no capacity. Exact at the
-/// mid-stage snapshot (taken before any binding, when freshly built tables
-/// have `len == capacity`); undercounts the truncated slack of bound state.
-#[cfg(feature = "allocative")]
-pub(crate) fn poly_heap_bytes<T>(poly: &jolt_poly::Polynomial<T>) -> usize {
-    poly.len() * size_of::<T>()
-}
-
-/// [`poly_heap_bytes`] summed over a table list, plus the outer spine.
-#[cfg(feature = "allocative")]
-pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usize {
-    polys.capacity() * size_of::<jolt_poly::Polynomial<T>>()
-        + polys.iter().map(poly_heap_bytes).sum::<usize>()
-}
-
 /// Backend-owned state with proof lifetime, opaque to orchestration.
 ///
 /// Slots stash and share private state keyed by a backend-private type, so
@@ -270,22 +289,9 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
 #[derive(Default)]
 pub struct ProofSession {
     state: HashMap<TypeId, Carry>,
-    witness: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl ProofSession {
-    /// Retain the proof's witness plane for kernels whose state outlives
-    /// their `prepare` borrow.
-    pub fn set_witness<F: Field>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
-        self.witness = Some(Box::new(witness));
-    }
-
-    /// The retained witness plane for `F`, when the proof was started from
-    /// an owned plane.
-    pub fn witness<F: Field>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
-        self.witness.as_ref()?.downcast_ref()
-    }
-
     /// The calling backend's private state, created by `init` on first
     /// access. `T` is the backend-private key: choose one type per backend
     /// family.
@@ -385,7 +391,7 @@ mod kernel_slots_derive_tests {
     // delegation is unrepresentable.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
-    struct ToyRegistry<F: Field> {
+    struct ToyRegistry<F: JoltField> {
         label: String,
         shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
         slot_count: usize,

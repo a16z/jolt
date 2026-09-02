@@ -22,6 +22,16 @@ pub struct Attributes {
     pub backtrace: Option<String>,
 }
 
+#[expect(
+    clippy::panic,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "build-time macro-attribute parsing: a panic here surfaces as a compile error at the #[jolt::provable] attribute site, never at runtime"
+)]
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "matches foreign syn AST enums, where wildcard fallbacks are the version-stable idiom"
+)]
 pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
@@ -58,7 +68,7 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
                             Lit::Int(lit) => lit.base10_parse().unwrap(),
                             _ => panic!("expected integer literal"),
                         };
-                        match ident.to_string().as_str() {
+                        let _ = match ident.to_string().as_str() {
                             "heap_size" => attributes.insert("heap_size", value),
                             "stack_size" => attributes.insert("stack_size", value),
                             "max_input_size" => attributes.insert("max_input_size", value),

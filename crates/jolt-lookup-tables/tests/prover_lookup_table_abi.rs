@@ -108,8 +108,8 @@ fn modular_lookup_table_indices_match_prover_abi() {
             prover_index(ProverLookupTables::<XLEN>::LowerHalfWord(Default::default())),
         ),
         (
-            LookupTableKind::<XLEN>::SignExtendHalfWord(Default::default()).index(),
-            prover_index(ProverLookupTables::<XLEN>::SignExtendHalfWord(
+            LookupTableKind::<XLEN>::SignExtendWord(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::SignExtendWord(
                 Default::default(),
             )),
         ),
@@ -148,14 +148,8 @@ fn modular_lookup_table_indices_match_prover_abi() {
             prover_index(ProverLookupTables::<XLEN>::VirtualROTRW(Default::default())),
         ),
         (
-            LookupTableKind::<XLEN>::VirtualChangeDivisor(Default::default()).index(),
-            prover_index(ProverLookupTables::<XLEN>::VirtualChangeDivisor(
-                Default::default(),
-            )),
-        ),
-        (
-            LookupTableKind::<XLEN>::VirtualChangeDivisorW(Default::default()).index(),
-            prover_index(ProverLookupTables::<XLEN>::VirtualChangeDivisorW(
+            LookupTableKind::<XLEN>::VirtualNegateIf(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualNegateIf(
                 Default::default(),
             )),
         ),
@@ -210,6 +204,80 @@ fn modular_lookup_table_indices_match_prover_abi() {
         (
             LookupTableKind::<XLEN>::VirtualXORROTW7(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW7(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::WindowMaskW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::WindowMaskW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::PextSigned(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::PextSigned(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTW22(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW22(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTW19(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW19(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTW6(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW6(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::ShiftRightBitmaskW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::ShiftRightBitmaskW(
+                Default::default(),
+            )),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualSRLW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualSRLW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualSRAW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualSRAW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::Pext(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::Pext(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::WindowMaskB(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::WindowMaskB(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::WindowMaskH(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::WindowMaskH(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::AlignAddr(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::AlignAddr(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::ShiftDataB(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::ShiftDataB(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::ShiftDataH(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::ShiftDataH(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::ShiftDataW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::ShiftDataW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::VirtualXORROTL1(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::VirtualXORROTL1(
                 Default::default(),
             )),
         ),

@@ -17,7 +17,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc_val_check;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -38,6 +38,7 @@ use crate::{
 
 /// Lazy-RA index source over the full remapped RAM address (a single
 /// `K`-ary selector), cold on no-access cycles.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
     columns: Arc<RamAccessColumns>,
 }
@@ -58,7 +59,7 @@ impl ChunkIndexSource for RamAddressIndices {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -97,21 +98,19 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
-struct RamValCheckKernel<F: Field> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: Polynomial<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,
     lt: SplitLt<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RamValCheckKernel, |kernel| {
-    crate::backend::poly_heap_bytes(&kernel.inc)
-        + kernel.ra.heap_bytes(|source| source.columns.heap_bytes())
-        + kernel.lt.heap_bytes()
-});
-
-impl<F: Field> RamValCheckKernel<F> {
+impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);
         self.ra.bind(challenge);
@@ -120,7 +119,7 @@ impl<F: Field> RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -143,6 +142,7 @@ impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
             |y| self.ra.lo_hi(0, y),
             |y| self.lt.pair(y),
         );
+
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
 
@@ -152,7 +152,7 @@ impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
     type Relation = RamValCheck<F>;
 
     fn output_claims(
@@ -181,9 +181,10 @@ impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
         pin_derived_term(
             relation,
-            JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
+            id,
             input_points,
             output_points,
             challenges,
@@ -200,7 +201,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::{
         RamValCheckChallenges, RamValCheckInputClaims,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::LtPolynomial;
 
     use super::super::testing::{

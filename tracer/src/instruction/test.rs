@@ -48,8 +48,53 @@ macro_rules! test_inline_sequences {
 test_inline_sequences!(
     AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND, AMOMINUD,
     AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, LB, LBU, LH, LHU, LW,
-    LWU, SB, SH, SW, ADDIW, ADDW, DIV, DIVU, DIVUW, DIVW, MULH, MULHSU, MULW, REM, REMU, REMUW,
-    REMW, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW
+    LWU, SB, SH, SW, ADDIW, ADDW, DIVU, DIVUW, MULH, MULHSU, MULW, REMU, REMUW, SLL, SLLI, SLLIW,
+    SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW
+);
+
+#[cfg(test)]
+const SIGNED_DIVISION_EDGE_CASES: [(u64, u64); 5] = [
+    ((-37i64) as u64, 0),
+    (i64::MIN as u64, (-1i64) as u64),
+    (i64::MIN as u64, 1),
+    (37, i64::MIN as u64),
+    (0, (-7i64) as u64),
+];
+
+#[cfg(test)]
+const SIGNED_WORD_DIVISION_EDGE_CASES: [(u64, u64); 5] = [
+    (0xdead_beef_ffff_ffdb, 0x1234_5678_0000_0000),
+    (0xdead_beef_8000_0000, u64::MAX),
+    (0xdead_beef_8000_0000, 0x1234_5678_0000_0001),
+    (0xdead_beef_0000_0025, 0x1234_5678_8000_0000),
+    (0xabcd_ef01_0000_0000, 0x1234_5678_ffff_fff9),
+];
+
+macro_rules! test_signed_division_inline_sequence {
+    ($(($name:ident, $instr:ty, $cases:expr)),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                inline_sequence_trace_test::<$instr>();
+                inline_sequence_edge_trace_test::<$instr>($cases);
+            }
+        )*
+    };
+}
+
+test_signed_division_inline_sequence!(
+    (test_div_inline_sequence, DIV, &SIGNED_DIVISION_EDGE_CASES),
+    (test_rem_inline_sequence, REM, &SIGNED_DIVISION_EDGE_CASES),
+    (
+        test_divw_inline_sequence,
+        DIVW,
+        &SIGNED_WORD_DIVISION_EDGE_CASES
+    ),
+    (
+        test_remw_inline_sequence,
+        REMW,
+        &SIGNED_WORD_DIVISION_EDGE_CASES
+    ),
 );
 
 fn test_rng() -> StdRng {
@@ -190,5 +235,46 @@ where
     }
     if non_panic == 0 {
         panic!("All of instructions panic at the execute function");
+    }
+}
+
+#[cfg(test)]
+fn inline_sequence_edge_trace_test<I: RISCVInstruction + RISCVTrace + Copy>(cases: &[(u64, u64)])
+where
+    Cycle: From<RISCVCycle<I>>,
+{
+    let word = I::MATCH | (3 << 7) | (1 << 15) | (2 << 20);
+    let instruction = I::new(word, DRAM_BASE, true, false);
+    let memory_config = common::jolt_device::MemoryConfig {
+        heap_size: TEST_MEMORY_CAPACITY,
+        program_size: Some(1024),
+        ..Default::default()
+    };
+
+    for &(rs1, rs2) in cases {
+        let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        original_cpu.get_mut_mmu().jolt_device =
+            Some(common::jolt_device::JoltDevice::new(&memory_config));
+        original_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        original_cpu.write_register(1, rs1 as i64);
+        original_cpu.write_register(2, rs2 as i64);
+
+        let mut virtual_cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        virtual_cpu.get_mut_mmu().jolt_device =
+            Some(common::jolt_device::JoltDevice::new(&memory_config));
+        virtual_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+        virtual_cpu.write_register(1, rs1 as i64);
+        virtual_cpu.write_register(2, rs2 as i64);
+
+        instruction.execute(&mut original_cpu, &mut Default::default());
+        instruction.trace(&mut virtual_cpu, Some(&mut Vec::new()));
+
+        assert_eq!(original_cpu.pc, virtual_cpu.pc);
+        for register in 0..RISCV_REGISTER_COUNT {
+            assert_eq!(
+                original_cpu.x[register as usize], virtual_cpu.x[register as usize],
+                "register={register}, rs1={rs1:#018x}, rs2={rs2:#018x}"
+            );
+        }
     }
 }

@@ -22,7 +22,7 @@
 
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
@@ -53,7 +53,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// cross-stage carrier stage 7 consumes. The precommitted reduction state
 /// that spans into stage 7's address phase travels as `ProofSession` carries,
 /// not output fields.
-pub struct Stage6bProverOutput<F: Field, C> {
+pub struct Stage6bProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6bOutputClaims<F>,
     pub clear_output: Stage6bClearOutput<F>,
@@ -81,7 +81,7 @@ pub fn prove_stage6b<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage6bProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -104,16 +104,12 @@ where
 
     // The batch, through the verifier's own promoted constructor over the
     // clear carriers. The full-program rows feed only the full-mode table
-    // fold, so the retained-program unwrap stays under the committed gate.
+    // fold; they ride the witness plane (witness generation requires the
+    // full program in every mode).
     let bytecode_table_rows = if committed_program {
         None
     } else {
-        let program = preprocessing
-            .program()
-            .ok_or(ProverError::InvariantViolation {
-                reason: "full bytecode preprocessing is unavailable",
-            })?;
-        Some(program.bytecode.bytecode.as_slice())
+        Some(witness.program_preprocessing().bytecode.bytecode.as_slice())
     };
     let entry_bytecode_index = preprocessing
         .verifier
@@ -176,9 +172,11 @@ where
     // `impl_stage_prover` invocation site (the promoted verifier helper's
     // canonical order, including the runtime booleanity-vs-bytecode point
     // dedup).
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,

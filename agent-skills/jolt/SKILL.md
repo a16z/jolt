@@ -114,10 +114,10 @@ For `PrivateInput<T>`, enable `zk` on the host only (see Step 7). The macro enfo
 
 | Hash | Cycles | vs SHA-256 | Max input |
 |------|--------|-----------|-----------|
-| BLAKE3 | 863 | 8.2x faster | 64 bytes (single block only) |
-| Blake2b | 1,264 | 5.6x faster | unlimited |
-| Keccak-256 | 3,680 | 1.9x faster | unlimited |
-| SHA-256 | 7,134 | baseline | unlimited |
+| BLAKE3 | 781 | 5.8x faster | 64 bytes (single block only) |
+| Blake2b | 1,235 | 3.6x faster | unlimited |
+| Keccak-256 | 3,645 | 1.2x faster | unlimited |
+| SHA-256 | 4,501 | baseline | unlimited |
 
 BLAKE3 is fastest but capped at 64 bytes. For variable-length hashing, Blake2b is the best choice. SHA-256 must be used when the hash is dictated by an external protocol (e.g., JWT RSA-SHA256 signatures).
 

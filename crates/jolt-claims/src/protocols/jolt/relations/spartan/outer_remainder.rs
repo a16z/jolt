@@ -1,6 +1,6 @@
 //! Spartan outer remainder symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_riscv::CircuitFlags;
 use serde::{Deserialize, Serialize};
 
@@ -152,11 +152,11 @@ impl SymbolicSumcheck for OuterRemainder {
         OUTER_REMAINDER_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(outer_uniskip_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         // The factored quadratic form `tau_kernel · Az · Bz` with each linear
         // form expanded over its per-column weights — every derived leaf one
         // multilinear (the weights are linear in the stream variable).
@@ -183,7 +183,7 @@ impl SymbolicSumcheck for OuterRemainder {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltVirtualPolynomial;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_riscv::CIRCUIT_FLAGS;
 
     /// The expanded `output_expression` reproduces the factored quadratic form

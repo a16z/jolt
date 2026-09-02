@@ -1,6 +1,6 @@
 //! RAM read/write-checking symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::{
@@ -85,12 +85,12 @@ impl SymbolicSumcheck for ReadWriteChecking {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(ram_read_value())
             + challenge(RamReadWriteChallenge::Gamma) * opening(ram_write_value())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(RamReadWritePublic::EqCycle) * opening(ram_ra()) * opening(ram_val())
             + derived(RamReadWritePublic::EqCycle)
                 * challenge(RamReadWriteChallenge::Gamma)
@@ -107,7 +107,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{BooleanityChallenge, JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 4, 2, 1)

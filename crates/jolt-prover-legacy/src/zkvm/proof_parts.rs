@@ -278,45 +278,13 @@ impl CanonicalSerialize for CommittedPolynomial {
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
             Self::ProgramImageInit => 8u8.serialize_with_mode(writer, compress),
-            Self::UnsignedIncChunk(i) => {
+            Self::BalancedIncDigit(i) => {
                 9u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
-            Self::UnsignedIncMsb => 10u8.serialize_with_mode(writer, compress),
-            Self::BytecodeRegisterSelector(chunk, lane) => {
-                11u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*chunk).unwrap()).serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*lane).unwrap()).serialize_with_mode(writer, compress)
-            }
-            Self::BytecodeCircuitFlag(chunk, flag) => {
-                12u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*chunk).unwrap()).serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*flag).unwrap()).serialize_with_mode(writer, compress)
-            }
-            Self::BytecodeInstructionFlag(chunk, flag) => {
-                13u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*chunk).unwrap()).serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*flag).unwrap()).serialize_with_mode(writer, compress)
-            }
-            Self::BytecodeLookupSelector(chunk) => {
-                14u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*chunk).unwrap()).serialize_with_mode(writer, compress)
-            }
-            Self::BytecodeRafFlag(chunk) => {
-                15u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*chunk).unwrap()).serialize_with_mode(writer, compress)
-            }
-            Self::BytecodeUnexpandedPcBytes(chunk) => {
-                16u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*chunk).unwrap()).serialize_with_mode(writer, compress)
-            }
-            Self::BytecodeImmBytes(chunk) => {
-                17u8.serialize_with_mode(&mut writer, compress)?;
-                (u8::try_from(*chunk).unwrap()).serialize_with_mode(writer, compress)
-            }
-            Self::ProgramImageBytes => 18u8.serialize_with_mode(writer, compress),
+            Self::BalancedIncCarry => 10u8.serialize_with_mode(writer, compress),
             #[cfg(feature = "implicit-carry")]
-            Self::Carry => 19u8.serialize_with_mode(writer, compress),
+            Self::Carry => 11u8.serialize_with_mode(writer, compress),
         }
     }
 
@@ -327,22 +295,14 @@ impl CanonicalSerialize for CommittedPolynomial {
             | Self::TrustedAdvice
             | Self::UntrustedAdvice
             | Self::ProgramImageInit
-            | Self::UnsignedIncMsb
-            | Self::ProgramImageBytes => 1,
+            | Self::BalancedIncCarry => 1,
             #[cfg(feature = "implicit-carry")]
             Self::Carry => 1,
             Self::InstructionRa(_)
             | Self::BytecodeRa(_)
             | Self::RamRa(_)
             | Self::BytecodeChunk(_)
-            | Self::UnsignedIncChunk(_)
-            | Self::BytecodeLookupSelector(_)
-            | Self::BytecodeRafFlag(_)
-            | Self::BytecodeUnexpandedPcBytes(_)
-            | Self::BytecodeImmBytes(_) => 2,
-            Self::BytecodeRegisterSelector(..)
-            | Self::BytecodeCircuitFlag(..)
-            | Self::BytecodeInstructionFlag(..) => 3,
+            | Self::BalancedIncDigit(_) => 2,
         }
     }
 }
@@ -384,43 +344,11 @@ impl CanonicalDeserialize for CommittedPolynomial {
                 8 => Self::ProgramImageInit,
                 9 => {
                     let i = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::UnsignedIncChunk(i as usize)
+                    Self::BalancedIncDigit(i as usize)
                 }
-                10 => Self::UnsignedIncMsb,
-                11 => {
-                    let chunk = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-                    let lane = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::BytecodeRegisterSelector(chunk as usize, lane as usize)
-                }
-                12 => {
-                    let chunk = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-                    let flag = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::BytecodeCircuitFlag(chunk as usize, flag as usize)
-                }
-                13 => {
-                    let chunk = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-                    let flag = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::BytecodeInstructionFlag(chunk as usize, flag as usize)
-                }
-                14 => {
-                    let chunk = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::BytecodeLookupSelector(chunk as usize)
-                }
-                15 => {
-                    let chunk = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::BytecodeRafFlag(chunk as usize)
-                }
-                16 => {
-                    let chunk = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::BytecodeUnexpandedPcBytes(chunk as usize)
-                }
-                17 => {
-                    let chunk = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::BytecodeImmBytes(chunk as usize)
-                }
-                18 => Self::ProgramImageBytes,
+                10 => Self::BalancedIncCarry,
                 #[cfg(feature = "implicit-carry")]
-                19 => Self::Carry,
+                11 => Self::Carry,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -682,16 +610,8 @@ mod tests {
                 | CommittedPolynomial::UntrustedAdvice
                 | CommittedPolynomial::BytecodeChunk(_)
                 | CommittedPolynomial::ProgramImageInit
-                | CommittedPolynomial::UnsignedIncChunk(_)
-                | CommittedPolynomial::UnsignedIncMsb
-                | CommittedPolynomial::BytecodeRegisterSelector(..)
-                | CommittedPolynomial::BytecodeCircuitFlag(..)
-                | CommittedPolynomial::BytecodeInstructionFlag(..)
-                | CommittedPolynomial::BytecodeLookupSelector(_)
-                | CommittedPolynomial::BytecodeRafFlag(_)
-                | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
-                | CommittedPolynomial::BytecodeImmBytes(_)
-                | CommittedPolynomial::ProgramImageBytes => {}
+                | CommittedPolynomial::BalancedIncDigit(_)
+                | CommittedPolynomial::BalancedIncCarry => {}
                 #[cfg(feature = "implicit-carry")]
                 CommittedPolynomial::Carry => {}
             }
@@ -706,16 +626,8 @@ mod tests {
             CommittedPolynomial::UntrustedAdvice,
             CommittedPolynomial::BytecodeChunk(4),
             CommittedPolynomial::ProgramImageInit,
-            CommittedPolynomial::UnsignedIncChunk(5),
-            CommittedPolynomial::UnsignedIncMsb,
-            CommittedPolynomial::BytecodeRegisterSelector(1, 2),
-            CommittedPolynomial::BytecodeCircuitFlag(0, 7),
-            CommittedPolynomial::BytecodeInstructionFlag(1, 3),
-            CommittedPolynomial::BytecodeLookupSelector(0),
-            CommittedPolynomial::BytecodeRafFlag(1),
-            CommittedPolynomial::BytecodeUnexpandedPcBytes(0),
-            CommittedPolynomial::BytecodeImmBytes(1),
-            CommittedPolynomial::ProgramImageBytes,
+            CommittedPolynomial::BalancedIncDigit(5),
+            CommittedPolynomial::BalancedIncCarry,
             #[cfg(feature = "implicit-carry")]
             CommittedPolynomial::Carry,
         ];

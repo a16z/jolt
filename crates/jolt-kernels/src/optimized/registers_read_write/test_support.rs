@@ -1,13 +1,8 @@
-//! Shared parity-test support for the registers kernel family: a
-//! register-consistent synthetic trace behind a full `TraceBackend` witness
-//! plane, deterministic challenge sequences, and the engine-mirroring parity
-//! driver (bind-then-compute, running claim via `poly.evaluate(challenge)`).
-
-use core::fmt::Debug;
+//! Shared parity-test support for the registers kernel family.
 
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_program::execution::{
     JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,
 };
@@ -36,78 +31,6 @@ pub(crate) fn challenge_sequence(len: usize, seed: u64) -> Vec<Fr> {
         .collect()
 }
 
-/// The counting pass and the write pass must agree on every operand
-/// pattern — including raw index 255, which the old `u8::MAX` sentinel
-/// collided with (count 0, write 1 → pass-2 window overrun).
-#[cfg(feature = "parallel")]
-#[test]
-fn cycle_entry_count_matches_cycle_entries() {
-    use super::RegisterCycleRow;
-    let candidates: [Option<u8>; 5] = [None, Some(0), Some(5), Some(127), Some(255)];
-    for rs1 in candidates {
-        for rs2 in candidates {
-            for rd in candidates {
-                let cycle = RegisterCycleRow {
-                    rs1: rs1.map(|register| (register, 11)),
-                    rs2: rs2.map(|register| (register, 22)),
-                    rd: rd.map(|register| (register, 33, 44)),
-                };
-                let (_, len) = cycle.entries::<Fr>(0);
-                assert_eq!(
-                    cycle.entry_count(),
-                    len,
-                    "count/write divergence for {cycle:?}"
-                );
-            }
-        }
-    }
-}
-
-/// Extraction rejects out-of-domain operand indices with the trace
-/// oracle's error (the reference tier's fail-loud contract) instead of
-/// scattering out of bounds; with several invalid cycles the collector
-/// reports the FIRST one, independent of thread timing.
-#[test]
-fn collect_rejects_out_of_domain_register_indices() {
-    use super::rows::CollectRegisterEntries;
-    let mut fixture = TraceFixture::new();
-    fixture.noop();
-    fixture.op(Some(3), Some(2), None);
-    fixture.rows.push(TraceRow {
-        registers: RegisterState {
-            rs1: None,
-            rs2: Some(RegisterRead {
-                register: 200,
-                value: 7,
-            }),
-            rd: None,
-        },
-        ..TraceRow::default()
-    });
-    fixture.rows.push(TraceRow {
-        registers: RegisterState {
-            rs1: Some(RegisterRead {
-                register: 255,
-                value: 1,
-            }),
-            rs2: None,
-            rd: None,
-        },
-        ..TraceRow::default()
-    });
-    fixture.with_plane(2, |witness| {
-        let error = match CollectRegisterEntries::<Fr>::collect(witness, 1 << 2) {
-            Err(error) => error,
-            Ok(_) => panic!("collect accepted an out-of-domain register index"),
-        };
-        let message = format!("{error}");
-        assert!(
-            message.contains("register index 200"),
-            "expected the first invalid cycle's index, got {message:?}"
-        );
-    });
-}
-
 /// A register-consistent trace builder: reads return the current register
 /// state, writes advance it, so every witness identity the sumchecks
 /// assume holds by construction.
@@ -115,7 +38,6 @@ pub(crate) struct TraceFixture {
     rows: Vec<TraceRow>,
     state: [u64; 128],
     counter: u64,
-    instruction: JoltInstructionRow,
 }
 
 impl TraceFixture {
@@ -124,28 +46,11 @@ impl TraceFixture {
             rows: Vec::new(),
             state: [0; 128],
             counter: 0xDEAD_BEEF_0BAD_F00D,
-            instruction: JoltInstructionRow {
-                instruction_kind: JoltInstructionKind::ADDI,
-                address: 0x8000_0000,
-                operands: NormalizedOperands {
-                    rd: Some(1),
-                    rs1: Some(2),
-                    rs2: None,
-                    imm: 3,
-                },
-                virtual_sequence_remaining: None,
-                is_first_in_sequence: false,
-                is_compressed: false,
-            },
         }
     }
 
     pub(crate) fn noop(&mut self) {
-        let instruction = self.instruction;
-        self.rows.push(TraceRow {
-            instruction,
-            ..TraceRow::default()
-        });
+        self.rows.push(TraceRow::default());
     }
 
     /// One cycle touching the given operands; the write value is a fresh
@@ -175,7 +80,19 @@ impl TraceFixture {
                 }
             }),
         };
-        let instruction = self.instruction;
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: 0x8000_0000 + 4 * self.rows.len(),
+            operands: NormalizedOperands {
+                rd,
+                rs1,
+                rs2,
+                imm: 3,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
         self.rows.push(TraceRow {
             instruction,
             registers,
@@ -190,14 +107,16 @@ impl TraceFixture {
         f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
     ) -> R {
         assert!(self.rows.len() <= 1 << log_t, "fixture overflows 2^log_t");
+        let bytecode = self
+            .rows
+            .iter()
+            .map(|row| row.instruction)
+            .filter(|instruction| instruction.instruction_kind != JoltInstructionKind::NoOp)
+            .collect();
         use std::sync::Arc;
         let preprocessing = Arc::new(JoltProgramPreprocessing {
-            bytecode: BytecodePreprocessing::preprocess(
-                vec![self.instruction],
-                self.instruction.address as u64,
-                RV64IMAC_JOLT,
-            )
-            .unwrap(),
+            bytecode: BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT)
+                .unwrap(),
             ram: RAMPreprocessing::default(),
             memory_layout: Default::default(),
             max_padded_trace_length: 1 << log_t,
@@ -222,12 +141,13 @@ impl TraceFixture {
 }
 
 /// A structured register workload: write-then-read chains, `rs1 == rs2`,
-/// `rd == rs1` in one cycle, repeated writes, high register indices, and
-/// interleaved no-ops. Emits exactly `cycles` rows.
+/// `rd == rs1` in one cycle, `rs1 == rs2 == rd` in one cycle, repeated
+/// writes, high register indices, and interleaved no-ops. Emits exactly
+/// `cycles` rows.
 pub(crate) fn structured_fixture(cycles: usize) -> TraceFixture {
     let mut fixture = TraceFixture::new();
     for step in 0..cycles {
-        match step % 8 {
+        match step % 9 {
             0 => fixture.op(Some(5), Some(2), None),
             1 => fixture.op(Some(7), Some(5), Some(5)),
             2 => fixture.op(Some(5), Some(5), Some(7)),
@@ -235,6 +155,7 @@ pub(crate) fn structured_fixture(cycles: usize) -> TraceFixture {
             4 => fixture.op(None, Some(7), Some(100)),
             5 => fixture.op(Some(127), Some(0), Some(5)),
             6 => fixture.op(Some(100), None, None),
+            7 => fixture.op(Some(5), Some(5), Some(5)),
             _ => fixture.op(Some(7), Some(127), Some(100)),
         }
     }
@@ -262,7 +183,7 @@ pub(crate) fn assert_kernel_parity<R>(
     R: ConcreteSumcheck<Fr>,
     ReferenceBackend: PrepareKernel<Fr, R>,
     SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + Debug,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
     ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
 {
     assert_kernel_parity_with_session(
@@ -298,7 +219,7 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
     R: ConcreteSumcheck<Fr>,
     ReferenceBackend: PrepareKernel<Fr, R>,
     SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + Debug,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
     ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
 {
     let mut reference_session = ProofSession::default();

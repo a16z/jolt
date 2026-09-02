@@ -1,5 +1,5 @@
 use jolt_claims::{Expr, Source};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use thiserror::Error;
 
 use crate::{LinearCombination, R1csBuilder, Variable};
@@ -30,7 +30,7 @@ pub enum SourceValue<F> {
     LinearCombination(LinearCombination<F>),
 }
 
-impl<F: Field> SourceValue<F> {
+impl<F: JoltField> SourceValue<F> {
     pub fn variable(variable: Variable) -> Self {
         Self::LinearCombination(LinearCombination::variable(variable))
     }
@@ -65,7 +65,7 @@ impl<F, O, P, C> ClaimSourceTable<F, O, P, C> {
 
     pub fn insert_opening(&mut self, id: O, variable: Variable)
     where
-        F: Field,
+        F: JoltField,
         O: PartialEq,
     {
         self.insert_opening_source(id, SourceValue::variable(variable));
@@ -73,7 +73,7 @@ impl<F, O, P, C> ClaimSourceTable<F, O, P, C> {
 
     pub fn insert_opening_lc(&mut self, id: O, linear_combination: LinearCombination<F>)
     where
-        F: Field,
+        F: JoltField,
         O: PartialEq,
     {
         self.insert_opening_source(id, SourceValue::linear_combination(linear_combination));
@@ -99,7 +99,7 @@ impl<F, O, P, C> ClaimSourceTable<F, O, P, C> {
 
     pub fn insert_challenge_lc(&mut self, id: C, linear_combination: LinearCombination<F>)
     where
-        F: Field,
+        F: JoltField,
         C: PartialEq,
     {
         self.insert_challenge_source(id, SourceValue::linear_combination(linear_combination));
@@ -128,7 +128,7 @@ impl<F, O, P, C> ClaimSourceTable<F, O, P, C> {
 
     pub fn insert_public_lc(&mut self, id: P, linear_combination: LinearCombination<F>)
     where
-        F: Field,
+        F: JoltField,
         P: PartialEq,
     {
         self.insert_public_source(id, SourceValue::linear_combination(linear_combination));
@@ -181,7 +181,7 @@ pub fn lower_claim_expr<F, R>(
     sources: &mut R,
 ) -> Result<LinearCombination<F>, ClaimLoweringError>
 where
-    F: Field,
+    F: JoltField,
     R: ClaimSources<F>,
 {
     let mut result = LinearCombination::zero();
@@ -217,7 +217,7 @@ pub fn assert_claim_expr_eq<F, R, Expected>(
     sources: &mut R,
 ) -> Result<(), ClaimLoweringError>
 where
-    F: Field,
+    F: JoltField,
     R: ClaimSources<F>,
     Expected: Into<LinearCombination<F>>,
 {
@@ -226,7 +226,7 @@ where
     Ok(())
 }
 
-fn lower_product<F: Field>(
+fn lower_product<F: JoltField>(
     builder: &mut R1csBuilder<F>,
     coefficient: F,
     factors: Vec<LinearCombination<F>>,
@@ -252,7 +252,7 @@ fn lower_product<F: Field>(
 mod tests {
     use super::*;
     use jolt_claims::{challenge, constant, derived, opening, Expr};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Opening {
