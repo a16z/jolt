@@ -30,6 +30,7 @@ use jolt_verifier::{
         stage6b::outputs::{
             BooleanityOutputClaims, BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
             RamHammingBooleanityOutputClaims, Stage6bOutputClaims,
+            TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
         },
         stage7::{
             advice_address_phase::{
@@ -64,7 +65,6 @@ use jolt_verifier::{
         stage6b::outputs::{
             BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
             ProgramImageReductionCyclePhaseOutputClaims, RamRaVirtualizationOutputClaims,
-            TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
         },
         stage7::committed_reduction_address_phase::{
             BytecodeReductionAddressPhaseOutputClaims,
@@ -437,6 +437,7 @@ fn stage6b_claims_from_openings<F: JoltField>(
     })
 }
 
+#[cfg(not(feature = "akita"))]
 fn trusted_advice_cycle_phase_claim_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Option<TrustedAdviceCyclePhaseOutputClaims<F>> {
@@ -448,6 +449,7 @@ fn trusted_advice_cycle_phase_claim_from_openings<F: JoltField>(
     })
 }
 
+#[cfg(not(feature = "akita"))]
 fn untrusted_advice_cycle_phase_claim_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Option<UntrustedAdviceCyclePhaseOutputClaims<F>> {
@@ -770,8 +772,6 @@ mod packed {
             instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
                 committed_instruction_ra,
             },
-            trusted_advice: trusted_advice_cycle_phase_claim_from_openings(claims),
-            untrusted_advice: untrusted_advice_cycle_phase_claim_from_openings(claims),
             bytecode_reduction: bytecode_cycle_phase_claims_from_openings(claims),
             program_image_reduction: claims
                 .get(program_image::cycle_phase_program_image_opening())

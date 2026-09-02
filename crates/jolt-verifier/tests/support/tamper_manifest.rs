@@ -860,6 +860,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets the register increment reduction output claim",
     ),
+    #[cfg(not(feature = "akita"))]
     checked_standard(
         "stage6.claims.trusted_advice.trusted",
         "claims.stage6b.trusted_advice.trusted",
@@ -868,6 +869,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice cycle-phase output claim",
     ),
+    #[cfg(not(feature = "akita"))]
     checked_standard(
         "stage6.claims.untrusted_advice.untrusted",
         "claims.stage6b.untrusted_advice.untrusted",
@@ -1495,9 +1497,11 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 ram_inc: zero,
                 rd_inc: zero,
             },
+            #[cfg(not(feature = "akita"))]
             trusted_advice: fill_optionals.then_some(
                 stage6b::outputs::TrustedAdviceCyclePhaseOutputClaims { trusted: zero },
             ),
+            #[cfg(not(feature = "akita"))]
             untrusted_advice: fill_optionals.then_some(
                 stage6b::outputs::UntrustedAdviceCyclePhaseOutputClaims { untrusted: zero },
             ),

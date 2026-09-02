@@ -62,8 +62,7 @@ use jolt_verifier::stages::{
     stage6b::outputs::{
         BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
         ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
-        RamRaVirtualizationOutputClaims, Stage6bOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
-        UntrustedAdviceCyclePhaseOutputClaims,
+        RamRaVirtualizationOutputClaims, Stage6bOutputClaims,
     },
     stage7::{
         advice_address_phase::{
@@ -402,8 +401,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
         ram_hamming_booleanity,
         ram_ra_virtualization,
         instruction_ra_virtualization,
-        trusted_advice,
-        untrusted_advice,
         bytecode_reduction,
         program_image_reduction,
     } = claims;
@@ -448,12 +445,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
     } = instruction_ra_virtualization;
     for scalar in committed_instruction_ra.iter_mut() {
         f(scalar);
-    }
-    if let Some(TrustedAdviceCyclePhaseOutputClaims { trusted }) = trusted_advice {
-        f(trusted);
-    }
-    if let Some(UntrustedAdviceCyclePhaseOutputClaims { untrusted }) = untrusted_advice {
-        f(untrusted);
     }
     if let Some(BytecodeReductionCyclePhaseOutputClaims {
         intermediate,

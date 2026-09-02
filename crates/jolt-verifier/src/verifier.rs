@@ -261,6 +261,7 @@ where
         &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
+        &stage4,
         &stage6b,
         &stage7,
     )?;
@@ -1616,7 +1617,9 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
+                #[cfg(not(feature = "akita"))]
                 untrusted_advice: None,
                 bytecode_reduction: None,
                 program_image_reduction: None,

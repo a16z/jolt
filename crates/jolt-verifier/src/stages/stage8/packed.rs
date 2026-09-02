@@ -20,6 +20,8 @@ use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use super::precommitted::precommitted_final_openings;
+#[cfg(feature = "akita")]
+use crate::stages::stage4::outputs::Stage4ClearOutput;
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
 use crate::stages::stage7::outputs::Stage7ClearOutput;
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
@@ -179,6 +181,7 @@ pub fn verify<PCS, VC, T>(
     proof: &PCS::Proof,
     transcript: &mut T,
     schedule: &PrecommittedSchedule,
+    #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
     stage6b: &Stage6bClearOutput<PCS::Field>,
     stage7: &Stage7ClearOutput<PCS::Field>,
 ) -> Result<(), VerifierError>
@@ -209,7 +212,13 @@ where
         1,
         1 << chunk_width,
     )?;
-    let leaves = leaf_claims(schedule, stage6b, stage7)?;
+    let leaves = leaf_claims(
+        schedule,
+        #[cfg(feature = "akita")]
+        stage4,
+        stage6b,
+        stage7,
+    )?;
     let packed_claims = one_hot_trace_packed_claims(&plan, chunk_width, &leaves)?;
     let packed_claim = plan
         .packing()
@@ -381,6 +390,7 @@ pub fn object_leaf_claims<F: JoltField>(
 /// Shared verbatim by the packed prover's stage 8.
 pub fn leaf_claims<F: JoltField>(
     schedule: &PrecommittedSchedule,
+    #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
 ) -> Result<BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>, VerifierError> {
@@ -450,19 +460,64 @@ pub fn leaf_claims<F: JoltField>(
         ),
     )?;
 
-    for opening in precommitted_final_openings(
-        schedule,
-        &stage7.output_points,
-        &stage6b.output_points,
-        Some((&stage7.output_values, &stage6b.output_values)),
-    )? {
-        let value = opening.opening_claim.ok_or_else(|| {
-            batch_failed(format!(
-                "missing clear final value for {:?}",
-                opening.polynomial
-            ))
-        })?;
-        insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
+    #[cfg(feature = "akita")]
+    {
+        for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
+            if schedule.advice(kind).is_some() {
+                let contribution = stage4
+                    .ram_val_check_init
+                    .advice_contribution(kind)
+                    .ok_or_else(|| {
+                        batch_failed(format!("missing {kind:?} advice stage-4 contribution"))
+                    })?;
+                let polynomial = match kind {
+                    JoltAdviceKind::Trusted => Poly::TrustedAdvice,
+                    JoltAdviceKind::Untrusted => Poly::UntrustedAdvice,
+                };
+                insert(
+                    &mut leaves,
+                    polynomial,
+                    leaf(contribution.opening_value, &contribution.opening_point),
+                )?;
+            }
+        }
+        let reduced_precommitted = PrecommittedSchedule {
+            trusted_advice: None,
+            untrusted_advice: None,
+            bytecode: schedule.bytecode.clone(),
+            program_image: schedule.program_image.clone(),
+        };
+        for opening in precommitted_final_openings(
+            &reduced_precommitted,
+            &stage7.output_points,
+            &stage6b.output_points,
+            Some((&stage7.output_values, &stage6b.output_values)),
+        )? {
+            let value = opening.opening_claim.ok_or_else(|| {
+                batch_failed(format!(
+                    "missing clear final value for {:?}",
+                    opening.polynomial
+                ))
+            })?;
+            insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
+        }
+    }
+    #[cfg(not(feature = "akita"))]
+    {
+        for opening in precommitted_final_openings(
+            schedule,
+            &stage7.output_points,
+            &stage6b.output_points,
+            Some((&stage7.output_values, &stage6b.output_values)),
+        )? {
+            let value = opening.opening_claim.ok_or_else(|| {
+                batch_failed(format!(
+                    "missing clear final value for {:?}",
+                    opening.polynomial
+                ))
+            })?;
+            insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
+        }
     }
 
     Ok(leaves)

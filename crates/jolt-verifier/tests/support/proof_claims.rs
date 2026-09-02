@@ -455,6 +455,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
         id if id == ram_inc => Some(&mut stage6b.inc_claim_reduction.ram_inc),
         #[cfg(not(feature = "akita"))]
         id if id == rd_inc => Some(&mut stage6b.inc_claim_reduction.rd_inc),
+        #[cfg(not(feature = "akita"))]
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -463,6 +464,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
                 .as_mut()
                 .map(|claim| &mut claim.trusted)
         }
+        #[cfg(not(feature = "akita"))]
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
         {
