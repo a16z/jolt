@@ -42,8 +42,7 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
         for key in grid {
             assert!(
                 table.entries.iter().any(|entry| {
-                    entry.root.final_group.layout == key
-                        && entry.root.precommitted_groups.is_empty()
+                    entry.final_group == key && entry.root.precommitted_groups.is_empty()
                 }),
                 "missing catalog entry for {key:?}"
             );
@@ -96,7 +95,10 @@ fn grouped_advice_rows_are_planned_not_cataloged() {
         .expect("the provisioned row must resolve by key");
     assert_eq!(resolved.profiles().precommitteds, key.precommitteds);
     assert_eq!(resolved.profiles().final_group.group, key.final_group);
-    assert_eq!(resolved.schedule().root.params.precommitted_groups.len(), 1);
+    assert_eq!(
+        resolved.schedule().root.params.precommitted_groups().len(),
+        1
+    );
 
     // The verifier only ever sees the public selection.
     let by_selection = JoltOneHotK256::resolve_schedule_selection(resolved.selection())
@@ -123,7 +125,10 @@ fn two_precommit_grouped_advice_row_is_planned() {
     let resolved = JoltOneHotK256::resolve_catalog_row_for_key(&key)
         .expect("the provisioned row must resolve by key");
     assert_eq!(resolved.profiles().precommitteds, key.precommitteds);
-    assert_eq!(resolved.schedule().root.params.precommitted_groups.len(), 2);
+    assert_eq!(
+        resolved.schedule().root.params.precommitted_groups().len(),
+        2
+    );
 
     assert!(key
         .fits_setup_capacity(39, 3)
@@ -156,8 +161,8 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
         .expect("grouped schedule capacity must be valid");
     let prefix = key.precommitteds[0];
     let precommit_capacity = commit_only_setup_field_elements(
-        &prefix.inner_commit_matrix,
-        &prefix.outer_commit_matrix,
+        &prefix.inner.matrix,
+        &prefix.outer.matrix,
         prefix.outer_slice_count,
     )
     .expect("trusted precommit capacity must be valid");

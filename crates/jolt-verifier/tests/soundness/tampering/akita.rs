@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::lattice::relations::{
     booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::JoltField;
+use jolt_field::{JoltField, Ring};
 use jolt_prover_legacy::zkvm::packed::{
     AkitaField, AkitaJoltProof, AkitaScheme, AkitaTranscript, AkitaVc,
 };

@@ -155,6 +155,7 @@ mod support {
 mod muldiv {
     use std::sync::Arc;
 
+    use jolt_field::Ring;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::akita;
@@ -700,6 +701,7 @@ mod advice {
 mod committed {
     use std::sync::Arc;
 
+    use jolt_field::Ring;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::akita;
