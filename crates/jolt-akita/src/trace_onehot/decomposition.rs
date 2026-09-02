@@ -1,9 +1,12 @@
+use std::env::VarError;
+
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use akita_prover::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use akita_prover::DecomposeFoldWitness;
 use jolt_field::One;
 use rayon::prelude::*;
+use tracing::field::Empty;
 
 use super::source::TracePackedOneHot;
 use super::traversal::{
@@ -29,7 +32,7 @@ impl DecomposeRotationMode {
             Ok("compact") => Ok(Self::Compact),
             Ok("dense") => Ok(Self::Dense),
             Ok("sparse") => Ok(Self::Sparse),
-            Ok("auto") | Err(std::env::VarError::NotPresent) => Ok(Self::Auto),
+            Ok("auto") | Err(VarError::NotPresent) => Ok(Self::Auto),
             Ok(value) => Err(AkitaError::InvalidInput(format!(
                 "JOLT_AKITA_DECOMPOSE_MODE must be auto, compact, dense, or sparse; got {value:?}"
             ))),
@@ -528,7 +531,7 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         rotation_table_bytes,
         table_budget_bytes = ROTATED_CHALLENGE_TABLE_BUDGET,
         requested_mode = ?rotation_mode,
-        dense = tracing::field::Empty,
+        dense = Empty,
     );
     let rotation_guard = rotation_span.enter();
     let rotations = prepare_rotations::<D>(

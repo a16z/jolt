@@ -1,4 +1,7 @@
-use std::{fmt, sync::Arc};
+use std::{
+    fmt::{Debug, Formatter, Result as FmtResult},
+    sync::Arc,
+};
 
 use akita_error::AkitaError;
 use akita_prover::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
@@ -55,8 +58,8 @@ pub struct TracePackedOneHot {
     pub(super) num_vars: usize,
 }
 
-impl fmt::Debug for TracePackedOneHot {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Debug for TracePackedOneHot {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("TracePackedOneHot")
             .field("one_hot_k", &self.one_hot_k)
             .field("num_columns", &self.num_columns)
