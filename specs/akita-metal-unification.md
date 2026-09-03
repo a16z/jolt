@@ -162,6 +162,31 @@ Akita gates green (409 passed). Jolt unify re-pinned at 7323fc159; cold single-s
 proofs verify: Fibonacci T24 9.07 s, T25 6.18 s; SHA-2 T25 7.51 s; BTreeMap T25 8.79 s. The
 harness example needs `--features prover-fixtures,metal,profiling`.
 
+Phase 3 (deltas, docs, matrix) 2026-09-03: 267055eb3. L1a, L1c and L6a re-applied (two conflict
+hunks were doc-only or touched a campaign-only test and were dropped); D512/K256 canonical-oracle
+test ported; unified CPU catalog is D128 rank 3 so the CPU commit at Fibonacci T25 is 5.5 s
+without further change; specs, goal and ledger carried over. Unified T28 matrix in
+`akita-metal-10mhz-attack-strategy.md` section 7.5: main's guests emit fewer cycles per
+operation (SHA-2 151 M cycles at T28; BTreeMap needs `--target-trace-size 210000000` for a 2^28
+domain), CPU 127.5 / 189.0 / 166.4 s, Metal 31.1-32.0 / 41.2-43.4 / 36.3-37.7 s, 4.0-4.6x.
+
+Phase 3b 2026-09-03: b60ba2173. The red registers parity test was an empty `CoeffLut`
+placeholder in the device continuation (debug assert on a zero-length LUT; release proofs never
+executed it) and now uses `CycleState::unused_lut()`; the witness prepare again overlaps the
+commit on a scoped thread (Fibonacci T28 38.66 s cooled, from 41.2-43.4 s).
+
+Phase 3c 2026-09-03: a78177a0d. The ten CPU-parity evaluators compile and pass under
+`--features metal,test-utils` (325 tests) with production CPU entry points as oracles; the ten
+`metal_*_cpu_eval` examples are back without the legacy host. SHA-2 T28 register parity by
+checksum: CPU and Metal Stage-1 both 3b8acc073eab58a9 at the default 2^28 target, so the port's
+Stage-1 fix covers the campaign's defect.
+
+Final state: `feat/akita-metal` (a16z/jolt) force-updated to this head; Akita fork
+`feat/akita-metal` = 3d748d499. Known regressions against the archived campaign line to work
+next: commit +1.3 s, Stage 6a +1.3 s on Fibonacci, eval proof +1.4 s (transcript grinding and
+the multi-group relation quotient from upstream #460/#468), and the CPU tier's eval proof
+38.9 s vs 22.3 s on the new protocol. The 5x gate does not hold on the unified line.
+
 ## 4. Order and gates
 
 1. Akita rebase (fork `feat/akita-metal`). Gate: `akita-metal` tests, the
