@@ -103,14 +103,22 @@ checks and cubic KZG pairing. This removes `ell-1` Fr values without a new witne
 - The only packed-polynomial output is `T(s)`, claiming
   `sum_g eq(s_group,g) P_g(r_A,s_slot)`. It is already a single-point claim.
 - Standalone Spartan opens only `W(ry)`; `Az(rx),Bz(rx),Cz(rx)` are matrix scalars, not packed
-  opening claims. In the combined wrapper, indexing W by the T1 row domain and head-aligning its
-  inner sumcheck in A makes its row point `r_A`; adding W's fixed column to the shared B batch
-  moves it to the same `(r_A,s_slot)` opening.
+  opening claims. `SharedWitnessColumn` now pads the 6,714 private coordinates of the committed
+  6,760-variable relation assignment to `2^13`, repeats each value over the five suffix bits of the
+  `2^18` common row domain, and exposes a 13-round, offset-zero member. Hence
+  `W_common(r_A)=W(ry)` for `ry=r_A[..13]` without five dummy inner rounds. The combined proof
+  still needs to insert that member and column into A/B; the standalone API retains its opening.
 - Smaller tables pad to the common row/column domains. No second point is required by the current
   claim set.
 
 Thus stage C was redundant after B became a shared-point batch and is deleted. A three-point PCS
 opening would add `3(ell+1)+1` G1 and lose to the 20–23-round block it was meant to replace.
+
+At k=16, adding W to a 254-column common set leaves 16 packed groups. Once the proof merger drops
+the standalone commitment/opening, the payload falls by **1,312 B**: one W commitment (32 B) plus
+the `ell=13` compact HyperKZG opening (`13 G1 + 27 Fr = 1,280 B`). Head alignment adds **0 rounds**;
+zero-padding W and extending the inner sumcheck to 18 rounds would instead add five degree-two
+rounds (320 B).
 
 Spartan retains compressed stages:
 
@@ -132,11 +140,11 @@ See `w4s-byte-audit.md` for line items.
 
 ```text
 k=8:  payload 5,344 B; bincode 5,437 B
-      setup 7.254 s; commit 1.156 s; proof 1.669 s; verify 0.007 s
-      109 ecMul; 108 ecAdd; 8 pairing pairs; 6,127 Fr mul; 282 Keccaks; 1,545,184 gas
+      setup 7.513 s; commit 1.130 s; proof 1.644 s; verify 0.005 s
+      109 ecMul; 108 ecAdd; 8 pairs; 6,127 Fr mul; 55 Fr inv; 282 Keccaks; 1,549,773 gas
 k=16: payload 4,960 B; bincode 5,039 B
-      setup 15.750 s; commit 1.434 s; proof 2.810 s; verify 0.006 s
-      95 ecMul; 94 ecAdd; 8 pairing pairs; 6,123 Fr mul; 270 Keccaks; 1,422,792 gas
+      setup 28.151 s; commit 2.327 s; proof 5.780 s; verify 0.012 s (contended)
+      95 ecMul; 94 ecAdd; 8 pairs; 6,123 Fr mul; 55 Fr inv; 270 Keccaks; 1,427,381 gas
 ```
 
 ## Verification
@@ -161,5 +169,6 @@ factors and the real recorded Fibonacci challenges. Tamper tests reject changed 
 bytes, all seven masked-bit aliases, round commitments, next claims, BDFG witnesses, factor/RLC
 inputs, both stage streams, packed commitments, and final opening components.
 
-Standalone Spartan still opens `W(ry)` separately. The combined wrapper will index `W` over T1's
-row domain and head-align the inner sumcheck in A; that integration belongs to its owning lane.
+`SharedWitnessColumn` is the committed co-pointing adapter; the real `2^18` relation fixture checks
+its 13-round shape and row count. The proof merger remains: insert its inner member into A, its
+column into the packed set/B, then remove standalone W commitment/opening serialization.

@@ -18,6 +18,7 @@ pub struct VerifierCost {
     pub ec_add: usize,
     pub pairing_pairs: usize,
     pub fr_mul: usize,
+    pub fr_inv: usize,
     pub keccak: usize,
 }
 
@@ -36,6 +37,10 @@ impl VerifierObserver for VerifierCost {
 
     fn record_fr_mul(&mut self) {
         self.fr_mul += 1;
+    }
+
+    fn record_fr_inv(&mut self) {
+        self.fr_inv += 1;
     }
 }
 

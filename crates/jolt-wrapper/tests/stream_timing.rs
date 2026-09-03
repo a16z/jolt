@@ -36,9 +36,21 @@ fn estimated_n4_gas(cost: VerifierCost, proof: &WrapperProof) -> usize {
         + 16 * evm_calldata_bytes
         + 7_700 * cost.ec_mul
         + 20 * cost.fr_mul
+        + batched_inversion_gas(cost.fr_inv)
         + 100 * cost.keccak
         + 2 * 114_700
         + 183_400
+}
+
+fn batched_inversion_gas(inversions: usize) -> usize {
+    if inversions == 0 {
+        return 0;
+    }
+    let max_length_bytes = 32usize;
+    let multiplication_complexity = max_length_bytes.div_ceil(8).pow(2);
+    let iteration_count = 254 - 1;
+    let modexp_gas = (multiplication_complexity * iteration_count / 3).max(200);
+    modexp_gas + 3 * (inversions - 1) * 20
 }
 
 struct TimingRow {

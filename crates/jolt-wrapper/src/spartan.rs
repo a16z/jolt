@@ -32,6 +32,10 @@ pub enum SpartanError {
     WitnessLength { expected: usize, actual: usize },
     #[error("committed witness length must be a nonzero power of two")]
     InvalidWitnessLength,
+    #[error("common row domain has {rows} rows, but the padded witness needs {minimum}")]
+    InvalidSharedRowDomain { rows: usize, minimum: usize },
+    #[error("common row point has {actual} coordinates, expected {expected}")]
+    SharedPointDimension { expected: usize, actual: usize },
     #[error("R1CS witness fails at row {0}")]
     Unsatisfied(usize),
     #[error("malformed Spartan proof")]
@@ -76,6 +80,73 @@ pub struct PublicChallenge {
 pub enum ChallengeDecoder {
     Challenge125,
     Scalar128,
+}
+
+/// Spartan's witness polynomial embedded in the wrapper's common row domain.
+///
+/// Each padded witness value is repeated across the suffix rows, so evaluating
+/// at a common row point equals evaluating the short witness at its prefix.
+/// The combined protocol can therefore head-align the 13-round inner sumcheck
+/// and insert this column into its one packed opening.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SharedWitnessColumn {
+    column: Column,
+    inner_rounds: usize,
+    common_row_vars: usize,
+}
+
+impl SharedWitnessColumn {
+    pub fn new(witness: &[Fr], common_rows: usize) -> Result<Self, SpartanError> {
+        let minimum = witness
+            .len()
+            .checked_next_power_of_two()
+            .filter(|minimum| *minimum != 0)
+            .ok_or(SpartanError::InvalidWitnessLength)?;
+        if !common_rows.is_power_of_two() || common_rows < minimum {
+            return Err(SpartanError::InvalidSharedRowDomain {
+                rows: common_rows,
+                minimum,
+            });
+        }
+        let repetitions = common_rows / minimum;
+        let mut evaluations = Vec::with_capacity(common_rows);
+        for index in 0..minimum {
+            let value = witness.get(index).copied().unwrap_or_else(Fr::zero);
+            evaluations.extend(std::iter::repeat_n(value, repetitions));
+        }
+        Ok(Self {
+            column: Column::Fr(evaluations),
+            inner_rounds: minimum.trailing_zeros() as usize,
+            common_row_vars: common_rows.trailing_zeros() as usize,
+        })
+    }
+
+    pub fn inner_member(&self) -> StageMemberSpec {
+        StageMemberSpec {
+            rounds: self.inner_rounds,
+            degree: INNER_DEGREE,
+            offset: 0,
+        }
+    }
+
+    pub fn inner_point<'a>(&self, common_row_point: &'a [Fr]) -> Result<&'a [Fr], SpartanError> {
+        if common_row_point.len() != self.common_row_vars {
+            return Err(SpartanError::SharedPointDimension {
+                expected: self.common_row_vars,
+                actual: common_row_point.len(),
+            });
+        }
+        common_row_point
+            .get(..self.inner_rounds)
+            .ok_or(SpartanError::SharedPointDimension {
+                expected: self.common_row_vars,
+                actual: common_row_point.len(),
+            })
+    }
+
+    pub fn into_column(self) -> Column {
+        self.column
+    }
 }
 
 impl ChallengeDecoder {
@@ -124,7 +195,8 @@ pub fn prove_spartan(
     let z = assignment(&public_inputs, witness);
     r1cs.check_witness(&z).map_err(SpartanError::Unsatisfied)?;
 
-    let packed = commit_packed(&[Column::Fr(witness.to_vec())], 1, setup)?;
+    let shared_witness = SharedWitnessColumn::new(witness, witness.len())?;
+    let packed = commit_packed(&[shared_witness.into_column()], 1, setup)?;
     let mut transcript = new_stream_transcript(key_digest, &public_inputs, &packed.commitments);
     let tau = draw_point(
         r1cs.num_constraints.trailing_zeros() as usize,

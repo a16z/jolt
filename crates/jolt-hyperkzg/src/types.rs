@@ -3,6 +3,7 @@
 //! All types are generic over `P: PairingGroup` — no arkworks leakage.
 
 use jolt_crypto::{HomomorphicCommitment, JoltGroup, PairingGroup};
+use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
@@ -11,10 +12,16 @@ pub trait VerifierObserver {
     fn ec_add(&mut self, count: usize);
     fn pairing_pairs(&mut self, count: usize);
     fn record_fr_mul(&mut self);
+    fn record_fr_inv(&mut self);
 
     fn fr_mul<F: core::ops::Mul<Output = F>>(&mut self, left: F, right: F) -> F {
         self.record_fr_mul();
         left * right
+    }
+
+    fn fr_inv<F: Field>(&mut self, value: F) -> Option<F> {
+        self.record_fr_inv();
+        value.inverse()
     }
 }
 
@@ -25,6 +32,7 @@ impl VerifierObserver for NoopVerifierObserver {
     fn ec_add(&mut self, _count: usize) {}
     fn pairing_pairs(&mut self, _count: usize) {}
     fn record_fr_mul(&mut self) {}
+    fn record_fr_inv(&mut self) {}
 }
 
 /// Commitment to a multilinear polynomial: a single G1 element.

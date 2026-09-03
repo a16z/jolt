@@ -282,12 +282,10 @@ where
             let mut result = [F::zero(); 3];
             for (x, y, other_a, other_b) in [(a, ya, b, c), (b, yb, a, c), (c, yc, a, b)] {
                 let denominator = observer.fr_mul(x - other_a, x - other_b);
-                let scale = observer.fr_mul(
-                    y,
-                    denominator
-                        .inverse()
-                        .ok_or(HyperKZGError::RepeatedBatchPoint)?,
-                );
+                let denominator_inverse = observer
+                    .fr_inv(denominator)
+                    .ok_or(HyperKZGError::RepeatedBatchPoint)?;
+                let scale = observer.fr_mul(y, denominator_inverse);
                 let scale_other_a = observer.fr_mul(scale, other_a);
                 result[0] += observer.fr_mul(scale_other_a, other_b);
                 result[1] -= observer.fr_mul(scale, other_a + other_b);

@@ -247,7 +247,8 @@ where
         let j = (i + 1) % 3;
         let k = (i + 2) % 3;
         let denominator = observer.fr_mul(u[i] - u[j], u[i] - u[k]);
-        let scale = observer.fr_mul(y[i], denominator.inverse()?);
+        let denominator_inverse = observer.fr_inv(denominator)?;
+        let scale = observer.fr_mul(y[i], denominator_inverse);
         let scale_u_j = observer.fr_mul(scale, u[j]);
         result[0] += observer.fr_mul(scale_u_j, u[k]);
         result[1] -= observer.fr_mul(scale, u[j] + u[k]);

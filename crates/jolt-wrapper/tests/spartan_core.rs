@@ -1,6 +1,8 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unwrap_used,
     reason = "test fixtures fail immediately on setup or proof errors"
 )]
 
@@ -9,15 +11,15 @@ use bincode::serde::encode_to_vec;
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, Ring};
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_poly::CompressedPoly;
+use jolt_poly::{CompressedPoly, MultilinearPoly};
 use jolt_r1cs::ConstraintMatrices;
 use jolt_transcript::{Blake3Transcript, Transcript};
 use jolt_wrapper::hash_table::{Decoder, Event, RecordingTranscript};
 use jolt_wrapper::spartan::{
-    prove_spartan, verify_spartan, ChallengeDecoder, PublicChallenge, SpartanPublicInputStatement,
-    SpartanPublicInputs,
+    prove_spartan, verify_spartan, ChallengeDecoder, PublicChallenge, SharedWitnessColumn,
+    SpartanPublicInputStatement, SpartanPublicInputs,
 };
-use jolt_wrapper::stream::Commitment;
+use jolt_wrapper::stream::{Column, Commitment, PackingLayout};
 
 fn instance(log_size: usize, public: Vec<Fr>) -> (ConstraintMatrices<Fr>, Vec<Fr>, Vec<Fr>) {
     let size = 1usize << log_size;
@@ -81,6 +83,48 @@ fn recorded_challenges() -> Vec<PublicChallenge> {
             Event::Start { .. } | Event::Append { .. } => None,
         })
         .collect()
+}
+
+#[test]
+fn shared_witness_uses_the_common_row_point_prefix() {
+    let witness: Vec<Fr> = (0..6_760)
+        .map(|index| Fr::from_u64(index as u64 + 1))
+        .collect();
+    let common_rows = 1 << 18;
+    let shared = SharedWitnessColumn::new(&witness, common_rows).expect("embed witness");
+    assert_eq!(
+        shared.inner_member(),
+        jolt_wrapper::stream::StageMemberSpec {
+            rounds: 13,
+            degree: 2,
+            offset: 0,
+        }
+    );
+    let common_point: Vec<Fr> = (0..18)
+        .map(|index| Fr::from_u64(index as u64 + 2))
+        .collect();
+    let inner_point = shared.inner_point(&common_point).expect("inner point");
+    let mut padded_witness = witness;
+    padded_witness.resize(1 << 13, Fr::from_u64(0));
+    let expected = padded_witness.as_slice().evaluate(inner_point);
+    let Column::Fr(evaluations) = shared.into_column() else {
+        panic!("shared witness must be a field column");
+    };
+    assert_eq!(evaluations.len(), common_rows);
+    assert_eq!(evaluations.as_slice().evaluate(&common_point), expected);
+
+    assert_eq!(
+        PackingLayout::new(common_rows, 254, 16)
+            .unwrap()
+            .group_count,
+        16
+    );
+    assert_eq!(
+        PackingLayout::new(common_rows, 255, 16)
+            .unwrap()
+            .group_count,
+        16
+    );
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use jolt_crypto::Bn254;
-use jolt_field::{Field, Fr, Zero};
+use jolt_field::{Fr, Zero};
 use jolt_hyperkzg::{
     HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup, NoopVerifierObserver,
     VerifierObserver,
@@ -480,7 +480,9 @@ fn single_member_output_observed<O: VerifierObserver>(
     if result.coefficients.len() != 1 {
         return Err(StreamError::StageMemberCount);
     }
-    let inverse = coefficient.inverse().ok_or(StreamError::StageOutputClaim)?;
+    let inverse = observer
+        .fr_inv(coefficient)
+        .ok_or(StreamError::StageOutputClaim)?;
     Ok(observer.fr_mul(result.final_claim, inverse))
 }
 

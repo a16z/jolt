@@ -132,15 +132,29 @@ Field arithmetic uses a multiplication shim at each operation site, including ba
 compressed-round evaluation, interpolation, vanishing-polynomial construction, Gemini folds, and
 the cubic KZG check; there is no aggregate Fr formula.
 
-| `k` | ecMul | ecAdd | pairing pairs | Fr mul | Keccak | N4 gas estimate |
-|---:|---:|---:|---:|---:|---:|---:|
-| 8 | 109 | 108 | 8 | 6,127 | 282 | 1,545,184 |
-| 16 | 95 | 94 | 8 | 6,123 | 270 | 1,422,792 |
+| `k` | ecMul | ecAdd | pairing pairs | Fr mul | Fr inv | Keccak | gas estimate |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 8 | 109 | 108 | 8 | 6,127 | 55 | 282 | 1,549,773 |
+| 16 | 95 | 94 | 8 | 6,123 | 55 | 270 | 1,427,381 |
 
 Gas applies the N4 constants: 21k base, 16 gas/calldata byte after expanding each G1 to 64 bytes,
 7.7k per paired ecMul+ecAdd MSM term, 114.7k per two-pair call, 183.4k for four pairs, and 100 gas
 per chained Keccak event. The 20 gas/Fr multiplication term is the EVM-plan estimate, not an N4
 measurement. The total excludes contract-code/data access and G1 decompression.
+
+The observer also records every inversion. The committed-A gate has 51 BDFG interpolation
+denominators and four final-opening denominators. None feeds a later Fiat–Shamir squeeze, so the
+Solidity verifier can defer the pairing algebra and batch all 55. EIP-2565 prices one BN254 Fr
+inverse as
+
+```text
+max(200, floor(ceil(32/8)^2 * (bitlen(p-2)-1) / 3))
+= floor(16 * 253 / 3)
+= 1,349 gas.
+```
+
+A 55-value batch costs one modexp plus `3(55-1)` field multiplications:
+`1,349 + 162*20 = 4,589 gas`, versus 74,195 gas for 55 independent modexp calls.
 
 The permanent `2^12` synthetic test has an independent 3,072-multiplication trace: 90 for
 compressed A, 120 for the public tensor, 2,658 for batched B, 7 for group weights, and 197 for the
@@ -170,8 +184,8 @@ decoder kinds; tests reject a low-bit change and all seven noncanonical high-bit
 
 | `k` | setup | commit | proof after commit | commit + proof | verify | payload |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8 | 7.254 s | 1.156 s | 1.669 s | 2.825 s | 0.007 s | 5,344 B |
-| 16 | 15.750 s | 1.434 s | 2.810 s | 4.244 s | 0.006 s | 4,960 B |
+| 8 | 7.513 s | 1.130 s | 1.644 s | 2.774 s | 0.005 s | 5,344 B |
+| 16 | 28.151 s | 2.327 s | 5.780 s | 8.107 s | 0.012 s | 4,960 B |
 
-The same run built both SRS sizes sequentially. The setup/prove spread across runs tracks concurrent
-host load; the byte and verifier-operation counts are deterministic.
+The same run built both SRS sizes sequentially. The k=16 run overlapped other build work; the
+setup/prove spread tracks host load, while byte and verifier-operation counts are deterministic.

@@ -253,7 +253,9 @@ where
         let ypos = &v[0]; // evaluations at r
         let yneg = &v[1]; // evaluations at -r
         let two_r = observer.fr_mul(P::ScalarField::from_u64(2), r);
-        let two_r_inverse = two_r.inverse().ok_or(HyperKZGError::DegenerateChallenge)?;
+        let two_r_inverse = observer
+            .fr_inv(two_r)
+            .ok_or(HyperKZGError::DegenerateChallenge)?;
         let mut y_sq = Vec::with_capacity(ell + 1);
         y_sq.push(proof.p0_at_r_squared);
         for ((&y_pos, &y_neg), &x) in ypos.iter().zip(yneg).zip(point.iter().rev()).take(ell - 1) {

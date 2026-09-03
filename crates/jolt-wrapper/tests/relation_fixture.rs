@@ -39,7 +39,7 @@ use jolt_wrapper::relation::{
     build_relation, generate_witness, outsourced_inputs, Relation, ScheduleEntry, SqueezeKind,
     StageValueInputs, Witness,
 };
-use jolt_wrapper::spartan::{ChallengeDecoder, PublicChallenge};
+use jolt_wrapper::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn};
 use tracer::execution_backend::TracerBackend;
 
 type Pcs = DoryScheme;
@@ -263,6 +263,15 @@ fn fibonacci_2_18_relation() {
     let Built {
         relation, witness, ..
     } = &built;
+    let private_start = 1 + relation.public.num_public;
+    let private_witness = witness
+        .values
+        .get(private_start..)
+        .expect("private witness range");
+    let shared_witness =
+        SharedWitnessColumn::new(private_witness, 1 << 18).expect("embed Spartan witness");
+    assert_eq!(shared_witness.inner_member().rounds, 13);
+    assert_eq!(shared_witness.into_column().len(), 1 << 18);
     assert_eq!(relation.matrices.num_constraints, EXPECTED_CONSTRAINTS_2_18);
     for (stage, rows) in EXPECTED_PER_STAGE_2_18 {
         assert_eq!(per_stage[stage], rows, "{stage}");
@@ -277,7 +286,7 @@ fn fibonacci_2_18_relation() {
             ScheduleEntry::Fr(_) => fr += 1,
             ScheduleEntry::Opaque { len } => opaque += len,
             ScheduleEntry::Squeeze { kind, .. } => {
-                squeezes[matches!(kind, SqueezeKind::Scalar) as usize] += 1
+                squeezes[matches!(kind, SqueezeKind::Scalar) as usize] += 1;
             }
         }
     }

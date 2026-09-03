@@ -183,6 +183,7 @@ fn synthetic_stream_round_trip_and_tampers() {
         .expect("count verifier operations");
     let hand_traced_fr_mul = 90 + 120 + 2_658 + 7 + 197;
     assert_eq!(cost.fr_mul, hand_traced_fr_mul);
+    assert_eq!(cost.fr_inv, 5);
     assert_eq!(
         proof.bincode_bytes(),
         encode_to_vec(&proof, standard())
