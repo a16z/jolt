@@ -63,11 +63,6 @@ pub struct Program {
     backtrace: Option<String>,
     pub elf: Option<PathBuf>,
     pub elf_compute_advice: Option<PathBuf>,
-    /// ELF bytes captured at build time, under the guest-target lock. The
-    /// on-disk artifact is shared across processes and replaced on every
-    /// build, so later readers must not go back to the path.
-    elf_contents: Option<Vec<u8>>,
-    elf_compute_advice_contents: Option<Vec<u8>>,
 }
 
 pub const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";

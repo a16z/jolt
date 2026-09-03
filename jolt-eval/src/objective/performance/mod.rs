@@ -1,6 +1,5 @@
 pub mod binding;
 pub mod field_mul;
-pub mod hamming_weight_pushforward;
 pub mod naive_sort;
 pub mod prover_time;
 pub mod trace_gen;
