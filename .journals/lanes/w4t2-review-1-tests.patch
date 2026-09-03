@@ -1,0 +1,214 @@
+diff --git a/crates/jolt-wrapper/tests/limb_table_e2e.rs b/crates/jolt-wrapper/tests/limb_table_e2e.rs
+index 60c175c2b..cc25662aa 100644
+--- a/crates/jolt-wrapper/tests/limb_table_e2e.rs
++++ b/crates/jolt-wrapper/tests/limb_table_e2e.rs
+@@ -15,11 +15,12 @@ mod common;
+ 
+ use std::time::Instant;
+ 
+-use ark_bn254::Fr as ArkFr;
+-use ark_ff::UniformRand;
+-use jolt_field::{Fr, Ring, Zero};
++use ark_bn254::{Fq, Fq12, Fr as ArkFr, G1Affine};
++use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup};
++use ark_ff::{Field as ArkField, UniformRand};
++use jolt_field::{Field, Fr, Ring, Zero};
+ use jolt_sumcheck::prover::ProveRounds;
+-use jolt_wrapper::limb_table::columns::{operand_columns, Columns};
++use jolt_wrapper::limb_table::columns::{operand_columns, Columns, GROUP_SIZE, Z_CHUNKS};
+ use jolt_wrapper::limb_table::digit_link::{link_term, LinkMember};
+ use jolt_wrapper::limb_table::dory::{FlattenedCheck, Wire, WireValues};
+ use jolt_wrapper::limb_table::export::{free_column, pin_columns, ClaimedColumns};
+@@ -27,12 +28,15 @@ use jolt_wrapper::limb_table::layout::LOG_ROWS;
+ use jolt_wrapper::limb_table::lookup::{
+     omega_column, omega_eval, public_evals, LookupColumns, PublicColumns,
+ };
++use jolt_wrapper::limb_table::ops::g1_add;
++use jolt_wrapper::limb_table::program::signed;
+ use jolt_wrapper::limb_table::relation::{
+     eq_tau_column, Challenges, Col, LookupConstants, RowRelation, RowSumcheck, SLOTS,
+ };
+ use jolt_wrapper::limb_table::schedule::{build, Layout};
+ use jolt_wrapper::limb_table::terms::evaluate_terms;
+-use jolt_wrapper::limb_table::wiring::{copy_kernel_table, fingerprint_columns};
++use jolt_wrapper::limb_table::tower::{conjugated, fq12_coords, fq12_from_coords};
++use jolt_wrapper::limb_table::wiring::{copy_kernel_table, fingerprint_columns, ReadKind};
+ use jolt_wrapper::stream::VerifierCost;
+ use rand_chacha::ChaCha20Rng;
+ use rand_core::SeedableRng;
+@@ -334,6 +338,175 @@ fn rejects(
+     );
+ }
+ 
++fn accepts(columns: Vec<Vec<Fr>>, relation: &RowRelation, layout: &Layout) {
++    let mut row = RowSumcheck::new(relation, &columns);
++    assert_eq!(row.input_claim(), Fr::zero(), "forged table input claim");
++    let mut driver = ChaCha20Rng::seed_from_u64(5);
++    let (r_le, final_claim) = drive(&mut row, Fr::zero(), &mut driver);
++    let claims = row.claims();
++    let mut cost = VerifierCost::default();
++    let evals = public_evals(
++        layout,
++        relation,
++        &tau_le(&relation.challenges),
++        &r_le,
++        &mut cost,
++    );
++    assert_eq!(
++        evaluate_terms(&relation.terms(&evals), &claims),
++        final_claim,
++        "forged table final relation"
++    );
++}
++
++#[test]
++fn out_of_range_chunk_is_accepted_with_multiplicity_above_the_range_table() {
++    let w = witness(0xE2E);
++    let mut rng = ChaCha20Rng::seed_from_u64(11);
++    let relation = RowRelation::new(
++        challenges(&mut rng),
++        LookupConstants {
++            one_row: w.layout.one_cell * 16,
++        },
++    );
++    let public = PublicColumns::new(&w.layout);
++    let mut columns = matrix(&w, &relation, &public, &public.digits.clone());
++
++    let data_row = w.layout.program.input_rows[0] as usize;
++    let chunk = Z_CHUNKS;
++    let invalid = 1usize << 16;
++    assert_eq!(columns[Col::CHUNKS + chunk][data_row], Fr::zero());
++    columns[Col::CHUNKS + chunk][data_row] = Fr::from_u64(invalid as u64);
++
++    let group = chunk / GROUP_SIZE;
++    let denominator = (0..GROUP_SIZE).fold(Fr::from_u64(1), |acc, i| {
++        acc * (relation.challenges.alpha - columns[Col::CHUNKS + group * GROUP_SIZE + i][data_row])
++    });
++    columns[Col::HELPERS + group][data_row] = denominator.inverse().unwrap();
++    columns[Col::MULT][0] -= Fr::from_u64(1);
++    columns[Col::MULT][invalid] += Fr::from_u64(1);
++    columns[Col::INV][invalid] = (relation.challenges.alpha - Fr::from_u64(invalid as u64))
++        .inverse()
++        .unwrap();
++
++    accepts(columns, &relation, &w.layout);
++}
++
++#[test]
++fn selected_operand_collision_is_accepted_when_fingerprint_root_is_known() {
++    let w = witness(0xE2E);
++    let mut rng = ChaCha20Rng::seed_from_u64(11);
++    let relation = RowRelation::new(
++        challenges(&mut rng),
++        LookupConstants {
++            one_row: w.layout.one_cell * 16,
++        },
++    );
++    let public = PublicColumns::new(&w.layout);
++    let mut columns = matrix(&w, &relation, &public, &public.digits.clone());
++
++    let mut attack = None;
++    for op in w
++        .layout
++        .digit_ops
++        .iter()
++        .filter(|op| op.kind == ReadKind::Gt)
++    {
++        let row = op.first_row as usize;
++        for a in 0..SLOTS - 2 {
++            for b in a + 1..SLOTS - 1 {
++                for c in b + 1..SLOTS {
++                    let f = [
++                        relation.fingerprint_weight(a),
++                        relation.fingerprint_weight(b),
++                        relation.fingerprint_weight(c),
++                    ];
++                    let x = [
++                        columns[Col::X + a][row],
++                        columns[Col::X + b][row],
++                        columns[Col::X + c][row],
++                    ];
++                    let delta = [
++                        f[1] * x[2] - f[2] * x[1],
++                        f[2] * x[0] - f[0] * x[2],
++                        f[0] * x[1] - f[1] * x[0],
++                    ];
++                    if delta.iter().any(|value| !value.is_zero()) {
++                        attack = Some((row, [a, b, c], delta));
++                        break;
++                    }
++                }
++                if attack.is_some() {
++                    break;
++                }
++            }
++            if attack.is_some() {
++                break;
++            }
++        }
++        if attack.is_some() {
++            break;
++        }
++    }
++    let (row, slots, delta) = attack.expect("non-degenerate selected GT row");
++    for (slot, change) in slots.into_iter().zip(delta) {
++        columns[Col::Y + slot][row] += change;
++    }
++
++    accepts(columns, &relation, &w.layout);
++}
++
++#[test]
++fn affine_addition_accepts_an_arbitrary_slope_when_points_are_equal() {
++    let point = G1Affine::generator();
++    let template = g1_add(false);
++    let mut own = [Fq::zero(); 4];
++    let coordinate =
++        |reference: jolt_wrapper::limb_table::template::Ref, own: &[Fq; 4]| match reference.elem {
++            0 => own[reference.coord as usize],
++            1 | 2 => {
++                if reference.coord == 0 {
++                    point.x
++                } else {
++                    point.y
++                }
++            }
++            3 => Fq::from(1u64),
++            _ => unreachable!(),
++        };
++    let evaluate = |row: usize, own: &[Fq; 4]| {
++        template.rows[row]
++            .slots
++            .iter()
++            .fold(Fq::zero(), |acc, (x, y, coefficient)| {
++                acc + coordinate(*x, own) * coordinate(*y, own) * signed(*coefficient)
++            })
++    };
++
++    own[0] = Fq::zero();
++    assert_eq!(evaluate(1, &own), Fq::zero(), "slope pin is vacuous");
++    own[2] = evaluate(2, &own);
++    own[3] = evaluate(3, &own);
++    let doubled = point.into_group().double().into_affine();
++    assert_ne!((own[2], own[3]), (doubled.x, doubled.y));
++}
++
++#[test]
++fn gt_conjugation_is_not_inverse_without_a_target_subgroup_check() {
++    let mut rng = ChaCha20Rng::seed_from_u64(0x000B_AD67);
++    let value = Fq12::rand(&mut rng);
++    let mut coordinates = fq12_coords(&value);
++    for (index, coordinate) in coordinates.iter_mut().enumerate() {
++        if conjugated(index) {
++            *coordinate = -*coordinate;
++        }
++    }
++    assert_ne!(
++        fq12_from_coords(&coordinates),
++        ArkField::inverse(&value).unwrap()
++    );
++}
++
+ #[test]
+ fn tampered_witnesses_are_rejected() {
+     let w = witness(0xE2E);
