@@ -232,7 +232,7 @@ where
     };
     let terms = exporters
         .iter()
-        .flat_map(|exporter| exporter.terms(&context))
+        .flat_map(|exporter| exporter.terms_observed(&context, observer))
         .collect::<Vec<_>>();
     let term_rounds = terms.len().next_power_of_two().max(2).trailing_zeros() as usize;
     let term_proof = proof.stages.get(1).ok_or(StreamError::StageCount)?;

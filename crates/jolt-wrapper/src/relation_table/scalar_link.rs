@@ -1,10 +1,11 @@
 use jolt_field::{Fr, One, Ring, Zero};
 #[cfg(test)]
-use jolt_hyperkzg::NoopVerifierObserver;
-use jolt_hyperkzg::VerifierObserver;
+use jolt_hyperkzg::{NoopVerifierObserver, VerifierObserver};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
+
+use crate::stream::TermObserver;
 
 use super::{RelationCellLayout, RelationTableWitness};
 
@@ -61,7 +62,7 @@ impl DoryScalarLink {
     ) -> Fr {
         assert_eq!(point.len(), self.rows.trailing_zeros() as usize);
         let weight = self.weight_at_observed(point, observer);
-        observer.fr_mul(weight, wire)
+        VerifierObserver::fr_mul(observer, weight, wire)
     }
 
     fn weights(&self) -> Vec<Fr> {
@@ -74,7 +75,7 @@ impl DoryScalarLink {
         weights
     }
 
-    pub(super) fn weight_at_observed<O: VerifierObserver>(
+    pub(super) fn weight_at_observed<O: TermObserver + ?Sized>(
         &self,
         point: &[Fr],
         observer: &mut O,

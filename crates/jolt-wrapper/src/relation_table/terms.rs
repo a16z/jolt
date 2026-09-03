@@ -1,7 +1,7 @@
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_hyperkzg::{NoopVerifierObserver, VerifierObserver};
+use jolt_hyperkzg::NoopVerifierObserver;
 
-use crate::stream::{AffineForm, ColumnId, Term, TermContext, TermExporter};
+use crate::stream::{AffineForm, ColumnId, Term, TermContext, TermExporter, TermObserver};
 
 use super::{
     CopyLink, DoryScalarLink, RelationTable, RelationTableError, ACTIVE, H_ID, H_SIGMA, Q_C, Q_L,
@@ -20,7 +20,7 @@ pub fn evaluate_terms(
     evaluate_terms_observed(terms, evaluate_column, &mut NoopVerifierObserver)
 }
 
-pub fn evaluate_terms_observed<O: VerifierObserver>(
+pub fn evaluate_terms_observed<O: TermObserver + ?Sized>(
     terms: &[Term],
     evaluate_column: &dyn Fn(ColumnId) -> Result<Fr, RelationTableError>,
     observer: &mut O,
@@ -58,7 +58,7 @@ fn term(coefficient: Fr, factors: Vec<AffineForm>) -> Term {
     }
 }
 
-fn evaluate_affine_observed<O: VerifierObserver>(
+fn evaluate_affine_observed<O: TermObserver + ?Sized>(
     form: &AffineForm,
     evaluate_column: &dyn Fn(ColumnId) -> Result<Fr, RelationTableError>,
     observer: &mut O,
@@ -101,7 +101,7 @@ impl RelationTermExporter<'_> {
         clippy::indexing_slicing,
         reason = "the assembly validates the exporter member count before term export"
     )]
-    pub fn terms_observed<O: VerifierObserver>(
+    pub fn terms_observed<O: TermObserver + ?Sized>(
         &self,
         context: &TermContext<'_>,
         observer: &mut O,
@@ -124,6 +124,14 @@ impl TermExporter for RelationTermExporter<'_> {
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         self.terms_observed(context, &mut NoopVerifierObserver)
     }
+
+    fn terms_observed(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term> {
+        RelationTermExporter::terms_observed(self, context, observer)
+    }
 }
 
 impl RelationTable {
@@ -131,7 +139,7 @@ impl RelationTable {
         relation_terms(self.rows(), ctx)
     }
 
-    pub fn terms_observed<O: VerifierObserver>(
+    pub fn terms_observed<O: TermObserver + ?Sized>(
         &self,
         ctx: &RelationTermsContext<'_>,
         observer: &mut O,
@@ -147,7 +155,7 @@ fn relation_terms(
     relation_terms_observed(rows, ctx, &mut NoopVerifierObserver)
 }
 
-pub(super) fn relation_terms_observed<O: VerifierObserver>(
+pub(super) fn relation_terms_observed<O: TermObserver + ?Sized>(
     rows: usize,
     ctx: &RelationTermsContext<'_>,
     observer: &mut O,
@@ -155,8 +163,8 @@ pub(super) fn relation_terms_observed<O: VerifierObserver>(
     if ctx.point.len() != rows.trailing_zeros() as usize || ctx.tau.len() != ctx.point.len() {
         return Err(RelationTableError::Claims);
     }
-    let eq = super::eq_mle_observed(ctx.tau, ctx.point, observer);
-    let identity = super::identity_mle_observed(ctx.point, observer);
+    let eq = eq_mle_observed(ctx.tau, ctx.point, observer);
+    let identity = identity_mle_observed(ctx.point, observer);
     let stage_eq = observer.fr_mul(ctx.stage_coefficient, eq);
     let column = |index| column_form(ctx.columns[index]);
     let wires = [column(WIRE_A), column(WIRE_B), column(WIRE_C)];
@@ -237,14 +245,14 @@ impl CopyLinkTermExporter<'_> {
         clippy::indexing_slicing,
         reason = "the assembly validates the exporter member count before term export"
     )]
-    pub fn terms_observed<O: VerifierObserver>(
+    pub fn terms_observed<O: TermObserver + ?Sized>(
         &self,
         context: &TermContext<'_>,
         observer: &mut O,
     ) -> Vec<Term> {
         assert_eq!(self.tau.len(), context.row_point.len());
         assert_eq!(self.tau.len(), self.link.rows().trailing_zeros() as usize);
-        let eq = super::eq_mle_observed(self.tau, context.row_point, observer);
+        let eq = eq_mle_observed(self.tau, context.row_point, observer);
         self.link.terms_observed(
             &CopyLinkTermsContext {
                 left: self.left.clone(),
@@ -264,6 +272,14 @@ impl TermExporter for CopyLinkTermExporter<'_> {
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         self.terms_observed(context, &mut NoopVerifierObserver)
     }
+
+    fn terms_observed(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term> {
+        CopyLinkTermExporter::terms_observed(self, context, observer)
+    }
 }
 
 impl CopyLink {
@@ -271,7 +287,7 @@ impl CopyLink {
         self.terms_observed(ctx, &mut NoopVerifierObserver)
     }
 
-    pub fn terms_observed<O: VerifierObserver>(
+    pub fn terms_observed<O: TermObserver + ?Sized>(
         &self,
         ctx: &CopyLinkTermsContext,
         observer: &mut O,
@@ -326,7 +342,7 @@ impl DoryScalarTermExporter<'_> {
         clippy::indexing_slicing,
         reason = "the assembly validates the exporter member count before term export"
     )]
-    pub fn terms_observed<O: VerifierObserver>(
+    pub fn terms_observed<O: TermObserver + ?Sized>(
         &self,
         context: &TermContext<'_>,
         observer: &mut O,
@@ -348,6 +364,14 @@ impl TermExporter for DoryScalarTermExporter<'_> {
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         self.terms_observed(context, &mut NoopVerifierObserver)
     }
+
+    fn terms_observed(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term> {
+        DoryScalarTermExporter::terms_observed(self, context, observer)
+    }
 }
 
 impl DoryScalarLink {
@@ -355,7 +379,7 @@ impl DoryScalarLink {
         self.terms_observed(ctx, &mut NoopVerifierObserver)
     }
 
-    pub fn terms_observed<O: VerifierObserver>(
+    pub fn terms_observed<O: TermObserver + ?Sized>(
         &self,
         ctx: &DoryScalarTermsContext<'_>,
         observer: &mut O,
@@ -375,7 +399,7 @@ impl DoryScalarLink {
     clippy::too_many_arguments,
     reason = "matches the grouped LogUp relation inputs without another protocol type"
 )]
-fn append_grouped_terms<O: VerifierObserver>(
+fn append_grouped_terms<O: TermObserver + ?Sized>(
     terms: &mut Vec<Term>,
     coefficient: Fr,
     selectors: [AffineForm; WIRES],
@@ -411,7 +435,7 @@ fn append_grouped_terms<O: VerifierObserver>(
     }
 }
 
-fn denominator<O: VerifierObserver>(
+fn denominator<O: TermObserver + ?Sized>(
     value: &AffineForm,
     id: &AffineForm,
     beta: Fr,
@@ -437,4 +461,23 @@ fn denominator<O: VerifierObserver>(
         )
     }));
     AffineForm { constant, weights }
+}
+
+fn identity_mle_observed<O: TermObserver + ?Sized>(point: &[Fr], observer: &mut O) -> Fr {
+    point
+        .iter()
+        .enumerate()
+        .fold(Fr::zero(), |sum, (index, &coordinate)| {
+            sum + observer.fr_mul(coordinate, Fr::from_u64(1 << (point.len() - index - 1)))
+        })
+}
+
+fn eq_mle_observed<O: TermObserver + ?Sized>(left: &[Fr], right: &[Fr], observer: &mut O) -> Fr {
+    left.iter()
+        .zip(right)
+        .fold(Fr::one(), |value, (&left, &right)| {
+            let both = observer.fr_mul(left, right);
+            let neither = observer.fr_mul(Fr::one() - left, Fr::one() - right);
+            observer.fr_mul(value, both + neither)
+        })
 }

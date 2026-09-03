@@ -13,7 +13,7 @@ use jolt_wrapper::stream::{
     combine_packed_phases, commit_packed, commitment_prefix_challenges, prove_assembly,
     verify_assembly_with_cost, AffineForm, AssemblyMemberStatement, AssemblyStatement, Column,
     ColumnId, Commitment, CommitmentPhase, StageMember, StageMemberSpec, Term, TermContext,
-    TermExporter,
+    TermExporter, TermObserver,
 };
 
 struct CarryTerms {
@@ -33,6 +33,31 @@ impl TermExporter for CarryTerms {
             }],
         }]
     }
+
+    fn terms_observed(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term> {
+        let eq = eq_observed(&self.source_point, context.row_point, observer);
+        vec![Term {
+            coefficient: observer.fr_mul(context.batching_coefficients[self.member], eq),
+            factors: vec![AffineForm {
+                constant: Fr::zero(),
+                weights: vec![(self.column, Fr::one())],
+            }],
+        }]
+    }
+}
+
+fn eq_observed(left: &[Fr], right: &[Fr], observer: &mut dyn TermObserver) -> Fr {
+    left.iter()
+        .zip(right)
+        .fold(Fr::one(), |result, (&left, &right)| {
+            let both = observer.fr_mul(left, right);
+            let neither = observer.fr_mul(Fr::one() - left, Fr::one() - right);
+            observer.fr_mul(result, both + neither)
+        })
 }
 
 #[test]

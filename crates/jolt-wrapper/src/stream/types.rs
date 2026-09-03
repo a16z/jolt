@@ -268,8 +268,24 @@ pub struct TermContext<'a> {
     pub challenges: &'a [Fr],
 }
 
+pub trait TermObserver {
+    fn fr_mul(&mut self, left: Fr, right: Fr) -> Fr;
+}
+
+impl<O: VerifierObserver> TermObserver for O {
+    fn fr_mul(&mut self, left: Fr, right: Fr) -> Fr {
+        VerifierObserver::fr_mul(self, left, right)
+    }
+}
+
 pub trait TermExporter {
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term>;
+
+    fn terms_observed(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

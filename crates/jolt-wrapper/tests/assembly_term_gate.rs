@@ -18,7 +18,7 @@ use jolt_wrapper::stream::{
     combine_packed_phases, commit_packed, commitment_prefix_challenges, prove_assembly,
     verify_assembly_with_cost, AffineForm, AssemblyMemberStatement, AssemblyStatement, Column,
     ColumnId, CommitmentPhase, StageMember, StageMemberSpec, StageProof, Term, TermContext,
-    TermExporter, VerifierCost, WrapperProof,
+    TermExporter, TermObserver, VerifierCost, WrapperProof,
 };
 
 const LOG_ROWS: usize = 18;
@@ -29,43 +29,67 @@ const IO_BYTES: usize = 608;
 
 struct RepeatedTerms {
     source_point: Vec<Fr>,
+    coefficient_scale: Fr,
 }
 
 impl TermExporter for RepeatedTerms {
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         let coefficient = context.batching_coefficients[0]
             * EqPolynomial::<Fr>::mle(&self.source_point, context.row_point)
-            * Fr::from_u64(TERM_COUNT as u64)
-                .inverse()
-                .expect("nonzero term count");
-        (0..TERM_COUNT)
-            .map(|_| Term {
-                coefficient,
-                factors: vec![
-                    AffineForm {
-                        constant: Fr::zero(),
-                        weights: vec![(ColumnId { group: 0, slot: 0 }, Fr::one())],
-                    },
-                    AffineForm {
-                        constant: Fr::one(),
-                        weights: Vec::new(),
-                    },
-                    AffineForm {
-                        constant: Fr::one(),
-                        weights: Vec::new(),
-                    },
-                    AffineForm {
-                        constant: Fr::one(),
-                        weights: Vec::new(),
-                    },
-                    AffineForm {
-                        constant: Fr::one(),
-                        weights: Vec::new(),
-                    },
-                ],
-            })
-            .collect()
+            * self.coefficient_scale;
+        repeated_terms(coefficient)
     }
+
+    fn terms_observed(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term> {
+        let eq = eq_observed(&self.source_point, context.row_point, observer);
+        let coefficient = observer.fr_mul(context.batching_coefficients[0], eq);
+        let coefficient = observer.fr_mul(coefficient, self.coefficient_scale);
+        repeated_terms(coefficient)
+    }
+}
+
+fn repeated_terms(coefficient: Fr) -> Vec<Term> {
+    (0..TERM_COUNT)
+        .map(|_| Term {
+            coefficient,
+            factors: vec![
+                AffineForm {
+                    constant: Fr::zero(),
+                    weights: vec![(ColumnId { group: 0, slot: 0 }, Fr::one())],
+                },
+                AffineForm {
+                    constant: Fr::one(),
+                    weights: Vec::new(),
+                },
+                AffineForm {
+                    constant: Fr::one(),
+                    weights: Vec::new(),
+                },
+                AffineForm {
+                    constant: Fr::one(),
+                    weights: Vec::new(),
+                },
+                AffineForm {
+                    constant: Fr::one(),
+                    weights: Vec::new(),
+                },
+            ],
+        })
+        .collect()
+}
+
+fn eq_observed(left: &[Fr], right: &[Fr], observer: &mut dyn TermObserver) -> Fr {
+    left.iter()
+        .zip(right)
+        .fold(Fr::one(), |result, (&left, &right)| {
+            let both = observer.fr_mul(left, right);
+            let neither = observer.fr_mul(Fr::one() - left, Fr::one() - right);
+            observer.fr_mul(result, both + neither)
+        })
 }
 
 #[test]
@@ -140,6 +164,9 @@ fn term_compression_gate() {
     };
     let exporter = RepeatedTerms {
         source_point: source_point.clone(),
+        coefficient_scale: Fr::from_u64(TERM_COUNT as u64)
+            .inverse()
+            .expect("nonzero term count"),
     };
     let exporters = [&exporter as &dyn TermExporter];
     let mut carry = CarryProver::new(&first, &source_point, input_claim).expect("carry");

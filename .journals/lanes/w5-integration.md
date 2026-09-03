@@ -298,3 +298,57 @@ Fiat-Shamir vector for member-specific α/β/γ/kernel values. Exporters return 
 five affine factors. The assembly pads shorter products with the constant-one form and pads the
 term table to a power of two with zero-coefficient terms. Prover and verifier call the same export
 method after stage A, using the same row point and member batching coefficients.
+
+## 01:04 compressed-claim stream gate
+
+Commits `5ca9bfa52` and `d5873f4fc` replace assembly's per-column claims with a term-index
+sumcheck and one weighted stage-B reduction. Stage A defers member final checks to the shared
+`TermExporter` list. The term stage pads `T` to a power of two, commits degree-six rounds, sends
+the five final factor evaluations, and derives one column weight vector. Stage B proves that
+weighted column functional and the existing HyperKZG proof opens the resulting packed polynomial.
+
+Committed stages now send one G1 commitment and one next-claim scalar per round. One aggregated
+`S(0)` scalar plus the three-G1 variable-batch proof checks all Boolean-sum identities. The
+assembly test rejects changes to either `S(0)`, a term-round commitment, a final factor
+evaluation, and a phase-2 commitment.
+
+Commitment phases are statement-owned `(group_count, challenge_count)` entries. The caller uses
+`commitment_prefix_challenges` after committing each available prefix, constructs the next helper
+phase, and joins aligned packed phases with `combine_packed_phases`. Verification replays the same
+ordered absorption before stage A. Non-final phases must end on a packed-group boundary.
+
+One release gate at `rows=2^18`, `k=16`, `T=600`, five factors, 32 synthetic stand-in columns:
+
+| item | bytes |
+|---|---:|
+| two phase commitments | 64 |
+| stage A: 18 × 64 + `S(0)` + BDFG/shift | 1,280 |
+| term stage: 10 × 64 + `S(0)` + BDFG/shift | 768 |
+| five final factor evaluations | 160 |
+| stage B: five degree-two rounds | 320 |
+| reduced claim | 32 |
+| HyperKZG opening | 2,144 |
+| proof payload | **4,768** |
+| canonical IO wire | 608 |
+| **total** | **5,376** |
+
+Exact bincode size is 4,850 B. Load was 7.01/9.37/9.53. Deterministic test setup 3,166 ms;
+wire commit 41 ms; helper commit 41 ms; assembly prove 4,638 ms; verify 10 ms. Executed verifier:
+152 ecMul, 151 ecAdd, 12 pairing pairs, 18,825 Fr mul, 8 inversions, 306 Keccak; N4 estimate
+2,128,781 gas including 608 B IO. The extra 56 Fr multiplications are the now-observed term
+export (54 for `eq`, two coefficient products); every production exporter must implement the
+object-safe `TermObserver` path, so its verifier arithmetic cannot bypass the counter.
+
+The committed R exporter contributes exactly 26 terms; T1/T2 exporters are still uncommitted, so
+600 is the requested stand-in count. Up to 1,024 total terms keeps ten term rounds and the same
+768 B term stage. Replacing the gate's two groups with 17 groups for approximately 270 real
+columns changes commitments 64 → 544 B and stage B five → nine rounds (320 → 576 B): projected
+full total **6,112 B**, 112 B over the decimal 6,000 B target (32 B below 6 KiB). The 2,144 B
+HyperKZG opening is the largest fixed item.
+
+Command:
+
+```bash
+cargo nextest run -p jolt-wrapper --release --test assembly_term_gate term_compression_gate \
+  --run-ignored ignored-only --cargo-quiet --no-capture
+```
