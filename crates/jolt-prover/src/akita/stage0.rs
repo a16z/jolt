@@ -41,6 +41,7 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
     trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
+    witness_prepare_start: Option<&std::sync::mpsc::Sender<()>>,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: JoltField,
@@ -206,6 +207,9 @@ where
                 log_k_chunk,
                 log_t,
             )?;
+            if let Some(start) = witness_prepare_start {
+                let _ = start.send(());
+            }
             let precommitted_hints = precommitted
                 .iter()
                 .map(|(_, _, hint)| *hint)

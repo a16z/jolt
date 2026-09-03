@@ -140,7 +140,7 @@ fn main() {
         let traces_dir = PathBuf::from("benchmark-runs/perfetto_traces");
         fs::create_dir_all(&traces_dir).expect("create perfetto_traces directory");
         let target = traces_dir.join(format!("{stem}.json"));
-        fs::copy(&trace_path, &target).expect("copy chrome trace");
+        let _ = fs::copy(&trace_path, &target).expect("copy chrome trace");
         println!("Trace copy: {}", target.display());
     }
 }

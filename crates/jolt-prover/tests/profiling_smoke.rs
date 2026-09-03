@@ -33,6 +33,7 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        target_trace_size: None,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");
