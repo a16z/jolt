@@ -138,3 +138,103 @@ column sumcheck reduces.
   tree — this lane only added `tracer` to it (`Program::trace_with_backend` needs a `TracerBackend`).
 - `crates/jolt-wrapper-bench` keeps its word-layout copy (N3's bench binary still builds); the
   production owner of the relation is now `hash_table/layout.rs`.
+
+## Fix #1 (review #1 blocker + major + minors; W5 / W6-RT interface), 2026-09-03 03:10
+
+Measured on the real fibonacci 2^18 fixture (M) unless tagged (E). Commands unchanged (see Tests).
+
+### What changed
+
+- **Cells.** Every compression is a 128-row cell (`b · 128 + p`): p 0..112 half-G steps
+  (`(round · 8 + g) · 2 + half`), 112..120 chaining rows, 120..122 challenge rows (two output
+  words each: `D' = out[8 + 2i]`, `B' = out[9 + 2i]`, `A' = cv[2i]`, `C' = cv[2i + 1]`, computed by
+  EVERY cell — only squeeze cells are linked), 122 / 123 hold the next cell's block length / flags
+  in `m`, 124..128 zero. Padding cells continue the chain (`Chain::pad`: empty block,
+  `CHUNK_START | KEYED_HASH`) so the wiring is uniform on the full 2^18 domain. Real table: 1,819
+  active cells of 2,048 (2^18 rows, 88.8 % active; L = 20 (E): 1,902 cells → 2^18).
+- **Wiring = a constant table + 4 verifier-key columns + public inputs** (`wiring.rs`).
+  `source(position, slot)` is the position table (Blake3 lanes, message permutation, rotations,
+  chaining, challenge decoding): `Cell{group, weights, δ}` / `Previous{position}` /
+  `Next{position}` / `Const(IV)` / `Zero`, 128 × 17 entries, held by the verifier as code. Block
+  length, flags, label words and zero padding are half-word pins of `m` in the verifier key:
+  `lo_is_const`, `hi_is_const` (bit), `lo_const`, `hi_const` (u16) — 31,957 pinned half-words
+  (23,584 constant bytes + block-length / flag words of every cell). Public inputs: `state_in`
+  (8 words), the first cell's block length / flags, the 22-byte preamble tail (pinned as half-words
+  of block 0 by the verifier). Every `(position, slot)` copy is a shift kernel with fixed δ inside
+  the cell or `eq+1` across cells: 724 entries, 537 distinct `(position, δ, cell offset)` kernels,
+  30 distinct value forms `(slot, group, weights)`.
+- **Copy constraints = one degree-3 zero-check member in stage A** (`wiring_prover.rs`,
+  `WiringStatement`): `Σ_row eq(τ₂, row) · [Σ_s γ_s w_s(row) + γ_lo·is_lo(row)·lo(m)(row) +
+  γ_hi·is_hi(row)·hi(m)(row) − pinned constants] − Σ_t P_t(row) · V_t(row) = public constant`,
+  where each read side `t` is a public kernel table `P_t` (the `eq(τ₂, ·)` weights of the row's
+  readers, slot coefficient folded in) times the value form `V_t` (fixed linear combination of the
+  source group's 32 bits), bound as separate multilinears. Head-aligned with the row relation:
+  0 extra rounds, same point r_A, wired columns stay committed (co-pointing). Public part of the
+  sum (IV constants, cell-0 chaining reads): O(#entries) verifier work. Message copies (rounds 1–6)
+  are a wired word `m_in` fed by 96 single-position kernels; the ternary add reads `m_in`.
+- **Verifier work (T1, per proof, E from counts):** two 7-variable eq tables (2 × 127 mults),
+  `eq(τ_hi, r_hi)`, two `eq+1` on 11 variables (≈ 90), `eq(τ₂, r)` (128), kernel weights
+  724 × 2 = 1,448, value-form expansion 30 × 32 × 2 = 1,920, wired side 79 + pins ≈ 50, row relation
+  ≈ 3 × 256 → **≈ 4.5k Fr mults**, no O(rows) data. VK: 4 columns (+4 claims in the batched
+  opening); proof: 0 extra rounds, 0 extra claims beyond the columns.
+- **Exported final relation as terms** (`terms.rs`): `terms(&FinalContext) -> Vec<Term>` with
+  `AffineForm { constant, weights: Vec<(ColumnId, Fr)> }`, `Term { coefficient, factors }` over
+  column ids (0..163 committed bits, 163..227 wired bits, 227..242 wired words, 242..246 VK):
+  **T = 230 terms, max d = 2** — 163 booleanity squares, 64 XOR cross terms, 2 half-word pin
+  products, 1 linear term (adds, wired side, kernels, pinned constants, public tail). Test oracle:
+  `Σ_t coeff·Π L(v) == ρ_rows · Relation::final_check + ρ_wiring · WiringStatement::final_check
+  == prove_batch final claim` on the real table.
+- **Virtual value columns for W6-RT** (`AffineForm`s at r_A): `challenge125()` /
+  `challenge_scalar128()` at a squeeze cell's row 120 (D', B' bits + wired `a_in = out[10]`,
+  `x_in = out[11] mod 2^29`, `y_in = bswap(out[10])`, `z_in = bswap(out[11])`; coefficients probed
+  from the production decoders `Fr::from_challenge_bytes` / `from_scalar_challenge_bytes`, which
+  stay the owners); `fr_word()` at an aligned wire row (own `m` bits bswapped + `fr_next[1..8]` =
+  bswap of the next 7 rows' `m`); `fr_word_shifted()` for the wires absorbed before the first
+  squeeze (2 bytes into their word after the 22-byte tail: high half of `m`, `fr_next`, `fr_tail`
+  = bswap16 of the low half 8 rows on, across the cell boundary via `Next`). Every recorded
+  challenge (376) and wire (1,199) evaluates exactly (tests).
+- **Link identities** (`schedule.rs`, `LinkMap`): `ByteSource` per block byte — `Padding`,
+  `Constant(byte)`, `Public{preamble offset}`, `Wire{index, byte}`, `Element{kind, index, byte}` —
+  from the `SymbolicSchedule` (per cell: block_len, flags, 64 sources, squeeze). Generated with the
+  verifier key from one recorded verifier run of the profile; deterministic in the profile (test:
+  two proofs of the same shape give identical schedules and VK columns); the linker never reads
+  witness bytes. Row maps: 1,199 wire rows (aligned / shifted), 376 challenge rows, 45,174
+  element/public byte positions (41 × 384 CommitmentGt, 68 × 384 DoryGt, 35 × 32 G1, 34 × 64 G2,
+  22 public). Commitment-segment elements are offset 2 bytes in their words (T2's byte links).
+- **Borrowed columns:** `HashTableProver::new(&relation, &table, τ)` and `WiringProver::new(..,
+  &bits, &wired_bits, &wired_words, &vk, &public, τ)` borrow; no clone before packing.
+  `column_specs()`: 163 bit + 64 bit + 15 u32 committed (packing order) + 4 VK (2 bit, 2 u16);
+  `members(log_rows)`: `t1-rows` (degree 3) and `t1-wiring` (degree 3), offset 0.
+- **Minors:** table-local `CellIndex` (`rlc_cell`, `last_squeeze_cell`); `Cargo.lock` carries the
+  fixture's `tracer` dependency.
+- Consumers ported (3 call sites): `wrap.rs` (W5) and `tests/perf1_profile.rs` (PERF-1) use
+  `JoltSchedule::new(log, log_rows)` / `HashTable::build(&schedule)` / borrowed provers.
+
+### Numbers (fibonacci 2^18, M)
+
+| item | value |
+|---|---:|
+| cells / rows | 1,819 active + 229 padding = 2^11 cells × 128 = 2^18 rows |
+| committed columns | 163 bits + 64 wired bits + 15 wired words = 242 (+4 VK) |
+| stage A (2 members, 18 rounds, degree 3) | 0.753 s (row member round 0 on bits 0.096 s, wiring setup 0.372 s) |
+| witness | replay 0.004 s, build (incl. wiring materialization) 0.301 s |
+| terms | 230, max degree 2, built in < 1 ms |
+| kernels | 724 entries, 537 distinct, 30 value forms |
+| pins | 31,957 half-words; 22 public tail bytes |
+
+### Tests
+
+- `cargo nextest run -p jolt-wrapper --cargo-quiet -E 'test(hash_table) | binary(hash_table_relation)'`
+  (6): chain + cells hold the recorded words, every squeeze / wire evaluates through the virtual
+  columns; byte identities cover every absorbed byte once + VK determinism across two proofs;
+  both members through `prove_batch`, native final checks and exported terms agree; tampers: 8
+  random state/carry bit flips (row relation), round-0 message bit / mis-routed `din` / mis-routed
+  `m_in` / forged label byte / forged preamble byte / forged next-block length (wiring), kernels at
+  a shifted stride (verifier formula).
+- `cargo nextest run -p jolt-wrapper --features prover-fixtures --cargo-quiet -E 'binary(hash_table_fixture)' --no-capture`:
+  the real proof, pinned shape, links, `state_rlc` / `state_out`, both members at full size, terms
+  vs native, 3 flips.
+- Gates (scratch worktree `w4t1-verify`): `cargo clippy -p jolt-wrapper --lib --test
+  hash_table_relation --test hash_table_fixture --test perf1_profile [--features prover-fixtures]
+  -- -D warnings`, rustfmt, `check_style_invariants.py --base HEAD` clean on this lane's files
+  (open findings remain in `limb_table/` — W4-T2).
