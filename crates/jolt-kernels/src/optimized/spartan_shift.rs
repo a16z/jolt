@@ -241,12 +241,6 @@ struct ShiftKernel<F: JoltField> {
     challenges: RoundChallenges<F>,
 }
 
-fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
-    SumcheckError::MissingEvaluationSource {
-        kind: "spartan shift row",
-    }
-}
-
 impl<F: JoltField> ShiftKernel<F> {
     /// Regenerate the dense phase from the raw values: the five columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
@@ -328,7 +322,11 @@ impl<F: JoltField> ShiftKernel<F> {
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q pairs.
         if matches!(&self.phase, Phase::PrefixSuffix { pairs } if pairs[0].0.len() == 2) {
-            return self.transition_to_dense().map_err(row_extraction_error);
+            return self.transition_to_dense().map_err(|_| {
+                SumcheckError::MissingEvaluationSource {
+                    kind: "spartan shift row",
+                }
+            });
         }
         match &mut self.phase {
             Phase::PrefixSuffix { pairs } => {

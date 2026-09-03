@@ -119,12 +119,6 @@ pub struct OptimizedInstructionInputKernel<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
 }
 
-fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
-    SumcheckError::MissingEvaluationSource {
-        kind: "instruction input operand row",
-    }
-}
-
 /// Exact `(value at t = 0, step)` for a linear extension.
 #[inline]
 fn ext_u64(even: u64, odd: u64) -> (i128, i128) {
@@ -290,7 +284,12 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let mut q_evals = match &self.state {
-            InputState::Native(rows) => self.native_q_evals(rows).map_err(row_extraction_error)?,
+            InputState::Native(rows) => {
+                self.native_q_evals(rows)
+                    .map_err(|_| SumcheckError::MissingEvaluationSource {
+                        kind: "instruction input operand row",
+                    })?
+            }
             InputState::Dense(tables) => self.dense_q_evals(tables),
         };
         self.gruen
@@ -363,7 +362,9 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             InputState::Native(rows) => {
                 let tables =
                     Self::materialize_half(rows, challenge, 1 << (self.progress.total() - 1))
-                        .map_err(row_extraction_error)?;
+                        .map_err(|_| SumcheckError::MissingEvaluationSource {
+                            kind: "instruction input operand row",
+                        })?;
                 self.state = InputState::Dense(tables);
                 // Return row and preparation pages before dense rounds.
                 purge_retained_memory(self.progress.total());

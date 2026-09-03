@@ -201,12 +201,6 @@ struct ClaimReductionKernel<F: JoltField> {
     challenges: RoundChallenges<F>,
 }
 
-fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
-    SumcheckError::MissingEvaluationSource {
-        kind: "register values row",
-    }
-}
-
 impl<F: JoltField> ClaimReductionKernel<F> {
     /// Regenerate the dense phase from the raw values: the three columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix
@@ -260,7 +254,11 @@ impl<F: JoltField> ClaimReductionKernel<F> {
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q.
         if matches!(&self.phase, Phase::PrefixSuffix { p, .. } if p.len() == 2) {
-            return self.transition_to_dense().map_err(row_extraction_error);
+            return self.transition_to_dense().map_err(|_| {
+                SumcheckError::MissingEvaluationSource {
+                    kind: "register values row",
+                }
+            });
         }
         match &mut self.phase {
             Phase::PrefixSuffix { p, q } => {
