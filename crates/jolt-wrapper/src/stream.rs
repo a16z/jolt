@@ -591,7 +591,7 @@ impl SumcheckRecorder<Fr> for KzgBatchRecorder<'_> {
     {
         if round_poly.coefficients().len() > self.degree + 1 {
             return Err(SumcheckError::DegreeBoundExceeded {
-                got: round_poly.degree(),
+                got: round_poly.coefficients().len().saturating_sub(1),
                 max: self.degree,
             });
         }
@@ -600,7 +600,7 @@ impl SumcheckRecorder<Fr> for KzgBatchRecorder<'_> {
             .g1_powers()
             .get(..round_poly.coefficients().len())
             .ok_or(SumcheckError::DegreeBoundExceeded {
-                got: round_poly.degree(),
+                got: round_poly.coefficients().len().saturating_sub(1),
                 max: self.degree,
             })?;
         let commitment = Bn254::g1_affine_msm(bases, round_poly.coefficients());
