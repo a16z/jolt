@@ -14,7 +14,7 @@ use super::{
     buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
-use crate::optimized::ram_trace::{RamAccessColumns, RamRaCompactRecord, RamRaQRecord, NO_ACCESS};
+use crate::metal::ram_records::{RamAccessColumns, RamRaCompactRecord, RamRaQRecord, NO_ACCESS};
 
 pub const SOURCE: &str = include_str!("shader.metal");
 

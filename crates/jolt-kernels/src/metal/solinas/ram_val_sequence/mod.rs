@@ -18,7 +18,7 @@ use super::{
     completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
     validate_completed_command, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
-use crate::optimized::ram_trace::{RamAccessColumns, RamIncrementActivity};
+use crate::metal::ram_records::{RamAccessColumns, RamIncrementActivity};
 
 const FACTORS: usize = 3;
 const REDUCTION_COLUMNS: usize = 4;

@@ -12,7 +12,7 @@ use super::{
     encode_column_reductions, set_inline_bytes, validate_completed_command, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
-use crate::optimized::ram_trace::RamAccessColumns;
+use crate::metal::ram_records::RamAccessColumns;
 
 const SIMD_WIDTH: usize = 32;
 const MESSAGE_THREADS: usize = 128;
