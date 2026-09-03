@@ -290,10 +290,7 @@ mod tests {
             memory_layout: device.memory_layout.clone(),
             max_padded_trace_length: 1 << log_t,
         });
-        let rows = vec![TraceRow {
-            instruction,
-            ..TraceRow::default()
-        }];
+        let rows = vec![TraceRow::from_instruction(instruction).unwrap()];
         // Post-execution DRAM bytes (outside the IO mask): nonzero
         // `val_final − val_io` there keeps the later round polynomials
         // nontrivial while the Boolean-point sum stays zero.

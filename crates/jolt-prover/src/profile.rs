@@ -604,7 +604,6 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
     }
-
     // The legacy harness's 7 CSV fields plus a trailing backend column, in
     // the run directory. Field 7 (`proof_size_compressed`)
     // duplicates the raw size exactly as legacy does — its
