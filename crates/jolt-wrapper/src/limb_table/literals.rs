@@ -124,6 +124,7 @@ pub(super) const NEG_KEY_OFFSET_FR: ArkFr = MontFp!("262144");
 pub(super) const WINDOW_BOUND_FR: ArkFr = MontFp!("3486998266802970663");
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test field constant is nonzero")]
 mod tests {
     use ark_ff::PrimeField;
     use jolt_field::{Field, Fr, Ring};

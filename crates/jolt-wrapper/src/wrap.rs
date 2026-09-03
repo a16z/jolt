@@ -1,25 +1,27 @@
 //! Full-wrapper input preparation shared by the prover and integration tests.
 
+mod key;
+
 use std::ops::Range;
 
 use common::jolt_device::JoltDevice;
 use jolt_crypto::Bn254;
 use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGVerifierSetup, NoopVerifierObserver};
-use jolt_poly::UnivariatePoly;
 use jolt_r1cs::Variable;
-use jolt_sumcheck::prover::ProveRounds;
-use jolt_sumcheck::SumcheckError;
 use jolt_transcript::Blake3Transcript;
 use jolt_verifier::VerifierError;
 use thiserror::Error;
 
+use self::key::{build_key_assembly, materialize_hash_form};
+
 use crate::hash_table::schedule::preamble;
+use crate::hash_table::terms::AffineForm as HashAffineForm;
 use crate::hash_table::{
     HashTable, HashTableKey, JoltSchedule, LinkMap, PublicInputs, Recorded, RecordingTranscript,
     ScheduleError, StreamTermExporter as HashStreamTermExporter, SymbolicSchedule, T1Challenges,
 };
-use crate::limb_table::digit_link::LinkMember;
+use crate::limb_table::columns::Columns as LimbColumns;
 use crate::limb_table::schedule::Layout as LimbTableLayout;
 use crate::limb_table::stream::{LimbTableKey, StreamTermExporter as LimbStreamTermExporter};
 use crate::profile::{ProfileError, WrapperProfile};
@@ -28,9 +30,9 @@ use crate::relation::{
     Witness,
 };
 use crate::relation_table::{
-    CopyLink, CopyLinkTermExporter, CopyLinkTermSide, DoryScalarLink, DoryScalarLinkProver,
-    DoryScalarTermExporter, PublicCopyLinkTermExporter, RelationCellLayout, RelationTermExporter,
-    TOTAL_COLUMNS,
+    CopyLink, CopyLinkTermExporter, CopyLinkTermSide, DoryScalarLink, DoryScalarTermExporter,
+    PublicCopyLinkTermExporter, RelationCellLayout, RelationTableError, RelationTermExporter,
+    TOTAL_COLUMNS, WIRES,
 };
 use crate::stream::{
     assembly_transcript, combine_packed_phases, commit_packed, commitment_prefix_challenges,
@@ -67,6 +69,8 @@ pub enum WrapError {
     Schedule(#[from] ScheduleError),
     #[error("verifier relation: {0}")]
     Relation(#[from] RelationError),
+    #[error("relation table: {0}")]
+    RelationTable(#[from] RelationTableError),
     #[error("wrapper stream: {0}")]
     Stream(#[from] StreamError),
     #[error("packing factor must be a nonzero power of two, got {0}")]
@@ -99,30 +103,19 @@ pub struct WrapHashKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct T1Placement {
-    pub group_offset: usize,
-    pub challenge_offset: usize,
-    pub members: [usize; 2],
+struct DoryLinkPlacement {
+    challenge: usize,
+    theta: usize,
+    member: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DoryLinkPlacement {
-    pub challenge: usize,
-    pub theta: usize,
-    pub member: usize,
-}
-
-pub struct WrapLimbKey {
+struct WrapLimbKey {
     table: LimbTableKey,
-    group_offset: usize,
 }
 
 impl WrapLimbKey {
-    pub fn new(table: LimbTableKey, group_offset: usize) -> Self {
-        Self {
-            table,
-            group_offset,
-        }
+    fn new(table: LimbTableKey) -> Self {
+        Self { table }
     }
 }
 
@@ -132,7 +125,6 @@ impl WrapHashKey {
         public_io: &JoltDevice,
         proof: &Proof,
         config: WrapConfig,
-        placement: T1Placement,
         setup: &HyperKZGProverSetup<Bn254>,
     ) -> Result<Self, WrapError> {
         validate_config(config)?;
@@ -157,9 +149,9 @@ impl WrapHashKey {
             profile_digest,
             table,
             links,
-            group_offset: placement.group_offset,
-            challenge_offset: placement.challenge_offset,
-            members: placement.members,
+            group_offset: 0,
+            challenge_offset: 0,
+            members: [0, 1],
         })
     }
 
@@ -177,63 +169,89 @@ impl WrapHashKey {
 }
 
 #[derive(Clone)]
-pub struct RelationExporterPlan {
-    pub rows: usize,
-    pub columns: [ColumnId; TOTAL_COLUMNS],
-    pub tau: Range<usize>,
-    pub beta: usize,
-    pub gamma: usize,
-    pub weights: Range<usize>,
-    pub member: usize,
+struct RelationExporterPlan {
+    rows: usize,
+    columns: [ColumnId; TOTAL_COLUMNS],
+    tau: Range<usize>,
+    beta: usize,
+    gamma: usize,
+    weights: Range<usize>,
+    member: usize,
 }
 
 #[derive(Clone)]
-pub struct PublicCopyPlan {
-    pub wire: usize,
-    pub rows: Vec<usize>,
-    pub values: Range<usize>,
+struct PublicCopyPlan {
+    wire: usize,
+    rows: Vec<usize>,
+    values: Range<usize>,
 }
 
 #[derive(Clone)]
-pub struct CopyExporterPlan {
-    pub link: CopyLink,
-    pub left: CopyLinkTermSide,
-    pub right: CopyLinkTermSide,
-    pub tau: Range<usize>,
-    pub beta: usize,
-    pub gamma: usize,
-    pub weights: Range<usize>,
-    pub member: usize,
-    pub public: Option<PublicCopyPlan>,
+struct CopyExporterPlan {
+    link: CopyLink,
+    left: CopyLinkTermSide,
+    right: CopyLinkTermSide,
+    tau: Range<usize>,
+    beta: usize,
+    gamma: usize,
+    weights: Range<usize>,
+    member: usize,
+    public: Option<PublicCopyPlan>,
 }
 
 #[derive(Clone)]
-pub struct LimbExporterPlan {
-    pub challenge_offset: usize,
-    pub theta_offset: usize,
-    pub rho_offset: usize,
-    pub columns: Vec<ColumnId>,
-    pub row_member: usize,
-    pub link_member: usize,
+struct LimbExporterPlan {
+    challenge_offset: usize,
+    theta_offset: usize,
+    rho_offset: usize,
+    columns: Vec<ColumnId>,
+    row_member: usize,
+    link_member: usize,
 }
 
 #[derive(Clone)]
-pub struct ScalarExporterPlan {
-    pub rows: usize,
-    pub cells: RelationCellLayout,
-    pub rho_offset: usize,
-    pub wire: ColumnId,
-    pub member: usize,
+struct ScalarExporterPlan {
+    rows: usize,
+    cells: RelationCellLayout,
+    rho_offset: usize,
+    wire: ColumnId,
+    member: usize,
 }
 
 #[derive(Clone)]
-pub struct WrapAssemblyPlan {
-    pub hash_columns: Vec<ColumnId>,
-    pub relation: RelationExporterPlan,
-    pub copies: Vec<CopyExporterPlan>,
-    pub limb: LimbExporterPlan,
-    pub scalar: ScalarExporterPlan,
+struct WrapAssemblyPlan {
+    hash_columns: Vec<ColumnId>,
+    relation: RelationExporterPlan,
+    copies: Vec<CopyExporterPlan>,
+    limb: LimbExporterPlan,
+    scalar: ScalarExporterPlan,
+    max_factors: usize,
 }
+
+#[derive(Clone)]
+enum LeftLinkValue {
+    Hash(HashAffineForm),
+    Public,
+    Zero,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum LimbLinkValue {
+    Relation,
+    Chunk(usize),
+    Sign,
+    Zero,
+}
+
+#[derive(Clone)]
+struct CopyKey {
+    link: CopyLink,
+    left: [LeftLinkValue; WIRES],
+    right: [LimbLinkValue; WIRES],
+    public_rows: Vec<usize>,
+}
+
+pub type CopyLinkValues = ([Vec<Fr>; WIRES], [Vec<Fr>; WIRES]);
 
 /// Profile-fixed data consumed by wrapper verification.
 pub struct WrapVerifierKey {
@@ -243,36 +261,103 @@ pub struct WrapVerifierKey {
     limb: WrapLimbKey,
     dory_link: Option<DoryLinkPlacement>,
     assembly: WrapAssemblyPlan,
+    copies: Vec<CopyKey>,
 }
 
 impl WrapVerifierKey {
     pub fn new(
-        mut statement: AssemblyStatement,
-        hash: WrapHashKey,
+        profile: &WrapperProfile,
+        mut hash: WrapHashKey,
         hash_public: PublicInputs,
-        limb: WrapLimbKey,
-        dory_link: Option<DoryLinkPlacement>,
-        assembly: WrapAssemblyPlan,
-        mut pinned_commitments: Vec<(usize, Commitment)>,
+        limb_table: LimbTableKey,
+        public_inputs: Vec<Fr>,
+        setup: &HyperKZGProverSetup<Bn254>,
     ) -> Result<Self, WrapError> {
-        if statement.key_digest != hash.profile_digest
-            || !statement
-                .public_inputs
-                .ends_with(&hash_public_statement(&hash_public))
-        {
+        if profile.digest()? != hash.profile_digest {
             return Err(WrapError::StatementMismatch);
         }
-        pinned_commitments.extend(hash.pinned_commitments());
-        pinned_commitments.extend(limb.table.pinned_commitments(limb.group_offset));
-        statement.pinned_commitments = pinned_commitments;
+        let assembly = build_key_assembly(
+            profile,
+            &hash,
+            &hash_public,
+            limb_table,
+            public_inputs,
+            setup,
+        )?;
+        hash.challenge_offset = 2 + 2 * assembly.copies.len();
         Ok(Self {
-            statement,
+            statement: assembly.statement,
             hash,
             hash_public,
-            limb,
-            dory_link,
-            assembly,
+            limb: assembly.limb,
+            dory_link: Some(assembly.dory_link),
+            assembly: assembly.plan,
+            copies: assembly.copies,
         })
+    }
+
+    pub fn assembly_statement(&self) -> &AssemblyStatement {
+        &self.statement
+    }
+
+    pub fn copy_count(&self) -> usize {
+        self.copies.len()
+    }
+
+    pub fn copy_link(&self, index: usize) -> Option<&CopyLink> {
+        self.copies.get(index).map(|copy| &copy.link)
+    }
+
+    pub fn copy_fixed_columns(&self, index: usize) -> Option<Vec<Column>> {
+        self.copies.get(index).map(|copy| {
+            copy.link
+                .left
+                .selectors
+                .iter()
+                .chain(&copy.link.left.ids)
+                .chain(&copy.link.right.selectors)
+                .chain(&copy.link.right.ids)
+                .cloned()
+                .map(Column::Fr)
+                .collect()
+        })
+    }
+
+    pub fn copy_values(
+        &self,
+        index: usize,
+        hash: &HashTable,
+        relation_a: &[Fr],
+        limb: &LimbColumns,
+    ) -> Option<CopyLinkValues> {
+        let copy = self.copies.get(index)?;
+        let rows = relation_a.len();
+        let left = copy.left.clone().map(|source| match source {
+            LeftLinkValue::Hash(form) => materialize_hash_form(&form, hash),
+            LeftLinkValue::Public => {
+                let mut column = vec![Fr::from_u64(0); rows];
+                for (&row, &value) in copy.public_rows.iter().zip(&self.statement.public_inputs) {
+                    column[row] = value;
+                }
+                column
+            }
+            LeftLinkValue::Zero => vec![Fr::from_u64(0); rows],
+        });
+        let right = copy.right.map(|source| match source {
+            LimbLinkValue::Relation => relation_a.to_vec(),
+            LimbLinkValue::Chunk(chunk) => limb
+                .chunk_column(chunk)
+                .into_iter()
+                .map(|value| Fr::from_u64(u64::from(value)))
+                .collect(),
+            LimbLinkValue::Sign => limb
+                .flags
+                .iter()
+                .map(|value| Fr::from_u64(u64::from(*value)))
+                .collect(),
+            LimbLinkValue::Zero => vec![Fr::from_u64(0); rows],
+        });
+        Some((left, right))
     }
 
     pub fn hash_schedule(&self) -> &SymbolicSchedule {
@@ -474,7 +559,7 @@ impl WrapVerifierKey {
     }
 }
 
-pub fn hash_public_statement(public: &PublicInputs) -> Vec<Fr> {
+fn hash_public_statement(public: &PublicInputs) -> Vec<Fr> {
     let mut bytes = Vec::with_capacity(32 + public.tail.len());
     bytes.extend(public.state_in.iter().flat_map(|word| word.to_le_bytes()));
     bytes.extend_from_slice(&public.tail);
@@ -494,6 +579,10 @@ struct KeyTermExporter<'a> {
 }
 
 impl TermExporter for KeyTermExporter<'_> {
+    fn max_factors(&self) -> usize {
+        self.key.assembly.max_factors
+    }
+
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         self.key.export_terms(context, &mut NoopVerifierObserver)
     }
@@ -579,69 +668,6 @@ impl Default for WrapCommitments {
         Self::new()
     }
 }
-
-pub struct DoryLinkedProver {
-    digit: LinkMember,
-    scalar: DoryScalarLinkProver,
-    digit_claim: Fr,
-    scalar_claim: Fr,
-    pending: Option<(UnivariatePoly<Fr>, UnivariatePoly<Fr>)>,
-}
-
-impl DoryLinkedProver {
-    pub fn new(digit: LinkMember, scalar: DoryScalarLinkProver, input_claim: Fr) -> Self {
-        let digit_claim = digit.input_claim();
-        let scalar_claim = scalar.input_claim();
-        assert_eq!(digit_claim - scalar_claim, input_claim);
-        Self {
-            digit,
-            scalar,
-            digit_claim,
-            scalar_claim,
-            pending: None,
-        }
-    }
-}
-
-impl ProveRounds<Fr> for DoryLinkedProver {
-    fn num_rounds(&self) -> usize {
-        self.digit.num_rounds()
-    }
-
-    fn prove_round(
-        &mut self,
-        bind: Option<Fr>,
-        round: usize,
-        previous_claim: Fr,
-    ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
-        if let Some(challenge) = bind {
-            let (digit, scalar) = self
-                .pending
-                .take()
-                .unwrap_or_else(|| unreachable!("a prior round supplies the bind polynomial"));
-            self.digit_claim = digit.evaluate(challenge);
-            self.scalar_claim = scalar.evaluate(challenge);
-        }
-        if self.digit_claim - self.scalar_claim != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: self.digit_claim - self.scalar_claim,
-            });
-        }
-        let digit = self.digit.prove_round(bind, round, self.digit_claim)?;
-        let scalar = self.scalar.prove_round(bind, round, self.scalar_claim)?;
-        let combined = &digit - &scalar;
-        self.pending = Some((digit, scalar));
-        Ok(combined)
-    }
-
-    fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
-        self.digit.finish_rounds(bind)?;
-        self.scalar.finish_rounds(bind)
-    }
-}
-
 /// Proves stage A only after every commitment phase has fixed the member challenges.
 pub fn wrap(
     committed: WrapCommitted,
@@ -686,7 +712,7 @@ pub fn verify_wrapped_with_key(
     )?)
 }
 
-/// Verified inputs needed before the T1/T2/Spartan sumchecks can be assembled.
+/// Verified inputs needed before the T1/T2/R sumchecks can be assembled.
 pub struct WrapPreparation {
     pub config: WrapConfig,
     pub profile: WrapperProfile,

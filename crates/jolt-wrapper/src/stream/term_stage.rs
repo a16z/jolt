@@ -59,6 +59,10 @@ impl TermStageProver {
         self.claim
     }
 
+    pub fn degree(&self) -> usize {
+        self.factors.len() + 1
+    }
+
     pub fn factor_evaluations(&self) -> Result<Vec<Fr>, StreamError> {
         self.factors
             .iter()
@@ -100,7 +104,7 @@ impl ProveRounds<Fr> for TermStageProver {
             self.bind(challenge);
         }
         let half = self.coefficient.len() / 2;
-        let evaluations = (0..=6)
+        let evaluations = (0..=self.degree())
             .map(|value| Fr::from_u64(value as u64))
             .map(|x| {
                 (0..half)

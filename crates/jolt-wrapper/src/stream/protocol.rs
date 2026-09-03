@@ -88,13 +88,22 @@ pub fn prove_assembly(
         .flat_map(|exporter| exporter.terms(&context))
         .collect::<Vec<_>>();
     let mut term_prover = TermStageProver::new(&terms, &column_values, statement.k)?;
+    let term_degree = exporters
+        .iter()
+        .map(|exporter| exporter.max_factors())
+        .max()
+        .ok_or(StreamError::EmptyTensor)?
+        + 1;
+    if term_prover.degree() != term_degree {
+        return Err(StreamError::StageEncoding);
+    }
     if term_prover.input_claim() != row_result.final_claim {
         return Err(StreamError::StageLink);
     }
     let (term_rounds, term_result) = prove_rounds(
         &mut term_prover,
         row_result.final_claim,
-        6,
+        term_degree,
         setup,
         &mut transcript,
     )?;
@@ -256,13 +265,19 @@ where
         .iter()
         .flat_map(|exporter| exporter.terms_observed(&context, observer))
         .collect::<Vec<_>>();
+    let term_degree = exporters
+        .iter()
+        .map(|exporter| exporter.max_factors())
+        .max()
+        .ok_or(StreamError::EmptyTensor)?
+        + 1;
     let term_rounds = terms.len().next_power_of_two().max(2).trailing_zeros() as usize;
     let term_proof = proof.stages.get(1).ok_or(StreamError::StageCount)?;
     let (term_result, term_rounds) = verify_rounds(
         term_proof,
         row_result.final_claim,
         term_rounds,
-        6,
+        term_degree,
         transcript,
     )?;
     verify_shared_opening(

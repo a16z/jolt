@@ -44,6 +44,9 @@ pub struct WrapperProfile {
     pub memory_layout: MemoryLayout,
     pub program_image_len_words: usize,
     pub entry_bytecode_index: usize,
+    pub instruction_ra_commitments: usize,
+    pub ram_ra_commitments: usize,
+    pub bytecode_ra_commitments: usize,
 }
 
 impl WrapperProfile {
@@ -85,6 +88,9 @@ impl WrapperProfile {
                 .program
                 .entry_bytecode_index()
                 .ok_or(ProfileError::CommittedProgram)?,
+            instruction_ra_commitments: proof.commitments.instruction_ra.len(),
+            ram_ra_commitments: proof.commitments.ram_ra.len(),
+            bytecode_ra_commitments: proof.commitments.bytecode_ra.len(),
         })
     }
 
@@ -105,6 +111,17 @@ impl WrapperProfile {
 
     pub fn trace_length(&self) -> usize {
         1 << self.log_t
+    }
+
+    pub fn commitment_link_order(&self) -> Vec<usize> {
+        let instruction = self.instruction_ra_commitments;
+        let ram = self.ram_ra_commitments;
+        let bytecode = self.bytecode_ra_commitments;
+        let mut order = vec![1, 0];
+        order.extend(2..2 + instruction);
+        order.extend(2 + instruction + ram..2 + instruction + ram + bytecode);
+        order.extend(2 + instruction..2 + instruction + ram);
+        order
     }
 }
 

@@ -243,6 +243,7 @@ pub struct SelectedFamily {
 }
 
 /// The built layout: explicit rows for the prover, kernels for the verifier.
+#[derive(Clone)]
 pub struct Layout {
     pub profile: Profile,
     pub check: FlattenedCheck,

@@ -126,6 +126,27 @@ impl HashTableKey {
             .zip(self.commitments.iter().copied())
             .collect()
     }
+
+    pub(crate) fn column_ids(&self, group_offset: usize) -> Vec<StreamColumnId> {
+        let mut ids = vec![StreamColumnId { group: 0, slot: 0 }; COLUMNS];
+        for (local, target) in ids.iter_mut().take(WIRED_WORD_BASE).enumerate() {
+            *target = id(group_offset, local, self.packing);
+        }
+        let word_base = WIRED_WORD_BASE.div_ceil(self.packing) * self.packing;
+        for word in 0..WIRED_WORDS {
+            ids[WIRED_WORD_BASE + word] = id(group_offset, word_base + word, self.packing);
+        }
+        let vk_base = prover_group_count(self.packing) * self.packing;
+        for (offset, (local, _)) in vk_group_columns(&self.vk, self.packing)
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(local) = local {
+                ids[local] = id(group_offset, vk_base + offset, self.packing);
+            }
+        }
+        ids
+    }
 }
 
 /// T1's columns as stream groups: committed bits (state, carries, message,
@@ -290,6 +311,10 @@ impl StreamTermExporter<'_> {
 }
 
 impl TermExporter for StreamTermExporter<'_> {
+    fn max_factors(&self) -> usize {
+        2
+    }
+
     fn terms(&self, context: &StreamTermContext<'_>) -> Vec<StreamTerm> {
         self.export(context, &mut plain)
     }

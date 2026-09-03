@@ -1289,6 +1289,10 @@ impl OwnChallengeExporter<'_> {
 }
 
 impl TermExporter for OwnChallengeExporter<'_> {
+    fn max_factors(&self) -> usize {
+        2
+    }
+
     fn terms(&self, context: &TermContext<'_>) -> Vec<StreamTerm> {
         self.export(context, &mut plain)
     }

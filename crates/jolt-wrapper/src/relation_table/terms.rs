@@ -121,6 +121,10 @@ impl RelationTermExporter<'_> {
 }
 
 impl TermExporter for RelationTermExporter<'_> {
+    fn max_factors(&self) -> usize {
+        4
+    }
+
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         self.terms_observed(context, &mut NoopVerifierObserver)
     }
@@ -300,6 +304,10 @@ impl PublicCopyLinkTermExporter<'_> {
 }
 
 impl TermExporter for PublicCopyLinkTermExporter<'_> {
+    fn max_factors(&self) -> usize {
+        4
+    }
+
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         self.terms_observed(context, &mut NoopVerifierObserver)
     }
@@ -342,6 +350,10 @@ impl CopyLinkTermExporter<'_> {
 }
 
 impl TermExporter for CopyLinkTermExporter<'_> {
+    fn max_factors(&self) -> usize {
+        4
+    }
+
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         self.terms_observed(context, &mut NoopVerifierObserver)
     }
@@ -434,6 +446,10 @@ impl DoryScalarTermExporter<'_> {
 }
 
 impl TermExporter for DoryScalarTermExporter<'_> {
+    fn max_factors(&self) -> usize {
+        1
+    }
+
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
         self.terms_observed(context, &mut NoopVerifierObserver)
     }

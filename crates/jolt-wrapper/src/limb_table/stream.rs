@@ -237,6 +237,23 @@ impl LimbTableKey {
             .zip(self.commitments.iter().copied())
             .collect()
     }
+
+    pub(crate) fn column_ids(&self, group_offset: usize) -> Vec<StreamColumnId> {
+        let mut ids = vec![StreamColumnId { group: 0, slot: 0 }; Col::CLAIMED];
+        let mut position = 0;
+        for phase in phases() {
+            for local in phase.columns.clone() {
+                ids[local] = physical_id(group_offset, position, self.packing);
+                position += 1;
+            }
+            position = position.div_ceil(self.packing) * self.packing;
+        }
+        for target in ids.iter_mut().take(Col::CLAIMED).skip(Col::COMMITTED) {
+            *target = physical_id(group_offset, position, self.packing);
+            position += 1;
+        }
+        ids
+    }
 }
 
 /// T2's columns as stream groups in phase order, then the verifier-key
@@ -681,6 +698,10 @@ impl StreamTermExporter<'_> {
 }
 
 impl TermExporter for StreamTermExporter<'_> {
+    fn max_factors(&self) -> usize {
+        4
+    }
+
     fn terms(&self, context: &StreamTermContext<'_>) -> Vec<StreamTerm> {
         self.export(context, &mut NoopVerifierObserver)
     }

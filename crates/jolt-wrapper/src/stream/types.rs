@@ -266,6 +266,8 @@ impl<O: VerifierObserver> TermObserver for O {
 }
 
 pub trait TermExporter {
+    fn max_factors(&self) -> usize;
+
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term>;
 
     fn terms_observed(
