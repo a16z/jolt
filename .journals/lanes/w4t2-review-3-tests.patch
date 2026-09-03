@@ -1,0 +1,199 @@
+diff --git a/crates/jolt-wrapper/src/limb_table/schedule/ec/mod.rs b/crates/jolt-wrapper/src/limb_table/schedule/ec/mod.rs
+index aee1faa70..d85c66545 100644
+--- a/crates/jolt-wrapper/src/limb_table/schedule/ec/mod.rs
++++ b/crates/jolt-wrapper/src/limb_table/schedule/ec/mod.rs
+@@ -243,7 +243,7 @@ mod tests {
+                     let a_dbl = power + lambda * offsets(power);
+                     assert_ne!(a_dbl, Fr::zero(), "doubling n={n} w={w}");
+                     assert_ne!(
+-                        a_dbl * suffix - sixteen * k_k,
++                        a_dbl * suffix - k_k,
+                         Fr::zero(),
+                         "doubling slope n={n} w={w}"
+                     );
+diff --git a/crates/jolt-wrapper/tests/common/mod.rs b/crates/jolt-wrapper/tests/common/mod.rs
+index 41732633c..e249490ca 100644
+--- a/crates/jolt-wrapper/tests/common/mod.rs
++++ b/crates/jolt-wrapper/tests/common/mod.rs
+@@ -34,6 +34,10 @@ pub struct ProductionVerifier {
+ }
+ 
+ impl ProductionVerifier {
++    pub fn setup(&self) -> &DoryVerifierSetup {
++        &self.setup
++    }
++
+     pub fn accepts(&self, proof: &DoryProof) -> bool {
+         let mut transcript = Blake2bTranscript::new(LABEL);
+         DoryScheme::verify(
+diff --git a/crates/jolt-wrapper/tests/limb_table_program.rs b/crates/jolt-wrapper/tests/limb_table_program.rs
+index 37d800da2..3d40880ee 100644
+--- a/crates/jolt-wrapper/tests/limb_table_program.rs
++++ b/crates/jolt-wrapper/tests/limb_table_program.rs
+@@ -7,24 +7,31 @@
+     reason = "tests report shapes and fail loudly"
+ )]
+ 
+-#[expect(
+-    dead_code,
+-    reason = "fixtures shared with the other limb-table test binaries"
+-)]
+ mod common;
+ 
+ use std::cmp::Reverse;
+ use std::time::Instant;
+ 
+ use ark_bn254::{Fq, Fq12, Fr as ArkFr};
++use ark_ec::AffineRepr;
+ use ark_ff::Zero;
++use jolt_crypto::Bn254GT;
++use jolt_dory::{DoryCommitment, DoryProof};
++use jolt_field::Ring;
+ use jolt_poly::EqPolynomial;
++use jolt_r1cs::Variable;
++use jolt_verifier::proof::JoltCommitments;
++use jolt_wrapper::limb_table::adapter::{from_jolt, AdapterError};
++use jolt_wrapper::limb_table::digit_link::LinkMember;
+ use jolt_wrapper::limb_table::dory::{DorySetupInputs, FlattenedCheck, NativeCheck, WireValues};
+-use jolt_wrapper::limb_table::layout::{Factor, ROWS};
+-use jolt_wrapper::limb_table::lookup::PublicColumns;
+-use jolt_wrapper::limb_table::program::Source;
+-use jolt_wrapper::limb_table::schedule::{build, Layout};
++use jolt_wrapper::limb_table::layout::{Bits, Factor, ROWS};
++use jolt_wrapper::limb_table::lookup::{omega_column, PublicColumns};
++use jolt_wrapper::limb_table::ops::g1_add;
++use jolt_wrapper::limb_table::program::{Program, Source};
++use jolt_wrapper::limb_table::schedule::{build, Cells, Layout};
++use jolt_wrapper::limb_table::template::{ElemRel, Family};
+ use jolt_wrapper::limb_table::tower::fq12_from_coords;
++use jolt_wrapper::relation::{DoryLinks, DoryScalar};
+ 
+ fn gt(values: &[Fq], rows: &[u32; 12]) -> Fq12 {
+     fq12_from_coords(&std::array::from_fn(|c| values[rows[c] as usize]))
+@@ -483,5 +490,125 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
+         terms.len(),
+         max_degree
+     );
+-    assert!(cost.fr_mul <= 10_000, "{} fr_mul", cost.fr_mul);
++    // `public_evals_with` performs these products directly instead of through
++    // the observer: three per eq bit, two for `small`, and one per `id` bit.
++    let known_unobserved = 3 * 18 + (18 - 16) + 18;
++    assert!(
++        cost.fr_mul + known_unobserved <= 10_000,
++        "{} observed + {known_unobserved} known-unobserved fr_mul",
++        cost.fr_mul
++    );
++}
++
++#[test]
++fn equal_point_exception_is_accepted_by_the_unguarded_add() {
++    let mut program = Program::new(16 * Cells::CONSTANTS.start..16 * Cells::CONSTANTS.end);
++    let point = ark_bn254::G1Affine::generator();
++    let point_rows = vec![program.constant(point.x), program.constant(point.y)];
++    let one = program.one;
++    let add = g1_add(false);
++    let family = Family {
++        name: "equal_add",
++        template: &add,
++        elems: vec![
++            ElemRel::Rows(point_rows.clone()),
++            ElemRel::Rows(point_rows),
++            ElemRel::Rows(vec![one]),
++        ],
++        own_bits: Bits::new(0, 4),
++        own_offset: 0,
++        domain: vec![],
++    };
++    family.emit(&mut program, 0, None);
++    let values = program.evaluate(&[]).expect("evaluate equal-point add");
++    program
++        .check_pins(&values)
++        .expect("the zero slope satisfies the vacuous pin");
++    assert_eq!(values[0], Fq::zero());
++}
++
++#[test]
++fn production_dory_links_publish_only_consumed_wires() {
++    let opening = common::synthetic_opening(8, 5, 0xD07);
++    let sigma = opening.witness.sigma();
++    let check = FlattenedCheck::derive(sigma, opening.witness.commitments.len());
++    let mut emitted = check.wires();
++    emitted.extend([DoryScalar::Chi(sigma), DoryScalar::S1Acc, DoryScalar::S2Acc]);
++    let links = DoryLinks {
++        num_vars: 8,
++        sigma,
++        scalars: emitted
++            .into_iter()
++            .enumerate()
++            .map(|(index, scalar)| (scalar, Variable::new(index)))
++            .collect(),
++    };
++    let commitments: Vec<DoryCommitment> = opening
++        .witness
++        .commitments
++        .iter()
++        .map(|value| DoryCommitment(Bn254GT::from(*value)))
++        .collect();
++    let jolt_commitments = JoltCommitments::new(
++        commitments[1].clone(),
++        commitments[0].clone(),
++        commitments[2..].to_vec(),
++        vec![],
++        vec![],
++    );
++    let result = from_jolt(
++        opening.verifier.setup(),
++        &jolt_commitments,
++        &DoryProof(opening.witness.proof),
++        &links,
++        &vec![jolt_field::Fr::from_u64(1); links.scalars.len()],
++        jolt_field::Fr::from_u64(1),
++    );
++    assert_eq!(
++        result.err(),
++        Some(AdapterError::WireSet {
++            links: check.wires().len() + 3,
++            check: check.wires().len(),
++        })
++    );
++}
++
++#[test]
++fn digit_link_accepts_different_offset_scalars_per_chain() {
++    use jolt_field::Fr;
++
++    let check = FlattenedCheck::derive(8, 5);
++    let values = random_values(&check, 0xD1617);
++    let setup = random_setup(8, 0xD1618);
++    let layout = build(&check, &values, &setup, &check.wires());
++    let public = PublicColumns::new(&layout);
++    let offset_kd = check.wires().len() as u32 + 1;
++    let mut pair = None;
++    for w in 0..64 {
++        let ops: Vec<_> = layout
++            .digit_ops
++            .iter()
++            .filter(|op| op.kd == offset_kd && op.w == w)
++            .collect();
++        if ops.len() >= 2 {
++            let digit = public.digit_values[ops[0].first_row as usize];
++            if digit != Fr::from_i64(-8) && digit != Fr::from_u64(7) {
++                pair = Some((ops[0], ops[1]));
++                break;
++            }
++        }
++    }
++    let (plus, minus) = pair.expect("an interior offset digit shared by two chains");
++    let rho = Fr::from_u64(19);
++    let omega = omega_column(&layout, rho);
++    let honest = LinkMember::new(omega.clone(), &public.digit_values).input_claim();
++    let mut altered = public.digit_values.clone();
++    altered[plus.first_row as usize] += Fr::from_u64(1);
++    altered[minus.first_row as usize] -= Fr::from_u64(1);
++    let forged = LinkMember::new(omega, &altered).input_claim();
++    assert_eq!(forged, honest, "equal weights cancel the two changes");
++    assert_ne!(
++        altered[plus.first_row as usize], altered[minus.first_row as usize],
++        "the two chains use different offset digits"
++    );
+ }
