@@ -39,6 +39,7 @@ use jolt_transcript::{
     AppendToTranscript, Blake3Transcript, Keccak256Transcript, Label, LabelWithCount, Transcript,
     U64Word,
 };
+use jolt_wrapper::hash_table::wiring::CELL_ROWS;
 use jolt_wrapper::hash_table::{
     HashTable, HashTableProver, JoltSchedule, Recorded, RecordingTranscript, Relation, CONSTRAINTS,
 };
@@ -459,8 +460,8 @@ fn synthetic_log(
 }
 
 fn t1_rows(rounds: usize) -> usize {
-    let schedule = JoltSchedule::new(&synthetic_log(1, 41, rounds, 11)).expect("schedule");
-    jolt_wrapper::hash_table::table::row_count(schedule.table_blocks())
+    let schedule = JoltSchedule::new(&synthetic_log(1, 41, rounds, 11), None).expect("schedule");
+    schedule.symbolic.active_cells() * CELL_ROWS
 }
 
 /// The largest synthetic schedule that fits `2^18` rows (the real fibonacci
@@ -472,12 +473,9 @@ fn t1_table() -> HashTable {
     while t1_rows(rounds) > ROWS {
         rounds -= 4;
     }
-    let schedule = JoltSchedule::new(&synthetic_log(1, 41, rounds, 11)).expect("schedule");
-    HashTable::build(
-        &schedule.chain.blocks,
-        schedule.blocks.clone(),
-        Some(ROWS_LOG),
-    )
+    let schedule =
+        JoltSchedule::new(&synthetic_log(1, 41, rounds, 11), Some(ROWS_LOG)).expect("schedule");
+    HashTable::build(&schedule)
 }
 
 /// Pure sumcheck rounds through a Blake3 transcript: no round commitments.
@@ -504,17 +502,15 @@ fn t1_profile(report: &mut Report, table: &HashTable, setup: &HyperKZGProverSetu
         .collect();
     let relation = Relation::new(&gammas);
     let tau: Vec<Fr> = (0..ROWS_LOG).map(|_| Fr::random(&mut rng)).collect();
-    let copy = table.clone();
     let mut prover = report.measure("T1      construct (round 0 on bit columns)", || {
-        HashTableProver::new(&relation, copy, tau.clone())
+        HashTableProver::new(&relation, table, tau.clone())
     });
     let claim = prover.input_claim();
     report.measure("T1      rounds 1..18, clear (no KZG)", || {
         raw_rounds(&mut prover, claim);
     });
     drop(prover);
-    let copy = table.clone();
-    let mut prover = HashTableProver::new(&relation, copy, tau);
+    let mut prover = HashTableProver::new(&relation, table, tau);
     let claim = prover.input_claim();
     let mut transcript = Keccak256Transcript::<Fr>::new(b"perf1-t1");
     let _ = report.measure("T1      rounds 1..18 + KZG round commits + BDFG", || {
@@ -937,8 +933,8 @@ fn perf1_full_statement_profile() {
     let t1 = report.measure("witness T1 synthetic transcript table", t1_table);
     report.note(&format!(
         "T1 table: {} rows of {ROWS} ({:.1}% full)",
-        t1.rows,
-        100.0 * t1.rows as f64 / ROWS as f64
+        t1.rows(),
+        100.0 * t1.rows() as f64 / ROWS as f64
     ));
     let t2 = report.measure("witness T2 synthetic program, chunks, LogUp", t2_witness);
     for k in [8usize, 16] {

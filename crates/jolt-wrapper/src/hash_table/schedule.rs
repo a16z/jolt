@@ -1,24 +1,35 @@
-//! The Jolt verifier's transcript as a table segment: replay of a recorded
-//! run through the [`Chain`], the in-table block range (from the block holding
-//! the first commitment absorb to the Dory `d` squeeze), and the external
-//! source of every absorbed item.
+//! The Jolt verifier's transcript as a table segment, and the symbolic
+//! schedule the verifier key is built from.
 //!
-//! Items are classified structurally: the preamble is public input, labeled
-//! words are constants, raw 32-byte appends before the Dory segment are field
-//! elements (R1CS wires), raw appends of the commitment segment and of the
-//! Dory segment are group elements (limb-table operands), told apart by
-//! encoding length.
+//! [`JoltSchedule::new`] replays a recorded `jolt_verifier::verify` run
+//! through the [`Chain`] (byte-exact, fail-closed) and classifies every item
+//! structurally: the preamble is public input, labeled words are protocol
+//! constants, raw 32-byte appends before the Dory segment are field elements
+//! (relation wires), raw appends of the commitment and Dory segments are
+//! group elements (limb-table operands), told apart by encoding length.
+//!
+//! The result is the [`SymbolicSchedule`]: per compression cell, the block
+//! length, flags, the squeeze it serves and the [`ByteSource`] of each of its
+//! 64 block bytes — a verifier-independent identity `(kind, index in the
+//! schedule, byte)` that never mentions witness bytes except for protocol
+//! constants, whose byte value *is* the identity. It is a deterministic
+//! function of the wrapped profile (the verifier's schedule does not depend
+//! on proof values), generated once with the verifier key; a proof's recorded
+//! run only fills the witness and is checked against it.
 
 use std::ops::Range;
 
 use jolt_field::{CanonicalEncoding, Fr, Zero};
 use jolt_transcript::{LabelWithCount, Transcript};
 
-use super::blake3::{Block, Chain};
+use super::blake3::{Block, ByteOrigin, Chain, BLOCK_BYTES, CHUNK_START, KEYED_HASH};
 use super::recorder::{Decoder, Event, Recorded};
+use super::wiring::{
+    PublicInputs, VkColumns, CHALLENGE_POS, LOG_CELL, NEXT_FLAGS_POS, NEXT_LEN_POS,
+};
 
 /// A group element absorbed as bytes and committed in the limb table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ElementKind {
     /// A polynomial commitment: arkworks-uncompressed `Fq12` (12 × 32-byte
     /// little-endian coefficients, `c0` first), whole buffer reversed
@@ -35,45 +46,168 @@ pub enum ElementKind {
     DoryG2,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ItemClass {
-    /// Preamble bytes hashed natively (public input); only the tail sharing
-    /// a block with the first commitment absorb reaches the table.
-    Public,
-    /// A domain-separation word: fixed by the protocol.
-    Constant,
-    /// The `index`-th absorbed field element of the segment (32 bytes
-    /// big-endian): an R1CS wire.
-    Wire {
-        index: usize,
-    },
+/// The external identity of one block byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ByteSource {
+    /// Zero padding of a partial block.
+    Padding,
+    /// A protocol constant (domain-separation word byte).
+    Constant(u8),
+    /// Byte `offset` of the public preamble (hashed natively by the verifier).
+    Public { offset: u32 },
+    /// Byte `byte` of the `index`-th absorbed field element (32 bytes
+    /// big-endian): a relation wire.
+    Wire { index: u32, byte: u8 },
     Element {
         kind: ElementKind,
-        index: usize,
+        index: u32,
+        byte: u16,
     },
-    /// The `index`-th squeeze of the segment.
-    Squeeze {
-        index: usize,
-        decoder: Decoder,
-    },
-    /// The start event or an append after the table's end.
-    Outside,
 }
 
-#[derive(Clone, Debug)]
-pub struct JoltSchedule {
-    /// The replayed chain.
-    pub chain: Chain,
-    pub classes: Vec<ItemClass>,
-    /// The in-table compressions.
-    pub blocks: Range<usize>,
-    /// The compression of the stage-8 RLC γ squeeze (its chaining rows hold
-    /// `state_rlc`).
-    pub rlc_block: usize,
-    pub first_commitment_item: usize,
-    pub dory_start_item: usize,
-    pub wires: usize,
-    pub squeezes: usize,
+/// The squeeze a compression serves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Squeeze {
+    /// Index among the segment's squeezes.
+    pub index: u32,
+    pub decoder: Decoder,
+}
+
+/// One compression cell of the symbolic schedule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CellPlan {
+    pub block_len: u32,
+    pub flags: u32,
+    pub bytes: [ByteSource; BLOCK_BYTES],
+    pub squeeze: Option<Squeeze>,
+}
+
+impl CellPlan {
+    /// A padding cell: empty block, `CHUNK_START | KEYED_HASH`.
+    pub const PADDING: Self = Self {
+        block_len: 0,
+        flags: KEYED_HASH | CHUNK_START,
+        bytes: [ByteSource::Padding; BLOCK_BYTES],
+        squeeze: None,
+    };
+
+    /// The constant value of half-word `half` (0..32) if both its bytes are
+    /// protocol constants or padding.
+    fn constant_half(&self, half: usize) -> Option<u16> {
+        let value = |source: ByteSource| match source {
+            ByteSource::Padding => Some(0u8),
+            ByteSource::Constant(byte) => Some(byte),
+            _ => None,
+        };
+        Some(u16::from_le_bytes([
+            value(self.bytes[2 * half])?,
+            value(self.bytes[2 * half + 1])?,
+        ]))
+    }
+}
+
+/// Table-local index of a compression cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CellIndex(pub usize);
+
+impl CellIndex {
+    pub fn first_row(self) -> usize {
+        self.0 << LOG_CELL
+    }
+}
+
+/// The verifier-key view of the table: one plan per cell (padding cells
+/// included, so the padded row count is fixed).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolicSchedule {
+    pub cells: Vec<CellPlan>,
+    pub log_rows: usize,
+    /// The 22-or-so preamble bytes sharing the first block (public input).
+    pub tail: Vec<u8>,
+    /// Block length and flags the first compression uses (profile constants).
+    pub first_block_len: u32,
+    pub first_flags: u32,
+    pub wires: u32,
+    pub squeezes: u32,
+    /// The cell of the stage-8 RLC γ squeeze (its chaining rows are
+    /// `state_rlc`); the last cell with a squeeze holds `state_out`.
+    pub rlc_cell: CellIndex,
+    pub last_squeeze_cell: CellIndex,
+}
+
+impl SymbolicSchedule {
+    pub fn rows(&self) -> usize {
+        1 << self.log_rows
+    }
+
+    pub fn active_cells(&self) -> usize {
+        self.cells
+            .iter()
+            .rposition(|cell| *cell != CellPlan::PADDING)
+            .map_or(0, |i| i + 1)
+    }
+
+    /// The row of a squeeze's first challenge row, by squeeze index.
+    pub fn challenge_rows(&self) -> Vec<(Squeeze, usize)> {
+        self.cells
+            .iter()
+            .enumerate()
+            .filter_map(|(i, cell)| {
+                cell.squeeze
+                    .map(|s| (s, CellIndex(i).first_row() + CHALLENGE_POS))
+            })
+            .collect()
+    }
+
+    /// The row and byte position of every non-padding block byte:
+    /// `(source, row of the round-0 message word, byte within the word)`.
+    pub fn byte_links(&self) -> impl Iterator<Item = (ByteSource, usize, u8)> + '_ {
+        self.cells.iter().enumerate().flat_map(|(i, cell)| {
+            cell.bytes
+                .iter()
+                .enumerate()
+                .filter(|(_, source)| !matches!(source, ByteSource::Padding))
+                .map(move |(byte, source)| {
+                    (
+                        *source,
+                        CellIndex(i).first_row() + byte / 4,
+                        (byte % 4) as u8,
+                    )
+                })
+        })
+    }
+
+    /// The verifier-key columns: half-word pins of every constant / padding
+    /// half-word of the round-0 message words, and of the next cell's block
+    /// length and flags at positions 122 / 123. Public (preamble) bytes are
+    /// not pinned here — the verifier adds them from the public inputs.
+    pub fn vk_columns(&self) -> VkColumns {
+        let mut vk = VkColumns::zero(self.rows());
+        let mut pin = |row: usize, high: bool, value: u16| {
+            let (is, constant) = if high {
+                (&mut vk.hi_is_const, &mut vk.hi_const)
+            } else {
+                (&mut vk.lo_is_const, &mut vk.lo_const)
+            };
+            is[row] = 1;
+            constant[row] = value;
+        };
+        for (i, cell) in self.cells.iter().enumerate() {
+            let base = CellIndex(i).first_row();
+            for half in 0..BLOCK_BYTES / 2 {
+                if let Some(value) = cell.constant_half(half) {
+                    pin(base + half / 2, half % 2 == 1, value);
+                }
+            }
+            let next = self.cells.get(i + 1).unwrap_or(&CellPlan::PADDING);
+            for (position, value) in [(NEXT_LEN_POS, next.block_len), (NEXT_FLAGS_POS, next.flags)]
+            {
+                pin(base + position, false, value as u16);
+                pin(base + position, true, (value >> 16) as u16);
+            }
+        }
+        vk
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -92,6 +226,10 @@ pub enum ScheduleError {
     StateMismatch { item: usize },
     #[error("challenge of item {item} differs from the recorded transcript")]
     ChallengeMismatch { item: usize },
+    #[error("{rows} rows do not fit 2^{log_rows}")]
+    TooManyRows { rows: usize, log_rows: usize },
+    #[error("the preamble tail sharing the first block has odd length {0}")]
+    OddTail(usize),
 }
 
 /// A transcript that only collects the bytes appended to it, for encoding a
@@ -126,7 +264,7 @@ fn label_word(label: &'static [u8], count: u64) -> Vec<u8> {
     capture.0
 }
 
-/// Bytes of item `item` in `log` (empty for non-appends).
+/// Bytes of a logged item (empty for non-appends).
 fn item_bytes(recorded: &Recorded) -> &[u8] {
     match &recorded.event {
         Event::Append { bytes, .. } => bytes,
@@ -134,12 +272,46 @@ fn item_bytes(recorded: &Recorded) -> &[u8] {
     }
 }
 
+/// Structural class of a logged item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemClass {
+    /// Preamble bytes hashed natively (public input); only the tail sharing
+    /// a block with the first commitment absorb reaches the table.
+    Public,
+    /// A domain-separation word: fixed by the protocol.
+    Constant,
+    /// The `index`-th absorbed field element of the segment.
+    Wire {
+        index: u32,
+    },
+    Element {
+        kind: ElementKind,
+        index: u32,
+    },
+    /// The `index`-th squeeze of the segment.
+    Squeeze(Squeeze),
+    /// The start event or an append after the table's end.
+    Outside,
+}
+
+/// A recorded verifier run replayed as a table: the chain (segment plus
+/// padding cells), the item classes, and the symbolic schedule.
+#[derive(Clone, Debug)]
+pub struct JoltSchedule {
+    pub chain: Chain,
+    pub classes: Vec<ItemClass>,
+    /// The chain blocks laid out as cells (`2^(log_rows − 7)` of them).
+    pub blocks: Range<usize>,
+    pub symbolic: SymbolicSchedule,
+}
+
 impl JoltSchedule {
     /// Replay a recorded `jolt_verifier::verify` run. The replayed chain is
     /// checked against the recording after every event (state) and squeeze
     /// (decoded challenge), so a table built from the result hashes exactly
-    /// what the verifier's transcript hashed.
-    pub fn new(log: &[Recorded]) -> Result<Self, ScheduleError> {
+    /// what the verifier's transcript hashed. `log_rows = None` picks the
+    /// smallest power of two holding the segment's cells.
+    pub fn new(log: &[Recorded], log_rows: Option<usize>) -> Result<Self, ScheduleError> {
         let Some(Recorded {
             event: Event::Start { label },
             ..
@@ -175,8 +347,8 @@ impl JoltSchedule {
             .ok_or(ScheduleError::MissingDory)?;
 
         let mut classes = Vec::with_capacity(log.len());
-        let (mut wires, mut squeezes) = (0, 0);
-        let mut elements = [0usize; 4];
+        let (mut wires, mut squeezes) = (0u32, 0u32);
+        let mut elements = [0u32; 4];
         let mut element = |kind: ElementKind| {
             let slot = &mut elements[kind as usize];
             *slot += 1;
@@ -234,16 +406,16 @@ impl JoltSchedule {
                         ItemClass::Outside
                     } else {
                         squeezes += 1;
-                        ItemClass::Squeeze {
+                        ItemClass::Squeeze(Squeeze {
                             index: squeezes - 1,
                             decoder: *decoder,
-                        }
+                        })
                     }
                 }
             };
             classes.push(class);
         }
-        let squeeze_block = |item: usize| -> Result<usize, ScheduleError> {
+        let squeeze_block = |chain: &Chain, item: usize| -> Result<usize, ScheduleError> {
             chain
                 .blocks
                 .iter()
@@ -261,21 +433,112 @@ impl JoltSchedule {
                     .any(|origin| origin.item as usize == first_commitment_item)
             })
             .ok_or(ScheduleError::MissingCommitments)?;
-        let last_block = squeeze_block(last_squeeze_item)?;
-        let rlc_block = squeeze_block(rlc_item)?;
+        let last_block = squeeze_block(&chain, last_squeeze_item)?;
+        let rlc_block = squeeze_block(&chain, rlc_item)?;
+        let active = last_block + 1 - first_block;
+        let min_log_rows = (active << LOG_CELL).next_power_of_two().ilog2() as usize;
+        let log_rows = log_rows.unwrap_or(min_log_rows);
+        if log_rows < min_log_rows {
+            return Err(ScheduleError::TooManyRows {
+                rows: active << LOG_CELL,
+                log_rows,
+            });
+        }
+        let cells = 1usize << (log_rows - LOG_CELL);
+        // Padding cells continue the chain past the final squeeze.
+        chain.blocks.truncate(last_block + 1);
+        for _ in active..cells {
+            chain.pad();
+        }
+        let blocks = first_block..first_block + cells;
+
+        // Preamble byte offsets of the public items.
+        let mut preamble_offset = Vec::with_capacity(first_commitment_item);
+        let mut offset = 0u32;
+        for recorded in &log[..first_commitment_item] {
+            preamble_offset.push(offset);
+            offset += item_bytes(recorded).len() as u32;
+        }
+        let source = |origin: Option<ByteOrigin>| -> ByteSource {
+            let Some(ByteOrigin { item, offset }) = origin else {
+                return ByteSource::Padding;
+            };
+            match classes[item as usize] {
+                ItemClass::Public => ByteSource::Public {
+                    offset: preamble_offset[item as usize] + offset,
+                },
+                ItemClass::Constant => {
+                    ByteSource::Constant(item_bytes(&log[item as usize])[offset as usize])
+                }
+                ItemClass::Wire { index } => ByteSource::Wire {
+                    index,
+                    byte: offset as u8,
+                },
+                ItemClass::Element { kind, index } => ByteSource::Element {
+                    kind,
+                    index,
+                    byte: offset as u16,
+                },
+                ItemClass::Squeeze(_) | ItemClass::Outside => {
+                    unreachable!("block bytes come from appends inside the segment")
+                }
+            }
+        };
+        let plans: Vec<CellPlan> = chain.blocks[blocks.clone()]
+            .iter()
+            .map(|block| CellPlan {
+                block_len: block.compression.block_len,
+                flags: block.compression.flags,
+                bytes: std::array::from_fn(|i| source(block.origins[i])),
+                squeeze: block.squeeze.and_then(|item| match classes[item as usize] {
+                    ItemClass::Squeeze(squeeze) => Some(squeeze),
+                    _ => None,
+                }),
+            })
+            .collect();
+        let first_words = &chain.blocks[first_block].compression.block;
+        let tail: Vec<u8> = plans[0]
+            .bytes
+            .iter()
+            .take_while(|source| matches!(source, ByteSource::Public { .. }))
+            .enumerate()
+            .map(|(i, _)| first_words[i / 4].to_le_bytes()[i % 4])
+            .collect();
+        if tail.len() % 2 == 1 {
+            return Err(ScheduleError::OddTail(tail.len()));
+        }
+        let first = &chain.blocks[first_block].compression;
+        let symbolic = SymbolicSchedule {
+            first_block_len: first.block_len,
+            first_flags: first.flags,
+            cells: plans,
+            log_rows,
+            tail,
+            wires,
+            squeezes,
+            rlc_cell: CellIndex(rlc_block - first_block),
+            last_squeeze_cell: CellIndex(last_block - first_block),
+        };
         Ok(Self {
             chain,
             classes,
-            blocks: first_block..last_block + 1,
-            rlc_block,
-            first_commitment_item,
-            dory_start_item,
-            wires,
-            squeezes,
+            blocks,
+            symbolic,
         })
     }
 
+    /// The blocks laid out as cells, padding included.
     pub fn table_blocks(&self) -> &[Block] {
         &self.chain.blocks[self.blocks.clone()]
+    }
+
+    /// The public inputs of the table.
+    pub fn public_inputs(&self) -> PublicInputs {
+        PublicInputs {
+            state_in: self.table_blocks()[0].compression.cv,
+            block_len: self.symbolic.first_block_len,
+            flags: self.symbolic.first_flags,
+            tail: self.symbolic.tail.clone(),
+        }
     }
 }

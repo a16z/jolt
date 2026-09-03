@@ -326,6 +326,26 @@ impl Chain {
         challenge
     }
 
+    /// Extend the chain with one padding compression: an empty block with
+    /// `CHUNK_START | KEYED_HASH` chained from the current key, never
+    /// finalized. Padding cells of the table continue the chain so the wiring
+    /// stays uniform; their outputs are never linked.
+    pub fn pad(&mut self) {
+        // Chain from the last block kept (the schedule drops the blocks after
+        // its final squeeze), not from the key of the dropped tail.
+        let mut cv = self.cv;
+        if let Some(last) = self.blocks.last() {
+            cv.copy_from_slice(&last.compression.out[..8]);
+        }
+        let compression = compress(&cv, &[0; 16], 0, KEYED_HASH | CHUNK_START);
+        self.cv.copy_from_slice(&compression.out[..8]);
+        self.blocks.push(Block {
+            compression,
+            origins: vec![None; BLOCK_BYTES],
+            squeeze: None,
+        });
+    }
+
     /// `Blake3Transcript::state()`: the keyed digest of the pending segment.
     pub fn state(&self) -> [u8; 32] {
         let mut state = [0u8; 32];

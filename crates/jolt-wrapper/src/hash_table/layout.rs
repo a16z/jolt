@@ -1,11 +1,14 @@
 //! Row layout and the aligned quadratic row relation.
 //!
-//! A row holds one half-G step (or one chaining XOR). Committed columns are
-//! bits: the add outputs `A'`, `C'`, the un-rotated XOR outputs `D' = d ^ A'`,
-//! `B' = b ^ C'`, the three add carries and the row's message word. Wired
-//! columns are copies of committed bits (or public constants) supplied by the
-//! wiring: the XOR operands `din`, `bin` as bits, and the add operands
-//! `a_in`, `c_in`, `rot_d` (this row's `D'` rotated) as 32-bit words.
+//! A row holds one half-G step (or one chaining / challenge XOR row).
+//! Committed columns are bits: the add outputs `A'`, `C'`, the un-rotated XOR
+//! outputs `D' = d ^ A'`, `B' = b ^ C'`, the three add carries and the row's
+//! message word `m` (meaningful on round-0 rows, free elsewhere). Wired
+//! columns are committed copies of other rows' words supplied by the wiring
+//! kernels ([`super::wiring`]): the XOR operands `din`, `bin` as bits and
+//! fourteen 32-bit words — the add operands `a_in`, `c_in`, `rot_d`, `m_in`
+//! and ten decoder helper words that only carry meaning on challenge / wire
+//! rows.
 //!
 //! The batched constraint `Σ_j γ_j C_j(row)` is written as
 //! `Σ_j γ̃_j v_j² + γ̃'_j v_j w_j + L1_j v_j + L2_j w_j` over the committed
@@ -29,15 +32,13 @@ pub const CARRY_C: usize = 130;
 pub const MESSAGE: usize = 131;
 pub const COMMITTED: usize = 163;
 
-/// Wired word columns in column space (`din_k` is at `A_OUT + k`, `bin_k` at
-/// `C_OUT + k`).
-pub const WIRED_A_IN: usize = 163;
-pub const WIRED_C_IN: usize = 164;
-pub const WIRED_ROT_D: usize = 165;
+/// Wired word columns in column space start right after the committed bits
+/// (`din_k` is at `A_OUT + k`, `bin_k` at `C_OUT + k`).
+pub const WIRED_WORD_BASE: usize = COMMITTED;
 pub const LOG_COLUMNS: usize = 8;
 
 pub const WIRED_BITS: usize = 2 * WORD_BITS;
-pub const WIRED_WORDS: usize = 3;
+pub const WIRED_WORDS: usize = 15;
 /// Booleanity × 163, XOR × 64, ternary add, binary add.
 pub const CONSTRAINTS: usize = COMMITTED + WIRED_BITS + 2;
 /// Sumcheck degree of the row relation including the `eq` factor.
@@ -50,6 +51,7 @@ pub enum WordColumn {
     DXor,
     COut,
     BXor,
+    Message,
 }
 
 impl WordColumn {
@@ -59,17 +61,81 @@ impl WordColumn {
             Self::DXor => D_XOR,
             Self::COut => C_OUT,
             Self::BXor => B_XOR,
+            Self::Message => MESSAGE,
         }
     }
 }
 
+/// The wired 32-bit word columns, in column order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WiredWord {
+    /// Ternary-add operand `a`.
+    AIn,
+    /// Binary-add operand `c`.
+    CIn,
+    /// This row's `D'` rotated by the half's first rotation.
+    RotD,
+    /// The message word of the step (a copy of a round-0 row's `m`).
+    MIn,
+    /// Challenge row 0: `out[11] mod 2^29` (Challenge125's masked top word).
+    XIn,
+    /// Challenge row 0: `bswap(out[10])`.
+    YIn,
+    /// Challenge row 0: `bswap(out[11])`.
+    ZIn,
+    /// Wire rows: `bswap(m)` of the row `i` steps later (`i` = 1..=7).
+    FrNext(u8),
+    /// Wire rows: `bswap16` of the low half-word of `m` eight rows later (the
+    /// last two bytes of a field element absorbed two bytes into its word).
+    FrTail,
+}
+
+impl WiredWord {
+    pub const ALL: [Self; WIRED_WORDS] = [
+        Self::AIn,
+        Self::CIn,
+        Self::RotD,
+        Self::MIn,
+        Self::XIn,
+        Self::YIn,
+        Self::ZIn,
+        Self::FrNext(1),
+        Self::FrNext(2),
+        Self::FrNext(3),
+        Self::FrNext(4),
+        Self::FrNext(5),
+        Self::FrNext(6),
+        Self::FrNext(7),
+        Self::FrTail,
+    ];
+
+    /// Index among the wired words (and offset from `WIRED_WORD_BASE`).
+    pub fn index(self) -> usize {
+        match self {
+            Self::AIn => 0,
+            Self::CIn => 1,
+            Self::RotD => 2,
+            Self::MIn => 3,
+            Self::XIn => 4,
+            Self::YIn => 5,
+            Self::ZIn => 6,
+            Self::FrNext(i) => 6 + usize::from(i),
+            Self::FrTail => 14,
+        }
+    }
+
+    pub fn column(self) -> usize {
+        WIRED_WORD_BASE + self.index()
+    }
+}
+
 /// Column-space index of every wired column: the 64 wired bits (`din`, then
-/// `bin`), then the three wired words.
+/// `bin`), then the wired words.
 pub fn wired_columns() -> Vec<usize> {
     (0..WORD_BITS)
         .map(|k| A_OUT + k)
         .chain((0..WORD_BITS).map(|k| C_OUT + k))
-        .chain([WIRED_A_IN, WIRED_C_IN, WIRED_ROT_D])
+        .chain(WiredWord::ALL.iter().map(|w| w.column()))
         .collect()
 }
 
@@ -79,7 +145,7 @@ pub struct ColumnEvals {
     pub committed: Vec<Fr>,
     /// `din` bits, then `bin` bits.
     pub wired_bits: Vec<Fr>,
-    /// `a_in`, `c_in`, `rot_d`.
+    /// `WiredWord::ALL` order.
     pub wired_words: Vec<Fr>,
 }
 
@@ -98,6 +164,18 @@ impl ColumnEvals {
             w[j] = *value;
         }
         (v, w)
+    }
+
+    /// `Σ_k 2^k · bit_k` of a committed word group.
+    pub fn word(&self, group: WordColumn) -> Fr {
+        let base = group.base();
+        (0..WORD_BITS).fold(Fr::zero(), |acc, k| {
+            acc + self.committed[base + k].mul_pow_2(k)
+        })
+    }
+
+    pub fn wired_word(&self, word: WiredWord) -> Fr {
+        self.wired_words[word.index()]
     }
 }
 
@@ -137,24 +215,24 @@ impl Relation {
         for (k, gamma) in xor_b.iter().enumerate() {
             rel.xor(*gamma, B_XOR + k, C_OUT + k);
         }
-        // Ternary add: Σ A'_k 2^k + 2^32 κ0 + 2^33 κ1 − a_in − Σ bin_k 2^k − Σ m_k 2^k.
+        // Ternary add: Σ A'_k 2^k + 2^32 κ0 + 2^33 κ1 − a_in − Σ bin_k 2^k − m_in.
         let gamma = rest[0];
         for k in 0..WORD_BITS {
             rel.l1[A_OUT + k] += gamma.mul_pow_2(k);
             rel.l2[C_OUT + k] -= gamma.mul_pow_2(k);
-            rel.l1[MESSAGE + k] -= gamma.mul_pow_2(k);
         }
         rel.l1[CARRY_A_LO] += gamma.mul_pow_2(32);
         rel.l1[CARRY_A_HI] += gamma.mul_pow_2(33);
-        rel.l2[WIRED_A_IN] -= gamma;
+        rel.l2[WiredWord::AIn.column()] -= gamma;
+        rel.l2[WiredWord::MIn.column()] -= gamma;
         // Binary add: Σ C'_k 2^k + 2^32 κ2 − c_in − rot_d.
         let gamma = rest[1];
         for k in 0..WORD_BITS {
             rel.l1[C_OUT + k] += gamma.mul_pow_2(k);
         }
         rel.l1[CARRY_C] += gamma.mul_pow_2(32);
-        rel.l2[WIRED_C_IN] -= gamma;
-        rel.l2[WIRED_ROT_D] -= gamma;
+        rel.l2[WiredWord::CIn.column()] -= gamma;
+        rel.l2[WiredWord::RotD.column()] -= gamma;
         rel
     }
 
@@ -181,17 +259,25 @@ impl Relation {
     /// for the row point `r` bound from `challenges` (round order; round `i`
     /// binds row-index bit `i`, i.e. `τ[n − 1 − i]`).
     pub fn final_check(&self, tau: &[Fr], challenges: &[Fr], evals: &ColumnEvals) -> Fr {
-        assert_eq!(
-            tau.len(),
-            challenges.len(),
-            "one challenge per row variable"
-        );
-        let one = Fr::from_u64(1);
-        let eq = tau.iter().rev().zip(challenges).fold(one, |acc, (t, r)| {
-            let tr = *t * *r;
-            acc * (one - *t - *r + tr + tr)
-        });
         let (v, w) = evals.column_space();
-        eq * self.evaluate(&v, &w)
+        eq_rounds(tau, challenges) * self.evaluate(&v, &w)
     }
+}
+
+/// `eq(τ, r)` for a point bound in round order (round `i` binds `τ[n − 1 − i]`).
+///
+/// # Panics
+///
+/// Panics unless `tau.len() == challenges.len()`.
+pub fn eq_rounds(tau: &[Fr], challenges: &[Fr]) -> Fr {
+    assert_eq!(
+        tau.len(),
+        challenges.len(),
+        "one challenge per row variable"
+    );
+    let one = Fr::from_u64(1);
+    tau.iter().rev().zip(challenges).fold(one, |acc, (t, r)| {
+        let tr = *t * *r;
+        acc * (one - *t - *r + tr + tr)
+    })
 }

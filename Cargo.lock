@@ -4101,6 +4101,7 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.18",
+ "tracer",
  "tracing",
 ]
 

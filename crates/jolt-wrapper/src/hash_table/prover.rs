@@ -1,8 +1,8 @@
 //! The row sumcheck `Σ_row eq(τ, row) · Q(row)` as a batch member: round 0
-//! runs on the 0/1 columns (no field multiplications), later rounds on the
-//! bound field columns; `s(X) = c · l(X) · t(X)` with `t(1)` recovered from
-//! the running claim. Row-index bits are bound LSB-first (round `i` binds bit
-//! `i` against `τ[n − 1 − i]`).
+//! runs on the borrowed 0/1 columns (no field multiplications), later rounds
+//! on the bound field columns; `s(X) = c · l(X) · t(X)` with `t(1)` recovered
+//! from the running claim. Row-index bits are bound LSB-first (round `i`
+//! binds bit `i` against `τ[n − 1 − i]`).
 
 use jolt_field::{Field, Fr, One, Ring, Zero};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
@@ -13,6 +13,8 @@ use rayon::prelude::*;
 use super::layout::{wired_columns, ColumnEvals, Relation, COMMITTED, WIRED_BITS};
 use super::table::HashTable;
 
+/// Borrows the table's columns until round 0 is bound; the stream packs and
+/// commits the same columns without a copy.
 pub struct HashTableProver<'a> {
     relation: &'a Relation,
     tau: Vec<Fr>,
@@ -21,9 +23,7 @@ pub struct HashTableProver<'a> {
     eq_prefix: Fr,
     claim: Fr,
     round0: [Fr; 4],
-    bits: Vec<Vec<u8>>,
-    wired_bits: Vec<Vec<u8>>,
-    wired_words: Vec<Vec<u32>>,
+    table: &'a HashTable,
     /// Bound committed columns and wired columns (bits, then words).
     v: Vec<Vec<Fr>>,
     w: Vec<Vec<Fr>>,
@@ -51,7 +51,7 @@ impl<'a> HashTableProver<'a> {
     /// # Panics
     ///
     /// Panics unless `tau.len() == table.log_rows`.
-    pub fn new(relation: &'a Relation, table: HashTable, tau: Vec<Fr>) -> Self {
+    pub fn new(relation: &'a Relation, table: &'a HashTable, tau: Vec<Fr>) -> Self {
         assert_eq!(tau.len(), table.log_rows, "one τ per row variable");
         let bool_weight = (0..COMMITTED)
             .map(|j| relation.gamma_sq[j] + relation.l1[j])
@@ -68,9 +68,7 @@ impl<'a> HashTableProver<'a> {
             eq_prefix: Fr::one(),
             claim: Fr::zero(),
             round0: [Fr::zero(); 4],
-            bits: table.bits,
-            wired_bits: table.wired_bits,
-            wired_words: table.wired_words,
+            table,
             v: Vec::new(),
             w: Vec::new(),
             wired_index,
@@ -97,27 +95,32 @@ impl<'a> HashTableProver<'a> {
     }
 
     fn q_bits(&self, row: usize) -> Fr {
+        let table = self.table;
         let mut acc = Fr::zero();
-        for (column, weight) in self.bits.iter().zip(&self.bool_weight) {
+        for (column, weight) in table.bits.iter().zip(&self.bool_weight) {
             if column[row] == 1 {
                 acc += *weight;
             }
         }
-        for ((column, &j), weight) in self
+        for ((column, &j), weight) in table
             .wired_bits
             .iter()
             .zip(&self.wired_index)
             .zip(&self.wired_weight)
         {
             if column[row] == 1 {
-                acc += if self.bits[j][row] == 1 {
+                acc += if table.bits[j][row] == 1 {
                     weight.0
                 } else {
                     weight.1
                 };
             }
         }
-        for (column, &j) in self.wired_words.iter().zip(&self.wired_index[WIRED_BITS..]) {
+        for (column, &j) in table
+            .wired_words
+            .iter()
+            .zip(&self.wired_index[WIRED_BITS..])
+        {
             acc += self.relation.l2[j] * Fr::from_u32(column[row]);
         }
         acc
@@ -125,16 +128,16 @@ impl<'a> HashTableProver<'a> {
 
     /// The quadratic coefficient of `Q` along the pair `(lo, hi)`.
     fn q2_bits(&self, lo: usize, hi: usize) -> Fr {
-        let rel = self.relation;
+        let (rel, table) = (self.relation, self.table);
         let mut acc = Fr::zero();
-        for (j, column) in self.bits.iter().enumerate() {
+        for (j, column) in table.bits.iter().enumerate() {
             if column[lo] != column[hi] {
                 acc += rel.gamma_sq[j];
             }
         }
-        for (column, &j) in self.wired_bits.iter().zip(&self.wired_index) {
+        for (column, &j) in table.wired_bits.iter().zip(&self.wired_index) {
             let dw = i8::from(column[hi] != 0) - i8::from(column[lo] != 0);
-            let dv = i8::from(self.bits[j][hi] != 0) - i8::from(self.bits[j][lo] != 0);
+            let dv = i8::from(table.bits[j][hi] != 0) - i8::from(table.bits[j][lo] != 0);
             match dv * dw {
                 1 => acc += rel.gamma_cross[j],
                 -1 => acc -= rel.gamma_cross[j],
@@ -245,15 +248,16 @@ impl<'a> HashTableProver<'a> {
         let n = self.tau.len();
         let tau_v = self.tau[n - 1 - self.round];
         if self.round == 0 {
+            let table = self.table;
             let lut = [Fr::zero(), Fr::one() - r, r, Fr::one()];
             let fold_bits = |column: &Vec<u8>| -> Vec<Fr> {
                 (0..column.len() / 2)
                     .map(|i| lut[usize::from(column[2 * i] | (column[2 * i + 1] << 1))])
                     .collect()
             };
-            self.v = self.bits.par_iter().map(fold_bits).collect();
-            let mut w: Vec<Vec<Fr>> = self.wired_bits.par_iter().map(fold_bits).collect();
-            w.par_extend(self.wired_words.par_iter().map(|column| {
+            self.v = table.bits.par_iter().map(fold_bits).collect();
+            let mut w: Vec<Vec<Fr>> = table.wired_bits.par_iter().map(fold_bits).collect();
+            w.par_extend(table.wired_words.par_iter().map(|column| {
                 (0..column.len() / 2)
                     .map(|i| {
                         let (lo, hi) =
@@ -263,9 +267,6 @@ impl<'a> HashTableProver<'a> {
                     .collect()
             }));
             self.w = w;
-            self.bits = Vec::new();
-            self.wired_bits = Vec::new();
-            self.wired_words = Vec::new();
         } else {
             self.v
                 .par_iter_mut()

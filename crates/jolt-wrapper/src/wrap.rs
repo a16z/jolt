@@ -8,16 +8,12 @@ use jolt_r1cs::Variable;
 use jolt_transcript::Blake3Transcript;
 use thiserror::Error;
 
-use crate::hash_table::{
-    HashTable, JoltSchedule, RecordingTranscript, ScheduleError,
-};
+use crate::hash_table::{HashTable, JoltSchedule, RecordingTranscript, ScheduleError};
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
     build_relation, generate_witness, Preprocessing, Proof, Relation, RelationError, Witness,
 };
-use crate::spartan::{
-    ChallengeDecoder, PublicChallenge, SharedWitnessColumn, SpartanError,
-};
+use crate::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn, SpartanError};
 use crate::stream::{
     commit_packed, prove_assembly, verify_assembly_with_cost, AssemblyStatement, Column,
     StageMember, StageResult, StreamError, VerifierCost, WrapperProof,
@@ -58,10 +54,7 @@ pub enum WrapError {
     #[error("packing factor must be a nonzero power of two, got {0}")]
     InvalidPacking(usize),
     #[error("T1 needs 2^{required} rows, common domain is 2^{configured}")]
-    CommonRowDomain {
-        required: usize,
-        configured: usize,
-    },
+    CommonRowDomain { required: usize, configured: usize },
     #[error("common row exponent {0} does not fit usize")]
     CommonRowExponent(usize),
     #[error("relation witness fails at row {0}")]
@@ -152,30 +145,21 @@ impl WrapPreparation {
             RecordingTranscript<Blake3Transcript>,
         >(preprocessing, public_io, proof, None)?;
         let records = RecordingTranscript::<Blake3Transcript>::take_log();
-        let hash_schedule = JoltSchedule::new(&records)?;
-        let natural_hash_table = HashTable::build(
-            &hash_schedule.chain.blocks,
-            hash_schedule.blocks.clone(),
-            None,
-        );
-        if natural_hash_table.log_rows > config.common_log_rows {
+        let natural = JoltSchedule::new(&records, None)?;
+        if natural.symbolic.log_rows > config.common_log_rows {
             return Err(WrapError::CommonRowDomain {
-                required: natural_hash_table.log_rows,
+                required: natural.symbolic.log_rows,
                 configured: config.common_log_rows,
             });
         }
-        let hash_table = if natural_hash_table.log_rows == config.common_log_rows {
-            natural_hash_table
+        let hash_schedule = if natural.symbolic.log_rows == config.common_log_rows {
+            natural
         } else {
-            HashTable::build(
-                &hash_schedule.chain.blocks,
-                hash_schedule.blocks.clone(),
-                Some(config.common_log_rows),
-            )
+            JoltSchedule::new(&records, Some(config.common_log_rows))?
         };
+        let hash_table = HashTable::build(&hash_schedule);
 
-        let (public_known, public_challenges) =
-            public_values(&relation, &relation_witness.values)?;
+        let (public_known, public_challenges) = public_values(&relation, &relation_witness.values)?;
         let private_start = 1 + relation.public.num_public;
         let private_witness = relation_witness
             .values
