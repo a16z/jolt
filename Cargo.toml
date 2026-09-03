@@ -295,17 +295,17 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "zk",
 ] }
 # Immutable fork revision: LayerZero main 26bdbac79 plus the Metal backend (feat/akita-metal).
-akita-algebra = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-config = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-error = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-metal = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-pcs = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-prover = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-planner = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-schedules = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-challenges = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-transcript = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
-akita-types = { git = "https://github.com/markosg04/akita.git", rev = "6817c72b86fefa55562efdc50841d7519f7043dd", default-features = false }
+akita-algebra = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-config = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-error = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-metal = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-pcs = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-prover = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-planner = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-schedules = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-challenges = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-transcript = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
+akita-types = { git = "https://github.com/markosg04/akita.git", rev = "3d748d499b7957f9b1adf4eb48a10a40c022e1d5", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
