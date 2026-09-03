@@ -1,6 +1,7 @@
 # W6-RT — verifier relation row table
 
 Date: 2026-09-03. Branch: `wrap/spartan-hyperkzg`.
+Code commit: `f845ec8ad`.
 
 ## Decisions
 
