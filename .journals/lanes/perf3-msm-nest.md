@@ -75,3 +75,21 @@ CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/perf1 cargo nextest run -p jolt-wrapp
 - Full statement gate not run; the targeted gates already reject the candidate.
 - `perf1/profile` retains the unstaged experiment for follow-up. `wrap/spartan-hyperkzg` received
   no MSM code.
+
+## Landing decision
+
+The orchestrator accepted the uniform production gain despite the two stretch-target misses.
+
+- Candidate committed on `perf1/profile` as `cdc5fc9a6`, then rebased onto main/W5 as
+  `add9b7a31`.
+- W5's stream stack is present at `c305fb312`.
+- `cargo clippy -p jolt-crypto --all-targets -q --message-format=short -- -D warnings` passed.
+- `cargo clippy -p jolt-hyperkzg --all-targets -q --message-format=short -- -D warnings` passed.
+- Combined `jolt-crypto` + `jolt-hyperkzg` nextest: 169 passed.
+- Main was not fast-forwarded: `crates/jolt-hyperkzg/tests/commit_open_verify.rs` is modified and
+  `crates/jolt-hyperkzg/src/.journals/` is untracked in the shared worktree.
+
+The required post-rebase profile launched at load 9.10. A separate six-core `wrap_real_t1` test
+started during the run. Helpers measured 2.383 s at 8.58 busy threads; isolated MSM measured
+0.461 µs/point at 8.45; HyperKZG open measured 4.063 s at 4.52. These contended values do not
+replace the clean three-repeat results above.
