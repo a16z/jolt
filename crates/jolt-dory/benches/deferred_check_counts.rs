@@ -11,10 +11,13 @@
 
 use std::time::Instant;
 
-use ark_bn254::{Bn254, Config as Bn254Config, Fq12, Fr as ArkScalar};
+use ark_bn254::{
+    Bn254, Config as Bn254Config, Fq, Fq12, Fr as ArkScalar, G1Projective, G2Projective,
+};
 use ark_ec::bn::BnConfig;
 use ark_ec::pairing::{Pairing, PairingOutput};
-use ark_ff::{BigInteger, CyclotomicMultSubgroup, Field as ArkField, One, PrimeField};
+use ark_ec::CurveGroup;
+use ark_ff::{BigInteger, CyclotomicMultSubgroup, Field as ArkField, MontFp, One, PrimeField};
 use dory::backends::arkworks::{ArkDoryProof, ArkFr, ArkGT, ArkworksVerifierSetup, BN254};
 use dory::primitives::arithmetic::{Field as DoryField, Group as DoryGroup};
 use dory::primitives::transcript::Transcript as DoryTranscript;
@@ -28,7 +31,7 @@ use jolt_transcript::domain::{Label, LabelWithCount};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
-use num_traits::{Signed, Zero};
+use num_traits::{Signed, ToPrimitive, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -36,6 +39,12 @@ const NUM_VARS: usize = 22;
 const NUM_COMMITMENTS: usize = 41;
 const WINDOWS: [usize; 4] = [4, 6, 7, 8];
 const SCALAR_BITS: usize = ArkScalar::MODULUS_BIT_SIZE as usize;
+
+mod g2_constants {
+    include!("../../jolt-crypto/src/ec/bn254/glv/constants.rs");
+}
+
+use g2_constants::POWER_OF_2_DECOMPOSITIONS;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct GtOps {
@@ -90,7 +99,9 @@ struct Relation {
     scalars: Vec<ArkFr>,
     names: Vec<String>,
     lhs: ArkGT,
+    e1_bases: Vec<G1Projective>,
     e1_scalars: Vec<ArkFr>,
+    e2_bases: Vec<G2Projective>,
     e2_scalars: Vec<ArkFr>,
 }
 
@@ -392,14 +403,20 @@ fn build_relation(
         [p1_g2.0, p2_g2.0, p3_g2.0, p4_g2.0],
     ));
 
+    let mut e1_bases = Vec::with_capacity(3 * sigma + 4);
     let mut e1_scalars = Vec::with_capacity(3 * sigma + 4);
+    let mut e2_bases = vec![setup.g2_0.0];
     let mut e2_scalars = vec![evaluation];
     for round in 0..sigma {
+        let first = &proof.first_messages[round];
+        let second = &proof.second_messages[round];
+        e1_bases.extend([first.e1_beta.0, second.e1_plus.0, second.e1_minus.0]);
         e1_scalars.extend([
             challenges.beta[round],
             challenges.alpha[round],
             inv(challenges.alpha[round]),
         ]);
+        e2_bases.extend([first.e2_beta.0, second.e2_plus.0, second.e2_minus.0]);
         e2_scalars.extend([
             inv(challenges.beta[round]),
             challenges.alpha[round],
@@ -412,16 +429,22 @@ fn build_relation(
         challenges.d,
         d_sq,
     ]);
+    e1_bases.extend([e1_acc.0, setup.g1_0.0, setup.g1_0.0, proof.vmv_message.e1.0]);
     e2_scalars.extend([-challenges.gamma, -challenges.gamma * d_inv * s1_acc, d_inv]);
+    e2_bases.extend([e2_acc.0, setup.g2_0.0, setup.g2_0.0]);
     assert_eq!(e1_scalars.len(), 3 * sigma + 4);
     assert_eq!(e2_scalars.len(), 3 * sigma + 4);
+    assert_eq!(e1_bases.len(), e1_scalars.len());
+    assert_eq!(e2_bases.len(), e2_scalars.len());
 
     Relation {
         bases,
         scalars,
         names,
         lhs,
+        e1_bases,
         e1_scalars,
+        e2_bases,
         e2_scalars,
     }
 }
@@ -712,6 +735,593 @@ fn glv_expansion(
     (expanded_bases, expanded_scalars, max_bits)
 }
 
+fn decompose_g1_scalar(scalar: ArkScalar) -> Vec<SignedMagnitude> {
+    let [n11, n12, n21, n22] = [
+        BigInt::from(-147_946_756_881_789_319_000_765_030_803_803_410_728i128),
+        BigInt::from(9_931_322_734_385_697_763i128),
+        BigInt::from(-9_931_322_734_385_697_763i128),
+        BigInt::from(-147_946_756_881_789_319_010_696_353_538_189_108_491i128),
+    ];
+    let scalar = BigInt::from_biguint(
+        Sign::Plus,
+        BigUint::from_bytes_be(&scalar.into_bigint().to_bytes_be()),
+    );
+    let modulus = BigInt::from_biguint(Sign::Plus, modulus_biguint());
+    let beta1 = {
+        let (mut quotient, remainder) = (&scalar * &n22).div_rem(&modulus);
+        if &remainder + &remainder > modulus {
+            quotient += 1;
+        }
+        quotient
+    };
+    let beta2 = {
+        let (mut quotient, remainder) = (&scalar * -&n12).div_rem(&modulus);
+        if &remainder + &remainder > modulus {
+            quotient += 1;
+        }
+        quotient
+    };
+    let b1 = &beta1 * n11 + &beta2 * n21;
+    let b2 = beta1 * n12 + beta2 * n22;
+    vec![signed_magnitude(scalar - b1), signed_magnitude(-b2)]
+}
+
+fn g1_endomorphism(point: &G1Projective) -> G1Projective {
+    const ENDO_COEFF: Fq =
+        MontFp!("21888242871839275220042445260109153167277707414472061641714758635765020556616");
+    let mut image = *point;
+    image.x *= ENDO_COEFF;
+    image
+}
+
+fn decompose_g2_scalar(scalar: ArkScalar) -> Vec<SignedMagnitude> {
+    let scalar = scalar.into_bigint();
+    let mut accumulators = [0u128; 4];
+    for (bit, &(k0, k1, k2, k3, neg0, neg1, neg2, neg3)) in
+        POWER_OF_2_DECOMPOSITIONS.iter().enumerate()
+    {
+        if scalar.get_bit(bit) {
+            for ((accumulator, coefficient), negative) in accumulators
+                .iter_mut()
+                .zip([k0, k1, k2, k3])
+                .zip([neg0, neg1, neg2, neg3])
+            {
+                *accumulator = if negative {
+                    accumulator.wrapping_sub(coefficient)
+                } else {
+                    accumulator.wrapping_add(coefficient)
+                };
+            }
+        }
+    }
+    accumulators
+        .into_iter()
+        .map(|coefficient| {
+            let value = coefficient as i128;
+            SignedMagnitude {
+                magnitude: BigUint::from(value.unsigned_abs()),
+                positive: value >= 0,
+            }
+        })
+        .collect()
+}
+
+fn g2_frobenius(point: &G2Projective, power: usize) -> G2Projective {
+    if point.is_zero() {
+        return *point;
+    }
+    let mut image = *point;
+    let coefficients = g2_constants::get_frobenius_coefficients();
+    if power & 1 == 1 {
+        let _ = image.x.conjugate_in_place();
+        let _ = image.y.conjugate_in_place();
+        let _ = image.z.conjugate_in_place();
+    }
+    match power % 4 {
+        0 => image,
+        1 => {
+            image.x *= coefficients.psi1_coef2;
+            image.y *= coefficients.psi1_coef3;
+            image
+        }
+        2 => {
+            image.x *= coefficients.psi2_coef2;
+            image.y *= coefficients.psi2_coef3;
+            image
+        }
+        _ => {
+            image.x *= coefficients.psi3_coef2;
+            image.y *= coefficients.psi3_coef3;
+            image
+        }
+    }
+}
+
+fn g1_components(scalars: &[ArkFr]) -> Vec<SignedMagnitude> {
+    scalars
+        .iter()
+        .flat_map(|scalar| decompose_g1_scalar(scalar.0))
+        .collect()
+}
+
+fn g2_components(scalars: &[ArkFr]) -> Vec<SignedMagnitude> {
+    scalars
+        .iter()
+        .flat_map(|scalar| decompose_g2_scalar(scalar.0))
+        .collect()
+}
+
+fn gt_components(scalars: &[ArkFr]) -> Vec<SignedMagnitude> {
+    scalar_magnitudes(scalars)
+        .into_iter()
+        .flat_map(|scalar| decompose_4d(&scalar.magnitude))
+        .collect()
+}
+
+fn max_bits(scalars: &[SignedMagnitude]) -> usize {
+    scalars
+        .iter()
+        .map(|scalar| scalar.magnitude.bits() as usize)
+        .max()
+        .unwrap_or(0)
+}
+
+fn centered_digits(scalar: &SignedMagnitude, window: usize) -> Vec<isize> {
+    let radix = BigInt::from(1usize << window);
+    let half = BigInt::from(1usize << (window - 1));
+    let mut value = BigInt::from_biguint(
+        if scalar.positive {
+            Sign::Plus
+        } else {
+            Sign::Minus
+        },
+        scalar.magnitude.clone(),
+    );
+    let mut digits = Vec::new();
+    while !value.is_zero() {
+        let mut residue = &value % &radix;
+        if residue.sign() == Sign::Minus {
+            residue += &radix;
+        }
+        let digit = if residue >= half {
+            residue - &radix
+        } else {
+            residue
+        };
+        digits.push(digit.to_isize().unwrap());
+        value = (value - digit) / &radix;
+    }
+    digits
+}
+
+fn centered_windows(scalars: &[SignedMagnitude], window: usize) -> usize {
+    scalars
+        .iter()
+        .map(|scalar| centered_digits(scalar, window).len())
+        .max()
+        .unwrap_or(0)
+}
+
+fn gt_glv_expansion_raw(bases: &[Fq12], scalars: &[ArkFr]) -> (Vec<Fq12>, Vec<SignedMagnitude>) {
+    let mut expanded_bases = Vec::with_capacity(4 * bases.len());
+    let mut expanded_scalars = Vec::with_capacity(4 * bases.len());
+    for (base, scalar) in bases.iter().zip(scalars) {
+        let components = decompose_4d(&BigUint::from_bytes_be(
+            &scalar.0.into_bigint().to_bytes_be(),
+        ));
+        assert_decomposition(scalar.0, &components);
+        for (power, component) in components.into_iter().enumerate() {
+            let mut image = *base;
+            image.frobenius_map_in_place(power);
+            expanded_bases.push(image);
+            expanded_scalars.push(component);
+        }
+    }
+    (expanded_bases, expanded_scalars)
+}
+
+fn g1_glv_expansion_raw(
+    bases: &[G1Projective],
+    scalars: &[ArkFr],
+) -> (Vec<G1Projective>, Vec<SignedMagnitude>) {
+    let mut expanded_bases = Vec::with_capacity(2 * bases.len());
+    let mut expanded_scalars = Vec::with_capacity(2 * bases.len());
+    for (base, scalar) in bases.iter().zip(scalars) {
+        expanded_bases.extend([*base, g1_endomorphism(base)]);
+        expanded_scalars.extend(decompose_g1_scalar(scalar.0));
+    }
+    (expanded_bases, expanded_scalars)
+}
+
+fn g2_glv_expansion_raw(
+    bases: &[G2Projective],
+    scalars: &[ArkFr],
+) -> (Vec<G2Projective>, Vec<SignedMagnitude>) {
+    let mut expanded_bases = Vec::with_capacity(4 * bases.len());
+    let mut expanded_scalars = Vec::with_capacity(4 * bases.len());
+    for (base, scalar) in bases.iter().zip(scalars) {
+        for power in 0..4 {
+            expanded_bases.push(g2_frobenius(base, power));
+        }
+        expanded_scalars.extend(decompose_g2_scalar(scalar.0));
+    }
+    (expanded_bases, expanded_scalars)
+}
+
+fn gt_straus(bases: &[Fq12], scalars: &[SignedMagnitude], window: usize, signed: bool) -> Fq12 {
+    let windows = if signed {
+        centered_windows(scalars, window)
+    } else {
+        max_bits(scalars).div_ceil(window)
+    };
+    let table_limit = if signed {
+        1 << (window - 1)
+    } else {
+        (1 << window) - 1
+    };
+    let tables: Vec<Vec<Fq12>> = bases
+        .iter()
+        .map(|base| {
+            let mut table = vec![Fq12::one(), *base];
+            while table.len() <= table_limit {
+                let next = *table.last().unwrap() * base;
+                table.push(next);
+            }
+            table
+        })
+        .collect();
+    let signed_digits: Vec<Vec<isize>> = if signed {
+        scalars
+            .iter()
+            .map(|scalar| centered_digits(scalar, window))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut result = Fq12::one();
+    for window_index in (0..windows).rev() {
+        for _ in 0..window {
+            let _ = result.cyclotomic_square_in_place();
+        }
+        for (index, scalar) in scalars.iter().enumerate() {
+            let digit = if signed {
+                signed_digits[index].get(window_index).copied().unwrap_or(0)
+            } else {
+                window_digit(&scalar.magnitude, window_index * window, window) as isize
+            };
+            let mut operand = tables[index][digit.unsigned_abs()];
+            let negative = if signed { digit < 0 } else { !scalar.positive };
+            if negative {
+                let _ = operand.cyclotomic_inverse_in_place().unwrap();
+            }
+            result *= operand;
+        }
+    }
+    result
+}
+
+fn ec_straus<G>(bases: &[G], scalars: &[SignedMagnitude], window: usize, signed: bool) -> G
+where
+    G: CurveGroup<ScalarField = ArkScalar> + Copy,
+{
+    let windows = if signed {
+        centered_windows(scalars, window)
+    } else {
+        max_bits(scalars).div_ceil(window)
+    };
+    let table_limit = if signed {
+        1 << (window - 1)
+    } else {
+        (1 << window) - 1
+    };
+    let tables: Vec<Vec<G>> = bases
+        .iter()
+        .map(|base| {
+            let mut table = vec![G::zero(), *base];
+            while table.len() <= table_limit {
+                let next = *table.last().unwrap() + base;
+                table.push(next);
+            }
+            table
+        })
+        .collect();
+    let signed_digits: Vec<Vec<isize>> = if signed {
+        scalars
+            .iter()
+            .map(|scalar| centered_digits(scalar, window))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut result = G::zero();
+    for window_index in (0..windows).rev() {
+        for _ in 0..window {
+            let _ = result.double_in_place();
+        }
+        for (index, scalar) in scalars.iter().enumerate() {
+            let digit = if signed {
+                signed_digits[index].get(window_index).copied().unwrap_or(0)
+            } else {
+                window_digit(&scalar.magnitude, window_index * window, window) as isize
+            };
+            let mut operand = tables[index][digit.unsigned_abs()];
+            let negative = if signed { digit < 0 } else { !scalar.positive };
+            if negative {
+                operand = -operand;
+            }
+            result += operand;
+        }
+    }
+    result
+}
+
+#[derive(Clone, Copy)]
+enum StrausVariant {
+    Fixed,
+    Signed,
+}
+
+impl StrausVariant {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Signed => "signed",
+        }
+    }
+
+    fn is_signed(self) -> bool {
+        matches!(self, Self::Signed)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct StrausCount {
+    bits: usize,
+    windows: usize,
+    table_ops: usize,
+    square_ops: usize,
+    online_ops: usize,
+    fq_products: usize,
+    rows: usize,
+    public_digit_selectors: usize,
+    selector_bits: usize,
+    fixed_operand_offsets: usize,
+    choices_per_selector: usize,
+    shift_relations: usize,
+}
+
+fn straus_shape(
+    original_bases: usize,
+    public_original_bases: usize,
+    dimensions: usize,
+    scalars: &[SignedMagnitude],
+    window: usize,
+    variant: StrausVariant,
+) -> (usize, usize, usize, usize, usize, usize, usize) {
+    let bits = max_bits(scalars);
+    let windows = if variant.is_signed() {
+        centered_windows(scalars, window)
+    } else {
+        bits.div_ceil(window)
+    };
+    let table_entries = if variant.is_signed() {
+        1 << (window - 1)
+    } else {
+        (1 << window) - 1
+    };
+    let table_ops_per_base = table_entries - 1;
+    let public_expanded_bases = public_original_bases * dimensions;
+    let public_digit_selectors = public_expanded_bases * windows;
+    let selector_bits = if variant.is_signed() {
+        public_digit_selectors * window
+    } else {
+        public_digit_selectors * window + public_expanded_bases
+    };
+    (
+        bits,
+        windows,
+        original_bases * table_ops_per_base,
+        dimensions * original_bases * windows,
+        public_digit_selectors,
+        selector_bits,
+        original_bases * table_entries,
+    )
+}
+
+fn gt_straus_count(
+    original_bases: usize,
+    public_original_bases: usize,
+    scalars: &[SignedMagnitude],
+    window: usize,
+    variant: StrausVariant,
+) -> StrausCount {
+    let (
+        bits,
+        windows,
+        table_ops,
+        online_ops,
+        public_digit_selectors,
+        selector_bits,
+        fixed_operand_offsets,
+    ) = straus_shape(
+        original_bases,
+        public_original_bases,
+        4,
+        scalars,
+        window,
+        variant,
+    );
+    let square_ops = windows * window;
+    StrausCount {
+        bits,
+        windows,
+        table_ops,
+        square_ops,
+        online_ops,
+        fq_products: 54 * (table_ops + online_ops) + 18 * square_ops,
+        rows: 12 * (table_ops + square_ops + online_ops),
+        public_digit_selectors,
+        selector_bits,
+        fixed_operand_offsets,
+        choices_per_selector: if variant.is_signed() {
+            (1 << (window - 1)) + 1
+        } else {
+            1 << window
+        },
+        shift_relations: 1,
+    }
+}
+
+fn g1_straus_count(
+    original_bases: usize,
+    scalars: &[SignedMagnitude],
+    window: usize,
+    variant: StrausVariant,
+) -> StrausCount {
+    let (
+        bits,
+        windows,
+        table_ops,
+        online_ops,
+        public_digit_selectors,
+        selector_bits,
+        fixed_operand_offsets,
+    ) = straus_shape(original_bases, original_bases, 2, scalars, window, variant);
+    let square_ops = windows * window;
+    StrausCount {
+        bits,
+        windows,
+        table_ops,
+        square_ops,
+        online_ops,
+        fq_products: 11 * table_ops + 7 * square_ops + 15 * online_ops,
+        rows: 11 * table_ops + 7 * square_ops + 15 * online_ops,
+        public_digit_selectors,
+        selector_bits,
+        fixed_operand_offsets,
+        choices_per_selector: if variant.is_signed() {
+            (1 << (window - 1)) + 1
+        } else {
+            1 << window
+        },
+        shift_relations: 5,
+    }
+}
+
+fn g2_straus_count(
+    original_bases: usize,
+    scalars: &[SignedMagnitude],
+    window: usize,
+    variant: StrausVariant,
+) -> StrausCount {
+    let (
+        bits,
+        windows,
+        table_ops,
+        online_ops,
+        public_digit_selectors,
+        selector_bits,
+        fixed_operand_offsets,
+    ) = straus_shape(original_bases, original_bases, 4, scalars, window, variant);
+    let square_ops = windows * window;
+    StrausCount {
+        bits,
+        windows,
+        table_ops,
+        square_ops,
+        online_ops,
+        fq_products: 30 * table_ops + 17 * square_ops + 41 * online_ops,
+        rows: 22 * table_ops + 14 * square_ops + 30 * online_ops,
+        public_digit_selectors,
+        selector_bits,
+        fixed_operand_offsets,
+        choices_per_selector: if variant.is_signed() {
+            (1 << (window - 1)) + 1
+        } else {
+            1 << window
+        },
+        shift_relations: 5,
+    }
+}
+
+fn print_straus_component(
+    sigma: usize,
+    group: &str,
+    window: usize,
+    variant: StrausVariant,
+    original_bases: usize,
+    dimensions: usize,
+    count: StrausCount,
+) {
+    println!(
+        "STRAUS sigma={sigma} group={group} variant={} w={window} original_bases={original_bases} expanded_bases={} mini_bits={} windows={} table_ops={} square_or_double_ops={} online_ops={} fq_products={} rows={} public_digit_selectors={} public_selector_bits={} fixed_operand_offsets={} choices_per_selector={} shift_relations={}",
+        variant.name(),
+        original_bases * dimensions,
+        count.bits,
+        count.windows,
+        count.table_ops,
+        count.square_ops,
+        count.online_ops,
+        count.fq_products,
+        count.rows,
+        count.public_digit_selectors,
+        count.selector_bits,
+        count.fixed_operand_offsets,
+        count.choices_per_selector,
+        count.shift_relations,
+    );
+}
+
+fn print_straus_counts(
+    sigma: usize,
+    gt_scalars: &[ArkFr],
+    g1_scalars: &[ArkFr],
+    g2_scalars: &[ArkFr],
+) {
+    const PAIRING_FQ_PRODUCTS: usize = 27_340 + 7_992;
+    const PAIRING_ROWS: usize = 14_380 + 3_288;
+
+    let gt_components = gt_components(gt_scalars);
+    let g1_components = g1_components(g1_scalars);
+    let g2_components = g2_components(g2_scalars);
+    assert_eq!(gt_components.len(), 4 * gt_scalars.len());
+    assert_eq!(g1_components.len(), 2 * g1_scalars.len());
+    assert_eq!(g2_components.len(), 4 * g2_scalars.len());
+
+    for window in [3, 4, 5] {
+        for variant in [StrausVariant::Fixed, StrausVariant::Signed] {
+            let gt = gt_straus_count(
+                gt_scalars.len(),
+                gt_scalars.len() - 1,
+                &gt_components,
+                window,
+                variant,
+            );
+            let g1 = g1_straus_count(g1_scalars.len(), &g1_components, window, variant);
+            let g2 = g2_straus_count(g2_scalars.len(), &g2_components, window, variant);
+            print_straus_component(sigma, "GT", window, variant, gt_scalars.len(), 4, gt);
+            print_straus_component(sigma, "G1", window, variant, g1_scalars.len(), 2, g1);
+            print_straus_component(sigma, "G2", window, variant, g2_scalars.len(), 4, g2);
+            let fq_products =
+                gt.fq_products + g1.fq_products + g2.fq_products + PAIRING_FQ_PRODUCTS;
+            let rows = gt.rows + g1.rows + g2.rows + PAIRING_ROWS;
+            println!(
+                "STRAUS_TOTAL sigma={sigma} variant={} w={window} fq_products={fq_products} rows={rows} domain=2^{} public_digit_selectors={} public_selector_bits={} fixed_operand_offsets={} shift_relations={}",
+                variant.name(),
+                rows.next_power_of_two().ilog2(),
+                gt.public_digit_selectors
+                    + g1.public_digit_selectors
+                    + g2.public_digit_selectors,
+                gt.selector_bits + g1.selector_bits + g2.selector_bits,
+                gt.fixed_operand_offsets
+                    + g1.fixed_operand_offsets
+                    + g2.fixed_operand_offsets,
+                gt.shift_relations + g1.shift_relations + g2.shift_relations,
+            );
+        }
+    }
+}
+
 fn ec_pippenger_counts(scalars: &[SignedMagnitude], window: usize, bits: usize) -> EcOps {
     let mut ops = EcOps::default();
     let mut result_started = false;
@@ -942,14 +1552,16 @@ fn print_pairing_counts() {
         (63, 24)
     );
     let fe_mul = 3 * 24 + 10 + 2;
+    let fe_inverse_check_mul = 1;
     let fe_cyclotomic_sqr = 3 * 62 + 3;
-    let fe_fq_products = fe_mul * 54 + fe_cyclotomic_sqr * 18;
-    let fe_rows = (fe_mul + fe_cyclotomic_sqr) * 12;
+    let fe_relation_mul = fe_mul + fe_inverse_check_mul;
+    let fe_fq_products = fe_relation_mul * 54 + fe_cyclotomic_sqr * 18;
+    let fe_rows = (fe_relation_mul + fe_cyclotomic_sqr) * 12;
     println!(
         "PAIRING pairs=4 doubling_lines_per_pair={doubling_lines} signed_add_lines_per_pair={add_lines} frobenius_lines_per_pair=2 accumulator_generic_sqr={accumulator_squares} accumulator_sparse_mul={accumulator_lines} miller_fq_products={miller_fq_products} miller_rows={miller_rows}"
     );
     println!(
-        "FINAL_EXP easy_mul=2 easy_inverse=1 hard_mul={} hard_cyclotomic_sqr={fe_cyclotomic_sqr} frobenius_maps=4 total_mul={fe_mul} fq_products={fe_fq_products} rows={fe_rows}",
+        "FINAL_EXP easy_mul=2 easy_inverse=1 inverse_check_mul={fe_inverse_check_mul} hard_mul={} hard_cyclotomic_sqr={fe_cyclotomic_sqr} frobenius_maps=4 total_mul={fe_relation_mul} fq_products={fe_fq_products} rows={fe_rows}",
         fe_mul - 2
     );
 }
@@ -1061,6 +1673,43 @@ fn main() {
     assert_eq!(relation.lhs.0 .0, rhs);
     let deferred_time = deferred_start.elapsed();
 
+    let (gt_straus_bases, gt_straus_scalars) = gt_glv_expansion_raw(&fq12_bases, &relation.scalars);
+    let g1_expected = relation
+        .e1_bases
+        .iter()
+        .zip(&relation.e1_scalars)
+        .fold(G1Projective::zero(), |sum, (base, scalar)| {
+            sum + *base * scalar.0
+        });
+    let (g1_straus_bases, g1_straus_scalars) =
+        g1_glv_expansion_raw(&relation.e1_bases, &relation.e1_scalars);
+    let g2_expected = relation
+        .e2_bases
+        .iter()
+        .zip(&relation.e2_scalars)
+        .fold(G2Projective::zero(), |sum, (base, scalar)| {
+            sum + *base * scalar.0
+        });
+    let (g2_straus_bases, g2_straus_scalars) =
+        g2_glv_expansion_raw(&relation.e2_bases, &relation.e2_scalars);
+    for window in [3, 4, 5] {
+        for signed in [false, true] {
+            assert_eq!(
+                gt_straus(&gt_straus_bases, &gt_straus_scalars, window, signed,),
+                rhs,
+            );
+            assert_eq!(
+                ec_straus(&g1_straus_bases, &g1_straus_scalars, window, signed,),
+                g1_expected,
+            );
+            assert_eq!(
+                ec_straus(&g2_straus_bases, &g2_straus_scalars, window, signed,),
+                g2_expected,
+            );
+        }
+    }
+    println!("STRAUS_EQUALITY real_proof=true windows=3,4,5 variants=fixed,signed groups=GT,G1,G2");
+
     let (rhs_plain, _) = gt_pippenger(&fq12_bases, &full_scalars, 8, SCALAR_BITS);
     assert_eq!(rhs, rhs_plain);
     let (glv2_bases, glv2_scalars, glv2_bits) = glv_expansion(&fq12_bases, &full_scalars, 2);
@@ -1110,6 +1759,12 @@ fn main() {
     print_gt_counts(proof.0.sigma, NUM_COMMITMENTS, &relation.scalars);
     print_ec_counts(proof.0.sigma, "G1", &relation.e1_scalars);
     print_ec_counts(proof.0.sigma, "G2", &relation.e2_scalars);
+    print_straus_counts(
+        proof.0.sigma,
+        &relation.scalars,
+        &relation.e1_scalars,
+        &relation.e2_scalars,
+    );
 
     let commitments_42 = split_commitment(
         &ark_commitment.0 .0,
@@ -1133,5 +1788,6 @@ fn main() {
     print_gt_counts(12, NUM_COMMITMENTS, &scalars_12);
     print_ec_counts(12, "G1", &e1_scalars_12);
     print_ec_counts(12, "G2", &e2_scalars_12);
+    print_straus_counts(12, &scalars_12, &e1_scalars_12, &e2_scalars_12);
     print_pairing_counts();
 }
