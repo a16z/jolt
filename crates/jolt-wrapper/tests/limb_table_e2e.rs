@@ -16,6 +16,8 @@ mod common;
 
 use std::time::Instant;
 
+use common::Opening;
+
 use ark_bn254::{Fq, Fq12, Fr as ArkFr, G1Affine, G1Projective};
 use ark_ec::AffineRepr;
 use ark_ff::{PrimeField, UniformRand};
@@ -94,7 +96,7 @@ struct Witness {
     check: FlattenedCheck,
     values: WireValues,
     columns: Columns,
-    opening: common::Opening,
+    opening: Opening,
 }
 
 fn witness(seed: u64) -> Witness {

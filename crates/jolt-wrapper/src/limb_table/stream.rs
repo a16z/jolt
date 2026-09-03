@@ -16,10 +16,11 @@
 
 use std::ops::Range;
 
+use ark_bn254::Fr as ArkFr;
 use ark_ff::PrimeField;
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, Ring};
-use jolt_hyperkzg::HyperKZGProverSetup;
+use jolt_hyperkzg::{HyperKZGProverSetup, NoopVerifierObserver};
 
 use crate::stream::{
     commit_packed, AffineForm as StreamAffineForm, Column, ColumnId as StreamColumnId, Commitment,
@@ -29,7 +30,9 @@ use crate::stream::{
 
 use super::columns::{Columns, CHUNK_COLUMNS, LIMBS};
 use super::digit_link::{link_term, LinkMember};
-use super::export::{columns, exact_column, free_column, phases, pin_columns, ClaimedColumns};
+use super::export::{
+    columns, exact_column, free_column, phases, pin_columns, ClaimedColumns, ColumnSpec,
+};
 use super::layout::LOG_ROWS;
 use super::lookup::{omega_column, omega_eval, public_evals, DIGIT_BITS};
 use super::relation::{Challenges, Col, LookupConstants, RowRelation, RowSumcheck};
@@ -263,12 +266,7 @@ impl StreamColumns {
 }
 
 /// The small-scalar encoding of local column `local`.
-fn stream_column(
-    local: usize,
-    values: &[Fr],
-    chunks: &Columns,
-    kinds: &[super::export::ColumnSpec],
-) -> Column {
+fn stream_column(local: usize, values: &[Fr], chunks: &Columns, kinds: &[ColumnSpec]) -> Column {
     let spec = kinds
         .iter()
         .find(|c| c.first <= local && local < c.first + c.count)
@@ -285,7 +283,7 @@ fn stream_column(
 
 /// A small nonnegative field element as an integer.
 fn small(value: Fr) -> u64 {
-    let limbs = ark_bn254::Fr::from(value).into_bigint();
+    let limbs = ArkFr::from(value).into_bigint();
     debug_assert!(limbs.0[1..].iter().all(|l| *l == 0));
     limbs.0[0]
 }
@@ -398,7 +396,7 @@ impl StreamTermExporter<'_> {
 
 impl TermExporter for StreamTermExporter<'_> {
     fn terms(&self, context: &StreamTermContext<'_>) -> Vec<StreamTerm> {
-        self.export(context, &mut jolt_hyperkzg::NoopVerifierObserver)
+        self.export(context, &mut NoopVerifierObserver)
     }
 
     fn terms_observed(
