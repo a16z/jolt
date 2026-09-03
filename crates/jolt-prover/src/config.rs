@@ -216,22 +216,18 @@ fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
 /// above it, 8-bit committed chunks and `LOG_K/4 = 32`-bit virtual-RA chunks
 /// (a branch that requires a 2^25-cycle trace and may never have run in
 /// practice — kept for parity).
-pub(crate) const NARROW_ONE_HOT_CONFIG: JoltOneHotConfig = JoltOneHotConfig {
-    log_k_chunk: 4,
-    lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 8) as u8,
-};
-
-pub(crate) const WIDE_ONE_HOT_CONFIG: JoltOneHotConfig = JoltOneHotConfig {
-    log_k_chunk: 8,
-    lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 4) as u8,
-};
-
 #[expect(non_snake_case)]
 fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-        NARROW_ONE_HOT_CONFIG
+        JoltOneHotConfig {
+            log_k_chunk: 4,
+            lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 8) as u8,
+        }
     } else {
-        WIDE_ONE_HOT_CONFIG
+        JoltOneHotConfig {
+            log_k_chunk: 8,
+            lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 4) as u8,
+        }
     }
 }
 

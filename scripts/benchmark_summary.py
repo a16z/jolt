@@ -45,12 +45,9 @@ def main():
                         help='Metric to display in the table')
     parser.add_argument('--protocol', choices=['dory', 'akita'], default='dory',
                         help='Protocol rows to display (default: dory)')
-    parser.add_argument('--one-hot-k', type=int, choices=[16, 256],
-                        help='Filter packed rows by one-hot K')
     args = parser.parse_args()
 
-    geometry = f', K={args.one_hot_k}' if args.one_hot_k else ''
-    print(f"\nBenchmark Summary ({args.protocol}{geometry}, "
+    print(f"\nBenchmark Summary ({args.protocol}, "
           f"{METRICS[args.metric]['label']})")
     print("=" * 60)
 
@@ -68,8 +65,6 @@ def main():
             reader = csv.DictReader(f)
             for row in reader:
                 if not row[args.metric]:
-                    continue
-                if args.one_hot_k and row.get('one_hot_k') != str(args.one_hot_k):
                     continue
                 scale = int(row['scale'])
                 bench_type = row['benchmark_name']

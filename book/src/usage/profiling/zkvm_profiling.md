@@ -26,19 +26,6 @@ attribution is meaningful relatively — while `optimized` is the performance
 tier (legacy-parity prover performance), slotting into the same
 instrumented seams.
 
-Packed builds may force the large-trace one-hot geometry without allocating a
-2^25 trace:
-
-```bash
-cargo run --release -p jolt-prover --features akita,profiling -- \
-    profile --name fibonacci --scale 16 --backend optimized \
-    --akita-one-hot-k 256 --format chrome
-```
-
-The override accepts only `16` or `256`, is rejected by non-Akita builds, and
-is included in the artifact name so forced and policy-selected runs cannot
-collide.
-
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =
 `modular_{workload}_{scale}`, hyphens in the workload mapped to
@@ -83,7 +70,7 @@ in place with empty values for these new fields. Render them with:
 ```bash
 python3 scripts/benchmark_summary.py     # per-scale table
 python3 scripts/benchmark_summary.py --protocol akita \
-    --one-hot-k 256 --metric verifier_single_thread_time_s
+    --metric verifier_single_thread_time_s
 python3 scripts/plot_benchmarks.py       # speed + proof-size plots
 python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.json)
 ```

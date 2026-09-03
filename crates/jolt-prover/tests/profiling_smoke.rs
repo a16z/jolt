@@ -33,7 +33,6 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
-        akita_one_hot_k: None,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");

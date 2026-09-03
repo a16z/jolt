@@ -76,8 +76,6 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use rayon::ThreadPoolBuilder;
 use tracer::execution_backend::TracerBackend;
 
-#[cfg(feature = "akita")]
-use crate::config::{NARROW_ONE_HOT_CONFIG, WIDE_ONE_HOT_CONFIG};
 #[cfg(not(feature = "akita"))]
 use crate::JoltBackend;
 use crate::{JoltProverPreprocessing, ProverConfig};
@@ -92,7 +90,7 @@ const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 const DEFAULT_VERIFIER_REPETITIONS: u32 = 10;
 const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
-const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_repetitions,verifier_parallel_threads,one_hot_k";
+const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_repetitions,verifier_parallel_threads";
 
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
@@ -112,15 +110,9 @@ const PROTOCOL_SUFFIX: &str = "_akita";
 /// the sweep's resume check reads), and the artifact lock. The reference
 /// Dory names stay bare `modular_{workload}_{scale}` — the deterministic
 /// paths `jolt-eval` telemetry reads.
-fn trace_name(
-    workload: Workload,
-    scale: u32,
-    backend: BackendKind,
-    akita_one_hot_k: Option<usize>,
-) -> String {
-    let one_hot_suffix = akita_one_hot_k.map_or_else(String::new, |k| format!("_k{k}"));
+fn trace_name(workload: Workload, scale: u32, backend: BackendKind) -> String {
     format!(
-        "modular_{}{PROTOCOL_SUFFIX}_{scale}{}{one_hot_suffix}",
+        "modular_{}{PROTOCOL_SUFFIX}_{scale}{}",
         workload.as_str().replace('-', "_"),
         backend.trace_suffix()
     )
@@ -260,11 +252,6 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
-
-    /// Override the packed one-hot chunk size for profile experiments.
-    /// Accepted values are 16 and 256; unavailable without `akita`.
-    #[clap(long)]
-    pub akita_one_hot_k: Option<usize>,
 }
 
 /// `benchmark` subcommand arguments: a multi-scale sweep over the workload
@@ -363,7 +350,7 @@ impl Drop for RunLock {
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
-    let trace_name = trace_name(args.name, scale, args.backend, args.akita_one_hot_k);
+    let trace_name = trace_name(args.name, scale, args.backend);
     let _run_lock = RunLock::acquire(&trace_name);
 
     // One directory per run — benchmark-runs/{timestamp}_{trace_name}/ —
@@ -394,13 +381,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         )),
     };
 
-    run_workload(
-        args.name,
-        scale,
-        args.backend,
-        args.akita_one_hot_k,
-        &run_dir,
-    );
+    run_workload(args.name, scale, args.backend, &run_dir);
 
     // The workload's high-water mark, sampled before the flush-time trace
     // parse/rewrite below can inflate it with tooling allocations.
@@ -499,7 +480,7 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
             // the resume marker (dangling links read as absent).
             let latest_link = format!(
                 "benchmark-runs/latest_{}",
-                trace_name(workload, scale, args.backend, None)
+                trace_name(workload, scale, args.backend)
             );
             if args.resume && std::path::Path::new(&latest_link).exists() {
                 println!("  ⏭ Skipping {name} (found {latest_link})");
@@ -569,7 +550,6 @@ struct ProvenRun {
     verifier_parallel: VerificationRun,
     verifier_single_threaded: VerificationRun,
     proof_size: usize,
-    one_hot_k: Option<usize>,
 }
 
 struct VerificationRun {
@@ -656,19 +636,13 @@ fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
     migrated.push('\n');
     for row in rows.lines().filter(|row| !row.is_empty()) {
         migrated.push_str(row);
-        migrated.push_str(",,,,,,");
+        migrated.push_str(",,,,,");
         migrated.push('\n');
     }
     fs::write(path, migrated)
 }
 
-fn run_workload(
-    workload: Workload,
-    scale: u32,
-    backend: BackendKind,
-    akita_one_hot_k: Option<usize>,
-    run_dir: &Path,
-) {
+fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
     let bench_name = workload.as_str();
     let backend_label = backend.as_str();
     let max_trace_length = 1usize << scale;
@@ -702,7 +676,6 @@ fn run_workload(
         max_trace_length,
         trace_output,
         backend,
-        akita_one_hot_k,
     );
     let (duration, proof_size) = (run.duration, run.proof_size);
 
@@ -718,10 +691,8 @@ fn run_workload(
     );
     println!("modular {bench_name} (2^{scale}, {backend_label}): Proof size {proof_size} bytes");
     println!(
-        "modular {bench_name} (2^{scale}, {backend_label}): PCS setup {:.3}s{}",
+        "modular {bench_name} (2^{scale}, {backend_label}): PCS setup {:.3}s",
         run.setup_duration.as_secs_f64(),
-        run.one_hot_k
-            .map_or_else(String::new, |k| format!(", K={k}")),
     );
     println!(
         "modular {bench_name} (2^{scale}, {backend_label}): Verifier mean {:.3}ms parallel ({} threads), {:.3}ms single-threaded ({} repetitions each)",
@@ -746,7 +717,7 @@ fn run_workload(
     // compressed encoding having been retired — so the columns stay
     // directly comparable across the two harnesses.
     let summary_line = format!(
-        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label},{:.6},{:.6},{:.6},{},{},{}\n",
+        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label},{:.6},{:.6},{:.6},{},{}\n",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -759,7 +730,6 @@ fn run_workload(
         run.verifier_single_threaded.mean_seconds(),
         run.verifier_parallel.repetitions,
         run.verifier_parallel.threads,
-        run.one_hot_k.map_or_else(String::new, |k| k.to_string()),
     );
     let individual_file = run_dir.join("timings.csv");
     if let Err(e) = fs::write(&individual_file, &summary_line) {
@@ -802,12 +772,7 @@ fn prove_workload(
     max_trace_length: usize,
     trace_output: TraceOutput<Arc<Vec<JoltTraceRow>>>,
     backend: BackendKind,
-    akita_one_hot_k: Option<usize>,
 ) -> ProvenRun {
-    assert!(
-        akita_one_hot_k.is_none(),
-        "--akita-one-hot-k requires the `akita` feature"
-    );
     let (bytecode, init_memory_state, _, entry_address) = program.decode();
     let program_data =
         LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
@@ -926,7 +891,6 @@ fn prove_workload(
         verifier_parallel,
         verifier_single_threaded,
         proof_size,
-        one_hot_k: None,
     }
 }
 
@@ -941,7 +905,6 @@ fn prove_workload(
     max_trace_length: usize,
     trace_output: TraceOutput<Arc<Vec<JoltTraceRow>>>,
     backend: BackendKind,
-    akita_one_hot_k: Option<usize>,
 ) -> ProvenRun {
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_prover_legacy::zkvm::packed::{
@@ -962,7 +925,7 @@ fn prove_workload(
         JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
     let legacy_preprocessing = LegacyProverPreprocessing::new(shared_preprocessing);
 
-    let mut config = ProverConfig::derive_compact::<AkitaField>(
+    let config = ProverConfig::derive_compact::<AkitaField>(
         trace_output.trace.as_slice(),
         memory_layout,
         legacy_preprocessing
@@ -976,14 +939,6 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
-    if let Some(one_hot_k) = akita_one_hot_k {
-        config.one_hot_config = match one_hot_k {
-            16 => NARROW_ONE_HOT_CONFIG,
-            256 => WIDE_ONE_HOT_CONFIG,
-            _ => panic!("--akita-one-hot-k must be 16 or 256, got {one_hot_k}"),
-        };
-    }
-
     // The transparent OneHotTrace setup, from the config + program shape.
     let (setup_shape, layout_digest, one_hot_k) = crate::akita::one_hot_trace_setup_shape(
         &config,
@@ -1087,7 +1042,6 @@ fn prove_workload(
         verifier_parallel,
         verifier_single_threaded,
         proof_size,
-        one_hot_k: Some(one_hot_k),
     }
 }
 
