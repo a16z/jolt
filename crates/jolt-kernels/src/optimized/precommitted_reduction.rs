@@ -499,7 +499,7 @@ fn parallel_chunk_coeffs<F: JoltField>(
 /// reference slot reclaims the optimized pipeline's carry and vice versa),
 /// so the mixed-tier composition promise — either tier's stage 6b feeds
 /// either tier's stage 7 — is the very thing the address-phase parity pins.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "akita")))]
 #[expect(
     clippy::unwrap_used,
     clippy::expect_used,

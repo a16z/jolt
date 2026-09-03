@@ -5,6 +5,7 @@
         reason = "test fixtures should fail loudly when their assumed proof shape changes"
     )
 )]
+#![cfg(not(feature = "akita"))]
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::{

@@ -5,6 +5,8 @@ use super::outputs::{Stage8ClearOutput, Stage8ZkOutput};
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(feature = "akita")]
+use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
 use crate::stages::{stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims};
 use crate::{
@@ -496,6 +498,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
+    stage4: &Stage4Output<F, VC::Output>,
     stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
@@ -517,6 +520,7 @@ where
         &proof.joint_opening_proof,
         transcript,
         &checked.precommitted,
+        stage4.clear()?,
         stage6.clear()?,
         stage7.clear()?,
     )?;

@@ -17,6 +17,11 @@ use super::carry_claim_reduction::{
     carry_claim_reduction_input_values_from_upstream,
 };
 #[cfg(not(feature = "akita"))]
+use super::committed_reduction_cycle_phase::{
+    trusted_advice_cycle_phase_input_values_from_upstream,
+    untrusted_advice_cycle_phase_input_values_from_upstream,
+};
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
 };
@@ -29,8 +34,6 @@ use super::{
     bytecode_read_raf::BytecodeReadRafInputClaims,
     committed_reduction_cycle_phase::{
         program_image_reduction_cycle_phase_input_values_from_upstream,
-        trusted_advice_cycle_phase_input_values_from_upstream,
-        untrusted_advice_cycle_phase_input_values_from_upstream,
         BytecodeReductionCyclePhaseInputClaims,
     },
     instruction_ra_virtualization::{
@@ -184,10 +187,12 @@ where
     // checks (`no_output_shape`, so no generated validator runs these guards
     // itself); one call per `Option` member. Transcript-free (runs before the
     // batched verify); the tampering suite asserts generic rejection.
+    #[cfg(not(feature = "akita"))]
     validate_member_presence(
         sumchecks.trusted_advice.as_ref(),
         claims.trusted_advice.as_ref(),
     )?;
+    #[cfg(not(feature = "akita"))]
     validate_member_presence(
         sumchecks.untrusted_advice.as_ref(),
         claims.untrusted_advice.as_ref(),
@@ -425,6 +430,7 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
         ),
         #[cfg(feature = "implicit-carry")]
         carry_claim_reduction: carry_claim_reduction_input_values_from_upstream(stage2, stage3),
+        #[cfg(not(feature = "akita"))]
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
@@ -432,6 +438,7 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
                 trusted_advice_cycle_phase_input_values_from_upstream(&stage4.ram_val_check_init)
             })
             .transpose()?,
+        #[cfg(not(feature = "akita"))]
         untrusted_advice: sumchecks
             .untrusted_advice
             .as_ref()
@@ -521,9 +528,11 @@ pub fn stage6b_opening_values<F: JoltField>(
     values.extend(claims.carry_claim_reduction.opening_values());
     // Each advice member is a single-slot per-kind claims struct, so it
     // contributes exactly its own kind's opening.
+    #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.trusted_advice {
         values.extend(advice.opening_values());
     }
+    #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.untrusted_advice {
         values.extend(advice.opening_values());
     }
@@ -615,9 +624,11 @@ fn append_opening_claims<F, T>(
     // The optional members single-source their per-field Fiat-Shamir order from the
     // `OutputClaims` derive too. Each advice member is a single-slot per-kind claims
     // struct, so it absorbs exactly its own kind's opening.
+    #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.trusted_advice {
         advice.append_openings(transcript);
     }
+    #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.untrusted_advice {
         advice.append_openings(transcript);
     }
@@ -714,7 +725,9 @@ mod tests {
                     crate::stages::stage6b::outputs::CarryClaimReductionOutputClaims {
                         carry: fr(11),
                     },
+                #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
+                #[cfg(not(feature = "akita"))]
                 untrusted_advice: None,
                 bytecode_reduction: None,
                 program_image_reduction: None,
@@ -807,7 +820,9 @@ mod tests {
             #[cfg(feature = "implicit-carry")]
             carry_claim_reduction:
                 crate::stages::stage6b::outputs::CarryClaimReductionOutputClaims { carry: fr(13) },
+            #[cfg(not(feature = "akita"))]
             trusted_advice: None,
+            #[cfg(not(feature = "akita"))]
             untrusted_advice: None,
             bytecode_reduction: None,
             program_image_reduction: None,

@@ -15,7 +15,7 @@ workspace = true
 default = ["parallel"]
 akita = ["jolt-claims/akita", "jolt-verifier/akita"]
 # Shallow heap visitation of the proof session (profile harness flamegraphs).
-allocative = ["dep:allocative", "jolt-poly/allocative"]
+allocative = ["dep:allocative", "jolt-field/allocative", "jolt-poly/allocative"]
 parallel = [
   "dep:rayon",
   "jolt-poly/parallel",
@@ -44,6 +44,9 @@ jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
+
+[target.'cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))'.dependencies]
+libc.workspace = true
 
 [dev-dependencies]
 common = { workspace = true, features = ["std"] }

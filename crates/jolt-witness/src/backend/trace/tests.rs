@@ -1,11 +1,3 @@
-#![cfg_attr(
-    not(any(feature = "field-inline", feature = "implicit-carry")),
-    expect(
-        clippy::needless_update,
-        reason = "the default update initializes the cfg-gated trace fields"
-    )
-)]
-
 use common::{
     constants::RAM_START_ADDRESS,
     jolt_device::{JoltDevice, MemoryConfig, MemoryLayout},
@@ -85,6 +77,14 @@ fn trace_output() -> TraceOutput<OwnedTrace> {
 
 fn trace_output_with_rows(rows: Vec<TraceRow>) -> TraceOutput<OwnedTrace> {
     TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None)
+}
+
+fn checked_row(
+    instruction: JoltInstructionRow,
+    registers: RegisterState,
+    ram_access: RamAccess,
+) -> TraceRow {
+    TraceRow::new(instruction, registers, ram_access).unwrap()
 }
 
 fn trace_output_with_device(device: JoltDevice) -> TraceOutput<OwnedTrace> {
@@ -230,10 +230,7 @@ fn backend_rejects_physical_rows_beyond_cycle_domain() {
     .unwrap();
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![
-        TraceRow {
-            instruction,
-            ..Default::default()
-        },
+        checked_row(instruction, RegisterState::default(), RamAccess::NoOp),
         TraceRow::default(),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
@@ -352,7 +349,7 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let program = Arc::new(JoltProgram::default());
     let rows = vec![
-        TraceRow::new(
+        checked_row(
             instruction_row,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -368,7 +365,7 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
             },
             RamAccess::NoOp,
         ),
-        TraceRow::new(
+        checked_row(
             load_instruction,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -447,9 +444,9 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
         ..base_preprocessing()
     });
     let rows = vec![
-        TraceRow {
-            instruction: store,
-            registers: RegisterState {
+        checked_row(
+            store,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: access_address,
@@ -460,20 +457,20 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Write(RamWrite {
+            RamAccess::Write(RamWrite {
                 address: access_address,
                 pre_value: 3,
                 post_value: 9,
             }),
-            ..Default::default()
-        },
-        TraceRow {
-            ram_access: RamAccess::NoOp,
-            ..Default::default()
-        },
-        TraceRow {
-            instruction: load,
-            registers: RegisterState {
+        ),
+        checked_row(
+            JoltInstructionRow::default(),
+            RegisterState::default(),
+            RamAccess::NoOp,
+        ),
+        checked_row(
+            load,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: access_address,
@@ -485,12 +482,11 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Read(RamRead {
+            RamAccess::Read(RamRead {
                 address: access_address,
                 value: 9,
             }),
-            ..Default::default()
-        },
+        ),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(JoltVmWitnessConfig::new(2, 16, config().one_hot), inputs);
@@ -555,9 +551,9 @@ fn register_read_write_virtual_views_materialize_address_major_state() -> Result
     .map_err(|error| error.to_string())?;
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![
-        TraceRow {
-            instruction: first,
-            registers: RegisterState {
+        checked_row(
+            first,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 0,
                     value: 0,
@@ -569,11 +565,11 @@ fn register_read_write_virtual_views_materialize_address_major_state() -> Result
                 }),
                 ..Default::default()
             },
-            ..Default::default()
-        },
-        TraceRow {
-            instruction: second,
-            registers: RegisterState {
+            RamAccess::NoOp,
+        ),
+        checked_row(
+            second,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 1,
                     value: 5,
@@ -585,11 +581,11 @@ fn register_read_write_virtual_views_materialize_address_major_state() -> Result
                 }),
                 ..Default::default()
             },
-            ..Default::default()
-        },
-        TraceRow {
-            instruction: third,
-            registers: RegisterState {
+            RamAccess::NoOp,
+        ),
+        checked_row(
+            third,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 0,
                     value: 0,
@@ -600,8 +596,8 @@ fn register_read_write_virtual_views_materialize_address_major_state() -> Result
                 }),
                 ..Default::default()
             },
-            ..Default::default()
-        },
+            RamAccess::NoOp,
+        ),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
@@ -685,7 +681,7 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
     let preprocessing = preprocessing_with_bytecode(bytecode);
-    let row = TraceRow::new(
+    let row = checked_row(
         instruction_row,
         RegisterState {
             rs1: Some(RegisterRead {
@@ -704,7 +700,7 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
     let row = TraceBackend::<OwnedTrace>::compact_trace_row(&row, &preprocessing)
         .map_err(|error| error.to_string())?;
     let ram_row = TraceBackend::<OwnedTrace>::compact_trace_row(
-        &TraceRow::new(
+        &checked_row(
             load_instruction,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -857,9 +853,9 @@ fn rd_inc_materializes_register_write_deltas_and_padding() {
             .unwrap();
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![
-        TraceRow {
-            instruction: first,
-            registers: RegisterState {
+        checked_row(
+            first,
+            RegisterState {
                 rd: Some(RegisterWrite {
                     register: 1,
                     pre_value: 10,
@@ -867,11 +863,11 @@ fn rd_inc_materializes_register_write_deltas_and_padding() {
                 }),
                 ..Default::default()
             },
-            ..Default::default()
-        },
-        TraceRow {
-            instruction: second,
-            registers: RegisterState {
+            RamAccess::NoOp,
+        ),
+        checked_row(
+            second,
+            RegisterState {
                 rd: Some(RegisterWrite {
                     register: 2,
                     pre_value: 2,
@@ -879,8 +875,8 @@ fn rd_inc_materializes_register_write_deltas_and_padding() {
                 }),
                 ..Default::default()
             },
-            ..Default::default()
-        },
+            RamAccess::NoOp,
+        ),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
@@ -900,9 +896,9 @@ fn ram_inc_materializes_write_deltas_only() {
             .unwrap();
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![
-        TraceRow {
-            instruction: store,
-            registers: RegisterState {
+        checked_row(
+            store,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: 10,
@@ -913,16 +909,15 @@ fn ram_inc_materializes_write_deltas_only() {
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Write(RamWrite {
+            RamAccess::Write(RamWrite {
                 address: 10,
                 pre_value: 5,
                 post_value: 12,
             }),
-            ..Default::default()
-        },
-        TraceRow {
-            instruction: load,
-            registers: RegisterState {
+        ),
+        checked_row(
+            load,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: 10,
@@ -934,12 +929,11 @@ fn ram_inc_materializes_write_deltas_only() {
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Read(RamRead {
+            RamAccess::Read(RamRead {
                 address: 10,
                 value: 12,
             }),
-            ..Default::default()
-        },
+        ),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
@@ -965,14 +959,8 @@ fn bytecode_ra_materializes_pc_chunks_and_noop_padding() {
     };
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let rows = vec![
-        TraceRow {
-            instruction: first,
-            ..Default::default()
-        },
-        TraceRow {
-            instruction: second,
-            ..Default::default()
-        },
+        checked_row(first, RegisterState::default(), RamAccess::NoOp),
+        checked_row(second, RegisterState::default(), RamAccess::NoOp),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
@@ -1000,9 +988,9 @@ fn ram_ra_materializes_remapped_address_chunks_and_noop_padding() {
         ..base_preprocessing()
     });
     let rows = vec![
-        TraceRow {
-            instruction: load,
-            registers: RegisterState {
+        checked_row(
+            load,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: access_address,
@@ -1014,16 +1002,16 @@ fn ram_ra_materializes_remapped_address_chunks_and_noop_padding() {
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Read(RamRead {
+            RamAccess::Read(RamRead {
                 address: access_address,
                 value: 12,
             }),
-            ..Default::default()
-        },
-        TraceRow {
-            ram_access: RamAccess::NoOp,
-            ..Default::default()
-        },
+        ),
+        checked_row(
+            JoltInstructionRow::default(),
+            RegisterState::default(),
+            RamAccess::NoOp,
+        ),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
@@ -1041,17 +1029,17 @@ fn instruction_ra_materializes_lookup_index_chunks_and_noop_padding() {
         BytecodePreprocessing::preprocess(vec![instruction_row], RAM_START_ADDRESS, RV64IMAC_JOLT)
             .unwrap();
     let preprocessing = preprocessing_with_bytecode(bytecode);
-    let rows = vec![TraceRow {
-        instruction: instruction_row,
-        registers: RegisterState {
+    let rows = vec![checked_row(
+        instruction_row,
+        RegisterState {
             rs1: Some(RegisterRead {
                 register: 2,
                 value: 10,
             }),
             ..Default::default()
         },
-        ..Default::default()
-    }];
+        RamAccess::NoOp,
+    )];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(config().with_log_t(2), inputs);
     let table = committed_table(&witness, JoltCommittedPolynomial::InstructionRa(15)).unwrap();
@@ -1229,10 +1217,7 @@ fn backend_drops_only_canonical_trailing_padding() {
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let program = Arc::new(JoltProgram::default());
     let rows = vec![
-        TraceRow {
-            instruction: instruction_row,
-            ..Default::default()
-        },
+        checked_row(instruction_row, RegisterState::default(), RamAccess::NoOp),
         TraceRow::default(),
         TraceRow::default(),
     ];
@@ -1244,4 +1229,37 @@ fn backend_drops_only_canonical_trailing_padding() {
         materialized_virtual_view(&backend, JoltVirtualPolynomial::NextIsNoop).unwrap(),
         [1, 1, 1, 1].map(Fr::from_u64)
     );
+}
+
+/// The dense-grid capacity formula: in-range shapes pass through, the
+/// profiling-scale shape that used to abort the process (`ram_K = 4096`,
+/// `log_T = 22`, 32-byte field: a 2^39-byte request) is refused with an
+/// actionable error, and the element/byte products refuse on overflow
+/// instead of wrapping.
+#[test]
+fn dense_grid_len_is_capped_and_overflow_checked() {
+    assert_eq!(checked_dense_grid_len::<Fr>(4096, 1 << 10), Ok(4096 << 10));
+    assert_eq!(
+        checked_dense_grid_len::<Fr>(
+            MAX_DENSE_GRID_BYTES / core::mem::size_of::<Fr>() / (1 << 10),
+            1 << 10
+        ),
+        Ok(MAX_DENSE_GRID_BYTES / core::mem::size_of::<Fr>())
+    );
+
+    let refused = checked_dense_grid_len::<Fr>(4096, 1 << 22).unwrap_err();
+    let reason = match refused {
+        WitnessError::InvalidDimensions { reason, .. } => reason,
+        other => format!("expected InvalidDimensions, got {other:?}"),
+    };
+    assert!(reason.contains(&(1_u64 << 39).to_string()), "{reason}");
+
+    assert!(matches!(
+        checked_dense_grid_len::<Fr>(usize::MAX, 2),
+        Err(WitnessError::InvalidDimensions { .. })
+    ));
+    assert!(matches!(
+        checked_dense_grid_len::<Fr>(usize::MAX / 8, 1),
+        Err(WitnessError::InvalidDimensions { .. })
+    ));
 }

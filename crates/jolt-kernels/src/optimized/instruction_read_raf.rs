@@ -347,11 +347,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
 
 /// One RAF prefix–suffix decomposition — same shape and binding as the
 /// reference kernel's.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RafDecomposition<F: JoltField> {
     prefix: Polynomial<F>,
     q_shift: Polynomial<F>,
@@ -410,16 +406,11 @@ fn extension_pair<F: JoltField>(evals: &[F], b: usize, half: usize) -> (F, F) {
 }
 
 /// Cycle-round state: the Gruen-split eq factor plus the cycle tables.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct CycleState<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     tables: CycleTables<F>,
     /// Reused low-to-high binding buffer (swapped through every bind).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
 }
 
@@ -431,11 +422,7 @@ struct CycleState<F: JoltField> {
 /// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
 /// exist. Values are identical to materialize-then-bind: the bases are the
 /// same, and `lo + r·(hi − lo)` is the binding formula either way.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CycleTables<F: JoltField> {
     Pending(PendingCycleTables<F>),
     Dense {
@@ -446,14 +433,9 @@ enum CycleTables<F: JoltField> {
 
 /// Everything the pending-base evaluations need beyond the kernel's own
 /// rows / claim columns / phase eq tables.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct PendingCycleTables<F: JoltField> {
     /// Per-table combined value at the bound address point.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     table_values: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     raf_interleaved: F,
@@ -542,26 +524,20 @@ impl<F: JoltField> RafSums<F> {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: InstructionReadRafDimensions,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_reduction: Vec<F>,
     rows: Arc<Vec<InstructionCycleRow>>,
     /// Per-table cycle buckets (`u32` cycle indices), by
     /// `LookupTableKind::index()`.
     buckets: Vec<Vec<u32>>,
     /// Condensed per-cycle eq weights (see the reference kernel).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     u_evals: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
     /// `ALL_PREFIXES` indices referenced by tables with non-empty buckets.
     prefix_indices: Vec<usize>,
@@ -577,11 +553,8 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     raf_identity: RafDecomposition<F>,
     raf_upper_all_ones: RafDecomposition<F>,
     /// Completed phases' bound-challenge eq tables.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     v_tables: Vec<Vec<F>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     phase_challenges: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
     /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,

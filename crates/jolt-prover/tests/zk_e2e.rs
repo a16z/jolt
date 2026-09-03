@@ -458,8 +458,7 @@ mod zk {
                     assert_eq!(
                         rows.iter()
                             .filter(|row| {
-                                row.instruction.instruction_kind
-                                    == JoltInstructionKind::VirtualROTRI
+                                row.instruction_kind() == JoltInstructionKind::VirtualROTRI
                             })
                             .count(),
                         KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,

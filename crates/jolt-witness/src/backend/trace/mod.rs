@@ -339,8 +339,9 @@ impl<T: TraceSource> TraceBackend<T> {
         row: &TraceRow,
         preprocessing: &JoltProgramPreprocessing,
     ) -> Result<JoltTraceRow, WitnessError> {
-        let register = row.registers;
-        let instruction = JoltInstruction::try_from(row.instruction).map_err(|kind| {
+        let register = row.registers();
+        let instruction_row = row.instruction();
+        let instruction = JoltInstruction::try_from(instruction_row).map_err(|kind| {
             WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: format!("unsupported Jolt instruction kind in trace row: {kind:?}"),
@@ -352,7 +353,7 @@ impl<T: TraceSource> TraceBackend<T> {
         let rd_pre_value = register.rd.map_or(0, |value| value.pre_value);
         let rd_write_value = register.rd.map_or(0, |value| value.post_value);
         let state = if circuit_flags[CircuitFlags::Load] {
-            let RamAccess::Read(read) = row.ram_access else {
+            let RamAccess::Read(read) = row.ram_access() else {
                 return Err(invalid_compact_row(
                     row,
                     "load instruction is missing its RAM read",
@@ -371,7 +372,7 @@ impl<T: TraceSource> TraceBackend<T> {
                 rd_write_value,
             })
         } else if circuit_flags[CircuitFlags::Store] {
-            let RamAccess::Write(write) = row.ram_access else {
+            let RamAccess::Write(write) = row.ram_access() else {
                 return Err(invalid_compact_row(
                     row,
                     "store instruction is missing its RAM write",
@@ -390,7 +391,7 @@ impl<T: TraceSource> TraceBackend<T> {
                 ram_address: write.address,
             })
         } else {
-            if row.ram_access != RamAccess::NoOp {
+            if row.ram_access() != RamAccess::NoOp {
                 return Err(invalid_compact_row(
                     row,
                     "non-memory instruction carries RAM access data",
@@ -405,19 +406,19 @@ impl<T: TraceSource> TraceBackend<T> {
         };
         let pc = preprocessing
         .bytecode
-        .get_pc(&row.instruction)
+        .get_pc(&instruction_row)
         .ok_or_else(|| WitnessError::InvalidWitnessData {
             label: JOLT_VM_LABEL,
             reason: format!(
                 "bytecode preprocessing is missing PC mapping for address {:#x} with virtual_sequence_remaining {:?}",
-                row.instruction.address, row.instruction.virtual_sequence_remaining
+                instruction_row.address, instruction_row.virtual_sequence_remaining
             ),
         })?;
         let pc = u32::try_from(pc).map_err(|_| WitnessError::InvalidWitnessData {
             label: JOLT_VM_LABEL,
             reason: format!("bytecode PC {pc} does not fit the compact trace row"),
         })?;
-        JoltTraceRow::from_components(state, &row.instruction, pc).map_err(|error| {
+        JoltTraceRow::from_components(state, &instruction_row, pc).map_err(|error| {
             WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: error.to_string(),
@@ -429,7 +430,48 @@ impl<T: TraceSource> TraceBackend<T> {
 fn invalid_compact_row(row: &TraceRow, reason: &'static str) -> WitnessError {
     WitnessError::InvalidWitnessData {
         label: JOLT_VM_LABEL,
-        reason: format!("{reason} for {:?}", row.instruction.instruction_kind),
+        reason: format!("{reason} for {:?}", row.instruction_kind()),
+    }
+}
+
+/// Upper bound, in bytes, on a dense `(K × T)` oracle grid materialized by
+/// the trace backend: the RAM and register read-write grids and the one-hot
+/// RA grids. The request grows linearly with the trace length and reaches
+/// hundreds of GiB at profiling scales (`ram_K = 4096`, `log_T = 22`, 32-byte
+/// field: 2^39 bytes). Past this bound the global allocator aborts the
+/// process with an opaque `memory allocation of N bytes failed`; refusing
+/// with a `WitnessError` keeps the failure actionable. 32 GiB admits every
+/// in-tree test and the fibonacci profiling default (scale 16); the larger
+/// documented profiling defaults are refused by design and belong on the
+/// optimized backend.
+pub(crate) const MAX_DENSE_GRID_BYTES: usize = 1 << 35;
+
+/// The element count of a dense `addresses × cycles` grid of `F`, refused
+/// with an actionable error when the byte size overflows or exceeds
+/// [`MAX_DENSE_GRID_BYTES`].
+pub(crate) fn checked_dense_grid_len<F>(
+    addresses: usize,
+    cycles: usize,
+) -> Result<usize, WitnessError> {
+    let len = addresses
+        .checked_mul(cycles)
+        .ok_or_else(|| WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: format!("dense grid of {addresses} addresses x {cycles} cycles overflows"),
+        })?;
+    let bytes = len.checked_mul(core::mem::size_of::<F>());
+    match bytes {
+        Some(bytes) if bytes <= MAX_DENSE_GRID_BYTES => Ok(len),
+        _ => Err(WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: format!(
+                "dense grid of {addresses} addresses x {cycles} cycles needs {} bytes \
+                 (> {MAX_DENSE_GRID_BYTES} max); this naive materialization is a test \
+                 oracle sized for small traces — use the optimized backend for larger \
+                 shapes",
+                bytes.map_or_else(|| "overflowing".to_owned(), |bytes| bytes.to_string()),
+            ),
+        }),
     }
 }
 

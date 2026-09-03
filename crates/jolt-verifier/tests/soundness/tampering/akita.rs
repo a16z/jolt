@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::lattice::relations::{
     booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::JoltField;
+use jolt_field::{JoltField, Ring};
 use jolt_prover_legacy::zkvm::packed::{
     AkitaField, AkitaJoltProof, AkitaScheme, AkitaTranscript, AkitaVc,
 };
@@ -62,13 +62,9 @@ use jolt_verifier::stages::{
     stage6b::outputs::{
         BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
         ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
-        RamRaVirtualizationOutputClaims, Stage6bOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
-        UntrustedAdviceCyclePhaseOutputClaims,
+        RamRaVirtualizationOutputClaims, Stage6bOutputClaims,
     },
     stage7::{
-        advice_address_phase::{
-            TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
-        },
         committed_reduction_address_phase::{
             BytecodeReductionAddressPhaseOutputClaims,
             ProgramImageReductionAddressPhaseOutputClaims,
@@ -402,8 +398,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
         ram_hamming_booleanity,
         ram_ra_virtualization,
         instruction_ra_virtualization,
-        trusted_advice,
-        untrusted_advice,
         bytecode_reduction,
         program_image_reduction,
     } = claims;
@@ -449,12 +443,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
     for scalar in committed_instruction_ra.iter_mut() {
         f(scalar);
     }
-    if let Some(TrustedAdviceCyclePhaseOutputClaims { trusted }) = trusted_advice {
-        f(trusted);
-    }
-    if let Some(UntrustedAdviceCyclePhaseOutputClaims { untrusted }) = untrusted_advice {
-        f(untrusted);
-    }
     if let Some(BytecodeReductionCyclePhaseOutputClaims {
         intermediate,
         chunks,
@@ -477,8 +465,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
 fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage7OutputClaims {
         hamming_weight_claim_reduction,
-        trusted_advice,
-        untrusted_advice,
         bytecode_address_phase,
         program_image_address_phase,
     } = claims;
@@ -502,12 +488,6 @@ fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn Fn
         f(scalar);
     }
     f(balanced_inc_carry);
-    if let Some(TrustedAdviceAddressPhaseOutputClaims { trusted }) = trusted_advice {
-        f(trusted);
-    }
-    if let Some(UntrustedAdviceAddressPhaseOutputClaims { untrusted }) = untrusted_advice {
-        f(untrusted);
-    }
     if let Some(BytecodeReductionAddressPhaseOutputClaims { chunks }) = bytecode_address_phase {
         for scalar in chunks.iter_mut() {
             f(scalar);

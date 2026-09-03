@@ -1,8 +1,8 @@
-use std::{collections::BTreeSet, fmt, io::Cursor, sync::Arc, sync::OnceLock};
+use std::{fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
-use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly, SparseRingPoly};
+use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
 use akita_transcript::Transcript as AkitaBackendTranscript;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
@@ -10,7 +10,7 @@ use akita_types::{
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup,
 };
-use jolt_field::CanonicalBytes;
+use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -50,7 +50,6 @@ pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
 pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
-pub(crate) type AkitaBackendSparsePoly = SparseRingPoly<AkitaField>;
 pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField>;
 pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaField>;
 pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
@@ -614,6 +613,23 @@ pub struct AkitaBatchProof {
     pub(crate) serialized_akita_proof: Vec<u8>,
 }
 
+impl AkitaBatchProof {
+    /// Headerless backend proof body produced by Akita's canonical encoder.
+    pub fn backend_proof_body_size(&self) -> usize {
+        self.serialized_akita_proof.len()
+    }
+
+    /// Sum of the raw component bytes before the enclosing Jolt serializer
+    /// adds container tags or length prefixes.
+    pub fn unframed_payload_size(&self) -> Option<usize> {
+        self.statement_bridge
+            .len()
+            .checked_add(self.serialized_schedule_selection.len())?
+            .checked_add(self.serialized_akita_proof_shape.len())?
+            .checked_add(self.serialized_akita_proof.len())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaHidingCommitment {
@@ -653,7 +669,6 @@ pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
     OneHot(Arc<[AkitaBackendOneHotPoly]>),
     TraceOneHot(TracePackedOneHot),
-    SparseUnit(Arc<[AkitaBackendSparsePoly]>),
 }
 
 impl Default for AkitaHintPolynomials {
@@ -665,7 +680,7 @@ impl Default for AkitaHintPolynomials {
 impl AkitaHintPolynomials {
     pub(crate) const fn backend_flavor(&self) -> AkitaBackendFlavor {
         match self {
-            Self::Dense(_) | Self::SparseUnit(_) => AkitaBackendFlavor::Dense,
+            Self::Dense(_) => AkitaBackendFlavor::Dense,
             Self::OneHot(_) | Self::TraceOneHot(_) => AkitaBackendFlavor::OneHot,
         }
     }
@@ -675,7 +690,6 @@ impl AkitaHintPolynomials {
             Self::Dense(_) => "dense",
             Self::OneHot(_) => "one_hot",
             Self::TraceOneHot(_) => "trace_one_hot",
-            Self::SparseUnit(_) => "sparse_unit",
         }
     }
 
@@ -684,7 +698,6 @@ impl AkitaHintPolynomials {
             Self::Dense(polys) => polys.len(),
             Self::OneHot(polys) => polys.len(),
             Self::TraceOneHot(_) => 1,
-            Self::SparseUnit(polys) => polys.len(),
         }
     }
 
@@ -696,7 +709,7 @@ impl AkitaHintPolynomials {
             Self::TraceOneHot(polynomial) => {
                 akita_prover::RootPolyMeta::onehot_chunk_size(polynomial)
             }
-            Self::Dense(_) | Self::SparseUnit(_) => None,
+            Self::Dense(_) => None,
         }
     }
 }
@@ -744,7 +757,7 @@ where
         .one_hot_indices()
         .ok_or_else(|| invalid_batch("Jolt one-hot polynomial did not expose its indices"))?;
     let _ = validate_one_hot_k(one_hot_k)?;
-    AkitaBackendOneHotPoly::new(one_hot_k, AKITA_SOURCE_RING_DIMENSION, indices.to_vec())
+    AkitaBackendOneHotPoly::new(one_hot_k, indices.to_vec())
         .map(Some)
         .map_err(akita_error)
 }
@@ -759,12 +772,7 @@ pub(crate) fn owned_one_hot_polynomial(
         )));
     }
     let _ = validate_one_hot_k(one_hot_k)?;
-    AkitaBackendOneHotPoly::new(
-        one_hot_k,
-        AKITA_SOURCE_RING_DIMENSION,
-        polynomial.into_indices(),
-    )
-    .map_err(akita_error)
+    AkitaBackendOneHotPoly::new(one_hot_k, polynomial.into_indices()).map_err(akita_error)
 }
 
 pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsError> {
@@ -811,55 +819,6 @@ pub(crate) fn one_hot_setup_verifier(
     }
 }
 
-pub(crate) fn sparse_unit_polynomial(
-    num_vars: usize,
-    indices: impl IntoIterator<Item = usize>,
-) -> Result<AkitaBackendSparsePoly, OpeningsError> {
-    let domain_size = domain_size(num_vars).ok_or_else(|| {
-        invalid_batch(format!(
-            "Akita sparse polynomial dimension {num_vars} exceeds usize bit width"
-        ))
-    })?;
-    if domain_size < AKITA_SOURCE_RING_DIMENSION {
-        return Err(invalid_batch(format!(
-            "Akita sparse polynomial domain {domain_size} is smaller than the minimum source ring dimension {AKITA_SOURCE_RING_DIMENSION}"
-        )));
-    }
-
-    let mut seen = BTreeSet::new();
-    let mut coeffs = Vec::new();
-    for index in indices {
-        if index >= domain_size {
-            return Err(invalid_batch(format!(
-                "Akita sparse polynomial index {index} outside domain size {domain_size}"
-            )));
-        }
-        if !seen.insert(index) {
-            return Err(invalid_batch(format!(
-                "Akita sparse polynomial index {index} appears more than once"
-            )));
-        }
-        let akita_index = jolt_to_akita_index(num_vars, index);
-        coeffs.push((
-            akita_index / AKITA_SOURCE_RING_DIMENSION,
-            akita_index % AKITA_SOURCE_RING_DIMENSION,
-            1i8,
-        ));
-    }
-
-    AkitaBackendSparsePoly::from_signed_coeffs(
-        num_vars,
-        AKITA_SOURCE_RING_DIMENSION,
-        domain_size / AKITA_SOURCE_RING_DIMENSION,
-        coeffs,
-    )
-    .map_err(|error| {
-        invalid_batch(format!(
-            "Akita sparse polynomial construction failed: {error}"
-        ))
-    })
-}
-
 #[doc(hidden)]
 pub fn jolt_to_akita_index(num_vars: usize, index: usize) -> usize {
     if num_vars == 0 {
@@ -875,12 +834,7 @@ pub(crate) fn dense_polynomials(
         .iter()
         .map(|poly| {
             let evals = jolt_to_akita_evals(poly.num_vars(), poly.evals())?;
-            AkitaBackendDensePoly::from_field_evals(
-                poly.num_vars(),
-                AKITA_SOURCE_RING_DIMENSION,
-                &evals,
-            )
-            .map_err(akita_error)
+            AkitaBackendDensePoly::from_field_evals(poly.num_vars(), evals).map_err(akita_error)
         })
         .collect()
 }

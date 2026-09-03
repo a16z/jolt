@@ -15,20 +15,6 @@ use akita_types::{
 
 use crate::AKITA_ONE_HOT_K16;
 
-fn dp_planned_schedule<Cfg: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
-) -> Result<FoldSchedule, AkitaError> {
-    let planned = akita_planner::find_schedule(
-        key,
-        akita_config::honest_fold_policy_of::<Cfg>(),
-        &[],
-        &akita_config::policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-    )?;
-    planned.schedule.validate_structure()?;
-    Ok(planned.schedule)
-}
-
 /// Fold one catalog row and its independently committed prefixes into `capacity`.
 fn fold_row_capacity(
     capacity: &mut SetupMatrixCapacity,
@@ -42,8 +28,8 @@ fn fold_row_capacity(
             .fits_setup_capacity(max_num_vars, max_num_batched_polys)?
         {
             let commit_only = commit_only_setup_field_elements(
-                &precommitted.inner_commit_matrix,
-                &precommitted.outer_commit_matrix,
+                &precommitted.inner.matrix,
+                &precommitted.outer.matrix,
                 precommitted.outer_slice_count,
             )?;
             capacity.num_field_elements = capacity.num_field_elements.max(commit_only);
@@ -70,8 +56,10 @@ fn catalog_setup_capacity<Cfg: CommitmentConfig + 'static>(
     let fallback_key = AkitaScheduleLookupKey::single(
         OpeningClaimsLayout::new(max_num_vars, max_num_batched_polys)?.root_final_group_layout()?,
     );
-    let mut capacity =
-        setup_matrix_capacity_for_schedule(&dp_planned_schedule::<Cfg>(&fallback_key)?)?;
+    let mut capacity = setup_matrix_capacity_for_schedule(&crate::planning::plan_schedule::<Cfg>(
+        &fallback_key,
+        &[],
+    )?)?;
     for entry in table.entries {
         let key = entry.to_runtime_lookup_key();
         fold_row_capacity(
@@ -118,7 +106,6 @@ macro_rules! delegate_preset {
         impl CommitmentConfig for $name {
             type Field = <$base as CommitmentConfig>::Field;
             type ExtField = <$base as CommitmentConfig>::ExtField;
-            const D: usize = <$base as CommitmentConfig>::D;
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
                 <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
@@ -165,7 +152,10 @@ macro_rules! delegate_preset {
                     )?
                     .root_final_group_layout()?,
                 );
-                setup_matrix_capacity_for_schedule(&dp_planned_schedule::<Self>(&key)?)
+                setup_matrix_capacity_for_schedule(&crate::planning::plan_schedule::<Self>(
+                    &key,
+                    &[],
+                )?)
             }
 
             fn opening_basis_range() -> (u32, u32) {
@@ -287,7 +277,6 @@ mod tests {
     #[test]
     #[expect(clippy::unwrap_used)]
     fn k256_policy_uses_adaptive_dimensions() {
-        assert_eq!(JoltOneHotK256::D, 256);
         assert_eq!(JoltOneHotK256::inner_basis_range(), (3, 11));
         assert_eq!(JoltOneHotK256::opening_basis_range(), (3, 6));
         assert!(matches!(
@@ -298,8 +287,8 @@ mod tests {
         let layout = akita_types::OpeningClaimsLayout::new(39, 1).unwrap();
         let row = JoltOneHotK256::resolve_catalog_row_for_opening(&layout).unwrap();
         let schedule = row.schedule();
-        let commitment = &schedule.root.params.final_group.commitment;
-        assert!([64, 128, 256].contains(&commitment.inner_commit_matrix.ring_dimension()));
-        assert!([64, 128].contains(&commitment.outer_commit_matrix.ring_dimension()));
+        let commitment = schedule.root.params.final_group();
+        assert!([64, 128, 256, 512].contains(&commitment.profile.inner.matrix.ring_dimension()));
+        assert!([64, 128].contains(&commitment.profile.outer.matrix.ring_dimension()));
     }
 }

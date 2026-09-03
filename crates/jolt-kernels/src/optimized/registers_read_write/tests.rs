@@ -9,17 +9,10 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
 };
 use jolt_witness::JoltWitnessOracle;
 
-use super::sparse::{IndexedSparseEntry, SmallLutIndex};
 use super::test_support::{
     assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture, TraceFixture,
 };
 use super::OptimizedRegistersReadWrite;
-
-#[test]
-fn indexed_entry_keeps_fp128_layout_compact() {
-    assert_eq!(core::mem::size_of::<SmallLutIndex>(), 1);
-    assert_eq!(core::mem::size_of::<IndexedSparseEntry<[u64; 2]>>(), 40);
-}
 
 fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {
     fixture.with_plane(log_t, |backend| {

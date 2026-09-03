@@ -15,6 +15,7 @@ use rand_chacha::ChaCha20Rng;
 
 const P: u64 = (1 << 61) - 1;
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct M61(u64);
 
@@ -312,7 +313,8 @@ fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
 
 #[test]
 fn jolt_field_blanket() {
-    // M61 satisfies the JoltField bundle without any explicit impl.
+    // M61 satisfies the JoltField bundle from the component traits alone —
+    // the derive above is the `allocative` feature's supertrait, not a JoltField impl.
     let xs = [M61(2), M61(3)];
     let ys = [M61(5), M61(7)];
     assert_eq!(inner_product(&xs, &ys), M61(31));

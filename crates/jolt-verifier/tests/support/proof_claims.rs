@@ -1,13 +1,15 @@
 //! Opening-claim projection for verifier-native prover proofs.
 #[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
     self as native,
     geometry::{
         booleanity, bytecode,
+        claim_reductions::instruction as instruction_claim_reduction,
         claim_reductions::registers as registers_claim_reduction,
-        claim_reductions::{advice, instruction as instruction_claim_reduction},
         instruction, ram, registers, spartan,
         spartan::{outer_opening, outer_uniskip_opening, product_uniskip_opening},
     },
@@ -471,6 +473,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
         id if id == rd_inc => Some(&mut stage6b.inc_claim_reduction.rd_inc),
         #[cfg(feature = "implicit-carry")]
         id if id == spartan::carry_reduced() => Some(&mut stage6b.carry_claim_reduction.carry),
+        #[cfg(not(feature = "akita"))]
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -479,6 +482,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
                 .as_mut()
                 .map(|claim| &mut claim.trusted)
         }
+        #[cfg(not(feature = "akita"))]
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
         {
@@ -541,15 +545,23 @@ fn claim_mut_from_stage7_outputs<F: JoltField>(
         }
     }
 
-    match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
-            .trusted_advice
-            .as_mut()
-            .map(|claims| &mut claims.trusted),
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
-            .untrusted_advice
-            .as_mut()
-            .map(|claims| &mut claims.untrusted),
-        _ => None,
+    #[cfg(not(feature = "akita"))]
+    {
+        match id {
+            id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
+                .trusted_advice
+                .as_mut()
+                .map(|claims| &mut claims.trusted),
+            id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
+                .untrusted_advice
+                .as_mut()
+                .map(|claims| &mut claims.untrusted),
+            _ => None,
+        }
+    }
+    #[cfg(feature = "akita")]
+    {
+        let _ = id;
+        None
     }
 }

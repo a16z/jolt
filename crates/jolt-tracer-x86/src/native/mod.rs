@@ -295,10 +295,7 @@ struct RecordRunOutput {
 }
 
 impl Observation {
-    /// Rebuild `TraceRow`s from the static bytecode plus the recorded dynamic
-    /// values. Generated code cannot construct `TraceRow` directly (its
-    /// `Option` fields have no guaranteed layout), so this is the seam between
-    /// the two.
+    /// Combines static bytecode with recorded values into validated rows.
     ///
     /// The first `skip_rows` observations produce no rows (chunk replay
     /// resumes from a boundary at or before its window) but are still walked:
@@ -321,9 +318,9 @@ impl Observation {
                 .get(observation.row_index as usize)
                 .ok_or(TraceError::Backend("observation row index out of range"))?;
             if index >= skip_rows {
-                rows.push(TraceRow {
-                    instruction: *row,
-                    registers: RegisterState {
+                let trace_row = TraceRow::new(
+                    *row,
+                    RegisterState {
                         rs1: Self::register_read(row.operands.rs1, observation.rs1),
                         rs2: Self::register_read(row.operands.rs2, observation.rs2),
                         rd: row.operands.rd.map(|register| RegisterWrite {
@@ -337,14 +334,13 @@ impl Observation {
                             },
                         }),
                     },
-                    ram_access: observation.ram_access(row.instruction_kind),
-                    #[cfg(feature = "field-inline")]
-                    field_inline: None,
-                    // The row's incoming carry: the previous row's carry-out,
-                    // matching the interpreter's pre-execute `cpu.carry` read.
-                    #[cfg(feature = "implicit-carry")]
-                    carry,
-                });
+                    observation.ram_access(row.instruction_kind),
+                )?;
+                // The row's incoming carry: the previous row's carry-out,
+                // matching the interpreter's pre-execute `cpu.carry` read.
+                #[cfg(feature = "implicit-carry")]
+                let trace_row = trace_row.with_carry(carry);
+                rows.push(trace_row);
             }
             #[cfg(feature = "implicit-carry")]
             {

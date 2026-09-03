@@ -15,11 +15,11 @@ use std::sync::Arc;
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
-    domain_size, invalid_batch, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    sparse_unit_polynomial, transparent_zk_error, validate_one_hot_k, with_backend_pool,
-    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint,
-    AkitaBackendOneHotPoly, AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField,
-    AkitaHidingCommitment, AkitaHintPolynomials, AkitaLayoutDigest, AkitaOneHotK16BackendScheme,
+    invalid_batch, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
+    transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackendCommitment,
+    AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
+    AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
+    AkitaHintPolynomials, AkitaLayoutDigest, AkitaOneHotK16BackendScheme,
     AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
     AkitaVerifierSetup, BackendVerifierCache, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
     AKITA_SOURCE_RING_DIMENSION,
@@ -72,12 +72,6 @@ pub(crate) fn validate_precommitted_order(
 }
 
 impl AkitaScheme {
-    /// Returns true when the Akita backend sparse-ring path can represent a
-    /// unit-valued sparse polynomial with this multilinear dimension.
-    pub fn supports_unit_sparse_dimension(num_vars: usize) -> bool {
-        domain_size(num_vars).is_some_and(|size| size >= AKITA_SOURCE_RING_DIMENSION)
-    }
-
     pub fn commit_group(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
@@ -244,30 +238,38 @@ impl AkitaScheme {
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let (backend_commitment, backend_hint) =
             with_backend_pool(|| match (setup.one_hot_k(), profiles.as_ref()) {
-                (AKITA_ONE_HOT_K16, None) => AkitaOneHotK16BackendScheme::commit(
-                    backend_prover_setup,
-                    std::slice::from_ref(&source),
-                    &stack,
-                    GroupContext::scheduler_without_precommitted_groups(),
-                ),
-                (AKITA_ONE_HOT_K16, Some(profiles)) => AkitaOneHotK16BackendScheme::commit(
-                    backend_prover_setup,
-                    std::slice::from_ref(&source),
-                    &stack,
-                    GroupContext::scheduler_with_precommitted_groups(profiles),
-                ),
-                (AKITA_ONE_HOT_K256, None) => AkitaOneHotK256BackendScheme::commit(
-                    backend_prover_setup,
-                    std::slice::from_ref(&source),
-                    &stack,
-                    GroupContext::scheduler_without_precommitted_groups(),
-                ),
-                (AKITA_ONE_HOT_K256, Some(profiles)) => AkitaOneHotK256BackendScheme::commit(
-                    backend_prover_setup,
-                    std::slice::from_ref(&source),
-                    &stack,
-                    GroupContext::scheduler_with_precommitted_groups(profiles),
-                ),
+                (AKITA_ONE_HOT_K16, None) => {
+                    AkitaOneHotK16BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
+                        backend_prover_setup,
+                        std::slice::from_ref(&source),
+                        &stack,
+                        GroupContext::scheduler_without_precommitted_groups(),
+                    )
+                }
+                (AKITA_ONE_HOT_K16, Some(profiles)) => {
+                    AkitaOneHotK16BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
+                        backend_prover_setup,
+                        std::slice::from_ref(&source),
+                        &stack,
+                        GroupContext::scheduler_with_precommitted_groups(profiles),
+                    )
+                }
+                (AKITA_ONE_HOT_K256, None) => {
+                    AkitaOneHotK256BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
+                        backend_prover_setup,
+                        std::slice::from_ref(&source),
+                        &stack,
+                        GroupContext::scheduler_without_precommitted_groups(),
+                    )
+                }
+                (AKITA_ONE_HOT_K256, Some(profiles)) => {
+                    AkitaOneHotK256BackendScheme::commit::<TracePackedOneHot, CpuBackend>(
+                        backend_prover_setup,
+                        std::slice::from_ref(&source),
+                        &stack,
+                        GroupContext::scheduler_with_precommitted_groups(profiles),
+                    )
+                }
                 _ => unreachable!("the one-hot setup geometry was validated during setup"),
             })
             .map(split_commit_output)
@@ -582,9 +584,9 @@ impl CommitmentScheme for AkitaScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        let num_vars = poly.num_vars();
+        Self::validate_commit_shape(setup, num_vars, 1)?;
         if let Some(one_hot) = one_hot_polynomial(poly, setup.one_hot_k())? {
-            let num_vars = RootPolyMeta::num_vars(&one_hot);
-            Self::validate_commit_shape(setup, num_vars, 1)?;
             let (backend_commitment, backend_hint) =
                 Self::commit_one_hot_backend(setup, std::slice::from_ref(&one_hot))?;
             return Self::package_commitment(
@@ -596,42 +598,16 @@ impl CommitmentScheme for AkitaScheme {
             );
         }
 
-        if poly.is_one_hot() && Self::supports_unit_sparse_dimension(poly.num_vars()) {
-            let mut indices = Vec::new();
-            poly.for_each_one(&mut |index| indices.push(index));
-            let sparse = sparse_unit_polynomial(poly.num_vars(), indices)?;
-            let num_vars = sparse.num_vars();
-            Self::validate_commit_shape(setup, num_vars, 1)?;
-            let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
-            let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-            let (backend_commitment, backend_hint) = with_backend_pool(|| {
-                AkitaBackendScheme::commit(
-                    backend_prover_setup,
-                    std::slice::from_ref(&sparse),
-                    &stack,
-                    GroupContext::scheduler_without_precommitted_groups(),
-                )
-            })
-            .map(split_commit_output)
-            .map_err(commit_failed)?;
-            return Self::package_commitment(
-                setup.default_layout_digest(),
-                num_vars,
-                backend_commitment,
-                backend_hint,
-                AkitaHintPolynomials::SparseUnit(vec![sparse].into()),
-            );
+        if poly.is_one_hot() {
+            return Err(invalid_batch(format!(
+                "Akita one-hot commitments require row-major K={}",
+                setup.one_hot_k()
+            )));
         }
 
-        let num_vars = poly.num_vars();
-        Self::validate_commit_shape(setup, num_vars, 1)?;
         let evals = akita_ordered_evaluations(poly)?;
-        let dense = vec![AkitaBackendDensePoly::from_field_evals(
-            num_vars,
-            AKITA_SOURCE_RING_DIMENSION,
-            &evals,
-        )
-        .map_err(akita_error)?];
+        let dense =
+            vec![AkitaBackendDensePoly::from_field_evals(num_vars, evals).map_err(akita_error)?];
         Self::commit_dense_backend(setup, setup.default_layout_digest(), num_vars, dense)
     }
 
@@ -860,6 +836,7 @@ mod tests {
 
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
+    use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
 
     #[test]
@@ -1139,310 +1116,5 @@ mod tests {
             &mut verifier_transcript,
         )
         .expect_err("direct commitment layout must not be accepted through setup default");
-    }
-}
-
-/// Timed comparison of the two OneHotTrace commitment formats at production shape:
-/// one sparse-unit union polynomial (`slots` slots × `2^(8+log_t)` cells)
-/// versus one batched one-hot group (`slots` polynomials of `8+log_t`
-/// variables each) — commit + batched open + verify for both.
-#[cfg(test)]
-mod flavor_bench {
-    #![expect(
-        clippy::unwrap_used,
-        reason = "bench unwraps successful PCS operations"
-    )]
-    #![expect(clippy::print_stderr, reason = "bench reports timings to stderr")]
-    #![expect(clippy::indexing_slicing, reason = "bench indexes fixture data")]
-    #![expect(
-        clippy::unimplemented,
-        reason = "the bench stand-in exposes only the one-hot polynomial interface"
-    )]
-
-    use super::*;
-    use jolt_transcript::Blake2bTranscript;
-    use std::time::Instant;
-
-    const LOG_K: usize = 8;
-    const K: usize = 1 << LOG_K;
-
-    fn splitmix(state: &mut u64) -> u64 {
-        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = *state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    /// Big-endian eq table: index bit of weight `2^(len-1-j)` pairs with
-    /// `point[j]`.
-    fn eq_table(point: &[AkitaField]) -> Vec<AkitaField> {
-        let one = AkitaField::from_u64(1);
-        let mut table = vec![one];
-        for &p in point {
-            let one_minus = one - p;
-            let mut next = Vec::with_capacity(table.len() * 2);
-            for &w in &table {
-                next.push(w * one_minus);
-                next.push(w * p);
-            }
-            table = next;
-        }
-        table
-    }
-
-    struct EqSplit {
-        hi: Vec<AkitaField>,
-        lo: Vec<AkitaField>,
-        low_bits: usize,
-        mask: usize,
-    }
-
-    impl EqSplit {
-        fn new(point: &[AkitaField]) -> Self {
-            let n = point.len();
-            let low_bits = n / 2;
-            Self {
-                hi: eq_table(&point[..n - low_bits]),
-                lo: eq_table(&point[n - low_bits..]),
-                low_bits,
-                mask: (1 << low_bits) - 1,
-            }
-        }
-
-        fn weight(&self, index: usize) -> AkitaField {
-            self.hi[index >> self.low_bits] * self.lo[index & self.mask]
-        }
-    }
-
-    fn sparse_eval(poly: &dyn MultilinearPoly<AkitaField>, tables: &EqSplit) -> AkitaField {
-        let mut acc = AkitaField::from_u64(0);
-        poly.for_each_one(&mut |index| acc += tables.weight(index));
-        acc
-    }
-
-    /// Bench stand-in for the packed union polynomial: unit-sparse over the
-    /// slot-prefixed cell domain, exposing only the one-hot interface the
-    /// sparse-unit commit path consumes.
-    struct UnionSparse {
-        num_vars: usize,
-        ones: Vec<usize>,
-    }
-
-    impl MultilinearPoly<AkitaField> for UnionSparse {
-        fn num_vars(&self) -> usize {
-            self.num_vars
-        }
-
-        fn evaluate(&self, point: &[AkitaField]) -> AkitaField {
-            let tables = EqSplit::new(point);
-            let mut acc = AkitaField::from_u64(0);
-            for &one in &self.ones {
-                acc += tables.weight(one);
-            }
-            acc
-        }
-
-        fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[AkitaField])) {
-            unimplemented!("bench union polynomial exposes only the one-hot interface")
-        }
-
-        fn is_one_hot(&self) -> bool {
-            true
-        }
-
-        fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
-            for &one in &self.ones {
-                f(one);
-            }
-        }
-    }
-
-    #[test]
-    fn sparse_eval_matches_the_trait_evaluation_convention() {
-        let mut state = 7;
-        let indices: Vec<Option<u8>> = (0..16)
-            .map(|_| Some((splitmix(&mut state) % 4) as u8))
-            .collect();
-        let poly = OneHotPolynomial::new(4, indices);
-        let point: Vec<AkitaField> = (0..poly.num_vars())
-            .map(|_| AkitaField::from_u64(splitmix(&mut state)))
-            .collect();
-        let expected = MultilinearPoly::<AkitaField>::evaluate(&poly, &point);
-        assert_eq!(sparse_eval(&poly, &EqSplit::new(&point)), expected);
-    }
-
-    #[test]
-    #[ignore = "release-only setup-split probe, run explicitly"]
-    fn setup_cost_split_by_flavor() {
-        use crate::adapters::{AkitaBackendScheme, AkitaOneHotK256BackendScheme};
-        let num_vars: usize = std::env::var("BENCH_VARS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(28);
-        let polys: usize = std::env::var("BENCH_SLOTS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(30);
-        let start = Instant::now();
-        let dense = AkitaBackendScheme::setup_prover(num_vars, polys).unwrap();
-        eprintln!("dense setup ({num_vars},{polys}): {:.2?}", start.elapsed());
-        drop(dense);
-        let start = Instant::now();
-        let one_hot = AkitaOneHotK256BackendScheme::setup_prover(num_vars, polys).unwrap();
-        eprintln!(
-            "one-hot setup ({num_vars},{polys}): {:.2?}",
-            start.elapsed()
-        );
-        drop(one_hot);
-    }
-
-    #[test]
-    #[ignore = "release-only flavor bench, run explicitly"]
-    fn flavor_bench_sparse_union_vs_batched_one_hot() {
-        let log_t: usize = std::env::var("BENCH_LOG_T")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(20);
-        let slots: usize = std::env::var("BENCH_SLOTS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(16);
-        let t = 1usize << log_t;
-        let cell_vars = LOG_K + log_t;
-        let union_vars = cell_vars + slots.next_power_of_two().ilog2() as usize;
-        let mut state = 0x1234_5678;
-
-        // Selected rows for each slot; the last slot uses only two rows.
-        let slot_indices: Vec<Vec<Option<u8>>> = (0..slots)
-            .map(|slot| {
-                (0..t)
-                    .map(|_| {
-                        let r = splitmix(&mut state);
-                        if slot == slots - 1 {
-                            Some((r & 1) as u8)
-                        } else {
-                            Some((r & 0xFF) as u8)
-                        }
-                    })
-                    .collect()
-            })
-            .collect();
-
-        // Batched one-hot group.
-        let skip_one_hot = std::env::var("BENCH_SKIP_ONEHOT").is_ok();
-        if !skip_one_hot {
-            let start = Instant::now();
-            let (prover_setup, verifier_setup) =
-                AkitaScheme::setup(AkitaSetupParams::one_hot_only(cell_vars, slots, [1; 32], K))
-                    .unwrap();
-            eprintln!(
-                "one-hot setup ({cell_vars} vars, {slots} polys): {:.2?}",
-                start.elapsed()
-            );
-            let polys: Vec<OneHotPolynomial> = slot_indices
-                .iter()
-                .map(|indices| OneHotPolynomial::new(K, indices.clone()))
-                .collect();
-            let start = Instant::now();
-            let (commitment, hint) =
-                AkitaScheme::commit_one_hot_group(&prover_setup, [2; 32], &polys).unwrap();
-            eprintln!("one-hot commit: {:.2?}", start.elapsed());
-
-            let point: Vec<AkitaField> = (0..cell_vars)
-                .map(|_| AkitaField::from_u64(splitmix(&mut state)))
-                .collect();
-            let tables = EqSplit::new(&point);
-            let statement: Vec<VerifierOpeningClaim<AkitaField, AkitaCommitment>> = polys
-                .iter()
-                .map(|poly| VerifierOpeningClaim {
-                    commitment: commitment.clone(),
-                    evaluation: EvaluationClaim::new(point.clone(), sparse_eval(poly, &tables)),
-                })
-                .collect();
-            let poly_refs: AkitaNativeBatchPolynomials<'_> = polys
-                .iter()
-                .map(|poly| poly as &dyn MultilinearPoly<AkitaField>)
-                .collect();
-            let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"flavor-bench");
-            let start = Instant::now();
-            let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
-                &prover_setup,
-                statement.clone(),
-                poly_refs,
-                hint,
-                &mut prover_transcript,
-            )
-            .unwrap();
-            eprintln!("one-hot batched open: {:.2?}", start.elapsed());
-            let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"flavor-bench");
-            let start = Instant::now();
-            <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-                &verifier_setup,
-                &statement,
-                &proof,
-                &mut verifier_transcript,
-            )
-            .unwrap();
-            eprintln!("one-hot verify: {:.2?}", start.elapsed());
-            assert_eq!(prover_transcript.state(), verifier_transcript.state());
-        }
-
-        if std::env::var("BENCH_SKIP_UNION").is_ok() {
-            return;
-        }
-
-        // Sparse-unit union of the same content.
-        let start = Instant::now();
-        let (prover_setup, verifier_setup) =
-            AkitaScheme::setup(AkitaSetupParams::new(union_vars, 1, [1; 32])).unwrap();
-        eprintln!("union setup ({union_vars} vars): {:.2?}", start.elapsed());
-        let mut ones = Vec::with_capacity(slots * t);
-        for (slot, indices) in slot_indices.iter().enumerate() {
-            for (cycle, &row) in indices.iter().enumerate() {
-                let row = row.unwrap() as usize;
-                ones.push((slot << cell_vars) | (row << log_t) | cycle);
-            }
-        }
-        ones.sort_unstable();
-        let union = UnionSparse {
-            num_vars: union_vars,
-            ones,
-        };
-        let start = Instant::now();
-        let (commitment, hint) =
-            <AkitaScheme as CommitmentScheme>::commit(&union, &prover_setup).unwrap();
-        eprintln!("union commit: {:.2?}", start.elapsed());
-
-        let point: Vec<AkitaField> = (0..union_vars)
-            .map(|_| AkitaField::from_u64(splitmix(&mut state)))
-            .collect();
-        let value = union.evaluate(&point);
-        let statement = vec![VerifierOpeningClaim {
-            commitment: commitment.clone(),
-            evaluation: EvaluationClaim::new(point.clone(), value),
-        }];
-        let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"flavor-bench");
-        let start = Instant::now();
-        let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
-            &prover_setup,
-            statement.clone(),
-            vec![&union as &dyn MultilinearPoly<AkitaField>],
-            hint,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        eprintln!("union open: {:.2?}", start.elapsed());
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"flavor-bench");
-        let start = Instant::now();
-        <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-            &verifier_setup,
-            &statement,
-            &proof,
-            &mut verifier_transcript,
-        )
-        .unwrap();
-        eprintln!("union verify: {:.2?}", start.elapsed());
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
     }
 }

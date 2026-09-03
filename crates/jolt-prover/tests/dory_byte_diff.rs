@@ -935,7 +935,7 @@ mod muldiv {
                 &stage0.commitments,
                 None,
                 None,
-                &stage0.hints,
+                stage0.hints.as_slice(),
                 &stage6b.clear_output,
                 &stage7.clear_output,
                 witness.as_ref(),
@@ -1904,9 +1904,7 @@ mod inline_sha3 {
                 .trace
                 .rows()
                 .iter()
-                .filter(|row| {
-                    row.instruction.instruction_kind == JoltInstructionKind::VirtualROTRI
-                })
+                .filter(|row| row.instruction_kind() == JoltInstructionKind::VirtualROTRI)
                 .count(),
             KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
             "two aligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",

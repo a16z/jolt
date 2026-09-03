@@ -41,13 +41,12 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage3::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 use jolt_witness::witnesses::{InstructionFlag, OpFlag, Pc, UnexpandedPc};
-use jolt_witness::{JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::support::{
-    bind_pairs, collect_rows, fmadd_u64_split, gamma_powers_array, pin_derived_term,
-    RoundChallenges,
+    bind_pairs, fmadd_u64_split, gamma_powers_array, pin_derived_term, BundleStore, RoundChallenges,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -94,9 +93,11 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
             });
         }
         let cycles = 1usize << log_t;
-        let rows: Vec<SpartanShiftRow> = collect_rows(witness, cycles)?;
+        // Slice-backed witnesses re-extract rows without retaining a vector.
+        let rows = BundleStore::<SpartanShiftRow>::resolve(witness, cycles)?;
+        let access = rows.access();
 
-        let gamma_powers = gamma_powers_array(inputs.challenges.gamma);
+        let gamma_powers: [F; 5] = gamma_powers_array(inputs.challenges.gamma);
 
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);
@@ -116,52 +117,57 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
                 ]
             })
             .collect();
-        let build_q_block = |(block_index, q_block): (usize, &mut [[F; 4]])| {
-            let mut outer_folds = vec![[F::Accumulator::default(); 2]; q_block.len()];
-            let mut product_folds = vec![[F::zero(); 2]; q_block.len()];
-            for (x_hi, suffix) in suffix_rows.iter().enumerate() {
-                let base = x_hi << prefix_vars;
-                for (i, (outer_fold, product_fold)) in outer_folds
-                    .iter_mut()
-                    .zip(product_folds.iter_mut())
-                    .enumerate()
-                {
-                    let x_lo = block_index * BLOCK + i;
-                    let row = &rows[base + x_lo];
-                    let mut v =
-                        F::from_u64(row.unexpanded_pc.0) + gamma_powers[1] * F::from_u64(row.pc.0);
-                    if row.is_virtual.0 {
-                        v += gamma_powers[2];
-                    }
-                    if row.is_first_in_sequence.0 {
-                        v += gamma_powers[3];
-                    }
-                    outer_fold[0].fmadd(v, suffix[0]);
-                    outer_fold[1].fmadd(v, suffix[1]);
-                    if !row.is_noop.0 {
-                        product_fold[0] += suffix[2];
-                        product_fold[1] += suffix[3];
+        let build_q_block =
+            |(block_index, q_block): (usize, &mut [[F; 4]])| -> Result<(), WitnessError> {
+                let mut outer_folds = vec![[F::Accumulator::default(); 2]; q_block.len()];
+                let mut product_folds = vec![[F::zero(); 2]; q_block.len()];
+                for (x_hi, suffix) in suffix_rows.iter().enumerate() {
+                    let base = x_hi << prefix_vars;
+                    for (i, (outer_fold, product_fold)) in outer_folds
+                        .iter_mut()
+                        .zip(product_folds.iter_mut())
+                        .enumerate()
+                    {
+                        let x_lo = block_index * BLOCK + i;
+                        let row = access.row(base + x_lo)?;
+                        let mut v = F::from_u64(row.unexpanded_pc.0)
+                            + gamma_powers[1] * F::from_u64(row.pc.0);
+                        if row.is_virtual.0 {
+                            v += gamma_powers[2];
+                        }
+                        if row.is_first_in_sequence.0 {
+                            v += gamma_powers[3];
+                        }
+                        outer_fold[0].fmadd(v, suffix[0]);
+                        outer_fold[1].fmadd(v, suffix[1]);
+                        if !row.is_noop.0 {
+                            product_fold[0] += suffix[2];
+                            product_fold[1] += suffix[3];
+                        }
                     }
                 }
-            }
-            for (q, (outer_fold, product_fold)) in q_block
-                .iter_mut()
-                .zip(outer_folds.into_iter().zip(product_folds))
-            {
-                q[0] = outer_fold[0].reduce();
-                q[1] = outer_fold[1].reduce();
-                q[2] = gamma_powers[4] * product_fold[0];
-                q[3] = gamma_powers[4] * product_fold[1];
-            }
-        };
+                for (q, (outer_fold, product_fold)) in q_block
+                    .iter_mut()
+                    .zip(outer_folds.into_iter().zip(product_folds))
+                {
+                    q[0] = outer_fold[0].reduce();
+                    q[1] = outer_fold[1].reduce();
+                    q[2] = gamma_powers[4] * product_fold[0];
+                    q[3] = gamma_powers[4] * product_fold[1];
+                }
+                Ok(())
+            };
         let mut q_rows = vec![[F::zero(); 4]; 1 << prefix_vars];
         #[cfg(feature = "parallel")]
         q_rows
             .par_chunks_mut(BLOCK)
             .enumerate()
-            .for_each(build_q_block);
+            .try_for_each(build_q_block)?;
         #[cfg(not(feature = "parallel"))]
-        q_rows.chunks_mut(BLOCK).enumerate().for_each(build_q_block);
+        q_rows
+            .chunks_mut(BLOCK)
+            .enumerate()
+            .try_for_each(build_q_block)?;
 
         let [q_0, q_1, q_2, q_3]: [Vec<F>; 4] =
             core::array::from_fn(|pair| q_rows.iter().map(|q| q[pair]).collect());
@@ -184,76 +190,58 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F> {
     /// First half of the rounds: the four `(P, Q)` pairs over the prefix
     /// variables (outer 0/1, product 0/1 — product Qs carry the γ⁴ scale).
-    PrefixSuffix {
-        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_scalar_pairs))]
-        pairs: [(Vec<F>, Vec<F>); 4],
-    },
+    PrefixSuffix { pairs: [(Vec<F>, Vec<F>); 4] },
     /// Remaining rounds: the two `eq+1` tables and the five columns, dense.
     Dense {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_plus_one_outer: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_plus_one_product: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         unexpanded_pc: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         pc: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_virtual: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_first_in_sequence: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_noop: Vec<F>,
     },
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ShiftKernel<F: JoltField> {
     log_t: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; 5],
     /// The two `eq+1` points (big-endian) the summand factors fix.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_outer: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_product: Vec<F>,
-    /// Raw per-cycle values, kept for the phase-2 regeneration.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-    rows: Vec<SpartanShiftRow>,
+    /// Raw values kept for phase-2 regeneration.
+    rows: BundleStore<SpartanShiftRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
+
 impl<F: JoltField> ShiftKernel<F> {
     /// Regenerate the dense phase from the raw values: the five columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
     /// table recombined from its suffix pair and bound-prefix evaluations.
-    fn transition_to_dense(&mut self) {
+    fn transition_to_dense(&mut self) -> Result<(), WitnessError> {
         let bound = self.challenges.bound();
         let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let eq_prefix = EqPolynomial::<F>::evals(&r_prefix, None);
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
         let chunk = eq_prefix.len();
         let remaining = 1usize << (self.log_t - bound);
+        let access = self.rows.access();
 
-        let fold_chunk = |rows: &[SpartanShiftRow]| -> [F; 5] {
+        let fold_chunk = |chunk_index: usize| -> Result<[F; 5], WitnessError> {
+            let base = chunk_index * chunk;
             let mut pc_folds = [F::SmallScalarAccumulator::default(); 2];
             let mut flag_folds = [F::zero(); 3];
-            for (row, (&eq, &eq_shifted)) in rows
-                .iter()
-                .zip(eq_prefix.iter().zip(eq_prefix_shifted.iter()))
+            for (offset, (&eq, &eq_shifted)) in
+                eq_prefix.iter().zip(eq_prefix_shifted.iter()).enumerate()
             {
+                let row = access.row(base + offset)?;
                 fmadd_u64_split(&mut pc_folds[0], eq, eq_shifted, row.unexpanded_pc.0);
                 fmadd_u64_split(&mut pc_folds[1], eq, eq_shifted, row.pc.0);
                 if row.is_virtual.0 {
@@ -266,22 +254,24 @@ impl<F: JoltField> ShiftKernel<F> {
                     flag_folds[2] += eq;
                 }
             }
-            [
+            Ok([
                 pc_folds[0].reduce(),
                 pc_folds[1].reduce(),
                 flag_folds[0],
                 flag_folds[1],
                 flag_folds[2],
-            ]
+            ])
         };
         #[cfg(feature = "parallel")]
-        let folds: Vec<[F; 5]> = self.rows.par_chunks(chunk).map(fold_chunk).collect();
+        let folds: Vec<[F; 5]> = (0..remaining)
+            .into_par_iter()
+            .map(fold_chunk)
+            .collect::<Result<_, _>>()?;
         #[cfg(not(feature = "parallel"))]
-        let folds: Vec<[F; 5]> = self.rows.chunks(chunk).map(fold_chunk).collect();
-        debug_assert_eq!(folds.len(), remaining);
+        let folds: Vec<[F; 5]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
-        // The raw values only feed this regeneration; free them now.
-        self.rows = Vec::new();
+        // Release retained raw values after regeneration.
+        self.rows = BundleStore::Retained(Vec::new());
 
         let recombine = |point: &[F]| -> Vec<F> {
             let split = EqPlusOnePrefixSuffix::new(point);
@@ -304,15 +294,19 @@ impl<F: JoltField> ShiftKernel<F> {
             is_first_in_sequence: folds.iter().map(|fold| fold[3]).collect(),
             is_noop: folds.iter().map(|fold| fold[4]).collect(),
         };
+        Ok(())
     }
 
-    fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         self.challenges.push(r);
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q pairs.
         if matches!(&self.phase, Phase::PrefixSuffix { pairs } if pairs[0].0.len() == 2) {
-            self.transition_to_dense();
-            return;
+            return self.transition_to_dense().map_err(|_| {
+                SumcheckError::MissingEvaluationSource {
+                    kind: "spartan shift row",
+                }
+            });
         }
         match &mut self.phase {
             Phase::PrefixSuffix { pairs } => {
@@ -343,6 +337,7 @@ impl<F: JoltField> ShiftKernel<F> {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -358,7 +353,7 @@ impl<F: JoltField> ProveRounds<F> for ShiftKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
 
         // Degree-2 member: evals at t = 0 and t = 2; s(1) from the hint.
@@ -423,8 +418,7 @@ impl<F: JoltField> ProveRounds<F> for ShiftKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -482,8 +476,14 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
             (SpartanShiftPublic::EqPlusOneOuter, eq_plus_one_outer[0]),
             (SpartanShiftPublic::EqPlusOneProduct, eq_plus_one_product[0]),
         ] {
-            let id = JoltDerivedId::from(public);
-            pin_derived_term(relation, id, input_points, output_points, challenges, got)?;
+            pin_derived_term(
+                relation,
+                JoltDerivedId::from(public),
+                input_points,
+                output_points,
+                challenges,
+                got,
+            )?;
         }
         Ok(())
     }
@@ -559,10 +559,7 @@ mod tests {
         let rows: Vec<TraceRow> = script
             .iter()
             .take(real_rows)
-            .map(|&instruction| TraceRow {
-                instruction,
-                ..TraceRow::default()
-            })
+            .map(|&instruction| TraceRow::from_instruction(instruction).unwrap())
             .collect();
 
         use std::sync::Arc;

@@ -17,18 +17,18 @@
 //! against the config policy on every lookup.
 
 pub(crate) use akita_schedules::generated::{
-    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
-    GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
-    GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
-    GeneratedRootPrecommittedGroup, GeneratedSetupPrefixInput, GeneratedTerminalFold,
-    GeneratedWitnessPartition, PlannerCostModelId, SelectionPolicyId, SelectiveL2ResponseModelId,
+    GeneratedFoldCore, GeneratedFoldScheduleEntry, GeneratedFrozenGroup, GeneratedGroup,
+    GeneratedMatrix, GeneratedPrecommittedGroup, GeneratedRecursiveFold, GeneratedRootFold,
+    GeneratedSetupPrefix, GeneratedTerminalFold, PlannerCostModelId, SelectionPolicyId,
+    SelectiveL2ResponseModelId,
 };
 pub(crate) use akita_schedules::RingDimensionScheduleMode;
 pub(crate) use akita_schedules::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub(crate) use akita_types::{
-    ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, CommittedGroupProfile,
-    DecompositionParams, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-    SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
+    BlockGeometry, ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims,
+    DecompositionParams, GroupCommitPhaseParams, InnerCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId,
+    SisTableDigest,
 };
 
 #[expect(
@@ -80,16 +80,16 @@ pub fn jolt_fp128_dense_bounded_table() -> Option<GeneratedScheduleTable> {
 pub mod emit {
     use std::path::PathBuf;
 
-    use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
+    use akita_config::{policy_of, CommitmentConfig};
     use akita_pcs::AkitaError;
     use akita_planner::emit::GroupedGenerationRequest;
-    use akita_planner::{find_schedule, EmitSpec};
-    use akita_types::sis::HonestFoldPolicySpec;
+    use akita_planner::EmitSpec;
     use akita_types::{
         AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
     };
 
     use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+    use crate::planning::plan_schedule;
 
     /// Prefix packing produces one physical polynomial; small two-poly rows
     /// are kept for the adapter/tamper test shapes (the verifier only accepts
@@ -112,22 +112,7 @@ pub mod emit {
     pub(crate) fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        plan::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
-    }
-
-    fn plan<Cfg: CommitmentConfig>(
-        key: &AkitaScheduleLookupKey,
-        precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
-    ) -> Result<FoldSchedule, AkitaError> {
-        let planned = find_schedule(
-            key,
-            honest_fold_policy_of::<Cfg>(),
-            precommitted_honest_fold_policies,
-            &policy_of::<Cfg>(),
-            Cfg::ring_challenge_config,
-        )?;
-        planned.schedule.validate_structure()?;
-        Ok(planned.schedule)
+        plan_schedule::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
     }
 
     /// No Jolt family emits grouped rows (see [`family_specs`]), so the emitter

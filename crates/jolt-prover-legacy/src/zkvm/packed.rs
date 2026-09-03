@@ -72,8 +72,7 @@ use crate::zkvm::bytecode::read_raf_checking::{
     BytecodeReadRafSumcheckParams,
 };
 use crate::zkvm::claim_reductions::{
-    AdviceClaimReductionParams, AdviceClaimReductionProver, AdviceKind,
-    HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
+    AdviceKind, HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
     PrecommittedClaimReduction,
 };
 use crate::zkvm::fiat_shamir_preamble;
@@ -1061,55 +1060,21 @@ impl AkitaPackedProver<'_> {
         let mut lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
 
-        // The advice claim-reduction cycle phases join at the bundle's
-        // canonical tail, exactly as in the base 6b assembly (the lattice
-        // batch has no inc slot — the fused-inc claims are discharged inside
-        // the read-raf's fused stages).
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
             self.preprocessing.is_committed_mode(),
-            self.advice.trusted_advice_polynomial.is_some(),
-            self.advice.untrusted_advice_polynomial.is_some(),
+            false,
+            false,
         );
         let precommitted_scheduling_reference =
             PrecommittedClaimReduction::<AkitaFp128>::scheduling_reference(
                 main_total_vars,
                 &precommitted_candidates,
             );
-        for (kind, max_size, polynomial) in [
-            (
-                crate::zkvm::claim_reductions::AdviceKind::Trusted,
-                self.program_io.memory_layout.max_trusted_advice_size as usize,
-                &self.advice.trusted_advice_polynomial,
-            ),
-            (
-                crate::zkvm::claim_reductions::AdviceKind::Untrusted,
-                self.program_io.memory_layout.max_untrusted_advice_size as usize,
-                &self.advice.untrusted_advice_polynomial,
-            ),
-        ] {
-            if let Some(polynomial) = polynomial {
-                let params = AdviceClaimReductionParams::new(
-                    kind,
-                    max_size,
-                    precommitted_scheduling_reference,
-                    &self.opening_accumulator,
-                );
-                let prover = AdviceClaimReductionProver::initialize(params, polynomial.clone());
-                match kind {
-                    crate::zkvm::claim_reductions::AdviceKind::Trusted => {
-                        self.advice_reduction_prover_trusted = Some(prover)
-                    }
-                    crate::zkvm::claim_reductions::AdviceKind::Untrusted => {
-                        self.advice_reduction_prover_untrusted = Some(prover)
-                    }
-                }
-            }
-        }
         // Committed-program mode: the bytecode/program-image claim-reduction
-        // cycle phases join after the advice slots (the bundle's canonical
-        // tail). `BytecodeClaimReductionParams::new` draws eta internally —
-        // after the instruction-RA gamma, matching the lattice verifier.
+        // cycle phases join at the bundle's canonical tail.
+        // `BytecodeClaimReductionParams::new` draws eta internally — after the
+        // instruction-RA gamma, matching the lattice verifier.
         if self.preprocessing.is_committed_mode() {
             let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_reduction_params =
@@ -1166,8 +1131,6 @@ impl AkitaPackedProver<'_> {
             );
         }
 
-        let mut advice_trusted = self.advice_reduction_prover_trusted.take();
-        let mut advice_untrusted = self.advice_reduction_prover_untrusted.take();
         let mut bytecode_reduction = self.bytecode_reduction_prover.take();
         let mut program_image_reduction = self.program_image_reduction_prover.take();
 
@@ -1180,12 +1143,6 @@ impl AkitaPackedProver<'_> {
             &mut ram_ra_virtual,
             &mut lookups_ra_virtual,
         ];
-        if let Some(ref mut advice) = advice_trusted {
-            instances.push(advice);
-        }
-        if let Some(ref mut advice) = advice_untrusted {
-            instances.push(advice);
-        }
         if let Some(ref mut reduction) = bytecode_reduction {
             instances.push(reduction);
         }
@@ -1196,8 +1153,6 @@ impl AkitaPackedProver<'_> {
         let (sumcheck_proof, _r, _claim) =
             self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
 
-        self.advice_reduction_prover_trusted = advice_trusted;
-        self.advice_reduction_prover_untrusted = advice_untrusted;
         self.bytecode_reduction_prover = bytecode_reduction;
         self.program_image_reduction_prover = program_image_reduction;
         sumcheck_proof
@@ -1225,27 +1180,10 @@ impl AkitaPackedProver<'_> {
             &columns.one_hot,
         );
 
-        // The advice/committed address phases join at the batch tail
-        // (prefix-aligned within it), exactly as in the base stage-7
-        // assembly. The Stage 7 batch is address-reduction-sized — wider
-        // than the address alignment window the two-phase schedule assumes —
-        // so each instance compensates the batch's extra `2^Δ` claim
-        // scaling (see `boost_scale_pow_2`).
+        // The committed address phases join at the batch tail. The Stage 7
+        // batch is address-reduction-sized, so each instance compensates the
+        // batch's extra `2^Δ` claim scaling (see `boost_scale_pow_2`).
         use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams as _;
-        let mut advice_instances = Vec::new();
-        for advice in [
-            self.advice_reduction_prover_trusted.take(),
-            self.advice_reduction_prover_untrusted.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let mut advice = advice;
-            if advice.params().precommitted.num_address_phase_rounds() > 0 {
-                advice.transition_to_address_phase();
-                advice_instances.push(advice);
-            }
-        }
         let mut bytecode_reduction = self
             .bytecode_reduction_prover
             .take()
@@ -1263,11 +1201,6 @@ impl AkitaPackedProver<'_> {
         let batch_rounds = [hw_prover.params.num_rounds()]
             .into_iter()
             .chain(
-                advice_instances
-                    .iter()
-                    .map(|advice| advice.params().num_rounds()),
-            )
-            .chain(
                 bytecode_reduction
                     .iter()
                     .map(|prover| prover.params().num_rounds()),
@@ -1282,10 +1215,6 @@ impl AkitaPackedProver<'_> {
         let mut instances: Vec<
             Box<dyn crate::subprotocols::sumcheck_prover::SumcheckInstanceProver<_, _>>,
         > = vec![Box::new(hw_prover)];
-        for mut advice in advice_instances {
-            advice.boost_scale_pow_2(batch_rounds - advice.params().num_rounds());
-            instances.push(Box::new(advice));
-        }
         if let Some(mut prover) = bytecode_reduction {
             prover.boost_scale_pow_2(batch_rounds - prover.params().num_rounds());
             instances.push(Box::new(prover));
@@ -1359,8 +1288,8 @@ impl AkitaPackedProver<'_> {
         Ok((point.r.iter().map(|value| value.0).collect(), value.0))
     }
 
-    /// The fixed-prefix advice claim produced by the retained word-level
-    /// advice claim reduction.
+    /// The fixed-prefix advice claim opened directly at stage 4's RAM value-check
+    /// point, then folded into the advice object's Akita group opening.
     fn packed_advice_claims(
         &self,
         kind: JoltAdviceKind,
@@ -1373,8 +1302,8 @@ impl AkitaPackedProver<'_> {
         };
         let (point, value) = self
             .opening_accumulator
-            .get_advice_opening(advice_kind, SumcheckId::AdviceClaimReduction)
-            .ok_or_else(|| batch_failed("missing final dense advice claim".to_string()))?;
+            .get_advice_opening(advice_kind, SumcheckId::RamValCheck)
+            .ok_or_else(|| batch_failed("missing stage-4 dense advice claim".to_string()))?;
         let logical_point = point.r.iter().map(|value| value.0).collect::<Vec<_>>();
         let claims = BTreeMap::from([(
             match kind {
@@ -2368,7 +2297,7 @@ mod committed_tests {
 }
 
 use jolt_crypto::{Commitment, HomomorphicCommitment, VectorCommitment};
-use jolt_field::{CanonicalBytes, JoltField};
+use jolt_field::{CanonicalBytes, JoltField, Ring, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug};
 
@@ -2460,6 +2389,7 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 #[expect(clippy::unwrap_used)]
 mod advice_object_tests {
     use super::*;
+    use jolt_field::Zero;
 
     /// A couple of bytes of advice must stay provable: without the packing
     /// plan's capacity padding, the zero-variable dense domain of a one-word

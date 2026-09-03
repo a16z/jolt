@@ -351,20 +351,14 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
 /// plain multilinear; the squared term binds `B_i[k]` (same initial masses)
 /// with squared weights, because binding squares the one-hot's accumulated
 /// eq factor. The initial `A = B` makes the input claim exactly zero.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityAddressKernel<F: JoltField> {
     progress: RoundProgress,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_weights: Vec<F>,
     linear: Vec<Polynomial<F>>,
     /// Raw vectors because the squared-weight bind is not a multilinear bind.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
 }
@@ -564,7 +558,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BooleanityChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<ColumnSelector>,
 }
 
@@ -583,11 +577,7 @@ impl ChunkIndexSource for BooleanityChunks {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
     progress: RoundProgress,
     /// Split-eq over the reference cycle, scaled by
@@ -597,11 +587,9 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     /// Pre-scaled (`γ^i`) shared address-folded tables, index-encoded for
     /// the first four binds (dense at `T/16` after).
     tables: LazyFoldedRa<F, BooleanityChunks>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_powers: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_powers_inv: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     openings: Vec<JoltOpeningId>,
 }
 
@@ -811,19 +799,10 @@ pub(crate) mod testing {
             max_padded_trace_length: 4.max(1 << log_t),
         });
         let program = Arc::new(JoltProgram::default());
-        // Field mutation instead of struct literals: `TraceRow` grows a
-        // cfg-gated field under the `field-inline` feature, which a literal
-        // cannot spell portably from this crate.
         let row = |instruction: Option<JoltInstructionRow>,
                    registers: RegisterState,
                    ram_access: RamAccess| {
-            let mut row = TraceRow::default();
-            if let Some(instruction) = instruction {
-                row.instruction = instruction;
-            }
-            row.registers = registers;
-            row.ram_access = ram_access;
-            row
+            TraceRow::new(instruction.unwrap_or_default(), registers, ram_access).unwrap()
         };
         let mut rows = vec![
             // Hot bytecode, hot RAM, register activity.

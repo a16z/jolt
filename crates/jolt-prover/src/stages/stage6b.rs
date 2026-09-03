@@ -20,7 +20,9 @@
 //! bytecode read-RAF points (which fires when the bytecode address width is
 //! a multiple of the committed chunk width).
 
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltAdviceKind;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
@@ -36,6 +38,7 @@ use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
 use jolt_verifier::stages::stage6b::batch::{Stage6bBuildParts, Stage6bDraws};
+#[cfg(not(feature = "akita"))]
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
 use jolt_verifier::stages::stage6b::outputs::{
     Stage6bClearOutput, Stage6bOutputClaims, Stage6bSumchecks,
@@ -132,10 +135,12 @@ where
         stage5_points: &stage5.output_points,
         stage6a_points: &stage6a.output_points,
         address_val_stages: stage6a.output_values.bytecode_read_raf.val_stages.clone(),
+        #[cfg(not(feature = "akita"))]
         trusted_advice_reference_point: advice_reference_point_from_upstream(
             &stage4.ram_val_check_init,
             JoltAdviceKind::Trusted,
         ),
+        #[cfg(not(feature = "akita"))]
         untrusted_advice_reference_point: advice_reference_point_from_upstream(
             &stage4.ram_val_check_init,
             JoltAdviceKind::Untrusted,

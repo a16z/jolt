@@ -29,12 +29,11 @@ default = ["host"]
 # Mutually exclusive with `zk` — one PIOP per compiled prover (the
 # jolt-verifier build errors on the combination).
 akita = [
-  "dep:akita-config",
-  "dep:akita-field",
   "dep:jolt-akita",
   "dep:jolt-claims",
   "jolt-claims/akita",
-  "jolt-field/akita",
+  "dep:jolt-field",
+  "jolt-field/solinas",
   "jolt-verifier/akita",
 ]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
@@ -90,8 +89,6 @@ transcript-keccak = []
 transcript-blake2b = []
 
 [dependencies]
-akita-config = { workspace = true, optional = true }
-akita-field = { workspace = true, optional = true }
 ark-bn254.workspace = true
 jolt-optimizations.workspace = true
 ark-ec.workspace = true
