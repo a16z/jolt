@@ -113,7 +113,7 @@ fn term_compression_gate() {
             .iter()
             .map(|&value| Fr::from_u64(u64::from(value)))
             .collect::<Vec<_>>(),
-        Column::U16(_) | Column::Fr(_) => unreachable!(),
+        Column::U16(_) | Column::U32(_) | Column::Fr(_) => unreachable!(),
     };
     let source_point = (0..LOG_ROWS)
         .map(|index| Fr::from_u64(index as u64 + 3))

@@ -822,7 +822,9 @@ fn stream_profile(
                 .iter()
                 .map(|&value| Fr::from_u64(u64::from(value)))
                 .collect(),
-            Column::U16(_) | Column::Fr(_) => unreachable!("the first columns are bits"),
+            Column::U16(_) | Column::U32(_) | Column::Fr(_) => {
+                unreachable!("the first columns are bits")
+            }
         })
         .collect();
     let mut row = TimingRow::new(row_columns);

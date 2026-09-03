@@ -19,6 +19,7 @@
 //! - [`terms`]: the exported interface — column list, batched final relation
 //!   as affine-form terms, virtual value columns, link identities.
 
+pub mod adapter;
 pub mod blake3;
 pub mod layout;
 pub mod prover;
@@ -29,6 +30,7 @@ pub mod terms;
 pub mod wiring;
 pub mod wiring_prover;
 
+pub use adapter::{StreamColumns, StreamTermExporter};
 pub use layout::{
     ColumnEvals, Relation, WiredWord, WordColumn, COMMITTED, CONSTRAINTS, DEGREE, WIRED_BITS,
     WIRED_WORDS,

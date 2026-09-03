@@ -14,6 +14,7 @@ pub enum Column {
     Bits(Vec<u8>),
     /// Small-scalar commitment input; the proved relation must enforce its range requirement.
     U16(Vec<u16>),
+    U32(Vec<u32>),
     Fr(Vec<Fr>),
 }
 
@@ -22,6 +23,7 @@ impl Column {
         match self {
             Self::Bits(values) => values.len(),
             Self::U16(values) => values.len(),
+            Self::U32(values) => values.len(),
             Self::Fr(values) => values.len(),
         }
     }
@@ -34,6 +36,7 @@ impl Column {
         match self {
             Self::Bits(values) => Fr::from_u64(u64::from(values[row])),
             Self::U16(values) => Fr::from_u64(u64::from(values[row])),
+            Self::U32(values) => Fr::from_u64(u64::from(values[row])),
             Self::Fr(values) => values[row],
         }
     }
@@ -158,6 +161,7 @@ impl PackingLayout {
 pub enum PackedPolynomial {
     Bits(Vec<u8>),
     U16(Vec<u16>),
+    U32(Vec<u32>),
     Fr(Vec<Fr>),
 }
 
@@ -166,6 +170,7 @@ impl PackedPolynomial {
         match self {
             Self::Bits(values) => values.len(),
             Self::U16(values) => values.len(),
+            Self::U32(values) => values.len(),
             Self::Fr(values) => values.len(),
         }
     }
@@ -182,6 +187,7 @@ impl PackedPolynomial {
         let value = |polynomial: &Self, index| match polynomial {
             Self::Bits(values) => Fr::from_u64(u64::from(values[index])),
             Self::U16(values) => Fr::from_u64(u64::from(values[index])),
+            Self::U32(values) => Fr::from_u64(u64::from(values[index])),
             Self::Fr(values) => values[index],
         };
         Ok(Self::Fr(
@@ -238,6 +244,16 @@ impl PackedColumns {
                             }
                         }
                     }
+                    PackedPolynomial::U32(evaluations) => {
+                        for (&row_weight, row) in row_weights
+                            .iter()
+                            .zip(evaluations.chunks_exact(self.layout.k))
+                        {
+                            for (value, &entry) in values.iter_mut().zip(row) {
+                                *value += row_weight.mul_u64(u64::from(entry));
+                            }
+                        }
+                    }
                     PackedPolynomial::Fr(evaluations) => {
                         for (&row_weight, row) in row_weights
                             .iter()
@@ -278,6 +294,7 @@ impl PackedColumns {
                             }
                         }
                         PackedPolynomial::U16(values) => weight.mul_u64(u64::from(values[index])),
+                        PackedPolynomial::U32(values) => weight.mul_u64(u64::from(values[index])),
                         PackedPolynomial::Fr(values) => values[index] * weight,
                     })
                     .sum()
@@ -338,7 +355,10 @@ pub fn commit_packed(
                     }
                 }
                 PackedPolynomial::Bits(packed)
-            } else if group_columns.all(|column| matches!(column, Column::U16(_))) {
+            } else if group_columns
+                .clone()
+                .all(|column| matches!(column, Column::U16(_)))
+            {
                 let mut packed = vec![0; packed_len];
                 for row in 0..rows {
                     for slot in 0..k {
@@ -348,6 +368,16 @@ pub fn commit_packed(
                     }
                 }
                 PackedPolynomial::U16(packed)
+            } else if group_columns.all(|column| matches!(column, Column::U32(_))) {
+                let mut packed = vec![0; packed_len];
+                for row in 0..rows {
+                    for slot in 0..k {
+                        if let Some(Column::U32(column)) = columns.get(group * k + slot) {
+                            packed[row * k + slot] = column[row];
+                        }
+                    }
+                }
+                PackedPolynomial::U32(packed)
             } else {
                 let mut packed = vec![Fr::zero(); packed_len];
                 for row in 0..rows {
@@ -373,7 +403,7 @@ pub fn commit_packed(
         .iter()
         .filter_map(|polynomial| match polynomial {
             PackedPolynomial::Bits(values) => Some(values.as_slice()),
-            PackedPolynomial::U16(_) | PackedPolynomial::Fr(_) => None,
+            PackedPolynomial::U16(_) | PackedPolynomial::U32(_) | PackedPolynomial::Fr(_) => None,
         })
         .collect();
     let mut indexed_commitments: Vec<(usize, Commitment)> = bit_groups
@@ -391,6 +421,10 @@ pub fn commit_packed(
         .map(|group| {
             let commitment = match &polynomials[group] {
                 PackedPolynomial::U16(values) => Commitment::new(Bn254::g1_affine_msm_small(
+                    &setup.g1_powers()[..packed_len],
+                    values,
+                )),
+                PackedPolynomial::U32(values) => Commitment::new(Bn254::g1_affine_msm_small(
                     &setup.g1_powers()[..packed_len],
                     values,
                 )),

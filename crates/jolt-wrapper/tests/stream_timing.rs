@@ -170,7 +170,7 @@ fn n3_g_shape_timing() {
                 .iter()
                 .map(|&value| Fr::from_u64(u64::from(value)))
                 .collect(),
-            Column::U16(_) | Column::Fr(_) => unreachable!(),
+            Column::U16(_) | Column::U32(_) | Column::Fr(_) => unreachable!(),
         })
         .collect();
     let mut results = String::new();
@@ -286,6 +286,7 @@ fn typed_column_timing() {
         .map(|polynomial| match polynomial {
             PackedPolynomial::Bits(values) => values.len(),
             PackedPolynomial::U16(values) => 2 * values.len(),
+            PackedPolynomial::U32(values) => 4 * values.len(),
             PackedPolynomial::Fr(values) => 32 * values.len(),
         })
         .sum::<usize>();

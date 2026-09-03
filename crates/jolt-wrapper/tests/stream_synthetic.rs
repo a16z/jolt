@@ -137,6 +137,10 @@ fn dense_columns(columns: &[Column]) -> Vec<Vec<Fr>> {
                 .iter()
                 .map(|&value| Fr::from_u64(u64::from(value)))
                 .collect(),
+            Column::U32(values) => values
+                .iter()
+                .map(|&value| Fr::from_u64(u64::from(value)))
+                .collect(),
             Column::Fr(values) => values.clone(),
         })
         .collect()
