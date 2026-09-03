@@ -142,7 +142,7 @@ pub struct HyperKZGProof<P: PairingGroup> {
 ///
 /// G1 powers: `[g1, beta * g1, beta^2 * g1, ..., beta^(N-1) * g1]`
 /// G2 powers through `beta^3 * g2` for the degree-three batch opening divisor, plus the
-/// `beta^(N-6)` shift used by degree-five round-polynomial commitments.
+/// `beta^(N-6)` / `beta^(N-7)` shifts used by degree-five/six round commitments.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "P::G1Affine: Serialize, P::G2: Serialize",
@@ -152,6 +152,7 @@ pub struct HyperKZGProverSetup<P: PairingGroup> {
     pub(crate) g1_powers: Vec<P::G1Affine>,
     pub(crate) g2_powers: Vec<P::G2>,
     pub(crate) degree_five_shift_g2: P::G2,
+    pub(crate) degree_six_shift_g2: P::G2,
 }
 
 impl<P: PairingGroup> HyperKZGProverSetup<P> {
@@ -182,6 +183,7 @@ pub struct HyperKZGVerifierSetup<P: PairingGroup> {
     pub(crate) beta_sq_g2: P::G2,
     pub(crate) beta_cu_g2: P::G2,
     pub(crate) degree_five_shift_g2: P::G2,
+    pub(crate) degree_six_shift_g2: P::G2,
 }
 
 impl<P: PairingGroup> From<&HyperKZGProverSetup<P>> for HyperKZGVerifierSetup<P> {
@@ -203,6 +205,7 @@ impl<P: PairingGroup> From<&HyperKZGProverSetup<P>> for HyperKZGVerifierSetup<P>
             beta_sq_g2: prover.g2_powers[2],
             beta_cu_g2: prover.g2_powers[3],
             degree_five_shift_g2: prover.degree_five_shift_g2,
+            degree_six_shift_g2: prover.degree_six_shift_g2,
         }
     }
 }

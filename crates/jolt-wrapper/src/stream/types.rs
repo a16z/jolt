@@ -53,7 +53,8 @@ pub struct StageProof {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedStageProof {
     pub round_commitments: Vec<Bn254G1>,
-    pub round_evaluations: Vec<[Fr; 2]>,
+    pub round_claims: Vec<Fr>,
+    pub sum_at_zero: Fr,
     pub opening: VariableBatchKzgProof<Bn254>,
 }
 
@@ -86,7 +87,7 @@ impl WrapperProof {
             .stages
             .iter()
             .filter_map(|stage| stage.committed_rounds.as_ref())
-            .map(|stage| 2 * stage.round_evaluations.len())
+            .map(|stage| stage.round_claims.len() + 1)
             .sum::<usize>();
         let opening_scalars = self.opening.v.iter().map(Vec::len).sum::<usize>() + 1;
         let stage_claims = self.stage_claims.iter().map(Vec::len).sum::<usize>();
@@ -124,7 +125,7 @@ impl WrapperProof {
                 Some(committed) => {
                     varint_bytes(committed.round_commitments.len())
                         + committed.round_commitments.len() * varint_bytes(32)
-                        + varint_bytes(committed.round_evaluations.len())
+                        + varint_bytes(committed.round_claims.len())
                         + 3 * varint_bytes(32)
                 }
                 None => 0,

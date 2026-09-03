@@ -128,7 +128,7 @@ fn generic_assembly_round_trip_and_section_tampers() {
         .committed_rounds
         .as_mut()
         .expect("KZG stage")
-        .round_evaluations[0][0] += Fr::from_u64(1);
+        .sum_at_zero += Fr::from_u64(1);
     assert!(verify(&stage_a).is_err());
 
     let mut factor_claim = proof.clone();

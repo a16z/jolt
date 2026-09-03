@@ -350,7 +350,7 @@ fn committed_stage_a_round_trip_and_tampers() {
         .committed_rounds
         .as_mut()
         .expect("committed stage")
-        .round_evaluations[0][1] += Fr::from_u64(1);
+        .round_claims[0] += Fr::from_u64(1);
     assert!(verify_stream(&next_claim_tamper, &statement, &verifier_setup).is_err());
 
     let mut opening_tamper = proof.clone();

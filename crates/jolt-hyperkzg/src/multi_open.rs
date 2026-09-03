@@ -13,7 +13,8 @@ use crate::kzg::{
 };
 use crate::{HyperKZGProverSetup, HyperKZGVerifierSetup, NoopVerifierObserver, VerifierObserver};
 
-const SUPPORTED_DEGREE: usize = 5;
+const MIN_DEGREE: usize = 5;
+const MAX_DEGREE: usize = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
@@ -28,8 +29,8 @@ pub struct VariableBatchKzgProof<P: PairingGroup> {
 
 pub fn open_variable_batch<P, T>(
     polynomials: &[Vec<P::ScalarField>],
-    points: &[[P::ScalarField; 3]],
-    evaluations: &[[P::ScalarField; 3]],
+    points: &[Vec<P::ScalarField>],
+    evaluations: &[Vec<P::ScalarField>],
     degree: usize,
     setup: &HyperKZGProverSetup<P>,
     transcript: &mut T,
@@ -136,8 +137,8 @@ where
 
 pub fn verify_variable_batch<P, T>(
     commitments: &[P::G1],
-    points: &[[P::ScalarField; 3]],
-    evaluations: &[[P::ScalarField; 3]],
+    points: &[Vec<P::ScalarField>],
+    evaluations: &[Vec<P::ScalarField>],
     degree: usize,
     proof: &VariableBatchKzgProof<P>,
     setup: &HyperKZGVerifierSetup<P>,
@@ -167,8 +168,8 @@ where
 )]
 pub fn verify_variable_batch_observed<P, T, O>(
     commitments: &[P::G1],
-    points: &[[P::ScalarField; 3]],
-    evaluations: &[[P::ScalarField; 3]],
+    points: &[Vec<P::ScalarField>],
+    evaluations: &[Vec<P::ScalarField>],
     degree: usize,
     proof: &VariableBatchKzgProof<P>,
     setup: &HyperKZGVerifierSetup<P>,
@@ -190,9 +191,14 @@ where
     observer.ec_mul(commitments.len());
     observer.ec_add(commitments.len());
     observer.pairing_pairs(2);
+    let degree_shift_g2 = match degree {
+        5 => setup.degree_five_shift_g2,
+        6 => setup.degree_six_shift_g2,
+        degree => return Err(HyperKZGError::UnsupportedDegreeBound(degree)),
+    };
     let degree_check = P::multi_pairing(
         &[proof.shifted_commitment, -combined_commitment],
-        &[setup.g2, setup.degree_five_shift_g2],
+        &[setup.g2, degree_shift_g2],
     );
     if !degree_check.is_identity() {
         return Err(HyperKZGError::DegreeBoundCheckFailed);
@@ -243,34 +249,44 @@ where
 
 fn validate_batch<F: JoltField, E>(
     entries: &[E],
-    points: &[[F; 3]],
-    evaluations: &[[F; 3]],
+    points: &[Vec<F>],
+    evaluations: &[Vec<F>],
     degree: usize,
 ) -> Result<(), HyperKZGError> {
-    if degree != SUPPORTED_DEGREE {
+    if !(MIN_DEGREE..=MAX_DEGREE).contains(&degree) {
         return Err(HyperKZGError::UnsupportedDegreeBound(degree));
     }
     if entries.is_empty() || entries.len() != points.len() || entries.len() != evaluations.len() {
         return Err(HyperKZGError::InvalidBatchShape);
     }
-    if points.iter().any(|&[a, b, c]| a == b || a == c || b == c) {
-        return Err(HyperKZGError::RepeatedBatchPoint);
+    for (point_set, evaluation_set) in points.iter().zip(evaluations) {
+        if point_set.is_empty()
+            || point_set.len() != evaluation_set.len()
+            || point_set.len() > degree + 1
+        {
+            return Err(HyperKZGError::InvalidBatchShape);
+        }
+        for (index, point) in point_set.iter().enumerate() {
+            if point_set.iter().take(index).any(|other| other == point) {
+                return Err(HyperKZGError::RepeatedBatchPoint);
+            }
+        }
     }
     Ok(())
 }
 
 fn interpolation_remainders<F: JoltField>(
-    points: &[[F; 3]],
-    evaluations: &[[F; 3]],
-) -> Result<Vec<[F; 3]>, HyperKZGError> {
+    points: &[Vec<F>],
+    evaluations: &[Vec<F>],
+) -> Result<Vec<Vec<F>>, HyperKZGError> {
     interpolation_remainders_observed(points, evaluations, &mut NoopVerifierObserver)
 }
 
 fn interpolation_remainders_observed<F, O>(
-    points: &[[F; 3]],
-    evaluations: &[[F; 3]],
+    points: &[Vec<F>],
+    evaluations: &[Vec<F>],
     observer: &mut O,
-) -> Result<Vec<[F; 3]>, HyperKZGError>
+) -> Result<Vec<Vec<F>>, HyperKZGError>
 where
     F: JoltField,
     O: VerifierObserver,
@@ -278,25 +294,34 @@ where
     points
         .iter()
         .zip(evaluations)
-        .map(|(&[a, b, c], &[ya, yb, yc])| {
-            let mut result = [F::zero(); 3];
-            for (x, y, other_a, other_b) in [(a, ya, b, c), (b, yb, a, c), (c, yc, a, b)] {
-                let denominator = observer.fr_mul(x - other_a, x - other_b);
-                let denominator_inverse = observer
+        .map(|(point_set, evaluation_set)| {
+            if let ([_], [evaluation]) = (point_set.as_slice(), evaluation_set.as_slice()) {
+                return Ok(vec![*evaluation]);
+            }
+            let mut result = vec![F::zero(); point_set.len()];
+            for (index, (&point, &evaluation)) in point_set.iter().zip(evaluation_set).enumerate() {
+                let basis = point_set
+                    .iter()
+                    .enumerate()
+                    .filter(|(other, _)| *other != index)
+                    .fold(vec![F::one()], |basis, (_, &other)| {
+                        multiply_observed(&basis, &[-other, F::one()], observer)
+                    });
+                let denominator = eval_univariate_observed(&basis, point, observer);
+                let inverse = observer
                     .fr_inv(denominator)
                     .ok_or(HyperKZGError::RepeatedBatchPoint)?;
-                let scale = observer.fr_mul(y, denominator_inverse);
-                let scale_other_a = observer.fr_mul(scale, other_a);
-                result[0] += observer.fr_mul(scale_other_a, other_b);
-                result[1] -= observer.fr_mul(scale, other_a + other_b);
-                result[2] += scale;
+                let scale = observer.fr_mul(evaluation, inverse);
+                for (coefficient, basis_coefficient) in result.iter_mut().zip(basis) {
+                    *coefficient += observer.fr_mul(scale, basis_coefficient);
+                }
             }
             Ok(result)
         })
         .collect()
 }
 
-fn point_union<F: JoltField>(points: &[[F; 3]]) -> Vec<F> {
+fn point_union<F: JoltField>(points: &[Vec<F>]) -> Vec<F> {
     let mut union = Vec::new();
     for &point in points.iter().flatten() {
         if !union.contains(&point) {

@@ -87,7 +87,7 @@ pub struct RelationTableProof {
 impl RelationTableProof {
     pub fn payload_bytes(&self) -> usize {
         let row = self.row_stage.committed_rounds.as_ref().map_or(0, |proof| {
-            32 * (proof.round_commitments.len() + 3 + 2 * proof.round_evaluations.len())
+            32 * (proof.round_commitments.len() + 3 + proof.round_claims.len() + 1)
         });
         let column_scalars = self
             .column_stage

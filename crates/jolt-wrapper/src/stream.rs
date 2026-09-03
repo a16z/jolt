@@ -5,7 +5,7 @@ use jolt_crypto::{Bn254, Bn254G1, PairingGroup};
 use jolt_field::{Field, Fr, One, Ring, Zero};
 use jolt_hyperkzg::{
     open_variable_batch, verify_variable_batch_observed, HyperKZGProverSetup, HyperKZGScheme,
-    HyperKZGVerifierSetup, NoopVerifierObserver, VerifierObserver,
+    HyperKZGVerifierSetup, NoopVerifierObserver, VariableBatchKzgProof, VerifierObserver,
 };
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
@@ -29,8 +29,8 @@ pub use protocol::{
 
 const STREAM_LABEL: &[u8] = b"jolt-wrapper-v1";
 const KZG_ROUND_COMMITMENT_LABEL: &[u8] = b"sumcheck_kzg_commitment";
-const KZG_ROUND_ZERO_LABEL: &[u8] = b"sumcheck_kzg_zero";
 const KZG_ROUND_NEXT_LABEL: &[u8] = b"sumcheck_kzg_next";
+const KZG_STAGE_SUM_ZERO_LABEL: &[u8] = b"sumcheck_kzg_sum_zero";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Column {
@@ -550,6 +550,119 @@ pub fn prove_stage<T: Transcript<Challenge = Fr>>(
     ))
 }
 
+fn prove_aggregated_round_opening<T: Transcript<Challenge = Fr>>(
+    polynomials: &[Vec<Fr>],
+    challenges: &[Fr],
+    initial_claim: Fr,
+    round_claims: &[Fr],
+    degree: usize,
+    setup: &HyperKZGProverSetup<Bn254>,
+    transcript: &mut T,
+) -> Result<(Fr, VariableBatchKzgProof<Bn254>), StreamError> {
+    if polynomials.len() != challenges.len() || polynomials.len() != round_claims.len() {
+        return Err(StreamError::StageCount);
+    }
+    let coefficients = (0..polynomials.len())
+        .map(|_| transcript.challenge())
+        .collect::<Vec<_>>();
+    let mut sum = vec![Fr::zero(); degree + 1];
+    for (polynomial, &coefficient) in polynomials.iter().zip(&coefficients) {
+        for (target, &value) in sum.iter_mut().zip(polynomial) {
+            *target += coefficient * value;
+        }
+    }
+    let sum_at_zero = sum[0];
+    transcript.append_labeled(KZG_STAGE_SUM_ZERO_LABEL, &sum_at_zero);
+    let sum_claim = coefficients
+        .iter()
+        .zip(std::iter::once(&initial_claim).chain(round_claims.iter()))
+        .map(|(&coefficient, &claim)| coefficient * claim)
+        .sum::<Fr>();
+    let mut opening_polynomials = polynomials.to_vec();
+    opening_polynomials.push(sum);
+    let mut points = challenges
+        .iter()
+        .map(|&challenge| vec![challenge])
+        .collect::<Vec<_>>();
+    points.push(vec![Fr::zero(), Fr::one()]);
+    let mut evaluations = round_claims
+        .iter()
+        .map(|&claim| vec![claim])
+        .collect::<Vec<_>>();
+    evaluations.push(vec![sum_at_zero, sum_claim - sum_at_zero]);
+    let opening = open_variable_batch(
+        &opening_polynomials,
+        &points,
+        &evaluations,
+        degree,
+        setup,
+        transcript,
+    )?;
+    Ok((sum_at_zero, opening))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the aggregated opening is shared by standalone and batched committed sumchecks"
+)]
+fn verify_aggregated_round_opening<T, O>(
+    commitments: &[Bn254G1],
+    challenges: &[Fr],
+    initial_claim: Fr,
+    round_claims: &[Fr],
+    sum_at_zero: Fr,
+    degree: usize,
+    opening: &VariableBatchKzgProof<Bn254>,
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    transcript: &mut T,
+    observer: &mut O,
+) -> Result<(), StreamError>
+where
+    T: Transcript<Challenge = Fr>,
+    O: VerifierObserver,
+{
+    if commitments.len() != challenges.len() || commitments.len() != round_claims.len() {
+        return Err(StreamError::StageCount);
+    }
+    let coefficients = (0..commitments.len())
+        .map(|_| transcript.challenge())
+        .collect::<Vec<_>>();
+    transcript.append_labeled(KZG_STAGE_SUM_ZERO_LABEL, &sum_at_zero);
+    let sum_commitment = Bn254::g1_msm(commitments, &coefficients);
+    observer.ec_mul(commitments.len());
+    observer.ec_add(commitments.len());
+    let mut sum_claim = Fr::zero();
+    for (&coefficient, &claim) in coefficients
+        .iter()
+        .zip(std::iter::once(&initial_claim).chain(round_claims.iter()))
+    {
+        sum_claim += observer.fr_mul(coefficient, claim);
+    }
+    let mut opening_commitments = commitments.to_vec();
+    opening_commitments.push(sum_commitment);
+    let mut points = challenges
+        .iter()
+        .map(|&challenge| vec![challenge])
+        .collect::<Vec<_>>();
+    points.push(vec![Fr::zero(), Fr::one()]);
+    let mut evaluations = round_claims
+        .iter()
+        .map(|&claim| vec![claim])
+        .collect::<Vec<_>>();
+    evaluations.push(vec![sum_at_zero, sum_claim - sum_at_zero]);
+    verify_variable_batch_observed(
+        &opening_commitments,
+        &points,
+        &evaluations,
+        degree,
+        opening,
+        setup,
+        transcript,
+        observer,
+    )?;
+    Ok(())
+}
+
 pub fn prove_kzg_stage<T: Transcript<Challenge = Fr>>(
     prover: &mut dyn ProveRounds<Fr>,
     input_claim: Fr,
@@ -557,15 +670,14 @@ pub fn prove_kzg_stage<T: Transcript<Challenge = Fr>>(
     setup: &HyperKZGProverSetup<Bn254>,
     transcript: &mut T,
 ) -> Result<(StageProof, StageResult), StreamError> {
-    if degree != 5 || prover.num_rounds() == 0 {
+    if !(5..=6).contains(&degree) || prover.num_rounds() == 0 {
         return Err(StreamError::StageEncoding);
     }
     append_sumcheck_claim(transcript, &input_claim);
     let mut polynomials = Vec::with_capacity(prover.num_rounds());
     let mut round_commitments = Vec::with_capacity(prover.num_rounds());
-    let mut round_evaluations = Vec::with_capacity(prover.num_rounds());
-    let mut points = Vec::with_capacity(prover.num_rounds());
-    let mut opening_evaluations = Vec::with_capacity(prover.num_rounds());
+    let mut round_claims = Vec::with_capacity(prover.num_rounds());
+    let mut challenges = Vec::with_capacity(prover.num_rounds());
     let mut previous_bind = None;
     let mut claim = input_claim;
     for round in 0..prover.num_rounds() {
@@ -589,11 +701,9 @@ pub fn prove_kzg_stage<T: Transcript<Challenge = Fr>>(
         transcript.append_labeled(KZG_ROUND_COMMITMENT_LABEL, &commitment);
         let challenge = transcript.challenge();
         let next_claim = polynomial.evaluate(challenge);
-        transcript.append_labeled(KZG_ROUND_ZERO_LABEL, &at_zero);
         transcript.append_labeled(KZG_ROUND_NEXT_LABEL, &next_claim);
-        points.push([Fr::zero(), Fr::one(), challenge]);
-        opening_evaluations.push([at_zero, at_one, next_claim]);
-        round_evaluations.push([at_zero, next_claim]);
+        challenges.push(challenge);
+        round_claims.push(next_claim);
         round_commitments.push(commitment);
         polynomials.push(polynomial.into_coefficients());
         previous_bind = Some(challenge);
@@ -601,10 +711,11 @@ pub fn prove_kzg_stage<T: Transcript<Challenge = Fr>>(
     }
     let final_bind = previous_bind.ok_or(StreamError::EmptyStage)?;
     prover.finish_rounds(final_bind)?;
-    let opening = open_variable_batch(
+    let (sum_at_zero, opening) = prove_aggregated_round_opening(
         &polynomials,
-        &points,
-        &opening_evaluations,
+        &challenges,
+        input_claim,
+        &round_claims,
         degree,
         setup,
         transcript,
@@ -616,12 +727,13 @@ pub fn prove_kzg_stage<T: Transcript<Challenge = Fr>>(
             },
             committed_rounds: Some(CommittedStageProof {
                 round_commitments,
-                round_evaluations,
+                round_claims,
+                sum_at_zero,
                 opening,
             }),
         },
         StageResult {
-            point: points.iter().map(|&[_, _, challenge]| challenge).collect(),
+            point: challenges,
             coefficients: vec![Fr::one()],
             output_claims: vec![claim],
             final_claim: claim,
@@ -634,13 +746,13 @@ struct KzgBatchRecorder<'a> {
     degree: usize,
     polynomials: Vec<Vec<Fr>>,
     commitments: Vec<Bn254G1>,
-    evaluations: Vec<[Fr; 3]>,
-    points: Vec<[Fr; 3]>,
+    claims: Vec<Fr>,
+    challenges: Vec<Fr>,
 }
 
 impl<'a> KzgBatchRecorder<'a> {
     fn new(setup: &'a HyperKZGProverSetup<Bn254>, degree: usize) -> Result<Self, StreamError> {
-        if degree != 5 {
+        if !(5..=6).contains(&degree) {
             return Err(StreamError::StageEncoding);
         }
         if setup.g1_powers().len() < degree + 1 {
@@ -654,8 +766,8 @@ impl<'a> KzgBatchRecorder<'a> {
             degree,
             polynomials: Vec::new(),
             commitments: Vec::new(),
-            evaluations: Vec::new(),
-            points: Vec::new(),
+            claims: Vec::new(),
+            challenges: Vec::new(),
         })
     }
 }
@@ -697,15 +809,12 @@ impl SumcheckRecorder<Fr> for KzgBatchRecorder<'_> {
         let commitment = Bn254::g1_affine_msm(bases, round_poly.coefficients());
         transcript.append_labeled(KZG_ROUND_COMMITMENT_LABEL, &commitment);
         let challenge = transcript.challenge();
-        let at_zero = round_poly.evaluate(Fr::zero());
-        let at_one = round_poly.evaluate(Fr::one());
         let next_claim = round_poly.evaluate(challenge);
-        transcript.append_labeled(KZG_ROUND_ZERO_LABEL, &at_zero);
         transcript.append_labeled(KZG_ROUND_NEXT_LABEL, &next_claim);
         self.polynomials.push(round_poly.coefficients().to_vec());
         self.commitments.push(commitment);
-        self.evaluations.push([at_zero, at_one, next_claim]);
-        self.points.push([Fr::zero(), Fr::one(), challenge]);
+        self.claims.push(next_claim);
+        self.challenges.push(challenge);
         Ok(challenge)
     }
 
@@ -788,10 +897,11 @@ pub fn prove_kzg_batch_stage<T: Transcript<Challenge = Fr>>(
     for output_claim in &proved.member_claims {
         transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, output_claim);
     }
-    let opening = open_variable_batch(
+    let (sum_at_zero, opening) = prove_aggregated_round_opening(
         &recorder.polynomials,
-        &recorder.points,
-        &recorder.evaluations,
+        &recorder.challenges,
+        prelude.claimed_sum,
+        &recorder.claims,
         max_degree,
         setup,
         transcript,
@@ -803,11 +913,8 @@ pub fn prove_kzg_batch_stage<T: Transcript<Challenge = Fr>>(
             },
             committed_rounds: Some(CommittedStageProof {
                 round_commitments: recorder.commitments,
-                round_evaluations: recorder
-                    .evaluations
-                    .iter()
-                    .map(|&[at_zero, _, next_claim]| [at_zero, next_claim])
-                    .collect(),
+                round_claims: recorder.claims,
+                sum_at_zero,
                 opening,
             }),
         },
@@ -873,7 +980,7 @@ where
         .map(|member| member.degree)
         .max()
         .ok_or(StreamError::EmptyStage)?;
-    if max_degree != 5 || max_rounds == 0 {
+    if !(5..=6).contains(&max_degree) || max_rounds == 0 {
         return Err(StreamError::StageEncoding);
     }
     for input_claim in input_claims {
@@ -898,29 +1005,25 @@ where
         .committed_rounds
         .as_ref()
         .ok_or(StreamError::StageEncoding)?;
-    if committed.round_commitments.len() != max_rounds
-        || committed.round_evaluations.len() != max_rounds
+    if committed.round_commitments.len() != max_rounds || committed.round_claims.len() != max_rounds
     {
         return Err(StreamError::StageCount);
     }
     let mut claim = prelude.claimed_sum;
-    let mut points = Vec::with_capacity(max_rounds);
-    let mut evaluations = Vec::with_capacity(max_rounds);
-    for (&commitment, &[at_zero, next_claim]) in committed
+    let mut challenges = Vec::with_capacity(max_rounds);
+    for (&commitment, &next_claim) in committed
         .round_commitments
         .iter()
-        .zip(&committed.round_evaluations)
+        .zip(&committed.round_claims)
     {
         transcript.append_labeled(KZG_ROUND_COMMITMENT_LABEL, &commitment);
         let challenge = transcript.challenge();
-        transcript.append_labeled(KZG_ROUND_ZERO_LABEL, &at_zero);
         transcript.append_labeled(KZG_ROUND_NEXT_LABEL, &next_claim);
-        points.push([Fr::zero(), Fr::one(), challenge]);
-        evaluations.push([at_zero, claim - at_zero, next_claim]);
+        challenges.push(challenge);
         claim = next_claim;
     }
     let mut result = StageResult {
-        point: points.iter().map(|&[_, _, challenge]| challenge).collect(),
+        point: challenges.clone(),
         coefficients,
         output_claims: Vec::new(),
         final_claim: claim,
@@ -939,10 +1042,12 @@ where
     for output_claim in &output_claims {
         transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, output_claim);
     }
-    verify_variable_batch_observed(
+    verify_aggregated_round_opening(
         &committed.round_commitments,
-        &points,
-        &evaluations,
+        &challenges,
+        prelude.claimed_sum,
+        &committed.round_claims,
+        committed.sum_at_zero,
         max_degree,
         &committed.opening,
         setup,
@@ -985,37 +1090,36 @@ where
     T: Transcript<Challenge = Fr>,
     O: VerifierObserver,
 {
-    if degree != 5 || !proof.round_polynomials.round_polynomials.is_empty() {
+    if !(5..=6).contains(&degree) || !proof.round_polynomials.round_polynomials.is_empty() {
         return Err(StreamError::StageEncoding);
     }
     let committed = proof
         .committed_rounds
         .as_ref()
         .ok_or(StreamError::StageEncoding)?;
-    if committed.round_commitments.len() != rounds || committed.round_evaluations.len() != rounds {
+    if committed.round_commitments.len() != rounds || committed.round_claims.len() != rounds {
         return Err(StreamError::StageCount);
     }
     append_sumcheck_claim(transcript, &input_claim);
-    let mut points = Vec::with_capacity(rounds);
-    let mut evaluations = Vec::with_capacity(rounds);
+    let mut challenges = Vec::with_capacity(rounds);
     let mut claim = input_claim;
-    for (&commitment, &[at_zero, next_claim]) in committed
+    for (&commitment, &next_claim) in committed
         .round_commitments
         .iter()
-        .zip(&committed.round_evaluations)
+        .zip(&committed.round_claims)
     {
         transcript.append_labeled(KZG_ROUND_COMMITMENT_LABEL, &commitment);
         let challenge = transcript.challenge();
-        transcript.append_labeled(KZG_ROUND_ZERO_LABEL, &at_zero);
         transcript.append_labeled(KZG_ROUND_NEXT_LABEL, &next_claim);
-        points.push([Fr::zero(), Fr::one(), challenge]);
-        evaluations.push([at_zero, claim - at_zero, next_claim]);
+        challenges.push(challenge);
         claim = next_claim;
     }
-    verify_variable_batch_observed(
+    verify_aggregated_round_opening(
         &committed.round_commitments,
-        &points,
-        &evaluations,
+        &challenges,
+        input_claim,
+        &committed.round_claims,
+        committed.sum_at_zero,
         degree,
         &committed.opening,
         setup,
@@ -1023,7 +1127,7 @@ where
         observer,
     )?;
     Ok(StageResult {
-        point: points.iter().map(|&[_, _, challenge]| challenge).collect(),
+        point: challenges,
         coefficients: vec![Fr::one()],
         output_claims: vec![claim],
         final_claim: claim,

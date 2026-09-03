@@ -57,7 +57,7 @@ where
     /// KZG binding.
     #[expect(
         clippy::indexing_slicing,
-        reason = "num_powers is at least six and scalars contains each published exponent"
+        reason = "num_powers is at least seven and scalars contains each published exponent"
     )]
     pub fn setup_from_secret(
         beta: P::ScalarField,
@@ -65,7 +65,7 @@ where
         g1: P::G1,
         g2: P::G2,
     ) -> HyperKZGProverSetup<P> {
-        let num_powers = max_degree.max(6);
+        let num_powers = max_degree.max(7);
         let mut scalars = Vec::with_capacity(num_powers);
         let mut cur = P::ScalarField::one();
         for _ in 0..num_powers {
@@ -82,10 +82,12 @@ where
         }
 
         let degree_five_shift_g2 = g2.scalar_mul(&scalars[num_powers - 6]);
+        let degree_six_shift_g2 = g2.scalar_mul(&scalars[num_powers - 7]);
         HyperKZGProverSetup {
             g1_powers,
             g2_powers,
             degree_five_shift_g2,
+            degree_six_shift_g2,
         }
     }
 
