@@ -40,6 +40,9 @@ pub struct Evaluator<'o, O: TermObserver + ?Sized> {
     tables: HashMap<(Point, Bits), Vec<Fr>>,
     consts: HashMap<(Point, Bits, u32), Fr>,
     groups: HashMap<Vec<Factor>, Fr>,
+    /// `Π_{cell fields ≠ map field} field(group)` per cell factor list and
+    /// map field: shared by every element of a family.
+    products: HashMap<(Vec<Factor>, Bits), Option<Fr>>,
     pairs: HashMap<(Bits, Bits, u32, u32), Fr>,
     observer: &'o mut O,
 }
@@ -55,6 +58,7 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
             tables: HashMap::new(),
             consts: HashMap::new(),
             groups: HashMap::new(),
+            products: HashMap::new(),
             pairs: HashMap::new(),
             observer,
         }
@@ -408,32 +412,53 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
 
     /// Adds `Π_{other cell fields}·m_map` for every map into `buckets[index]`,
     /// the caller applying one weight per bucket; the cell factors sharing
-    /// the maps' row field join each map's sum.
+    /// the maps' row field join each map's sum. The maps of one bucket are
+    /// summed before the product, and the cell product is memoized across
+    /// the elements sharing the cell.
     pub fn group_into(&mut self, cell: &[Factor], maps: &[(usize, &Factor)], buckets: &mut [Fr]) {
         let Some((_, first)) = maps.first() else {
             return;
         };
         let map_field = first.u;
-        let mut product: Option<Fr> = None;
         let mut shared: Vec<Factor> = Vec::new();
+        let mut others: Vec<Vec<Factor>> = Vec::new();
         for group in field_groups(cell) {
             if group[0].u == map_field {
                 shared = group;
-                continue;
+            } else {
+                others.push(group);
             }
-            let value = self.field(&group);
-            product = Some(match product {
-                Some(p) => self.mul(p, value),
-                None => value,
-            });
         }
+        let key = (cell.to_vec(), map_field);
+        let product = if let Some(&p) = self.products.get(&key) {
+            p
+        } else {
+            let mut product: Option<Fr> = None;
+            for group in &others {
+                let value = self.field(group);
+                product = Some(match product {
+                    Some(p) => self.mul(p, value),
+                    None => value,
+                });
+            }
+            let _ = self.products.insert(key, product);
+            product
+        };
+        let mut sums: Vec<(usize, Fr)> = Vec::new();
         for (index, map) in maps {
             let mut group = shared.clone();
             group.push((*map).clone());
             let m = self.field(&group);
-            buckets[*index] += match product {
-                Some(p) => self.mul(p, m),
-                None => m,
+            if let Some((_, sum)) = sums.iter_mut().find(|(i, _)| i == index) {
+                *sum += m;
+            } else {
+                sums.push((*index, m));
+            }
+        }
+        for (index, sum) in sums {
+            buckets[index] += match product {
+                Some(p) => self.mul(p, sum),
+                None => sum,
             };
         }
     }
@@ -463,6 +488,7 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
             let _ = self.consts.insert((Point::Row, bits, value), v);
         }
         self.groups.clear();
+        self.products.clear();
         self.pairs.clear();
         self
     }

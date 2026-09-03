@@ -29,10 +29,11 @@ impl Builder {
 
         let r_chain = Chain {
             bases: vec![(Operand::Constant(g), Wire::Offset)],
-            kbase: chains[0].bases.len() as u32 + 1 + 4,
+            kbase: chains[0].bases.len() as u32 + 1 + 5,
             init: vec![self.constant(g.x), self.constant(g.y)],
             z0: vec![self.constant(z_fixed.x), self.constant(z_fixed.y)],
             correction: Some(offset_correction(g, z_fixed, 1)),
+            guard: false,
         };
         assert!(
             r_chain.kbase + r_chain.slots() <= 64,
@@ -59,6 +60,7 @@ impl Builder {
                 init: r_rows.clone(),
                 z0: z0_rows.to_vec(),
                 correction: None,
+                guard: true,
             };
             assert!(chain.slots() <= 64);
             outputs[m] = self.g1_chain(&chain, values, setup, &mut lane, &templates);
@@ -137,6 +139,7 @@ impl Builder {
             copy_neg,
             add,
             dbl,
+            guard,
             ..
         } = templates;
         let table_base = lane.table_base;
@@ -344,6 +347,32 @@ impl Builder {
             output = cell(n + 4, 63);
             corr.emit(&mut self.program, row(output), None);
             self.record(&corr, 1, false);
+        }
+        if chain.guard {
+            // Slot `n + 4`: the guard of the last base's add (slot `n − 1`),
+            // reading its `λ`/`x3` rows and the accumulator it added to.
+            let guarded = |delta: i64, offset: u32| {
+                ElemRel::structured(
+                    vec![
+                        Factor::shift(KM1, KM1, delta).with_range(k_field(n + 4)..k_field(n + 5)),
+                        Factor::same(W1, W1),
+                    ],
+                    C,
+                    offset,
+                )
+            };
+            let guards = Family {
+                name: "g1_guard",
+                template: guard,
+                elems: vec![guarded(-5, 12), guarded(-6, 14), self.ones()],
+                own_bits: C,
+                own_offset: 12,
+                domain: vec![restrict(n + 4, n + 5)],
+            };
+            for w in 0..WINDOWS as u32 {
+                guards.emit(&mut self.program, row(cell(n + 4, w)), None);
+            }
+            self.record(&guards, WINDOWS, false);
         }
         // Reference entry `j = 8` of base `b = table_base + k`: row
         // `16·(G1_TABLE + 16b + 8) + c` from op row `16·(64·(kbase + k) + w) + c`,

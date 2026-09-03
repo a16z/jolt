@@ -1,21 +1,37 @@
 //! The G1 and G2 lanes: affine Straus chains over the flattened check's
 //! MSMs with transcript-randomized offsets.
 //!
-//! Every chain starts at `R = θ·G` and reads table entries `d·P + Z0` with
-//! `Z0 = φ(R) = θ·φ(G)`, `φ` the GLV endomorphism (`φ(G) = [λ]G`), `θ` the
-//! wrapper's offset challenge drawn after the phase-1a commitments (the
-//! points `P` among them). Before the add of window `w`, base `k`, the
-//! accumulator is `θ·(16^{w+1} + λ(nw + k))·G + H` with `H` the honest,
-//! θ-independent partial sum, and the entry is `d·P + θλ·G`; the exceptional
-//! affine case `acc = ±entry` is therefore the linear equation
-//! `θ·(16^{w+1} + λ(nw + k ∓ 1))·G = ∓d·P − H` in `θ`, with exactly one root
-//! because its coefficient is a nonzero scalar ([`tests::offsets_are_nondegenerate`]
-//! sweeps every `(w, k, n)` of the layout); a doubling of the identity is
-//! `16^w + λnw ≡ 0`, likewise excluded, and neither curve has 2-torsion. The
-//! table entries `(d ∓ 1)·P + θλG ± P` degenerate only when `θλG` equals a
-//! fixed point, one root each. The offsets are removed by one extra base
-//! `−K` per chain with scalar `θ`, `K = 16^64·G + n'·(16^64 − 1)/15·φ(G)`
-//! (`n'` bases including itself), so no correction depends on the prover.
+//! Every main chain starts at `R = θ·G` and reads table entries `(d − 8)·P +
+//! Z0` with `Z0 = φ(R) = θ·φ(G)`, `φ` the GLV endomorphism (`φ(G) = [λ]G`),
+//! `θ` the wrapper's offset challenge drawn after the phase-1a commitments
+//! (the points `P` and the digits of the proof scalars among them). The
+//! offsets are removed by one extra base `−K` per chain with scalar `θ`,
+//! `K = (16^64 + n·(16^64 − 1)/15·λ)·G` (`n` bases including itself), so
+//! no correction depends on the prover. Processing order within a window:
+//! four doublings, the proof bases, the correction base last.
+//!
+//! Exceptional affine cases. An add `acc + entry` with `x_entry = x_acc` is
+//! either `entry = acc` (the slope pin `λ·(x2 − x1) = y2 − y1` is vacuous and
+//! the output unconstrained) or `entry = −acc` (the pin reads `0 = −2·y1`:
+//! no witness). The correction base's adds carry the completeness guard
+//! ([`super::super::ops::g1_add_guard`]: `inv·(x2 − x1) = 1` from the add's
+//! own rows), so they admit no exceptional witness at all. For a proof-base
+//! add of window `w`, base `k`, and for the doublings, the accumulator is
+//! `θ·A·G − 16·k_K·P_w·G + H` with `A = A_{w,k} = 16^{w+1} + λ·(n·(16^{w+1}
+//! − 16)/15 + k)` (`A_w = 16^w + λ·n·(16^w − 1)/15` before the doublings),
+//! `K = k_K·G`, `P_w` the integer formed by the `w` digits of `θ` the
+//! correction base has consumed, and `H` the partial MSM, fixed before `θ`.
+//! Writing `θ = 16^{64−w}·P_w + S_w`, `acc = ±entry` (or `acc = 0`) is
+//! `(A ∓ λ)·S_w + ((A ∓ λ)·16^{64−w} − 16·k_K)·P_w ≡ c` with `c` fixed:
+//! for each of the `≤ 16^w·16/15` prefixes there is at most one `S_w`, and
+//! for each of the `≤ 16^{64−w}·16/15` suffixes at most one prefix, so at
+//! most `2^129` values of `θ` are exceptional at any site, `2^{−125}` of
+//! them, provided the two coefficients are nonzero —
+//! [`tests::offsets_are_nondegenerate`] sweeps every `(w, k, n ≤ 64)`. The
+//! one zero it finds is the last add's `acc = −entry`, i.e. a zero MSM, for
+//! every `θ`: that case has no witness (an honest zero MSM has probability
+//! `1/r`). Table entries `(d ∓ 1)·P + Z0 ± P` degenerate only when `θ·λ·G`
+//! equals a fixed point, one root each; neither curve has 2-torsion.
 //!
 //! `R` itself is a fixed-base Straus chain of `θ` over `G` with constant
 //! offsets `R'' = G`, `Z'' = 9G` and a constant correction: the accumulator
@@ -24,7 +40,9 @@
 //! the entry multiplier `d_w + 9 ∈ [1, 16]`, so `acc = ±entry` needs a wrap
 //! modulo `r`, impossible below `2^254` (`w ≤ 62`) and a single-residue
 //! event on the last window (`≤ 32` digit strings) and on the correction
-//! (`θ ∈ {0, −2·(16^64 + 9(16^64 − 1)/15)}`).
+//! (`θ ∈ {0, −2·(16^64 + 9(16^64 − 1)/15)}`). The ψ-chain adds (prover-chosen
+//! operands, no `θ`) are guarded as well; the Miller-loop adds pair the
+//! constant `Q` bases with points inside `G2`.
 
 use ark_bn254::{
     g1::Config as G1Config, g2::Config as G2Config, Config as Bn254Config, Fq, G1Affine, G2Affine,
@@ -41,8 +59,9 @@ use super::super::digits::{digits, WINDOWS};
 use super::super::dory::{FlattenedCheck, G1Base, G2Base, InputElement, Wire, WireValues};
 use super::super::layout::{Bits, Factor, Rel};
 use super::super::ops::{
-    g1_add, g1_copy, g1_dbl, g1_endo, g1_on_curve, g1_sign, g2_add, g2_add_guarded, g2_copy,
-    g2_dbl, g2_endo, g2_negation_pins, g2_on_curve, g2_psi, g2_sign, psi_coefficients,
+    g1_add, g1_add_guard, g1_copy, g1_dbl, g1_endo, g1_on_curve, g1_sign, g2_add, g2_add_guard,
+    g2_add_guarded, g2_copy, g2_dbl, g2_endo, g2_negation_pins, g2_on_curve, g2_psi, g2_sign,
+    psi_coefficients,
 };
 use super::super::program::{half_plus_one, RowId};
 use super::super::relation::{FP_SLOTS_G1, FP_SLOTS_G2};
@@ -86,19 +105,22 @@ enum Operand<B, A> {
 }
 
 /// One chain: bases with scalar wires, first `k` slot, accumulator start rows,
-/// table offset rows and the constant correction of a fixed-base chain.
+/// table offset rows, the constant correction of a fixed-base chain and
+/// whether the last base's adds carry the completeness guard (the main
+/// chains' `θ`-digit correction base).
 struct Chain<B, A> {
     bases: Vec<(Operand<B, A>, Wire)>,
     kbase: u32,
     init: Vec<RowId>,
     z0: Vec<RowId>,
     correction: Option<A>,
+    guard: bool,
 }
 
 impl<B, A> Chain<B, A> {
-    /// `k` slots used: bases, four doublings, the correction.
+    /// `k` slots used: bases, four doublings, the correction, the guard.
     fn slots(&self) -> u32 {
-        self.bases.len() as u32 + 4 + u32::from(self.correction.is_some())
+        self.bases.len() as u32 + 4 + u32::from(self.correction.is_some()) + u32::from(self.guard)
     }
 }
 
@@ -132,6 +154,7 @@ struct G1Templates {
     add: Template,
     sub: Template,
     dbl: Template,
+    guard: Template,
 }
 
 impl G1Templates {
@@ -142,6 +165,7 @@ impl G1Templates {
             add: g1_add(false),
             sub: g1_add(true),
             dbl: g1_dbl(),
+            guard: g1_add_guard(),
         }
     }
 }
@@ -153,6 +177,7 @@ struct G2Templates {
     add: Template,
     sub: Template,
     dbl: Template,
+    guard: Template,
 }
 
 impl G2Templates {
@@ -163,6 +188,7 @@ impl G2Templates {
             add: g2_add(false),
             sub: g2_add(true),
             dbl: g2_dbl(),
+            guard: g2_add_guard(),
         }
     }
 }
@@ -173,7 +199,7 @@ impl G2Templates {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
-    use ark_ff::{BigInteger, One, PrimeField, Zero};
+    use ark_ff::{BigInteger, Field, One, PrimeField, Zero};
 
     fn modulus<A: AffineRepr>() -> BigUint {
         BigUint::from_bytes_be(&<A::ScalarField as PrimeField>::MODULUS.to_bytes_be())
@@ -194,24 +220,48 @@ mod tests {
         );
     }
 
-    /// No `(window, add, chain size)` of the layout makes an exceptional
-    /// affine case θ-independent: `16^{w+1} + λ(nw + k ∓ 1) ≠ 0` and
-    /// `16^w + λnw ≠ 0` for every `w < 64`, `k < n ≤ 64`.
+    /// No `(window, add, chain size)` of a main chain makes an exceptional
+    /// affine case θ-independent (module doc): both `A ∓ λ` and
+    /// `(A ∓ λ)·16^{64−w} − 16·k_K` are nonzero for every add, and `A_w`,
+    /// `A_w·16^{64−w} − 16·k_K` for every doubling, `w < 64`, `k < n ≤ 64` —
+    /// except the last add's `acc = −entry`, the zero MSM.
     #[test]
+    #[expect(clippy::unwrap_used, reason = "test")]
     fn offsets_are_nondegenerate() {
+        let sixteen = Fr::from(16u64);
+        let sixteen_pow = sixteen.pow([WINDOWS as u64]);
+        let window_sum = Fr::from(window_sum());
+        let fifteen_inverse = Fr::from(15u64).inverse().unwrap();
         for lambda in [G1Config::LAMBDA, G2Config::LAMBDA] {
             assert!(!lambda.is_zero());
-            let sixteen = Fr::from(16u64);
-            for n in 1..=64u64 {
+            for n in 2..=64u64 {
+                let k_k = sixteen_pow + Fr::from(n) * window_sum * lambda;
+                let offsets = |power: Fr| Fr::from(n) * (power - Fr::one()) * fifteen_inverse;
                 let mut power = Fr::one();
                 for w in 0..WINDOWS as u64 {
-                    let zeros = Fr::from(n * w);
-                    assert_ne!(power + lambda * zeros, Fr::zero(), "doubling n={n} w={w}");
-                    let before_add = power * sixteen;
+                    let suffix = sixteen.pow([WINDOWS as u64 - w]);
+                    let a_dbl = power + lambda * offsets(power);
+                    assert_ne!(a_dbl, Fr::zero(), "doubling n={n} w={w}");
+                    assert_ne!(
+                        a_dbl * suffix - sixteen * k_k,
+                        Fr::zero(),
+                        "doubling slope n={n} w={w}"
+                    );
+                    let before_window = power * sixteen;
                     for k in 0..n {
+                        let a = before_window + lambda * (offsets(power) * sixteen + Fr::from(k));
                         for sign in [Fr::one(), -Fr::one()] {
-                            let coefficient = before_add + lambda * (zeros + Fr::from(k) - sign);
+                            let coefficient = a - sign * lambda;
+                            let slope = coefficient * suffix - sixteen * k_k;
                             assert_ne!(coefficient, Fr::zero(), "add n={n} w={w} k={k}");
+                            if w + 1 == WINDOWS as u64 && k + 1 == n && sign == -Fr::one() {
+                                // The last add: `acc = −entry` is the zero MSM,
+                                // θ-independent by construction (no witness).
+                                assert_eq!(coefficient, k_k, "zero MSM n={n}");
+                                assert_eq!(slope, Fr::zero(), "zero MSM slope n={n}");
+                                continue;
+                            }
+                            assert_ne!(slope, Fr::zero(), "add slope n={n} w={w} k={k}");
                         }
                     }
                     power *= sixteen;

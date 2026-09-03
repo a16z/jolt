@@ -9,10 +9,6 @@
 //! evaluations at the stage point.
 
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_poly::{EqPolynomial, UnivariatePoly};
-use jolt_sumcheck::prover::ProveRounds;
-use jolt_sumcheck::SumcheckError;
-use rayon::prelude::*;
 
 use super::columns::{
     recompose, Constants, CANON_CHUNKS, CANON_SHIFT, CARRIES, CARRY_CHUNKS, CHUNK_BITS,
@@ -21,6 +17,8 @@ use super::columns::{
 };
 use super::layout::LOG_ROWS;
 use super::terms::{plain, powers_with, AffineForm, ColumnId, Mul, Term};
+
+pub use super::row_sumcheck::{eq_tau_column, RowSumcheck};
 
 /// Slots per row (the dense `Fq12` product form).
 pub const SLOTS: usize = 22;
@@ -109,7 +107,7 @@ pub struct PublicEvals {
 }
 
 impl PublicEvals {
-    fn as_array(&self) -> [Fr; Col::PUBLIC] {
+    pub(super) fn as_array(&self) -> [Fr; Col::PUBLIC] {
         [
             self.eq_tau,
             self.copy_kernel,
@@ -124,6 +122,17 @@ impl PublicEvals {
             self.id,
         ]
     }
+}
+
+/// The five quantities every term of the final relation is linear in
+/// (`eq(τ, r)`, `λ`, `λ_lookup`, the copy kernel, the constancy kernel): a
+/// member's batching coefficient scales them once instead of every term.
+struct TermScale {
+    eq: Fr,
+    lambda: Fr,
+    lambda_lookup: Fr,
+    copy_kernel: Fr,
+    constancy: Fr,
 }
 
 /// Transcript challenges of the row member.
@@ -619,10 +628,34 @@ impl RowRelation {
 
     /// The final relation as terms, every constant product observed by `mul`.
     pub fn terms_with(&self, public: &PublicEvals, mul: Mul<'_>) -> Vec<Term> {
+        let scale = TermScale {
+            eq: public.eq_tau,
+            lambda: self.challenges.lambda,
+            lambda_lookup: self.challenges.lambda_lookup,
+            copy_kernel: public.copy_kernel,
+            constancy: public.constancy,
+        };
+        self.terms_scaled(public, &scale, mul)
+    }
+
+    /// [`Self::terms_with`] with every term multiplied by `batching` (the
+    /// member's batching coefficient): five products instead of one per term.
+    pub fn batched_terms(&self, public: &PublicEvals, batching: Fr, mul: Mul<'_>) -> Vec<Term> {
+        let scale = TermScale {
+            eq: mul(public.eq_tau, batching),
+            lambda: mul(self.challenges.lambda, batching),
+            lambda_lookup: mul(self.challenges.lambda_lookup, batching),
+            copy_kernel: mul(public.copy_kernel, batching),
+            constancy: mul(public.constancy, batching),
+        };
+        self.terms_scaled(public, &scale, mul)
+    }
+
+    fn terms_scaled(&self, public: &PublicEvals, scale: &TermScale, mul: Mul<'_>) -> Vec<Term> {
         let ch = &self.challenges;
         let c = &self.constants;
         let g = &self.gammas;
-        let eq = public.eq_tau;
+        let eq = scale.eq;
         let column = |i: usize| AffineForm::column(ColumnId(i as u32));
         let one_minus =
             |i: usize| AffineForm::constant(Fr::one()).plus(&column(i).scale(-Fr::one()));
@@ -692,11 +725,11 @@ impl RowRelation {
                         .filter(|(j, _)| *j != i)
                         .map(|(_, x)| x.clone()),
                 );
-                terms.push(Term::new(ch.lambda, factors));
+                terms.push(Term::new(scale.lambda, factors));
             }
         }
         terms.push(Term::new(
-            -ch.lambda,
+            -scale.lambda,
             vec![column(Col::MULT), column(Col::INV)],
         ));
         // Digit bits.
@@ -830,9 +863,9 @@ impl RowRelation {
             vec![column(Col::FREE), one_minus(Col::PIN), canon],
         ));
         // Lookup sum.
-        terms.push(Term::new(ch.lambda_lookup, vec![h.clone()]));
-        terms.push(Term::new(-ch.lambda_lookup, vec![column(Col::G_POS)]));
-        terms.push(Term::new(-ch.lambda_lookup, vec![column(Col::G_NEG)]));
+        terms.push(Term::new(scale.lambda_lookup, vec![h.clone()]));
+        terms.push(Term::new(-scale.lambda_lookup, vec![column(Col::G_POS)]));
+        terms.push(Term::new(-scale.lambda_lookup, vec![column(Col::G_NEG)]));
         // Copy identities (looked-up `Y_s` masked out).
         let mut copied = AffineForm::default();
         for s in 0..SLOTS {
@@ -851,14 +884,14 @@ impl RowRelation {
         }
         copied.add_column(ColumnId(Col::F_POS as u32), self.copy_pow[2 * SLOTS]);
         copied.add_column(ColumnId(Col::F_NEG as u32), self.copy_pow[2 * SLOTS + 1]);
-        terms.push(Term::new(public.eq_tau, vec![copied]));
-        terms.push(Term::new(-public.copy_kernel, vec![z_xi]));
+        terms.push(Term::new(eq, vec![copied]));
+        terms.push(Term::new(-scale.copy_kernel, vec![z_xi]));
         // Digit constancy.
         let mut bits = AffineForm::default();
         for b in 0..DIGIT_COLUMNS {
             bits.add_column(ColumnId((Col::DIGITS + b) as u32), self.constancy_pow[b]);
         }
-        terms.push(Term::new(public.constancy, vec![bits]));
+        terms.push(Term::new(scale.constancy, vec![bits]));
         terms
     }
 
@@ -881,184 +914,6 @@ impl RowRelation {
 
 const _: () = assert!(RANGE_COLUMNS == CHUNK_COLUMNS + DIGIT_COLUMNS);
 const _: () = assert!(CHUNK_BITS == 16);
-
-/// Linear extrapolation of a row pair to `X = x`: `even + x·(odd − even)`.
-fn extrapolate(out: &mut [Fr], even: &[Fr], odd: &[Fr], x: Fr) {
-    for ((slot, &e), &o) in out.iter_mut().zip(even).zip(odd) {
-        *slot = e + x * (o - e);
-    }
-}
-
-/// The row member as a batch member: a row-major matrix of every claimed and
-/// public column, folded round by round (low bit first). The `eq(τ,·)`
-/// column is part of the matrix, so the round polynomial is the plain
-/// degree-`d+1` evaluation of the summand at `d + 2` points.
-pub struct RowSumcheck<'a> {
-    relation: &'a RowRelation,
-    matrix: Vec<Fr>,
-    scratch: Vec<Fr>,
-    rows: usize,
-    round: usize,
-    points: Vec<Fr>,
-}
-
-impl<'a> RowSumcheck<'a> {
-    /// `columns[i]` is matrix column `i` (`Col::WIDTH` columns of `2^LOG_ROWS`
-    /// rows: claimed columns then the public ones).
-    pub fn new(relation: &'a RowRelation, columns: &[Vec<Fr>]) -> Self {
-        assert_eq!(columns.len(), Col::WIDTH);
-        let rows = 1usize << LOG_ROWS;
-        for column in columns {
-            assert_eq!(column.len(), rows);
-        }
-        let mut matrix = vec![Fr::zero(); rows * Col::WIDTH];
-        matrix
-            .par_chunks_mut(Col::WIDTH)
-            .enumerate()
-            .for_each(|(row, slot)| {
-                for (value, column) in slot.iter_mut().zip(columns) {
-                    *value = column[row];
-                }
-            });
-        Self {
-            relation,
-            matrix,
-            scratch: Vec::new(),
-            rows,
-            round: 0,
-            points: (0..=(Self::degree() + 1) as u64)
-                .map(Fr::from_u64)
-                .collect(),
-        }
-    }
-
-    /// Summand degree in each variable (`eq` included).
-    pub const fn degree() -> usize {
-        RowRelation::degree()
-    }
-
-    /// `Σ_row summand(row)` — zero for an honest witness.
-    pub fn input_claim(&self) -> Fr {
-        self.matrix
-            .par_chunks(Col::WIDTH)
-            .map(|row| self.relation.summand(row))
-            .sum()
-    }
-
-    fn round_poly(&self) -> Vec<Fr> {
-        let relation = self.relation;
-        let width = Col::WIDTH;
-        let evals: Vec<Fr> = self.matrix[..self.rows * width]
-            .par_chunks(2 * width)
-            .fold(
-                || (vec![Fr::zero(); self.points.len()], vec![Fr::zero(); width]),
-                |(mut acc, mut scratch), pair| {
-                    let (even, odd) = pair.split_at(width);
-                    acc[0] += relation.summand(even);
-                    acc[1] += relation.summand(odd);
-                    for (i, &point) in self.points.iter().enumerate().skip(2) {
-                        extrapolate(&mut scratch, even, odd, point);
-                        acc[i] += relation.summand(&scratch);
-                    }
-                    (acc, scratch)
-                },
-            )
-            .map(|(acc, _)| acc)
-            .reduce(
-                || vec![Fr::zero(); self.points.len()],
-                |a, b| a.iter().zip(&b).map(|(x, y)| *x + *y).collect(),
-            );
-        let mut coefficients = UnivariatePoly::from_evals(&evals).into_coefficients();
-        while coefficients.len() > 2 && coefficients.last() == Some(&Fr::zero()) {
-            let _ = coefficients.pop();
-        }
-        coefficients
-    }
-
-    fn bind(&mut self, r: Fr) {
-        let width = Col::WIDTH;
-        let half = self.rows / 2;
-        if self.scratch.len() < half * width {
-            self.scratch.resize(half * width, Fr::zero());
-        }
-        self.scratch[..half * width]
-            .par_chunks_mut(width)
-            .zip(self.matrix[..self.rows * width].par_chunks(2 * width))
-            .for_each(|(out, pair)| {
-                let (even, odd) = pair.split_at(width);
-                extrapolate(out, even, odd, r);
-            });
-        std::mem::swap(&mut self.matrix, &mut self.scratch);
-        self.rows = half;
-        self.round += 1;
-    }
-
-    /// Final evaluations after every round: the claimed columns, then the
-    /// public columns (which the verifier recomputes).
-    pub fn final_row(&self) -> &[Fr] {
-        assert_eq!(self.rows, 1, "sumcheck not finished");
-        &self.matrix[..Col::WIDTH]
-    }
-
-    /// Claimed column evaluations at the point (`Col::CLAIMED` values).
-    pub fn claims(&self) -> Vec<Fr> {
-        self.final_row()[..Col::CLAIMED].to_vec()
-    }
-
-    /// The public columns' final values (the verifier's oracle in tests).
-    pub fn public_evals(&self) -> PublicEvals {
-        let p = &self.final_row()[Col::CLAIMED..];
-        PublicEvals {
-            eq_tau: p[0],
-            copy_kernel: p[1],
-            sel: p[2],
-            is_gt: p[3],
-            is_g1: p[4],
-            is_g2: p[5],
-            s0: p[6],
-            coord: p[7],
-            constancy: p[8],
-            small: p[9],
-            id: p[10],
-        }
-    }
-}
-
-impl PublicEvals {
-    /// Matrix row layout helper: the public part of a final row.
-    pub fn to_row(&self) -> [Fr; Col::PUBLIC] {
-        self.as_array()
-    }
-}
-
-impl ProveRounds<Fr> for RowSumcheck<'_> {
-    fn num_rounds(&self) -> usize {
-        LOG_ROWS
-    }
-
-    fn prove_round(
-        &mut self,
-        bind: Option<Fr>,
-        round: usize,
-        _previous_claim: Fr,
-    ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
-        if let Some(r) = bind {
-            self.bind(r);
-        }
-        debug_assert_eq!(round, self.round);
-        Ok(UnivariatePoly::new(self.round_poly()))
-    }
-
-    fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
-        self.bind(bind);
-        Ok(())
-    }
-}
-
-/// `eq(τ, x)` over the rows for the big-endian `tau`.
-pub fn eq_tau_column(tau: &[Fr]) -> Vec<Fr> {
-    EqPolynomial::<Fr>::evals(tau, None)
-}
 
 impl RowRelation {
     /// Fingerprint weight `fp^s` of operand slot `s`.

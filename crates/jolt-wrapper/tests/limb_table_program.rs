@@ -7,7 +7,10 @@
     reason = "tests report shapes and fail loudly"
 )]
 
-#[expect(dead_code, reason = "fixtures shared with the other limb-table test binaries")]
+#[expect(
+    dead_code,
+    reason = "fixtures shared with the other limb-table test binaries"
+)]
 mod common;
 
 use std::cmp::Reverse;
@@ -439,7 +442,7 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     use jolt_wrapper::stream::{ColumnId, TermContext, TermExporter, VerifierCost};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
-    let check = FlattenedCheck::derive(11, 5);
+    let check = FlattenedCheck::derive(11, 42);
     let values = random_values(&check, 1);
     let setup = random_setup(11, 2);
     let layout = build(&check, &values, &setup, &check.wires());

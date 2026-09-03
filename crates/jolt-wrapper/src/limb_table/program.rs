@@ -398,19 +398,19 @@ impl Program {
                 Source::Compute => eval_slots(&values, &spec.slots),
                 Source::Input(index) => inputs[*index],
                 Source::Constant(value) => *value,
+                // A zero denominator is an exceptional affine add; the slope
+                // is set to zero and the gadget's pinned slope row fails, so
+                // the case surfaces as a pin violation, not an evaluation error.
                 Source::Quotient { num, den } => {
                     eval_slots(&values, num)
-                        * eval_slots(&values, den)
-                            .inverse()
-                            .ok_or(EvaluationError::NonInvertible { row })?
+                        * eval_slots(&values, den).inverse().unwrap_or(Fq::ZERO)
                 }
                 Source::QuotientFq2 { num, den, coord } => {
                     let num = Fq2::new(eval_slots(&values, &num[0]), eval_slots(&values, &num[1]));
                     let den = Fq2::new(eval_slots(&values, &den[0]), eval_slots(&values, &den[1]));
-                    let quotient = num
-                        * den
-                            .inverse()
-                            .ok_or(EvaluationError::NonInvertible { row })?;
+                    let quotient = den
+                        .inverse()
+                        .map_or(Fq2::new(Fq::ZERO, Fq::ZERO), |inverse| num * inverse);
                     if *coord == 0 {
                         quotient.c0
                     } else {

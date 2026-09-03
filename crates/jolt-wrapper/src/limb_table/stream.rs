@@ -34,7 +34,7 @@ use super::export::{
     columns, exact_column, free_column, phases, pin_columns, ClaimedColumns, ColumnSpec,
 };
 use super::layout::LOG_ROWS;
-use super::lookup::{omega_column, omega_eval, public_evals, DIGIT_BITS};
+use super::lookup::{omega_column, public_and_omega_evals, DIGIT_BITS};
 use super::relation::{Challenges, Col, LookupConstants, RowRelation, RowSumcheck};
 use super::schedule::Layout;
 use super::terms::{plain, powers_with, Mul};
@@ -115,12 +115,24 @@ fn phase_groups(columns: Range<usize>, packing: usize) -> usize {
     columns.len().div_ceil(packing)
 }
 
+/// Groups of the pinned verifier-key columns at `packing`.
+fn vk_groups(packing: usize) -> usize {
+    phase_groups(Col::COMMITTED..Col::CLAIMED, packing)
+}
+
 /// T2's committed phases: group counts at `packing` and the challenges drawn
-/// after each.
+/// after each. The phase list owns the whole group geometry of the block:
+/// the verifier-key groups sit after the last phase's columns and are
+/// counted with it, so the sizes sum to every emitted group.
 pub fn commitment_phases(packing: usize) -> [CommitmentPhase; 4] {
     let specs = phases();
     std::array::from_fn(|i| CommitmentPhase {
-        group_count: phase_groups(specs[i].columns.clone(), packing),
+        group_count: phase_groups(specs[i].columns.clone(), packing)
+            + if i + 1 == specs.len() {
+                vk_groups(packing)
+            } else {
+                0
+            },
         challenge_count: PHASE_CHALLENGES[i],
     })
 }
@@ -137,7 +149,7 @@ pub fn prover_group_count(packing: usize) -> usize {
 /// `group_offset`.
 pub fn vk_group_range(packing: usize, group_offset: usize) -> Range<usize> {
     let start = group_offset + prover_group_count(packing);
-    start..start + phase_groups(Col::COMMITTED..Col::CLAIMED, packing)
+    start..start + vk_groups(packing)
 }
 
 /// The verifier-key columns of a layout as stream columns (the `pin` and
@@ -361,15 +373,18 @@ impl StreamTermExporter<'_> {
         };
         let relation =
             RowRelation::new_with(challenges.row, lookup, &mut |a, b| observer.fr_mul(a, b));
-        let public = public_evals(self.layout, &relation, &tau_le, context.row_point, observer);
-        let omega = omega_eval(self.layout, challenges.rho, context.row_point, observer);
+        let (public, omega) = public_and_omega_evals(
+            self.layout,
+            &relation,
+            &tau_le,
+            context.row_point,
+            challenges.rho,
+            observer,
+        );
         let mut mul = |a, b| observer.fr_mul(a, b);
         let rho_rows = context.batching_coefficients[self.row_member];
         let rho_link = context.batching_coefficients[self.link_member];
-        let mut local = relation.terms_with(&public, &mut mul);
-        for term in &mut local {
-            term.coefficient = mul(term.coefficient, rho_rows);
-        }
+        let mut local = relation.batched_terms(&public, rho_rows, &mut mul);
         let mut link = link_term(omega);
         link.coefficient = mul(link.coefficient, rho_link);
         local.push(link);
@@ -410,3 +425,25 @@ impl TermExporter for StreamTermExporter<'_> {
 
 const _: () = assert!(CHUNK_COLUMNS + DIGIT_BITS + 5 == Col::PHASE_1B_END);
 const _: () = assert!(LIMBS + 3 == Col::CLAIMED - Col::COMMITTED);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The phase sizes cover every emitted group, the verifier-key suffix
+    /// included, at every packing the assembly uses.
+    #[test]
+    fn phases_cover_every_group() {
+        for packing in [4, 16, 32] {
+            let declared: usize = commitment_phases(packing)
+                .iter()
+                .map(|phase| phase.group_count)
+                .sum();
+            assert_eq!(
+                declared,
+                prover_group_count(packing) + vk_group_range(packing, 0).len(),
+                "packing {packing}"
+            );
+        }
+    }
+}

@@ -11,6 +11,7 @@ use jolt_field::{Field, Fr, One, Ring, Zero};
 use super::layout::{Bits, Factor, Rel, LOG_ROWS, ROWS};
 use super::relation::{PublicEvals, RowRelation, FP_SLOTS_G1, FP_SLOTS_G2, FP_SLOTS_GT};
 use super::schedule::{Layout, SelectedFamily};
+use super::terms::{plain, powers_with, Mul};
 use super::verifier::{Evaluator, Point};
 use super::wiring::{copy_kernel_eval, ReadKind};
 use ark_bn254::Fr as ArkFr;
@@ -452,25 +453,38 @@ impl SelectedFamily {
 
 /// `ρ^{kd}/mult(kd)` per digit base (the digit link's per-base weight).
 pub fn rho_weights(layout: &Layout, rho: Fr) -> Vec<Fr> {
+    rho_weights_with(layout, rho, &mut plain)
+}
+
+/// [`rho_weights`] with every product observed by `mul` (the verifier's
+/// derivation): the `ρ` powers, plus one scaling per base several MSMs share.
+pub fn rho_weights_with(layout: &Layout, rho: Fr, mul: Mul<'_>) -> Vec<Fr> {
     let mut multiplicity = vec![0u64; layout.digit_bases as usize];
     for op in &layout.digit_ops {
         if op.w == 0 {
             multiplicity[op.kd as usize] += 1;
         }
     }
-    let mut power = Fr::one();
-    (0..layout.digit_bases)
-        .map(|kd| {
-            let weight = if multiplicity[kd as usize] == 0 {
-                Fr::zero()
-            } else {
-                power
-                    * Fr::from_u64(multiplicity[kd as usize])
+    let powers = powers_with(rho, layout.digit_bases as usize, mul);
+    let mut inverses: Vec<(u64, Fr)> = Vec::new();
+    powers
+        .iter()
+        .zip(&multiplicity)
+        .map(|(power, &m)| match m {
+            0 => Fr::zero(),
+            1 => *power,
+            _ => {
+                let inverse = if let Some((_, v)) = inverses.iter().find(|(k, _)| *k == m) {
+                    *v
+                } else {
+                    let v = Fr::from_u64(m)
                         .inverse()
-                        .unwrap_or_else(|| unreachable!("nonzero multiplicity"))
-            };
-            power *= rho;
-            weight
+                        .unwrap_or_else(|| unreachable!("nonzero multiplicity"));
+                    inverses.push((m, v));
+                    v
+                };
+                mul(*power, inverse)
+            }
         })
         .collect()
 }
@@ -492,11 +506,34 @@ pub fn omega_eval<O: TermObserver + ?Sized>(
     r_le: &[Fr],
     observer: &mut O,
 ) -> Fr {
-    let weights = rho_weights(layout, rho);
     let mut ev = Evaluator::new(r_le, r_le, observer);
+    omega_eval_in(layout, rho, &mut ev)
+}
+
+fn omega_eval_in<O: TermObserver + ?Sized>(
+    layout: &Layout,
+    rho: Fr,
+    ev: &mut Evaluator<'_, O>,
+) -> Fr {
+    let weights = rho_weights_with(layout, rho, &mut |a, b| ev.mul(a, b));
     layout.selected.iter().fold(Fr::zero(), |acc, family| {
-        acc + family.omega_eval(&mut ev, &weights)
+        acc + family.omega_eval(ev, &weights)
     })
+}
+
+/// [`public_evals`] and `ω̃(r)` over one evaluator: the digit link reuses the
+/// stage point's eq tables.
+pub fn public_and_omega_evals<O: TermObserver + ?Sized>(
+    layout: &Layout,
+    relation: &RowRelation,
+    tau_le: &[Fr],
+    r_le: &[Fr],
+    rho: Fr,
+    observer: &mut O,
+) -> (PublicEvals, Fr) {
+    let (public, mut ev) = public_evals_with(layout, relation, tau_le, r_le, observer);
+    let omega = omega_eval_in(layout, rho, &mut ev);
+    (public, omega)
 }
 
 /// Verifier: the public multilinears of the row member at the stage point
@@ -508,6 +545,16 @@ pub fn public_evals<O: TermObserver + ?Sized>(
     r_le: &[Fr],
     observer: &mut O,
 ) -> PublicEvals {
+    public_evals_with(layout, relation, tau_le, r_le, observer).0
+}
+
+fn public_evals_with<'o, O: TermObserver + ?Sized>(
+    layout: &Layout,
+    relation: &RowRelation,
+    tau_le: &[Fr],
+    r_le: &[Fr],
+    observer: &'o mut O,
+) -> (PublicEvals, Evaluator<'o, O>) {
     let eq_tau = tau_le.iter().zip(r_le).fold(Fr::one(), |acc, (t, r)| {
         acc * (*t * *r + (Fr::one() - *t) * (Fr::one() - *r))
     });
@@ -545,7 +592,7 @@ pub fn public_evals<O: TermObserver + ?Sized>(
         .iter()
         .enumerate()
         .fold(Fr::zero(), |acc, (i, r)| acc + *r * Fr::from_u64(1u64 << i));
-    PublicEvals {
+    let public = PublicEvals {
         eq_tau,
         copy_kernel,
         sel,
@@ -557,7 +604,8 @@ pub fn public_evals<O: TermObserver + ?Sized>(
         constancy,
         small,
         id,
-    }
+    };
+    (public, ev)
 }
 
 const _: () = assert!(FP_SLOTS_GT >= FP_SLOTS_G2 && FP_SLOTS_G2 >= FP_SLOTS_G1);

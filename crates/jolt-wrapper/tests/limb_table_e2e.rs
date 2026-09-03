@@ -19,8 +19,8 @@ use std::time::Instant;
 use common::Opening;
 
 use ark_bn254::{Fq, Fq12, Fr as ArkFr, G1Affine, G1Projective};
-use ark_ec::AffineRepr;
-use ark_ff::{PrimeField, UniformRand};
+use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::{BigInteger, PrimeField, UniformRand};
 use jolt_dory::DoryProof;
 use jolt_field::{Field, Fr, Ring, Zero};
 use jolt_poly::UnivariatePoly;
@@ -635,6 +635,92 @@ fn twist_point_outside_g2_is_rejected() {
     rejects(columns, &relation, &w.layout, |_| {});
 }
 
+/// The two small prime factors called out in the BN254 twist cofactor cannot
+/// ride into the proof-derived Miller input.
+#[test]
+fn exact_small_torsion_pairing_inputs_are_rejected() {
+    use ark_bn254::{g2::Config as G2Config, Fq2, G2Affine};
+    use ark_ec::CurveConfig;
+    use jolt_wrapper::limb_table::dory::InputElement;
+
+    let cofactor = G2Config::COFACTOR
+        .iter()
+        .rev()
+        .fold(BigUint::zero(), |acc, limb| (acc << 64) + limb);
+    let subgroup_order = BigUint::from_bytes_le(&ArkFr::MODULUS.to_bytes_le());
+    for factor in [10_069u64, 5_864_401] {
+        let mut rng = ChaCha20Rng::seed_from_u64(factor);
+        let quotient = &subgroup_order * (&cofactor / factor);
+        let torsion = loop {
+            let x = Fq2::rand(&mut rng);
+            let Some(point) = G2Affine::get_point_from_x_unchecked(x, true) else {
+                continue;
+            };
+            let point = point.mul_bigint(quotient.to_u64_digits()).into_affine();
+            if !point.is_zero() {
+                assert!(point.mul_bigint([factor]).is_zero());
+                break point;
+            }
+        };
+
+        let opening = common::synthetic_opening(8, 5, 0xE2E);
+        let sigma = opening.statement.challenges.beta.len();
+        let n = opening.witness.commitments.len();
+        let check = FlattenedCheck::derive(sigma, n);
+        let values = WireValues::derive(&opening.statement, sigma, n, common::offset_challenge());
+        let layout = build(&check, &values, &opening.setup, &check.wires());
+        let mut coords = opening.witness.coordinates_in(&layout.input_order);
+        let mut offset = 0;
+        for element in &layout.input_order {
+            if *element == InputElement::FinalE2 {
+                coords[offset..offset + 4].copy_from_slice(&[
+                    torsion.x.c0,
+                    torsion.x.c1,
+                    torsion.y.c0,
+                    torsion.y.c1,
+                ]);
+                break;
+            }
+            offset += element.kind().coords();
+        }
+        rejected(&witness_of(opening, check, values, layout, &coords));
+    }
+}
+
+/// The witness of `coords` for `layout` (pins unchecked: a dishonest input
+/// reaches the verifier's checks).
+fn witness_of(
+    opening: Opening,
+    check: FlattenedCheck,
+    values: WireValues,
+    layout: Layout,
+    coords: &[Fq],
+) -> Witness {
+    let v = layout.program.evaluate(coords).expect("evaluate");
+    let columns = Columns::generate(&layout.program, &v, LOG_ROWS);
+    Witness {
+        layout,
+        check,
+        values,
+        columns,
+        opening,
+    }
+}
+
+/// The term check rejects `w` as committed.
+fn rejected(w: &Witness) {
+    let mut rng = ChaCha20Rng::seed_from_u64(11);
+    let relation = RowRelation::new(
+        challenges(&mut rng),
+        LookupConstants {
+            one_row: w.layout.one_cell * 16,
+        },
+    );
+    let public = PublicColumns::new(&w.layout);
+    let columns = matrix(w, &relation, &public, &public.digits.clone());
+    rejects(columns, &relation, &w.layout, |_| {});
+}
+
 /// Decision (A) negative: the point `P = −(d − 8)⁻¹·G` that made an affine
 /// add exceptional against the former fixed offsets (`R = G`, `Z0 = 2G`)
 /// meets θ-randomized offsets: no add of the layout degenerates (the witness
@@ -671,6 +757,36 @@ fn point_crafted_for_fixed_offsets_is_rejected() {
     let public = PublicColumns::new(&w.layout);
     let columns = matrix(&w, &relation, &public, &public.digits.clone());
     rejects(columns, &relation, &w.layout, |_| {});
+}
+
+/// A zero MSM (`A1 = FinalE1 + d·Γ1_0 = 0`, `FinalE1` prover-chosen) makes the
+/// chain's last add `acc + entry = 0` for every `θ`: the slope pin has no
+/// witness and the verifier rejects, for `θ = 1, 2` as for any other.
+#[test]
+fn zero_msm_output_is_rejected_for_every_offset_challenge() {
+    use jolt_wrapper::limb_table::dory::InputElement;
+
+    for theta in [ArkFr::from(1u64), ArkFr::from(2u64)] {
+        let opening = common::synthetic_opening(8, 5, 0xE2E);
+        let sigma = opening.statement.challenges.beta.len();
+        let n = opening.witness.commitments.len();
+        let check = FlattenedCheck::derive(sigma, n);
+        let values = WireValues::derive(&opening.statement, sigma, n, theta);
+        let layout = build(&check, &values, &opening.setup, &check.wires());
+        let mut coords = opening.witness.coordinates_in(&layout.input_order);
+        let mut offset = 0;
+        for element in &layout.input_order {
+            if *element == InputElement::FinalE1 {
+                let d = values.get(&check.g1_a1.bases[1].1);
+                let zero_sum = (-opening.setup.g1_0.mul_bigint(d.into_bigint())).into_affine();
+                coords[offset] = zero_sum.x;
+                coords[offset + 1] = zero_sum.y;
+                break;
+            }
+            offset += element.kind().coords();
+        }
+        rejected(&witness_of(opening, check, values, layout, &coords));
+    }
 }
 
 /// The scalar of `wire` in the fixture (the digits the layout committed).
@@ -807,8 +923,8 @@ fn selected_operand_collision_for_a_guessed_fingerprint_root_is_rejected() {
 fn stream_exporter_terms_match_the_members() {
     use jolt_wrapper::limb_table::export::phases;
     use jolt_wrapper::limb_table::stream::{
-        commitment_phases, link_input_claim, Members, StreamColumns, StreamTermExporter,
-        T2Challenges,
+        commitment_phases, link_input_claim, prover_group_count, Members, StreamColumns,
+        StreamTermExporter, T2Challenges,
     };
     use jolt_wrapper::stream::{Column, TermContext, TermExporter, VerifierCost};
     let w = witness(0xE2E);
@@ -836,7 +952,12 @@ fn stream_exporter_terms_match_the_members() {
         .iter()
         .map(|p| p.group_count)
         .sum();
-    assert_eq!(stream.vk_groups.start, 3 + declared);
+    assert_eq!(
+        stream.vk_groups.end,
+        3 + declared,
+        "phases cover every group"
+    );
+    assert_eq!(stream.vk_groups.start, 3 + prover_group_count(4));
     assert_eq!(stream.vk_groups.end, 3 + stream.group_count);
     for spec in phases() {
         for local in spec.columns {
@@ -940,4 +1061,20 @@ fn stream_exporter_terms_match_the_members() {
         })
         .sum();
     assert_eq!(value, batching[0] * row_claim + batching[1] * link_claim);
+}
+
+/// Every packed group, including the pinned verifier-key suffix, must belong
+/// to a commitment phase or `AssemblyStatement` rejects the table shape.
+#[test]
+fn commitment_phases_cover_verifier_key_groups() {
+    use jolt_wrapper::limb_table::stream::{commitment_phases, prover_group_count, vk_group_range};
+
+    for packing in [4, 16, 32] {
+        let declared: usize = commitment_phases(packing)
+            .iter()
+            .map(|phase| phase.group_count)
+            .sum();
+        let all_groups = prover_group_count(packing) + vk_group_range(packing, 0).len();
+        assert_eq!(declared, all_groups, "packing {packing}");
+    }
 }
