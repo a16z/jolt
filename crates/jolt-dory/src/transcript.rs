@@ -85,8 +85,10 @@ mod tests {
 
     use super::*;
     use crate::scheme::jolt_fr_to_ark;
+    use ark_bn254::{Fr as ArkBn254Fr, G1Projective};
     use ark_ec::PrimeGroup;
-    use dory::backends::arkworks::ArkG1;
+    use ark_serialize::CanonicalSerialize;
+    use dory::backends::arkworks::{ArkFr as DoryArkFr, ArkG1};
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
 
@@ -117,8 +119,8 @@ mod tests {
 
     /// `ArkFr` in scope is a type alias, which cannot be used in constructor
     /// position; this builds the dory wrapper explicitly.
-    fn dory_ark_fr(inner: ark_bn254::Fr) -> ArkFr {
-        dory::backends::arkworks::ArkFr(inner)
+    fn dory_ark_fr(inner: ArkBn254Fr) -> ArkFr {
+        DoryArkFr(inner)
     }
 
     #[test]
@@ -154,7 +156,7 @@ mod tests {
         let mut actual = transcript();
         JoltToDoryTranscript::new(&mut actual).append_field(
             b"caller-label",
-            &dory_ark_fr(ark_bn254::Fr::from(0xdead_beefu64)),
+            &dory_ark_fr(ArkBn254Fr::from(0xdead_beefu64)),
         );
 
         // Fr absorbs as its 32-byte big-endian canonical form: 24 zero bytes
@@ -178,7 +180,7 @@ mod tests {
 
     #[test]
     fn append_group_frames_as_dory_group_count_word_then_compressed_point() {
-        let generator = ArkG1(ark_bn254::G1Projective::generator());
+        let generator = ArkG1(G1Projective::generator());
 
         let mut actual = transcript();
         JoltToDoryTranscript::new(&mut actual).append_group(b"caller-label", &generator);
@@ -186,7 +188,9 @@ mod tests {
         // Payload reconstructed via arkworks compressed serialization of the
         // inner point; the adapter's framing is the labeled count word.
         let mut payload = Vec::new();
-        ark_serialize::CanonicalSerialize::serialize_compressed(&generator.0, &mut payload)
+        generator
+            .0
+            .serialize_compressed(&mut payload)
             .expect("compressed G1 serialization should not fail");
         assert_eq!(payload.len(), 32);
 
@@ -198,13 +202,15 @@ mod tests {
 
     #[test]
     fn append_serde_frames_as_dory_serde_count_word_then_compressed_value() {
-        let value = dory_ark_fr(ark_bn254::Fr::from(42u64));
+        let value = dory_ark_fr(ArkBn254Fr::from(42u64));
 
         let mut actual = transcript();
         JoltToDoryTranscript::new(&mut actual).append_serde(b"caller-label", &value);
 
         let mut payload = Vec::new();
-        ark_serialize::CanonicalSerialize::serialize_compressed(&value.0, &mut payload)
+        value
+            .0
+            .serialize_compressed(&mut payload)
             .expect("compressed Fr serialization should not fail");
         assert_eq!(payload.len(), 32);
 
@@ -247,14 +253,14 @@ mod tests {
         let direct_challenge: Fr = direct.challenge_scalar();
 
         assert_eq!(adapter_challenge, jolt_fr_to_ark(&direct_challenge));
-        assert_ne!(adapter_challenge, dory_ark_fr(ark_bn254::Fr::from(0u64)));
+        assert_ne!(adapter_challenge, dory_ark_fr(ArkBn254Fr::from(0u64)));
         assert_eq!(adapted.state(), direct.state());
 
         // Fr conversion sanity: the transmute-based bridge is the identity on
         // canonical values.
         assert_eq!(
             jolt_fr_to_ark(&Fr::from_u64(7)),
-            dory_ark_fr(ark_bn254::Fr::from(7u64)),
+            dory_ark_fr(ArkBn254Fr::from(7u64)),
         );
     }
 }

@@ -135,7 +135,7 @@ pub fn decompose_scalar_4d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 4], [boo
 mod tests {
     use super::super::frobenius::frobenius_psi_power_projective;
     use super::*;
-    use ark_bn254::{Fq, G2Projective};
+    use ark_bn254::{Fq, G2Affine, G2Projective};
     use ark_ec::AffineRepr;
     use ark_ff::PrimeField;
     use ark_std::{UniformRand, Zero};
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn lambda_powers_match_frobenius_powers_on_g2() {
         let lambda = lambda();
-        let g = ark_bn254::G2Affine::generator().into_group();
+        let g = G2Affine::generator().into_group();
         let mut power = Fr::from(1u64);
         for exponent in 1usize..4 {
             power *= lambda;
@@ -235,7 +235,7 @@ mod tests {
     // for random scalars.
     #[test]
     fn power_of_2_decomposition_table_matches_reference() {
-        let g = ark_bn254::G2Affine::generator().into_group();
+        let g = G2Affine::generator().into_group();
         let psi = [
             g,
             frobenius_psi_power_projective(&g, 1),

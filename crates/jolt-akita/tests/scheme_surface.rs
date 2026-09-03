@@ -9,7 +9,9 @@
 )]
 mod support;
 
-use jolt_akita::{AkitaBackendFlavor, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16};
+use jolt_akita::{
+    AkitaBackendFlavor, AkitaField, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
+};
 use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
@@ -169,9 +171,9 @@ fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
     )
     .expect("open_zk should produce a hiding commitment");
 
-    let mut first = Blake2bTranscript::<jolt_akita::AkitaField>::new(b"akita-hiding-bind");
+    let mut first = Blake2bTranscript::<AkitaField>::new(b"akita-hiding-bind");
     hiding.append_to_transcript(&mut first);
-    let mut second = Blake2bTranscript::<jolt_akita::AkitaField>::new(b"akita-hiding-bind");
+    let mut second = Blake2bTranscript::<AkitaField>::new(b"akita-hiding-bind");
     hiding.append_to_transcript(&mut second);
     assert_eq!(first.state(), second.state(), "binding is deterministic");
 
@@ -189,7 +191,7 @@ fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
         &mut transcript,
     )
     .expect("open_zk should produce a hiding commitment");
-    let mut third = Blake2bTranscript::<jolt_akita::AkitaField>::new(b"akita-hiding-bind");
+    let mut third = Blake2bTranscript::<AkitaField>::new(b"akita-hiding-bind");
     other_hiding.append_to_transcript(&mut third);
     assert_ne!(
         first.state(),

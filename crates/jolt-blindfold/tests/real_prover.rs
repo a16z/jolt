@@ -8,6 +8,7 @@
 mod support;
 
 use jolt_blindfold::{prove, BlindFoldProof, BlindFoldWitness, ProverError, VerificationError};
+use jolt_crypto::Bn254G1;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -16,7 +17,7 @@ use support::*;
 fn prove_real(
     instance: &ProtocolBackedInstance,
     rng: &mut ChaCha20Rng,
-) -> Result<BlindFoldProof<F, jolt_crypto::Bn254G1>, ProverError<F>> {
+) -> Result<BlindFoldProof<F, Bn254G1>, ProverError<F>> {
     let mut transcript = Blake2bTranscript::<F>::new(PROTOCOL_BACKED_TRANSCRIPT_LABEL);
     append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
     prove::<F, VC, _, _>(
@@ -35,7 +36,7 @@ fn prove_real(
 
 fn verify_real(
     instance: &ProtocolBackedInstance,
-    proof: &BlindFoldProof<F, jolt_crypto::Bn254G1>,
+    proof: &BlindFoldProof<F, Bn254G1>,
 ) -> Result<(), VerificationError<F>> {
     let mut transcript = Blake2bTranscript::<F>::new(PROTOCOL_BACKED_TRANSCRIPT_LABEL);
     append_protocol_transcript_prefix(&instance.protocol, &mut transcript);

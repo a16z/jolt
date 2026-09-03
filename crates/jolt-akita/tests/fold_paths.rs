@@ -12,16 +12,16 @@
 )]
 mod support;
 
-use jolt_akita::{AkitaBatchProof, AkitaScheme};
+use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField, AkitaScheme};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial, setup_for};
 
 struct ProofFixture {
     verifier_setup: <AkitaScheme as CommitmentScheme>::VerifierSetup,
-    commitment: jolt_akita::AkitaCommitment,
-    point: Vec<jolt_akita::AkitaField>,
-    eval: jolt_akita::AkitaField,
+    commitment: AkitaCommitment,
+    point: Vec<AkitaField>,
+    eval: AkitaField,
     proof: AkitaBatchProof,
     label: &'static [u8],
 }

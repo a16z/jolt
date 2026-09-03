@@ -7,6 +7,9 @@
 )]
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use std::sync::Arc;
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::{self, tamper_manifest, verifier_fixtures::standard_muldiv_case};
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -181,7 +184,7 @@ fn tampered_bytecode_entry_address_rejects() {
             let ProgramPreprocessing::Full(full) = &mut case.preprocessing.program else {
                 panic!("muldiv fixture uses full (non-committed) program preprocessing");
             };
-            std::sync::Arc::make_mut(full).bytecode.entry_address += 4;
+            Arc::make_mut(full).bytecode.entry_address += 4;
         },
     );
 }

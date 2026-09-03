@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn tracer_backend_rejects_programs_without_elf_bytes() {
         let program = JoltProgram::from_elf_bytes(Vec::new());
-        let mut backend = TracerBackend::with_elf_path(std::path::PathBuf::from("/nonexistent"));
+        let mut backend = TracerBackend::with_elf_path(PathBuf::from("/nonexistent"));
         assert!(matches!(
             backend.trace(&program, TraceInputs::default()),
             Err(TraceError::MissingElfBytes)

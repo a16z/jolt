@@ -543,7 +543,7 @@ fn invalid<T>(message: &'static str) -> Result<T, ProgramError> {
 #[expect(clippy::panic, reason = "decode tests fail with contextual errors")]
 mod tests {
     use super::*;
-    use jolt_riscv::RV64IMAC_JOLT;
+    use jolt_riscv::{RV64IMAC_JOLT, RV64IM_JOLT};
 
     fn field_word(funct3: u32, rd: u8, rs1: u8, rs2_or_imm: u32) -> u32 {
         0x7b | (funct3 << 12) | (u32::from(rd) << 7) | (u32::from(rs1) << 15) | (rs2_or_imm << 20)
@@ -947,7 +947,7 @@ mod tests {
     fn rejects_source_instructions_outside_the_profile() {
         // amoadd.w decodes but the A extension is absent from RV64IM_JOLT
         let word = (11 << 20) | (12 << 15) | (0b010 << 12) | (10 << 7) | 0x2f;
-        match decode_instruction(word, 0x8000_0000, false, jolt_riscv::RV64IM_JOLT) {
+        match decode_instruction(word, 0x8000_0000, false, RV64IM_JOLT) {
             Err(ProgramError::IllegalSourceInstruction(kind)) => {
                 assert_eq!(kind, SourceInstructionKind::AMOADDW);
             }

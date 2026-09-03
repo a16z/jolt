@@ -5,19 +5,19 @@
 )]
 
 use proc_macro2::TokenStream as TokenStream2;
-use syn::parse_quote;
+use syn::{parse_quote, DeriveInput, File};
 
 use crate::{expand_challenges, expand_input, expand_output};
 
 fn pretty(tokens: TokenStream2) -> String {
-    let file = syn::parse2::<syn::File>(tokens).expect("expansion must parse as a list of items");
+    let file = syn::parse2::<File>(tokens).expect("expansion must parse as a list of items");
     prettyplease::unparse(&file)
 }
 
 /// Covers the full `OutputClaims` grammar: scalar virtual, payload-carrying
 /// virtual, indexed (`Vec`) family, conditional (`Option`) committed, and
 /// scalar advice openings.
-fn representative_output_struct() -> syn::DeriveInput {
+fn representative_output_struct() -> DeriveInput {
     parse_quote! {
         #[relation(SpartanOuter)]
         struct DemoOutputClaims<C> {
@@ -68,7 +68,7 @@ fn canonical_order_follows_field_declaration_order() {
 }
 
 #[track_caller]
-fn expect_output_error(input: syn::DeriveInput, expected: &str) {
+fn expect_output_error(input: DeriveInput, expected: &str) {
     let error = expand_output(input)
         .expect_err("expansion should be rejected")
         .to_string();
@@ -238,7 +238,7 @@ fn input_claims_rejects_leaves_without_from() {
 }
 
 #[track_caller]
-fn expect_challenges_error(input: syn::DeriveInput, expected: &str) {
+fn expect_challenges_error(input: DeriveInput, expected: &str) {
     let error = expand_challenges(input)
         .expect_err("expansion should be rejected")
         .to_string();

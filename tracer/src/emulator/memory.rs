@@ -464,6 +464,8 @@ impl Memory {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "test-only assertions")]
 mod tests {
+    use std::panic::AssertUnwindSafe;
+
     use super::*;
 
     fn memory(capacity: u64) -> Memory {
@@ -580,15 +582,12 @@ mod tests {
         let mut memory = memory(16); // 2 doublewords
         assert!(memory.validate_address(15));
         assert!(!memory.validate_address(16));
-        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| memory.read_byte(16)))
+        let err = std::panic::catch_unwind(AssertUnwindSafe(|| memory.read_byte(16)))
             .expect_err("read beyond capacity must panic");
         let message = err.downcast_ref::<String>().expect("panic message");
         assert!(message.contains("Out of bounds memory access (2 >= 2)"));
 
         let memory = self::memory(16);
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { memory.get_byte(24) }))
-                .is_err()
-        );
+        assert!(std::panic::catch_unwind(AssertUnwindSafe(|| { memory.get_byte(24) })).is_err());
     }
 }

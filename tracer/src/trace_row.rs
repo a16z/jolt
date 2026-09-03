@@ -165,7 +165,7 @@ mod tests {
     use crate::emulator::cpu::Cpu;
     use crate::emulator::mmu::DRAM_BASE;
     use crate::emulator::terminal::DummyTerminal;
-    use crate::instruction::Instruction;
+    use crate::instruction::{Instruction, RISCVCycle};
     use jolt_riscv::RV64IMAC_JOLT;
 
     const TEXT: u64 = 0x8000_0000;
@@ -246,7 +246,7 @@ mod tests {
         let Instruction::DIV(div) = instruction else {
             panic!("expected DIV");
         };
-        let cycle: Cycle = crate::instruction::RISCVCycle {
+        let cycle: Cycle = RISCVCycle {
             instruction: div,
             register_state: Default::default(),
             ram_access: Default::default(),

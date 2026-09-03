@@ -1155,6 +1155,8 @@ mod tests {
 
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    #[cfg(feature = "zk")]
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     #[cfg(feature = "zk")]
@@ -1324,7 +1326,7 @@ mod tests {
         #[cfg(feature = "zk")]
         {
             preprocessing.vc_setup = Some(PedersenSetup::new(
-                vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],
+                vec![Bn254G1::default(); MAX_BLINDFOLD_GENERATORS],
                 Bn254G1::default(),
             ));
         }
@@ -1806,7 +1808,7 @@ mod tests {
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
         #[cfg(feature = "zk")]
         let vc_setup = Some(PedersenSetup::new(
-            vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],
+            vec![Bn254G1::default(); MAX_BLINDFOLD_GENERATORS],
             Bn254G1::default(),
         ));
         #[cfg(not(feature = "zk"))]

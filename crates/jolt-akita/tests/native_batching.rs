@@ -2,7 +2,7 @@
 
 pub mod support;
 
-use jolt_akita::{AkitaNativeBatching, AkitaProverHint, AkitaScheme};
+use jolt_akita::{AkitaCommitment, AkitaNativeBatching, AkitaProverHint, AkitaScheme};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, VerifierOpeningClaim,
 };
@@ -379,7 +379,7 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
     *forged
         .get_mut("one_hot_k")
         .expect("commitment exposes one_hot_k") = serde_json::json!(4);
-    let forged: jolt_akita::AkitaCommitment =
+    let forged: AkitaCommitment =
         serde_json::from_value(forged).expect("forged commitment deserializes");
     let forged_statement = single_statement(forged, &point, eval);
 

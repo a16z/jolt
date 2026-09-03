@@ -991,6 +991,7 @@ mod tests {
     )]
 
     use super::*;
+    use akita_types::{LevelProofShape, NextWitnessBindingShape};
     use jolt_field::Ring;
 
     fn af(value: u64) -> AkitaField {
@@ -1161,22 +1162,22 @@ mod tests {
 
     #[test]
     fn deserialize_akita_rejects_trailing_bytes() {
-        let shape = akita_types::LevelProofShape {
+        let shape = LevelProofShape {
             extension_opening_reduction: None,
             opening_payload_coeffs: 3,
             stage1_stages: Vec::new(),
             stage1_norm: None,
             stage2_sumcheck_proof: vec![3, 3],
             stage3_sumcheck: None,
-            next_witness_binding: akita_types::NextWitnessBindingShape::TerminalInnerState,
+            next_witness_binding: NextWitnessBindingShape::TerminalInnerState,
         };
         let mut bytes = serialize_akita(&shape).expect("shape serializes");
-        let roundtrip: akita_types::LevelProofShape =
+        let roundtrip: LevelProofShape =
             deserialize_akita(&bytes, &()).expect("exact bytes deserialize");
         assert_eq!(roundtrip, shape);
 
         bytes.push(0);
-        let err = deserialize_akita::<akita_types::LevelProofShape>(&bytes, &())
+        let err = deserialize_akita::<LevelProofShape>(&bytes, &())
             .expect_err("trailing bytes must be rejected");
         assert!(
             matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")),

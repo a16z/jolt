@@ -9,6 +9,7 @@
     reason = "tests unwrap infallible serialization of well-formed values"
 )]
 
+use core::fmt::Debug;
 use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderOutputClaims, OuterUniskipOutputClaims, ProductRemainderOutputClaims,
     ProductUniskipOutputClaims, SpartanShiftOutputClaims,
@@ -31,7 +32,7 @@ fn encode<T: Serialize>(value: &T) -> Vec<u8> {
 
 fn assert_roundtrip<T>(value: &T)
 where
-    T: Serialize + DeserializeOwned + PartialEq + core::fmt::Debug,
+    T: Serialize + DeserializeOwned + PartialEq + Debug,
 {
     let bytes = encode(value);
     let (decoded, consumed): (T, usize) =

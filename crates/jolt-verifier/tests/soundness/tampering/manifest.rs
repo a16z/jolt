@@ -1,3 +1,6 @@
+#[cfg(not(feature = "akita"))]
+use std::path::Path;
+
 use crate::support::tamper_manifest::{
     all_targets, clear_claim_leaf_paths, manifest_paths, proof_field_paths,
     target_names_are_unique, verifier_owned_targets_without_active_coverage, TamperCoverage,
@@ -26,7 +29,7 @@ fn tamper_manifest_target_names_are_unique() {
     reason = "manifest audits should fail loudly if test sources are unreadable"
 )]
 fn active_tamper_targets_are_referenced_by_tampering_tests() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/soundness/tampering");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/soundness/tampering");
     let mut sources = String::new();
     for entry in std::fs::read_dir(&dir).expect("tampering test directory is readable") {
         let path = entry.expect("tampering test directory entry").path();
