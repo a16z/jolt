@@ -43,6 +43,13 @@ mod prover;
 mod setup;
 mod verifier;
 
+use jolt_field::Fr;
+use sha3::Keccak256;
+#[cfg(feature = "transcript-blake2b")]
+use spongefish::instantiations::Blake2b512;
+#[cfg(feature = "transcript-keccak")]
+use spongefish::instantiations::Keccak;
+
 #[cfg(feature = "transcript-blake3")]
 pub use blake3::Blake3Transcript;
 pub use codec::BytesMsg;
@@ -67,24 +74,22 @@ pub use verifier::VerifierTranscript;
 
 /// Fiat-Shamir transcript backed by Blake2b-512 (spongefish duplex sponge).
 #[cfg(feature = "transcript-blake2b")]
-pub type Blake2bTranscript<F = jolt_field::Fr> =
-    SpongeTranscript<spongefish::instantiations::Blake2b512, F>;
+pub type Blake2bTranscript<F = Fr> = SpongeTranscript<Blake2b512, F>;
 
 /// Blake2b-256 chained-digest transcript, byte-compatible with `jolt-prover-legacy`'s
 /// `Blake2bTranscript`. Required to verify proofs produced by `jolt-prover-legacy`
 /// provers; new modular protocols should use [`Blake2bTranscript`] instead.
 #[cfg(feature = "transcript-blake2b")]
-pub type LegacyBlake2bTranscript<F = jolt_field::Fr> =
+pub type LegacyBlake2bTranscript<F = Fr> =
     DigestTranscript<blake2::Blake2b<blake2::digest::consts::U32>, F>;
 
 /// Keccak-256 chained-digest transcript for EVM-verifiable outer protocols.
-pub type Keccak256Transcript<F = jolt_field::Fr> = DigestTranscript<sha3::Keccak256, F>;
+pub type Keccak256Transcript<F = Fr> = DigestTranscript<Keccak256, F>;
 
 /// Fiat-Shamir transcript backed by Keccak-f1600 (spongefish duplex sponge).
 #[cfg(feature = "transcript-keccak")]
-pub type KeccakTranscript<F = jolt_field::Fr> =
-    SpongeTranscript<spongefish::instantiations::Keccak, F>;
+pub type KeccakTranscript<F = Fr> = SpongeTranscript<Keccak, F>;
 
 /// Fiat-Shamir transcript backed by Circom-compatible BN254 Poseidon.
 #[cfg(feature = "transcript-poseidon")]
-pub type PoseidonTranscript<F = jolt_field::Fr> = SpongeTranscript<PoseidonSponge, F>;
+pub type PoseidonTranscript<F = Fr> = SpongeTranscript<PoseidonSponge, F>;

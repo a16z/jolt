@@ -2,8 +2,11 @@
 //!
 //! All types are generic over `P: PairingGroup` — no arkworks leakage.
 
+use core::ops::Mul;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
 use jolt_crypto::{HomomorphicCommitment, JoltGroup, PairingGroup};
-use jolt_field::Field;
+use jolt_field::{Field, JoltField};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +17,7 @@ pub trait VerifierObserver {
     fn record_fr_mul(&mut self);
     fn record_fr_inv(&mut self);
 
-    fn fr_mul<F: core::ops::Mul<Output = F>>(&mut self, left: F, right: F) -> F {
+    fn fr_mul<F: Mul<Output = F>>(&mut self, left: F, right: F) -> F {
         self.record_fr_mul();
         left * right
     }
@@ -57,8 +60,8 @@ impl<P: PairingGroup> Clone for HyperKZGCommitment<P> {
     }
 }
 
-impl<P: PairingGroup> std::fmt::Debug for HyperKZGCommitment<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P: PairingGroup> Debug for HyperKZGCommitment<P> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("HyperKZGCommitment")
             .field("point", &self.point)
             .finish()
@@ -83,7 +86,7 @@ impl<P: PairingGroup> PartialEq for HyperKZGCommitment<P> {
 
 impl<P: PairingGroup> Eq for HyperKZGCommitment<P> {}
 
-impl<P: PairingGroup, F: jolt_field::JoltField> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
+impl<P: PairingGroup, F: JoltField> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
     #[inline]
     fn add(c1: &Self, c2: &Self) -> Self {
         Self {

@@ -1,4 +1,5 @@
-use std::fmt::{Display, Formatter};
+use std::error::Error as StdError;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use ark_bn254::{
     compressible_fq12_to_fq12, fq12_to_compressible_fq12, CompressedFq12, CompressibleFq12, Fq12,
@@ -28,7 +29,7 @@ pub enum GtCompressionError {
 }
 
 impl Display for GtCompressionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::InvalidFieldEncoding => f.write_str("invalid compressed GT field encoding"),
             Self::InvalidTorusEncoding => f.write_str("invalid compressed GT torus encoding"),
@@ -40,7 +41,7 @@ impl Display for GtCompressionError {
     }
 }
 
-impl std::error::Error for GtCompressionError {}
+impl StdError for GtCompressionError {}
 
 /// Canonical BN254 target-group encoding.
 ///
@@ -103,7 +104,7 @@ struct CompressedGtVisitor;
 impl<'de> Visitor<'de> for CompressedGtVisitor {
     type Value = CompressedBn254GT;
 
-    fn expecting(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         write!(
             formatter,
             "a canonical {COMPRESSED_GT_SIZE}-byte GT encoding"

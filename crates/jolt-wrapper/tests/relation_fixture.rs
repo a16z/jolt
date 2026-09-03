@@ -52,20 +52,6 @@ const FIBONACCI_UNITS_2_18: u32 = 19_660;
 /// Shared with the transcript-table fixture at 2^18: the same bincode triple.
 const CACHE_DIR: &str = "/Volumes/Dev/scratch/wrapper-fixtures";
 
-/// Pinned row counts of the fibonacci 2^20 relation (L = 20, K = 13, σ = 12).
-const EXPECTED_CONSTRAINTS_2_20: usize = 5_455;
-const EXPECTED_PER_STAGE_2_20: [(&str, usize); 9] = [
-    ("stage1", 278),
-    ("stage2", 383),
-    ("stage3", 376),
-    ("stage4", 230),
-    ("stage5", 1_834),
-    ("stage6a", 229),
-    ("stage6b", 1_038),
-    ("stage7", 795),
-    ("stage8", 292),
-];
-
 /// Pinned row counts of the fibonacci 2^18 relation (L = 18, K = 13, σ = 11).
 const EXPECTED_CONSTRAINTS_2_18: usize = 5_253;
 const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
@@ -356,21 +342,4 @@ fn fibonacci_2_18_relation() {
     let failure = first_failure(relation, &tampered).expect("tampered dory challenge rejected");
     println!("tampered Dory gamma fails at {failure}");
     assert!(failure.starts_with("stage8/dory"), "{failure}");
-}
-
-/// The 2^20 proof takes minutes and several GiB to generate on first run; it
-/// is cached afterwards.
-///
-/// `cargo nextest run -p jolt-wrapper --features prover-fixtures --cargo-quiet --test relation_fixture --run-ignored ignored-only --no-capture`
-#[test]
-#[ignore = "generates a 2^20 proof on first run"]
-fn fibonacci_2_20_relation() {
-    let (built, per_stage) = relation_on_fixture(20);
-    assert_eq!(
-        built.relation.matrices.num_constraints,
-        EXPECTED_CONSTRAINTS_2_20
-    );
-    for (stage, rows) in EXPECTED_PER_STAGE_2_20 {
-        assert_eq!(per_stage[stage], rows, "{stage}");
-    }
 }

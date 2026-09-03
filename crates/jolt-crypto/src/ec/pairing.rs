@@ -1,4 +1,5 @@
 use jolt_field::JoltField;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 use super::group::JoltGroup;
@@ -16,14 +17,7 @@ pub trait PairingGroup: Clone + Debug + Eq + Sync + Send + 'static {
     /// Scalar field for G1 and G2 (e.g., BN254 Fr).
     type ScalarField: JoltField;
     type G1: JoltGroup;
-    type G1Affine: Clone
-        + Copy
-        + Debug
-        + Eq
-        + Send
-        + Sync
-        + serde::Serialize
-        + for<'de> serde::Deserialize<'de>;
+    type G1Affine: Clone + Copy + Debug + Eq + Send + Sync + Serialize + for<'de> Deserialize<'de>;
     type G2: JoltGroup;
     type GT: JoltGroup;
 

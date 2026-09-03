@@ -1,4 +1,5 @@
-use std::fmt::{Display, Formatter};
+use std::error::Error as StdError;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::backends::arkworks::{ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT};
@@ -9,6 +10,8 @@ use dory::{
 use jolt_crypto::{
     compress_gt, decompress_gt, CompressedBn254GT, GtCompressionError, COMPRESSED_GT_SIZE,
 };
+use serde::de::Error as DeserializeError;
+use serde::ser::Error as SerializeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::scheme::{ark_to_jolt_gt, jolt_gt_to_ark};
@@ -34,7 +37,7 @@ pub enum DoryCompressionError {
 }
 
 impl Display for DoryCompressionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::Gt(error) => Display::fmt(error, f),
             Self::InvalidGroupEncoding => f.write_str("invalid compressed Dory group encoding"),
@@ -52,7 +55,7 @@ impl Display for DoryCompressionError {
     }
 }
 
-impl std::error::Error for DoryCompressionError {}
+impl StdError for DoryCompressionError {}
 
 impl From<GtCompressionError> for DoryCompressionError {
     fn from(error: GtCompressionError) -> Self {
@@ -86,7 +89,7 @@ impl CompressedDoryProof {
 
 impl Serialize for CompressedDoryProof {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let bytes = encode_proof(&self.0).map_err(serde::ser::Error::custom)?;
+        let bytes = encode_proof(&self.0).map_err(SerializeError::custom)?;
         serializer.serialize_bytes(&bytes)
     }
 }
@@ -96,7 +99,7 @@ impl<'de> Deserialize<'de> for CompressedDoryProof {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         decode_proof(&bytes)
             .map(Self)
-            .map_err(serde::de::Error::custom)
+            .map_err(DeserializeError::custom)
     }
 }
 

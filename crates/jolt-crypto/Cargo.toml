@@ -88,8 +88,3 @@ required-features = ["bn254"]
 name = "crypto"
 harness = false
 required-features = ["bn254"]
-
-[[bench]]
-name = "bit_columns"
-harness = false
-required-features = ["bn254"]

@@ -15,7 +15,7 @@ use jolt_program::preprocess::{PublicInitialRam, PublicIoMemory};
 use jolt_r1cs::Variable;
 
 use super::ctx::{lc_var, Ctx, Lc};
-use super::{Native, PublicLayout, RelationError, NUM_STAGE_VALUES};
+use super::{Native, Preprocessing, PublicLayout, RelationError, NUM_STAGE_VALUES};
 use crate::profile::WrapperProfile;
 
 pub const NUM_BYTECODE_GAMMAS: usize = 6;
@@ -242,7 +242,7 @@ pub(crate) fn stage_values(
 /// The outsourced inputs from the verifier's data alone, for callers that
 /// hold the challenge values (the public outputs) but not a witness.
 pub fn outsourced_inputs(
-    native_preprocessing: &super::Preprocessing,
+    native_preprocessing: &Preprocessing,
     public_io: &JoltDevice,
     ram_address: &[Fr],
     stage_inputs: StageValueInputs<'_>,

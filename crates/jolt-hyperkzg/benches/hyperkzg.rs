@@ -3,14 +3,14 @@
     reason = "benchmarks and tests unwrap successful PCS operations"
 )]
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_poly::Polynomial;
-use jolt_transcript::Transcript;
+use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -40,7 +40,7 @@ fn bench_commit(c: &mut Criterion) {
                         Polynomial::<Fr>::random(nv, &mut rng)
                     },
                     |poly| TestScheme::commit(poly.evaluations(), &pk),
-                    criterion::BatchSize::SmallInput,
+                    BatchSize::SmallInput,
                 );
             },
         );
@@ -66,7 +66,7 @@ fn bench_open(c: &mut Criterion) {
                         (poly, point, eval)
                     },
                     |(poly, point, eval)| {
-                        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"bench-open");
+                        let mut transcript = Blake2bTranscript::new(b"bench-open");
                         <TestScheme as CommitmentScheme>::open(
                             &poly,
                             &point,
@@ -76,7 +76,7 @@ fn bench_open(c: &mut Criterion) {
                             &mut transcript,
                         )
                     },
-                    criterion::BatchSize::SmallInput,
+                    BatchSize::SmallInput,
                 );
             },
         );
@@ -100,8 +100,7 @@ fn bench_verify(c: &mut Criterion) {
                         let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
                         let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-verify");
+                        let mut transcript = Blake2bTranscript::new(b"bench-verify");
                         let proof = <TestScheme as CommitmentScheme>::open(
                             &poly,
                             &point,
@@ -114,8 +113,7 @@ fn bench_verify(c: &mut Criterion) {
                         (commitment, point, eval, proof)
                     },
                     |(commitment, point, eval, proof)| {
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-verify");
+                        let mut transcript = Blake2bTranscript::new(b"bench-verify");
                         <TestScheme as CommitmentScheme>::verify(
                             &commitment,
                             &point,
@@ -125,7 +123,7 @@ fn bench_verify(c: &mut Criterion) {
                             &mut transcript,
                         )
                     },
-                    criterion::BatchSize::SmallInput,
+                    BatchSize::SmallInput,
                 );
             },
         );

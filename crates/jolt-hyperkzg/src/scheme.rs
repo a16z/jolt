@@ -11,6 +11,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
+use rand_core::{OsRng, RngCore};
 use rayon::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -40,7 +41,7 @@ where
     /// `max_degree` is the maximum polynomial length (number of evaluations).
     /// The SRS contains `max(max_degree, 6)` G1 powers, the four low G2 powers used by
     /// HyperKZG, and the G2 shift used to batch degree-five univariate checks.
-    pub fn setup<R: rand_core::RngCore>(
+    pub fn setup<R: RngCore>(
         rng: &mut R,
         max_degree: usize,
         g1: P::G1,
@@ -409,7 +410,7 @@ where
     fn setup(
         (max_num_vars, g1, g2): Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
-        let mut rng = rand_core::OsRng;
+        let mut rng = OsRng;
         let max_degree = 1usize << max_num_vars;
         let prover = HyperKZGScheme::setup(&mut rng, max_degree, g1, g2);
         let verifier = Self::verifier_setup(&prover);

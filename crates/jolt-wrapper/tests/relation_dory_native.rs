@@ -22,7 +22,7 @@ use dory::setup::VerifierSetup;
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_polynomial_order;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{Bn254G1, Pedersen};
-use jolt_dory::DoryScheme;
+use jolt_dory::{DoryCommitment, DoryScheme};
 use jolt_field::{CanonicalBytes, Fr};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::stages::formula_dimensions_from_parts;
@@ -52,7 +52,7 @@ fn ark(value: Fr) -> ArkFr {
     ArkFr(ArkFrInner::from_le_bytes_mod_order(&bytes))
 }
 
-fn gt(value: &jolt_dory::DoryCommitment) -> ArkGT {
+fn gt(value: &DoryCommitment) -> ArkGT {
     ArkGT(PairingOutput(Fq12::from(value.0)))
 }
 

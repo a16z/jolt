@@ -14,7 +14,7 @@
 //! compression, not an extra one. An empty append absorbs nothing; payload
 //! delimiting is the protocol layer's job (`LabelWithCount`).
 
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{Debug, Formatter, Result};
 use std::marker::PhantomData;
 
 use blake3::Hasher;
@@ -49,7 +49,7 @@ impl<F: CanonicalEncoding> Default for Blake3Transcript<F> {
 }
 
 impl<F: CanonicalEncoding> Debug for Blake3Transcript<F> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.debug_struct("Blake3Transcript")
             .field("state", &format_args!("{:02x?}", self.state()))
             .field("pending", &self.pending)

@@ -238,7 +238,7 @@ pub use g2::Bn254G2;
 pub use gt::Bn254GT;
 pub use msm::SmallScalar;
 
-use ark_bn254::Bn254 as ArkBn254;
+use ark_bn254::{Bn254 as ArkBn254, G1Projective};
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField as _;
@@ -289,7 +289,7 @@ impl PairingGroup for Bn254 {
     type GT = Bn254GT;
 
     fn g1_to_affine(bases: &[Self::G1]) -> Vec<Self::G1Affine> {
-        ark_bn254::G1Projective::normalize_batch(Bn254G1::as_inner_slice(bases))
+        G1Projective::normalize_batch(Bn254G1::as_inner_slice(bases))
             .into_iter()
             .map(Bn254G1Affine)
             .collect()

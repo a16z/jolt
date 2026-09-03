@@ -3348,7 +3348,6 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "bincode 2.0.1",
  "criterion",
@@ -3359,9 +3358,6 @@ dependencies = [
  "jolt-optimizations",
  "jolt-poly",
  "jolt-transcript",
- "num-bigint",
- "num-integer",
- "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
@@ -3638,27 +3634,6 @@ dependencies = [
  "common",
  "jolt-program",
  "jolt-riscv",
-]
-
-[[package]]
-name = "jolt-limb-bench"
-version = "0.1.0"
-dependencies = [
- "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "bincode 2.0.1",
- "jolt-crypto",
- "jolt-field",
- "jolt-hyperkzg",
- "jolt-openings",
- "jolt-poly",
- "jolt-transcript",
- "num-bigint",
- "num-integer",
- "num-traits",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
 ]
 
 [[package]]
@@ -4100,7 +4075,6 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
- "libc",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -4112,44 +4086,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracer",
- "tracing",
-]
-
-[[package]]
-name = "jolt-wrapper-bench"
-version = "0.1.0"
-dependencies = [
- "bincode 2.0.1",
- "jolt-crypto",
- "jolt-field",
- "jolt-hyperkzg",
- "jolt-limb-bench",
- "jolt-openings",
- "jolt-poly",
- "jolt-transcript",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
-]
-
-[[package]]
-name = "jolt-zeromorph"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "jolt-crypto",
- "jolt-field",
- "jolt-hyperkzg",
- "jolt-openings",
- "jolt-poly",
- "jolt-transcript",
- "num-traits",
- "postcard",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "thiserror 2.0.18",
  "tracing",
 ]
 
