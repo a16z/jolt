@@ -222,7 +222,7 @@ where
     .in_scope(|| {
         backend
             .joint_opening
-            .prepare(session, witness, &order, &precommitted_tables, grid)
+            .prepare(session, witness, &order, precommitted_tables, grid)
     })?;
     // Move stage-0 hints; cloning would retain every row commitment.
     let mut hint_by_id: BTreeMap<JoltCommittedPolynomial, PCS::OpeningHint> =
