@@ -282,3 +282,11 @@ Lane 4 = 75a50106 (BN254 MSM kernels: flat task graph, size/width-aware windows,
 ## 19:26 — duplicate lane-4 worker collision (second orchestrator instance again)
 
 A second run of this orchestrator spawned lane 4 twice within 45 s (657b5f94 at 23:09:54Z, mine 75a50106 at 23:10:39Z), both in `perf5-lane4` with the same target and mutex; 75a50106 ran a real gate without the lock while lane 3 held it. Resolution: stopped 75a50106, killed its orphaned gate (PIDs 34019/35616), steered 657b5f94 as sole owner (reconcile edits, redo any timing under the mutex). Lane 3's concurrent measurement (start 19:23) is contaminated for its first ~40 s — expect it to rerun. Standing rule reinforced: `pika-cli tasks list` before every spawn; if a same-description task exists, adopt it instead of spawning.
+
+## 19:58 — PERF-5 lane 3 landed (80ac4bc7d); lanes 5a + virtual-operand design launched
+
+Lane 3 (69ab7fd6): honest online 29.8 → 27.8 s (idle). Preparation 564 → 454 ms; T2 adaptation 1,426 → 640 ms; T2 finish + member setup ≈ 1,289 → 493 ms; T2 stage A 2,854 → 1,910 ms (typed first round, bind/eval fusion, degree-5 round from four relation evaluations + running-claim identity). Missed: preparation ≤ 350 ms, T2 stage A ≤ 1.4 s. Two attempts reverted with measurements: coefficient-form range evaluation (+0.34 s), sequential conversion in fused column generation (+0.2 s); whole-layout caching invalid (θ selects operands/window rows). Bytes/gas unchanged (7,392 / 7,530 / 352; 4,868,177).
+
+Cumulative: 40.3 → 27.8 s (−31 %), 7,488 → 7,392 B, gas 5.05 → 4.87 M. Remaining big items: phase 2a 7.4 s (67 full-Fr columns), HyperKZG 5.8 folds + 3.8 quotient, phase 1a 1.8, 1b 1.15, T1 stage A 1.3, T2 stage A 1.9, RLC 1.0, column evals 1.15.
+
+Launched: lane 5a = 5e7ac8a5 (T2 LogUp s = 3 → 4/6/9 sweep + phase-2a packing; `perf5-lane5a`), design lane db67ae11 (virtual ξ-operands: drop the 44 full-Fr phase-2a columns — soundness + cost + spec, read-only, `perf5/design`). Lane 4 (657b5f94, MSM) still running. Lane 5b (4-ary HyperKZG fold) waits for lane 4.
