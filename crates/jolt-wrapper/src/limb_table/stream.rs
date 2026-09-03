@@ -29,13 +29,10 @@ use crate::stream::{
 };
 
 use super::columns::{operand_columns, Columns, CHUNK_COLUMNS, LIMBS};
-use super::digit_link::{link_term, LinkMember};
+use super::digit_link::{link_terms, LinkMember};
 use super::export::{exact_column, free_column, phases, pin_columns};
 use super::layout::LOG_ROWS;
-use super::lookup::{
-    link_weights_with, omega_column, public_and_omega_evals, LookupColumns, PublicColumns,
-    DIGIT_BITS,
-};
+use super::lookup::{public_and_link_evals, LinkPowers, LookupColumns, PublicColumns, DIGIT_BITS};
 use super::relation::{
     eq_tau_column, Challenges, Col, LookupConstants, RowRelation, RowSumcheck, SLOTS,
 };
@@ -113,8 +110,9 @@ pub fn row_challenges(phase_challenges: &[Fr]) -> Challenges {
 
 /// The digit link's input claim from R's scalar-link claim `Σ_k W_k(ρ)·s_k`
 /// (`W = link_weights(layout, ρ)`, the named wires in the published order):
-/// the constant-one base (`W_K`) and the offset base (`W_{K+1}·θ`) are added,
-/// `K` the number of named wires.
+/// the constant-one base (`W_K`), the offset base (`W_{K+1}·θ`) and the
+/// recoding window checks' constant `WINDOW_BOUND·ρ^{M+256}·Σ_{o<256} ρ^o`
+/// are added, `K` the number of named wires and `M` the occurrence count.
 pub fn link_input_claim(r_link_claim: Fr, rho: Fr, theta: Fr, layout: &Layout) -> Fr {
     link_input_claim_with(r_link_claim, rho, theta, layout, &mut plain)
 }
@@ -126,9 +124,10 @@ pub fn link_input_claim_with(
     layout: &Layout,
     mul: Mul<'_>,
 ) -> Fr {
-    let weights = link_weights_with(layout, rho, mul);
+    let powers = LinkPowers::new_with(layout, rho, mul);
+    let weights = powers.base_weights(layout);
     let named = layout.digit_bases as usize - 2;
-    r_link_claim + weights[named] + mul(weights[named + 1], theta)
+    r_link_claim + weights[named] + mul(weights[named + 1], theta) + powers.window_constant(mul)
 }
 
 /// Group count of one phase's columns at packing `packing`.
@@ -277,6 +276,8 @@ pub struct StreamBuilder<'a> {
     /// Position in `columns` of every local column emitted so far.
     positions: Vec<usize>,
     phase_start: usize,
+    /// Local columns emitted in the current phase (checked against `phases()`).
+    phase_locals: Vec<usize>,
     /// The per-phase challenges in transcript order ([`PHASE_CHALLENGES`]).
     drawn: Vec<Fr>,
     stage: Stage,
@@ -314,6 +315,7 @@ impl<'a> StreamBuilder<'a> {
             columns: Vec::new(),
             positions: vec![0; Col::CLAIMED],
             phase_start: 0,
+            phase_locals: Vec::new(),
             drawn: Vec::new(),
             stage: Stage::OneB,
         }
@@ -348,7 +350,7 @@ impl<'a> StreamBuilder<'a> {
         let flags = self.chunks.flags.clone();
         self.push(Col::FLAG, Column::Bits(flags));
         self.stage = Stage::TwoA;
-        self.end()
+        self.end(0)
     }
 
     /// Phase 2a (after `ξ, α`): the operand columns `X, Y`, the range helpers
@@ -371,7 +373,7 @@ impl<'a> StreamBuilder<'a> {
         }
         self.push(Col::INV, Column::Fr(PublicColumns::inverse_table(alpha)));
         self.stage = Stage::TwoB { z_xi };
-        self.end()
+        self.end(1)
     }
 
     /// Phase 2b (after `fp_root`): the fingerprint columns `f_pos`, `f_neg`.
@@ -391,7 +393,7 @@ impl<'a> StreamBuilder<'a> {
         self.push(Col::F_POS, Column::Fr(pos));
         self.push(Col::F_NEG, Column::Fr(neg));
         self.stage = Stage::TwoC { fp_pow };
-        self.end()
+        self.end(2)
     }
 
     /// Phase 2c (after `β, fp_combine, copy_root`): the lookup helpers `h`,
@@ -422,11 +424,7 @@ impl<'a> StreamBuilder<'a> {
         self.push(Col::H, Column::Fr(lookup.h));
         self.push(Col::G_POS, Column::Fr(lookup.g_pos));
         self.push(Col::G_NEG, Column::Fr(lookup.g_neg));
-        self.pad();
-        debug_assert_eq!(
-            self.columns.len() / self.packing,
-            prover_group_count(self.packing)
-        );
+        let _ = self.end(3);
         for (i, column) in vk_columns(self.layout, self.packing)
             .into_iter()
             .enumerate()
@@ -513,10 +511,18 @@ impl<'a> StreamBuilder<'a> {
 
     fn begin(&mut self) {
         self.phase_start = self.columns.len();
+        self.phase_locals.clear();
     }
 
-    /// Pads the current phase to whole groups and returns its columns.
-    fn end(&mut self) -> &[Column] {
+    /// Checks the phase emitted exactly the columns `phases()[phase]`
+    /// declares (the geometry [`commitment_phases`] publishes), pads it to
+    /// whole groups and returns its columns.
+    fn end(&mut self, phase: usize) -> &[Column] {
+        let declared: Vec<usize> = phases()[phase].columns.clone().collect();
+        assert_eq!(
+            self.phase_locals, declared,
+            "phase {phase} columns match the declared geometry"
+        );
         self.pad();
         &self.columns[self.phase_start..]
     }
@@ -531,6 +537,7 @@ impl<'a> StreamBuilder<'a> {
     fn push(&mut self, local: usize, column: Column) {
         debug_assert_eq!(column.len(), 1usize << LOG_ROWS);
         self.positions[local] = self.columns.len();
+        self.phase_locals.push(local);
         self.columns.push(column);
     }
 
@@ -586,7 +593,12 @@ impl<'a> Members<'a> {
     ) -> Self {
         Self {
             rows: RowSumcheck::new(relation, matrix),
-            link: LinkMember::new(omega_column(layout, rho), digit_values),
+            link: LinkMember::new(
+                layout,
+                rho,
+                digit_values,
+                &matrix[Col::CHUNKS..Col::CHUNKS + 8],
+            ),
         }
     }
 }
@@ -631,7 +643,7 @@ impl StreamTermExporter<'_> {
         };
         let relation =
             RowRelation::new_with(challenges.row, lookup, &mut |a, b| observer.fr_mul(a, b));
-        let (public, omega) = public_and_omega_evals(
+        let (public, link) = public_and_link_evals(
             self.layout,
             &relation,
             &tau_le,
@@ -643,9 +655,10 @@ impl StreamTermExporter<'_> {
         let rho_rows = context.batching_coefficients[self.row_member];
         let rho_link = context.batching_coefficients[self.link_member];
         let mut local = relation.batched_terms(&public, rho_rows, &mut mul);
-        let mut link = link_term(omega);
-        link.coefficient = mul(link.coefficient, rho_link);
-        local.push(link);
+        for mut term in link_terms(&link) {
+            term.coefficient = mul(term.coefficient, rho_link);
+            local.push(term);
+        }
         local
             .into_iter()
             .map(|term| StreamTerm {

@@ -27,22 +27,23 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::limb_table::columns::{q_biguint, Columns, CANON_CHUNKS, GROUP_SIZE, Z_CHUNKS};
-use jolt_wrapper::limb_table::digit_link::{link_term, LinkMember};
+use jolt_wrapper::limb_table::digit_link::{link_terms, LinkMember};
+use jolt_wrapper::limb_table::digits::WINDOW_BOUND;
 use jolt_wrapper::limb_table::dory::{
     DoryWitnessInputs, ElementKind, FlattenedCheck, Wire, WireValues,
 };
 use jolt_wrapper::limb_table::layout::LOG_ROWS;
 use jolt_wrapper::limb_table::lookup::{
-    link_weights, omega_column, omega_eval, public_evals, PublicColumns,
+    digit_bits, link_evals, link_weights, public_evals, PublicColumns,
 };
 use jolt_wrapper::limb_table::relation::{
     Challenges, Col, LookupConstants, RowRelation, RowSumcheck,
 };
-use jolt_wrapper::limb_table::schedule::{build, Layout};
+use jolt_wrapper::limb_table::schedule::{build, Layout, WINDOW_ROW_BASE};
 use jolt_wrapper::limb_table::stream::{link_input_claim, StreamBuilder, StreamWitness};
 use jolt_wrapper::limb_table::terms::evaluate_terms;
 use jolt_wrapper::stream::VerifierCost;
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint, Sign};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -174,6 +175,44 @@ fn r_link_claim(w: &Witness, rho: Fr) -> Fr {
         .zip(&weights)
         .map(|(wire, weight)| *weight * Fr::from(w.values.get(&Wire::Named(wire.clone()))))
         .sum()
+}
+
+/// The first eight committed chunk columns of `w` (the digit link's window values).
+fn window_chunks(w: &Witness) -> Vec<Vec<Fr>> {
+    (0..8)
+        .map(|j| {
+            w.columns
+                .chunk_column(j)
+                .into_iter()
+                .map(|c| Fr::from_u64(u64::from(c)))
+                .collect()
+        })
+        .collect()
+}
+
+/// The signed radix-16 recoding of an integer (`digits[i]` weighs `16^i`),
+/// the reviewer's alias construction.
+fn recode(value: &BigInt) -> [i64; 64] {
+    let sixteen = BigInt::from(16);
+    let mut value = value.clone();
+    let mut digits = [0i64; 64];
+    for digit in &mut digits {
+        let residue = ((&value % &sixteen) + &sixteen) % &sixteen;
+        let residue = i64::try_from(residue).unwrap();
+        *digit = if residue >= 8 { residue - 16 } else { residue };
+        value = (value - BigInt::from(*digit)) / &sixteen;
+    }
+    assert!(value.is_zero(), "64 signed digits");
+    digits
+}
+
+fn fr_from_bigint(value: &BigInt) -> Fr {
+    let modulus = BigInt::from_biguint(
+        Sign::Plus,
+        BigUint::from_bytes_le(&ArkFr::MODULUS.to_bytes_le()),
+    );
+    let reduced = ((value % &modulus) + &modulus) % &modulus;
+    Fr::from(ArkFr::from(reduced.to_biguint().unwrap()))
 }
 
 /// A small field element as an integer (chunk values).
@@ -325,7 +364,6 @@ fn members_accept(w: &Witness) {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
     let start = Instant::now();
     let columns = matrix(w, &relation);
     println!("columns {:?}", start.elapsed());
@@ -361,23 +399,32 @@ fn members_accept(w: &Witness) {
     assert!(max_degree <= 5);
 
     // Digit link at the same point.
-    let mut link = LinkMember::new(omega_column(&w.layout, rho), &public.digit_values);
+    let mut link = LinkMember::new(
+        &w.layout,
+        rho,
+        &columns[Col::D],
+        &columns[Col::CHUNKS..Col::CHUNKS + 8],
+    );
     let input = link.input_claim();
     let theta = Fr::from(w.values.get(&Wire::Offset));
     assert_eq!(
         input,
         link_input_claim(r_link_claim(w, rho), rho, theta, &w.layout),
-        "digit link input = Σ_k W_k(ρ)·s_k + W_K(ρ) + W_(K+1)(ρ)·θ"
+        "digit link input = Σ_k W_k(ρ)·s_k + W_K(ρ) + W_(K+1)(ρ)·θ + window constant"
     );
     let mut driver = ChaCha20Rng::seed_from_u64(99);
     let (r_link, link_claim) = drive(&mut link, input, &mut driver);
     assert_eq!(r_link, point);
-    let (digit, omega_final) = link.final_values();
-    assert_eq!(digit, claims[Col::D], "digit value claim");
+    let finals = link.final_values();
+    assert_eq!(finals.digit, claims[Col::D], "digit value claim");
     let mut link_cost = VerifierCost::default();
-    let omega = omega_eval(&w.layout, rho, &r_le, &mut link_cost);
-    assert_eq!(omega, omega_final, "ω̃(r)");
-    assert_eq!(link_term(omega).evaluate(&claims), link_claim, "link term");
+    let evals = link_evals(&w.layout, rho, &r_le, &mut link_cost);
+    assert_eq!(evals, finals.evals, "ω̃, κ̃, κ̃' at r");
+    assert_eq!(
+        evaluate_terms(&link_terms(&evals), &claims),
+        link_claim,
+        "link terms"
+    );
     println!("digit link verifier fr_mul {}", link_cost.fr_mul);
 }
 
@@ -966,7 +1013,7 @@ fn stream_exporter_terms_match_the_members() {
     let (r_link, link_claim) = drive(&mut members.link, link_input, &mut driver);
     assert_eq!(point, r_link);
     let claims = members.rows.claims();
-    let (digit_final, _) = members.link.final_values();
+    let digit_final = members.link.final_values().digit;
     drop(members);
     let batching = [fr(&mut rng), fr(&mut rng)];
     let mut all_challenges = vec![theta];
@@ -1059,9 +1106,9 @@ fn shared_scalar_recoded_differently_per_chain_is_rejected() {
     let rho = fr(&mut rng);
     let theta = Fr::from(w.values.get(&Wire::Offset));
     let expected = link_input_claim(r_link_claim(&w, rho), rho, theta, &w.layout);
-    let omega = omega_column(&w.layout, rho);
+    let chunks = window_chunks(&w);
     assert_eq!(
-        LinkMember::new(omega.clone(), &public.digit_values).input_claim(),
+        LinkMember::new(&w.layout, rho, &public.digit_values, &chunks).input_claim(),
         expected,
         "honest recodings"
     );
@@ -1069,9 +1116,135 @@ fn shared_scalar_recoded_differently_per_chain_is_rejected() {
     altered[plus.first_row as usize] += Fr::from_u64(1);
     altered[minus.first_row as usize] -= Fr::from_u64(1);
     assert_ne!(
-        LinkMember::new(omega, &altered).input_claim(),
+        LinkMember::new(&w.layout, rho, &altered, &chunks).input_claim(),
         expected,
         "each occurrence is bound to the scalar on its own"
+    );
+}
+
+/// Review #4 blocker: `s ± r` recodes to another valid signed digit string of
+/// the same residue. The window check admits one recoding per scalar: with
+/// honest window rows an aliased occurrence's link claim leaves the one the
+/// verifier derives from R, and window rows matching the alias need a chunk
+/// outside `[0, 2^16)`, which the row member's range LogUp rejects.
+#[test]
+fn modulus_alias_recodings_are_rejected() {
+    let w = witness(0xE2E);
+    let mut rng = ChaCha20Rng::seed_from_u64(0xA11A5);
+    let ch = challenges(&mut rng);
+    let rho = fr(&mut rng);
+    let relation = RowRelation::new(
+        ch,
+        LookupConstants {
+            one_row: w.layout.one_cell * 16,
+        },
+    );
+    let columns = matrix(&w, &relation);
+    let one_kd = w.layout.digit_bases - 2;
+    let occurrence = w
+        .layout
+        .digit_ops
+        .iter()
+        .find(|op| op.kd == one_kd)
+        .expect("constant-one occurrence")
+        .link;
+    let ops: Vec<_> = w
+        .layout
+        .digit_ops
+        .iter()
+        .filter(|op| op.link == occurrence)
+        .collect();
+    assert_eq!(ops.len(), 64);
+    let modulus = BigInt::from_biguint(
+        Sign::Plus,
+        BigUint::from_bytes_le(&ArkFr::MODULUS.to_bytes_le()),
+    );
+    let theta = Fr::from(w.values.get(&Wire::Offset));
+    let expected = link_input_claim(r_link_claim(&w, rho), rho, theta, &w.layout);
+    for alias in [BigInt::from(1) + &modulus, BigInt::from(1) - &modulus] {
+        let digits = recode(&alias);
+        let mut aliased = columns.clone();
+        for op in &ops {
+            let d = digits[63 - op.w as usize];
+            let bits = digit_bits(u8::try_from(d + 8).unwrap());
+            let first = op.first_row as usize;
+            for (b, bit) in bits.iter().enumerate() {
+                for value in &mut aliased[Col::DIGITS + b][first..first + usize::from(op.rows)] {
+                    *value = Fr::from_u64(u64::from(*bit));
+                }
+            }
+            aliased[Col::D][op.first_row as usize] = Fr::from_i64(d);
+        }
+        // Honest window rows: the link's claim is not the verifier's.
+        let link = LinkMember::new(
+            &w.layout,
+            rho,
+            &aliased[Col::D],
+            &aliased[Col::CHUNKS..Col::CHUNKS + 8],
+        );
+        assert_ne!(
+            link.input_claim(),
+            expected,
+            "alias {alias} with honest window rows"
+        );
+        // Window rows matching the alias: `V_hi` outside `0..=WINDOW_BOUND`
+        // only fits the identities with an out-of-range chunk.
+        let v_hi = digits[48..]
+            .iter()
+            .rev()
+            .fold(BigInt::zero(), |acc, d| acc * 16 + d);
+        let v = fr_from_bigint(&v_hi);
+        let row = WINDOW_ROW_BASE as usize + occurrence as usize;
+        let mut forged = aliased;
+        for j in 0..8 {
+            forged[Col::CHUNKS + j][row] = Fr::zero();
+        }
+        forged[Col::CHUNKS][row] = v;
+        forged[Col::CHUNKS + 4][row] = Fr::from_u64(WINDOW_BOUND) - v;
+        let link = LinkMember::new(
+            &w.layout,
+            rho,
+            &forged[Col::D],
+            &forged[Col::CHUNKS..Col::CHUNKS + 8],
+        );
+        assert_eq!(
+            link.input_claim(),
+            expected,
+            "alias {alias} with matching window rows satisfies the link"
+        );
+        rejects(forged, &relation, &w.layout, |_| {});
+    }
+}
+
+/// Every phase slice the builder returns has the group count
+/// `commitment_phases` declares, at every packing the assembly uses.
+#[test]
+fn stream_builder_phase_slices_match_declared_geometry() {
+    use jolt_wrapper::limb_table::stream::commitment_phases;
+
+    let w = witness(0xE2E);
+    let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_1117);
+    let ch = challenges(&mut rng);
+    for packing in [4, 16, 32] {
+        let declared = commitment_phases(packing);
+        let mut builder = StreamBuilder::new(&w.layout, &w.columns, packing);
+        assert_eq!(builder.phase_1b().len() / packing, declared[0].group_count);
+        assert_eq!(
+            builder.phase_2a(ch.xi, ch.alpha).len() / packing,
+            declared[1].group_count
+        );
+        assert_eq!(
+            builder.phase_2b(ch.fp_root).len() / packing,
+            declared[2].group_count
+        );
+        assert_eq!(
+            builder.phase_2c(ch.beta, ch.fp_combine, ch.copy_root).len() / packing,
+            declared[3].group_count
+        );
+    }
+    assert_eq!(
+        commitment_phases(32).map(|phase| phase.group_count),
+        [3, 3, 1, 2]
     );
 }
 

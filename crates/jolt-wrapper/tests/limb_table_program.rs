@@ -217,6 +217,7 @@ fn fibonacci_profile_fits_2_18_rows() {
     let layout = build(&check, &values, &setup, &check.wires());
     println!("build {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
     print_shape(&layout);
+    println!("used rows {} of {ROWS}", layout.used_rows());
     assert_eq!(layout.program.len(), ROWS);
     assert!(layout.used_rows() <= ROWS);
 }
@@ -439,7 +440,7 @@ fn kernels_match_program_rows() {
 fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     use ark_ff::UniformRand;
     use jolt_field::Fr;
-    use jolt_wrapper::limb_table::lookup::public_and_omega_evals;
+    use jolt_wrapper::limb_table::lookup::public_and_link_evals;
     use jolt_wrapper::limb_table::relation::{Col, LookupConstants, RowRelation};
     use jolt_wrapper::limb_table::stream::{StreamTermExporter, T2Challenges};
     use jolt_wrapper::stream::{ColumnId, TermContext, TermExporter, TermObserver, VerifierCost};
@@ -494,11 +495,11 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     let tau_le = t2.tau_le();
     let r_le: Vec<Fr> = point.iter().rev().copied().collect();
     let mut public_cost = VerifierCost::default();
-    let (public, _omega) =
-        public_and_omega_evals(&layout, &relation, &tau_le, &r_le, t2.rho, &mut public_cost);
+    let (public, _link) =
+        public_and_link_evals(&layout, &relation, &tau_le, &r_le, t2.rho, &mut public_cost);
     let mut terms_cost = VerifierCost::default();
     let _ = relation.batched_terms(&public, batching[0], &mut |a, b| terms_cost.fr_mul(a, b));
-    let link_batching = 1;
+    let link_batching = 3;
     assert_eq!(
         relation_cost.fr_mul + public_cost.fr_mul + terms_cost.fr_mul + link_batching,
         cost.fr_mul,
@@ -506,8 +507,8 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     );
     println!(
         "fibonacci profile: execution-derived verifier {} fr_mul = relation {} + public \
-         evaluations and ω̃ {} + terms {} + link batching {}; {} terms, max degree {}, {} link \
-         occurrences over {} digit bases",
+         evaluations and link weights {} + terms {} + link batching {}; {} terms, max degree \
+         {}, {} link occurrences over {} digit bases",
         cost.fr_mul,
         relation_cost.fr_mul,
         public_cost.fr_mul,

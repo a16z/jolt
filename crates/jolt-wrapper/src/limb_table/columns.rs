@@ -13,6 +13,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
+use std::sync::LazyLock;
 
 use super::program::{half_plus_one, Program, Slot, Source};
 
@@ -273,7 +274,7 @@ impl Columns {
                 } else {
                     let mut row = zero_row_chunks();
                     chunks_of(z, &mut row[..Z_CHUNKS]);
-                    if let Source::Input(_) = spec.source {
+                    if let Source::Input(_) | Source::Window(_) = spec.source {
                         // Canonicality witness `d = (q_hi − 1) − z_hi` (top 64 bits)
                         // in the otherwise idle low quotient chunks of an input row.
                         // The `2^-62` fraction of canonical inputs with `z_hi = q_hi`
@@ -378,7 +379,10 @@ pub fn operand_columns(program: &Program, z_xi: &[Fr], num_slots: usize) -> Vec<
     columns
 }
 
-/// Field constants of the row relation, shared by prover and verifier.
+/// Field constants of the row relation, shared by prover and verifier
+/// (computed once: [`Constants::get`]; the verifier derivation does no
+/// fixed-power arithmetic).
+#[derive(Clone, Copy)]
 pub struct Constants {
     pub q_limbs: [Fr; LIMBS],
     pub pow_limb: Fr,
@@ -386,7 +390,11 @@ pub struct Constants {
     pub carry_offset: Fr,
     /// `2^267` in top-limb form (`2^75`).
     pub k_offset_top_limb: Fr,
+    /// `2^64` (the sign rows' `2^256` term in limb form is `2^64·ξ²`).
+    pub pow_64: Fr,
 }
+
+static CONSTANTS: LazyLock<Constants> = LazyLock::new(Constants::new);
 
 impl Default for Constants {
     fn default() -> Self {
@@ -403,7 +411,13 @@ impl Constants {
             pow_chunk: std::array::from_fn(|j| Fr::pow2(CHUNK_BITS * j)),
             carry_offset: Fr::pow2(CARRY_OFFSET_BITS),
             k_offset_top_limb: Fr::pow2(K_OFFSET_BITS - 2 * LIMB_BITS),
+            pow_64: Fr::pow2(64),
         }
+    }
+
+    /// The constants, computed once per process.
+    pub fn get() -> &'static Self {
+        &CONSTANTS
     }
 
     /// `q(ξ) = Σ_a ξ^a·q_a`.

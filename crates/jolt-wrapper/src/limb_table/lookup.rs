@@ -8,14 +8,16 @@
 use crate::stream::TermObserver;
 use jolt_field::{Field, Fr, One, Ring, Zero};
 
+use super::digits::{WINDOWS, WINDOW_BOUND, WINDOW_ROWS, WINDOW_TOP_DIGITS};
 use super::layout::{Bits, Factor, Rel, LOG_ROWS, ROWS};
 use super::relation::{PublicEvals, RowRelation, FP_SLOTS_G1, FP_SLOTS_G2, FP_SLOTS_GT};
-use super::schedule::{Layout, SelectedFamily};
+use super::schedule::{Layout, SelectedFamily, WINDOW_ROW_BASE};
 use super::terms::{plain, powers_with, Mul};
 use super::verifier::{Evaluator, Point};
 use super::wiring::{copy_kernel_eval, ReadKind};
 use ark_bn254::Fr as ArkFr;
 use std::ops::Range;
+use std::sync::LazyLock;
 
 pub const DIGIT_BITS: usize = 5;
 const NEG_KEY_OFFSET: u64 = 1 << LOG_ROWS;
@@ -366,13 +368,16 @@ impl SelectedFamily {
         (indicator, s0, coord)
     }
 
-    /// `Σ_{x ∈ family, c(x) = first_c} eq(r, x)·ρ^{link(k(x))}·16^{63 − w(x)}`,
-    /// `powers[link]` the digit link's occurrence weights.
+    /// The digit link's weight over the family at the evaluator's row point:
+    /// `Σ_{x: c(x) = first_c} eq(r, x)·ρ^{link(k(x))}·(16^{63−w(x)} +
+    /// [w(x) < 16]·ρ^M·16^{15−w(x)})` — the recoded integer's weight plus the
+    /// window check's top-16-digit weight.
     pub fn omega_eval<O: TermObserver + ?Sized>(
         &self,
         ev: &mut Evaluator<'_, O>,
-        powers: &[Fr],
+        powers: &LinkPowers,
     ) -> Fr {
+        let sixteen = &*SIXTEEN;
         let mut product: Option<Fr> = None;
         for (bits, range, factor) in field_partition(&self.domain) {
             let part = if bits == self.c_bits {
@@ -383,7 +388,7 @@ impl SelectedFamily {
                     bases
                         .iter()
                         .find(|(kk, _)| *kk == k)
-                        .map_or(Fr::zero(), |(_, link)| powers[*link as usize])
+                        .map_or(Fr::zero(), |(_, link)| powers.occurrence[*link as usize])
                 };
                 let admitted: Vec<u32> = bases.iter().map(|(k, _)| *k).collect();
                 let (lo, hi) = (
@@ -392,17 +397,32 @@ impl SelectedFamily {
                 );
                 ev.field_sum(Point::Row, bits, lo..hi, &f)
             } else if bits == self.w_bits {
-                if range == (0..1 << bits.width()) {
-                    // `Σ_w eq(r_w, w)·16^{63−w} = 16^{63}·Π_i (1 − r_i + r_i·16^{−2^i})`.
-                    let sixteen_inverse = Fr::pow2(4)
-                        .inverse()
-                        .unwrap_or_else(|| unreachable!("16 is invertible"));
-                    let geometric = ev.geometric(Point::Row, bits, sixteen_inverse);
-                    ev.mul(geometric, Fr::pow2(4 * 63))
+                let (all, top) = if range == (0..1 << bits.width()) {
+                    // `Σ_w eq(r_w, w)·16^{63−w} = 16^{63}·Π_i (1 − r_i + r_i·16^{−2^i})`;
+                    // the top 16 windows are the field's high bits zero.
+                    let geometric = ev.geometric(Point::Row, bits, sixteen.inverse);
+                    let all = ev.mul(geometric, sixteen.powers[WINDOWS - 1]);
+                    let low = Bits::new(bits.lo, bits.lo + 4);
+                    let high = Bits::new(bits.lo + 4, bits.hi);
+                    let low_geometric = ev.geometric(Point::Row, low, sixteen.inverse);
+                    let high_zero = ev.eq_const(Point::Row, high, 0);
+                    let top = ev.mul(low_geometric, high_zero);
+                    (all, ev.mul(top, sixteen.powers[WINDOW_TOP_DIGITS - 1]))
                 } else {
-                    let f = |w: u32| -> Fr { Fr::pow2(4 * (63 - w as usize)) };
-                    ev.field_sum(Point::Row, bits, range, &f)
-                }
+                    let all = ev.field_sum(Point::Row, bits, range.clone(), &|w| {
+                        sixteen.powers[WINDOWS - 1 - w as usize]
+                    });
+                    let top_range = range.start..range.end.min(WINDOW_TOP_DIGITS as u32);
+                    let top = if top_range.is_empty() {
+                        Fr::zero()
+                    } else {
+                        ev.field_sum(Point::Row, bits, top_range, &|w| {
+                            sixteen.powers[WINDOW_TOP_DIGITS - 1 - w as usize]
+                        })
+                    };
+                    (all, top)
+                };
+                all + ev.mul(powers.window_digits, top)
             } else {
                 let Some(f) = factor else { continue };
                 ev.field(std::slice::from_ref(&f))
@@ -435,77 +455,183 @@ impl SelectedFamily {
     }
 }
 
-/// `ρ^link` for every chain-base occurrence of the layout.
-fn link_powers_with(layout: &Layout, rho: Fr, mul: Mul<'_>) -> Vec<Fr> {
-    powers_with(rho, layout.link_occurrences as usize, mul)
+/// Fixed powers of sixteen of the link weights: `16^k` for `k < 64` and
+/// `16^{−1}` (computed once; no fixed-power arithmetic in the verifier).
+struct Sixteen {
+    powers: [Fr; WINDOWS],
+    inverse: Fr,
 }
 
-/// The digit link's weight of every digit base (the named wires in the
-/// published order, the constant one, then `θ`): `W_kd(ρ) = Σ ρ^link` over
-/// the chain-base occurrences of `kd`. R's scalar link publishes
-/// `Σ_k W_k(ρ)·s_k` over the named wires while T2 sums `ρ^link` per
-/// occurrence, so every chain's recoding is bound to its scalar on its own
-/// (no averaging across the chains sharing a scalar).
+static SIXTEEN: LazyLock<Sixteen> = LazyLock::new(|| Sixteen {
+    powers: std::array::from_fn(|k| Fr::pow2(4 * k)),
+    inverse: Fr::pow2(4)
+        .inverse()
+        .unwrap_or_else(|| unreachable!("16 is invertible")),
+});
+
+/// The digit link's `ρ` powers for a layout with `M = link_occurrences`
+/// chain-base occurrences: `ρ^o` for `o ≤ M`, the window check's bases `ρ^M`
+/// (digit side) and `ρ^{M+256}` (chunk side), and `Σ_{o<256} ρ^o`.
+pub struct LinkPowers {
+    pub occurrence: Vec<Fr>,
+    pub window_digits: Fr,
+    pub window_chunks: Fr,
+    pub window_sum: Fr,
+}
+
+impl LinkPowers {
+    pub fn new(layout: &Layout, rho: Fr) -> Self {
+        Self::new_with(layout, rho, &mut plain)
+    }
+
+    /// [`Self::new`] with every product observed by `mul`.
+    pub fn new_with(layout: &Layout, rho: Fr, mul: Mul<'_>) -> Self {
+        let m = layout.link_occurrences as usize;
+        let occurrence = powers_with(rho, m + 1, mul);
+        // `ρ^{2^i}` by squaring: `Σ_{o<256} ρ^o = Π_{i<8} (1 + ρ^{2^i})` and `ρ^256`.
+        let mut window_sum = Fr::one() + rho;
+        let mut square = mul(rho, rho);
+        for _ in 1..8 {
+            window_sum = mul(window_sum, Fr::one() + square);
+            square = mul(square, square);
+        }
+        let window_digits = occurrence[m];
+        Self {
+            occurrence,
+            window_digits,
+            window_chunks: mul(window_digits, square),
+            window_sum,
+        }
+    }
+
+    /// `W_kd(ρ) = Σ ρ^o` over the chain-base occurrences `o` of every digit
+    /// base `kd` (the named wires in the published order, the constant one,
+    /// then `θ`).
+    pub fn base_weights(&self, layout: &Layout) -> Vec<Fr> {
+        let mut weights = vec![Fr::zero(); layout.digit_bases as usize];
+        for op in layout.digit_ops.iter().filter(|op| op.w == 0) {
+            weights[op.kd as usize] += self.occurrence[op.link as usize];
+        }
+        weights
+    }
+
+    /// The window checks' public constant `WINDOW_BOUND·ρ^{M+256}·Σ_{o<256} ρ^o`
+    /// (the chunk-side identities `V(o) + V'(o) = WINDOW_BOUND` summed).
+    pub fn window_constant(&self, mul: Mul<'_>) -> Fr {
+        let scaled = mul(Fr::from_u64(WINDOW_BOUND), self.window_chunks);
+        mul(scaled, self.window_sum)
+    }
+}
+
+/// The digit link's weight of every digit base: `W_kd(ρ) = Σ ρ^o` over the
+/// chain-base occurrences of `kd`. R's scalar link publishes `Σ_k W_k(ρ)·s_k`
+/// over the named wires while T2 sums `ρ^o` per occurrence, so every chain's
+/// recoding is bound to its scalar on its own (no averaging across the chains
+/// sharing a scalar).
 pub fn link_weights(layout: &Layout, rho: Fr) -> Vec<Fr> {
     link_weights_with(layout, rho, &mut plain)
 }
 
 /// [`link_weights`] with every product observed by `mul`.
 pub fn link_weights_with(layout: &Layout, rho: Fr, mul: Mul<'_>) -> Vec<Fr> {
-    let powers = link_powers_with(layout, rho, mul);
-    let mut weights = vec![Fr::zero(); layout.digit_bases as usize];
-    for op in layout.digit_ops.iter().filter(|op| op.w == 0) {
-        weights[op.kd as usize] += powers[op.link as usize];
-    }
-    weights
+    LinkPowers::new_with(layout, rho, mul).base_weights(layout)
 }
 
-/// The prover's `ω(x)` table: `ρ^link·16^{63−w}` on every op's first slotted row.
-pub fn omega_column(layout: &Layout, rho: Fr) -> Vec<Fr> {
-    let powers = link_powers_with(layout, rho, &mut plain);
+/// The digit link's public weight columns: `ω` on every op's first slotted
+/// row (`ρ^o·16^{63−w}`, plus `ρ^{M+o}·16^{15−w}` on the top 16 windows) and
+/// the window rows' chunk weights `κ = ρ^o·(ρ^{M+256} − ρ^M)` (on `V`) and
+/// `κ' = ρ^{M+256+o}` (on `V'`).
+pub struct LinkColumns {
+    pub omega: Vec<Fr>,
+    pub kappa: Vec<Fr>,
+    pub kappa_prime: Vec<Fr>,
+}
+
+pub fn link_columns(layout: &Layout, rho: Fr) -> LinkColumns {
+    let powers = LinkPowers::new(layout, rho);
+    let sixteen = &*SIXTEEN;
     let mut omega = vec![Fr::zero(); ROWS];
     for op in &layout.digit_ops {
-        omega[op.first_row as usize] =
-            powers[op.link as usize] * Fr::pow2(4 * (63 - op.w as usize));
+        let w = op.w as usize;
+        let mut weight = sixteen.powers[WINDOWS - 1 - w];
+        if w < WINDOW_TOP_DIGITS {
+            weight += powers.window_digits * sixteen.powers[WINDOW_TOP_DIGITS - 1 - w];
+        }
+        omega[op.first_row as usize] = powers.occurrence[op.link as usize] * weight;
     }
-    omega
+    let mut kappa = vec![Fr::zero(); ROWS];
+    let mut kappa_prime = vec![Fr::zero(); ROWS];
+    let chunks_minus_digits = powers.window_chunks - powers.window_digits;
+    for (o, rho_o) in powers_with(rho, WINDOW_ROWS, &mut plain)
+        .into_iter()
+        .enumerate()
+    {
+        let row = WINDOW_ROW_BASE as usize + o;
+        kappa[row] = rho_o * chunks_minus_digits;
+        kappa_prime[row] = rho_o * powers.window_chunks;
+    }
+    LinkColumns {
+        omega,
+        kappa,
+        kappa_prime,
+    }
 }
 
-/// Verifier: `ω̃(r)` over every selected family.
-pub fn omega_eval<O: TermObserver + ?Sized>(
+/// The digit link's public multilinears at the stage point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkEvals {
+    pub omega: Fr,
+    pub kappa: Fr,
+    pub kappa_prime: Fr,
+}
+
+/// Verifier: the digit link's weights at `r` — `ω̃` over every selected
+/// family, `κ̃`/`κ̃'` over the window block.
+pub fn link_evals<O: TermObserver + ?Sized>(
     layout: &Layout,
     rho: Fr,
     r_le: &[Fr],
     observer: &mut O,
-) -> Fr {
+) -> LinkEvals {
     let mut ev = Evaluator::new(r_le, r_le, observer);
-    omega_eval_in(layout, rho, &mut ev)
+    link_evals_in(layout, rho, &mut ev)
 }
 
-fn omega_eval_in<O: TermObserver + ?Sized>(
+fn link_evals_in<O: TermObserver + ?Sized>(
     layout: &Layout,
     rho: Fr,
     ev: &mut Evaluator<'_, O>,
-) -> Fr {
-    let powers = link_powers_with(layout, rho, &mut |a, b| ev.mul(a, b));
-    layout.selected.iter().fold(Fr::zero(), |acc, family| {
+) -> LinkEvals {
+    let powers = LinkPowers::new_with(layout, rho, &mut |a, b| ev.mul(a, b));
+    let omega = layout.selected.iter().fold(Fr::zero(), |acc, family| {
         acc + family.omega_eval(ev, &powers)
-    })
+    });
+    // Window rows `WINDOW_ROW_BASE + o`, `o < 256`: `eq(r_hi, base)·Σ_o ρ^o·eq(r_lo, o)`.
+    let low = Bits::new(0, WINDOW_ROWS.trailing_zeros() as u8);
+    let high = Bits::new(low.hi, LOG_ROWS as u8);
+    let block = ev.eq_const(Point::Row, high, WINDOW_ROW_BASE >> low.hi);
+    let geometric = ev.geometric(Point::Row, low, rho);
+    let window = ev.mul(block, geometric);
+    LinkEvals {
+        omega,
+        kappa: ev.mul(window, powers.window_chunks - powers.window_digits),
+        kappa_prime: ev.mul(window, powers.window_chunks),
+    }
 }
 
-/// [`public_evals`] and `ω̃(r)` over one evaluator: the digit link reuses the
-/// stage point's eq tables.
-pub fn public_and_omega_evals<O: TermObserver + ?Sized>(
+/// [`public_evals`] and the digit link's weights over one evaluator: the link
+/// reuses the stage point's eq tables.
+pub fn public_and_link_evals<O: TermObserver + ?Sized>(
     layout: &Layout,
     relation: &RowRelation,
     tau_le: &[Fr],
     r_le: &[Fr],
     rho: Fr,
     observer: &mut O,
-) -> (PublicEvals, Fr) {
+) -> (PublicEvals, LinkEvals) {
     let (public, mut ev) = public_evals_with(layout, relation, tau_le, r_le, observer);
-    let omega = omega_eval_in(layout, rho, &mut ev);
-    (public, omega)
+    let link = link_evals_in(layout, rho, &mut ev);
+    (public, link)
 }
 
 /// Verifier: the public multilinears of the row member at the stage point

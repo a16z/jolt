@@ -17,7 +17,9 @@ use std::ops::Range;
 
 use crate::relation::DoryScalar;
 
-use super::digits::{digits, WINDOWS};
+use super::digits::{
+    digits, window_row_value, window_value, WINDOWS, WINDOW_ROWS, WINDOW_TOP_DIGITS,
+};
 use super::dory::{DorySetupInputs, FlattenedCheck, GtBase, InputElement, Wire, WireValues};
 use super::layout::{Bits, Factor, Piece, Rel, LOG_ROWS};
 use super::ops::{
@@ -63,6 +65,9 @@ impl Cells {
     pub const FINAL: u32 = 9600;
     /// Structured constant cells (points in output layout).
     pub const POINT_CONSTANTS: u32 = 9601;
+    /// `9616 + (o >> 4)`, row `o & 15`: the recoding window row of link
+    /// occurrence `o < 256` (a `256`-row block: rows `WINDOW_ROW_BASE + o`).
+    pub const WINDOW: u32 = 9616;
     /// `9728 + k`: the norm-one check of the GT input base `k`.
     pub const GT_NORM: u32 = 9728;
     /// Final-exponentiation glue and the `ψ` points (explicit edges).
@@ -106,6 +111,10 @@ impl Cells {
     pub const G1_SIGN: u32 = 15168;
     pub const G2_SIGN: u32 = 14912;
 }
+
+/// First row of the recoding window block (`256`-row aligned).
+pub const WINDOW_ROW_BASE: RowId = Program::cell_row(Cells::WINDOW);
+const _: () = assert!(WINDOW_ROW_BASE.is_multiple_of(WINDOW_ROWS as u32));
 
 const C: Bits = Bits::new(0, 4);
 const C3: Bits = Bits::new(0, 3);
@@ -373,6 +382,27 @@ impl Builder {
         base
     }
 
+    /// The recoding window rows: for every link occurrence the value `V_hi`
+    /// of its top 16 digits packed with `WINDOW_BOUND − V_hi`, one row per
+    /// occurrence in the `WINDOW` block (rows without an occurrence hold
+    /// `V_hi = 0`). Emitted after every chain, so `digit_ops` is complete.
+    fn window_rows(&mut self) {
+        assert!(
+            self.link_occurrences as usize <= WINDOW_ROWS,
+            "the window block holds {WINDOW_ROWS} occurrences"
+        );
+        let mut window_digits = vec![[0i64; WINDOW_TOP_DIGITS]; WINDOW_ROWS];
+        for op in &self.digit_ops {
+            if let Some(digit) = window_digits[op.link as usize].get_mut(op.w as usize) {
+                *digit = i64::from(op.j) - 8;
+            }
+        }
+        for (o, digits) in window_digits.iter().enumerate() {
+            let value = window_row_value(window_value(digits));
+            self.program.window_at(WINDOW_ROW_BASE + o as u32, value);
+        }
+    }
+
     /// Registers a table region: its fingerprint kernels (rows read their
     /// own cell through the reading template's fingerprinted `Y` maps) and
     /// the explicit reads of every entry (`first_rows` are the entries'
@@ -578,6 +608,7 @@ pub fn build(
     let rhs = b.gt_online(check, values);
     let g1_out = b.g1(check, values, setup);
     let (g2_out, q_halves) = b.g2(check, values, setup);
+    b.window_rows();
     b.g2_subgroup_checks(q_halves);
     // Pairs: (A1, E2_fin), (H1, B2), (A3, H2), (A4, Γ2_0).
     let p_cells = [g1_out[2], h1_cell, g1_out[1], g1_out[3]];

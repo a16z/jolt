@@ -225,14 +225,14 @@ impl RowRelation {
     /// `mul` (the verifier's statement derivation).
     pub fn new_with(challenges: Challenges, lookup: LookupConstants, mul: Mul<'_>) -> Self {
         assert_eq!(challenges.tau.len(), LOG_ROWS);
-        let constants = Constants::new();
+        let constants = *Constants::get();
         let xi = challenges.xi;
         let xi_pow = [Fr::one(), xi, mul(xi, xi)];
         let q_xi = xi_pow
             .iter()
             .zip(&constants.q_limbs)
             .fold(Fr::zero(), |acc, (p, q)| acc + mul(*p, *q));
-        let flag_xi = mul(Fr::pow2(64), xi_pow[2]);
+        let flag_xi = mul(constants.pow_64, xi_pow[2]);
         let chunk_form = |start: usize, count: usize| {
             let mut form = AffineForm::default();
             for j in 0..count {
