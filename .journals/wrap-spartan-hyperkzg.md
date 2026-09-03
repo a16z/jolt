@@ -236,3 +236,7 @@ Report `.journals/lanes/w5-review-3.md`, regression `.journals/lanes/w5-review-3
 - Minor 4: program-preamble tamper (T1 `state_in` word) missing → patch adds it.
 
 Decision: resume W5 (57541c0a) with the blocker + all four minors, then fresh review #4, then PR-branch rebuild.
+
+## 14:24–16:55 — W5 stopped by user mid-landing; fresh finishing lane
+
+W5 (57541c0a) was stopped by the user at 14:24 at step 4/5. Its fix commit exists on `w5-fs-order` @ f4fbd2ee9 (15 files: FS reorder in `wrap/key.rs` + `limb_table/{stream,export}.rs` + `stream/protocol.rs`, phase counts [39, …]; carry/spartan privatized; shared-rounds doc; regression + preamble tamper in the real gate). Unit suite 64/64, clippy/fmt/check green per its last update; real gate, journals, pr-tables and the fast-forward were not done. Asked the user why it was stopped (14:36) — no answer by 16:52 ("Where did we end on this?"), so the stated default runs: fresh codex lane da0904df in `/Volumes/Dev/worktrees/jolt/w5-fs-order` audits f4fbd2ee9 against the five review-3 items, runs the real gate, writes journals/pr-tables, ff's canonical. Then review #4 → PR-branch rebuild.
