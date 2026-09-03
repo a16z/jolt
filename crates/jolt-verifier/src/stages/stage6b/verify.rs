@@ -649,6 +649,8 @@ mod tests {
     use super::super::bytecode_read_raf::BytecodeReadRafOutputClaims;
     #[cfg(feature = "akita")]
     use super::super::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims;
+    #[cfg(feature = "implicit-carry")]
+    use super::super::carry_claim_reduction::CarryClaimReductionOutputClaims;
     #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
@@ -721,10 +723,7 @@ mod tests {
                     rd_inc: fr(10),
                 },
                 #[cfg(feature = "implicit-carry")]
-                carry_claim_reduction:
-                    crate::stages::stage6b::outputs::CarryClaimReductionOutputClaims {
-                        carry: fr(11),
-                    },
+                carry_claim_reduction: CarryClaimReductionOutputClaims { carry: fr(11) },
                 #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
                 #[cfg(not(feature = "akita"))]
@@ -818,8 +817,7 @@ mod tests {
                 rd_inc: fr(12),
             },
             #[cfg(feature = "implicit-carry")]
-            carry_claim_reduction:
-                crate::stages::stage6b::outputs::CarryClaimReductionOutputClaims { carry: fr(13) },
+            carry_claim_reduction: CarryClaimReductionOutputClaims { carry: fr(13) },
             #[cfg(not(feature = "akita"))]
             trusted_advice: None,
             #[cfg(not(feature = "akita"))]

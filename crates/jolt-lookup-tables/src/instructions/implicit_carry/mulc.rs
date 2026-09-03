@@ -38,19 +38,20 @@ mod tests {
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
         materialize_entry_test,
     };
+    use tracer::instruction::mulc::MULC;
 
     #[test]
     fn materialize_entry_mulc() {
-        materialize_entry_test!(MulC, tracer::instruction::mulc::MULC);
+        materialize_entry_test!(MulC, MULC);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_mulc() {
-        instruction_inputs_match_constraint_test!(MulC, tracer::instruction::mulc::MULC);
+        instruction_inputs_match_constraint_test!(MulC, MULC);
     }
 
     #[test]
     fn lookup_output_matches_trace_mulc() {
-        lookup_output_matches_trace_test!(MulC, tracer::instruction::mulc::MULC);
+        lookup_output_matches_trace_test!(MulC, MULC);
     }
 }

@@ -1159,6 +1159,8 @@ mod tests {
 
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    #[cfg(feature = "implicit-carry")]
+    use crate::stages::stage6b::outputs::CarryClaimReductionOutputClaims;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     #[cfg(feature = "zk")]
@@ -1477,8 +1479,8 @@ mod tests {
     }
 
     #[cfg(not(feature = "akita"))]
-    fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
-        crate::proof::JoltCommitments {
+    fn test_commitments() -> JoltCommitments<TestCommitment> {
+        JoltCommitments {
             rd_inc: TestCommitment,
             ram_inc: TestCommitment,
             instruction_ra: Vec::new(),
@@ -1640,7 +1642,7 @@ mod tests {
                     rd_inc: zero,
                 },
                 #[cfg(feature = "implicit-carry")]
-                carry_claim_reduction: stage6b::outputs::CarryClaimReductionOutputClaims {
+                carry_claim_reduction: CarryClaimReductionOutputClaims {
                     carry: zero,
                 },
                 #[cfg(not(feature = "akita"))]

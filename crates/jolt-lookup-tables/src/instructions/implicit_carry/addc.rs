@@ -38,19 +38,20 @@ mod tests {
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
         materialize_entry_test,
     };
+    use tracer::instruction::addc::ADDC;
 
     #[test]
     fn materialize_entry_addc() {
-        materialize_entry_test!(AddC, tracer::instruction::addc::ADDC);
+        materialize_entry_test!(AddC, ADDC);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_addc() {
-        instruction_inputs_match_constraint_test!(AddC, tracer::instruction::addc::ADDC);
+        instruction_inputs_match_constraint_test!(AddC, ADDC);
     }
 
     #[test]
     fn lookup_output_matches_trace_addc() {
-        lookup_output_matches_trace_test!(AddC, tracer::instruction::addc::ADDC);
+        lookup_output_matches_trace_test!(AddC, ADDC);
     }
 }

@@ -2809,7 +2809,7 @@ mod tests {
     use serial_test::serial;
 
     use crate::curve::Bn254Curve;
-    use crate::host;
+    use crate::host::Program;
     use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
     #[cfg(feature = "zk")]
     use crate::poly::commitment::pedersen::PedersenGenerators;
@@ -2832,6 +2832,8 @@ mod tests {
     #[cfg(feature = "zk")]
     use crate::{curve::JoltCurve, field::JoltField};
     use jolt_riscv::JoltInstructionRow;
+    #[cfg(feature = "implicit-carry")]
+    use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 
     type TestCommittedSharedPreprocessing = (
         JoltSharedPreprocessing,
@@ -2969,7 +2971,7 @@ mod tests {
     #[serial]
     fn fib_e2e_dory() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3006,7 +3008,7 @@ mod tests {
     #[serial]
     fn oversized_trace_returns_error() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3041,7 +3043,7 @@ mod tests {
     #[serial]
     fn small_trace_e2e_dory() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3088,7 +3090,7 @@ mod tests {
     fn sha3_e2e_dory() {
         DoryGlobals::reset();
 
-        let mut program = host::Program::new("sha3-guest");
+        let mut program = Program::new("sha3-guest");
         program.set_func("sha3");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
@@ -3139,7 +3141,7 @@ mod tests {
     fn sha2_e2e_dory() {
         DoryGlobals::reset();
 
-        let mut program = host::Program::new("sha2-guest");
+        let mut program = Program::new("sha2-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3192,7 +3194,7 @@ mod tests {
         // should still work correctly through the full pipeline:
         // - Trusted: commit in preprocessing-only context, reduce in Stage 6, batch in Stage 8
         // - Untrusted: commit at prove time, reduce in Stage 6, batch in Stage 8
-        let mut program = host::Program::new("sha2-guest");
+        let mut program = Program::new("sha2-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
@@ -3252,7 +3254,7 @@ mod tests {
         // Tests that max-sized advice (4KB = 512 words) works with a minimal trace.
         // With balanced dims (sigma_a=5, nu_a=4 for 512 words), the minimum padded trace
         // (256 cycles -> total_vars=12) is sufficient to embed advice.
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
         let trusted_advice = vec![7u8; 4096];
         let untrusted_advice = vec![9u8; 4096];
@@ -3311,7 +3313,7 @@ mod tests {
         DoryGlobals::reset();
 
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
-        let mut program = host::Program::new("merkle-tree-guest");
+        let mut program = Program::new("merkle-tree-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
 
         // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
@@ -3375,7 +3377,7 @@ mod tests {
         //
         // For a small trace (256 cycles), the advice row coordinates span both Stage 6 (cycle)
         // and Stage 7 (address) challenges, verifying the two-phase reduction works correctly.
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&5u32).unwrap();
         let trusted_advice = postcard::to_stdvec(&[7u8; 32]).unwrap();
         let untrusted_advice = postcard::to_stdvec(&[9u8; 32]).unwrap();
@@ -3469,7 +3471,7 @@ mod tests {
     #[serial]
     fn memory_ops_e2e_dory() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("memory-ops-guest");
+        let mut program = Program::new("memory-ops-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&[], &[], &[]);
 
@@ -3506,7 +3508,7 @@ mod tests {
     #[serial]
     fn btreemap_e2e_dory() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("btreemap-guest");
+        let mut program = Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3582,7 +3584,7 @@ mod tests {
         eprintln!("sha2-chain: {iters} iterations, target 2^{log_t}");
 
         DoryGlobals::reset();
-        let mut program = host::Program::new("sha2-chain-guest");
+        let mut program = Program::new("sha2-chain-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
         let (shared_preprocessing, _program_data) = test_shared_preprocessing(
@@ -3661,7 +3663,7 @@ mod tests {
     #[serial]
     fn carry_chain_e2e_dory() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("carry-chain-guest");
+        let mut program = Program::new("carry-chain-guest");
         program.enable_implicit_carry();
         // The guest holds several provable functions (the mul256 benchmark
         // variants); select the carry-chain entry explicitly.
@@ -3730,16 +3732,14 @@ mod tests {
 
         // Tamper coverage across the distinct carry grounding paths: each
         // mutation must be rejected.
-        let tamper =
-            |mutate: &dyn Fn(&mut jolt_verifier::proof::ClearProofClaims<jolt_field::Fr>)| {
-                let mut tampered = jolt_proof.clone();
-                let jolt_verifier::proof::JoltProofClaims::Clear(claims) = &mut tampered.claims
-                else {
-                    panic!("clear proofs carry clear claims");
-                };
-                mutate(claims);
-                tampered
+        let tamper = |mutate: &dyn Fn(&mut ClearProofClaims<_>)| {
+            let mut tampered = jolt_proof.clone();
+            let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
+                panic!("clear proofs carry clear claims");
             };
+            mutate(claims);
+            tampered
+        };
         let one = <jolt_field::Fr as jolt_field::Ring>::from_u64(1);
         assert!(
             canonical_verify_result(
@@ -3808,7 +3808,7 @@ mod tests {
         let inputs = postcard::to_stdvec(&(a, b)).unwrap();
 
         let run = |func: &str| {
-            let mut program = host::Program::new("carry-chain-guest");
+            let mut program = Program::new("carry-chain-guest");
             program.enable_implicit_carry();
             program.set_func(func);
             let (_, trace, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3859,7 +3859,7 @@ mod tests {
     #[serial]
     fn muldiv_e2e_dory() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("muldiv-guest");
+        let mut program = Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3897,7 +3897,7 @@ mod tests {
     #[serial]
     fn muldiv_e2e_dory_committed_program_commitments() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("muldiv-guest");
+        let mut program = Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -3947,7 +3947,7 @@ mod tests {
 
     fn muldiv_e2e_dory_committed_program_preprocessing_roundtrip_inner() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("muldiv-guest");
+        let mut program = Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -4001,7 +4001,7 @@ mod tests {
     #[serial]
     fn stdlib_e2e_dory() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("stdlib-guest");
+        let mut program = Program::new("stdlib-guest");
         program.set_std(true);
         program.set_func("int_to_string");
         let inputs = postcard::to_stdvec(&81i32).unwrap();
@@ -4152,7 +4152,7 @@ mod tests {
         }
 
         // Run muldiv prover to get a real proof
-        let mut program = host::Program::new("muldiv-guest");
+        let mut program = Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -4273,7 +4273,7 @@ mod tests {
     #[serial]
     #[should_panic]
     fn truncated_trace() {
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (lazy_trace, mut trace, final_memory_state, mut program_io) =
@@ -4313,7 +4313,7 @@ mod tests {
     #[serial]
     #[should_panic]
     fn malicious_trace() {
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&1u8).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (lazy_trace, trace, final_memory_state, mut program_io) =
@@ -4363,7 +4363,7 @@ mod tests {
     #[serial]
     fn initial_pc_is_constrained_to_entry_point() {
         DoryGlobals::reset();
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u8).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (lazy_trace, trace, final_memory_state, program_io) = program.trace(&inputs, &[], &[]);
@@ -4542,7 +4542,7 @@ mod tests {
         DoryGlobals::reset();
         DoryGlobals::set_layout(DoryLayout::AddressMajor);
 
-        let mut program = host::Program::new("fibonacci-guest");
+        let mut program = Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
@@ -4582,7 +4582,7 @@ mod tests {
         DoryGlobals::set_layout(DoryLayout::AddressMajor);
 
         // Tests a guest (merkle-tree) that actually consumes both trusted and untrusted advice.
-        let mut program = host::Program::new("merkle-tree-guest");
+        let mut program = Program::new("merkle-tree-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
 
         // Merkle tree with 4 leaves: input=leaf1, trusted=[leaf2, leaf3], untrusted=leaf4
