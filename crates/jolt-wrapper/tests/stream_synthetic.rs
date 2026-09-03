@@ -178,7 +178,7 @@ fn synthetic_stream_round_trip_and_tampers() {
     };
     let proof = prove_stream(&packed, &statement, &mut row_relation, &setup).expect("prove stream");
     let verified = verify_stream(&proof, &statement, &verifier_setup).expect("verify stream");
-    assert_eq!(verified.len(), 3);
+    assert_eq!(verified.len(), 2);
     assert_eq!(
         proof.bincode_bytes(),
         encode_to_vec(&proof, standard())
@@ -255,13 +255,6 @@ fn synthetic_stream_round_trip_and_tampers() {
     *round = CompressedPoly::new(coefficients);
     assert!(verify_stream(&group_point_tamper, &statement, &verifier_setup).is_err());
 
-    let mut stage_c_tamper = proof.clone();
-    let round = &mut stage_c_tamper.stages[2].round_polynomials.round_polynomials[0];
-    let mut coefficients = round.coeffs_except_linear_term().to_vec();
-    coefficients[0] += Fr::from_u64(1);
-    *round = CompressedPoly::new(coefficients);
-    assert!(verify_stream(&stage_c_tamper, &statement, &verifier_setup).is_err());
-
     let mut polynomial_index_tamper = proof.clone();
     polynomial_index_tamper.commitments.swap(0, 1);
     assert!(verify_stream(&polynomial_index_tamper, &statement, &verifier_setup).is_err());
@@ -321,7 +314,7 @@ fn committed_stage_a_round_trip_and_tampers() {
     };
     let proof = prove_stream(&packed, &statement, &mut row_relation, &setup).expect("prove stream");
     let verified = verify_stream(&proof, &statement, &verifier_setup).expect("verify stream");
-    assert_eq!(verified.len(), 3);
+    assert_eq!(verified.len(), 2);
     assert_eq!(
         proof.bincode_bytes(),
         encode_to_vec(&proof, standard())

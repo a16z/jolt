@@ -184,10 +184,10 @@ where
     let vanishing_at_z = eval_univariate(&vanishing_polynomial(&union), z);
     folded_commitment -= proof.quotient_commitment.scalar_mul(&vanishing_at_z);
     transcript.append(&proof.evaluation_witness);
-    let beta_minus_z = setup.beta_g2 - setup.g2.scalar_mul(&z);
+    folded_commitment += proof.evaluation_witness.scalar_mul(&z);
     let opening_check = P::multi_pairing(
         &[folded_commitment, -proof.evaluation_witness],
-        &[setup.g2, beta_minus_z],
+        &[setup.g2, setup.beta_g2],
     );
     if !opening_check.is_identity() {
         return Err(HyperKZGError::VariableBatchCheckFailed);

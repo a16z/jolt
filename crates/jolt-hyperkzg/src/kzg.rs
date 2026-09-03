@@ -106,8 +106,8 @@ where
 
 /// Batch KZG verification: checks that commitments open correctly at all points.
 ///
-/// Optimized for the t=3 case used by HyperKZG. The pairing check verifies
-/// `e(C_B - C_R, g2) == e(W, Z(beta) * g2)`.
+/// Optimized for the t=3 case used by HyperKZG. Divisor coefficients multiply
+/// G1 arguments so verification needs only the four fixed G2 SRS powers.
 pub(crate) fn kzg_verify_batch<P, T>(
     vk: &HyperKZGVerifierSetup<P>,
     com: &[P::G1],
@@ -154,14 +154,15 @@ where
     let b_commitment = P::g1_msm(com, &q_powers);
     let remainder_commitment = P::g1_msm(&[vk.g1, vk.beta_g1, vk.beta_sq_g1], &remainder);
     let divisor = vanishing_polynomial(u);
-    let divisor_at_beta = vk.g2.scalar_mul(&divisor[0])
-        + vk.beta_g2.scalar_mul(&divisor[1])
-        + vk.beta_sq_g2.scalar_mul(&divisor[2])
-        + vk.beta_cu_g2;
-
+    let [z0, z1, z2, _] = divisor;
     let result = P::multi_pairing(
-        &[b_commitment - remainder_commitment, -wit],
-        &[vk.g2, divisor_at_beta],
+        &[
+            b_commitment - remainder_commitment - wit.scalar_mul(&z0),
+            -wit.scalar_mul(&z1),
+            -wit.scalar_mul(&z2),
+            -wit,
+        ],
+        &[vk.g2, vk.beta_g2, vk.beta_sq_g2, vk.beta_cu_g2],
     );
     result.is_identity()
 }

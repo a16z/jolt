@@ -77,6 +77,9 @@ pub type Blake2bTranscript<F = jolt_field::Fr> =
 pub type LegacyBlake2bTranscript<F = jolt_field::Fr> =
     DigestTranscript<blake2::Blake2b<blake2::digest::consts::U32>, F>;
 
+/// Keccak-256 chained-digest transcript for EVM-verifiable outer protocols.
+pub type Keccak256Transcript<F = jolt_field::Fr> = DigestTranscript<sha3::Keccak256, F>;
+
 /// Fiat-Shamir transcript backed by Keccak-f1600 (spongefish duplex sponge).
 #[cfg(feature = "transcript-keccak")]
 pub type KeccakTranscript<F = jolt_field::Fr> =

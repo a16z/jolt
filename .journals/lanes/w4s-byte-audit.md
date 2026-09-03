@@ -10,16 +10,16 @@ and `k = 16`. Payload counts BN254 G1 and Fr values as 32 B and exclude serde fr
 | packed commitments | 30 G1 | 960 | 15 G1 | 480 |
 | stage A committed rounds | 17 G1 + 34 Fr + 3 G1 | 1,728 | same | 1,728 |
 | stage B column batch | 8 rounds × 2 Fr | 512 | same | 512 |
-| stage C opening reduction | 20 rounds × 2 Fr | 1,280 | 21 rounds × 2 Fr | 1,344 |
+| stage C opening reduction | deleted | 0 | deleted | 0 |
 | A→B factor claims | 5 Fr | 160 | 5 Fr | 160 |
 | reduced packed claim | 1 Fr | 32 | 1 Fr | 32 |
 | multilinear HyperKZG | 20 G1 + 60 Fr | 2,560 | 21 G1 + 63 Fr | 2,688 |
-| **payload** | | **7,232** | | **6,944** |
-| standard-bincode framing | | 115 | | 102 |
-| **standard bincode** | | **7,347** | | **7,046** |
+| **payload** | | **5,952** | | **5,600** |
+| standard-bincode framing | | 94 | | 80 |
+| **standard bincode** | | **6,046** | | **5,680** |
 
-The previous `k = 8` proof was 10,304 B payload / 10,445 B bincode. Implemented payload saving:
-**3,072 B**. `k = 16` saves another **288 B**.
+The original `k = 8` proof was 10,304 B payload / 10,445 B bincode. Implemented payload saving:
+**4,352 B**. `k = 16` saves another **352 B**.
 
 ## Packed commitments
 
@@ -99,11 +99,17 @@ The five A→B factor values cost 160 B for the gate's one degree-five tensor te
 A's scalar output fixes their product, not each factor. The prior A/B/C singleton output claims
 are all derived and no longer serialized (−96 B).
 
-## Stage C and multilinear opening
+## Direct multilinear opening
 
-Stage C has `log2(rows*k)` degree-two rounds: 20 at `k = 8`, 21 at `k = 16`. It reduces the one
-`T(s)` claim to the eq-weighted commitment RLC. HyperKZG then opens the resulting packed
-polynomial at the same stage-C point:
+The shared B batch leaves one claim at one packed point:
+
+```text
+T(s) = sum_g eq(s_group,g) P_g(r_A,s_slot).
+```
+
+The verifier directly forms that eq-weighted commitment RLC and HyperKZG opens it at
+`(r_A,s_slot)`. The former C sumcheck changed one point into another point and cost 1,280 B at
+`k=8` / 1,344 B at `k=16`; it is deleted. HyperKZG remains:
 
 ```text
 ell G1 + 3*ell Fr = 4*ell*32
@@ -111,15 +117,34 @@ ell=20: 2,560 B
 ell=21: 2,688 B
 ```
 
+Lane Z's single-point Zeromorph target is `ell+2` G1: 704 B at `ell=20`, 736 B at `ell=21`.
+Replacing only the final PCS would therefore yield **4,096 B** (`k=8`) or **3,648 B** (`k=16`).
+A three-point Zeromorph opening adds `3(ell+1)+1` G1 and is larger than the deleted C stream.
+
+## EVM verifier operations
+
+The ignored gate's `VerifierCost` follows the current EVM-form verifier: two two-pair checks for
+the committed rounds, one four-pair HyperKZG check, G1-side divisor arithmetic, one Keccak per
+chained-digest append/squeeze, and a formula-level Fr count.
+
+| `k` | ecMul | ecAdd | pairing pairs | modeled Fr ops | Keccak | N4 gas estimate |
+|---:|---:|---:|---:|---:|---:|---:|
+| 8 | 109 | 108 | 8 | 1,112 | 301 | 1,456,512 |
+| 16 | 95 | 94 | 8 | 1,079 | 290 | 1,334,152 |
+
+Gas applies the N4 constants: 21k base, 16 gas/calldata byte after expanding each G1 to 64 bytes,
+7.7k per paired ecMul+ecAdd MSM term, 114.7k per two-pair call, 183.4k for four pairs, 20 gas/modeled Fr op,
+and 100 gas per chained Keccak event. It excludes contract-code/data access and G1 decompression.
+
 ## Measured release gate
 
 16 GiB M4 mini, one heavy binary, isolated target/worktree:
 
 | `k` | setup | commit | proof after commit | commit + proof | verify | payload |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8 | 14.712 s | 2.056 s | 8.220 s | 10.276 s | 0.122 s | 7,232 B |
-| 16 | 28.291 s | 1.454 s | 11.614 s | 13.068 s | 0.042 s | 6,944 B |
+| 8 | 14.779 s | 1.533 s | 2.213 s | 3.746 s | 0.008 s | 5,952 B |
+| 16 | 17.374 s | 1.434 s | 2.890 s | 4.324 s | 0.006 s | 5,600 B |
 
-The same run built both SRS sizes sequentially. The prior quieter baseline was 1.013 s commit +
-4.948 s proof at `k = 8`; host load in this run also roughly doubled SRS generation and commit
-time, so these absolute deltas are not an isolated protocol microbenchmark.
+The same run built both SRS sizes sequentially. Prior runs varied from 3.963–8.220 s for the
+pre-deletion `k=8` proof, while SRS generation varied from 6.600–14.779 s; the spread is host
+contention, not a protocol delta.

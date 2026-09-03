@@ -1,17 +1,16 @@
 use jolt_crypto::Bn254;
-use jolt_field::{Field, Fr, Zero};
+use jolt_field::{Field, Fr};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::AdditivelyHomomorphic;
-use jolt_poly::{EqPolynomial, MultilinearPoly};
+use jolt_poly::MultilinearPoly;
 use jolt_sumcheck::prover::ProveRounds;
-use jolt_transcript::{AppendToTranscript, Blake3Transcript, Transcript};
+use jolt_transcript::{AppendToTranscript, Keccak256Transcript, Transcript};
 
 use super::{
-    absorb_output_claims, combine_evaluations, prove_kzg_stage, prove_stage, verify_kzg_stage,
-    verify_stage_with, verify_stage_without_output, ClaimReduction, ColumnReduction, Commitment,
-    PackedColumns, PackingLayout, ReductionClaim, StageAEncoding, StageMember, StageMemberSpec,
-    StageProof, StageResult, StreamError, TensorStreamStatement, TensorTerm, WrapperProof,
-    STREAM_LABEL,
+    combine_evaluations, prove_kzg_stage, prove_stage, verify_kzg_stage, verify_stage_with,
+    ColumnReduction, Commitment, PackedColumns, PackingLayout, ReductionClaim, StageAEncoding,
+    StageMember, StageMemberSpec, StageProof, StageResult, StreamError, TensorStreamStatement,
+    TensorTerm, WrapperProof, STREAM_LABEL,
 };
 
 pub fn prove_stream(
@@ -109,58 +108,44 @@ pub fn prove_stream(
     if column_result.output_claims != expected_column {
         return Err(StreamError::StageOutputClaim);
     }
-    let claims = canonical_reduction_claims(
+    let claim = canonical_reduction_claim(
         packed.layout,
         &row_result.point,
         &column_result.point,
         reduced_claim,
     )?;
-    prove_reduced_opening(
+    prove_direct_opening(
         packed,
         vec![row_stage, column_stage],
         vec![factor_claims],
-        claims,
+        &claim,
         setup,
         &mut transcript,
     )
 }
 
-fn prove_reduced_opening(
+fn prove_direct_opening(
     packed: &PackedColumns,
-    mut stages: Vec<StageProof>,
+    stages: Vec<StageProof>,
     stage_claims: Vec<Vec<Fr>>,
-    claims: Vec<ReductionClaim>,
+    claim: &ReductionClaim,
     setup: &HyperKZGProverSetup<Bn254>,
-    transcript: &mut Blake3Transcript<Fr>,
+    transcript: &mut Keccak256Transcript<Fr>,
 ) -> Result<WrapperProof, StreamError> {
-    for claim in &claims {
-        transcript.append(&claim.value);
-    }
-    let coefficients: Vec<Fr> = claims.iter().map(|_| transcript.challenge()).collect();
-    let mut reduction = ClaimReduction::new(&packed.evaluations, &claims, &coefficients)?;
-    let input_claim = reduction.input_claim();
-    let mut members = [StageMember {
-        prover: &mut reduction,
-        input_claim,
-        degree: 2,
-        offset: 0,
-    }];
-    let (stage, result) = prove_stage(&mut members, transcript)?;
-    stages.push(stage);
-    let weights = reduction.final_weights();
-    let combined_evaluations = combine_evaluations(&packed.evaluations, &weights);
-    let claimed_eval = combined_evaluations.as_slice().evaluate(&result.point);
-    if result.output_claims != [claimed_eval] {
+    transcript.append(&claim.value);
+    let combined_evaluations = combine_evaluations(&packed.evaluations, &claim.polynomial_weights);
+    if combined_evaluations.as_slice().evaluate(&claim.point) != claim.value {
         return Err(StreamError::OpeningClaim);
     }
     let opening =
-        HyperKZGScheme::<Bn254>::open(setup, &combined_evaluations, &result.point, transcript)
+        HyperKZGScheme::<Bn254>::open(setup, &combined_evaluations, &claim.point, transcript)
             .map_err(StreamError::HyperKzg)?;
     Ok(WrapperProof {
+        public_challenges: Vec::new(),
         commitments: packed.commitments.clone(),
         stages,
         stage_claims,
-        reduced_claims: claims.into_iter().map(|claim| claim.value).collect(),
+        reduced_claims: vec![claim.value],
         opening,
     })
 }
@@ -173,7 +158,8 @@ pub fn verify_stream(
     let layout = PackingLayout::new(statement.rows, statement.column_count, statement.k)?;
     validate_statement(layout, statement)?;
     let factor_columns = tensor_factor_columns(&statement.terms);
-    if proof.stages.len() != 3
+    if !proof.public_challenges.is_empty()
+        || proof.stages.len() != 2
         || proof.stage_claims.len() != 1
         || proof.stage_claims.first().map(Vec::len) != Some(factor_columns.len())
         || proof.commitments.len() != layout.group_count
@@ -249,84 +235,43 @@ pub fn verify_stream(
                 .collect()
         },
     )?;
-    let claims = canonical_reduction_claims(
+    let claim = canonical_reduction_claim(
         layout,
         &row_result.point,
         &column_result.point,
         reduced_claim,
     )?;
-    let mut results = vec![row_result, column_result];
-    results.push(verify_reduced_opening(
-        proof,
-        layout,
-        &claims,
-        setup,
-        &mut transcript,
-    )?);
-    Ok(results)
+    verify_direct_opening(proof, &claim, setup, &mut transcript)?;
+    Ok(vec![row_result, column_result])
 }
 
-fn verify_reduced_opening(
+fn verify_direct_opening(
     proof: &WrapperProof,
-    layout: PackingLayout,
-    claims: &[ReductionClaim],
+    claim: &ReductionClaim,
     setup: &HyperKZGVerifierSetup<Bn254>,
-    transcript: &mut Blake3Transcript<Fr>,
-) -> Result<StageResult, StreamError> {
-    for value in &proof.reduced_claims {
-        transcript.append(value);
-    }
-    let coefficients: Vec<Fr> = claims.iter().map(|_| transcript.challenge()).collect();
-    let final_shape = [StageMemberSpec {
-        rounds: layout.packed_vars(),
-        degree: 2,
-        offset: 0,
-    }];
-    let final_stage = proof.stages.get(2).ok_or(StreamError::StageCount)?;
-    let expected_input: Fr = proof
-        .reduced_claims
-        .iter()
-        .zip(&coefficients)
-        .map(|(&value, &coefficient)| value * coefficient)
-        .sum();
-    let mut final_result =
-        verify_stage_without_output(final_stage, &final_shape, &[expected_input], transcript)?;
-    let weights = reduction_weights(
-        proof.commitments.len(),
-        claims,
-        &coefficients,
-        &final_result.point,
-    )?;
-    let commitment = HyperKZGScheme::<Bn254>::combine(&proof.commitments, &weights);
-    let coefficient_inverse = final_result
-        .coefficients
-        .first()
-        .copied()
-        .ok_or(StreamError::StageMemberCount)?
-        .inverse()
-        .ok_or(StreamError::StageOutputClaim)?;
-    let claimed_eval = final_result.final_claim * coefficient_inverse;
-    let output_claims = vec![claimed_eval];
-    absorb_output_claims(&output_claims, transcript);
-    final_result.output_claims = vec![claimed_eval];
+    transcript: &mut Keccak256Transcript<Fr>,
+) -> Result<(), StreamError> {
+    transcript.append(&claim.value);
+    let commitment =
+        HyperKZGScheme::<Bn254>::combine(&proof.commitments, &claim.polynomial_weights);
     HyperKZGScheme::<Bn254>::verify(
         setup,
         &commitment,
-        &final_result.point,
-        &claimed_eval,
+        &claim.point,
+        &claim.value,
         &proof.opening,
         transcript,
     )
     .map_err(StreamError::HyperKzg)?;
-    Ok(final_result)
+    Ok(())
 }
 
 pub fn new_stream_transcript(
     key_digest: &[u8; 32],
     public_statement: &[Fr],
     commitments: &[Commitment],
-) -> Blake3Transcript<Fr> {
-    let mut transcript = Blake3Transcript::<Fr>::new(STREAM_LABEL);
+) -> Keccak256Transcript<Fr> {
+    let mut transcript = Keccak256Transcript::<Fr>::new(STREAM_LABEL);
     transcript.append_bytes(key_digest);
     for value in public_statement {
         transcript.append(value);
@@ -352,52 +297,23 @@ fn absorb_stage_a_encoding<T: Transcript>(encoding: StageAEncoding, transcript: 
     transcript.append_bytes(&[tag]);
 }
 
-fn reduction_weights(
-    polynomial_count: usize,
-    claims: &[ReductionClaim],
-    coefficients: &[Fr],
-    point: &[Fr],
-) -> Result<Vec<Fr>, StreamError> {
-    let mut weights = vec![Fr::zero(); polynomial_count];
-    for (claim_index, (claim, &coefficient)) in claims.iter().zip(coefficients).enumerate() {
-        if claim.polynomial_weights.len() != polynomial_count {
-            return Err(StreamError::PolynomialWeightCount {
-                claim: claim_index,
-                expected: polynomial_count,
-                actual: claim.polynomial_weights.len(),
-            });
-        }
-        if claim.point.len() != point.len() {
-            return Err(StreamError::PointDimension {
-                expected: point.len(),
-                actual: claim.point.len(),
-            });
-        }
-        let eq = EqPolynomial::<Fr>::mle(&claim.point, point);
-        for (weight, &polynomial_coefficient) in weights.iter_mut().zip(&claim.polynomial_weights) {
-            *weight += coefficient * polynomial_coefficient * eq;
-        }
-    }
-    Ok(weights)
-}
-
-fn canonical_reduction_claims(
+fn canonical_reduction_claim(
     layout: PackingLayout,
     row_point: &[Fr],
     column_batch_point: &[Fr],
     value: Fr,
-) -> Result<Vec<ReductionClaim>, StreamError> {
+) -> Result<ReductionClaim, StreamError> {
     if column_batch_point.len() != layout.column_vars() {
         return Err(StreamError::PointDimension {
             expected: layout.column_vars(),
             actual: column_batch_point.len(),
         });
     }
-    Ok(vec![ReductionClaim {
+    Ok(ReductionClaim {
         polynomial_weights: layout.group_weights(column_batch_point)?,
         point: layout.packed_point(row_point, column_batch_point)?,
         value,
-    }])
+    })
 }
 
 fn tensor_factor_columns(terms: &[TensorTerm]) -> Vec<usize> {

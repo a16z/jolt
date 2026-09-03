@@ -3992,6 +3992,7 @@ dependencies = [
  "light-poseidon",
  "num-traits",
  "rand 0.8.7",
+ "sha3 0.12.0",
  "spongefish",
 ]
 

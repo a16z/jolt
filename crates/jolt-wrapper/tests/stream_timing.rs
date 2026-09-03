@@ -17,9 +17,88 @@ use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::stream::{
     commit_packed, prove_stream, verify_stream, Column, StageAEncoding, TensorStreamStatement,
-    TensorTerm,
+    TensorTerm, WrapperProof,
 };
 use rayon::prelude::*;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VerifierCost {
+    ec_mul: usize,
+    ec_add: usize,
+    pairing_pairs: usize,
+    fr_ops: usize,
+    keccak: usize,
+}
+
+impl VerifierCost {
+    fn stream(proof: &WrapperProof, statement: &TensorStreamStatement) -> Self {
+        let committed = proof.stages[0]
+            .committed_rounds
+            .as_ref()
+            .expect("timing gate uses committed stage A");
+        let row_rounds = committed.round_commitments.len();
+        let column_rounds = proof.stages[1].round_polynomials.round_polynomials.len();
+        let factors = proof.stage_claims[0].len();
+        let ell = proof.opening.com.len() + 1;
+        let groups = proof.commitments.len();
+        let compressed_keccak = |stage: usize| {
+            proof.stages[stage]
+                .round_polynomials
+                .round_polynomials
+                .iter()
+                .map(|round| round.coeffs_except_linear_term().len() + 2)
+                .sum::<usize>()
+        };
+        let prefix_keccak = groups + 4;
+        let stage_a_keccak = 2 + 7 * row_rounds + 6;
+        let stage_b_keccak = 5 * factors + compressed_keccak(1);
+        let reduced_claim_keccak = proof.reduced_claims.len();
+        let opening_keccak =
+            proof.opening.com.len() + proof.opening.v.iter().map(Vec::len).sum::<usize>() + 3;
+        let ec_mul = 3 * row_rounds + 2 + groups + ell + 6;
+        let ec_add = ec_mul - 1;
+
+        let column_vars = statement.column_count.next_power_of_two().trailing_zeros() as usize;
+        let padded_groups = groups.next_power_of_two();
+        let fr_ops = 25 * row_rounds
+            + 12 * column_rounds
+            + factors * (4 * column_vars + 1)
+            + 3 * padded_groups
+            + 15 * ell
+            + 30;
+        Self {
+            ec_mul,
+            ec_add,
+            pairing_pairs: 8,
+            fr_ops,
+            keccak: prefix_keccak
+                + stage_a_keccak
+                + stage_b_keccak
+                + reduced_claim_keccak
+                + opening_keccak,
+        }
+    }
+
+    fn estimated_n4_gas(self, proof: &WrapperProof) -> usize {
+        let proof_g1 = proof.commitments.len()
+            + proof
+                .stages
+                .iter()
+                .filter_map(|stage| stage.committed_rounds.as_ref())
+                .map(|stage| stage.round_commitments.len() + 3)
+                .sum::<usize>()
+            + proof.opening.com.len()
+            + 1;
+        let evm_calldata_bytes = proof.payload_bytes() + 32 * proof_g1;
+        21_000
+            + 16 * evm_calldata_bytes
+            + 7_700 * self.ec_mul
+            + 20 * self.fr_ops
+            + 100 * self.keccak
+            + 2 * 114_700
+            + 183_400
+    }
+}
 
 struct TimingRow {
     columns: Vec<Polynomial<Fr>>,
@@ -177,12 +256,14 @@ fn n3_g_shape_timing() {
         let bincode_bytes = encode_to_vec(&proof, standard())
             .expect("serialize G proof")
             .len();
-        assert_eq!(verified.len(), 3);
+        assert_eq!(verified.len(), 2);
         assert_eq!(proof.bincode_bytes(), bincode_bytes);
+        let verifier_cost = VerifierCost::stream(&proof, &statement);
         writeln!(
             results,
-            "k={k} setup={setup_seconds:.3}s commit={commit_seconds:.3}s prove={prove_seconds:.3}s verify={verify_seconds:.3}s payload={}B bincode={bincode_bytes}B",
+            "k={k} setup={setup_seconds:.3}s commit={commit_seconds:.3}s prove={prove_seconds:.3}s verify={verify_seconds:.3}s payload={}B bincode={bincode_bytes}B cost={verifier_cost:?} gas={}",
             proof.payload_bytes(),
+            verifier_cost.estimated_n4_gas(&proof),
         )
         .expect("write timing line");
     }

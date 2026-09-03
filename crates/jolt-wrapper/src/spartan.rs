@@ -1,7 +1,7 @@
 //! Spartan for plain R1CS with columns `[0, 1 + public_inputs.len())` public.
 
 use jolt_crypto::Bn254;
-use jolt_field::{Fr, One, Ring, Zero};
+use jolt_field::{CanonicalEncoding, Fr, One, Ring, Zero};
 use jolt_hyperkzg::error::HyperKZGError;
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
@@ -36,6 +36,8 @@ pub enum SpartanError {
     Unsatisfied(usize),
     #[error("malformed Spartan proof")]
     MalformedProof,
+    #[error("public challenge does not fit the 128-bit outer-transcript encoding")]
+    ChallengeOutOfRange,
     #[error("outer sumcheck final claim mismatch")]
     OuterFinalClaim,
     #[error("inner sumcheck input claim mismatch")]
@@ -50,19 +52,26 @@ pub enum SpartanError {
     HyperKzg(#[from] HyperKZGError),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SpartanPublicInputs<'a> {
+    pub known: &'a [Fr],
+    pub challenges: &'a [Fr],
+}
+
 pub fn prove_spartan(
     key_digest: &[u8; 32],
     r1cs: &ConstraintMatrices<Fr>,
-    public_inputs: &[Fr],
+    public: SpartanPublicInputs<'_>,
     witness: &[Fr],
     setup: &HyperKZGProverSetup<Bn254>,
 ) -> Result<WrapperProof, SpartanError> {
+    let public_inputs = materialize_public_inputs(public.known, public.challenges);
     validate_dimensions(r1cs, public_inputs.len(), witness.len())?;
-    let z = assignment(public_inputs, witness);
+    let z = assignment(&public_inputs, witness);
     r1cs.check_witness(&z).map_err(SpartanError::Unsatisfied)?;
 
     let packed = commit_packed(&[Column::Fr(witness.to_vec())], 1, setup)?;
-    let mut transcript = new_stream_transcript(key_digest, public_inputs, &packed.commitments);
+    let mut transcript = new_stream_transcript(key_digest, &public_inputs, &packed.commitments);
     let tau = draw_point(
         r1cs.num_constraints.trailing_zeros() as usize,
         &mut transcript,
@@ -86,10 +95,10 @@ pub fn prove_spartan(
     }
     let matrix_weights = draw_matrix_weights(&mut transcript);
     let row_weights = EqPolynomial::<Fr>::evals(&outer_result.point, None);
-    let public = public_contributions(r1cs, &row_weights, public_inputs)?;
-    let inner_claim = matrix_weights[0] * (az - public.a)
-        + matrix_weights[1] * (bz - public.b)
-        + matrix_weights[2] * (cz - public.c);
+    let contributions = public_contributions(r1cs, &row_weights, &public_inputs)?;
+    let inner_claim = matrix_weights[0] * (az - contributions.a)
+        + matrix_weights[1] * (bz - contributions.b)
+        + matrix_weights[2] * (cz - contributions.c);
     let linear_form = project_witness_columns(
         r1cs,
         &row_weights,
@@ -115,6 +124,7 @@ pub fn prove_spartan(
             .map_err(SpartanError::HyperKzg)?;
 
     Ok(WrapperProof {
+        public_challenges: pack_challenges(public.challenges)?,
         commitments: packed.commitments,
         stages: vec![outer_proof, inner_proof],
         stage_claims: vec![outer_result.output_claims, inner_result.output_claims],
@@ -126,10 +136,12 @@ pub fn prove_spartan(
 pub fn verify_spartan(
     key_digest: &[u8; 32],
     r1cs: &ConstraintMatrices<Fr>,
-    public_inputs: &[Fr],
+    known_public_inputs: &[Fr],
     proof: &WrapperProof,
     setup: &HyperKZGVerifierSetup<Bn254>,
 ) -> Result<(), SpartanError> {
+    let challenges = unpack_challenges(&proof.public_challenges);
+    let public_inputs = materialize_public_inputs(known_public_inputs, &challenges);
     let public_columns = 1 + public_inputs.len();
     if public_columns > r1cs.num_vars {
         return Err(SpartanError::PublicInputRange {
@@ -155,7 +167,7 @@ pub fn verify_spartan(
         .first()
         .ok_or(SpartanError::MalformedProof)?;
 
-    let mut transcript = new_stream_transcript(key_digest, public_inputs, &proof.commitments);
+    let mut transcript = new_stream_transcript(key_digest, &public_inputs, &proof.commitments);
     let tau = draw_point(
         r1cs.num_constraints.trailing_zeros() as usize,
         &mut transcript,
@@ -183,10 +195,10 @@ pub fn verify_spartan(
     }
     let matrix_weights = draw_matrix_weights(&mut transcript);
     let row_weights = EqPolynomial::<Fr>::evals(&outer.point, None);
-    let public = public_contributions(r1cs, &row_weights, public_inputs)?;
-    let inner_claim = matrix_weights[0] * (az - public.a)
-        + matrix_weights[1] * (bz - public.b)
-        + matrix_weights[2] * (cz - public.c);
+    let contributions = public_contributions(r1cs, &row_weights, &public_inputs)?;
+    let inner_claim = matrix_weights[0] * (az - contributions.a)
+        + matrix_weights[1] * (bz - contributions.b)
+        + matrix_weights[2] * (cz - contributions.c);
     let inner_shape = [StageMemberSpec {
         rounds: witness_len.trailing_zeros() as usize,
         degree: INNER_DEGREE,
@@ -239,6 +251,32 @@ fn checked_stage_claim(
         return Err(StreamError::StageOutputClaim);
     }
     Ok(vec![expected])
+}
+
+fn pack_challenges(challenges: &[Fr]) -> Result<Vec<[u8; 16]>, SpartanError> {
+    challenges
+        .iter()
+        .map(|challenge| {
+            challenge
+                .to_u128_checked()
+                .map(u128::to_be_bytes)
+                .ok_or(SpartanError::ChallengeOutOfRange)
+        })
+        .collect()
+}
+
+fn unpack_challenges(challenges: &[[u8; 16]]) -> Vec<Fr> {
+    challenges
+        .iter()
+        .map(|bytes| Fr::from_u128(u128::from_be_bytes(*bytes)))
+        .collect()
+}
+
+fn materialize_public_inputs(known: &[Fr], challenges: &[Fr]) -> Vec<Fr> {
+    let mut public_inputs = Vec::with_capacity(known.len() + challenges.len());
+    public_inputs.extend_from_slice(known);
+    public_inputs.extend_from_slice(challenges);
+    public_inputs
 }
 
 fn validate_dimensions(

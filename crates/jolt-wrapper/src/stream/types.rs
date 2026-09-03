@@ -27,6 +27,7 @@ pub struct CommittedStageProof {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WrapperProof {
+    pub public_challenges: Vec<[u8; 16]>,
     pub commitments: Vec<Commitment>,
     pub stages: Vec<StageProof>,
     pub stage_claims: Vec<Vec<Fr>>,
@@ -57,15 +58,16 @@ impl WrapperProof {
             .sum::<usize>();
         let opening_scalars = self.opening.v.iter().map(Vec::len).sum::<usize>();
         let stage_claims = self.stage_claims.iter().map(Vec::len).sum::<usize>();
-        32 * (self.commitments.len()
-            + round_scalars
-            + committed_groups
-            + committed_scalars
-            + stage_claims
-            + self.reduced_claims.len()
-            + self.opening.com.len()
-            + 1
-            + opening_scalars)
+        16 * self.public_challenges.len()
+            + 32 * (self.commitments.len()
+                + round_scalars
+                + committed_groups
+                + committed_scalars
+                + stage_claims
+                + self.reduced_claims.len()
+                + self.opening.com.len()
+                + 1
+                + opening_scalars)
     }
 
     /// Exact `bincode::config::standard()` size for this proof's serde shape.
@@ -97,6 +99,7 @@ impl WrapperProof {
             })
             .sum::<usize>();
         self.payload_bytes()
+            + varint_bytes(self.public_challenges.len())
             + (self.commitments.len() + self.opening.com.len() + 1) * varint_bytes(32)
             + varint_bytes(self.commitments.len())
             + varint_bytes(self.stages.len())
@@ -234,20 +237,6 @@ pub enum StreamError {
     },
     #[error("column index {column} is out of range for {columns} columns")]
     ColumnOutOfRange { column: usize, columns: usize },
-    #[error("reduction claim {claim} has {actual} polynomial weights, expected {expected}")]
-    PolynomialWeightCount {
-        claim: usize,
-        expected: usize,
-        actual: usize,
-    },
-    #[error("polynomial {polynomial} has {actual} evaluations, expected {expected}")]
-    PolynomialLength {
-        polynomial: usize,
-        expected: usize,
-        actual: usize,
-    },
-    #[error("reduction has {claims} claims but {coefficients} coefficients")]
-    CoefficientCount { claims: usize, coefficients: usize },
     #[error("stream shape/proof stage count mismatch")]
     StageCount,
     #[error("stage A output does not equal stage B input")]

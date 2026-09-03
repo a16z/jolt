@@ -1,5 +1,6 @@
 #![expect(
     clippy::expect_used,
+    clippy::indexing_slicing,
     reason = "test fixtures fail immediately on setup or proof errors"
 )]
 
@@ -10,7 +11,7 @@ use jolt_field::{Fr, Ring};
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_poly::CompressedPoly;
 use jolt_r1cs::ConstraintMatrices;
-use jolt_wrapper::spartan::{prove_spartan, verify_spartan};
+use jolt_wrapper::spartan::{prove_spartan, verify_spartan, SpartanPublicInputs};
 use jolt_wrapper::stream::Commitment;
 
 fn instance(log_size: usize, public_count: usize) -> (ConstraintMatrices<Fr>, Vec<Fr>, Vec<Fr>) {
@@ -64,26 +65,30 @@ fn spartan_round_trip_and_tampers() {
         Bn254::g2_generator(),
     );
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
-    let proof = prove_spartan(&key_digest, &r1cs, &public, &witness, &setup).expect("prove");
-    verify_spartan(&key_digest, &r1cs, &public, &proof, &verifier_setup).expect("verify");
+    let known = &public[..22];
+    let challenges = &public[22..];
+    let public_request = SpartanPublicInputs { known, challenges };
+    let proof = prove_spartan(&key_digest, &r1cs, public_request, &witness, &setup).expect("prove");
+    assert_eq!(proof.public_challenges.len(), 28);
+    verify_spartan(&key_digest, &r1cs, known, &proof, &verifier_setup).expect("verify");
 
     let wrong_key_digest = [43; 32];
-    assert!(verify_spartan(&wrong_key_digest, &r1cs, &public, &proof, &verifier_setup).is_err());
+    assert!(verify_spartan(&wrong_key_digest, &r1cs, known, &proof, &verifier_setup).is_err());
     let mut other_r1cs = r1cs.clone();
     for row in other_r1cs.a.iter_mut().chain(&mut other_r1cs.c) {
         for (_, coefficient) in row {
             *coefficient *= Fr::from_u64(2);
         }
     }
-    let other_proof = prove_spartan(&key_digest, &other_r1cs, &public, &witness, &setup)
+    let other_proof = prove_spartan(&key_digest, &other_r1cs, public_request, &witness, &setup)
         .expect("prove other key");
-    assert!(verify_spartan(&key_digest, &r1cs, &public, &other_proof, &verifier_setup).is_err());
+    assert!(verify_spartan(&key_digest, &r1cs, known, &other_proof, &verifier_setup).is_err());
 
     let mut unsatisfied = witness.clone();
     unsatisfied[0] += Fr::from_u64(1);
-    assert!(prove_spartan(&key_digest, &r1cs, &public, &unsatisfied, &setup).is_err());
+    assert!(prove_spartan(&key_digest, &r1cs, public_request, &unsatisfied, &setup).is_err());
 
-    let mut wrong_public = public.clone();
+    let mut wrong_public = known.to_vec();
     wrong_public[0] += Fr::from_u64(1);
     assert!(verify_spartan(&key_digest, &r1cs, &wrong_public, &proof, &verifier_setup).is_err());
 
@@ -97,7 +102,7 @@ fn spartan_round_trip_and_tampers() {
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        &public,
+        known,
         &inner_round_tamper,
         &verifier_setup
     )
@@ -108,14 +113,14 @@ fn spartan_round_trip_and_tampers() {
     let mut coefficients = round.coeffs_except_linear_term().to_vec();
     coefficients[0] += Fr::from_u64(1);
     *round = CompressedPoly::new(coefficients);
-    assert!(verify_spartan(&key_digest, &r1cs, &public, &round_tamper, &verifier_setup).is_err());
+    assert!(verify_spartan(&key_digest, &r1cs, known, &round_tamper, &verifier_setup).is_err());
 
     let mut witness_eval_tamper = proof.clone();
     witness_eval_tamper.reduced_claims[3] += Fr::from_u64(1);
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        &public,
+        known,
         &witness_eval_tamper,
         &verifier_setup
     )
@@ -126,7 +131,7 @@ fn spartan_round_trip_and_tampers() {
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        &public,
+        known,
         &commitment_tamper,
         &verifier_setup
     )
@@ -134,14 +139,14 @@ fn spartan_round_trip_and_tampers() {
 
     let mut claim_tamper = proof.clone();
     claim_tamper.reduced_claims[0] += Fr::from_u64(1);
-    assert!(verify_spartan(&key_digest, &r1cs, &public, &claim_tamper, &verifier_setup).is_err());
+    assert!(verify_spartan(&key_digest, &r1cs, known, &claim_tamper, &verifier_setup).is_err());
 
     let mut stage_claim_tamper = proof.clone();
     stage_claim_tamper.stage_claims[1][0] += Fr::from_u64(1);
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        &public,
+        known,
         &stage_claim_tamper,
         &verifier_setup
     )
@@ -149,17 +154,21 @@ fn spartan_round_trip_and_tampers() {
 
     let mut opening_tamper = proof.clone();
     opening_tamper.opening.v[0][0] += Fr::from_u64(1);
+    assert!(verify_spartan(&key_digest, &r1cs, known, &opening_tamper, &verifier_setup).is_err());
+
+    let mut packed_challenge_tamper = proof.clone();
+    packed_challenge_tamper.public_challenges[0][0] ^= 1;
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        &public,
-        &opening_tamper,
+        known,
+        &packed_challenge_tamper,
         &verifier_setup
     )
     .is_err());
 
     let encoded = encode_to_vec(&proof, standard()).expect("serialize proof");
-    assert_eq!(proof.payload_bytes(), 3_680);
-    assert_eq!(encoded.len(), 3_731);
+    assert_eq!(proof.payload_bytes(), 4_128);
+    assert_eq!(encoded.len(), 4_180);
     assert_eq!(encoded.len(), proof.bincode_bytes());
 }
