@@ -1,10 +1,5 @@
 name: PR Title
 
-# pull_request_target (not pull_request): GitHub skips every pull_request
-# workflow when it cannot build the merge commit (conflicting PR), so a
-# pull_request-triggered title check can be silently absent. The job only
-# reads the PR title from the event payload; it never checks out or runs PR
-# code, so the elevated context is safe.
 on:
   pull_request_target:
     types: [opened, edited, reopened, synchronize, ready_for_review]
