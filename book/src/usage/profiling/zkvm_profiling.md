@@ -41,12 +41,10 @@ the run identity, so the files inside use fixed names:
 
 The run also compiles and traces the guest, derives the PCS setup, proves it,
 and verifies the proof. PCS setup and `prove()` are timed separately. The
-verifier is warmed once and then timed under an explicit host-sized Rayon
-pool followed by an exactly one-worker pool; both CSV fields report the mean
-of 10 verifications by default. Set `JOLT_PROFILE_VERIFY_REPETITIONS` to a
-nonzero integer to change that sample count. The `profiling` feature enables
-the system monitor, so CPU/memory counters render as native Perfetto counter
-tracks directly from the emitted trace — no offline post-processing step.
+verifier is timed once under an explicit host-sized Rayon pool and once under
+an exactly one-worker pool. The `profiling` feature enables the system
+monitor, so CPU/memory counters render as native Perfetto counter tracks
+directly from the emitted trace — no offline post-processing step.
 
 ## Benchmark sweeps
 
@@ -63,9 +61,9 @@ cargo run --release -p jolt-prover --features profiling -- \
 Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
 in the run directories). In addition to prover throughput and proof size, the
 CSV records `setup_time_s`, `verifier_parallel_time_s`,
-`verifier_single_thread_time_s`, `verifier_repetitions`, and the explicit
-parallel worker count. Existing CSVs using the previous header are migrated
-in place with empty values for these new fields. Render them with:
+`verifier_single_thread_time_s`, and the explicit parallel worker count.
+Existing CSVs using the previous header are migrated in place with empty
+values for these new fields. Render them with:
 
 ```bash
 python3 scripts/benchmark_summary.py     # per-scale table

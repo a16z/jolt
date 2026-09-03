@@ -20,7 +20,7 @@
 //! `akita::prove` on the packed build (artifact names gain an `_akita`
 //! suffix so the two protocols' runs never collide) — and a full
 //! `jolt_verifier::verify` as the correctness gate. PCS setup, prove, and
-//! warm-verifier throughput under explicit host-parallel and single-threaded
+//! verifier latency under explicit host-parallel and single-threaded
 //! pools are measured separately; guest compilation, tracer execution, and
 //! non-PCS preprocessing remain excluded.
 
@@ -32,7 +32,6 @@
     reason = "profile harness: fail loudly and report to stdout"
 )]
 
-use std::env::VarError;
 use std::fs;
 use std::io::{Result, Write as _};
 #[cfg(not(feature = "akita"))]
@@ -88,9 +87,8 @@ const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
-const DEFAULT_VERIFIER_REPETITIONS: u32 = 10;
 const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
-const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_repetitions,verifier_parallel_threads";
+const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
 
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
@@ -553,8 +551,7 @@ struct ProvenRun {
 }
 
 struct VerificationRun {
-    total_duration: Duration,
-    repetitions: u32,
+    duration: Duration,
     threads: usize,
 }
 
@@ -565,59 +562,31 @@ enum VerificationMode {
 }
 
 impl VerificationRun {
-    fn mean_seconds(&self) -> f64 {
-        self.total_duration.as_secs_f64() / f64::from(self.repetitions)
-    }
-}
-
-fn verifier_repetitions() -> u32 {
-    match std::env::var("JOLT_PROFILE_VERIFY_REPETITIONS") {
-        Ok(value) => {
-            let repetitions = value
-                .parse::<u32>()
-                .expect("JOLT_PROFILE_VERIFY_REPETITIONS must be a positive integer");
-            assert!(
-                repetitions > 0,
-                "JOLT_PROFILE_VERIFY_REPETITIONS must be a positive integer"
-            );
-            repetitions
-        }
-        Err(VarError::NotPresent) => DEFAULT_VERIFIER_REPETITIONS,
-        Err(VarError::NotUnicode(_)) => {
-            panic!("JOLT_PROFILE_VERIFY_REPETITIONS must be valid UTF-8")
-        }
+    fn seconds(&self) -> f64 {
+        self.duration.as_secs_f64()
     }
 }
 
 fn measure_verifier(
     mode: VerificationMode,
     threads: usize,
-    repetitions: u32,
-    mut verify: impl FnMut(),
+    verify: impl FnOnce(),
 ) -> VerificationRun {
     let span = match mode {
-        VerificationMode::Parallel => {
-            tracing::info_span!("profile_verifier_parallel", threads, repetitions)
-        }
+        VerificationMode::Parallel => tracing::info_span!("profile_verifier_parallel", threads),
         VerificationMode::SingleThreaded => {
-            tracing::info_span!("profile_verifier_single_threaded", threads, repetitions)
+            tracing::info_span!("profile_verifier_single_threaded", threads)
         }
     };
     let _guard = span.enter();
     let now = Instant::now();
-    for _ in 0..repetitions {
-        verify();
-    }
-    let total_duration = now.elapsed();
+    verify();
+    let duration = now.elapsed();
     tracing::info!(
-        mean_time_s = total_duration.as_secs_f64() / f64::from(repetitions),
+        wall_time_s = duration.as_secs_f64(),
         "verifier profile complete"
     );
-    VerificationRun {
-        total_duration,
-        repetitions,
-        threads,
-    }
+    VerificationRun { duration, threads }
 }
 
 fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
@@ -636,7 +605,7 @@ fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
     migrated.push('\n');
     for row in rows.lines().filter(|row| !row.is_empty()) {
         migrated.push_str(row);
-        migrated.push_str(",,,,,");
+        migrated.push_str(",,,,");
         migrated.push('\n');
     }
     fs::write(path, migrated)
@@ -695,11 +664,10 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         run.setup_duration.as_secs_f64(),
     );
     println!(
-        "modular {bench_name} (2^{scale}, {backend_label}): Verifier mean {:.3}ms parallel ({} threads), {:.3}ms single-threaded ({} repetitions each)",
-        run.verifier_parallel.mean_seconds() * 1e3,
+        "modular {bench_name} (2^{scale}, {backend_label}): Verifier {:.3}ms parallel ({} threads), {:.3}ms single-threaded",
+        run.verifier_parallel.seconds() * 1e3,
         run.verifier_parallel.threads,
-        run.verifier_single_threaded.mean_seconds() * 1e3,
-        run.verifier_parallel.repetitions,
+        run.verifier_single_threaded.seconds() * 1e3,
     );
     if let Some(peak) = peak_rss_bytes() {
         println!(
@@ -717,7 +685,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     // compressed encoding having been retired — so the columns stay
     // directly comparable across the two harnesses.
     let summary_line = format!(
-        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label},{:.6},{:.6},{:.6},{},{}\n",
+        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label},{:.6},{:.6},{:.6},{}\n",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -726,9 +694,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         proof_size,
         proof_size,
         run.setup_duration.as_secs_f64(),
-        run.verifier_parallel.mean_seconds(),
-        run.verifier_single_threaded.mean_seconds(),
-        run.verifier_parallel.repetitions,
+        run.verifier_parallel.seconds(),
+        run.verifier_single_threaded.seconds(),
         run.verifier_parallel.threads,
     );
     let individual_file = run_dir.join("timings.csv");
@@ -871,19 +838,10 @@ fn prove_workload(
         )
         .expect("modular proof verifies");
     };
-    parallel_pool.install(verify);
-    single_threaded_pool.install(verify);
-    let repetitions = verifier_repetitions();
-    let verifier_parallel = parallel_pool.install(|| {
-        measure_verifier(
-            VerificationMode::Parallel,
-            parallel_threads,
-            repetitions,
-            verify,
-        )
-    });
+    let verifier_parallel = parallel_pool
+        .install(|| measure_verifier(VerificationMode::Parallel, parallel_threads, verify));
     let verifier_single_threaded = single_threaded_pool
-        .install(|| measure_verifier(VerificationMode::SingleThreaded, 1, repetitions, verify));
+        .install(|| measure_verifier(VerificationMode::SingleThreaded, 1, verify));
 
     ProvenRun {
         duration,
@@ -1020,20 +978,12 @@ fn prove_workload(
         )
         .expect("modular packed proof verifies");
     };
-    jolt_akita::with_host_parallel_verifier_backend(verify);
-    jolt_akita::with_single_threaded_verifier_backend(verify);
-    let repetitions = verifier_repetitions();
     let parallel_threads = jolt_akita::host_parallel_verifier_threads();
     let verifier_parallel = jolt_akita::with_host_parallel_verifier_backend(|| {
-        measure_verifier(
-            VerificationMode::Parallel,
-            parallel_threads,
-            repetitions,
-            verify,
-        )
+        measure_verifier(VerificationMode::Parallel, parallel_threads, verify)
     });
     let verifier_single_threaded = jolt_akita::with_single_threaded_verifier_backend(|| {
-        measure_verifier(VerificationMode::SingleThreaded, 1, repetitions, verify)
+        measure_verifier(VerificationMode::SingleThreaded, 1, verify)
     });
 
     ProvenRun {
