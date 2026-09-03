@@ -225,6 +225,49 @@ pub struct AssemblyMemberStatement {
     pub spec: StageMemberSpec,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ColumnId {
+    pub group: usize,
+    pub slot: usize,
+}
+
+impl ColumnId {
+    pub fn index(self, packing: usize) -> Result<usize, StreamError> {
+        if self.slot >= packing {
+            return Err(StreamError::ColumnOutOfRange {
+                column: self.slot,
+                columns: packing,
+            });
+        }
+        self.group
+            .checked_mul(packing)
+            .and_then(|base| base.checked_add(self.slot))
+            .ok_or(StreamError::PackedLengthOverflow)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AffineForm {
+    pub constant: Fr,
+    pub weights: Vec<(ColumnId, Fr)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Term {
+    pub coefficient: Fr,
+    pub factors: Vec<AffineForm>,
+}
+
+pub struct TermContext<'a> {
+    pub row_point: &'a [Fr],
+    pub batching_coefficients: &'a [Fr],
+    pub challenges: &'a [Fr],
+}
+
+pub trait TermExporter {
+    fn terms(&self, context: &TermContext<'_>) -> Vec<Term>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AssemblyStatement {
     pub key_digest: [u8; 32],

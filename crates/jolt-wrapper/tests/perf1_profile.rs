@@ -50,7 +50,8 @@ use jolt_wrapper::limb_table::wiring::Wiring;
 use jolt_wrapper::spartan::{prove_spartan, SpartanPublicInputs};
 use jolt_wrapper::stream::{
     commit_packed, prove_kzg_stage, prove_stage, prove_stream, verify_stream_with_cost, Column,
-    ColumnReduction, PackedColumns, StageAEncoding, StageMember, TensorStreamStatement, TensorTerm,
+    ColumnReduction, PackedColumns, PackedPolynomial, StageAEncoding, StageMember,
+    TensorStreamStatement, TensorTerm,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
@@ -357,7 +358,10 @@ fn profile_commit_kernels(
             mixed_groups
                 .par_iter()
                 .map(|&g| {
-                    HyperKZGScheme::<Bn254>::commit(packed.evaluations[g].as_slice(), setup)
+                    let PackedPolynomial::Fr(values) = &packed.polynomials[g] else {
+                        unreachable!("mixed group is field-valued")
+                    };
+                    HyperKZGScheme::<Bn254>::commit(values, setup)
                         .expect("commit group")
                         .0
                 })
@@ -718,19 +722,6 @@ impl ProveRounds<Fr> for TimingRow {
     }
 }
 
-fn rlc(polynomials: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
-    (0..polynomials[0].len())
-        .into_par_iter()
-        .map(|index| {
-            polynomials
-                .iter()
-                .zip(weights)
-                .map(|(polynomial, &weight)| polynomial[index] * weight)
-                .sum()
-        })
-        .collect()
-}
-
 fn horner(f: &[Fr], u: Fr) -> Fr {
     f.iter().rev().fold(Fr::zero(), |acc, &c| acc * u + c)
 }
@@ -894,7 +885,7 @@ fn stream_profile(
     let weights = packed.layout.group_weights(&s).expect("group weights");
     let point = packed.layout.packed_point(&r_a, &s).expect("packed point");
     let combined = report.measure("open    RLC of packed polys (groups x N)", || {
-        rlc(&packed.evaluations, &weights)
+        packed.rlc_evaluations(&weights).expect("RLC")
     });
     let _ = report.measure("open    evaluate combined at the point (check)", || {
         combined.as_slice().evaluate(&point)

@@ -273,3 +273,28 @@ multiplication with `Fr::mul_u64` then measured **0.121/0.148 s** at load 8.29. 
 0.483 -> 0.269 s (-0.214 s, 44%). Packed coefficient storage is exactly 2,048 -> 324 MiB
 (-1,724 MiB); this excludes the caller-owned source columns and SRS. The 0.05/0.08 s estimate was
 not reached; bit-column field additions now dominate the evaluation pass.
+
+## 00:52 term-stage export contract
+
+Published in `stream::types`:
+
+```rust
+pub struct ColumnId { pub group: usize, pub slot: usize }
+pub struct AffineForm { pub constant: Fr, pub weights: Vec<(ColumnId, Fr)> }
+pub struct Term { pub coefficient: Fr, pub factors: Vec<AffineForm> }
+pub struct TermContext<'a> {
+    pub row_point: &'a [Fr],
+    pub batching_coefficients: &'a [Fr],
+    pub challenges: &'a [Fr],
+}
+pub trait TermExporter {
+    fn terms(&self, context: &TermContext<'_>) -> Vec<Term>;
+}
+```
+
+`ColumnId` is the physical `(packed group, slot)` so VK and prover phases share one namespace.
+Each table exporter captures its typed verifier state; `TermContext::challenges` is the canonical
+Fiat-Shamir vector for member-specific α/β/γ/kernel values. Exporters return products of at most
+five affine factors. The assembly pads shorter products with the constant-one form and pads the
+term table to a power of two with zero-coefficient terms. Prover and verifier call the same export
+method after stage A, using the same row point and member batching coefficients.

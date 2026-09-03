@@ -5,7 +5,6 @@ use jolt_openings::AdditivelyHomomorphic;
 use jolt_poly::MultilinearPoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_transcript::{AppendToTranscript, Keccak256Transcript, Transcript};
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -233,7 +232,7 @@ pub fn prove(
     let point = packed
         .layout
         .packed_point(&row_result.point, &column_result.point)?;
-    let combined = combine_evaluations(&packed.evaluations, &weights);
+    let combined = packed.rlc_evaluations(&weights)?;
     if combined.as_slice().evaluate(&point) != reduced_claim {
         return Err(RelationTableError::Claims);
     }
@@ -415,11 +414,11 @@ fn phase_packed(
         return Err(RelationTableError::Claims);
     }
     let layout = PackingLayout::new(fixed.layout.rows, 3 * fixed.layout.k, fixed.layout.k)?;
-    let evaluations = fixed
-        .evaluations
+    let polynomials = fixed
+        .polynomials
         .iter()
-        .chain(&wire.evaluations)
-        .chain(&helper.evaluations)
+        .chain(&wire.polynomials)
+        .chain(&helper.polynomials)
         .cloned()
         .collect();
     let commitments = fixed
@@ -431,7 +430,7 @@ fn phase_packed(
         .collect();
     Ok(PackedColumns {
         layout,
-        evaluations,
+        polynomials,
         commitments,
     })
 }
@@ -440,19 +439,6 @@ fn factor_columns(k: usize) -> Vec<usize> {
     (0..FIXED_COLUMNS)
         .chain((0..WIRES).map(|wire| k + FIXED_COLUMNS + wire))
         .chain((WIRES..WITNESS_COLUMNS).map(|helper| 2 * k + FIXED_COLUMNS + helper))
-        .collect()
-}
-
-fn combine_evaluations(polynomials: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
-    (0..polynomials[0].len())
-        .into_par_iter()
-        .map(|index| {
-            polynomials
-                .iter()
-                .zip(weights)
-                .map(|(polynomial, &weight)| polynomial[index] * weight)
-                .sum()
-        })
         .collect()
 }
 
