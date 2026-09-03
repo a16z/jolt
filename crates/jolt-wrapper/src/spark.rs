@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
+use jolt_crypto::{Bn254, HomomorphicCommitment};
 use jolt_field::{Field, Fr, One, Ring, Zero};
+use jolt_hyperkzg::HyperKZGProverSetup;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, SparseRow};
 use jolt_sumcheck::prover::ProveRounds;
@@ -10,7 +12,7 @@ use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 use thiserror::Error;
 
-use crate::stream::Column;
+use crate::stream::{commit_packed, Column, Commitment, PackedColumns, PackingLayout, StreamError};
 
 pub const FIXED_COLUMNS: usize = 7;
 pub const WITNESS_COLUMNS: usize = 6;
@@ -52,6 +54,8 @@ pub enum SparkError {
     ClaimMismatch,
     #[error("SPARK common row domain has {actual} rows, need at least {minimum}")]
     CommonRows { minimum: usize, actual: usize },
+    #[error("SPARK packed columns: {0}")]
+    Stream(#[from] StreamError),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,6 +191,24 @@ impl SparkTables {
         Ok(columns)
     }
 
+    fn witness_columns(
+        &self,
+        witness: &SparkWitness,
+        common_rows: usize,
+    ) -> Result<Vec<Column>, SparkError> {
+        let mut columns: Vec<Column> = (0..FIXED_COLUMNS)
+            .map(|_| Column::Fr(vec![Fr::zero(); common_rows]))
+            .collect();
+        columns.extend(
+            witness
+                .columns
+                .iter()
+                .map(|values| embed(values, common_rows).map(Column::Fr))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        Ok(columns)
+    }
+
     fn virtual_evaluations(&self, point: &[Fr], rx: &[Fr], ry: &[Fr]) -> [Fr; 4] {
         let row_point = &point[self.entry_vars - self.row_vars..];
         let col_point = &point[self.entry_vars - self.col_vars..];
@@ -196,6 +218,99 @@ impl SparkTables {
             EqPolynomial::<Fr>::mle(rx, row_point),
             EqPolynomial::<Fr>::mle(ry, col_point),
         ]
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SparkVerifierKey {
+    pub fixed_commitments: Vec<Commitment>,
+    pub layout: PackingLayout,
+    pub row_vars: usize,
+    pub col_vars: usize,
+    pub entry_vars: usize,
+}
+
+impl SparkVerifierKey {
+    pub fn combine_commitments(
+        &self,
+        witness_commitments: &[Commitment],
+    ) -> Result<Vec<Commitment>, SparkError> {
+        if witness_commitments.len() != self.fixed_commitments.len() {
+            return Err(StreamError::StageCount.into());
+        }
+        Ok(self
+            .fixed_commitments
+            .iter()
+            .zip(witness_commitments)
+            .map(|(fixed, witness)| <Commitment as HomomorphicCommitment<Fr>>::add(fixed, witness))
+            .collect())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SparkProverKey {
+    pub tables: SparkTables,
+    fixed: PackedColumns,
+}
+
+impl SparkProverKey {
+    pub fn new(
+        tables: SparkTables,
+        common_rows: usize,
+        packing: usize,
+        setup: &HyperKZGProverSetup<Bn254>,
+    ) -> Result<(Self, SparkVerifierKey), SparkError> {
+        let fixed = commit_packed(&tables.fixed_columns(common_rows)?, packing, setup)?;
+        let verifier = SparkVerifierKey {
+            fixed_commitments: fixed.commitments.clone(),
+            layout: fixed.layout,
+            row_vars: tables.row_vars,
+            col_vars: tables.col_vars,
+            entry_vars: tables.entry_vars,
+        };
+        Ok((Self { tables, fixed }, verifier))
+    }
+
+    pub fn commit_witness(
+        &self,
+        witness: &SparkWitness,
+        setup: &HyperKZGProverSetup<Bn254>,
+    ) -> Result<(PackedColumns, Vec<Commitment>), SparkError> {
+        let witness_packed = commit_packed(
+            &self
+                .tables
+                .witness_columns(witness, self.fixed.layout.rows)?,
+            self.fixed.layout.k,
+            setup,
+        )?;
+        let commitments = self
+            .fixed
+            .commitments
+            .iter()
+            .zip(&witness_packed.commitments)
+            .map(|(fixed, witness)| <Commitment as HomomorphicCommitment<Fr>>::add(fixed, witness))
+            .collect();
+        let evaluations = self
+            .fixed
+            .evaluations
+            .iter()
+            .zip(&witness_packed.evaluations)
+            .map(|(fixed, witness)| {
+                fixed
+                    .iter()
+                    .zip(witness)
+                    .map(|(&fixed, &witness)| fixed + witness)
+                    .collect()
+            })
+            .collect();
+        Ok((
+            PackedColumns {
+                layout: self.fixed.layout,
+                evaluations,
+                commitments,
+            },
+            witness_packed.commitments,
+        ))
     }
 }
 

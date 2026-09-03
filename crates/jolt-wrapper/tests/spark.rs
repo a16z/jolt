@@ -3,11 +3,14 @@
     reason = "test fixtures fail immediately on proof errors"
 )]
 
+use jolt_crypto::Bn254;
 use jolt_field::{Fr, Ring};
+use jolt_hyperkzg::HyperKZGScheme;
 use jolt_r1cs::ConstraintMatrices;
 use jolt_transcript::{Keccak256Transcript, Transcript};
 use jolt_wrapper::spark::{
-    final_claim, SparkChallenges, SparkProver, SparkTables, SparkWitness, DEGREE, TOTAL_COLUMNS,
+    final_claim, SparkChallenges, SparkProver, SparkProverKey, SparkTables, SparkWitness, DEGREE,
+    TOTAL_COLUMNS,
 };
 use jolt_wrapper::stream::{prove_stage, verify_stage_with, StageMember, StageMemberSpec};
 
@@ -63,6 +66,31 @@ fn spark_matrix_logup_round_trip_and_tampers() {
     assert_eq!(
         tables.columns(&witness, 256).expect("embed").len(),
         TOTAL_COLUMNS
+    );
+    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+        Fr::from_u64(71),
+        256 * 16,
+        Bn254::g1_generator(),
+        Bn254::g2_generator(),
+    );
+    let (prover_key, verifier_key) =
+        SparkProverKey::new(tables.clone(), 256, 16, &setup).expect("commit fixed tables");
+    let (packed, witness_commitments) = prover_key
+        .commit_witness(&witness, &setup)
+        .expect("commit SPARK witness");
+    assert_eq!(
+        packed.commitments,
+        verifier_key
+            .combine_commitments(&witness_commitments)
+            .expect("combine commitments")
+    );
+    let mut wrong_commitments = witness_commitments.clone();
+    wrong_commitments[0] = verifier_key.fixed_commitments[0];
+    assert_ne!(
+        packed.commitments,
+        verifier_key
+            .combine_commitments(&wrong_commitments)
+            .expect("combine tampered commitments")
     );
 
     let mut prover =
