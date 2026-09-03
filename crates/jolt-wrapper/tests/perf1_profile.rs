@@ -22,10 +22,14 @@
     reason = "ignored profiling gate with dimensions fixed by the statement"
 )]
 
+mod common;
+#[path = "perf1_profile/t2.rs"]
+mod t2;
+
 use std::fmt::Write as _;
+use std::mem::MaybeUninit;
 use std::time::Instant;
 
-use ark_bn254::Fq;
 use jolt_crypto::ec::bn254::bit_columns::g1_bit_columns_msm;
 use jolt_crypto::{Bn254, PairingGroup};
 use jolt_field::{Field, Fr, One, Ring, Zero};
@@ -45,18 +49,15 @@ use jolt_wrapper::hash_table::{
     HashTable, HashTableProver, JoltSchedule, PublicInputs, Recorded, RecordingTranscript,
     Relation, SymbolicSchedule, CONSTRAINTS,
 };
-use jolt_wrapper::limb_table::columns::Columns;
-use jolt_wrapper::limb_table::program::{Program, Slot};
-use jolt_wrapper::limb_table::relation::{RowRelation, RowSumcheck};
-use jolt_wrapper::limb_table::wiring::Wiring;
 use jolt_wrapper::spartan::{prove_spartan, SpartanPublicInputs};
 use jolt_wrapper::stream::{
     commit_packed, prove_kzg_stage, prove_stage, prove_stream, verify_stream_with_cost, Column,
     ColumnReduction, PackedColumns, PackedPolynomial, StageAEncoding, StageMember,
     TensorStreamStatement, TensorTerm,
 };
+use libc::RUSAGE_SELF;
 use rand::rngs::StdRng;
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
 
 const ROWS_LOG: usize = 18;
@@ -66,17 +67,16 @@ const T1_BITS: usize = 163;
 const ONE_HOT_BITS: usize = 17;
 const T2_CHUNKS: usize = 54;
 const T2_HELPERS: usize = 18;
-const T2_SLOTS: usize = 12;
 const SPARTAN_LOG: usize = 14;
 const REPEATS: usize = 3;
 
 // ---------------------------------------------------------------- metering
 
 fn cpu_seconds() -> f64 {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    let mut usage = MaybeUninit::<libc::rusage>::uninit();
     // SAFETY: getrusage fills the provided rusage struct for the calling process.
     let usage = unsafe {
-        assert_eq!(libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()), 0);
+        assert_eq!(libc::getrusage(RUSAGE_SELF, usage.as_mut_ptr()), 0);
         usage.assume_init()
     };
     let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 * 1e-6;
@@ -84,10 +84,10 @@ fn cpu_seconds() -> f64 {
 }
 
 fn max_rss_mib() -> f64 {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    let mut usage = MaybeUninit::<libc::rusage>::uninit();
     // SAFETY: as above.
     let usage = unsafe {
-        assert_eq!(libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()), 0);
+        assert_eq!(libc::getrusage(RUSAGE_SELF, usage.as_mut_ptr()), 0);
         usage.assume_init()
     };
     usage.ru_maxrss as f64 / (1u64 << 20) as f64
@@ -527,84 +527,6 @@ fn t1_profile(report: &mut Report, table: &HashTable, setup: &HyperKZGProverSetu
     });
 }
 
-// ---------------------------------------------------------------- T2 (limb table)
-
-struct T2Witness {
-    program: Program,
-    columns: Columns,
-    helpers: Vec<Vec<Fr>>,
-    multiplicities: Vec<u32>,
-    alpha: Fr,
-}
-
-/// `2^18` compute rows of twelve products over random earlier rows.
-fn t2_witness() -> T2Witness {
-    let mut rng = StdRng::seed_from_u64(0x72);
-    let constants_start = (ROWS - 2) as u32;
-    let mut program = Program::new(constants_start..ROWS as u32);
-    let input_count = 16;
-    for index in 0..input_count {
-        let _ = program.input(index);
-    }
-    let kappas = [1, -1, 2, -2, 3, -3];
-    while program.cursor() < constants_start {
-        let id = program.cursor();
-        let slots = (0..T2_SLOTS)
-            .map(|_| Slot {
-                x: rng.gen_range(0..id),
-                y: rng.gen_range(0..id),
-                kappa: kappas[rng.gen_range(0..kappas.len())],
-            })
-            .collect();
-        let _ = program.compute(slots);
-    }
-    let inputs: Vec<Fq> = (0..input_count).map(|_| Fq::from(rng.next_u64())).collect();
-    let values = program.evaluate(&inputs).expect("evaluate program");
-    let columns = Columns::generate(&program, &values, ROWS_LOG);
-    let alpha = Fr::random(&mut rng);
-    let (helpers, multiplicities) = columns.logup_columns(alpha);
-    assert_eq!(helpers.len(), T2_HELPERS);
-    T2Witness {
-        program,
-        columns,
-        helpers,
-        multiplicities,
-        alpha,
-    }
-}
-
-fn t2_profile(report: &mut Report, witness: &T2Witness, setup: &HyperKZGProverSetup<Bn254>) {
-    let mut rng = StdRng::seed_from_u64(0x73);
-    let tau: Vec<Fr> = (0..ROWS_LOG).map(|_| Fr::random(&mut rng)).collect();
-    let relation = RowRelation::new(
-        ROWS_LOG,
-        T2_SLOTS,
-        witness.alpha,
-        tau,
-        Fr::random(&mut rng),
-        Fr::random(&mut rng),
-    );
-    let wiring = Wiring {
-        program: &witness.program,
-        num_slots: T2_SLOTS,
-    };
-    let mut prover = report.measure("T2      construct (row matrix, 150 Fr/row)", || {
-        RowSumcheck::new(
-            &relation,
-            &witness.program,
-            &witness.columns,
-            &witness.helpers,
-            &witness.multiplicities,
-            &wiring,
-        )
-    });
-    let claim = report.measure("T2      input claim", || prover.input_claim());
-    let mut transcript = Keccak256Transcript::<Fr>::new(b"perf1-t2");
-    let _ = report.measure("T2      rounds 0..18 + KZG round commits + BDFG", || {
-        prove_kzg_stage(&mut prover, claim, 5, setup, &mut transcript).expect("T2 stage")
-    });
-}
-
 // ---------------------------------------------------------------- Spartan (2^14)
 
 fn spartan_instance(log_size: usize) -> (ConstraintMatrices<Fr>, Vec<Fr>) {
@@ -934,7 +856,7 @@ fn perf1_full_statement_profile() {
         t1.rows(),
         100.0 * t1.rows() as f64 / ROWS as f64
     ));
-    let t2 = report.measure("witness T2 synthetic program, chunks, LogUp", t2_witness);
+    let t2 = report.measure("witness T2 synthetic program, chunks, LogUp", t2::witness);
     for k in [8usize, 16] {
         for repeat in 0..REPEATS {
             report.note(&format!("--- k={k} repeat {repeat}"));
@@ -946,7 +868,7 @@ fn perf1_full_statement_profile() {
                 profile_commit_kernels(&mut report, &columns, &packed, k, &setup);
             }
             t1_profile(&mut report, &t1, &setup);
-            t2_profile(&mut report, &t2, &setup);
+            t2::profile(&mut report, &t2, &setup);
             spartan_profile(&mut report, &setup);
             stream_profile(&mut report, &columns, &packed, k, &setup, &verifier_setup);
         }

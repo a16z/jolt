@@ -16,9 +16,8 @@ use bincode::serde::{decode_from_slice, encode_to_vec};
 use common::jolt_device::JoltDevice;
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup, NoopVerifierObserver};
+use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-use jolt_wrapper::carry::CarryProver;
 use jolt_wrapper::hash_table::terms::{
     challenge125, challenge_scalar128, AffineForm as HashAffineForm, LinkMap, WIRED_BIT_BASE,
     WIRED_WORD_BASE,
@@ -27,19 +26,31 @@ use jolt_wrapper::hash_table::{
     Decoder, HashTable, Members as HashMembers, StreamColumns, StreamTermExporter, T1Challenges,
     VkColumn,
 };
+use jolt_wrapper::limb_table::digit_link::LinkMember;
+use jolt_wrapper::limb_table::lookup::omega_column;
+use jolt_wrapper::limb_table::relation::{LookupConstants, RowRelation, RowSumcheck};
 use jolt_wrapper::relation::{Pcs, Relation, ScheduleEntry, SqueezeKind, Vc};
 use jolt_wrapper::relation_table::{
-    CopyLink, CopyLinkSide, CopyLinkTermExporter, CopyLinkTermSide, RelationTable,
-    RelationTableProver, RelationTermExporter, FIXED_COLUMNS, WIRES,
+    CopyLink, CopyLinkSide, CopyLinkTermExporter, CopyLinkTermSide, DoryScalarLink,
+    DoryScalarTermExporter, RelationTable, RelationTableProver, RelationTermExporter,
+    FIXED_COLUMNS, WIRES,
 };
 use jolt_wrapper::stream::{
     commit_packed, AffineForm, AssemblyMemberStatement, AssemblyStatement, Column, ColumnId,
-    Commitment, CommitmentPhase, StageMember, StageMemberSpec, StageProof, Term, TermContext,
-    TermExporter, TermObserver, VerifierCost, WrapperProof,
+    Commitment, CommitmentPhase, StageMember, StageMemberSpec, StageProof, TermContext,
+    TermExporter, VerifierCost, WrapperProof,
 };
 use jolt_wrapper::wrap::{
     commit_wrap_phase_one, commit_wrap_phase_two, verify_wrapped_with_key, wrap as wrap_proof,
-    T1Placement, WrapConfig, WrapError, WrapHashKey, WrapPreparation, WrapVerifierKey,
+    DoryLinkPlacement, T1Placement, WrapConfig, WrapError, WrapHashKey, WrapPreparation,
+    WrapVerifierKey,
+};
+
+#[path = "wrap_real_t1_r/t2.rs"]
+mod t2;
+use t2::{
+    Base as T2Base, Exporter as T2Exporter, LinkProver, NegatingExporter, CHALLENGE_COUNT,
+    PHASE_ONE_COLUMNS, PHASE_TWO_COLUMNS,
 };
 
 type Proof = JoltProof<Pcs, Vc>;
@@ -48,56 +59,26 @@ type Preprocessing = JoltVerifierPreprocessing<Pcs, Vc>;
 const FIXTURE: &str = "/Volumes/Dev/scratch/wrapper-fixtures/fibonacci_2_18_blake3.bin";
 const LOG_ROWS: usize = 18;
 const ROWS: usize = 1 << LOG_ROWS;
-const K: usize = 16;
-const PHASE_1_CHALLENGES: usize = 4 + T1Challenges::count(LOG_ROWS);
-const PHASE_2_CHALLENGES: usize = 3 * LOG_ROWS + 6;
-
-struct CarryTerms {
-    member: usize,
-    column: ColumnId,
-    source_point: Vec<Fr>,
-}
-
-impl TermExporter for CarryTerms {
-    fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
-        self.export(context, &mut NoopVerifierObserver)
-    }
-
-    fn terms_observed(
-        &self,
-        context: &TermContext<'_>,
-        observer: &mut dyn TermObserver,
-    ) -> Vec<Term> {
-        self.export(context, observer)
-    }
-}
-
-impl CarryTerms {
-    fn export(&self, context: &TermContext<'_>, observer: &mut dyn TermObserver) -> Vec<Term> {
-        let eq = self.source_point.iter().zip(context.row_point).fold(
-            Fr::one(),
-            |result, (&left, &right)| {
-                let both = observer.fr_mul(left, right);
-                let neither = observer.fr_mul(Fr::one() - left, Fr::one() - right);
-                observer.fr_mul(result, both + neither)
-            },
-        );
-        vec![Term {
-            coefficient: observer.fr_mul(context.batching_coefficients[self.member], eq),
-            factors: vec![column_form(self.column)],
-        }]
-    }
-}
+const PHASE_1_CHALLENGES: usize = 4 + T1Challenges::count(LOG_ROWS) + CHALLENGE_COUNT;
+const PHASE_2_CHALLENGES: usize = 2 * LOG_ROWS + 6;
 
 #[test]
 #[ignore = "manual real fibonacci 2^18 wrapper gate"]
 fn real_t1_relation_table_round_trip_and_tampers() {
+    let k = std::env::var("WRAP_K")
+        .map_or(Ok(16), |value| value.parse())
+        .expect("WRAP_K is an integer");
+    assert!(matches!(k, 16 | 32));
+    let config = WrapConfig {
+        common_log_rows: LOG_ROWS,
+        packing_factor: k,
+    };
     let uptime = Command::new("uptime").output().expect("uptime").stdout;
     let started = Instant::now();
     let (preprocessing, public_io, original_proof) = fixture();
     let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
         Fr::from_u64(0x5eed),
-        ROWS * K,
+        ROWS * k,
         Bn254::g1_generator(),
         Bn254::g2_generator(),
     );
@@ -107,7 +88,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         &preprocessing,
         &public_io,
         &original_proof,
-        WrapConfig::default(),
+        config,
         T1Placement {
             group_offset: 0,
             challenge_offset: 4,
@@ -118,32 +99,26 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     .expect("build trusted T1 key");
     let key_profile_ms = started.elapsed().as_millis();
     let started = Instant::now();
-    let preparation = WrapPreparation::new(
+    let mut preparation = WrapPreparation::new(
         &preprocessing,
         &public_io,
         &original_proof,
-        WrapConfig::default(),
+        config,
         &hash_key,
     )
     .expect("prepare real wrapper inputs");
     let mut wrong_shape = original_proof.clone();
     wrong_shape.trace_length *= 2;
     assert!(matches!(
-        WrapPreparation::new(
-            &preprocessing,
-            &public_io,
-            &wrong_shape,
-            WrapConfig::default(),
-            &hash_key,
-        ),
+        WrapPreparation::new(&preprocessing, &public_io, &wrong_shape, config, &hash_key,),
         Err(WrapError::ProfileMismatch)
     ));
     let prepare_ms = started.elapsed().as_millis();
 
     let started = Instant::now();
-    let hash_columns = StreamColumns::new(&preparation.hash_table, K, 0);
-    assert_eq!(hash_columns.group_count, 22);
-    assert_eq!(hash_columns.vk_groups, 20..22);
+    t2::retain_used_links(&original_proof, &mut preparation.relation);
+    let hash_columns = StreamColumns::new(&preparation.hash_table, k, 0);
+    assert_eq!(hash_columns.vk_groups.end, hash_columns.group_count);
     let relation_table =
         RelationTable::from_relation(&preparation.relation, ROWS).expect("lower R table");
     let mut relation_witness = relation_table
@@ -157,12 +132,19 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         &preparation.hash_table,
         relation_witness.evaluations()[0].clone(),
     );
+    let t2_base = T2Base::new(
+        &preprocessing,
+        &original_proof,
+        &preparation.relation,
+        &preparation.relation_witness,
+    )
+    .expect("adapt real Dory opening");
     let adapt_ms = started.elapsed().as_millis();
 
     let mut phase_1_columns = hash_columns.columns;
     let relation_fixed_base = phase_1_columns.len();
     phase_1_columns.extend(relation_table.fixed_columns());
-    pad_fr(&mut phase_1_columns);
+    pad_fr(&mut phase_1_columns, k);
     let relation_wire_base = phase_1_columns.len();
     phase_1_columns.extend(
         relation_witness.evaluations()[..WIRES]
@@ -170,20 +152,26 @@ fn real_t1_relation_table_round_trip_and_tampers() {
             .cloned()
             .map(Column::Fr),
     );
-    pad_fr(&mut phase_1_columns);
+    pad_fr(&mut phase_1_columns, k);
     let link_fixed_base = phase_1_columns.len();
     phase_1_columns.extend(link_columns.into_iter().map(Column::Fr));
-    pad_fr(&mut phase_1_columns);
-    let phase_1_groups = phase_1_columns.len() / K;
-    assert_eq!(phase_1_groups, 25);
+    pad_fr(&mut phase_1_columns, k);
+    let t2_phase_one_base = phase_1_columns.len();
+    phase_1_columns.extend(t2_base.phase_one());
+    pad_fr(&mut phase_1_columns, k);
+    let t2_vk_base = phase_1_columns.len();
+    phase_1_columns.extend(t2_base.vk());
+    pad_fr(&mut phase_1_columns, k);
+    let phase_1_groups = phase_1_columns.len() / k;
+    let phase_2_groups = 1 + PHASE_TWO_COLUMNS.div_ceil(k);
 
     let started = Instant::now();
-    let pinned_groups = [relation_fixed_base / K, link_fixed_base / K];
+    let pinned_groups = [relation_fixed_base / k, link_fixed_base / k, t2_vk_base / k];
     let pinned_commitments = pinned_groups
         .into_iter()
         .map(|group| {
-            let start = group * K;
-            let packed = commit_packed(&phase_1_columns[start..start + K], K, &setup)
+            let start = group * k;
+            let packed = commit_packed(&phase_1_columns[start..start + k], k, &setup)
                 .expect("verifier-key group commitment");
             (group, packed.commitments[0])
         })
@@ -192,9 +180,9 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         key_digest: preparation.profile_digest,
         public_inputs: preparation.public_known.clone(),
         rows: ROWS,
-        column_count: phase_1_columns.len() + K,
-        k: K,
-        members: [3, 3, 5, 5, 2]
+        column_count: phase_1_columns.len() + phase_2_groups * k,
+        k,
+        members: [3, 3, 5, 5, 5, 2]
             .into_iter()
             .map(|degree| AssemblyMemberStatement {
                 input_claim: Fr::zero(),
@@ -211,7 +199,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
                 challenge_count: PHASE_1_CHALLENGES,
             },
             CommitmentPhase {
-                group_count: 1,
+                group_count: phase_2_groups,
                 challenge_count: PHASE_2_CHALLENGES,
             },
         ],
@@ -221,6 +209,11 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         statement,
         hash_key,
         preparation.hash_public.clone(),
+        Some(DoryLinkPlacement {
+            challenge: PHASE_1_CHALLENGES - 1,
+            member: 5,
+            scalar_count: t2_base.inputs.wire_order.len(),
+        }),
         pinned_commitments,
     );
     assert_eq!(verifier_key.hash_links(), &links);
@@ -236,8 +229,17 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     let relation_gamma = phase_1_values[1];
     let copy_beta = phase_1_values[2];
     let copy_gamma = phase_1_values[3];
-    let hash_challenges = T1Challenges::from_challenges(&phase_1_values[4..], LOG_ROWS);
+    let t2_challenge_start = 4 + T1Challenges::count(LOG_ROWS);
+    let hash_challenges =
+        T1Challenges::from_challenges(&phase_1_values[4..t2_challenge_start], LOG_ROWS);
     let hash_relation = hash_challenges.relation();
+    let (t2_challenges, t2_rho) = t2::challenges(&phase_1_values[t2_challenge_start..]);
+    let t2_relation = RowRelation::new(
+        t2_challenges,
+        LookupConstants {
+            one_row: t2_base.layout.one_cell * 16,
+        },
+    );
 
     let started = Instant::now();
     relation_table
@@ -252,14 +254,26 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     copy_link
         .check(&copy_witness, copy_beta, copy_gamma)
         .expect("T1-R challenge equality");
+    let t2_claimed = t2_base.claimed(&t2_relation);
+    let t2_matrix = t2_base.matrix(&t2_relation, &t2_claimed);
     let mut phase_2_columns = relation_witness.evaluations()[WIRES..]
         .iter()
         .cloned()
         .map(Column::Fr)
         .collect::<Vec<_>>();
     phase_2_columns.extend(copy_witness.helpers.iter().cloned().map(Column::Fr));
-    phase_2_columns.push(Column::Fr(vec![Fr::zero(); ROWS]));
-    pad_fr(&mut phase_2_columns);
+    pad_fr(&mut phase_2_columns, k);
+    let t2_phase_two_base = phase_1_columns.len() + phase_2_columns.len();
+    let mut t2_phase_two = t2_claimed
+        .phase_two()
+        .iter()
+        .cloned()
+        .map(Column::Fr)
+        .collect::<Vec<_>>();
+    t2::bit_reverse_columns(&mut t2_phase_two);
+    phase_2_columns.extend(t2_phase_two);
+    pad_fr(&mut phase_2_columns, k);
+    assert_eq!(phase_2_columns.len(), phase_2_groups * k);
     let helper_ms = started.elapsed().as_millis();
     let started = Instant::now();
     let committed = commit_wrap_phase_two(phase_1, &phase_2_columns, &verifier_key, &setup)
@@ -271,33 +285,33 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     let mut cursor = PHASE_1_CHALLENGES;
     let tau_relation = take_point(full_challenges, &mut cursor);
     let tau_copy = take_point(full_challenges, &mut cursor);
-    let tau_t2 = take_point(full_challenges, &mut cursor);
     let relation_weights = take_array(full_challenges, &mut cursor);
     let copy_weights = take_array(full_challenges, &mut cursor);
     assert_eq!(cursor, full_challenges.len());
+    let assembly_challenges = full_challenges.to_vec();
 
     let relation_columns = std::array::from_fn(|column| {
         if column < FIXED_COLUMNS {
-            physical_id(relation_fixed_base + column)
+            physical_id(relation_fixed_base + column, k)
         } else if column < FIXED_COLUMNS + WIRES {
-            physical_id(relation_wire_base + column - FIXED_COLUMNS)
+            physical_id(relation_wire_base + column - FIXED_COLUMNS, k)
         } else {
-            physical_id((phase_2_group * K) + column - FIXED_COLUMNS - WIRES)
+            physical_id((phase_2_group * k) + column - FIXED_COLUMNS - WIRES, k)
         }
     });
-    let link_left_selectors = std::array::from_fn(|wire| physical_id(link_fixed_base + wire));
+    let link_left_selectors = std::array::from_fn(|wire| physical_id(link_fixed_base + wire, k));
     let link_left_ids =
-        std::array::from_fn(|wire| column_form(physical_id(link_fixed_base + WIRES + wire)));
+        std::array::from_fn(|wire| column_form(physical_id(link_fixed_base + WIRES + wire, k)));
     let link_right_selectors =
-        std::array::from_fn(|wire| physical_id(link_fixed_base + 2 * WIRES + wire));
+        std::array::from_fn(|wire| physical_id(link_fixed_base + 2 * WIRES + wire, k));
     let link_right_ids =
-        std::array::from_fn(|wire| column_form(physical_id(link_fixed_base + 3 * WIRES + wire)));
+        std::array::from_fn(|wire| column_form(physical_id(link_fixed_base + 3 * WIRES + wire, k)));
     let relation_a = relation_columns[FIXED_COLUMNS];
     let copy_helpers = [
-        physical_id(phase_2_group * K + 2),
-        physical_id(phase_2_group * K + 3),
+        physical_id(phase_2_group * k + 2, k),
+        physical_id(phase_2_group * k + 3, k),
     ];
-    let t2_column = physical_id(phase_2_group * K + 4);
+    let t2_columns = t2::column_ids(t2_phase_one_base, t2_phase_two_base, t2_vk_base, k);
 
     let HashMembers {
         rows: mut hash_rows,
@@ -319,11 +333,20 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         copy_gamma,
         copy_weights,
     );
-    let mut t2_standin =
-        CarryProver::new(&vec![Fr::zero(); ROWS], &tau_t2, Fr::zero()).expect("T2 stand-in");
+    let mut t2_rows = RowSumcheck::new(&t2_relation, &t2_matrix);
+    let scalar_link = DoryScalarLink::new(ROWS, relation_table.cell_layout(), t2_rho);
+    let scalar_prover = scalar_link.prover(&relation_witness);
+    let digit_prover = LinkMember::new(
+        omega_column(&t2_base.layout, t2_rho),
+        &t2_base.public.digit_values,
+    );
+    let dory_link_claim =
+        (0..t2_base.inputs.wire_order.len()).fold(Fr::one(), |power, _| power * t2_rho);
+    let mut dory_link = LinkProver::new(digit_prover, scalar_prover, dory_link_claim);
     assert!(hash_rows.input_claim().is_zero());
     assert!(relation_rows.input_claim().is_zero());
     assert!(copy_rows.input_claim().is_zero());
+    assert!(t2_rows.input_claim().is_zero());
 
     let input_claims = [
         hash_input_claims[0],
@@ -331,6 +354,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         relation_rows.input_claim(),
         copy_rows.input_claim(),
         Fr::zero(),
+        dory_link_claim,
     ];
     let hash_exporter = StreamTermExporter {
         log_rows: LOG_ROWS,
@@ -383,16 +407,26 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         relation_weights: copy_weights,
         member_index: 3,
     };
-    let t2_exporter = CarryTerms {
-        member: 4,
-        column: t2_column,
-        source_point: tau_t2,
+    let t2_exporter = T2Exporter {
+        layout: &t2_base.layout,
+        relation: &t2_relation,
+        columns: &t2_columns,
+        rho: t2_rho,
+        row_member: 4,
+        digit_member: 5,
     };
-    let exporters: [&dyn TermExporter; 4] = [
+    let scalar_exporter = DoryScalarTermExporter {
+        link: &scalar_link,
+        wire: relation_a,
+        member_index: 5,
+    };
+    let negative_scalar_exporter = NegatingExporter(&scalar_exporter);
+    let exporters: [&dyn TermExporter; 5] = [
         &hash_exporter,
         &relation_exporter,
         &copy_exporter,
         &t2_exporter,
+        &negative_scalar_exporter,
     ];
     let mut members = [
         StageMember {
@@ -420,28 +454,46 @@ fn real_t1_relation_table_round_trip_and_tampers() {
             offset: 0,
         },
         StageMember {
-            prover: &mut t2_standin,
+            prover: &mut t2_rows,
             input_claim: input_claims[4],
+            degree: 5,
+            offset: 0,
+        },
+        StageMember {
+            prover: &mut dory_link,
+            input_claim: input_claims[5],
             degree: 2,
             offset: 0,
         },
     ];
     let started = Instant::now();
     let wrapped = wrap_proof(committed, &verifier_key, &mut members, &exporters, &setup)
-        .expect("prove real T1/R wrapper");
+        .expect("prove real T1/T2/R wrapper");
     let prove_ms = started.elapsed().as_millis();
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
     let started = Instant::now();
-    let (_, cost) = verify_wrapped_with_key(&verifier_key, &wrapped, &exporters, &verifier_setup)
-        .expect("verify real T1/R wrapper");
+    let (results, cost) =
+        verify_wrapped_with_key(&verifier_key, &wrapped, &exporters, &verifier_setup)
+            .expect("verify real T1/T2/R wrapper");
     let verify_ms = started.elapsed().as_millis();
+    let term_context = TermContext {
+        row_point: &results[0].point,
+        batching_coefficients: &results[0].coefficients,
+        challenges: &assembly_challenges,
+    };
+    let term_count = exporters
+        .iter()
+        .map(|exporter| exporter.terms(&term_context).len())
+        .sum();
 
-    tamper_suite(&wrapped, |proof| {
+    let t2_wire_index = hash_columns.group_count - hash_columns.vk_groups.len() + 1;
+    tamper_suite(&wrapped, t2_wire_index, |proof| {
         verify_wrapped_with_key(&verifier_key, proof, &exporters, &verifier_setup).is_err()
     });
     report(
         &wrapped,
-        phase_1_groups - 4,
+        phase_1_groups - 5,
+        term_count,
         cost,
         [
             key_profile_ms,
@@ -456,6 +508,14 @@ fn real_t1_relation_table_round_trip_and_tampers() {
             verify_ms,
         ],
         &uptime,
+    );
+    println!(
+        "groups k={k} t1_sent={} t1_vk={} r=2 copy_vk=1 t2_phase1={} t2_vk=1 r_helpers=1 t2_phase2={} phase1_full={phase_1_groups} phase1_wire={} phase2={phase_2_groups}",
+        hash_columns.group_count - hash_columns.vk_groups.len(),
+        hash_columns.vk_groups.len(),
+        PHASE_ONE_COLUMNS.div_ceil(k),
+        PHASE_TWO_COLUMNS.div_ceil(k),
+        phase_1_groups - 5,
     );
 }
 
@@ -480,10 +540,10 @@ fn take_array(challenges: &[Fr], cursor: &mut usize) -> [Fr; 3] {
     values
 }
 
-fn physical_id(index: usize) -> ColumnId {
+fn physical_id(index: usize, k: usize) -> ColumnId {
     ColumnId {
-        group: index / K,
-        slot: index % K,
+        group: index / k,
+        slot: index % k,
     }
 }
 
@@ -505,8 +565,8 @@ fn map_hash_form(form: &HashAffineForm, columns: &[ColumnId]) -> AffineForm {
     }
 }
 
-fn pad_fr(columns: &mut Vec<Column>) {
-    while !columns.len().is_multiple_of(K) {
+fn pad_fr(columns: &mut Vec<Column>, k: usize) {
+    while !columns.len().is_multiple_of(k) {
         columns.push(Column::Fr(vec![Fr::zero(); ROWS]));
     }
 }
@@ -587,7 +647,11 @@ fn hash_column_value(table: &HashTable, column: usize, row: usize) -> Fr {
     }
 }
 
-fn tamper_suite(proof: &WrapperProof, rejected: impl Fn(&WrapperProof) -> bool) {
+fn tamper_suite(
+    proof: &WrapperProof,
+    t2_wire_index: usize,
+    rejected: impl Fn(&WrapperProof) -> bool,
+) {
     let original = proof.clone();
     let tamper = |edit: &dyn Fn(&mut WrapperProof)| {
         let mut candidate = original.clone();
@@ -595,7 +659,13 @@ fn tamper_suite(proof: &WrapperProof, rejected: impl Fn(&WrapperProof) -> bool) 
         assert!(rejected(&candidate));
     };
     tamper(&|candidate| candidate.commitments[0] = Commitment::new(original.opening.com[0]));
-    tamper(&|candidate| candidate.commitments[21] = Commitment::new(original.opening.com[0]));
+    tamper(&|candidate| {
+        candidate.commitments[t2_wire_index] = Commitment::new(original.opening.com[0]);
+    });
+    tamper(&|candidate| {
+        let last = candidate.commitments.len() - 1;
+        candidate.commitments[last] = Commitment::new(original.opening.com[0]);
+    });
     tamper(&|candidate| {
         candidate.stages[0]
             .committed_rounds
@@ -620,6 +690,7 @@ fn tamper_suite(proof: &WrapperProof, rejected: impl Fn(&WrapperProof) -> bool) 
 fn report(
     proof: &WrapperProof,
     phase_1_groups: usize,
+    term_count: usize,
     cost: VerifierCost,
     times: [u128; 10],
     uptime: &[u8],
@@ -654,6 +725,15 @@ fn report(
         proof.payload_bytes(),
         proof.bincode_bytes(),
         32 * 7,
+    );
+    println!(
+        "terms={term_count} term_rounds={}",
+        proof.stages[1]
+            .committed_rounds
+            .as_ref()
+            .expect("term stage")
+            .round_commitments
+            .len()
     );
     println!("cost={cost:?} gas={}", estimated_gas(cost, proof));
 }

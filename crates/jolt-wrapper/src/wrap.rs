@@ -2,7 +2,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_crypto::Bn254;
-use jolt_field::Fr;
+use jolt_field::{Fr, Ring};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGVerifierSetup};
 use jolt_r1cs::Variable;
 use jolt_transcript::Blake3Transcript;
@@ -94,6 +94,13 @@ pub struct T1Placement {
     pub members: [usize; 2],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DoryLinkPlacement {
+    pub challenge: usize,
+    pub member: usize,
+    pub scalar_count: usize,
+}
+
 impl WrapHashKey {
     pub fn from_reference(
         preprocessing: &Preprocessing,
@@ -149,6 +156,7 @@ pub struct WrapVerifierKey {
     statement: AssemblyStatement,
     hash: WrapHashKey,
     hash_public: PublicInputs,
+    dory_link: Option<DoryLinkPlacement>,
 }
 
 impl WrapVerifierKey {
@@ -156,6 +164,7 @@ impl WrapVerifierKey {
         mut statement: AssemblyStatement,
         hash: WrapHashKey,
         hash_public: PublicInputs,
+        dory_link: Option<DoryLinkPlacement>,
         mut pinned_commitments: Vec<(usize, Commitment)>,
     ) -> Self {
         pinned_commitments.extend(hash.pinned_commitments());
@@ -164,6 +173,7 @@ impl WrapVerifierKey {
             statement,
             hash,
             hash_public,
+            dory_link,
         }
     }
 
@@ -193,6 +203,18 @@ impl WrapVerifierKey {
             statement
                 .members
                 .get_mut(member)
+                .ok_or(WrapError::T1MemberLayout)?
+                .input_claim = claim;
+        }
+        if let Some(link) = self.dory_link {
+            let rho = challenges
+                .get(link.challenge)
+                .copied()
+                .ok_or(WrapError::T1MemberLayout)?;
+            let claim = (0..link.scalar_count).fold(Fr::from_u64(1), |power, _| power * rho);
+            statement
+                .members
+                .get_mut(link.member)
                 .ok_or(WrapError::T1MemberLayout)?
                 .input_claim = claim;
         }
