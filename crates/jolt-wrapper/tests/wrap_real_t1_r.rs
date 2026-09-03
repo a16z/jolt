@@ -66,7 +66,7 @@ const PHASE_2_CHALLENGES: usize = 2 * LOG_ROWS + 6;
 #[ignore = "manual real fibonacci 2^18 wrapper gate"]
 fn real_t1_relation_table_round_trip_and_tampers() {
     let k = std::env::var("WRAP_K")
-        .map_or(Ok(16), |value| value.parse())
+        .map_or(Ok(32), |value| value.parse())
         .expect("WRAP_K is an integer");
     assert!(matches!(k, 16 | 32));
     let config = WrapConfig {

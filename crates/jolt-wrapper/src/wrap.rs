@@ -3,7 +3,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, Ring};
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGVerifierSetup};
+use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGVerifierSetup, NoopVerifierObserver};
 use jolt_r1cs::Variable;
 use jolt_transcript::Blake3Transcript;
 use jolt_verifier::VerifierError;
@@ -12,7 +12,7 @@ use thiserror::Error;
 use crate::hash_table::schedule::preamble;
 use crate::hash_table::{
     HashTable, HashTableKey, JoltSchedule, LinkMap, PublicInputs, Recorded, RecordingTranscript,
-    ScheduleError, SymbolicSchedule, T1Challenges,
+    ScheduleError, StreamTermExporter, SymbolicSchedule, T1Challenges,
 };
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
@@ -23,11 +23,11 @@ use crate::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn, Spa
 use crate::stream::{
     combine_packed_phases, commit_packed, commitment_prefix_challenges, prove_assembly,
     verify_assembly_with_cost, AssemblyStatement, Column, Commitment, PackedColumns, StageMember,
-    StageResult, StreamError, TermExporter, VerifierCost, WrapperProof,
+    StageResult, StreamError, TermExporter, TermObserver, VerifierCost, WrapperProof,
 };
 
 pub const DEFAULT_COMMON_LOG_ROWS: usize = 18;
-pub const DEFAULT_PACKING_FACTOR: usize = 16;
+pub const DEFAULT_PACKING_FACTOR: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WrapConfig {
@@ -127,7 +127,7 @@ impl WrapHashKey {
             SymbolicSchedule::from_reference(&records, Some(config.common_log_rows))?
         };
         let table = HashTableKey::new(schedule, config.packing_factor, setup)?;
-        let links = LinkMap::new(&table.schedule);
+        let links = LinkMap::new(table.schedule());
         Ok(Self {
             profile_digest,
             table,
@@ -139,7 +139,7 @@ impl WrapHashKey {
     }
 
     pub fn schedule(&self) -> &SymbolicSchedule {
-        &self.table.schedule
+        self.table.schedule()
     }
 
     pub fn links(&self) -> &LinkMap {
@@ -186,18 +186,32 @@ impl WrapVerifierKey {
     }
 
     fn statement(&self, challenges: &[Fr]) -> Result<AssemblyStatement, WrapError> {
+        self.statement_observed(challenges, &mut NoopVerifierObserver)
+    }
+
+    fn statement_observed(
+        &self,
+        challenges: &[Fr],
+        observer: &mut dyn TermObserver,
+    ) -> Result<AssemblyStatement, WrapError> {
         let schedule = self.hash.schedule();
-        let count = T1Challenges::count(schedule.log_rows);
         let end = self
             .hash
             .challenge_offset
-            .checked_add(count)
+            .checked_add(T1Challenges::count(schedule.log_rows))
             .ok_or(WrapError::T1MemberLayout)?;
-        let t1 = challenges
-            .get(self.hash.challenge_offset..end)
-            .ok_or(WrapError::T1MemberLayout)?;
-        let claims =
-            T1Challenges::from_challenges(t1, schedule.log_rows).input_claims(&self.hash_public);
+        if challenges.get(self.hash.challenge_offset..end).is_none() {
+            return Err(WrapError::T1MemberLayout);
+        }
+        let exporter = StreamTermExporter {
+            log_rows: schedule.log_rows,
+            challenge_offset: self.hash.challenge_offset,
+            public: &self.hash_public,
+            columns: &[],
+            row_member: self.hash.members[0],
+            wiring_member: self.hash.members[1],
+        };
+        let claims = exporter.input_claims(challenges, observer);
         let mut statement = self.statement.clone();
         for (member, claim) in self.hash.members.into_iter().zip(claims) {
             statement
@@ -211,7 +225,8 @@ impl WrapVerifierKey {
                 .get(link.challenge)
                 .copied()
                 .ok_or(WrapError::T1MemberLayout)?;
-            let claim = (0..link.scalar_count).fold(Fr::from_u64(1), |power, _| power * rho);
+            let claim = (0..link.scalar_count)
+                .fold(Fr::from_u64(1), |power, _| observer.fr_mul(power, rho));
             statement
                 .members
                 .get_mut(link.member)
@@ -376,8 +391,11 @@ pub fn verify_wrapped_with_key(
 ) -> Result<(Vec<StageResult>, VerifierCost), WrapError> {
     let commitments = key.full_commitments(&proof.commitments)?;
     let challenges = key.challenges(&commitments)?;
-    let statement = key.statement(&challenges)?;
-    verify_wrapped(&statement, proof, exporters, setup)
+    let mut statement_cost = VerifierCost::default();
+    let statement = key.statement_observed(&challenges, &mut statement_cost)?;
+    let (results, mut cost) = verify_wrapped(&statement, proof, exporters, setup)?;
+    cost.fr_mul += statement_cost.fr_mul;
+    Ok((results, cost))
 }
 
 /// Verified inputs needed before the T1/T2/Spartan sumchecks can be assembled.

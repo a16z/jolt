@@ -35,11 +35,7 @@ pub fn retain_used_links(proof: &Proof, relation: &mut Relation) {
     );
     let used = check.wires();
     for (wire, _) in &mut relation.link.dory.scalars {
-        *wire = match wire.clone() {
-            DoryScalar::Delta1R(index) => DoryScalar::Delta1R(index - 1),
-            DoryScalar::Delta2R(index) => DoryScalar::Delta2R(index - 1),
-            other => other,
-        };
+        *wire = t2_name(wire.clone());
     }
     let available = relation
         .link
@@ -58,6 +54,14 @@ pub fn retain_used_links(proof: &Proof, relation: &mut Relation) {
         .dory
         .scalars
         .retain(|(wire, _)| used.contains(wire));
+}
+
+fn t2_name(wire: DoryScalar) -> DoryScalar {
+    match wire {
+        DoryScalar::Delta1R(index) => DoryScalar::Delta1R(index - 1),
+        DoryScalar::Delta2R(index) => DoryScalar::Delta2R(index - 1),
+        other => other,
+    }
 }
 
 pub struct Base {
@@ -478,4 +482,64 @@ fn range_multiplicities(columns: &Columns, public: &PublicColumns) -> Vec<u32> {
         }
     }
     multiplicities
+}
+
+#[test]
+fn t2_consumed_scalars_match_the_relation_links() {
+    use std::collections::HashSet;
+
+    let (sigma, commitments) = (11, 41);
+    let consumed = FlattenedCheck::derive(sigma, commitments)
+        .wires()
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let mut relation = vec![DoryScalar::Evaluation];
+    relation.extend((0..commitments).map(DoryScalar::CommitmentWeight));
+    for round in 0..sigma {
+        relation.extend([
+            DoryScalar::Beta(round),
+            DoryScalar::BetaInv(round),
+            DoryScalar::Alpha(round),
+            DoryScalar::AlphaInv(round),
+        ]);
+    }
+    relation.extend([
+        DoryScalar::Gamma,
+        DoryScalar::GammaInv,
+        DoryScalar::D,
+        DoryScalar::DInv,
+        DoryScalar::DSquared,
+        DoryScalar::D2Init,
+        DoryScalar::Chi(sigma),
+    ]);
+    for round in 0..sigma {
+        relation.extend([
+            DoryScalar::U(round),
+            DoryScalar::V(round),
+            DoryScalar::UAlpha(round),
+            DoryScalar::VAlphaInv(round),
+            DoryScalar::Chi(sigma - 1 - round),
+            DoryScalar::Delta1R(sigma - round),
+            DoryScalar::Delta2R(sigma - round),
+        ]);
+    }
+    relation.extend([
+        DoryScalar::S1Acc,
+        DoryScalar::S2Acc,
+        DoryScalar::Ht,
+        DoryScalar::PairingG2ZeroScalar,
+        DoryScalar::PairingG1ZeroScalar,
+    ]);
+    let relation = relation.into_iter().map(t2_name).collect::<HashSet<_>>();
+    let missing = consumed.difference(&relation).collect::<Vec<_>>();
+    assert!(missing.is_empty(), "T2 inputs missing R links: {missing:?}");
+    assert_eq!(consumed.len(), 172);
+    assert_eq!(relation.len(), 175);
+    assert_eq!(
+        relation
+            .difference(&consumed)
+            .cloned()
+            .collect::<HashSet<_>>(),
+        HashSet::from([DoryScalar::Chi(sigma), DoryScalar::S1Acc, DoryScalar::S2Acc,])
+    );
 }
