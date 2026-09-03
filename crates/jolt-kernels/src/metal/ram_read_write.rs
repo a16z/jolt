@@ -20,7 +20,7 @@ use rayon::prelude::*;
 
 use super::backend::MetalBackend;
 use super::ram_cycle_family::shared_ram_cycle_family_owner;
-use crate::optimized::ram_trace::{
+use crate::metal::ram_records::{
     RamAccessColumns, RamAccessValues, RamIncrementActivity, RamReadWriteRecordChunks, NO_ACCESS,
 };
 use crate::optimized::rw_matrix::{
@@ -803,7 +803,7 @@ impl MetalRamReadWriteKernel {
             .into_iter()
             .map(|root| AddressMajorEntry {
                 row: 0,
-                col: root.address,
+                col: root.address as u32,
                 prev_val: AkitaField::from_u64(root.previous),
                 next_val: AkitaField::from_u64(root.next),
                 val: root.value,
@@ -1597,8 +1597,8 @@ impl PrepareKernel<AkitaField, RamReadWriteChecking<AkitaField>> for MetalBacken
                     val_init[address] = AkitaField::from_u64(record.pre_value());
                 }
                 CycleMajorEntry {
-                    row: record.cycle() as usize,
-                    col: address,
+                    row: record.cycle(),
+                    col: address as u32,
                     prev_val: record.pre_value(),
                     next_val: record.post_value(),
                     val: AkitaField::from_u64(record.pre_value()),
@@ -1843,7 +1843,7 @@ mod tests {
             }
 
             assert!(actual_session
-                .state::<Arc<crate::optimized::ram_trace::RamIncrementActivity>>()
+                .state::<Arc<crate::metal::ram_records::RamIncrementActivity>>()
                 .is_none());
 
             let actual_tape = actual_session.state::<RamAccessTape>().unwrap();

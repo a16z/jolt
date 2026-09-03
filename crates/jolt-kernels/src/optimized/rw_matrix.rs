@@ -303,10 +303,27 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         inc: &Polynomial<F>,
         gamma: F,
     ) -> [F; 2] {
+        self.quadratic_coefficients_with(
+            eq_head,
+            |pair| {
+                let inc_0 = inc.evals()[2 * pair];
+                [inc_0, inc.evals()[2 * pair + 1] - inc_0]
+            },
+            gamma,
+        )
+    }
+
+    /// [`Self::quadratic_coefficients`] with the bound increment pair
+    /// supplied per pair index instead of read from a dense column.
+    pub(crate) fn quadratic_coefficients_with(
+        &self,
+        eq_head: impl Fn(usize) -> F + Sync,
+        inc_pair: impl Fn(usize) -> [F; 2] + Sync,
+        gamma: F,
+    ) -> [F; 2] {
         let per_group = |group: &[CycleMajorEntry<F>]| -> [F; 2] {
             let pair = (group[0].row / 2) as usize;
-            let inc_0 = inc.evals()[2 * pair];
-            let inc_evals = [inc_0, inc.evals()[2 * pair + 1] - inc_0];
+            let inc_evals = inc_pair(pair);
             let (even, odd) = split_row_pair(group);
             let inner = merge_quadratic_evals(even, odd, inc_evals, gamma);
             let head = eq_head(pair);
@@ -623,8 +640,8 @@ fn merge_address_round_evals<F: JoltField>(
     odd: &[AddressMajorEntry<F>],
     mut even_checkpoint: F,
     mut odd_checkpoint: F,
-    inc: &Polynomial<F>,
-    eq: &Polynomial<F>,
+    inc_at: &impl Fn(usize) -> F,
+    eq_at: &impl Fn(usize) -> F,
     gamma: F,
 ) -> [F; 2] {
     let mut acc = [F::zero(); 2];
@@ -642,8 +659,8 @@ fn merge_address_round_evals<F: JoltField>(
                     Some(&odd[j]),
                     even_checkpoint,
                     odd_checkpoint,
-                    inc.evals()[even[i].row as usize],
-                    eq.evals()[even[i].row as usize],
+                    inc_at(even[i].row as usize),
+                    eq_at(even[i].row as usize),
                     gamma,
                 ));
                 even_checkpoint = even[i].next_val;
@@ -657,8 +674,8 @@ fn merge_address_round_evals<F: JoltField>(
                     None,
                     even_checkpoint,
                     odd_checkpoint,
-                    inc.evals()[even[i].row as usize],
-                    eq.evals()[even[i].row as usize],
+                    inc_at(even[i].row as usize),
+                    eq_at(even[i].row as usize),
                     gamma,
                 ));
                 even_checkpoint = even[i].next_val;
@@ -670,8 +687,8 @@ fn merge_address_round_evals<F: JoltField>(
                     Some(&odd[j]),
                     even_checkpoint,
                     odd_checkpoint,
-                    inc.evals()[odd[j].row as usize],
-                    eq.evals()[odd[j].row as usize],
+                    inc_at(odd[j].row as usize),
+                    eq_at(odd[j].row as usize),
                     gamma,
                 ));
                 odd_checkpoint = odd[j].next_val;
@@ -685,8 +702,8 @@ fn merge_address_round_evals<F: JoltField>(
             None,
             even_checkpoint,
             odd_checkpoint,
-            inc.evals()[entry.row as usize],
-            eq.evals()[entry.row as usize],
+            inc_at(entry.row as usize),
+            eq_at(entry.row as usize),
             gamma,
         ));
         even_checkpoint = entry.next_val;
@@ -697,8 +714,8 @@ fn merge_address_round_evals<F: JoltField>(
             Some(entry),
             even_checkpoint,
             odd_checkpoint,
-            inc.evals()[entry.row as usize],
-            eq.evals()[entry.row as usize],
+            inc_at(entry.row as usize),
+            eq_at(entry.row as usize),
             gamma,
         ));
         odd_checkpoint = entry.next_val;
@@ -765,6 +782,35 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         eq: &Polynomial<F>,
         gamma: F,
     ) -> [F; 2] {
+        self.address_round_evals_with(
+            val_init,
+            &|row| inc.evals()[row],
+            &|row| eq.evals()[row],
+            gamma,
+        )
+    }
+
+    /// [`Self::address_round_evals`] once `inc` and `eq` are fully bound:
+    /// every remaining entry sits on row 0, so a scalar stands in for each
+    /// column.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn address_round_evals_scalars(
+        &self,
+        val_init: &Polynomial<F>,
+        inc_eval: F,
+        eq_eval: F,
+        gamma: F,
+    ) -> [F; 2] {
+        self.address_round_evals_with(val_init, &|_| inc_eval, &|_| eq_eval, gamma)
+    }
+
+    fn address_round_evals_with(
+        &self,
+        val_init: &Polynomial<F>,
+        inc_at: &(impl Fn(usize) -> F + Sync),
+        eq_at: &(impl Fn(usize) -> F + Sync),
+        gamma: F,
+    ) -> [F; 2] {
         let per_group = |group: &[AddressMajorEntry<F>]| -> [F; 2] {
             let (even, odd) = split_col_pair(group);
             let even_col = 2 * (group[0].col / 2) as usize;
@@ -773,8 +819,8 @@ impl<F: JoltField> AddressMajorMatrix<F> {
                 odd,
                 val_init.evals()[even_col],
                 val_init.evals()[even_col + 1],
-                inc,
-                eq,
+                inc_at,
+                eq_at,
                 gamma,
             )
         };

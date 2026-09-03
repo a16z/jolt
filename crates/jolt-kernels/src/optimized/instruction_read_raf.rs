@@ -121,6 +121,14 @@ pub(crate) const fn instruction_read_raf_claim_table_plus_one(claim: u8) -> u8 {
     canonical_instruction_read_raf_claim(claim) & PACKED_TABLE_MASK as u8
 }
 
+#[cfg(all(test, feature = "metal", target_os = "macos"))]
+pub(crate) fn collect_instruction_cycle_rows<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
+    InstructionCycleRow::collect(witness, cycles)
+}
+
 impl InstructionCycleRow {
     pub(crate) fn new(
         lookup_index: u128,
@@ -174,6 +182,12 @@ impl InstructionCycleRow {
     }
 
     #[inline]
+    /// The bytecode PC as the Metal bytecode route tests consume it.
+    #[cfg(all(test, feature = "metal", target_os = "macos"))]
+    pub(crate) fn mapped_pc(&self) -> Option<usize> {
+        Some(self.bytecode_pc())
+    }
+
     pub(crate) fn bytecode_pc(&self) -> usize {
         ((self.packed_pc_and_flags & PACKED_PC_MASK) - 1) as usize
     }

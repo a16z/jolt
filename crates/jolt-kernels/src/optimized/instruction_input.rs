@@ -111,12 +111,30 @@ pub struct OptimizedInstructionInput;
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
-        let rows = BundleStore::resolve(witness, 1usize << r_product.len())?;
+        let trace_elements = 1usize << r_product.len();
+        // A Metal stage-1 owner may have co-produced the rows already.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let rows = match session.take::<PreparedInstructionInputRows>() {
+            Some(prepared) if prepared.len() == trace_elements => {
+                BundleStore::Retained(prepared.into_rows())
+            }
+            Some(_) => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "prepared InstructionInput row count disagrees with the relation",
+                });
+            }
+            None => BundleStore::resolve(witness, trace_elements)?,
+        };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let rows = {
+            let _ = &session;
+            BundleStore::resolve(witness, trace_elements)?
+        };
         Ok(Box::new(OptimizedInstructionInputKernel::new(
             r_product,
             rows,
@@ -191,7 +209,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             gamma,
             state: InputState::Offloaded,
             gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
-            bind_scratch: Vec::new(),
         }
     }
 
@@ -437,6 +454,82 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 label: "instruction input state is offloaded to Metal",
             }),
         }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn metal_copy_dense_tables(
+        &self,
+        table_ids: [usize; 2],
+        expected_rounds_bound: usize,
+        expected_elements: usize,
+    ) -> Result<[Vec<F>; 2], SumcheckError<F>> {
+        if self.progress.bound() != expected_rounds_bound {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot has the wrong bind count",
+            ));
+        }
+        let InputState::Dense(tables) = &self.state else {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot requires host dense tables",
+            ));
+        };
+        if table_ids
+            .iter()
+            .any(|&table| table >= tables.len() || tables[table].len() != expected_elements)
+        {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot has the wrong table geometry",
+            ));
+        }
+        Ok(table_ids.map(|table| tables[table].evals().to_vec()))
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn metal_weights(&self) -> Result<(&[F], &[F]), SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal weights requested after instruction input returned to the CPU",
+            ));
+        }
+        Ok((self.gruen.e_in_current(), self.gruen.e_out_current()))
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn metal_bind_offloaded(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal bind requested after instruction input returned to the CPU",
+            ));
+        }
+        if self.progress.bound() >= self.progress.total() {
+            return Err(instruction_input_state_error(
+                "instruction input received more binds than cycle variables",
+            ));
+        }
+        self.gruen.bind(challenge);
+        self.progress.advance();
+        Ok(())
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn metal_message(
+        &self,
+        q_coefficients: [F; 3],
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal message supplied after instruction input returned to the CPU",
+            ));
+        }
+        let [q_at_0, q_at_1, q_quadratic] = q_coefficients;
+        let twice_quadratic = q_quadratic + q_quadratic;
+        let q_at_2 = q_at_1 + q_at_1 - q_at_0 + twice_quadratic;
+        let q_at_3 = q_at_2 + q_at_1 - q_at_0 + twice_quadratic + twice_quadratic;
+        let mut q_evals = [q_at_0, q_at_1, q_at_2, q_at_3];
+        self.gruen
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     #[cfg(all(feature = "metal", target_os = "macos"))]

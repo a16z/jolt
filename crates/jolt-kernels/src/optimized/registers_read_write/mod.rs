@@ -121,10 +121,17 @@ impl OptimizedRegistersReadWrite {
         Ok(Box::new(ReadWriteKernel {
             log_t,
             log_k,
-            entries: SparseEntries::Direct(Vec::new()),
+            // The cycle phase ran on the device: the continuation starts in
+            // the address phase with the dense K-sized state populated, so
+            // the sparse cycle state is never consulted.
+            cycle: CycleState::new(
+                Vec::new(),
+                CoeffLut::new(Vec::new()),
+                CoeffLut::new(Vec::new()),
+                Vec::new(),
+            ),
             eq_scalar: gruen.current_scalar(),
             gruen,
-            inc: Polynomial::new(vec![increment]),
             ra,
             wa,
             val,

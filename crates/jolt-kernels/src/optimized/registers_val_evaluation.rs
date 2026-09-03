@@ -56,6 +56,8 @@ enum WaState<F: JoltField> {
         eq_address: Vec<F>,
     },
     Dense(Polynomial<F>),
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Offloaded,
 }
 
 impl<F: JoltField> WaState<F> {
@@ -70,6 +72,8 @@ impl<F: JoltField> WaState<F> {
                 let evals = table.evals();
                 (evals[2 * y], evals[2 * y + 1])
             }
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Self::Offloaded => unreachable!("offloaded registers WA has no CPU pair"),
         }
     }
 
@@ -89,6 +93,8 @@ impl<F: JoltField> WaState<F> {
                 *self = Self::Dense(Polynomial::new(dense));
             }
             Self::Dense(table) => table.bind_with_order(r, BindingOrder::LowToHigh),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Self::Offloaded => unreachable!("offloaded registers WA binds on Metal"),
         }
     }
 
@@ -169,6 +175,8 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
 enum IncState<F: JoltField> {
     Rows(BundleStore<RdIncRow>),
     Dense(Polynomial<F>),
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Offloaded,
 }
 
 /// The single-column bundle behind the increment table.
@@ -191,10 +199,128 @@ fn row_unavailable<F: JoltField>() -> SumcheckError<F> {
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn offloaded_state_error<F: JoltField>(message: &str) -> SumcheckError<F> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: message.to_owned(),
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<F: JoltField> ValEvaluationKernel<F> {
+    /// A kernel whose increment table is already materialized, for a Metal
+    /// route that prepared the rows itself.
+    pub(crate) fn new_ready(
+        inc: Vec<F>,
+        rd: Vec<Option<u8>>,
+        r_address: &[F],
+        r_cycle: &[F],
+    ) -> Result<Self, KernelError<F>> {
+        let cycles = inc.len();
+        if cycles < 2 || !cycles.is_power_of_two() || r_cycle.len() != cycles.ilog2() as usize {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers value ready state has inconsistent cycle geometry",
+            });
+        }
+        if rd.len() != cycles || r_address.len() != REGISTER_ADDRESS_BITS {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers value ready state has inconsistent address geometry",
+            });
+        }
+        if rd
+            .iter()
+            .flatten()
+            .any(|&index| index as usize >= 1 << REGISTER_ADDRESS_BITS)
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers value ready state has an invalid register index",
+            });
+        }
+        Ok(Self {
+            progress: RoundProgress::new(r_cycle.len()),
+            inc: IncState::Dense(Polynomial::new(inc)),
+            wa: WaState::Indices {
+                rd,
+                eq_address: EqPolynomial::<F>::evals(r_address, None),
+            },
+            lt: SplitLt::new(r_cycle),
+        })
+    }
+
+    /// A kernel whose increment and write-address state live on the device
+    /// until `metal_restore_dense`.
+    pub(crate) fn new_offloaded(r_cycle: &[F]) -> Self {
+        Self {
+            progress: RoundProgress::new(r_cycle.len()),
+            inc: IncState::Offloaded,
+            wa: WaState::Offloaded,
+            lt: SplitLt::new(r_cycle),
+        }
+    }
+
+    pub(crate) fn metal_bind_offloaded(&mut self, challenge: F) -> Result<&[F], SumcheckError<F>> {
+        if !matches!(&self.inc, IncState::Offloaded) || !matches!(&self.wa, WaState::Offloaded) {
+            return Err(offloaded_state_error(
+                "registers value CPU tail was restored before the device bind",
+            ));
+        }
+        self.lt.bind(challenge);
+        self.progress.advance();
+        self.lt.split_lo().ok_or_else(|| {
+            offloaded_state_error("registers value Metal prefix crossed the split-LT boundary")
+        })
+    }
+
+    pub(crate) fn metal_message(
+        &self,
+        evals: [F; 3],
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if !matches!(&self.inc, IncState::Offloaded) || !matches!(&self.wa, WaState::Offloaded) {
+            return Err(offloaded_state_error(
+                "registers value device message arrived after CPU restoration",
+            ));
+        }
+        Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
+    }
+
+    pub(crate) fn metal_restore_dense(&mut self, rows: &[[F; 2]]) -> Result<(), SumcheckError<F>> {
+        let remaining = self
+            .progress
+            .total()
+            .checked_sub(self.progress.bound())
+            .ok_or_else(|| offloaded_state_error("registers value device bound too many rounds"))?;
+        let shift = u32::try_from(remaining)
+            .map_err(|_| offloaded_state_error("registers value CPU-tail length overflow"))?;
+        let expected = 1usize
+            .checked_shl(shift)
+            .ok_or_else(|| offloaded_state_error("registers value CPU-tail length overflow"))?;
+        if rows.len() != expected
+            || self.lt.current_len() != expected
+            || !matches!(&self.inc, IncState::Offloaded)
+            || !matches!(&self.wa, WaState::Offloaded)
+        {
+            return Err(offloaded_state_error(
+                "registers value CPU-tail state does not match the bound device state",
+            ));
+        }
+        self.inc = IncState::Dense(Polynomial::new(rows.iter().map(|row| row[0]).collect()));
+        self.wa = WaState::Dense(Polynomial::new(rows.iter().map(|row| row[1]).collect()));
+        Ok(())
+    }
+}
+
 impl<F: JoltField> ValEvaluationKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         match &mut self.inc {
             IncState::Dense(inc) => inc.bind_with_order(challenge, BindingOrder::LowToHigh),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            IncState::Offloaded => {
+                return Err(offloaded_state_error(
+                    "registers value CPU bind requested while the state is on Metal",
+                ));
+            }
             IncState::Rows(store) => {
                 // Bind row pairs directly into a half-length field table.
                 debug_assert_eq!(self.progress.bound(), 0);
@@ -293,6 +419,12 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
                     |y| self.wa.pair(y),
                     |y| self.lt.pair(y),
                 )
+            }
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            IncState::Offloaded => {
+                return Err(offloaded_state_error(
+                    "registers value CPU message requested while the state is on Metal",
+                ));
             }
         };
 

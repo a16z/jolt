@@ -113,33 +113,53 @@ impl ChunkIndexSource for LookupIndexChunks {
     }
 }
 
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
-    progress: RoundProgress,
+/// Everything the kernel derives from the relation before it knows where the
+/// cycle rows live: the CPU path attaches the shared stage-5 rows, the Metal
+/// path uploads the chunk tables and keeps the rows device-resident.
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_instruction_ra_initialization<F: JoltField>(
+    inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
+) -> Result<InstructionRaInitialization<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    InstructionRaInitialization::new(
+        relation.dimensions().log_t(),
+        relation.dimensions().num_virtual_ra_polys(),
+        relation.dimensions().num_committed_per_virtual(),
+        relation.instruction_address(),
+        relation.instruction_read_raf_cycle(),
+        relation.committed_chunk_bits(),
+        inputs.challenges.gamma,
+    )
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_instruction_ra_from_initialization<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    initialization: InstructionRaInitialization<F>,
+) -> Result<OptimizedInstructionRaVirtualizationKernel<F>, KernelError<F>> {
+    let cycles = 1usize << initialization.log_t();
+    let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+    initialization.into_cpu(rows)
+}
+
+pub(crate) struct InstructionRaInitialization<F: JoltField> {
+    log_t: usize,
     num_committed_per_virtual: usize,
-    /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
-    /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
-    /// exactly, so unscaling is byte-exact).
+    committed_chunk_bits: usize,
     gamma_powers_inv: Vec<F>,
-    /// Address-folded committed RA selectors, one per committed chunk:
-    /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
-    /// batch's first table pre-scaled by `γ^v` so the round loop needs no
-    /// batching multiplies — served lazily off the shared rows for the
-    /// first four binds instead of `N × T` dense.
-    folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
+    chunk_tables: Vec<Vec<F>>,
     gruen: GruenSplitEqPolynomial<F>,
 }
 
-impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
-    #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
-    pub(crate) fn new(
+impl<F: JoltField> InstructionRaInitialization<F> {
+    fn new(
         log_t: usize,
         num_virtual: usize,
         num_committed_per_virtual: usize,
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let num_committed = num_virtual * num_committed_per_virtual;
@@ -154,13 +174,6 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         if committed_chunk_bits == 0 || committed_chunk_bits > 32 {
             return Err(KernelError::Unsupported {
                 reason: "committed RA chunk width outside the supported one-hot range",
-            });
-        }
-        if rows.len() != 1 << log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: "stage-6b instruction rows".to_owned(),
-                expected: 1 << log_t,
-                got: rows.len(),
             });
         }
         if instruction_read_raf_cycle.len() != log_t {
@@ -201,22 +214,143 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             }
             table
         });
+
+        Ok(Self {
+            log_t,
+            num_committed_per_virtual,
+            committed_chunk_bits,
+            gamma_powers_inv,
+            chunk_tables,
+            gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
+        })
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) const fn log_t(&self) -> usize {
+        self.log_t
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn supports_metal_sequence(&self) -> bool {
+        self.num_committed_per_virtual == 4
+            && self.committed_chunk_bits == 8
+            && self.chunk_tables.len() == 16
+            && self.chunk_tables.iter().all(|table| table.len() == 256)
+    }
+
+    pub(crate) fn into_cpu(
+        mut self,
+        rows: Arc<Vec<InstructionCycleRow>>,
+    ) -> Result<OptimizedInstructionRaVirtualizationKernel<F>, KernelError<F>> {
+        let expected = 1usize << self.log_t;
+        if rows.len() != expected {
+            return Err(KernelError::TableSizeMismatch {
+                table: "stage-6b instruction rows".to_owned(),
+                expected,
+                got: rows.len(),
+            });
+        }
+        let chunk_tables = core::mem::take(&mut self.chunk_tables);
+        let num_committed = chunk_tables.len();
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
             LookupIndexChunks {
                 rows,
                 num_committed,
-                committed_chunk_bits,
+                committed_chunk_bits: self.committed_chunk_bits,
             },
         );
+        Ok(self.into_kernel(num_committed, folded_ra, false))
+    }
 
-        Ok(Self {
-            progress: RoundProgress::new(log_t),
-            num_committed_per_virtual,
-            gamma_powers_inv,
+    /// The kernel with its selectors resident on Metal, plus the flattened
+    /// chunk tables the device sequence needs.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn into_offloaded(
+        mut self,
+    ) -> Result<(OptimizedInstructionRaVirtualizationKernel<F>, Vec<F>), KernelError<F>> {
+        if !self.supports_metal_sequence() {
+            return Err(KernelError::Unsupported {
+                reason: "instruction RA Metal sequence requires 4x4 8-bit geometry",
+            });
+        }
+        let tables = core::mem::take(&mut self.chunk_tables);
+        let num_committed = tables.len();
+        let table_values = tables.iter().map(Vec::len).sum();
+        let mut chunk_tables = Vec::with_capacity(table_values);
+        for table in tables {
+            chunk_tables.extend(table);
+        }
+        let kernel = self.into_kernel(num_committed, LazyFoldedRa::Dense(Vec::new()), true);
+        Ok((kernel, chunk_tables))
+    }
+
+    fn into_kernel(
+        self,
+        num_committed: usize,
+        folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
+        metal_offloaded: bool,
+    ) -> OptimizedInstructionRaVirtualizationKernel<F> {
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let _ = (metal_offloaded, num_committed);
+        OptimizedInstructionRaVirtualizationKernel {
+            progress: RoundProgress::new(self.log_t),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            num_committed,
+            num_committed_per_virtual: self.num_committed_per_virtual,
+            gamma_powers_inv: self.gamma_powers_inv,
             folded_ra,
-            gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
-        })
+            gruen: self.gruen,
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            metal_offloaded,
+        }
+    }
+}
+
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
+    progress: RoundProgress,
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    num_committed: usize,
+    num_committed_per_virtual: usize,
+    /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
+    /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
+    /// exactly, so unscaling is byte-exact).
+    gamma_powers_inv: Vec<F>,
+    /// Address-folded committed RA selectors, one per committed chunk:
+    /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
+    /// batch's first table pre-scaled by `γ^v` so the round loop needs no
+    /// batching multiplies — served lazily off the shared rows for the
+    /// first four binds instead of `N × T` dense.
+    folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
+    gruen: GruenSplitEqPolynomial<F>,
+    /// Selectors live on the device until `metal_restore_dense`.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    metal_offloaded: bool,
+}
+
+impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
+    #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
+    pub(crate) fn new(
+        log_t: usize,
+        num_virtual: usize,
+        num_committed_per_virtual: usize,
+        instruction_address: &[F],
+        instruction_read_raf_cycle: &[F],
+        committed_chunk_bits: usize,
+        rows: Arc<Vec<InstructionCycleRow>>,
+        gamma: F,
+    ) -> Result<Self, KernelError<F>> {
+        InstructionRaInitialization::new(
+            log_t,
+            num_virtual,
+            num_committed_per_virtual,
+            instruction_address,
+            instruction_read_raf_cycle,
+            committed_chunk_bits,
+            gamma,
+        )?
+        .into_cpu(rows)
     }
 
     /// `s(t) = ℓ(t) · q(t)` with
@@ -348,6 +482,115 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         self.gruen.bind(challenge);
         self.folded_ra.bind(challenge);
         self.progress.advance();
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
+    pub(crate) fn metal_num_polys(&self) -> usize {
+        self.num_committed
+    }
+
+    pub(crate) fn metal_weights(&self) -> Result<(&[F], &[F]), SumcheckError<F>> {
+        if !self.metal_offloaded {
+            return Err(instruction_ra_state_error(
+                "Metal weights requested after instruction RA returned to the CPU",
+            ));
+        }
+        if self.progress.bound() >= self.progress.total() {
+            return Err(instruction_ra_state_error(
+                "Metal weights requested after the final instruction RA bind",
+            ));
+        }
+        Ok((self.gruen.e_in_current(), self.gruen.e_out_current()))
+    }
+
+    pub(crate) fn metal_bind_offloaded(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        if !self.metal_offloaded {
+            return Err(instruction_ra_state_error(
+                "Metal bind requested after instruction RA returned to the CPU",
+            ));
+        }
+        if self.progress.bound() >= self.progress.total() {
+            return Err(instruction_ra_state_error(
+                "instruction RA received more binds than cycle variables",
+            ));
+        }
+        self.gruen.bind(challenge);
+        self.progress.advance();
+        Ok(())
+    }
+
+    pub(crate) fn metal_message(
+        &self,
+        q_evals: [F; 4],
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if !self.metal_offloaded {
+            return Err(instruction_ra_state_error(
+                "Metal message supplied after instruction RA returned to the CPU",
+            ));
+        }
+        if self.num_committed_per_virtual != 4 {
+            return Err(instruction_ra_state_error(
+                "Metal instruction RA message requires four factors per virtual product",
+            ));
+        }
+        Ok(self.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+    }
+
+    pub(crate) fn metal_restore_dense(
+        &mut self,
+        flat_tables: &[F],
+        elements: usize,
+    ) -> Result<(), SumcheckError<F>> {
+        if !self.metal_offloaded {
+            return Err(instruction_ra_state_error(
+                "instruction RA dense tables restored more than once",
+            ));
+        }
+        if elements == 0
+            || !elements.is_power_of_two()
+            || self.progress.bound() > self.progress.total()
+        {
+            return Err(instruction_ra_state_error(
+                "invalid instruction RA dense-tail geometry",
+            ));
+        }
+        let expected_elements = 1usize
+            .checked_shl((self.progress.total() - self.progress.bound()) as u32)
+            .ok_or_else(|| instruction_ra_state_error("instruction RA table length overflow"))?;
+        if elements != expected_elements {
+            return Err(instruction_ra_state_error(format!(
+                "instruction RA dense tail has {elements} elements per factor; expected {expected_elements}"
+            )));
+        }
+        let expected_values = self
+            .num_committed
+            .checked_mul(elements)
+            .ok_or_else(|| instruction_ra_state_error("instruction RA readback length overflow"))?;
+        if flat_tables.len() != expected_values {
+            return Err(instruction_ra_state_error(format!(
+                "instruction RA dense tail has {} values; expected {expected_values}",
+                flat_tables.len()
+            )));
+        }
+        self.folded_ra = LazyFoldedRa::Dense(
+            flat_tables
+                .chunks_exact(elements)
+                .map(|table| jolt_poly::Polynomial::new(table.to_vec()))
+                .collect(),
+        );
+        self.metal_offloaded = false;
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn instruction_ra_state_error<F: JoltField>(message: impl Into<String>) -> SumcheckError<F> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: message.into(),
     }
 }
 
