@@ -26,6 +26,19 @@ attribution is meaningful relatively — while `optimized` is the performance
 tier (legacy-parity prover performance), slotting into the same
 instrumented seams.
 
+Packed builds may force the large-trace one-hot geometry without allocating a
+2^25 trace:
+
+```bash
+cargo run --release -p jolt-prover --features akita,profiling -- \
+    profile --name fibonacci --scale 16 --backend optimized \
+    --akita-one-hot-k 256 --format chrome
+```
+
+The override accepts only `16` or `256`, is rejected by non-Akita builds, and
+is included in the artifact name so forced and policy-selected runs cannot
+collide.
+
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =
 `modular_{workload}_{scale}`, hyphens in the workload mapped to
@@ -39,11 +52,14 @@ the run identity, so the files inside use fixed names:
   [Perfetto](https://ui.perfetto.dev/) or query with `trace_processor` SQL.
 - `summary.json` — schema-versioned aggregates (see below).
 
-The run also compiles and traces the guest, proves it, and **verifies the
-proof** as a correctness gate; only `prove()` is measured. The `profiling`
-feature enables the system monitor, so CPU/memory counters render as native
-Perfetto counter tracks directly from the emitted trace — no offline
-post-processing step.
+The run also compiles and traces the guest, derives the PCS setup, proves it,
+and verifies the proof. PCS setup and `prove()` are timed separately. The
+verifier is warmed once and then timed under an explicit host-sized Rayon
+pool followed by an exactly one-worker pool; both CSV fields report the mean
+of 10 verifications by default. Set `JOLT_PROFILE_VERIFY_REPETITIONS` to a
+nonzero integer to change that sample count. The `profiling` feature enables
+the system monitor, so CPU/memory counters render as native Perfetto counter
+tracks directly from the emitted trace — no offline post-processing step.
 
 ## Benchmark sweeps
 
@@ -58,11 +74,16 @@ cargo run --release -p jolt-prover --features profiling -- \
 ```
 
 Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
-in the run directories); render
-them with:
+in the run directories). In addition to prover throughput and proof size, the
+CSV records `setup_time_s`, `verifier_parallel_time_s`,
+`verifier_single_thread_time_s`, `verifier_repetitions`, and the explicit
+parallel worker count. Existing CSVs using the previous header are migrated
+in place with empty values for these new fields. Render them with:
 
 ```bash
 python3 scripts/benchmark_summary.py     # per-scale table
+python3 scripts/benchmark_summary.py --protocol akita \
+    --one-hot-k 256 --metric verifier_single_thread_time_s
 python3 scripts/plot_benchmarks.py       # speed + proof-size plots
 python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.json)
 ```

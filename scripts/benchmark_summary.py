@@ -11,6 +11,11 @@ BENCHMARK_LABELS = ['Fibonacci', 'SHA2-chain', 'SHA3-chain', 'BTreeMap']
 METRICS = {
     'proving_hz': {'label': 'Prover Speed (kHz)', 'format': '{:.1f}', 'suffix': ' kHz'},
     'prover_time_s': {'label': 'Prover Time', 'format': '{:.2f}', 'suffix': 's'},
+    'setup_time_s': {'label': 'PCS Setup Time', 'format': '{:.3f}', 'suffix': 's'},
+    'verifier_parallel_time_s': {
+        'label': 'Parallel Verifier Time', 'format': '{:.3f}', 'suffix': 's'},
+    'verifier_single_thread_time_s': {
+        'label': 'Single-thread Verifier Time', 'format': '{:.3f}', 'suffix': 's'},
     'trace_length': {'label': 'Trace Length', 'format': '{:.0f}', 'suffix': ''},
     'proof_size': {'label': 'Proof Size', 'format': '{:.1f}', 'suffix': ' KB'},
     'proof_size_compressed': {'label': 'Compressed Proof', 'format': '{:.1f}', 'suffix': ' KB'},
@@ -38,9 +43,15 @@ def main():
     parser.add_argument('--metric', default='proving_hz',
                         choices=list(METRICS.keys()),
                         help='Metric to display in the table')
+    parser.add_argument('--protocol', choices=['dory', 'akita'], default='dory',
+                        help='Protocol rows to display (default: dory)')
+    parser.add_argument('--one-hot-k', type=int, choices=[16, 256],
+                        help='Filter packed rows by one-hot K')
     args = parser.parse_args()
 
-    print(f"\nBenchmark Summary ({METRICS[args.metric]['label']})")
+    geometry = f', K={args.one_hot_k}' if args.one_hot_k else ''
+    print(f"\nBenchmark Summary ({args.protocol}{geometry}, "
+          f"{METRICS[args.metric]['label']})")
     print("=" * 60)
 
     # Print header
@@ -56,6 +67,10 @@ def main():
         with open(args.csv, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
+                if not row[args.metric]:
+                    continue
+                if args.one_hot_k and row.get('one_hot_k') != str(args.one_hot_k):
+                    continue
                 scale = int(row['scale'])
                 bench_type = row['benchmark_name']
                 value = float(row[args.metric])
@@ -74,8 +89,9 @@ def main():
         row_data = data[scale]
         values = []
         for bench in BENCHMARKS:
-            if bench in row_data:
-                formatted = format_value(row_data[bench], args.metric)
+            row_name = bench if args.protocol == 'dory' else f'{bench}_akita'
+            if row_name in row_data:
+                formatted = format_value(row_data[row_name], args.metric)
                 values.append(f"{formatted:>12}")
             else:
                 values.append(f"{'':12}")
