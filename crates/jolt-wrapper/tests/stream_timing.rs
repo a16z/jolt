@@ -228,7 +228,7 @@ fn n3_g_shape_timing() {
 fn typed_column_timing() {
     let rows = 1 << 18;
     let k = 8;
-    let mut columns: Vec<Column> = (0..163)
+    let mut columns: Vec<Column> = (0..180)
         .into_par_iter()
         .map(|column| {
             Column::Bits(
@@ -288,12 +288,13 @@ fn typed_column_timing() {
             PackedPolynomial::Fr(values) => 32 * values.len(),
         })
         .sum::<usize>();
+    let dense_storage_bytes = packed.layout.group_count * rows * k * 32;
     assert_eq!(evaluations.len(), packed.layout.padded_column_count);
     assert_eq!(rlc.len(), rows * k);
     std::fs::write(
         "/tmp/w4s-typed-columns.txt",
         format!(
-            "rows={rows} k={k} groups={} storage={storage_bytes}B column_evaluations={eval_seconds:.6}s rlc={rlc_seconds:.6}s\n",
+            "rows={rows} k={k} groups={} storage={storage_bytes}B dense_storage={dense_storage_bytes}B column_evaluations={eval_seconds:.6}s rlc={rlc_seconds:.6}s\n",
             packed.layout.group_count,
         ),
     )

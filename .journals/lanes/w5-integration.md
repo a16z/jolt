@@ -234,3 +234,42 @@ slot with:
 `.journals/lanes/w6-relation-table.md` is not present yet, so no speculative Rust trait was added.
 The existing Spartan/SPARK path remains a measured fallback. L4 stays after the first assembled
 e2e baseline.
+
+## 00:29 generic assembly and L4 checkpoint
+
+Commits `8536caf1e` and `4cfd41f2a` add the generic assembly core plus the named `wrap` /
+`verify_wrapped` entry points. The caller supplies the packed columns, arbitrary stage-A members,
+their verifier-owned final checks, and the stage-B factor-column set. The engine commits the
+columns, proves one KZG-batched stage A, reduces every exposed column through stage B, and opens
+one packed RLC. `tests/assembly.rs` verifies the round trip and rejects independent changes to a
+packed commitment, stage-A KZG data, a member-final claim, stage B, the reduced claim, and the
+HyperKZG opening.
+
+This is an executable synthetic-honest assembly seam, not the real fibonacci wrapper yet. The T2
+`from_jolt` input adapter is now committed, but it does not yet export its `Column` list,
+`StageMember`s, or final-check evaluator. T1 still lacks the same stream adapter. W6-RT adds a
+second requirement: its `a,b,c` commitments precede `(beta,gamma)`, while `h_id,h_sigma`
+commitments follow them. The current one-phase `wrap` seeds all commitments together. The next
+assembly API must let an adapter build and absorb a challenge-dependent commitment phase before
+stage A; flattening W6-RT into the current call would be unsound.
+
+L4 is isolated on `wrap/l4-typed` at `dc1e9ff42`: `PackedPolynomial::{Bits,U16,Fr}` replaces the
+unconditional `Vec<Fr>` copy per packed group. Pure bit groups use conditional additions for row
+evaluation and RLC; pure u16 groups convert only in the active arithmetic loop; mixed groups keep
+the field path. Focused assembly/stream/SPARK tests pass, as do debug all-target and release-lib
+clippy. It remains isolated because W6-RT's uncommitted protocol constructs `PackedColumns`
+directly and must switch `evaluations` to `polynomials` with the same commit.
+
+W4-R review #2's production diagnostic is fixed by `c0592f75c` + `9d9c344c9`: `native::check`,
+`NativeParity`, and the witness field exist only for debug/test builds. Release witness generation
+still executes the native verifier once to obtain the transcript schedule; it no longer performs
+the second parity reconstruction. Debug relation tests, debug all-target clippy, and release-lib
+clippy pass.
+
+L4 release timings use the PERF-1 shape at `rows=2^18`, `k=8`: 180 bit columns, 54 u16 columns,
+20 Fr columns, 32 packed groups. The prior dense profiler measured column evaluations at 0.168 s
+and RLC at 0.315 s. One initial typed run (load 5.29) measured 0.210/0.158 s; replacing u16 field
+multiplication with `Fr::mul_u64` then measured **0.121/0.148 s** at load 8.29. Combined time is
+0.483 -> 0.269 s (-0.214 s, 44%). Packed coefficient storage is exactly 2,048 -> 324 MiB
+(-1,724 MiB); this excludes the caller-owned source columns and SRS. The 0.05/0.08 s estimate was
+not reached; bit-column field additions now dominate the evaluation pass.

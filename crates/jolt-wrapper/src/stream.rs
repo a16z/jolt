@@ -258,7 +258,7 @@ impl PackedColumns {
                             .zip(evaluations.chunks_exact(self.layout.k))
                         {
                             for (value, &entry) in values.iter_mut().zip(row) {
-                                *value += row_weight * Fr::from_u64(u64::from(entry));
+                                *value += row_weight.mul_u64(u64::from(entry));
                             }
                         }
                     }
@@ -301,9 +301,7 @@ impl PackedColumns {
                                 Fr::zero()
                             }
                         }
-                        PackedPolynomial::U16(values) => {
-                            weight * Fr::from_u64(u64::from(values[index]))
-                        }
+                        PackedPolynomial::U16(values) => weight.mul_u64(u64::from(values[index])),
                         PackedPolynomial::Fr(values) => values[index] * weight,
                     })
                     .sum()
