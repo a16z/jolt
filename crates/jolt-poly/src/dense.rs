@@ -273,13 +273,45 @@ impl<F: JoltField> Polynomial<F> {
         self.num_vars -= 1;
     }
 
-    /// Binds the LSB variable in place without another buffer. Once the
-    /// backing allocation reaches 8x the live length it is released; the
-    /// return value reports that release so callers can purge after it.
+    /// Binds the LSB variable in place without another buffer:
+    /// `v[j] = v[2j] + r·(v[2j+1] − v[2j])`. Once the backing allocation
+    /// reaches 8x the live length it is released; the return value reports
+    /// that release so callers can purge after it.
+    ///
+    /// Each power-of-two level writes below its read window. Earlier outputs
+    /// lie below later reads, and each level splits into disjoint `dst` and
+    /// `src`.
     #[inline]
     pub fn bind_low_to_high_in_place(&mut self, scalar: F) -> bool {
         assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
-        bind_low_to_high_in_place(&mut self.evals, scalar);
+        debug_assert!(self.evals.len().is_power_of_two());
+        let half = self.evals.len() / 2;
+
+        let (lo, hi) = (self.evals[0], self.evals[1]);
+        self.evals[0] = lo + scalar * (hi - lo);
+        let mut e = 2;
+        while e <= half {
+            let (head, tail) = self.evals.split_at_mut(e);
+            let dst = &mut head[e / 2..];
+            let src = &tail[..e];
+            let write = |(k, out): (usize, &mut F)| {
+                let lo = src[2 * k];
+                *out = lo + scalar * (src[2 * k + 1] - lo);
+            };
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                dst.par_iter_mut()
+                    .enumerate()
+                    .with_min_len(1 << 10)
+                    .for_each(write);
+            }
+            #[cfg(not(feature = "parallel"))]
+            dst.iter_mut().enumerate().for_each(write);
+            e *= 2;
+        }
+        self.evals.truncate(half);
+
         self.num_vars -= 1;
         let shrink = self.evals.capacity() >= 8 * self.evals.len().max(1);
         if shrink {
@@ -599,42 +631,6 @@ impl<F: JoltField> Neg for Polynomial<F> {
         }
         self
     }
-}
-
-/// In-place LSB bind: `v[j] = v[2j] + r·(v[2j+1] − v[2j])`.
-///
-/// Each power-of-two level writes below its read window. Earlier outputs lie
-/// below later reads, and each level splits into disjoint `dst` and `src`.
-fn bind_low_to_high_in_place<F: JoltField>(evals: &mut Vec<F>, challenge: F) {
-    debug_assert!(evals.len().is_power_of_two());
-    let half = evals.len() / 2;
-    if half == 0 {
-        return;
-    }
-    let (lo, hi) = (evals[0], evals[1]);
-    evals[0] = lo + challenge * (hi - lo);
-    let mut e = 2;
-    while e <= half {
-        let (head, tail) = evals.split_at_mut(e);
-        let dst = &mut head[e / 2..];
-        let src = &tail[..e];
-        let write = |(k, out): (usize, &mut F)| {
-            let lo = src[2 * k];
-            *out = lo + challenge * (src[2 * k + 1] - lo);
-        };
-        #[cfg(feature = "parallel")]
-        {
-            use rayon::prelude::*;
-            dst.par_iter_mut()
-                .enumerate()
-                .with_min_len(1 << 10)
-                .for_each(write);
-        }
-        #[cfg(not(feature = "parallel"))]
-        dst.iter_mut().enumerate().for_each(write);
-        e *= 2;
-    }
-    evals.truncate(half);
 }
 
 #[cfg(test)]
