@@ -6,10 +6,11 @@
 //! in closed form for the verifier.
 
 use crate::stream::TermObserver;
-use jolt_field::{Field, Fr, One, Ring, Zero};
+use jolt_field::{Fr, One, Ring, Zero};
 
-use super::digits::{WINDOWS, WINDOW_BOUND, WINDOW_ROWS, WINDOW_TOP_DIGITS};
+use super::digits::{WINDOWS, WINDOW_ROWS, WINDOW_TOP_DIGITS};
 use super::layout::{Bits, Factor, Rel, LOG_ROWS, ROWS};
+use super::literals::{SIXTEEN_INVERSE, SIXTEEN_POWERS, WINDOW_BOUND_FR};
 use super::relation::{PublicEvals, RowRelation, FP_SLOTS_G1, FP_SLOTS_G2, FP_SLOTS_GT};
 use super::schedule::{Layout, SelectedFamily, WINDOW_ROW_BASE};
 use super::terms::{plain, powers_with, Mul};
@@ -17,7 +18,6 @@ use super::verifier::{Evaluator, Point};
 use super::wiring::{copy_kernel_eval, ReadKind};
 use ark_bn254::Fr as ArkFr;
 use std::ops::Range;
-use std::sync::LazyLock;
 
 pub const DIGIT_BITS: usize = 5;
 const NEG_KEY_OFFSET: u64 = 1 << LOG_ROWS;
@@ -377,7 +377,6 @@ impl SelectedFamily {
         ev: &mut Evaluator<'_, O>,
         powers: &LinkPowers,
     ) -> Fr {
-        let sixteen = &*SIXTEEN;
         let mut product: Option<Fr> = None;
         for (bits, range, factor) in field_partition(&self.domain) {
             let part = if bits == self.c_bits {
@@ -400,24 +399,24 @@ impl SelectedFamily {
                 let (all, top) = if range == (0..1 << bits.width()) {
                     // `Σ_w eq(r_w, w)·16^{63−w} = 16^{63}·Π_i (1 − r_i + r_i·16^{−2^i})`;
                     // the top 16 windows are the field's high bits zero.
-                    let geometric = ev.geometric(Point::Row, bits, sixteen.inverse);
-                    let all = ev.mul(geometric, sixteen.powers[WINDOWS - 1]);
+                    let geometric = ev.geometric(Point::Row, bits, sixteen_inverse());
+                    let all = ev.mul(geometric, sixteen_pow(WINDOWS - 1));
                     let low = Bits::new(bits.lo, bits.lo + 4);
                     let high = Bits::new(bits.lo + 4, bits.hi);
-                    let low_geometric = ev.geometric(Point::Row, low, sixteen.inverse);
+                    let low_geometric = ev.geometric(Point::Row, low, sixteen_inverse());
                     let high_zero = ev.eq_const(Point::Row, high, 0);
                     let top = ev.mul(low_geometric, high_zero);
-                    (all, ev.mul(top, sixteen.powers[WINDOW_TOP_DIGITS - 1]))
+                    (all, ev.mul(top, sixteen_pow(WINDOW_TOP_DIGITS - 1)))
                 } else {
                     let all = ev.field_sum(Point::Row, bits, range.clone(), &|w| {
-                        sixteen.powers[WINDOWS - 1 - w as usize]
+                        sixteen_pow(WINDOWS - 1 - w as usize)
                     });
                     let top_range = range.start..range.end.min(WINDOW_TOP_DIGITS as u32);
                     let top = if top_range.is_empty() {
                         Fr::zero()
                     } else {
                         ev.field_sum(Point::Row, bits, top_range, &|w| {
-                            sixteen.powers[WINDOW_TOP_DIGITS - 1 - w as usize]
+                            sixteen_pow(WINDOW_TOP_DIGITS - 1 - w as usize)
                         })
                     };
                     (all, top)
@@ -455,19 +454,15 @@ impl SelectedFamily {
     }
 }
 
-/// Fixed powers of sixteen of the link weights: `16^k` for `k < 64` and
-/// `16^{−1}` (computed once; no fixed-power arithmetic in the verifier).
-struct Sixteen {
-    powers: [Fr; WINDOWS],
-    inverse: Fr,
+/// `16^k` from its literal (`k < WINDOWS`).
+fn sixteen_pow(k: usize) -> Fr {
+    Fr::from(SIXTEEN_POWERS[k])
 }
 
-static SIXTEEN: LazyLock<Sixteen> = LazyLock::new(|| Sixteen {
-    powers: std::array::from_fn(|k| Fr::pow2(4 * k)),
-    inverse: Fr::pow2(4)
-        .inverse()
-        .unwrap_or_else(|| unreachable!("16 is invertible")),
-});
+/// `16^{−1}` from its literal.
+fn sixteen_inverse() -> Fr {
+    Fr::from(SIXTEEN_INVERSE)
+}
 
 /// The digit link's `ρ` powers for a layout with `M = link_occurrences`
 /// chain-base occurrences: `ρ^o` for `o ≤ M`, the window check's bases `ρ^M`
@@ -518,7 +513,7 @@ impl LinkPowers {
     /// The window checks' public constant `WINDOW_BOUND·ρ^{M+256}·Σ_{o<256} ρ^o`
     /// (the chunk-side identities `V(o) + V'(o) = WINDOW_BOUND` summed).
     pub fn window_constant(&self, mul: Mul<'_>) -> Fr {
-        let scaled = mul(Fr::from_u64(WINDOW_BOUND), self.window_chunks);
+        let scaled = mul(Fr::from(WINDOW_BOUND_FR), self.window_chunks);
         mul(scaled, self.window_sum)
     }
 }
@@ -549,13 +544,12 @@ pub struct LinkColumns {
 
 pub fn link_columns(layout: &Layout, rho: Fr) -> LinkColumns {
     let powers = LinkPowers::new(layout, rho);
-    let sixteen = &*SIXTEEN;
     let mut omega = vec![Fr::zero(); ROWS];
     for op in &layout.digit_ops {
         let w = op.w as usize;
-        let mut weight = sixteen.powers[WINDOWS - 1 - w];
+        let mut weight = sixteen_pow(WINDOWS - 1 - w);
         if w < WINDOW_TOP_DIGITS {
-            weight += powers.window_digits * sixteen.powers[WINDOW_TOP_DIGITS - 1 - w];
+            weight += powers.window_digits * sixteen_pow(WINDOW_TOP_DIGITS - 1 - w);
         }
         omega[op.first_row as usize] = powers.occurrence[op.link as usize] * weight;
     }

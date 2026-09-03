@@ -59,7 +59,7 @@ impl LinkMember {
     pub fn new(layout: &Layout, rho: Fr, digit_values: &[Fr], chunks: &[Vec<Fr>]) -> Self {
         let size = 1usize << LOG_ROWS;
         assert_eq!(digit_values.len(), size);
-        let pow_chunk = &Constants::get().pow_chunk;
+        let pow_chunk = Constants::get().pow_chunk;
         let pack = |offset: usize| -> Vec<Fr> {
             (0..size)
                 .into_par_iter()
@@ -187,7 +187,7 @@ impl ProveRounds<Fr> for LinkMember {
 
 /// `Σ_{j<4} 2^{16j}·chunk_{offset+j}` as a form over the claimed columns.
 fn window_form(offset: usize) -> AffineForm {
-    let pow_chunk = &Constants::get().pow_chunk;
+    let pow_chunk = Constants::get().pow_chunk;
     let mut form = AffineForm::default();
     for (j, weight) in pow_chunk.iter().take(WINDOW_CHUNKS).enumerate() {
         form.add_column(ColumnId((Col::CHUNKS + offset + j) as u32), *weight);

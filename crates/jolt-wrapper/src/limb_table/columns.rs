@@ -13,8 +13,8 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
-use std::sync::LazyLock;
 
+use super::literals::{CARRY_OFFSET, K_OFFSET_TOP_LIMB, POW_64, POW_CHUNK, POW_LIMB, Q_LIMBS};
 use super::program::{half_plus_one, Program, Slot, Source};
 
 pub const CHUNK_BITS: usize = 16;
@@ -379,9 +379,9 @@ pub fn operand_columns(program: &Program, z_xi: &[Fr], num_slots: usize) -> Vec<
     columns
 }
 
-/// Field constants of the row relation, shared by prover and verifier
-/// (computed once: [`Constants::get`]; the verifier derivation does no
-/// fixed-power arithmetic).
+/// Field constants of the row relation, shared by prover and verifier:
+/// compile-time literals ([`super::literals`]), so no fixed-power arithmetic
+/// runs cold or warm.
 #[derive(Clone, Copy)]
 pub struct Constants {
     pub q_limbs: [Fr; LIMBS],
@@ -394,30 +394,17 @@ pub struct Constants {
     pub pow_64: Fr,
 }
 
-static CONSTANTS: LazyLock<Constants> = LazyLock::new(Constants::new);
-
-impl Default for Constants {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Constants {
-    pub fn new() -> Self {
-        let q = q_biguint();
+    /// The constants from their literals (moves, no arithmetic).
+    pub fn get() -> Self {
         Self {
-            q_limbs: std::array::from_fn(|a| fr_from_biguint(&limb(&q, a))),
-            pow_limb: Fr::pow2(LIMB_BITS),
-            pow_chunk: std::array::from_fn(|j| Fr::pow2(CHUNK_BITS * j)),
-            carry_offset: Fr::pow2(CARRY_OFFSET_BITS),
-            k_offset_top_limb: Fr::pow2(K_OFFSET_BITS - 2 * LIMB_BITS),
-            pow_64: Fr::pow2(64),
+            q_limbs: Q_LIMBS.map(Fr::from),
+            pow_limb: Fr::from(POW_LIMB),
+            pow_chunk: POW_CHUNK.map(Fr::from),
+            carry_offset: Fr::from(CARRY_OFFSET),
+            k_offset_top_limb: Fr::from(K_OFFSET_TOP_LIMB),
+            pow_64: Fr::from(POW_64),
         }
-    }
-
-    /// The constants, computed once per process.
-    pub fn get() -> &'static Self {
-        &CONSTANTS
     }
 
     /// `q(ξ) = Σ_a ξ^a·q_a`.

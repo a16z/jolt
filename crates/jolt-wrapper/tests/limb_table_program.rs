@@ -222,6 +222,39 @@ fn fibonacci_profile_fits_2_18_rows() {
     assert!(layout.used_rows() <= ROWS);
 }
 
+/// Every occurrence of the fibonacci profile owns one complete radix-16
+/// string and one `Source::Window` row; the spare rows cannot hide an
+/// omitted occurrence.
+#[test]
+fn fibonacci_profile_binds_every_link_occurrence_to_one_window_row() {
+    use jolt_wrapper::limb_table::digits::{WINDOWS, WINDOW_ROWS};
+    use jolt_wrapper::limb_table::schedule::WINDOW_ROW_BASE;
+
+    let check = FlattenedCheck::derive(11, 42);
+    let values = random_values(&check, 0x5E05E);
+    let setup = random_setup(11, 0x5E05F);
+    let layout = build(&check, &values, &setup, &check.wires());
+    assert_eq!(check.wires().len(), 173);
+    assert_eq!(layout.digit_bases, 175);
+    assert_eq!(layout.link_occurrences, 230);
+    let mut windows = vec![[0u8; WINDOWS]; layout.link_occurrences as usize];
+    for op in &layout.digit_ops {
+        windows[op.link as usize][op.w as usize] += 1;
+    }
+    for (occurrence, counts) in windows.iter().enumerate() {
+        assert!(
+            counts.iter().all(|&count| count == 1),
+            "occurrence {occurrence} owns every window exactly once"
+        );
+    }
+    for occurrence in 0..WINDOW_ROWS {
+        assert!(matches!(
+            layout.program.rows[WINDOW_ROW_BASE as usize + occurrence].source,
+            Source::Window(_)
+        ));
+    }
+}
+
 /// The memoized evaluator agrees with the brute-force kernel MLEs on every
 /// kernel of the layout (copies, fingerprints, selected-family domains), and
 /// the kernel MLE agrees with its edge list on a sample.
@@ -520,4 +553,7 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
         layout.digit_bases
     );
     assert!(cost.fr_mul <= 10_000, "{} fr_mul", cost.fr_mul);
+    // The measured count at this profile; every field constant is a literal,
+    // so a cold process observes the same number (update deliberately).
+    assert_eq!(cost.fr_mul, 9_973, "fr_mul at σ = 11, N = 42");
 }

@@ -1263,3 +1263,48 @@ fn commitment_phases_cover_verifier_key_groups() {
         assert_eq!(declared, all_groups, "packing {packing}");
     }
 }
+
+/// Review #5: copying one valid `(V, V')` row onto another occurrence keeps
+/// every chunk in range and `V + V' = WINDOW_BOUND`, but the row's `ρ^o`
+/// coefficient ties it to its own occurrence's top digits: the link rejects.
+#[test]
+fn one_window_row_cannot_be_reused_for_two_occurrences() {
+    let w = witness(0xE2E);
+    let mut rng = ChaCha20Rng::seed_from_u64(0x5E05E);
+    let ch = challenges(&mut rng);
+    let rho = fr(&mut rng);
+    let relation = RowRelation::new(
+        ch,
+        LookupConstants {
+            one_row: w.layout.one_cell * 16,
+        },
+    );
+    let columns = matrix(&w, &relation);
+    let theta = Fr::from(w.values.get(&Wire::Offset));
+    let expected = link_input_claim(r_link_claim(&w, rho), rho, theta, &w.layout);
+    let rows =
+        WINDOW_ROW_BASE as usize..WINDOW_ROW_BASE as usize + w.layout.link_occurrences as usize;
+    let (source, target) = rows
+        .clone()
+        .flat_map(|source| rows.clone().map(move |target| (source, target)))
+        .find(|&(source, target)| {
+            source != target
+                && (0..8)
+                    .any(|j| columns[Col::CHUNKS + j][source] != columns[Col::CHUNKS + j][target])
+        })
+        .expect("two occurrences with different top windows");
+    let mut reused = columns.clone();
+    for j in 0..8 {
+        reused[Col::CHUNKS + j][target] = columns[Col::CHUNKS + j][source];
+    }
+    assert_ne!(
+        LinkMember::new(
+            &w.layout,
+            rho,
+            &reused[Col::D],
+            &reused[Col::CHUNKS..Col::CHUNKS + 8],
+        )
+        .input_claim(),
+        expected
+    );
+}

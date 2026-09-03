@@ -11,6 +11,7 @@ pub mod digits;
 pub mod dory;
 pub mod export;
 pub mod layout;
+mod literals;
 pub mod lookup;
 pub mod ops;
 pub mod program;
