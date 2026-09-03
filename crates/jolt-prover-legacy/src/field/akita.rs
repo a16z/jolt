@@ -1,10 +1,15 @@
 //! `JoltField` implementation for the Akita fp128 field
 //! (`p = 2^128 - 2^32 + 22537`, a pseudo-Mersenne prime).
 //!
-//! `AkitaFp128` is a newtype rather than a direct impl on the upstream type:
-//! `JoltField`'s supertraits include foreign traits the upstream type does not
-//! implement (`CanonicalSerialize`/`CanonicalDeserialize`, `Div`,
-//! `UniformRand`, `Allocative`), and orphan rules prevent adding them here.
+//! The shared-field cutover chain (Jolt #1810, Akita #447, and this PR,
+//! Jolt #1796) makes the Akita field type the shared `jolt_field::Fp128` at Akita's modulus
+//! (`Prime128OffsetA7F7`), so this module no longer bridges two field
+//! implementations. `AkitaFp128` survives as a newtype for orphan-rule
+//! reasons only: this crate's legacy `JoltField` supertraits include foreign
+//! traits the shared type does not implement
+//! (`CanonicalSerialize`/`CanonicalDeserialize`, `Div`, `UniformRand`), and
+//! neither crate may add them (`jolt-field`'s Solinas backend is
+//! deliberately arkworks-free).
 //!
 //! fp128 is not a Montgomery field: elements are stored canonically, so
 //! `MONTGOMERY_R = 1` and the "Montgomery-reduced" ladder levels use the same
@@ -12,23 +17,20 @@
 
 use super::{FieldOps, JoltField};
 use crate::field::folded_accum::{Folded128MulU64, Folded128Product};
-use akita_field::{
-    CanonicalBitLength, CanonicalField, CanonicalU64, FromPrimitiveInt, Invertible, RandomSampling,
-    ReducingBytes,
-};
 use allocative::Allocative;
 use ark_ff::{BigInt, UniformRand};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use ark_std::rand::Rng;
+use jolt_field::{CanonicalEncoding, Field as SharedField, Prime128OffsetA7F7, Ring};
 use num_traits::{One, Zero};
 use std::fmt;
 use std::io::{Read, Write};
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-pub type AkitaField = akita_config::proof_optimized::fp128::Field;
+pub type AkitaField = Prime128OffsetA7F7;
 
 /// The Akita fp128 base field, wrapped so it can implement `JoltField`.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
@@ -46,7 +48,7 @@ impl fmt::Display for AkitaFp128 {
 
 #[inline(always)]
 fn div_inner(a: &AkitaField, b: &AkitaField) -> AkitaField {
-    *a * Invertible::inverse(b).expect("division by zero")
+    *a * SharedField::inverse(b).expect("division by zero")
 }
 
 impl Add for AkitaFp128 {
@@ -241,17 +243,17 @@ impl<'a> Product<&'a Self> for AkitaFp128 {
 impl From<u128> for AkitaFp128 {
     #[inline(always)]
     fn from(value: u128) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_u128(value))
+        Self(<AkitaField as Ring>::from_u128(value))
     }
 }
 
 impl UniformRand for AkitaFp128 {
     fn rand<R: Rng + ?Sized>(rng: &mut R) -> Self {
         // Rejection sampling over u128, identical in distribution to the
-        // native `RandomSampling` impl (which requires a sized RngCore).
+        // shared `Field::random` impl (which requires a sized RngCore).
         loop {
             let x: u128 = rng.gen();
-            if let Some(f) = AkitaField::from_canonical_u128_checked(x) {
+            if let Some(f) = <AkitaField as CanonicalEncoding>::from_u128_checked(x) {
                 return Self(f);
             }
         }
@@ -288,13 +290,15 @@ impl CanonicalDeserialize for AkitaFp128 {
     ) -> Result<Self, SerializationError> {
         let value = u128::deserialize_with_mode(reader, compress, validate)?;
         match validate {
-            Validate::Yes => AkitaField::from_canonical_u128_checked(value)
+            Validate::Yes => <AkitaField as CanonicalEncoding>::from_u128_checked(value)
                 .map(Self)
                 .ok_or(SerializationError::InvalidData),
             // Mirrors the upstream Akita deserializer: unvalidated input is
             // reduced (p > 2^127, so any u128 is < 2p and one conditional
             // subtract suffices).
-            Validate::No => Ok(Self(AkitaField::from_canonical_u128_reduced(value))),
+            Validate::No => Ok(Self(<AkitaField as CanonicalEncoding>::from_u128_reduced(
+                value,
+            ))),
         }
     }
 }
@@ -310,7 +314,9 @@ impl FieldOps<&AkitaFp128, AkitaFp128> for &AkitaFp128 {}
 /// multiply and Solinas reduction are correct for every 128-bit integer.
 #[inline(always)]
 fn elem_to_field(a: &BigInt<2>) -> AkitaField {
-    AkitaField::from_canonical_u128(a.0[0] as u128 | (a.0[1] as u128) << 64)
+    // SAFETY: callers pass values produced by `to_unreduced`, which preserves
+    // the canonical representative.
+    unsafe { AkitaField::from_canonical_u128(a.0[0] as u128 | (a.0[1] as u128) << 64) }
 }
 
 /// field × M-limb magnitude, eagerly reduced to a canonical element.
@@ -321,10 +327,6 @@ fn elem_to_field(a: &BigInt<2>) -> AkitaField {
 /// value, which is equivalent modulo p by linearity of the final reduction.
 #[inline(always)]
 fn mul_mag_reduced<const M: usize>(a: AkitaField, mag: &BigInt<M>) -> AkitaField {
-    // M is const, so this match is resolved at monomorphization time. The
-    // M ≤ 3 and M = 4 arms hit `mul_wide_limbs`' specialized paths and are
-    // exact (2 + M output limbs). Callers currently pass M ∈ {3, 4}
-    // (S160/S192/S256 magnitudes); the fallback covers M ≤ 10.
     match M {
         0..=3 => AkitaField::solinas_reduce(&a.mul_wide_limbs::<M, 5>(mag.0)),
         4 => AkitaField::solinas_reduce(&a.mul_wide_limbs::<M, 6>(mag.0)),
@@ -337,8 +339,10 @@ impl JoltField for AkitaFp128 {
     const NUM_LIMBS: usize = 2;
 
     // fp128 stores elements canonically (no Montgomery scaling), so R = 1.
-    const MONTGOMERY_R: Self = AkitaFp128(AkitaField::from_i64_const(1));
-    const MONTGOMERY_R_SQUARE: Self = AkitaFp128(AkitaField::from_i64_const(1));
+    // SAFETY: one is below the Akita field modulus.
+    const MONTGOMERY_R: Self = AkitaFp128(unsafe { AkitaField::from_canonical_u128(1) });
+    // SAFETY: one is below the Akita field modulus.
+    const MONTGOMERY_R_SQUARE: Self = AkitaFp128(unsafe { AkitaField::from_canonical_u128(1) });
 
     type UnreducedElem = BigInt<2>;
     type UnreducedMulU64 = Folded128MulU64;
@@ -359,52 +363,52 @@ impl JoltField for AkitaFp128 {
     type Challenge = AkitaFp128;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
-        Self(<AkitaField as RandomSampling>::random(rng))
+        Self(<AkitaField as SharedField>::random(rng))
     }
 
     #[inline]
     fn from_bool(val: bool) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_bool(val))
+        Self(<AkitaField as Ring>::from_bool(val))
     }
 
     #[inline]
     fn from_u8(n: u8) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_u8(n))
+        Self(<AkitaField as Ring>::from_u8(n))
     }
 
     #[inline]
     fn from_u16(n: u16) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_u16(n))
+        Self(<AkitaField as Ring>::from_u16(n))
     }
 
     #[inline]
     fn from_u32(n: u32) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_u32(n))
+        Self(<AkitaField as Ring>::from_u32(n))
     }
 
     #[inline]
     fn from_u64(n: u64) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_u64(n))
+        Self(<AkitaField as Ring>::from_u64(n))
     }
 
     #[inline]
     fn from_i64(val: i64) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_i64(val))
+        Self(<AkitaField as Ring>::from_i64(val))
     }
 
     #[inline]
     fn from_i128(val: i128) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_i128(val))
+        Self(<AkitaField as Ring>::from_i128(val))
     }
 
     #[inline]
     fn from_u128(val: u128) -> Self {
-        Self(<AkitaField as FromPrimitiveInt>::from_u128(val))
+        Self(<AkitaField as Ring>::from_u128(val))
     }
 
     #[inline]
     fn to_u64(&self) -> Option<u64> {
-        <AkitaField as CanonicalU64>::to_canonical_u64_checked(&self.0)
+        <AkitaField as CanonicalEncoding>::to_u64_checked(&self.0)
     }
 
     #[inline]
@@ -414,27 +418,30 @@ impl JoltField for AkitaFp128 {
 
     #[inline]
     fn inverse(&self) -> Option<Self> {
-        Invertible::inverse(&self.0).map(Self)
+        SharedField::inverse(&self.0).map(Self)
     }
 
     #[inline]
     fn from_bytes(bytes: &[u8]) -> Self {
-        Self(<AkitaField as ReducingBytes>::from_le_bytes_mod_order(
+        Self(<AkitaField as CanonicalEncoding>::from_bytes_le_reduced(
             bytes,
         ))
     }
 
-    /// Akita transcripts interpret digest bytes directly as little-endian.
-    #[inline]
+    /// The shared Solinas fp128 scalar-challenge convention is unreversed
+    /// little-endian (unlike BN254's reversed legacy convention); the modular
+    /// verifier decodes with the shared `from_scalar_challenge_bytes`, so the
+    /// legacy prover must match it or every `challenge_scalar` value diverges
+    /// while the transcript byte stream stays in sync (both consume 16
+    /// bytes), which surfaces as StageClaimOutputMismatch at the first
+    /// batched-claim check of the packed pipeline.
     fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self(<AkitaField as ReducingBytes>::from_le_bytes_mod_order(
-            bytes,
-        ))
+        Self(<AkitaField as CanonicalEncoding>::from_scalar_challenge_bytes(bytes))
     }
 
     #[inline]
     fn num_bits(&self) -> u32 {
-        <AkitaField as CanonicalBitLength>::num_bits(&self.0)
+        <AkitaField as CanonicalEncoding>::num_bits(&self.0)
     }
 
     #[inline(always)]

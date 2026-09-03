@@ -96,21 +96,13 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
 }
 
 /// Native rows through round 0; eight dense tables afterward.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum InputState<F: JoltField> {
     Native(BundleStore<InstructionInputRow>),
     Dense(Vec<Polynomial<F>>),
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionInputKernel<F: JoltField> {
     progress: RoundProgress,
     #[cfg_attr(feature = "allocative", allocative(skip))]

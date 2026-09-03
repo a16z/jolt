@@ -833,8 +833,8 @@ fn prove_workload(
     };
 
     // --- The measured window: the full packed prove (OneHotTrace assembly
-    // and native commit, all sumcheck stages, reconstruction, the native
-    // same-point opening). The `jolt_prover::prove` root span covers exactly
+    // and native commit, all sumcheck stages, and the native grouped opening).
+    // The `jolt_prover::prove` root span covers exactly
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
     let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(

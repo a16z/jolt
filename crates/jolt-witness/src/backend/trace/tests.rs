@@ -1113,9 +1113,7 @@ fn advice_rejects_disabled_and_oversized_advice() {
 
 #[test]
 fn excluded_ids_report_their_classification() {
-    use super::oracle::{
-        COMMITTED_PROGRAM_REASON, LATTICE_REASON, PROTOCOL_INTERMEDIATE_REASON, UNSERVED_REASON,
-    };
+    use super::oracle::{COMMITTED_PROGRAM_REASON, PROTOCOL_INTERMEDIATE_REASON, UNSERVED_REASON};
     let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
@@ -1143,12 +1141,6 @@ fn excluded_ids_report_their_classification() {
         JoltCommittedPolynomial::ProgramImageInit,
     ] {
         assert_reason(JoltPolynomialId::Committed(id), COMMITTED_PROGRAM_REASON);
-    }
-    for id in [
-        JoltCommittedPolynomial::BytecodeLookupSelector { chunk: 0 },
-        JoltCommittedPolynomial::ProgramImageBytes,
-    ] {
-        assert_reason(JoltPolynomialId::Committed(id), LATTICE_REASON);
     }
     for id in [
         JoltVirtualPolynomial::Rd,

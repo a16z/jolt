@@ -155,6 +155,7 @@ pub(super) trait MatrixEntry<F: JoltField>: Cell {
 /// Round-0 entry. `val = F::from_u64(prev_val)` stays implicit until the
 /// first bind, cutting the peak layout from 64 to 24 bytes.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(in crate::optimized::registers_read_write) struct SeedEntry {
     pub(super) prev_val: u64,
     pub(super) next_val: u64,
@@ -300,6 +301,7 @@ impl<F: JoltField> MatrixEntry<F> for SeedEntry {
 /// Nonzero register-matrix cell. `C` is a LUT index until saturation, then a
 /// field value; boundary values stay raw until merged.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct SparseEntry<F, C> {
     pub(super) val: F,
     pub(super) prev_val: u64,

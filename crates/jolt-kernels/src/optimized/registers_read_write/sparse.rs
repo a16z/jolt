@@ -10,14 +10,9 @@ use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized};
 
 /// Bound one-hot coefficient values indexed by `u16`. Each bind squares the
 /// table: `(a ≪ bits) | b` maps to `b + r·(a − b)`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CoeffLut<F> {
     /// Power-of-two table with zero fixed at index 0.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) values: Vec<F>,
 }
 
@@ -114,6 +109,7 @@ impl<F: JoltField> OneHotCoeff<F> for F {
 
 /// Newtype avoids overlap with the blanket field-value implementation.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct LutIndex(pub(super) u16);
 
 impl<F: JoltField> OneHotCoeff<F> for LutIndex {
@@ -162,14 +158,9 @@ use ops::{
     bind_sparse_entries_in_place, sparse_quadratic, sparse_quadratic_fused, sparse_quadratic_soa,
 };
 /// Sparse-entry layout: compact seed, indexed SoA, then direct field values.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CyclePhase<F: JoltField> {
     Seed {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         entries: Vec<SeedEntry>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
@@ -178,7 +169,6 @@ enum CyclePhase<F: JoltField> {
     /// First challenge retained; round 1 rebuilds intermediates per 4-row
     /// group instead of storing a `T/2` generation.
     SeedBound {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         entries: Vec<SeedEntry>,
         seed_ra_lut: CoeffLut<F>,
         seed_wa_lut: CoeffLut<F>,
@@ -189,26 +179,20 @@ enum CyclePhase<F: JoltField> {
         rd_inc: Vec<i128>,
     },
     Indexed {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         vals: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
         metas: Vec<IndexedMeta>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
         inc: Polynomial<F>,
     },
     Direct {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         entries: Vec<SparseEntry<F, F>>,
         inc: Polynomial<F>,
     },
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CycleState<F: JoltField>(CyclePhase<F>);
 
 /// First-bind value at half-domain index `y`.

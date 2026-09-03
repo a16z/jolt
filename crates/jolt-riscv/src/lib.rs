@@ -189,6 +189,7 @@ macro_rules! for_each_instruction_kind {
                 VirtualShiftDataB => ShiftDataB => "jolt.virtual.shiftdatab",
                 VirtualShiftDataH => ShiftDataH => "jolt.virtual.shiftdatah",
                 VirtualShiftDataW => ShiftDataW => "jolt.virtual.shiftdataw",
+                VirtualXORROTL1 => VirtualXorRotL1 => "jolt.virtual.xorrotl1",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -303,6 +304,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualShiftDataB => ShiftDataB => (0x009e, "jolt.virtual.shiftdatab"),
                 VirtualShiftDataH => ShiftDataH => (0x009f, "jolt.virtual.shiftdatah"),
                 VirtualShiftDataW => ShiftDataW => (0x00a0, "jolt.virtual.shiftdataw"),
+                VirtualXORROTL1 => VirtualXorRotL1 => (0x00a1, "jolt.virtual.xorrotl1"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

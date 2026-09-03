@@ -16,8 +16,8 @@
 //!   and the RLC-batched joint opening (`dory::prove`), in the compiled
 //!   proof mode (transparent, or BlindFold ZK under the `zk` feature);
 //! - `akita` — the packed pipeline over the lattice PCS: one native
-//!   `OneHotTrace` commitment group, the fused-inc/reconstruction stage
-//!   swaps, and the native same-point joint opening (`akita::prove`).
+//!   `OneHotTrace` commitment group, the fused-increment relation changes,
+//!   and one native grouped opening (`akita::prove`).
 //!
 //! Like `jolt-verifier`, one compiled prover proves exactly one protocol:
 //! the `akita` feature swaps the shared wire types to the packed envelope,

@@ -108,23 +108,15 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
 
 /// `s₁·eq(p₁, ·) + s₂·eq(p₂, ·)` in four ~√T split tables.
 /// Binding folds the exhausted low scalars into one dense high table.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum PairedEq<F> {
     Split {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lo1: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         hi1: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lo2: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         hi2: Vec<F>,
     },
-    Dense(#[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<F>),
+    Dense(Vec<F>),
 }
 
 impl<F: JoltField> PairedEq<F> {
@@ -204,11 +196,7 @@ impl<F: JoltField> PairedEq<F> {
 }
 
 /// Trace rows before the first bind; dense bound tables afterward.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncState<F: JoltField> {
     Rows(BundleStore<IncRow>),
     Dense {
@@ -217,11 +205,7 @@ enum IncState<F: JoltField> {
     },
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct IncKernel<F: JoltField> {
     progress: RoundProgress,
     incs: IncState<F>,

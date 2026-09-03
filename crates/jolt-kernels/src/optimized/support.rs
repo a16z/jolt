@@ -260,13 +260,8 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
 /// round total — one authority for both the challenge history and the
 /// bound-rounds invariant. Kernels that never revisit their challenges use
 /// [`RoundProgress`] instead.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RoundChallenges<F> {
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     challenges: Vec<F>,
     total: usize,
 }
@@ -657,21 +652,14 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
 /// — binding acts linearly on the `j_lo` tensor factor. (jolt-poly's
 /// `LtPolynomial` binds high-to-low only, so the low-to-high variant lives
 /// here.)
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) enum SplitLt<F> {
     Split {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lt_lo: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         lt_hi: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_hi: Vec<F>,
     },
-    Dense(#[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<F>),
+    Dense(Vec<F>),
 }
 
 impl<F: JoltField> SplitLt<F> {
@@ -775,7 +763,8 @@ pub(crate) enum BundleStore<B> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     Owned(RandomAccessRows),
     Retained(
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<B>,
+        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
+         Vec<B>,
     ),
 }
 

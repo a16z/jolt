@@ -364,18 +364,14 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct HammingWeightKernel<F: JoltField> {
     progress: RoundProgress,
     /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
     /// Combined claim weights `W_i`, index-aligned with `g_tables`.
     weight_tables: Vec<Polynomial<F>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     output_openings: Vec<JoltOpeningId>,
 }
 impl<F: JoltField> HammingWeightKernel<F> {

@@ -84,11 +84,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
 
 /// Raw trace values for two rounds; a dense `T/4` table afterward.
 /// Reads have `post == pre`, and no-ops are zero, matching `RamInc`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncColumn<F: JoltField> {
     Raw(RamAccessColumns),
     RawBound {
@@ -105,11 +101,7 @@ fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
     F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncColumn<F>,

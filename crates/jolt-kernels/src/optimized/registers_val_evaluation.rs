@@ -50,15 +50,10 @@ use crate::{
 };
 
 /// Address indices before the first bind; a dense table afterward.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum WaState<F: JoltField> {
     Indices {
         rd: Vec<Option<u8>>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,
     },
     Dense(Polynomial<F>),
@@ -169,11 +164,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
 }
 
 /// Trace rows before the first bind; a dense table afterward.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncState<F: JoltField> {
     Rows(BundleStore<RdIncRow>),
     Dense(Polynomial<F>),
@@ -185,11 +176,7 @@ struct RdIncRow {
     rd_inc: RdInc,
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncState<F>,

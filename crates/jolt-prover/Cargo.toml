@@ -28,7 +28,7 @@ akita = [
   "dep:jolt-akita",
   "jolt-verifier/akita",
   "jolt-claims/akita",
-  "jolt-field/akita",
+  "jolt-field/solinas",
   "jolt-kernels/akita",
   "jolt-prover-legacy/akita",
 ]

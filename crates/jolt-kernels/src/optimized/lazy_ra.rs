@@ -63,7 +63,6 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
     /// offset-major — `tables[i][offset · stride_i + k]` with
     /// `stride_i = tables[i].len() / width` — plus the compact index source.
     Lazy {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         tables: Vec<Vec<F>>,
         /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
         width: usize,

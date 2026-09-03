@@ -48,6 +48,7 @@ use window_sign_pow2::WindowSignPow2Suffix;
 use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
+use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
 use xor_rotw::XorRotWSuffix;
 
 pub mod align_addr;
@@ -96,6 +97,7 @@ pub mod window_sign_pow2;
 pub mod x31_y0;
 pub mod xor;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 
 pub trait SparseDenseSuffix: 'static + Sync {
@@ -168,6 +170,9 @@ pub enum Suffixes {
     OffsetScaleB,
     OffsetScaleH,
     OffsetScaleW,
+    XorRotL1Pairs,
+    TopYBit,
+    BottomXBit,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -192,6 +197,8 @@ impl Suffixes {
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
                 | Suffixes::WindowSign
+                | Suffixes::TopYBit
+                | Suffixes::BottomXBit
         )
     }
 
@@ -261,6 +268,9 @@ impl Suffixes {
             Suffixes::OffsetScaleB => OffsetScaleSuffix::<XLEN, 1>::suffix_mle(b),
             Suffixes::OffsetScaleH => OffsetScaleSuffix::<XLEN, 2>::suffix_mle(b),
             Suffixes::OffsetScaleW => OffsetScaleSuffix::<XLEN, 4>::suffix_mle(b),
+            Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
+            Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
+            Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
         }
     }
 }

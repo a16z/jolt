@@ -23,6 +23,7 @@
 mod adapters;
 pub mod configs;
 mod native_batching;
+mod planning;
 pub mod schedule_registry;
 pub mod schedules;
 mod scheme;
@@ -41,7 +42,7 @@ pub use adapters::{
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
-pub use schedule_registry::AdviceScheduleParams;
+pub use schedule_registry::PrecommittedScheduleParams;
 pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotRows, TracePackedOneHot};
 

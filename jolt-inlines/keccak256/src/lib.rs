@@ -5,10 +5,14 @@
 pub const INLINE_OPCODE: u32 = 0x0B;
 
 pub const KECCAK256_FUNCT3: u32 = 0x00;
+pub const KECCAK256_ABSORB_PERMUTE_FUNCT3: u32 = 0x01;
 pub const KECCAK256_FUNCT7: u32 = 0x01;
 pub const KECCAK256_NAME: &str = "KECCAK256_INLINE";
+pub const KECCAK256_ABSORB_PERMUTE_NAME: &str = "KECCAK256_ABSORB_PERMUTE_INLINE";
 
 pub const NUM_LANES: usize = 25;
+pub const RATE_IN_BYTES: usize = 136;
+pub const RATE_IN_U64: usize = RATE_IN_BYTES / 8;
 pub type Keccak256State = [u64; NUM_LANES];
 
 pub mod sdk;

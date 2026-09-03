@@ -133,11 +133,7 @@ impl<F: JoltField> CombineCoefficients<F> {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     progress: RoundProgress,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
@@ -146,7 +142,6 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     /// Native rows used to recover individual output claims.
     rows: BundleStore<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bound_challenges: Vec<F>,
 }
 

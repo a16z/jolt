@@ -56,11 +56,7 @@ use crate::{
 
 /// Raw columns, cycle matrix, address matrix, then bound values.
 /// The first bind creates the first sparse entry vector at half size.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F: JoltField> {
     Round0 {
         columns: RamAccessColumns,
@@ -84,11 +80,7 @@ enum Phase<F: JoltField> {
     },
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
     /// The committed per-cycle increment column, bound alongside phase 1;

@@ -232,47 +232,31 @@ fn gather_h_prime<F: JoltField>(
     clippy::large_enum_variant,
     reason = "one kernel object per proof; boxing buys nothing"
 )]
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F: JoltField> {
     /// Rounds over the low (prefix) cycle variables: six `O(√T)` tables. The
     /// suffix eq tables and the transition inputs (columns, address eq,
     /// low-half cycle points, collected challenges) ride along.
     Prefix {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         p: [Vec<F>; TERMS],
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         q: [Vec<F>; TERMS],
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         eq_hi: [Vec<F>; TERMS],
         addresses: Arc<Vec<u32>>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         r_cycle_lo: [Vec<F>; TERMS],
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         challenges: Vec<F>,
     },
     /// Rounds over the high (suffix) cycle variables after the regather.
     /// `scales[x] = eq(r_x_lo, r_prefix)` — the bound prefix eq factors.
     Suffix {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         h: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         eq_hi: [Vec<F>; TERMS],
         #[cfg_attr(feature = "allocative", allocative(skip))]
         scales: [F; TERMS],
     },
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RaReductionKernel<F: JoltField> {
     progress: RoundProgress,
     prefix_bits: usize,

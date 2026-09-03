@@ -120,11 +120,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ReadWriteKernel<F: JoltField> {
     log_t: usize,
     log_k: usize,
@@ -133,11 +129,8 @@ struct ReadWriteKernel<F: JoltField> {
     cycle: CycleState<F>,
     gruen: GruenSplitEqPolynomial<F>,
     // Address-phase dense state (K-sized), materialized at the transition.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     ra: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     wa: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     val: Vec<F>,
     /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
     #[cfg_attr(feature = "allocative", allocative(skip))]
