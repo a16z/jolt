@@ -57,6 +57,7 @@ num-traits = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
+libc = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
