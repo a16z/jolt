@@ -65,8 +65,6 @@ fn print_shape(layout: &Layout) {
         layout.selected.len(),
         layout.digit_ops.len()
     );
-    let cost: usize = layout.pieces().iter().map(|p| p.kernel.cost()).sum();
-    println!("fixed-kernel verifier cost ≈ {cost} field multiplications");
 }
 
 #[test]

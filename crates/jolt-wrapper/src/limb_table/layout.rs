@@ -508,27 +508,6 @@ impl Kernel {
             .into_iter()
             .fold(Fr::one(), |acc, group| acc * field_mle(&group, r, r_src))
     }
-
-    /// Native verifier cost in field multiplications, the reporting unit.
-    pub fn cost(&self) -> usize {
-        self.factors
-            .iter()
-            .map(|factor| match &factor.rel {
-                Rel::Shift(_) => 32 * usize::from(factor.u.width()),
-                Rel::Const(_) => usize::from(factor.v.width()) + 8 * usize::from(factor.u.width()),
-                Rel::Map(map) => {
-                    map.iter().flatten().count()
-                        * usize::from(factor.u.width() + factor.v.width() + 1)
-                }
-                Rel::Weight(weights) => {
-                    weights.iter().filter(|w| **w != 0).count() * usize::from(factor.u.width() + 1)
-                }
-                Rel::Table(pairs) => {
-                    pairs.len() * usize::from(factor.u.width() + factor.v.width() + 1)
-                }
-            })
-            .sum()
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
