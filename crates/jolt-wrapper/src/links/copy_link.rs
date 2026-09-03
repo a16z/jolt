@@ -1,20 +1,30 @@
+use std::collections::BTreeMap;
+
 use ark_bn254::Fr as ArkFr;
 use ark_ff::batch_inversion;
-use jolt_field::{Fr, Ring, Zero};
+use jolt_field::{Fr, One, Ring, Zero};
 use jolt_hyperkzg::{NoopVerifierObserver, VerifierObserver};
-use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 
 use super::{LinkError, DEGREE, WIRES};
 
-/// VK columns describing three link slots per row. `ids` are logical edge
+#[derive(Clone, Copy, Debug)]
+struct ActivePosition {
+    row: usize,
+    wire: usize,
+    selector: Fr,
+    id: Fr,
+}
+
+/// VK data describing three link slots per row. `ids` are logical edge
 /// identifiers shared by the two sides; selectors disable unused slots.
 #[derive(Clone, Debug)]
 pub struct CopyLinkSide {
-    pub selectors: [Vec<Fr>; WIRES],
-    pub ids: [Vec<Fr>; WIRES],
+    rows: usize,
+    active: Vec<ActivePosition>,
 }
 
 impl CopyLinkSide {
@@ -31,7 +41,31 @@ impl CopyLinkSide {
                 actual: rows,
             });
         }
-        Ok(Self { selectors, ids })
+        let active = (0..rows)
+            .flat_map(|row| {
+                let selectors = &selectors;
+                let ids = &ids;
+                (0..WIRES).filter_map(move |wire| {
+                    let selector = selectors[wire][row];
+                    (!selector.is_zero()).then_some(ActivePosition {
+                        row,
+                        wire,
+                        selector,
+                        id: ids[wire][row],
+                    })
+                })
+            })
+            .collect();
+        Ok(Self { rows, active })
+    }
+
+    pub fn fixed_columns(&self) -> [Vec<Fr>; 2 * WIRES] {
+        let mut columns = std::array::from_fn(|_| vec![Fr::zero(); self.rows]);
+        for position in &self.active {
+            columns[position.wire][position.row] = position.selector;
+            columns[WIRES + position.wire][position.row] = position.id;
+        }
+        columns
     }
 }
 
@@ -44,11 +78,11 @@ pub struct CopyLink {
 
 impl CopyLink {
     pub fn new(left: CopyLinkSide, right: CopyLinkSide) -> Result<Self, LinkError> {
-        let rows = left.selectors[0].len();
-        if right.selectors[0].len() != rows {
+        let rows = left.rows;
+        if right.rows != rows {
             return Err(LinkError::RowDomain {
                 minimum: rows,
-                actual: right.selectors[0].len(),
+                actual: right.rows,
             });
         }
         Ok(Self { left, right, rows })
@@ -58,108 +92,217 @@ impl CopyLink {
         self.rows
     }
 
-    pub fn witness(
+    pub fn witness<L: CopyLinkValueSource, R: CopyLinkValueSource>(
         &self,
-        left_values: [Vec<Fr>; WIRES],
-        right_values: [Vec<Fr>; WIRES],
+        left_values: [L; WIRES],
+        right_values: [R; WIRES],
         beta: Fr,
         gamma: Fr,
-    ) -> Result<CopyLinkWitness, LinkError> {
-        if left_values
-            .iter()
-            .chain(&right_values)
-            .any(|column| column.len() != self.rows)
-        {
-            return Err(LinkError::Claims);
-        }
-        let mut denominators = Vec::new();
-        let mut positions = Vec::new();
-        for row in 0..self.rows {
-            for (wire, ((values, ids), selectors)) in left_values
-                .iter()
-                .zip(&self.left.ids)
-                .zip(&self.left.selectors)
-                .enumerate()
-            {
-                if !selectors[row].is_zero() {
-                    denominators.push(gamma + values[row] + beta * ids[row]);
-                    positions.push((0, row, wire));
-                }
-            }
-            for (wire, ((values, ids), selectors)) in right_values
-                .iter()
-                .zip(&self.right.ids)
-                .zip(&self.right.selectors)
-                .enumerate()
-            {
-                if !selectors[row].is_zero() {
-                    denominators.push(gamma + values[row] + beta * ids[row]);
-                    positions.push((1, row, wire));
-                }
-            }
-        }
-        if denominators.iter().any(Zero::is_zero) {
-            return Err(LinkError::ZeroDenominator);
-        }
-        let mut inverses: Vec<ArkFr> = denominators.iter().copied().map(ArkFr::from).collect();
-        batch_inversion(&mut inverses);
-        let mut helpers = [vec![Fr::zero(); self.rows], vec![Fr::zero(); self.rows]];
-        for (&(side, row, wire), inverse) in positions.iter().zip(inverses) {
-            let selectors = if side == 0 {
-                &self.left.selectors
-            } else {
-                &self.right.selectors
-            };
-            helpers[side][row] += selectors[wire][row] * Fr::from(inverse);
-        }
-        Ok(CopyLinkWitness {
+    ) -> Result<CopyLinkWitness<L, R>, LinkError> {
+        let mut witnesses = batch_witnesses(std::iter::once((
+            self,
             left_values,
             right_values,
-            helpers,
-        })
+            beta,
+            gamma,
+        )))?;
+        witnesses.pop().ok_or(LinkError::Claims)
     }
 
-    pub fn check(&self, witness: &CopyLinkWitness, beta: Fr, gamma: Fr) -> Result<(), LinkError> {
-        let mut sum = Fr::zero();
-        for row in 0..self.rows {
-            for (side, values, helper) in [
-                (&self.left, &witness.left_values, witness.helpers[0][row]),
-                (&self.right, &witness.right_values, witness.helpers[1][row]),
-            ] {
-                let values = std::array::from_fn(|wire| values[wire][row]);
-                let ids = std::array::from_fn(|wire| side.ids[wire][row]);
-                let selectors = std::array::from_fn(|wire| side.selectors[wire][row]);
-                if grouped_selected_relation(values, ids, selectors, helper, beta, gamma)
-                    != Fr::zero()
-                {
-                    return Err(LinkError::Copy);
-                }
-            }
-            sum += witness.helpers[0][row] - witness.helpers[1][row];
-        }
-        if sum.is_zero() {
+    pub fn check<L: CopyLinkValueSource, R: CopyLinkValueSource>(
+        &self,
+        witness: &CopyLinkWitness<L, R>,
+        beta: Fr,
+        gamma: Fr,
+    ) -> Result<(), LinkError> {
+        check_side(
+            &self.left,
+            &witness.left_values,
+            &witness.helpers[0],
+            beta,
+            gamma,
+        )?;
+        check_side(
+            &self.right,
+            &witness.right_values,
+            &witness.helpers[1],
+            beta,
+            gamma,
+        )?;
+        if witness.helper_sum().is_zero() {
             Ok(())
         } else {
             Err(LinkError::Copy)
         }
     }
 
-    pub fn prover(
-        &self,
-        witness: &CopyLinkWitness,
+    pub fn prover<'a, L: CopyLinkValueSource, R: CopyLinkValueSource>(
+        &'a self,
+        witness: &'a CopyLinkWitness<L, R>,
         tau: Vec<Fr>,
         beta: Fr,
         gamma: Fr,
         weights: [Fr; 3],
-    ) -> CopyLinkProver {
+    ) -> CopyLinkProver<'a, L, R> {
         CopyLinkProver::new(self, witness, tau, beta, gamma, weights)
     }
 }
 
-pub struct CopyLinkWitness {
-    pub left_values: [Vec<Fr>; WIRES],
-    pub right_values: [Vec<Fr>; WIRES],
-    pub helpers: [Vec<Fr>; 2],
+pub trait CopyLinkValueSource: Sync {
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    fn value(&self, row: usize) -> Fr;
+}
+
+impl CopyLinkValueSource for Vec<Fr> {
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn value(&self, row: usize) -> Fr {
+        self[row]
+    }
+}
+
+pub struct CopyLinkWitness<L = Vec<Fr>, R = Vec<Fr>> {
+    left_values: [L; WIRES],
+    right_values: [R; WIRES],
+    helpers: [Vec<(usize, Fr)>; 2],
+    rows: usize,
+}
+
+impl<L, R> CopyLinkWitness<L, R> {
+    pub fn helper_columns(&self) -> [Vec<Fr>; 2] {
+        self.helpers.each_ref().map(|helper| {
+            let mut column = vec![Fr::zero(); self.rows];
+            for &(row, value) in helper {
+                column[row] = value;
+            }
+            column
+        })
+    }
+
+    fn helper_sum(&self) -> Fr {
+        self.helpers[0].iter().map(|(_, value)| *value).sum::<Fr>()
+            - self.helpers[1].iter().map(|(_, value)| *value).sum::<Fr>()
+    }
+}
+
+pub(crate) fn batch_witnesses<'a, L, R>(
+    requests: impl IntoIterator<Item = (&'a CopyLink, [L; WIRES], [R; WIRES], Fr, Fr)>,
+) -> Result<Vec<CopyLinkWitness<L, R>>, LinkError>
+where
+    L: CopyLinkValueSource,
+    R: CopyLinkValueSource,
+{
+    let requests = requests.into_iter().collect::<Vec<_>>();
+    if requests.iter().any(|(link, left, right, _, _)| {
+        left.iter()
+            .map(|source| source.len())
+            .chain(right.iter().map(|source| source.len()))
+            .any(|rows| rows != link.rows)
+    }) {
+        return Err(LinkError::Claims);
+    }
+    let denominator_count = requests
+        .iter()
+        .map(|(link, _, _, _, _)| link.left.active.len() + link.right.active.len())
+        .sum();
+    let mut denominators = Vec::with_capacity(denominator_count);
+    let mut positions = Vec::with_capacity(denominator_count);
+    for (index, (link, left, right, beta, gamma)) in requests.iter().enumerate() {
+        append_denominators(
+            &mut denominators,
+            &mut positions,
+            (index, 0),
+            &link.left,
+            left,
+            *beta,
+            *gamma,
+        );
+        append_denominators(
+            &mut denominators,
+            &mut positions,
+            (index, 1),
+            &link.right,
+            right,
+            *beta,
+            *gamma,
+        );
+    }
+    if denominators.iter().any(Zero::is_zero) {
+        return Err(LinkError::ZeroDenominator);
+    }
+    let mut inverses: Vec<ArkFr> = denominators.into_iter().map(ArkFr::from).collect();
+    batch_inversion(&mut inverses);
+    let mut helpers = (0..requests.len())
+        .map(|_| [Vec::new(), Vec::new()])
+        .collect::<Vec<_>>();
+    for ((index, side, row, selector), inverse) in positions.into_iter().zip(inverses) {
+        let value = selector * Fr::from(inverse);
+        let helper = &mut helpers[index][side];
+        if let Some((_, last_value)) = helper.last_mut().filter(|(last_row, _)| *last_row == row) {
+            *last_value += value;
+        } else {
+            helper.push((row, value));
+        }
+    }
+    Ok(requests
+        .into_iter()
+        .zip(helpers)
+        .map(
+            |((link, left_values, right_values, _, _), helpers)| CopyLinkWitness {
+                left_values,
+                right_values,
+                helpers,
+                rows: link.rows,
+            },
+        )
+        .collect())
+}
+
+fn append_denominators<S: CopyLinkValueSource>(
+    denominators: &mut Vec<Fr>,
+    positions: &mut Vec<(usize, usize, usize, Fr)>,
+    location: (usize, usize),
+    side: &CopyLinkSide,
+    values: &[S; WIRES],
+    beta: Fr,
+    gamma: Fr,
+) {
+    for position in &side.active {
+        denominators.push(gamma + values[position.wire].value(position.row) + beta * position.id);
+        positions.push((location.0, location.1, position.row, position.selector));
+    }
+}
+
+fn check_side<S: CopyLinkValueSource>(
+    side: &CopyLinkSide,
+    values: &[S; WIRES],
+    helpers: &[(usize, Fr)],
+    beta: Fr,
+    gamma: Fr,
+) -> Result<(), LinkError> {
+    let mut active = side.active.iter().peekable();
+    for &(row, helper) in helpers {
+        let mut ids = [Fr::zero(); WIRES];
+        let mut selectors = [Fr::zero(); WIRES];
+        while active.peek().is_some_and(|position| position.row < row) {
+            let _ = active.next();
+        }
+        while active.peek().is_some_and(|position| position.row == row) {
+            let position = active.next().ok_or(LinkError::Claims)?;
+            ids[position.wire] = position.id;
+            selectors[position.wire] = position.selector;
+        }
+        let values = std::array::from_fn(|wire| values[wire].value(row));
+        if !grouped_selected_relation(values, ids, selectors, helper, beta, gamma).is_zero() {
+            return Err(LinkError::Copy);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,11 +316,264 @@ pub struct CopyLinkClaims {
     pub helpers: [Fr; 2],
 }
 
-const COPY_COLUMNS: usize = 20;
+const SPARSE_BIND_ROUNDS: usize = 3;
 
-pub struct CopyLinkProver {
-    columns: [Polynomial<Fr>; COPY_COLUMNS],
-    eq: Polynomial<Fr>,
+#[derive(Clone, Copy, Default)]
+struct SparseClaims {
+    left_selectors: [Fr; WIRES],
+    left_ids: [Fr; WIRES],
+    right_selectors: [Fr; WIRES],
+    right_ids: [Fr; WIRES],
+    helpers: [Fr; 2],
+}
+
+impl SparseClaims {
+    fn bind(self, other: Self, challenge: Fr) -> Self {
+        let interpolate = |left: Fr, right: Fr| left + challenge * (right - left);
+        Self {
+            left_selectors: std::array::from_fn(|i| {
+                interpolate(self.left_selectors[i], other.left_selectors[i])
+            }),
+            left_ids: std::array::from_fn(|i| interpolate(self.left_ids[i], other.left_ids[i])),
+            right_selectors: std::array::from_fn(|i| {
+                interpolate(self.right_selectors[i], other.right_selectors[i])
+            }),
+            right_ids: std::array::from_fn(|i| interpolate(self.right_ids[i], other.right_ids[i])),
+            helpers: std::array::from_fn(|i| interpolate(self.helpers[i], other.helpers[i])),
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.left_selectors
+            .iter()
+            .chain(&self.left_ids)
+            .chain(&self.right_selectors)
+            .chain(&self.right_ids)
+            .chain(&self.helpers)
+            .all(Zero::is_zero)
+    }
+
+    fn claims(self, values: [Fr; 2 * WIRES]) -> CopyLinkClaims {
+        CopyLinkClaims {
+            left_selectors: self.left_selectors,
+            left_ids: self.left_ids,
+            left_values: std::array::from_fn(|i| values[i]),
+            right_selectors: self.right_selectors,
+            right_ids: self.right_ids,
+            right_values: std::array::from_fn(|i| values[WIRES + i]),
+            helpers: self.helpers,
+        }
+    }
+}
+
+struct SparseRows {
+    values: Vec<(usize, SparseClaims)>,
+    len: usize,
+}
+
+impl SparseRows {
+    fn new<L, R>(link: &CopyLink, witness: &CopyLinkWitness<L, R>) -> Self {
+        let mut rows = BTreeMap::<usize, SparseClaims>::new();
+        for position in &link.left.active {
+            let claims = rows.entry(position.row).or_default();
+            claims.left_selectors[position.wire] = position.selector;
+            claims.left_ids[position.wire] = position.id;
+        }
+        for position in &link.right.active {
+            let claims = rows.entry(position.row).or_default();
+            claims.right_selectors[position.wire] = position.selector;
+            claims.right_ids[position.wire] = position.id;
+        }
+        for (side, helpers) in witness.helpers.iter().enumerate() {
+            for &(row, helper) in helpers {
+                rows.entry(row).or_default().helpers[side] = helper;
+            }
+        }
+        Self {
+            values: rows.into_iter().collect(),
+            len: link.rows,
+        }
+    }
+
+    fn pairs(&self) -> Vec<(usize, SparseClaims, SparseClaims)> {
+        let half = self.len / 2;
+        let split = self.values.partition_point(|(row, _)| *row < half);
+        let (low, high) = self.values.split_at(split);
+        let mut low = low.iter().peekable();
+        let mut high = high.iter().peekable();
+        let mut pairs = Vec::with_capacity(self.values.len());
+        while low.peek().is_some() || high.peek().is_some() {
+            let low_index = low.peek().map(|(row, _)| *row);
+            let high_index = high.peek().map(|(row, _)| *row - half);
+            let index = match (low_index, high_index) {
+                (Some(low), Some(high)) => low.min(high),
+                (Some(low), None) => low,
+                (None, Some(high)) => high,
+                (None, None) => unreachable!("one sparse pair remains"),
+            };
+            let low_value = low
+                .next_if(|(row, _)| *row == index)
+                .map_or_else(SparseClaims::default, |(_, value)| *value);
+            let high_value = high
+                .next_if(|(row, _)| *row == index + half)
+                .map_or_else(SparseClaims::default, |(_, value)| *value);
+            pairs.push((index, low_value, high_value));
+        }
+        pairs
+    }
+
+    fn bind(&mut self, challenge: Fr) {
+        self.values = self
+            .pairs()
+            .into_iter()
+            .filter_map(|(index, low, high)| {
+                let value = low.bind(high, challenge);
+                (!value.is_zero()).then_some((index, value))
+            })
+            .collect();
+        self.len /= 2;
+    }
+
+    fn final_claims(&self) -> SparseClaims {
+        self.values
+            .first()
+            .filter(|(row, _)| *row == 0)
+            .map_or_else(SparseClaims::default, |(_, value)| *value)
+    }
+}
+
+enum BoundValues<'a, L, R> {
+    Borrowed {
+        left: &'a [L; WIRES],
+        right: &'a [R; WIRES],
+        weights: Vec<Fr>,
+        len: usize,
+    },
+    Dense([Polynomial<Fr>; 2 * WIRES]),
+}
+
+impl<L: CopyLinkValueSource, R: CopyLinkValueSource> BoundValues<'_, L, R> {
+    fn pair(&self, index: usize) -> ([Fr; 2 * WIRES], [Fr; 2 * WIRES]) {
+        match self {
+            Self::Borrowed {
+                left,
+                right,
+                weights,
+                len,
+            } => {
+                let half = len / 2;
+                let evaluate = |source: &dyn CopyLinkValueSource, suffix| {
+                    weights
+                        .iter()
+                        .enumerate()
+                        .map(|(prefix, &weight)| weight * source.value(suffix + prefix * *len))
+                        .sum()
+                };
+                let low = std::array::from_fn(|column| {
+                    if column < WIRES {
+                        evaluate(&left[column], index)
+                    } else {
+                        evaluate(&right[column - WIRES], index)
+                    }
+                });
+                let high = std::array::from_fn(|column| {
+                    if column < WIRES {
+                        evaluate(&left[column], index + half)
+                    } else {
+                        evaluate(&right[column - WIRES], index + half)
+                    }
+                });
+                (low, high)
+            }
+            Self::Dense(columns) => {
+                let half = columns[0].len() / 2;
+                (
+                    std::array::from_fn(|column| columns[column].evals()[index]),
+                    std::array::from_fn(|column| columns[column].evals()[index + half]),
+                )
+            }
+        }
+    }
+
+    fn bind(&mut self, challenge: Fr) {
+        match self {
+            Self::Borrowed {
+                left,
+                right,
+                weights,
+                len,
+            } => {
+                let old = std::mem::take(weights);
+                weights.reserve(2 * old.len());
+                for weight in old {
+                    let high = weight * challenge;
+                    weights.push(weight - high);
+                    weights.push(high);
+                }
+                *len /= 2;
+                if weights.len() == 1 << SPARSE_BIND_ROUNDS || *len == 1 {
+                    let bound_len = *len;
+                    let dense = std::array::from_fn(|column| {
+                        let source: &dyn CopyLinkValueSource = if column < WIRES {
+                            &left[column]
+                        } else {
+                            &right[column - WIRES]
+                        };
+                        let values = (0..bound_len)
+                            .into_par_iter()
+                            .map(|suffix| {
+                                weights
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(prefix, &weight)| {
+                                        weight * source.value(suffix + prefix * bound_len)
+                                    })
+                                    .sum()
+                            })
+                            .collect();
+                        Polynomial::new(values)
+                    });
+                    *self = Self::Dense(dense);
+                }
+            }
+            Self::Dense(columns) => {
+                for column in columns {
+                    column.bind_with_order(challenge, BindingOrder::HighToLow);
+                }
+            }
+        }
+    }
+
+    fn finals(&self) -> [Fr; 2 * WIRES] {
+        match self {
+            Self::Borrowed {
+                left,
+                right,
+                weights,
+                len,
+            } => std::array::from_fn(|column| {
+                let source: &dyn CopyLinkValueSource = if column < WIRES {
+                    &left[column]
+                } else {
+                    &right[column - WIRES]
+                };
+                weights
+                    .iter()
+                    .enumerate()
+                    .map(|(prefix, &weight)| weight * source.value(prefix * *len))
+                    .sum()
+            }),
+            Self::Dense(columns) => std::array::from_fn(|column| columns[column].evals()[0]),
+        }
+    }
+}
+
+pub struct CopyLinkProver<'a, L = Vec<Fr>, R = Vec<Fr>> {
+    sparse: SparseRows,
+    values: BoundValues<'a, L, R>,
+    tau: Vec<Fr>,
+    point: Vec<Fr>,
+    eq_prefix: Fr,
     beta: Fr,
     gamma: Fr,
     weights: [Fr; 3],
@@ -185,41 +581,33 @@ pub struct CopyLinkProver {
     input_claim: Fr,
 }
 
-impl CopyLinkProver {
+impl<'a, L: CopyLinkValueSource, R: CopyLinkValueSource> CopyLinkProver<'a, L, R> {
     fn new(
         link: &CopyLink,
-        witness: &CopyLinkWitness,
+        witness: &'a CopyLinkWitness<L, R>,
         tau: Vec<Fr>,
         beta: Fr,
         gamma: Fr,
         weights: [Fr; 3],
     ) -> Self {
         assert_eq!(tau.len(), link.rows.trailing_zeros() as usize);
-        let values: [Vec<Fr>; COPY_COLUMNS] = std::array::from_fn(|column| match column {
-            0..=2 => link.left.selectors[column].clone(),
-            3..=5 => link.left.ids[column - 3].clone(),
-            6..=8 => witness.left_values[column - 6].clone(),
-            9..=11 => link.right.selectors[column - 9].clone(),
-            12..=14 => link.right.ids[column - 12].clone(),
-            15..=17 => witness.right_values[column - 15].clone(),
-            18..=19 => witness.helpers[column - 18].clone(),
-            _ => unreachable!("copy column count"),
-        });
-        let eq = EqPolynomial::<Fr>::evals(&tau, None);
-        let input_claim = (0..link.rows)
-            .into_par_iter()
-            .map(|row| {
-                let claims = claims_at(&values, row);
-                copy_link_value(beta, gamma, weights, eq[row], &claims)
-            })
-            .sum();
+        let input_claim = weights[2] * witness.helper_sum();
+        let rounds = tau.len();
         Self {
-            columns: values.map(Polynomial::new),
-            eq: Polynomial::new(eq),
+            sparse: SparseRows::new(link, witness),
+            values: BoundValues::Borrowed {
+                left: &witness.left_values,
+                right: &witness.right_values,
+                weights: vec![Fr::one()],
+                len: link.rows,
+            },
+            tau,
+            point: Vec::new(),
+            eq_prefix: Fr::one(),
             beta,
             gamma,
             weights,
-            rounds: tau.len(),
+            rounds,
             input_claim,
         }
     }
@@ -229,20 +617,38 @@ impl CopyLinkProver {
     }
 
     pub fn claims(&self) -> CopyLinkClaims {
-        let values: [Fr; COPY_COLUMNS] =
-            std::array::from_fn(|column| self.columns[column].evals()[0]);
-        claims_from_values(&values)
+        self.sparse.final_claims().claims(self.values.finals())
     }
 
     fn bind(&mut self, challenge: Fr) {
-        for column in &mut self.columns {
-            column.bind_with_order(challenge, BindingOrder::HighToLow);
-        }
-        self.eq.bind_with_order(challenge, BindingOrder::HighToLow);
+        let tau = self.tau[self.point.len()];
+        self.eq_prefix *= Fr::one() - tau + challenge * (tau + tau - Fr::one());
+        self.point.push(challenge);
+        self.sparse.bind(challenge);
+        self.values.bind(challenge);
+    }
+
+    fn eq_pair(&self, index: usize) -> (Fr, Fr) {
+        let tau = &self.tau[self.point.len()..];
+        let current = tau[0];
+        let suffix =
+            tau[1..]
+                .iter()
+                .enumerate()
+                .fold(self.eq_prefix, |value, (offset, &challenge)| {
+                    let bit = 1 << (tau.len() - 2 - offset);
+                    value
+                        * if index & bit == 0 {
+                            Fr::one() - challenge
+                        } else {
+                            challenge
+                        }
+                });
+        (suffix * (Fr::one() - current), suffix * current)
     }
 }
 
-impl ProveRounds<Fr> for CopyLinkProver {
+impl<L: CopyLinkValueSource, R: CopyLinkValueSource> ProveRounds<Fr> for CopyLinkProver<'_, L, R> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -256,29 +662,21 @@ impl ProveRounds<Fr> for CopyLinkProver {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        let evaluations = (0..self.eq.len() / 2)
+        let pairs = self.sparse.pairs();
+        let evaluations = pairs
             .into_par_iter()
-            .map(|index| {
+            .map(|(index, low_sparse, high_sparse)| {
                 let mut local = [Fr::zero(); DEGREE + 1];
+                let (low_values, high_values) = self.values.pair(index);
+                let (low_eq, high_eq) = self.eq_pair(index);
                 for (x, value) in local.iter_mut().enumerate() {
                     let x = Fr::from_u64(x as u64);
-                    let columns: [Fr; COPY_COLUMNS] = std::array::from_fn(|column| {
-                        self.columns[column].sumcheck_round_eval_with_order(
-                            index,
-                            x,
-                            BindingOrder::HighToLow,
-                        )
+                    let values = std::array::from_fn(|column| {
+                        low_values[column] + x * (high_values[column] - low_values[column])
                     });
-                    let eq =
-                        self.eq
-                            .sumcheck_round_eval_with_order(index, x, BindingOrder::HighToLow);
-                    *value = copy_link_value(
-                        self.beta,
-                        self.gamma,
-                        self.weights,
-                        eq,
-                        &claims_from_values(&columns),
-                    );
+                    let claims = low_sparse.bind(high_sparse, x).claims(values);
+                    let eq = low_eq + x * (high_eq - low_eq);
+                    *value = copy_link_value(self.beta, self.gamma, self.weights, eq, &claims);
                 }
                 local
             })
@@ -304,23 +702,6 @@ impl ProveRounds<Fr> for CopyLinkProver {
     fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
         self.bind(bind);
         Ok(())
-    }
-}
-
-fn claims_at(values: &[Vec<Fr>; COPY_COLUMNS], row: usize) -> CopyLinkClaims {
-    let row_values: [Fr; COPY_COLUMNS] = std::array::from_fn(|column| values[column][row]);
-    claims_from_values(&row_values)
-}
-
-fn claims_from_values(values: &[Fr; COPY_COLUMNS]) -> CopyLinkClaims {
-    CopyLinkClaims {
-        left_selectors: [values[0], values[1], values[2]],
-        left_ids: [values[3], values[4], values[5]],
-        left_values: [values[6], values[7], values[8]],
-        right_selectors: [values[9], values[10], values[11]],
-        right_ids: [values[12], values[13], values[14]],
-        right_values: [values[15], values[16], values[17]],
-        helpers: [values[18], values[19]],
     }
 }
 
@@ -430,7 +811,7 @@ mod tests {
         let left = CopyLinkSide::new(selectors.clone(), left_ids).unwrap();
         let right = CopyLinkSide::new(selectors, right_ids).unwrap();
         let link = CopyLink::new(left, right).unwrap();
-        let values = std::array::from_fn(|wire| {
+        let values: [Vec<Fr>; WIRES] = std::array::from_fn(|wire| {
             (0..rows)
                 .map(|row| Fr::from_u64((10 * wire + row) as u64))
                 .collect()

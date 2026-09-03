@@ -273,16 +273,11 @@ fn real_wrapper_round_trip_and_tampers() {
     let witness_base = phase_1a_columns.len();
     phase_1a_columns.push(Column::Fr(witness_values.clone()));
     pad_fr(&mut phase_1a_columns, k);
-    let mut copy_fixed_bases = Vec::with_capacity(copy_count);
-    for index in 0..copy_count {
-        copy_fixed_bases.push(phase_1a_columns.len());
-        phase_1a_columns.extend(
-            verifier_key
-                .copy_fixed_columns(index)
-                .expect("canonical copy link"),
-        );
-        pad_fr(&mut phase_1a_columns, k);
-    }
+    let copy_fixed_base = phase_1a_columns.len();
+    let copy_fixed_columns = verifier_key.copy_fixed_columns();
+    let copy_vk_groups = copy_fixed_columns.len().div_ceil(k);
+    phase_1a_columns.extend(copy_fixed_columns);
+    pad_fr(&mut phase_1a_columns, k);
     let phase_1a_groups = phase_1a_columns.len() / k;
     let t2_group_offset = phase_1a_groups;
     let t2_phases = t2_commitment_phases(k);
@@ -297,7 +292,6 @@ fn real_wrapper_round_trip_and_tampers() {
         "wrapper Fiat-Shamir phase schedule"
     );
     let t2_vk_groups = t2_vk_group_range(k, 0).len();
-    let helper_groups = (2 * copy_count).div_ceil(k);
     let total_groups = statement
         .commitment_phases
         .iter()
@@ -366,38 +360,31 @@ fn real_wrapper_round_trip_and_tampers() {
     let copy_root = commitments.challenges()[t2_after_1b_offset + 3];
     let phase_2b_commit_ms = lap_ms(&honest_started, &mut previous);
 
-    let copy_witnesses = (0..copy_count)
-        .zip(&copy_challenges)
-        .map(|(index, &(beta, gamma))| {
-            let (left, right) = verifier_key
-                .copy_values(
-                    index,
-                    &preparation.hash_table,
-                    &witness_values,
-                    &t2_base.columns,
-                )
-                .expect("canonical copy values");
-            let link = verifier_key.copy_link(index).expect("canonical copy link");
-            let witness = link
-                .witness(left, right, beta, gamma)
-                .expect("linked transcript witness");
-            link.check(&witness, beta, gamma)
-                .unwrap_or_else(|error| panic!("linked transcript equality {index}: {error}"));
-            witness
-        })
-        .collect::<Vec<_>>();
-    let mut helper_columns = copy_witnesses
+    let copy_witnesses = verifier_key
+        .copy_witnesses(
+            &preparation.hash_table,
+            &witness_values,
+            &t2_base.columns,
+            &copy_challenges,
+        )
+        .expect("linked transcript witnesses");
+    for (index, (witness, &(beta, gamma))) in
+        copy_witnesses.iter().zip(&copy_challenges).enumerate()
+    {
+        let link = verifier_key.copy_link(index).expect("canonical copy link");
+        link.check(witness, beta, gamma)
+            .unwrap_or_else(|error| panic!("linked transcript equality {index}: {error}"));
+    }
+    let helper_columns = copy_witnesses
         .iter()
-        .flat_map(|witness| witness.helpers.iter().cloned())
+        .flat_map(|witness| witness.helper_columns())
         .map(Column::Fr)
         .collect::<Vec<_>>();
-    pad_fr(&mut helper_columns, k);
     let helper_ms = lap_ms(&honest_started, &mut previous);
 
-    let mut final_phase_columns = t2_builder.phase_2c(beta, fp_combine, copy_root).to_vec();
-    final_phase_columns.extend(helper_columns);
+    let final_phase_columns = t2_builder.phase_2c(beta, fp_combine, copy_root, helper_columns);
     commitments = commitments
-        .commit(&final_phase_columns, &statement, &setup)
+        .commit(final_phase_columns, &statement, &setup)
         .expect("T2 phase 2c, VK and relation-helper commitments");
     let committed = commitments
         .finish(&statement)
@@ -569,11 +556,11 @@ fn real_wrapper_round_trip_and_tampers() {
     let term_count = verifier_key.term_count(&term_context);
 
     let wire_phase_groups = [
-        phase_1a_groups - hash_columns.vk_groups.len() - copy_count,
+        phase_1a_groups - hash_columns.vk_groups.len() - copy_vk_groups,
         t2_phases[0].group_count,
         t2_phases[1].group_count,
         t2_phases[2].group_count,
-        t2_phases[3].group_count - t2_vk_groups + helper_groups,
+        statement.commitment_phases[4].group_count - t2_vk_groups,
     ];
     tamper_suite(&wrapped, wire_phase_groups, k, |proof| {
         verify_wrapped_with_key(&verifier_key, proof, &verifier_setup).is_err()
@@ -599,7 +586,7 @@ fn real_wrapper_round_trip_and_tampers() {
     let pinned_phase_1a = hash_columns
         .vk_groups
         .clone()
-        .chain(copy_fixed_bases.iter().map(|base| base / k))
+        .chain(copy_fixed_base / k..copy_fixed_base / k + copy_vk_groups)
         .collect::<Vec<_>>();
     let absorbed_row = preparation
         .relation
@@ -714,13 +701,13 @@ fn real_wrapper_round_trip_and_tampers() {
         "groups k={k} t1_sent={} t1_vk={} w=1 copy_vk={} t2_1b={} t2_2a={} t2_2b={} t2_2c={} t2_vk={} helpers={} full={} wire={}",
         hash_columns.group_count - hash_columns.vk_groups.len(),
         hash_columns.vk_groups.len(),
-        copy_count,
+        copy_vk_groups,
         t2_phases[0].group_count,
         t2_phases[1].group_count,
         t2_phases[2].group_count,
         t2_phases[3].group_count,
         t2_vk_groups,
-        helper_groups,
+        0,
         total_groups,
         wire_phase_groups.iter().sum::<usize>(),
     );

@@ -5,7 +5,10 @@ mod terms;
 use thiserror::Error;
 
 pub use crate::stream::{AffineForm, ColumnId, Term, TermContext, TermExporter};
-pub use copy_link::{CopyLink, CopyLinkClaims, CopyLinkProver, CopyLinkSide, CopyLinkWitness};
+pub(crate) use copy_link::batch_witnesses;
+pub use copy_link::{
+    CopyLink, CopyLinkClaims, CopyLinkProver, CopyLinkSide, CopyLinkValueSource, CopyLinkWitness,
+};
 pub use scalar_link::{DoryScalarLink, DoryScalarLinkProver};
 pub use terms::{
     evaluate_terms, evaluate_terms_observed, CopyLinkTermExporter, CopyLinkTermSide,

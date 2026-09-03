@@ -150,7 +150,7 @@ fn staged(w: &Witness, ch: &Challenges, packing: usize, group_offset: usize) -> 
     let _ = builder.phase_1b();
     let _ = builder.phase_2a(ch.xi, ch.alpha);
     let _ = builder.phase_2b(ch.fp_root);
-    let _ = builder.phase_2c(ch.beta, ch.fp_combine, ch.copy_root);
+    let _ = builder.phase_2c(ch.beta, ch.fp_combine, ch.copy_root, Vec::new());
     builder.finish(
         ch.tau.clone(),
         ch.gamma,

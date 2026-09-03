@@ -315,7 +315,10 @@ fn stream_builder_phase_slices_match_declared_geometry() {
             declared[2].group_count
         );
         assert_eq!(
-            builder.phase_2c(ch.beta, ch.fp_combine, ch.copy_root).len() / packing,
+            builder
+                .phase_2c(ch.beta, ch.fp_combine, ch.copy_root, Vec::new())
+                .len()
+                / packing,
             declared[3].group_count
         );
     }

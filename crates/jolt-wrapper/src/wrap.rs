@@ -13,7 +13,7 @@ use jolt_transcript::Blake3Transcript;
 use jolt_verifier::VerifierError;
 use thiserror::Error;
 
-use self::key::{build_key_assembly, materialize_hash_form};
+use self::key::{build_key_assembly, hash_form_value};
 
 use crate::hash_table::schedule::preamble;
 use crate::hash_table::terms::AffineForm as HashAffineForm;
@@ -25,8 +25,8 @@ use crate::limb_table::columns::Columns as LimbColumns;
 use crate::limb_table::schedule::Layout as LimbTableLayout;
 use crate::limb_table::stream::{LimbTableKey, StreamTermExporter as LimbStreamTermExporter};
 use crate::links::{
-    CopyLink, CopyLinkTermExporter, CopyLinkTermSide, DoryScalarLink, DoryScalarTermExporter,
-    LinkError, WIRES,
+    batch_witnesses, CopyLink, CopyLinkTermExporter, CopyLinkTermSide, CopyLinkValueSource,
+    CopyLinkWitness, DoryScalarLink, DoryScalarTermExporter, LinkError, WIRES,
 };
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
@@ -234,7 +234,42 @@ struct CopyKey {
     right: [LimbLinkValue; WIRES],
 }
 
-pub type CopyLinkValues = ([Vec<Fr>; WIRES], [Vec<Fr>; WIRES]);
+#[derive(Clone, Copy)]
+enum CopyLinkValueInner<'a> {
+    Hash(&'a HashAffineForm, &'a HashTable),
+    Witness(&'a [Fr]),
+    Chunk(&'a LimbColumns, usize),
+    Sign(&'a [u8]),
+    Zero(usize),
+}
+
+pub struct CopyLinkValue<'a> {
+    source: CopyLinkValueInner<'a>,
+}
+
+impl CopyLinkValueSource for CopyLinkValue<'_> {
+    fn len(&self) -> usize {
+        match self.source {
+            CopyLinkValueInner::Hash(_, table) => table.rows(),
+            CopyLinkValueInner::Witness(values) => values.len(),
+            CopyLinkValueInner::Chunk(columns, _) => columns.rows(),
+            CopyLinkValueInner::Sign(values) => values.len(),
+            CopyLinkValueInner::Zero(rows) => rows,
+        }
+    }
+
+    fn value(&self, row: usize) -> Fr {
+        match self.source {
+            CopyLinkValueInner::Hash(form, table) => hash_form_value(form, table, row),
+            CopyLinkValueInner::Witness(values) => values[row],
+            CopyLinkValueInner::Chunk(columns, chunk) => columns.chunk(row, chunk),
+            CopyLinkValueInner::Sign(values) => Fr::from_u64(u64::from(values[row])),
+            CopyLinkValueInner::Zero(_) => Fr::from_u64(0),
+        }
+    }
+}
+
+pub type WrapCopyLinkWitness<'a> = CopyLinkWitness<CopyLinkValue<'a>, CopyLinkValue<'a>>;
 
 /// Profile-fixed data consumed by wrapper verification.
 pub struct WrapVerifierKey {
@@ -293,49 +328,67 @@ impl WrapVerifierKey {
         self.copies.get(index).map(|copy| &copy.link)
     }
 
-    pub fn copy_fixed_columns(&self, index: usize) -> Option<Vec<Column>> {
-        self.copies.get(index).map(|copy| {
-            copy.link
-                .left
-                .selectors
-                .iter()
-                .chain(&copy.link.left.ids)
-                .chain(&copy.link.right.selectors)
-                .chain(&copy.link.right.ids)
-                .cloned()
-                .map(Column::Fr)
-                .collect()
-        })
+    pub fn copy_fixed_columns(&self) -> Vec<Column> {
+        self.copies
+            .iter()
+            .flat_map(|copy| {
+                copy.link
+                    .left
+                    .fixed_columns()
+                    .into_iter()
+                    .chain(copy.link.right.fixed_columns())
+            })
+            .map(Column::Fr)
+            .collect()
     }
 
-    pub fn copy_values(
-        &self,
+    fn copy_values<'a>(
+        &'a self,
         index: usize,
-        hash: &HashTable,
-        witness: &[Fr],
-        limb: &LimbColumns,
-    ) -> Option<CopyLinkValues> {
+        hash: &'a HashTable,
+        witness: &'a [Fr],
+        limb: &'a LimbColumns,
+    ) -> Option<([CopyLinkValue<'a>; WIRES], [CopyLinkValue<'a>; WIRES])> {
         let copy = self.copies.get(index)?;
         let rows = witness.len();
-        let left = copy.left.clone().map(|source| match source {
-            LeftLinkValue::Hash(form) => materialize_hash_form(&form, hash),
-            LeftLinkValue::Zero => vec![Fr::from_u64(0); rows],
+        let left = copy.left.each_ref().map(|source| CopyLinkValue {
+            source: match source {
+                LeftLinkValue::Hash(form) => CopyLinkValueInner::Hash(form, hash),
+                LeftLinkValue::Zero => CopyLinkValueInner::Zero(rows),
+            },
         });
-        let right = copy.right.map(|source| match source {
-            LimbLinkValue::Witness => witness.to_vec(),
-            LimbLinkValue::Chunk(chunk) => limb
-                .chunk_column(chunk)
-                .into_iter()
-                .map(|value| Fr::from_u64(u64::from(value)))
-                .collect(),
-            LimbLinkValue::Sign => limb
-                .flags
-                .iter()
-                .map(|value| Fr::from_u64(u64::from(*value)))
-                .collect(),
-            LimbLinkValue::Zero => vec![Fr::from_u64(0); rows],
+        let right = copy.right.map(|source| CopyLinkValue {
+            source: match source {
+                LimbLinkValue::Witness => CopyLinkValueInner::Witness(witness),
+                LimbLinkValue::Chunk(chunk) => CopyLinkValueInner::Chunk(limb, chunk),
+                LimbLinkValue::Sign => CopyLinkValueInner::Sign(&limb.flags),
+                LimbLinkValue::Zero => CopyLinkValueInner::Zero(rows),
+            },
         });
         Some((left, right))
+    }
+
+    pub fn copy_witnesses<'a>(
+        &'a self,
+        hash: &'a HashTable,
+        witness: &'a [Fr],
+        limb: &'a LimbColumns,
+        challenges: &[(Fr, Fr)],
+    ) -> Result<Vec<WrapCopyLinkWitness<'a>>, WrapError> {
+        if challenges.len() != self.copies.len() {
+            return Err(WrapError::T1MemberLayout);
+        }
+        let values = (0..self.copies.len())
+            .map(|index| {
+                self.copy_values(index, hash, witness, limb)
+                    .ok_or(WrapError::T1MemberLayout)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(batch_witnesses(
+            self.copies.iter().zip(values).zip(challenges).map(
+                |((copy, (left, right)), &(beta, gamma))| (&copy.link, left, right, beta, gamma),
+            ),
+        )?)
     }
 
     pub fn hash_schedule(&self) -> &SymbolicSchedule {

@@ -165,9 +165,17 @@ fn vk_groups(packing: usize) -> usize {
 /// the verifier-key groups sit after the last phase's columns and are
 /// counted with it, so the sizes sum to every emitted group.
 pub fn commitment_phases(packing: usize) -> [CommitmentPhase; 4] {
+    commitment_phases_with_final_fill(packing, 0)
+}
+
+pub(crate) fn commitment_phases_with_final_fill(
+    packing: usize,
+    final_fill: usize,
+) -> [CommitmentPhase; 4] {
     let specs = phases();
     std::array::from_fn(|i| CommitmentPhase {
-        group_count: phase_groups(specs[i].columns.clone(), packing)
+        group_count: (specs[i].columns.len() + if i + 1 == specs.len() { final_fill } else { 0 })
+            .div_ceil(packing)
             + if i + 1 == specs.len() {
                 vk_groups(packing)
             } else {
@@ -179,16 +187,37 @@ pub fn commitment_phases(packing: usize) -> [CommitmentPhase; 4] {
 
 /// Groups of T2's prover-committed columns.
 pub fn prover_group_count(packing: usize) -> usize {
+    prover_group_count_with_final_fill(packing, 0)
+}
+
+fn prover_group_count_with_final_fill(packing: usize, final_fill: usize) -> usize {
     phases()
         .iter()
-        .map(|spec| phase_groups(spec.columns.clone(), packing))
+        .enumerate()
+        .map(|(index, spec)| {
+            (spec.columns.len()
+                + if index + 1 == phases().len() {
+                    final_fill
+                } else {
+                    0
+                })
+            .div_ceil(packing)
+        })
         .sum()
 }
 
 /// Absolute indices of T2's verifier-key groups when its block starts at
 /// `group_offset`.
 pub fn vk_group_range(packing: usize, group_offset: usize) -> Range<usize> {
-    let start = group_offset + prover_group_count(packing);
+    vk_group_range_with_final_fill(packing, group_offset, 0)
+}
+
+fn vk_group_range_with_final_fill(
+    packing: usize,
+    group_offset: usize,
+    final_fill: usize,
+) -> Range<usize> {
+    let start = group_offset + prover_group_count_with_final_fill(packing, final_fill);
     start..start + vk_groups(packing)
 }
 
@@ -253,18 +282,33 @@ impl LimbTableKey {
     /// `(group index, commitment)` of every verifier-key group when T2's block
     /// starts at `group_offset`.
     pub fn pinned_commitments(&self, group_offset: usize) -> Vec<(usize, Commitment)> {
-        vk_group_range(self.packing, group_offset)
+        self.pinned_commitments_with_final_fill(group_offset, 0)
+    }
+
+    pub(crate) fn pinned_commitments_with_final_fill(
+        &self,
+        group_offset: usize,
+        final_fill: usize,
+    ) -> Vec<(usize, Commitment)> {
+        vk_group_range_with_final_fill(self.packing, group_offset, final_fill)
             .zip(self.commitments.iter().copied())
             .collect()
     }
 
-    pub(crate) fn column_ids(&self, group_offset: usize) -> Vec<StreamColumnId> {
+    pub(crate) fn column_ids_with_final_fill(
+        &self,
+        group_offset: usize,
+        final_fill: usize,
+    ) -> Vec<StreamColumnId> {
         let mut ids = vec![StreamColumnId { group: 0, slot: 0 }; Col::CLAIMED];
         let mut position = 0;
-        for phase in phases() {
+        for (index, phase) in phases().into_iter().enumerate() {
             for local in phase.columns.clone() {
                 ids[local] = physical_id(group_offset, position, self.packing);
                 position += 1;
+            }
+            if index + 1 == phases().len() {
+                position += final_fill;
             }
             position = position.div_ceil(self.packing) * self.packing;
         }
@@ -273,6 +317,22 @@ impl LimbTableKey {
             position += 1;
         }
         ids
+    }
+
+    pub(crate) fn final_fill_column_ids(
+        &self,
+        group_offset: usize,
+        count: usize,
+    ) -> Vec<StreamColumnId> {
+        let before_final = phases()
+            .iter()
+            .take(phases().len() - 1)
+            .map(|phase| phase.columns.len().div_ceil(self.packing) * self.packing)
+            .sum::<usize>();
+        let start = before_final + phases()[phases().len() - 1].columns.len();
+        (start..start + count)
+            .map(|position| physical_id(group_offset, position, self.packing))
+            .collect()
     }
 }
 
@@ -317,6 +377,7 @@ pub struct StreamBuilder<'a> {
     phase_locals: Vec<usize>,
     /// The per-phase challenges in transcript order ([`PHASE_CHALLENGES`]).
     drawn: Vec<Fr>,
+    final_fill: usize,
     stage: Stage,
 }
 
@@ -354,6 +415,7 @@ impl<'a> StreamBuilder<'a> {
             phase_start: 0,
             phase_locals: Vec::new(),
             drawn: Vec::new(),
+            final_fill: 0,
             stage: Stage::OneB,
         }
     }
@@ -434,8 +496,14 @@ impl<'a> StreamBuilder<'a> {
     }
 
     /// Phase 2c (after `β, fp_combine, copy_root`): the lookup helpers `h`,
-    /// `g_pos`, `g_neg`, followed by the verifier-key columns.
-    pub fn phase_2c(&mut self, beta: Fr, fp_combine: Fr, copy_root: Fr) -> &[Column] {
+    /// `g_pos`, `g_neg`, caller-owned fill columns, then the verifier-key columns.
+    pub fn phase_2c(
+        &mut self,
+        beta: Fr,
+        fp_combine: Fr,
+        copy_root: Fr,
+        fill: Vec<Column>,
+    ) -> &[Column] {
         assert!(
             matches!(self.stage, Stage::TwoC { .. }),
             "phase 2c follows phase 2b"
@@ -461,6 +529,10 @@ impl<'a> StreamBuilder<'a> {
         self.push(Col::H, Column::Fr(lookup.h));
         self.push(Col::G_POS, Column::Fr(lookup.g_pos));
         self.push(Col::G_NEG, Column::Fr(lookup.g_neg));
+        let rows = 1usize << LOG_ROWS;
+        assert!(fill.iter().all(|column| column.len() == rows));
+        self.final_fill = fill.len();
+        self.columns.extend(fill);
         let _ = self.end(3);
         for (i, column) in vk_columns(self.layout, self.packing)
             .into_iter()
@@ -527,7 +599,7 @@ impl<'a> StreamBuilder<'a> {
         ]);
         debug_assert_eq!(matrix.len(), Col::WIDTH);
         let group_count = self.columns.len() / self.packing;
-        let vk_groups = vk_group_range(self.packing, group_offset);
+        let vk_groups = vk_group_range_with_final_fill(self.packing, group_offset, self.final_fill);
         debug_assert_eq!(vk_groups.end, group_offset + group_count);
         let ids = self
             .positions

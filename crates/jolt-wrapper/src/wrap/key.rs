@@ -18,7 +18,8 @@ use crate::limb_table::dory::{input_elements, ElementKind as LimbElementKind, In
 use crate::limb_table::relation::Col as LimbCol;
 use crate::limb_table::schedule::Layout as LimbTableLayout;
 use crate::limb_table::stream::{
-    commitment_phases as limb_commitment_phases, LimbTableKey, T2Challenges, PHASE_CHALLENGES,
+    commitment_phases_with_final_fill as limb_commitment_phases, LimbTableKey, T2Challenges,
+    PHASE_CHALLENGES,
 };
 use crate::links::{CopyLink, CopyLinkSide, CopyLinkTermSide, WIRES};
 use crate::profile::WrapperProfile;
@@ -75,25 +76,16 @@ pub(super) fn build_key_assembly(
         .ok_or(WrapError::CommitmentPhases)?
         + 1;
     let witness_base = hash_groups * packing;
-    let mut copy_base = witness_base + packing;
+    let copy_base = witness_base + packing;
     let copy_fixed_bases = copies
         .iter()
-        .map(|_| {
-            let base = copy_base;
-            copy_base += (4 * WIRES).div_ceil(packing) * packing;
-            base
-        })
+        .enumerate()
+        .map(|(index, _)| copy_base + index * 4 * WIRES)
         .collect::<Vec<_>>();
-    let phase_1a_groups = copy_base / packing;
+    let phase_1a_groups = (copy_base + copies.len() * 4 * WIRES).div_ceil(packing);
     let t2_group_offset = phase_1a_groups;
-    let t2_phases = limb_commitment_phases(packing);
-    let t2_groups = t2_phases
-        .iter()
-        .map(|phase| phase.group_count)
-        .sum::<usize>();
     let helper_count = 2 * copies.len();
-    let helper_groups = helper_count.div_ceil(packing);
-    let helper_base = (t2_group_offset + t2_groups) * packing;
+    let t2_phases = limb_commitment_phases(packing, helper_count);
 
     let t1_challenge_offset = 0;
     let theta_offset = t1_challenge_offset + T1Challenges::count(hash.schedule().log_rows);
@@ -119,7 +111,6 @@ pub(super) fn build_key_assembly(
     let final_phase = commitment_phases
         .last_mut()
         .ok_or(WrapError::CommitmentPhases)?;
-    final_phase.group_count += helper_groups;
     final_phase.challenge_count += copies.len() * (hash.schedule().log_rows + 3);
     let total_groups = commitment_phases
         .iter()
@@ -141,19 +132,23 @@ pub(super) fn build_key_assembly(
         .collect();
 
     let mut pinned_commitments = hash.pinned_commitments();
-    for (copy, &base) in copies.iter().zip(&copy_fixed_bases) {
-        pinned_commitments.extend(commit_key_columns(
-            fixed_copy_columns(&copy.link),
-            base / packing,
-            packing,
-            rows,
-            setup,
-        )?);
-    }
-    pinned_commitments.extend(limb_table.pinned_commitments(t2_group_offset));
+    let fixed_copy_columns = copies
+        .iter()
+        .flat_map(|copy| fixed_copy_columns(&copy.link))
+        .collect();
+    pinned_commitments.extend(commit_key_columns(
+        fixed_copy_columns,
+        copy_base / packing,
+        packing,
+        rows,
+        setup,
+    )?);
+    pinned_commitments
+        .extend(limb_table.pinned_commitments_with_final_fill(t2_group_offset, helper_count));
 
     let witness_column = physical_id(witness_base, packing);
-    let limb_columns = limb_table.column_ids(t2_group_offset);
+    let limb_columns = limb_table.column_ids_with_final_fill(t2_group_offset, helper_count);
+    let helper_columns = limb_table.final_fill_column_ids(t2_group_offset, helper_count);
     let copy_plans = copies
         .iter()
         .zip(&copy_fixed_bases)
@@ -168,7 +163,7 @@ pub(super) fn build_key_assembly(
                     LeftLinkValue::Hash(form) => map_hash_form(&form, &hash_columns),
                     LeftLinkValue::Zero => zero_form(),
                 }),
-                helper: physical_id(helper_base + 2 * index, packing),
+                helper: helper_columns[2 * index],
             };
             let right = CopyLinkTermSide {
                 selectors: std::array::from_fn(|wire| {
@@ -180,7 +175,7 @@ pub(super) fn build_key_assembly(
                 values: copy
                     .right
                     .map(|source| limb_link_form(source, witness_column, &limb_columns)),
-                helper: physical_id(helper_base + 2 * index + 1, packing),
+                helper: helper_columns[2 * index + 1],
             };
             CopyExporterPlan {
                 link: copy.link.clone(),
@@ -309,12 +304,9 @@ fn limb_link_form(source: LimbLinkValue, witness: ColumnId, limb: &[ColumnId]) -
 
 fn fixed_copy_columns(link: &CopyLink) -> Vec<Column> {
     link.left
-        .selectors
-        .iter()
-        .chain(&link.left.ids)
-        .chain(&link.right.selectors)
-        .chain(&link.right.ids)
-        .cloned()
+        .fixed_columns()
+        .into_iter()
+        .chain(link.right.fixed_columns())
         .map(Column::Fr)
         .collect()
 }
@@ -733,25 +725,24 @@ fn hash_bit(bit: usize) -> HashAffineForm {
     form
 }
 
-pub(super) fn materialize_hash_form(form: &HashAffineForm, table: &HashTable) -> Vec<Fr> {
-    let mut values = vec![form.constant; table.rows()];
-    for &(column, weight) in &form.weights {
-        for (row, value) in values.iter_mut().enumerate() {
-            *value += weight * hash_column_value(table, column, row);
-        }
-    }
-    values
+pub(super) fn hash_form_value(form: &HashAffineForm, table: &HashTable, row: usize) -> Fr {
+    form.weights
+        .iter()
+        .fold(form.constant, |value, &(column, weight)| {
+            let column = hash_column_value(table, column, row);
+            value + weight.mul_u64(column)
+        })
 }
 
-fn hash_column_value(table: &HashTable, column: usize, row: usize) -> Fr {
+fn hash_column_value(table: &HashTable, column: usize, row: usize) -> u64 {
     if column < WIRED_BIT_BASE {
-        Fr::from_u64(u64::from(table.bits[column][row]))
+        u64::from(table.bits[column][row])
     } else if column < WIRED_WORD_BASE {
-        Fr::from_u64(u64::from(table.wired_bits[column - WIRED_BIT_BASE][row]))
+        u64::from(table.wired_bits[column - WIRED_BIT_BASE][row])
     } else if column < WIRED_WORD_BASE + table.wired_words.len() {
-        Fr::from_u64(u64::from(table.wired_words[column - WIRED_WORD_BASE][row]))
+        u64::from(table.wired_words[column - WIRED_WORD_BASE][row])
     } else {
         let vk = VkColumn::ALL[column - WIRED_WORD_BASE - table.wired_words.len()];
-        Fr::from_u64(u64::from(table.vk.value(vk, row)))
+        u64::from(table.vk.value(vk, row))
     }
 }
