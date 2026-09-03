@@ -30,6 +30,7 @@ mod scheme;
 mod shape_guard;
 mod trace_onehot;
 
+pub(crate) use akita_schedules::RecursiveSetupSearchPolicy;
 pub(crate) use akita_schedules::RecursiveSplitSearchPolicy;
 
 pub use akita_pcs::AkitaError;

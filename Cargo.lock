@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-error",
  "akita-serialization",
@@ -117,7 +117,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-error",
  "akita-transcript",
@@ -130,7 +130,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -145,15 +145,33 @@ dependencies = [
 [[package]]
 name = "akita-error"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
+name = "akita-metal"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
+dependencies = [
+ "akita-algebra",
+ "akita-error",
+ "akita-prover",
+ "akita-serialization",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "jolt-field",
+ "metal",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -174,7 +192,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -186,7 +204,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -208,7 +226,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -218,7 +236,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "jolt-field",
  "thiserror 2.0.18",
@@ -227,7 +245,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -242,7 +260,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -256,7 +274,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-serialization",
  "blake2 0.10.6",
@@ -267,7 +285,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -287,7 +305,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/markosg04/akita.git?rev=6817c72b86fefa55562efdc50841d7519f7043dd#6817c72b86fefa55562efdc50841d7519f7043dd"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -1337,6 +1355,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "block"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a"
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1705,7 +1729,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1779,10 +1803,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-foundation"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "core-graphics-types"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d44a101f213f6c4cdc1853d4b78aef6db6bdfa3468798cc1d9912f4735013eb"
+dependencies = [
+ "bitflags 2.11.0",
+ "core-foundation",
+ "libc",
+]
 
 [[package]]
 name = "cpp_demangle"
@@ -2613,6 +2658,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "foreign-types"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d737d9aa519fb7b749cbc3b962edcf310a8dd1f4b67c91c4f83975dbdd17d965"
+dependencies = [
+ "foreign-types-macros",
+ "foreign-types-shared",
+]
+
+[[package]]
+name = "foreign-types-macros"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea5190182e6915eb873ddbc16e23b711b6eb1f9c00a0d0a3a91b5f6228475225"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
+name = "foreign-types-shared"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3168,6 +3240,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
+ "akita-metal",
  "akita-pcs",
  "akita-planner",
  "akita-prover",
@@ -3521,9 +3594,11 @@ dependencies = [
  "jolt-verifier",
  "jolt-witness",
  "libc",
+ "metal",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -4054,6 +4129,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "malloc_buf"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "maplit"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4149,6 +4233,21 @@ dependencies = [
  "merkle-tree-guest",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "metal"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7047791b5bc903b8cd963014b355f71dc9864a9a0b727057676c1dcae5cbc15"
+dependencies = [
+ "bitflags 2.11.0",
+ "block",
+ "core-graphics-types",
+ "foreign-types",
+ "log",
+ "objc",
+ "paste",
 ]
 
 [[package]]
@@ -4411,6 +4510,15 @@ dependencies = [
  "ruint",
  "serde",
  "smallvec",
+]
+
+[[package]]
+name = "objc"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "915b1b472bc21c53464d6c8461c9d3af805ba1ef837e1cac254428f4a77177b1"
+dependencies = [
+ "malloc_buf",
 ]
 
 [[package]]
@@ -5157,7 +5265,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.12.1",
  "log",
  "multimap",
@@ -5191,7 +5299,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -7282,7 +7390,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
