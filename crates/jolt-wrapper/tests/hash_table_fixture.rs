@@ -572,11 +572,7 @@ fn fibonacci_2_18_table() {
     assert_eq!(observed.len(), exported.len());
     let term_mults = counter.0;
     let mut statement_counter = MulCounter(0);
-    let statement_challenges = T1Challenges::from_challenges_with(&raw, log_rows, &mut |a, b| {
-        statement_counter.fr_mul(a, b)
-    });
-    let statement_claims = statement_challenges
-        .input_claims_with(&table.public, &mut |a, b| statement_counter.fr_mul(a, b));
+    let statement_claims = exporter.input_claims(&raw, &mut statement_counter);
     assert_eq!(statement_claims, challenges.input_claims(&table.public));
     let statement_mults = statement_counter.0;
     let (kernels, entries, forms) = kernel_counts();

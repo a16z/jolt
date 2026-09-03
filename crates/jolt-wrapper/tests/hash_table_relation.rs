@@ -29,7 +29,9 @@ use jolt_wrapper::hash_table::terms::{
     challenge125, challenge_scalar128, evaluate_terms, fr_word, fr_word_shifted, terms, vk_id,
     wired_word_id, LinkMap, COLUMNS, WIRED_BIT_BASE,
 };
-use jolt_wrapper::hash_table::wiring::{source, Source, WordSlot, CELL_ROWS, CHALLENGE_POS};
+use jolt_wrapper::hash_table::wiring::{
+    canonicality, source, Source, WordSlot, CELL_ROWS, CHALLENGE_POS,
+};
 use jolt_wrapper::hash_table::{
     AffineForm, ByteSource, CellIndex, ColumnEvals, Decoder, Event, FinalContext, HashTable,
     HashTableKey, HashTableProver, ItemClass, JoltSchedule, Members, PublicInputs, Recorded,
@@ -489,7 +491,7 @@ fn statement(
     input_claims: [Fr; 2],
     pinned: bool,
 ) -> AssemblyStatement {
-    let schedule = &key.schedule;
+    let schedule = key.schedule();
     AssemblyStatement {
         key_digest: DIGEST,
         public_inputs: public.field_elements(),
@@ -578,12 +580,12 @@ fn prove_with(
 ) -> (WrapperProof, StreamColumns) {
     let columns = StreamColumns::new(table, K, 0);
     let packed = commit_packed(&columns.columns, K, setup).expect("commit");
-    let challenges = drawn_challenges(&key.schedule, public, &packed.commitments);
+    let challenges = drawn_challenges(key.schedule(), public, &packed.commitments);
     let relation = challenges.relation();
     let mut members = Members::new(table, &relation, &challenges);
     let claims = [members.rows.input_claim(), members.wiring.input_claim()];
     let statement = statement(key, public, &columns, claims, pinned);
-    let exporter = exporter(&key.schedule, public, &columns);
+    let exporter = exporter(key.schedule(), public, &columns);
     let mut stage = [
         StageMember {
             prover: &mut members.rows,
@@ -623,10 +625,24 @@ fn verify(
     columns: &StreamColumns,
     setup: &HyperKZGVerifierSetup<Bn254>,
 ) -> Result<VerifierCost, StreamError> {
-    let challenges = drawn_challenges(&key.schedule, public, &full_commitments(key, proof));
-    let statement = statement(key, public, columns, challenges.input_claims(public), true);
-    let exporter = exporter(&key.schedule, public, columns);
-    verify_assembly_with_cost(proof, &statement, &[&exporter], setup).map(|(_, cost)| cost)
+    let full = full_commitments(key, proof);
+    let raw = commitment_prefix_challenges(
+        &DIGEST,
+        &public.field_elements(),
+        &[(&full, T1Challenges::count(key.schedule().log_rows))],
+    );
+    let exporter = exporter(key.schedule(), public, columns);
+    // The verifier's statement derivation is verifier work: counted with the
+    // stream's cost.
+    let mut cost = VerifierCost::default();
+    let claims = exporter.input_claims(&raw, &mut cost);
+    let statement = statement(key, public, columns, claims, true);
+    let (_, stream) = verify_assembly_with_cost(proof, &statement, &[&exporter], setup)?;
+    cost.fr_mul += stream.fr_mul;
+    Ok(VerifierCost {
+        fr_mul: cost.fr_mul,
+        ..stream
+    })
 }
 
 // ------------------------------------------------------------------- tests
@@ -925,6 +941,87 @@ fn modulus_hi_is_the_top_word_of_the_field_modulus() {
     );
 }
 
+/// Review #4: both canonicality windows read exactly the top 64 bits of the
+/// encoding for every representable alias `x + k·r`, `k = 1..=5`; each has
+/// its top word `≥ r_hi` while the value column still aliases `x`.
+#[test]
+fn canonicality_windows_match_every_representable_alias_class() {
+    let top_word = |bytes: [u8; 32], shifted: bool| {
+        let mut committed = vec![Fr::zero(); COMMITTED];
+        let mut wired = vec![Fr::zero(); WIRED_WORDS];
+        let first = if shifted {
+            [0, 0, bytes[0], bytes[1]]
+        } else {
+            bytes[..4].try_into().expect("four bytes")
+        };
+        let word = u32::from_le_bytes(first);
+        for k in 0..32 {
+            committed[MESSAGE + k] = Fr::from_u64(u64::from((word >> k) & 1));
+        }
+        let next = if shifted { 2 } else { 4 };
+        wired[WiredWord::FrNext(1).index()] = Fr::from_u32(u32::from_be_bytes(
+            bytes[next..next + 4].try_into().expect("four bytes"),
+        ));
+        if shifted {
+            wired[WiredWord::FrLo2.index()] =
+                Fr::from_u64(u64::from(u16::from_be_bytes([bytes[6], bytes[7]])));
+        }
+        canonicality(shifted)
+            .into_iter()
+            .fold(Fr::zero(), |sum, (column, weight)| {
+                let value = if column < COMMITTED {
+                    committed[column]
+                } else {
+                    wired[column - COMMITTED]
+                };
+                sum + weight * value
+            })
+    };
+    for times in 1..=5 {
+        let bytes = plus_modulus(canonical_one(), times);
+        let expected = u64::from_be_bytes(bytes[..8].try_into().expect("eight bytes"));
+        assert!(expected >= MODULUS_HI);
+        assert_eq!(top_word(bytes, false), Fr::from_u64(expected));
+        assert_eq!(top_word(bytes, true), Fr::from_u64(expected));
+        assert_eq!(wire_value(&bytes, false), Fr::one());
+        assert_eq!(wire_value(&bytes, true), Fr::one());
+    }
+}
+
+/// Review #4: the reported `VerifierCost` includes the verifier's statement
+/// derivation (challenge powers and the wiring constant), not only the
+/// stream's work.
+#[test]
+fn verifier_cost_includes_statement_derivation() {
+    let log = synthetic_log(3, 2, 10, 1, 54);
+    let Instance {
+        key, public, table, ..
+    } = instance(&log);
+    let setup = prover_setup(key.rows());
+    let verifier_setup = HyperKZGVerifierSetup::from(&setup);
+    let key = table_key(&key, &setup);
+    let (proof, columns) = prove(&table, &key, &public, &setup);
+    let cost = verify(&proof, &key, &public, &columns, &verifier_setup).expect("proof");
+    let full = full_commitments(&key, &proof);
+    let raw = commitment_prefix_challenges(
+        &DIGEST,
+        &public.field_elements(),
+        &[(&full, T1Challenges::count(key.schedule().log_rows))],
+    );
+    let mut statement = MulCounter(0);
+    let challenges =
+        T1Challenges::from_challenges_with(&raw, key.schedule().log_rows, &mut |a, b| {
+            statement.fr_mul(a, b)
+        });
+    let _ = challenges.input_claims_with(&public, &mut |a, b| statement.fr_mul(a, b));
+    assert_eq!(statement.0, 703);
+    assert_eq!(
+        cost.fr_mul,
+        9_963 + statement.0,
+        "VerifierCost must include the verifier's statement derivation"
+    );
+}
+
 /// One key with its HyperKZG setups.
 struct Bench {
     key: HashTableKey,
@@ -980,7 +1077,7 @@ fn assert_noncanonical_rejected(
             bytes,
         }),
     );
-    let Instance { public, table, .. } = instance_under(&tampered, key.schedule.clone());
+    let Instance { public, table, .. } = instance_under(&tampered, key.schedule().clone());
     let (proof, columns) = prove(&table, key, &public, setup);
     assert!(
         verify(&proof, key, &public, &columns, verifier_setup).is_err(),
@@ -1075,7 +1172,7 @@ fn prover_owned_vk_columns_are_rejected() {
         );
         let Instance {
             public, mut table, ..
-        } = instance_under(&tampered, key.schedule.clone());
+        } = instance_under(&tampered, key.schedule().clone());
         if shifted {
             table.vk.wire_shifted.fill(0);
         } else {
@@ -1086,8 +1183,8 @@ fn prover_owned_vk_columns_are_rejected() {
     // A run of another profile with the same row count and public inputs:
     // its pins (one more commitment) are not the key's.
     let other = instance(&synthetic_log(3, 3, 10, 1, 54));
-    assert_eq!(other.key.log_rows, key.schedule.log_rows);
-    assert_ne!(other.key, key.schedule);
+    assert_eq!(other.key.log_rows, key.schedule().log_rows);
+    assert_ne!(&other.key, key.schedule());
     let Instance { public, .. } = instance(&honest);
     assert_eq!(other.public, public);
     tables.push((other.table, public));

@@ -66,14 +66,16 @@ pub fn vk_group_range(packing: usize, group_offset: usize) -> Range<usize> {
 }
 
 /// T1's verifier key: the symbolic schedule and the verifier-key column
-/// groups committed once from it.
+/// groups committed once from it. Immutable after construction: the
+/// commitments are exactly the `vk_group_range(packing, 0)` groups of
+/// `schedule.vk_columns()` (checked in `new`), so every pin extraction covers
+/// every verifier-key group.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HashTableKey {
-    pub schedule: SymbolicSchedule,
-    pub vk: VkColumns,
-    pub packing: usize,
-    /// Commitments of the verifier-key groups (`vk_group_range` order).
-    pub commitments: Vec<Commitment>,
+    schedule: SymbolicSchedule,
+    vk: VkColumns,
+    packing: usize,
+    commitments: Vec<Commitment>,
 }
 
 impl HashTableKey {
@@ -88,12 +90,32 @@ impl HashTableKey {
             .map(|(_, column)| column)
             .collect();
         let packed = commit_packed(&columns, packing, setup)?;
+        if packed.commitments.len() != vk_group_range(packing, 0).len() {
+            return Err(StreamError::StageCount);
+        }
         Ok(Self {
             schedule,
             vk,
             packing,
             commitments: packed.commitments,
         })
+    }
+
+    pub fn schedule(&self) -> &SymbolicSchedule {
+        &self.schedule
+    }
+
+    pub fn vk(&self) -> &VkColumns {
+        &self.vk
+    }
+
+    pub fn packing(&self) -> usize {
+        self.packing
+    }
+
+    /// Commitments of the verifier-key groups (`vk_group_range` order).
+    pub fn commitments(&self) -> &[Commitment] {
+        &self.commitments
     }
 
     /// `(group index, commitment)` of every verifier-key group when T1's block
@@ -193,10 +215,11 @@ impl<'a> Members<'a> {
     }
 }
 
-/// T1's `TermExporter`: derives the members' randomizers from the phase
-/// challenges the stream drew after T1's commitments and maps the local
-/// terms to physical ids. `terms_observed` routes every field multiplication
-/// of the derivation and of the terms through the observer.
+/// T1's `TermExporter` and the verifier's T1 statement: derives the members'
+/// randomizers from the phase challenges the stream drew after T1's
+/// commitments, their input claims (`input_claims`) and the local terms mapped
+/// to physical ids. The observed variants route every field multiplication
+/// of the derivation through the observer.
 pub struct StreamTermExporter<'a> {
     pub log_rows: usize,
     /// Offset of T1's `T1Challenges::count(log_rows)` challenges in
@@ -209,6 +232,21 @@ pub struct StreamTermExporter<'a> {
 }
 
 impl StreamTermExporter<'_> {
+    /// The verifier's two member input claims (row relation `0`, wiring public
+    /// constant) from the phase challenges, every multiplication observed —
+    /// the verifier's statement derivation, to be counted with the stream's
+    /// `VerifierCost`.
+    pub fn input_claims(&self, challenges: &[Fr], observer: &mut dyn TermObserver) -> [Fr; 2] {
+        let count = T1Challenges::count(self.log_rows);
+        let mut mul = |a, b| observer.fr_mul(a, b);
+        T1Challenges::from_challenges_with(
+            &challenges[self.challenge_offset..self.challenge_offset + count],
+            self.log_rows,
+            &mut mul,
+        )
+        .input_claims_with(self.public, &mut mul)
+    }
+
     fn export(
         &self,
         context: &StreamTermContext<'_>,

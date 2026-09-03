@@ -1,8 +1,11 @@
 //! `eq`-family evaluations and challenge powers with every field
 //! multiplication routed through the verifier's operation counter
-//! (`stream::TermObserver::fr_mul`), so T1's reported `VerifierCost` is
-//! execution-derived. Powers of two are constants of the relation, not
-//! verifier arithmetic; multiplying by one is.
+//! (`stream::TermObserver::fr_mul`). A verifier that derives T1's statement
+//! through `adapter::StreamTermExporter::input_claims` and its terms through
+//! `terms_observed` reports an execution-derived `VerifierCost`; the plain
+//! `T1Challenges::from_challenges` / `input_claims` are the prover's. Powers
+//! of two are constants of the relation, not verifier arithmetic;
+//! multiplying by one is.
 
 use jolt_field::{Fr, One, Ring, Zero};
 
