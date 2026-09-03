@@ -270,10 +270,13 @@ mod tests {
     use crate::stages::stage6b::bytecode_read_raf::BytecodeReadRafOutputClaims;
     use crate::stages::stage6b::inc_claim_reduction::IncClaimReductionOutputClaims;
     use crate::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
+    #[cfg(feature = "field-inline")]
+    use crate::stages::stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims;
     use crate::stages::stage6b::outputs::Stage6bOutputClaims;
     use crate::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use crate::stages::stage6b::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use crate::stages::stage6b::stage6b_opening_values;
+    use jolt_claims::protocols::jolt::geometry::dimensions::JoltOneHotDimensions;
     use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
@@ -281,16 +284,14 @@ mod tests {
     }
 
     fn formula_dimensions() -> JoltFormulaDimensions {
-        JoltFormulaDimensions::try_from(
-            jolt_claims::protocols::jolt::geometry::dimensions::JoltOneHotDimensions {
-                log_t: 8,
-                instruction_address_bits: 128,
-                bytecode_k: 1024,
-                ram_k: 4096,
-                committed_chunk_bits: 8,
-                lookup_virtual_chunk_bits: 32,
-            },
-        )
+        JoltFormulaDimensions::try_from(JoltOneHotDimensions {
+            log_t: 8,
+            instruction_address_bits: 128,
+            bytecode_k: 1024,
+            ram_k: 4096,
+            committed_chunk_bits: 8,
+            lookup_virtual_chunk_bits: 32,
+        })
         .unwrap()
     }
 
@@ -340,10 +341,9 @@ mod tests {
                 rd_inc: next(),
             },
             #[cfg(feature = "field-inline")]
-            field_registers_inc_claim_reduction:
-                crate::stages::stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims {
-                    rd_inc: next(),
-                },
+            field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
+                rd_inc: next(),
+            },
             trusted_advice: None,
             untrusted_advice: None,
             bytecode_reduction: None,
@@ -411,7 +411,7 @@ mod tests {
 )]
 mod field_inline_tests {
     use super::*;
-    use crate::stages::field_inline_bytecode::FieldInlineBytecodeTable;
+    use crate::stages::field_inline_bytecode::{FieldInlineBytecodeFold, FieldInlineBytecodeTable};
     use crate::stages::relations::ConcreteSumcheck as _;
     use crate::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRaf, BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims,
@@ -424,7 +424,8 @@ mod field_inline_tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
     use jolt_claims::protocols::jolt::relations::bytecode::{
-        BytecodeReadRafCyclePhaseChallenges, ReadRafCyclePhase,
+        BytecodeReadRafAddressPhaseChallenges, BytecodeReadRafCyclePhaseChallenges,
+        ReadRafCyclePhase,
     };
     use jolt_field::{Fr, Ring};
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
@@ -455,15 +456,14 @@ mod field_inline_tests {
         let field_read_write_point = [point(90, FIELD_REGISTERS_LOG_K), point(100, log_t)].concat();
         let field_val_evaluation_point =
             [point(110, FIELD_REGISTERS_LOG_K), point(120, log_t)].concat();
-        let challenges =
-            jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges {
-                gamma: fr(501),
-                stage1_gamma: fr(502),
-                stage2_gamma: fr(503),
-                stage3_gamma: fr(504),
-                stage4_gamma: fr(505),
-                stage5_gamma: fr(506),
-            };
+        let challenges = BytecodeReadRafAddressPhaseChallenges {
+            gamma: fr(501),
+            stage1_gamma: fr(502),
+            stage2_gamma: fr(503),
+            stage3_gamma: fr(504),
+            stage4_gamma: fr(505),
+            stage5_gamma: fr(506),
+        };
         let stage_gammas = challenges.stage_gamma_powers();
         let mut bytecode = vec![JoltInstructionRow::default(); 4];
         *bytecode.get_mut(0).unwrap() = JoltInstructionRow {
@@ -510,7 +510,7 @@ mod field_inline_tests {
                 register_val_evaluation_point: &register_val_evaluation_point,
                 stage_gammas: stage_gammas.each_ref().map(Vec::as_slice),
             }),
-            field_inline: crate::stages::field_inline_bytecode::FieldInlineBytecodeFold {
+            field_inline: FieldInlineBytecodeFold {
                 table: table.clone(),
                 read_write_address: point(90, FIELD_REGISTERS_LOG_K),
                 read_write_cycle: point(100, log_t),

@@ -26,9 +26,6 @@ use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 /// never derived from the execution trace.
 pub(crate) const COMMITTED_PROGRAM_REASON: &str =
     "committed-program polynomial served from preprocessing, not the execution trace";
-/// Lattice-mode slots of the packed witness; base mode never constructs them.
-pub(crate) const LATTICE_REASON: &str =
-    "lattice-mode packed-witness polynomial; base mode never constructs it";
 /// Openings produced by kernels during proving (owned by the proof session).
 pub(crate) const PROTOCOL_INTERMEDIATE_REASON: &str =
     "protocol intermediate produced during proving, never served by a witness backend";
@@ -97,14 +94,6 @@ impl<T: TraceSource> TraceBackend<T> {
                     Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
                 }
                 C::BalancedIncCarry => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
-                C::BytecodeRegisterSelector { .. }
-                | C::BytecodeCircuitFlag { .. }
-                | C::BytecodeInstructionFlag { .. }
-                | C::BytecodeLookupSelector { .. }
-                | C::BytecodeRafFlag { .. }
-                | C::BytecodeUnexpandedPcBytes { .. }
-                | C::BytecodeImmBytes { .. }
-                | C::ProgramImageBytes => Err(not_served(id, LATTICE_REASON)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => Ok(Shape::new(self.ram_read_write_log_rows()?, Dense)),
@@ -219,14 +208,6 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
                         width: self.config.one_hot.committed_chunk_bits(),
                     },
                 ),
-                C::BytecodeRegisterSelector { .. }
-                | C::BytecodeCircuitFlag { .. }
-                | C::BytecodeInstructionFlag { .. }
-                | C::BytecodeLookupSelector { .. }
-                | C::BytecodeRafFlag { .. }
-                | C::BytecodeUnexpandedPcBytes { .. }
-                | C::BytecodeImmBytes { .. }
-                | C::ProgramImageBytes => Err(not_served(id, LATTICE_REASON)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => self.materialize_ram_read_write_virtual(virtual_id),

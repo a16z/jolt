@@ -5,6 +5,7 @@ use crate::{
 use allocative::Allocative;
 use lsb::LsbPrefix;
 use num_derive::FromPrimitive;
+use offset_scale::OffsetScalePrefix;
 use pow2::Pow2Prefix;
 use pow2_offset::Pow2OffsetPrefix;
 use pow2_w::Pow2WPrefix;
@@ -12,6 +13,7 @@ use rayon::prelude::*;
 use rev8w::Rev8WPrefix;
 use right_shift::RightShiftPrefix;
 use right_shift_w::RightShiftWPrefix;
+use shift_data::ShiftDataPrefix;
 use sign_extension::SignExtensionPrefix;
 use sign_extension_right_operand::SignExtensionRightOperandPrefix;
 use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
@@ -51,6 +53,7 @@ use window_sign_pow2::WindowSignPow2Prefix;
 use word_msb::WordMsbPrefix;
 use xor::XorPrefix;
 use xor_rot::XorRotPrefix;
+use xor_rotl1::{XorRotL1AccPrefix, XorRotL1StraddlePrefix, XorRotL1WrapPrefix};
 use xor_rotw::XorRotWPrefix;
 
 pub mod align_addr;
@@ -70,6 +73,7 @@ pub mod lower_half_word;
 pub mod lower_word;
 pub mod lsb;
 pub mod lt;
+pub mod offset_scale;
 pub mod or;
 pub mod overflow_bits_zero;
 pub mod pow2;
@@ -82,6 +86,7 @@ pub mod right_operand;
 pub mod right_operand_w;
 pub mod right_shift;
 pub mod right_shift_w;
+pub mod shift_data;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
@@ -94,6 +99,7 @@ pub mod window_sign_pow2;
 pub mod word_msb;
 pub mod xor;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
@@ -195,7 +201,16 @@ pub enum Prefixes {
     SrlwSext,
     Pow2OffsetB,
     Pow2OffsetH,
+    ShiftDataB,
+    ShiftDataH,
+    ShiftDataW,
+    OffsetScaleB,
+    OffsetScaleH,
+    OffsetScaleW,
     AlignAddr,
+    XorRotL1Acc,
+    XorRotL1Straddle,
+    XorRotL1Wrap,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -279,6 +294,11 @@ impl Prefixes {
             Prefixes::XorRotW22 => XorRotWPrefix::<XLEN, 22>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRotW19 => XorRotWPrefix::<XLEN, 19>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRotW6 => XorRotWPrefix::<XLEN, 6>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotL1Acc => XorRotL1AccPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotL1Straddle => {
+                XorRotL1StraddlePrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::XorRotL1Wrap => XorRotL1WrapPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LessThan => LessThanPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LeftOperandIsZero => {
@@ -346,6 +366,24 @@ impl Prefixes {
             }
             Prefixes::Pow2OffsetH => {
                 Pow2OffsetPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataB => {
+                ShiftDataPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataH => {
+                ShiftDataPrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataW => {
+                ShiftDataPrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleB => {
+                OffsetScalePrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleH => {
+                OffsetScalePrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleW => {
+                OffsetScalePrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
         };
@@ -513,6 +551,19 @@ impl Prefixes {
                 j,
                 suffix_len,
             ),
+            Prefixes::XorRotL1Acc => {
+                XorRotL1AccPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
+            }
+            Prefixes::XorRotL1Straddle => XorRotL1StraddlePrefix::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::XorRotL1Wrap => {
+                XorRotL1WrapPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
+            }
             Prefixes::Eq => {
                 EqPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
             }
@@ -707,6 +758,48 @@ impl Prefixes {
                 j,
                 suffix_len,
             ),
+            Prefixes::ShiftDataB => ShiftDataPrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ShiftDataH => ShiftDataPrefix::<XLEN, 2>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ShiftDataW => ShiftDataPrefix::<XLEN, 4>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleB => OffsetScalePrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleH => OffsetScalePrefix::<XLEN, 2>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleW => OffsetScalePrefix::<XLEN, 4>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
             Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
@@ -715,5 +808,119 @@ impl Prefixes {
                 suffix_len,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+    use ark_ff::{One, Zero};
+    use common::constants::XLEN;
+    use rand::prelude::*;
+
+    const LOG_K: usize = 2 * XLEN;
+
+    /// `1 + (2^exp - 1)*r`: the bound per-bit factor of the Pow2Offset and
+    /// OffsetScale families.
+    fn bit_factor(exp: usize, r: Fr) -> Fr {
+        Fr::one() + (Fr::from_u128(1u128 << exp) - Fr::one()) * r
+    }
+
+    /// Pins the post-final-round checkpoint state that the production prover
+    /// (`read_raf_checking`) actually consumes: binds all LOG_K address
+    /// rounds through `Prefixes::update_checkpoints` with the production
+    /// suffix_len schedule, then checks every checkpoint of the
+    /// byte-addressable prefix families against its closed form at the
+    /// challenge point.
+    ///
+    /// WARNING: the per-table prefix_suffix tests do not cover this state on
+    /// their own; a checkpoint updater can diverge from the phased evaluation
+    /// path while those tests stay green (this exact gap produced a
+    /// production bug in the parallel #1755 implementation).
+    fn final_checkpoints_match_closed_forms(log_m: usize, seed: u64) {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let r: Vec<Fr> = (0..LOG_K).map(|_| Fr::from_u64(rng.next_u64())).collect();
+
+        let mut checkpoints: Vec<PrefixCheckpoint<Fr>> = vec![None.into(); Prefixes::COUNT];
+        for j in (1..LOG_K).step_by(2) {
+            // WARNING: keep in sync with the production schedule at
+            // read_raf_checking's update site; if that formula changes, this
+            // test silently keeps validating the old schedule.
+            let suffix_len = LOG_K - (j / log_m + 1) * log_m;
+            Prefixes::update_checkpoints::<XLEN, Fr, Fr>(
+                &mut checkpoints,
+                r[j - 1],
+                r[j],
+                j,
+                suffix_len,
+            );
+        }
+        let value = |p: Prefixes| checkpoints[p as usize].unwrap().0;
+
+        // Raw index bit k binds at round LOG_K - 1 - k; interleaved x_k sits
+        // at index bit 2k+1 and y_i at index bit 2i.
+        let raw = |k: usize| r[LOG_K - 1 - k];
+        let rx = |k: usize| r[LOG_K - 1 - (2 * k + 1)];
+        let ry = |i: usize| r[LOG_K - 1 - 2 * i];
+
+        // Pow2Offset: product of per-bit factors over the raw offset bits.
+        let pow2_offset =
+            |low_bit: usize| -> Fr { (low_bit..3).map(|k| bit_factor(8 << k, raw(k))).product() };
+        assert_eq!(value(Prefixes::Pow2OffsetB), pow2_offset(0));
+        assert_eq!(value(Prefixes::Pow2OffsetH), pow2_offset(1));
+        assert_eq!(value(Prefixes::Pow2OffsetW), pow2_offset(2));
+
+        // AlignAddr: sum of 2^k over raw bits 3..XLEN (carry excluded).
+        let align_addr: Fr = (3..XLEN).map(|k| Fr::from_u128(1u128 << k) * raw(k)).sum();
+        assert_eq!(value(Prefixes::AlignAddr), align_addr);
+
+        // OffsetScale: product over the interleaved offset y bits; ShiftData
+        // is the joint L(x)*P(y) accumulator.
+        let offset_scale = |eighths: usize| -> Fr {
+            (0..3)
+                .filter(|i| (8 - eighths) >> i & 1 == 1)
+                .map(|i| bit_factor(8 << i, ry(i)))
+                .product()
+        };
+        let lane = |lane_bits: usize| -> Fr {
+            (0..lane_bits)
+                .map(|k| Fr::from_u128(1u128 << k) * rx(k))
+                .sum()
+        };
+        assert_eq!(value(Prefixes::OffsetScaleB), offset_scale(1));
+        assert_eq!(value(Prefixes::OffsetScaleH), offset_scale(2));
+        assert_eq!(value(Prefixes::OffsetScaleW), offset_scale(4));
+        assert_eq!(value(Prefixes::ShiftDataB), lane(8) * offset_scale(1));
+        assert_eq!(value(Prefixes::ShiftDataH), lane(16) * offset_scale(2));
+        assert_eq!(value(Prefixes::ShiftDataW), lane(32) * offset_scale(4));
+
+        // RightShift (generalized pext), WindowSign, and WindowSignPow2, per
+        // the PextSigned MLE recurrences (MSB-first).
+        let mut pext = Fr::zero();
+        let mut sigma = Fr::zero();
+        let mut sig2pc = Fr::zero();
+        let mut none = Fr::one();
+        for k in (0..XLEN).rev() {
+            let xy = rx(k) * ry(k);
+            pext = pext * (Fr::one() + ry(k)) + xy;
+            sig2pc = sig2pc * (Fr::one() + ry(k)) + none * (xy + xy);
+            sigma += none * xy;
+            none *= Fr::one() - ry(k);
+        }
+        assert_eq!(value(Prefixes::RightShift), pext);
+        assert_eq!(value(Prefixes::WindowSign), sigma);
+        assert_eq!(value(Prefixes::WindowSignPow2), sig2pc);
+    }
+
+    // Seeds are mnemonics for the byte-addressable stack PRs (#1761, #1768).
+    #[test]
+    fn final_checkpoints_log_m_16() {
+        final_checkpoints_match_closed_forms(16, 0x1761);
+    }
+
+    #[test]
+    fn final_checkpoints_log_m_8() {
+        final_checkpoints_match_closed_forms(8, 0x1768);
     }
 }

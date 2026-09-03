@@ -482,6 +482,7 @@ mod field_inline_round_trip {
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
     use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
@@ -496,7 +497,7 @@ mod field_inline_zk {
     use crate::stages::stage2::prove_stage2;
     use crate::stages::stage3::prove_stage3;
 
-    const CAPACITY: usize = common::constants::MAX_BLINDFOLD_GENERATORS;
+    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
 
     #[test]
     fn committed_stage4_shell_carries_the_curated_rows() {

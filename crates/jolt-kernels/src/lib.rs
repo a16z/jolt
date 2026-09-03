@@ -39,6 +39,7 @@ mod commitment;
 pub mod committed_program;
 mod error;
 mod kernel;
+pub mod mem;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;

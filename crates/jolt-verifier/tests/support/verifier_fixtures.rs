@@ -538,13 +538,18 @@ mod field_inline {
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
-    use jolt_prover::{JoltBackend, ProverConfig};
+    use jolt_prover::{
+        JoltBackend, JoltProverPreprocessing as ModularProverPreprocessing, ProverConfig,
+    };
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
     use jolt_prover_legacy::{
-        host,
+        ark_bn254::Fr as LegacyFr,
+        curve::Bn254Curve,
+        host::Program,
+        poly::commitment::dory::DoryCommitmentScheme,
         zkvm::{
             preprocessing::JoltSharedPreprocessing, program::ProgramPreprocessing,
             proof::verifier_preprocessing_from_prover, prover::JoltProverPreprocessing,
@@ -579,7 +584,7 @@ mod field_inline {
 
     pub(super) fn generate_eqpoly() -> GeneratedVerifierFixture {
         let inputs = eqpoly_inputs();
-        let mut program = host::Program::new("eqpoly-field-guest");
+        let mut program = Program::new("eqpoly-field-guest");
         program.enable_field_inline();
 
         let (bytecode, memory_init, _, entry_address) = program.decode();
@@ -600,9 +605,9 @@ mod field_inline {
             MAX_PADDED_TRACE_LENGTH,
         );
         let legacy_preprocessing: JoltProverPreprocessing<
-            jolt_prover_legacy::ark_bn254::Fr,
-            jolt_prover_legacy::curve::Bn254Curve,
-            jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme,
+            LegacyFr,
+            Bn254Curve,
+            DoryCommitmentScheme,
         > = JoltProverPreprocessing::new(shared);
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
 
@@ -651,12 +656,11 @@ mod field_inline {
         // commit under a different generator set than the verifier checks.
         let max_log_k_chunk = 4usize; // max log_t = 16 < the 25-bit threshold
         let total_vars = max_log_k_chunk + MAX_PADDED_TRACE_LENGTH.ilog2() as usize;
-        let prover_preprocessing =
-            jolt_prover::JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
-                verifier: verifier_preprocessing,
-                pcs_setup: DoryScheme::setup_prover(total_vars),
-                committed_program: None,
-            };
+        let prover_preprocessing = ModularProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(total_vars),
+            committed_program: None,
+        };
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
             &backend,

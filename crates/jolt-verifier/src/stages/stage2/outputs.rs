@@ -247,6 +247,8 @@ mod tests {
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use crate::stages::relations::ConcreteSumcheck;
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::{
         dimensions::{ReadWriteDimensions, TraceDimensions},
         ram::RamRafEvaluationDimensions,
@@ -284,7 +286,7 @@ mod tests {
             ),
             #[cfg(feature = "field-inline")]
             field_registers_claim_reduction: FieldRegistersClaimReduction::new(
-                jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
+                FieldRegistersTraceDimensions::new(log_t),
                 Vec::new(),
             ),
             ram_raf_evaluation: RamRafEvaluation::new(

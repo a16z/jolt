@@ -424,7 +424,8 @@ fn validate_final_opening_count<F, O, P, Ch, C>(
 mod tests {
     use super::*;
     use crate::{
-        BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias, OpeningEquality,
+        BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias,
+        OpeningEquality, VerificationError,
     };
     use jolt_claims::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, Ring};
@@ -785,11 +786,11 @@ mod tests {
             Vec::new(),
         );
 
-        let error = crate::BlindFoldProtocol::<Fr, ()>::from_parts(&statement, &[], &[])
+        let error = BlindFoldProtocol::<Fr, ()>::from_parts(&statement, &[], &[])
             .expect_err("an alias operand has no committed row");
         assert!(matches!(
             error,
-            crate::VerificationError::R1cs(Error::MissingOpeningEqualityOperand)
+            VerificationError::R1cs(Error::MissingOpeningEqualityOperand)
         ));
     }
 

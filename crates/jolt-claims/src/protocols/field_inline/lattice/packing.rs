@@ -129,7 +129,7 @@ mod tests {
 
     use super::super::geometry::{field_inc_limb_count, recompose_limbs};
     use super::*;
-    use crate::lattice::MIN_AUXILIARY_PACKED_NUM_VARS;
+    use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
 
     fn shape(log_t: usize) -> FieldIncLimbShape {
         FieldIncLimbShape { limbs: 2, log_t }
@@ -141,8 +141,8 @@ mod tests {
     #[test]
     fn physical_arity_pads_to_the_dense_floor() {
         for (log_t, expected_physical) in [
-            (11, MIN_AUXILIARY_PACKED_NUM_VARS),
-            (13, MIN_AUXILIARY_PACKED_NUM_VARS),
+            (11, MIN_DENSE_OBJECT_NUM_VARS),
+            (13, MIN_DENSE_OBJECT_NUM_VARS),
             (16, 17),
             (24, 25),
         ] {

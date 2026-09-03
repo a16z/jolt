@@ -44,6 +44,7 @@ use crate::{
 
 /// One FR-active cycle's combined-column cell.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SparseCell<F> {
     row: usize,
     value: F,
@@ -140,12 +141,9 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
 struct FieldClaimReductionKernel<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     /// Sparse combined-column cells, sorted by `row`; merged on each bind.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     cells: Vec<SparseCell<F>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     scratch: Vec<SparseCell<F>>,
     /// The raw per-cycle value triples, retained for the opening extraction.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     triples: Vec<(u32, [F; 3])>,
     challenges: RoundChallenges<F>,
 }
@@ -342,6 +340,7 @@ mod tests {
     };
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_field::{Fr, Ring};
+    use jolt_riscv::FieldInlineOp;
 
     use super::*;
     use crate::optimized::field_registers_testing::{
@@ -440,7 +439,7 @@ mod tests {
     fn parity_single_cycle_round() {
         let mut fixture = FrTraceFixture::new();
         fixture.load_imm(15, 7);
-        fixture.arithmetic(jolt_riscv::FieldInlineOp::Add, 0, 15, 15);
+        fixture.arithmetic(FieldInlineOp::Add, 0, 15, 15);
         run_parity(fixture, 1, 419, true);
     }
 

@@ -43,7 +43,7 @@ field-inline = [
 # `FieldValueEncoding::ACTIVE` to the two-limb 16-byte encoding). Inert
 # without `field-inline`; enabled by the provers' `akita` features so FR
 # execution always matches the field the packed axis proves over.
-fp128-field-inline = ["jolt-field?/akita", "jolt-program/fp128-field-inline"]
+fp128-field-inline = ["jolt-field?/solinas", "jolt-program/fp128-field-inline"]
 
 [dependencies]
 thiserror.workspace = true

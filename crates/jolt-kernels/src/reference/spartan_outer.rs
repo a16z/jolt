@@ -118,14 +118,9 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemaind
 /// The shared stage-1 compute state: the 35 R1CS input tables, the
 /// per-constraint Az/Bz row-value tables, and `eq(τ_low, ·)` — everything the
 /// uni-skip polynomial and the remainder member both consume.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct SpartanOuterKernel<F: JoltField> {
     log_t: usize,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     matrices: ConstraintMatrices<F>,
@@ -137,18 +132,14 @@ pub struct SpartanOuterKernel<F: JoltField> {
     /// Cycle-indexed R1CS input tables (big-endian cycle index), in the
     /// composed opening-column order: the relation's 35 variables, then
     /// (under `field-inline`) the 13 FR-local columns.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     input_tables: Vec<Vec<F>>,
     /// Per-constraint-row value tables over the cycle domain:
     /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]`.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     az_rows: Vec<Vec<F>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     bz_rows: Vec<Vec<F>>,
     /// eq(τ_low, ·) over the (cycle ∥ stream) index `j = (t << 1) | s`
     /// (τ_low[0] pairs the index MSB, so the stream bit pairs τ_low's last
     /// entry — legacy's convention).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     eq_table: Vec<F>,
 }
 

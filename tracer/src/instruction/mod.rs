@@ -148,6 +148,9 @@ use virtual_pow2i_w::VirtualPow2IW;
 use virtual_rev8w::VirtualRev8W;
 use virtual_rotri::VirtualROTRI;
 use virtual_rotriw::VirtualROTRIW;
+use virtual_shift_data_b::VirtualShiftDataB;
+use virtual_shift_data_h::VirtualShiftDataH;
+use virtual_shift_data_w::VirtualShiftDataW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmask_w::VirtualShiftRightBitmaskW;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
@@ -164,6 +167,7 @@ use virtual_window_mask_b::VirtualWindowMaskB;
 use virtual_window_mask_h::VirtualWindowMaskH;
 use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use virtual_xor_rotl1::VirtualXORROTL1;
 use virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
     VirtualXORROTW7, VirtualXORROTW8,
@@ -348,6 +352,9 @@ pub mod virtual_pow2i_w;
 pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
+pub mod virtual_shift_data_b;
+pub mod virtual_shift_data_h;
+pub mod virtual_shift_data_w;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmask_w;
 pub mod virtual_shift_right_bitmaski;
@@ -364,6 +371,7 @@ pub mod virtual_window_mask_b;
 pub mod virtual_window_mask_h;
 pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
 pub mod xor;

@@ -11,6 +11,11 @@
 //! a multiply, the stage-0 fixture's rows) whose decoded FR instruction
 //! words populate the FR columns.
 
+#![expect(
+    clippy::unwrap_used,
+    reason = "hand-crafted fixture rows fail loudly when malformed"
+)]
+
 use std::sync::Arc;
 
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -117,11 +122,9 @@ fn enc(value: u64) -> FieldEncodedValue {
 }
 
 fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-    TraceRow {
-        instruction,
-        field_inline: Some(data.into()),
-        ..TraceRow::default()
-    }
+    let mut row = TraceRow::from_instruction(instruction).unwrap();
+    row.field_inline = Some(data.into());
+    row
 }
 
 /// A terminal JAL row: the only hand-craftable last real instruction — its
@@ -130,9 +133,9 @@ fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> Tra
 /// link write (`rd = address + 4`) row 13 demands.
 fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
     let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);
-    TraceRow {
-        instruction: jal,
-        registers: RegisterState {
+    TraceRow::new(
+        jal,
+        RegisterState {
             rd: Some(RegisterWrite {
                 register: rd,
                 pre_value: 0,
@@ -140,8 +143,9 @@ fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
             }),
             ..Default::default()
         },
-        ..TraceRow::default()
-    }
+        RamAccess::NoOp,
+    )
+    .unwrap()
 }
 
 /// The guest termination convention, hand-crafted: the witness plane's final
@@ -162,9 +166,9 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
         termination as i128,
     );
     [
-        TraceRow {
-            instruction: one,
-            registers: RegisterState {
+        TraceRow::new(
+            one,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 0,
                     value: 0,
@@ -176,11 +180,12 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
                 }),
                 ..Default::default()
             },
-            ..TraceRow::default()
-        },
-        TraceRow {
-            instruction: store,
-            registers: RegisterState {
+            RamAccess::NoOp,
+        )
+        .unwrap(),
+        TraceRow::new(
+            store,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 0,
                     value: 0,
@@ -191,13 +196,13 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Write(RamWrite {
+            RamAccess::Write(RamWrite {
                 address: termination,
                 pre_value: 0,
                 post_value: 1,
             }),
-            ..TraceRow::default()
-        },
+        )
+        .unwrap(),
     ]
 }
 
@@ -209,9 +214,9 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let [one, store] = termination_store_rows(1);
     let jal = halt_jal_row(3, 5);
     let rows = vec![
-        TraceRow {
-            instruction: addi,
-            registers: RegisterState {
+        TraceRow::new(
+            addi,
+            RegisterState {
                 // Register 2 is never written, so the read must see the
                 // initial value — the stage-4 register file check binds it.
                 rs1: Some(RegisterRead {
@@ -225,14 +230,20 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
                 }),
                 ..Default::default()
             },
-            ..TraceRow::default()
-        },
+            RamAccess::NoOp,
+        )
+        .unwrap(),
         one.clone(),
         store.clone(),
         jal.clone(),
     ];
     (
-        vec![addi, one.instruction, store.instruction, jal.instruction],
+        vec![
+            addi,
+            one.instruction(),
+            store.instruction(),
+            jal.instruction(),
+        ],
         rows,
     )
 }
@@ -328,9 +339,9 @@ fn fr_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
             load_a,
             load_b,
             mul,
-            one.instruction,
-            store.instruction,
-            jal.instruction,
+            one.instruction(),
+            store.instruction(),
+            jal.instruction(),
         ],
         rows,
     )
@@ -383,7 +394,9 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
         precommitted: PrecommittedSchedule {
+            #[cfg(not(feature = "akita"))]
             trusted_advice: None,
+            #[cfg(not(feature = "akita"))]
             untrusted_advice: None,
             bytecode: None,
             program_image: None,
@@ -482,10 +495,12 @@ pub(crate) mod twins {
     };
     use jolt_verifier::stages::stage3::stage3_input_values_from_upstream;
     use jolt_verifier::stages::uniskip::{
-        self, draw_spartan_outer_tau, draw_spartan_product_tau_high,
+        self, draw_spartan_outer_tau, draw_spartan_product_tau_high, UniskipParams,
     };
 
     use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
+    #[cfg(feature = "akita")]
+    use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
     use jolt_claims::protocols::jolt::JoltRelationId;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
@@ -532,7 +547,7 @@ pub(crate) mod twins {
         let tau = draw_spartan_outer_tau(transcript, LOG_T);
         let uniskip_challenge = uniskip::verify_clear(
             &stage1.uniskip_proof,
-            &uniskip::UniskipParams::spartan_outer(),
+            &UniskipParams::spartan_outer(),
             Fr::from_u64(0),
             stage1.claims.uniskip_output_claim,
             transcript,
@@ -599,7 +614,7 @@ pub(crate) mod twins {
             .unwrap();
         let uniskip_challenge = uniskip::verify_clear(
             &stage2.uniskip_proof,
-            &uniskip::UniskipParams::spartan_product(),
+            &UniskipParams::spartan_product(),
             uniskip_input_claim,
             stage2.claims.product_uniskip_output_claim,
             transcript,
@@ -888,8 +903,7 @@ pub(crate) mod twins {
         // The packed shape folds the four reduced Inc claims into the
         // fused-inc consumer stage slots (stage6a::verify's own wrapper).
         #[cfg(feature = "akita")]
-        let base_input_values =
-            jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
+        let base_input_values = LatticeReadRafAddressPhaseInputClaims {
                 base: base_input_values,
                 inc: jolt_verifier::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
                     &stage2.clear_output.output_values,

@@ -1,96 +1,101 @@
 //! Preprocessing-provisioned grouped schedule rows.
 //!
-//! Advice layouts are known only during preprocessing, so their grouped rows
-//! cannot be emitted in the static catalog. [`provision`] plans those rows once
-//! and publishes them for the static [`CommitmentConfig`](akita_config::CommitmentConfig)
-//! resolution hooks. Resolution never invokes the planner.
+//! Advice and direct-program layouts are known during preprocessing, where
+//! [`provision`] plans their grouped rows for the static
+//! [`CommitmentConfig`](akita_config::CommitmentConfig) resolution hooks.
+//! Resolution never invokes the planner.
 
 use std::any::TypeId;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::ops::RangeInclusive;
 use std::sync::{OnceLock, RwLock};
 
 use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, ResolvedScheduleRow};
 use akita_pcs::AkitaError;
 use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout, ScheduleRowDigest,
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule,
+    GroupCommitPhaseParams, OpeningScheduleSelection, PolynomialGroupLayout, ScheduleRowDigest,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::planning::plan_schedule;
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
-/// Upper bound on preprocessing-provisioned rows per config (currently at most 3 × 32).
-pub const MAX_REGISTERED_ROWS: usize = 128;
+/// Upper bound on rows planned by one preprocessing request. Installed rows
+/// are immutable and shared as a process-wide cache across independent setups.
+pub const MAX_PROVISIONED_ROWS: usize = 128;
 
-/// Public inputs needed to restore this setup's grouped advice schedules.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Public inputs needed to restore this setup's grouped precommitted schedules.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AdviceScheduleParams {
+pub struct PrecommittedScheduleParams {
     untrusted_physical_arity: Option<usize>,
     trusted_physical_arity: Option<usize>,
-    final_arity_ceiling: usize,
+    #[serde(default)]
+    direct_program_physical_arities: Vec<usize>,
+    final_arity: usize,
     /// The always-present FR limb group's arity line (field-inline proofs
     /// only). `None` keeps provisioning identical to the base protocol.
     #[cfg(feature = "field-inline")]
     field_inc_limbs: Option<FieldIncLimbScheduleParams>,
 }
 
-impl AdviceScheduleParams {
+impl PrecommittedScheduleParams {
     pub fn new(
         untrusted_physical_num_vars: Option<usize>,
         trusted_physical_num_vars: Option<usize>,
-        max_final_num_vars: usize,
+        final_num_vars: usize,
     ) -> Self {
         Self {
             untrusted_physical_arity: untrusted_physical_num_vars,
             trusted_physical_arity: trusted_physical_num_vars,
-            final_arity_ceiling: max_final_num_vars,
+            direct_program_physical_arities: Vec::new(),
+            final_arity: final_num_vars,
             #[cfg(feature = "field-inline")]
             field_inc_limbs: None,
         }
     }
 
-    /// Attach the FR limb-group arity line: every provisioned row then
-    /// carries the per-arity FR profile as its last precommitted group (an
-    /// FR-on prover commits the group on every proof, so no FR-absent row is
-    /// reachable).
+    /// Attach the FR limb-group arity line: the provisioned rows then carry
+    /// the setup arity's FR profile as a mandatory group after the advice
+    /// (an FR-on prover commits the group on every proof, so no FR-absent
+    /// row is reachable).
     #[cfg(feature = "field-inline")]
     pub fn with_field_inc_limbs(mut self, field_inc_limbs: FieldIncLimbScheduleParams) -> Self {
         self.field_inc_limbs = Some(field_inc_limbs);
         self
     }
 
-    pub(crate) fn provision(self, one_hot_k: usize) -> Result<RegisteredRows, AkitaError> {
-        #[cfg(feature = "field-inline")]
-        if let Some(field_inc_limbs) = self.field_inc_limbs {
-            return provision_field_inc_limbs_for_k(
-                self.untrusted_physical_arity,
-                self.trusted_physical_arity,
-                field_inc_limbs,
-                one_hot_k,
-                self.final_arity_ceiling,
-            );
-        }
-        provision_advice_for_k(
+    pub fn with_direct_program_physical_arities(
+        mut self,
+        direct_program_physical_arities: Vec<usize>,
+    ) -> Self {
+        self.direct_program_physical_arities = direct_program_physical_arities;
+        self
+    }
+
+    pub(crate) fn provision(&self, one_hot_k: usize) -> Result<RegisteredRows, AkitaError> {
+        provision_precommitted_for_k(
             self.untrusted_physical_arity,
             self.trusted_physical_arity,
+            &self.direct_program_physical_arities,
+            #[cfg(feature = "field-inline")]
+            self.field_inc_limbs,
             one_hot_k,
-            self.final_arity_ceiling,
+            self.final_arity,
         )
     }
 }
 
-/// The FR limb group's physical-arity line over the swept final arities:
-/// `physical = max(log_T + selector_num_vars, min_physical_arity)` with
-/// `log_T = final_num_vars - trace_arity_overhead`. All three terms are
-/// caller-derived from the jolt-claims packing laws and carried here as
-/// serialized data (this crate is claims-free); the FR provisioning pin test
-/// holds the line to `FieldIncLimbPackingPlan` across the whole sweep.
+/// The FR limb group's physical-arity line: `physical = max(log_T +
+/// selector_num_vars, min_physical_arity)` with `log_T = final_num_vars -
+/// trace_arity_overhead`. All three terms are caller-derived from the
+/// jolt-claims packing laws and carried here as serialized data (this crate
+/// is claims-free); the FR provisioning pin test holds the line to
+/// `FieldIncLimbPackingPlan` across every final arity.
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -235,21 +240,13 @@ fn plan_row<Cfg: CommitmentConfig>(
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
 ) -> Result<ResolvedScheduleRow, AkitaError> {
     let policy = policy_of::<Cfg>();
-    let schedule = akita_planner::find_schedule(
-        key,
-        honest_fold_policy_of::<Cfg>(),
-        precommitted_honest_fold_policies,
-        &policy,
-        Cfg::ring_challenge_config,
-    )?
-    .schedule;
-    schedule.validate_structure()?;
+    let schedule = plan_schedule::<Cfg>(key, precommitted_honest_fold_policies)?;
     reject_setup_prefix_contributions(&schedule)?;
 
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::try_from_params(
+        final_group: GroupCommitPhaseParams::try_from_params(
             key.final_group,
-            &schedule.root.params.final_group.commitment,
+            &schedule.root.params,
         )?,
         precommitteds: key.precommitteds.clone(),
     };
@@ -264,7 +261,7 @@ fn reject_setup_prefix_contributions(schedule: &FoldSchedule) -> Result<(), Akit
     if schedule
         .recursive_folds
         .iter()
-        .any(|fold| fold.params.incoming_setup_prefix.is_some())
+        .any(|fold| fold.params.setup_prefix().is_some())
     {
         return Err(AkitaError::InvalidSetup(
             "provisioned schedule carries a recursive setup-prefix contribution, which Jolt's \
@@ -277,7 +274,7 @@ fn reject_setup_prefix_contributions(schedule: &FoldSchedule) -> Result<(), Akit
 
 /// Plan and install missing grouped rows across `final_num_vars`.
 pub fn provision<Cfg: CommitmentConfig + 'static>(
-    precommitted_combinations: &[Vec<CommittedGroupProfile>],
+    precommitted_combinations: &[Vec<GroupCommitPhaseParams>],
     precommitted_honest_fold_policy: HonestFoldPolicySpec,
     final_num_vars: impl IntoIterator<Item = usize>,
 ) -> Result<RegisteredRows, AkitaError> {
@@ -299,18 +296,9 @@ pub fn provision<Cfg: CommitmentConfig + 'static>(
                 .collect::<Vec<_>>()
         })
         .collect();
-    provision_keys::<Cfg>(keys, precommitted_honest_fold_policy)
-}
-
-/// Plan and install the exact grouped keys (shared by the cartesian advice
-/// sweep and the per-arity FR sweep).
-fn provision_keys<Cfg: CommitmentConfig + 'static>(
-    keys: Vec<AkitaScheduleLookupKey>,
-    precommitted_honest_fold_policy: HonestFoldPolicySpec,
-) -> Result<RegisteredRows, AkitaError> {
-    if keys.len() > MAX_REGISTERED_ROWS {
+    if keys.len() > MAX_PROVISIONED_ROWS {
         return Err(AkitaError::InvalidSetup(format!(
-            "provisioning {} rows exceeds the {MAX_REGISTERED_ROWS}-row cap",
+            "provisioning {} rows exceeds the {MAX_PROVISIONED_ROWS}-row cap",
             keys.len()
         )));
     }
@@ -318,6 +306,9 @@ fn provision_keys<Cfg: CommitmentConfig + 'static>(
     // Planner solves hold large suffix DP caches, so use Akita's bounded worker count.
     let workers = akita_planner::emit::offline_planning_worker_count(keys.len());
     let planned = akita_planner::emit::bounded_parallel_filter_map(&keys, workers, |key| {
+        if let Some(row) = lookup_key::<Cfg>(key) {
+            return Ok(Some(row));
+        }
         if catalog_only_row::<Cfg>(key).is_ok() {
             return Ok(None);
         }
@@ -362,22 +353,6 @@ fn publish<Cfg: CommitmentConfig + 'static>(
             ));
         }
     }
-    let new_rows = rows
-        .by_digest
-        .keys()
-        .filter(|digest| !ambient.by_digest.contains_key(digest))
-        .count();
-    let combined_rows = ambient
-        .by_digest
-        .len()
-        .checked_add(new_rows)
-        .ok_or_else(|| AkitaError::InvalidSetup("schedule row count overflow".to_owned()))?;
-    if combined_rows > MAX_REGISTERED_ROWS {
-        return Err(AkitaError::InvalidSetup(format!(
-            "publishing these rows would grow the registry to {combined_rows}, above the \
-             {MAX_REGISTERED_ROWS}-row cap"
-        )));
-    }
     for (digest, row) in &rows.by_digest {
         let _ = ambient
             .by_digest
@@ -390,7 +365,7 @@ fn publish<Cfg: CommitmentConfig + 'static>(
 /// Resolve the frozen profile produced by an independent dense commit.
 pub fn dense_precommit_profile(
     layout: PolynomialGroupLayout,
-) -> Result<CommittedGroupProfile, AkitaError> {
+) -> Result<GroupCommitPhaseParams, AkitaError> {
     JoltDenseBounded::profile_without_precommitted_groups(layout)
 }
 
@@ -404,11 +379,11 @@ pub struct AdvicePrecommitLayouts {
 impl AdvicePrecommitLayouts {
     /// Every distinct ordered non-empty advice presence combination.
     /// Equal profiles deduplicate because schedule keys do not encode advice roles.
-    fn precommit_combinations(self) -> Result<Vec<Vec<CommittedGroupProfile>>, AkitaError> {
+    fn precommit_combinations(self) -> Result<Vec<Vec<GroupCommitPhaseParams>>, AkitaError> {
         let untrusted = self.untrusted.map(dense_precommit_profile).transpose()?;
         let trusted = self.trusted.map(dense_precommit_profile).transpose()?;
-        let mut combinations: Vec<Vec<CommittedGroupProfile>> = Vec::with_capacity(3);
-        let mut push_unique = |combination: Vec<CommittedGroupProfile>| {
+        let mut combinations: Vec<Vec<GroupCommitPhaseParams>> = Vec::with_capacity(3);
+        let mut push_unique = |combination: Vec<GroupCommitPhaseParams>| {
             if !combinations.contains(&combination) {
                 combinations.push(combination);
             }
@@ -448,13 +423,73 @@ pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupL
 /// K=16 fixture final arities for canonical `log_T = 12..=16` traces.
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
-/// The grouped final-arity sweep for `one_hot_k`: the K catalog's declared
-/// range clamped to the caller's ceiling, or `None` when the clamp empties it.
-fn grouped_final_arity_range(
+/// Provision advice rows before building the packed setup that must cover them.
+pub fn provision_advice_for_k(
+    untrusted_physical_vars: Option<usize>,
+    trusted_physical_vars: Option<usize>,
     one_hot_k: usize,
-    max_final_num_vars: usize,
-) -> Result<Option<RangeInclusive<usize>>, AkitaError> {
-    let (min, declared_max) = match one_hot_k {
+    final_num_vars: usize,
+) -> Result<RegisteredRows, AkitaError> {
+    provision_precommitted_for_k(
+        untrusted_physical_vars,
+        trusted_physical_vars,
+        &[],
+        #[cfg(feature = "field-inline")]
+        None,
+        one_hot_k,
+        final_num_vars,
+    )
+}
+
+/// Provision grouped rows for optional advice followed by the mandatory
+/// groups — (field-inline) the FR limb group, then the direct
+/// committed-program objects — all in canonical precommit order.
+pub fn provision_precommitted_for_k(
+    untrusted_physical_vars: Option<usize>,
+    trusted_physical_vars: Option<usize>,
+    direct_program_physical_vars: &[usize],
+    #[cfg(feature = "field-inline")] field_inc_limbs: Option<FieldIncLimbScheduleParams>,
+    one_hot_k: usize,
+    final_num_vars: usize,
+) -> Result<RegisteredRows, AkitaError> {
+    let layouts = AdvicePrecommitLayouts {
+        untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
+        trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
+    };
+    let mut mandatory = Vec::with_capacity(
+        usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
+    );
+    #[cfg(feature = "field-inline")]
+    if let Some(field_inc_limbs) = field_inc_limbs {
+        // Below the packed trace's own arity overhead no trace exists, so
+        // there is nothing to pair the limb group with.
+        let Some(limb_physical) = field_inc_limbs.physical_num_vars(final_num_vars) else {
+            return Ok(RegisteredRows::default());
+        };
+        mandatory.push(dense_precommit_profile(PolynomialGroupLayout::new(
+            limb_physical,
+            1,
+        ))?);
+    }
+    for vars in direct_program_physical_vars {
+        mandatory.push(dense_precommit_profile(PolynomialGroupLayout::new(
+            *vars, 1,
+        ))?);
+    }
+    let mut combinations = layouts.precommit_combinations()?;
+    if mandatory.is_empty() {
+        if combinations.is_empty() {
+            return Ok(RegisteredRows::default());
+        }
+    } else {
+        for combination in &mut combinations {
+            combination.extend(mandatory.iter().copied());
+        }
+        if !combinations.contains(&mandatory) {
+            combinations.push(mandatory);
+        }
+    }
+    let (min, max) = match one_hot_k {
         AKITA_ONE_HOT_K256 => K256_NUM_VARS,
         AKITA_ONE_HOT_K16 => K16_NUM_VARS,
         other => {
@@ -463,97 +498,21 @@ fn grouped_final_arity_range(
             )))
         }
     };
-    let max = declared_max.min(max_final_num_vars);
-    Ok((max >= min).then_some(min..=max))
-}
-
-/// Provision advice rows before building the packed setup that must cover them.
-pub fn provision_advice_for_k(
-    untrusted_physical_vars: Option<usize>,
-    trusted_physical_vars: Option<usize>,
-    one_hot_k: usize,
-    max_final_num_vars: usize,
-) -> Result<RegisteredRows, AkitaError> {
-    let layouts = AdvicePrecommitLayouts {
-        untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
-        trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
-    };
-    let Some(range) = grouped_final_arity_range(one_hot_k, max_final_num_vars)? else {
+    if !(min..=max).contains(&final_num_vars) {
         return Ok(RegisteredRows::default());
-    };
+    }
     match one_hot_k {
-        AKITA_ONE_HOT_K256 => provision_advice::<JoltOneHotK256>(layouts, range),
-        AKITA_ONE_HOT_K16 => provision_advice::<JoltOneHotK16>(layouts, range),
-        _ => unreachable!("one-hot K was validated by grouped_final_arity_range"),
-    }
-}
-
-/// Every FR-composed presence combination at one final arity, in canonical
-/// role order: each advice subset (including advice-absent) with the
-/// per-arity FR limb profile appended last. FR-absent combinations are
-/// deliberately not enumerated — an FR-on prover commits the limb group on
-/// every proof, so no packed FR proof without it is constructible.
-#[cfg(feature = "field-inline")]
-fn field_inc_limb_combinations(
-    layouts: AdvicePrecommitLayouts,
-    field_inc_limbs: &CommittedGroupProfile,
-) -> Result<Vec<Vec<CommittedGroupProfile>>, AkitaError> {
-    let untrusted = layouts.untrusted.map(dense_precommit_profile).transpose()?;
-    let trusted = layouts.trusted.map(dense_precommit_profile).transpose()?;
-    let mut combinations: Vec<Vec<CommittedGroupProfile>> = Vec::with_capacity(4);
-    let mut push_unique = |combination: Vec<CommittedGroupProfile>| {
-        if !combinations.contains(&combination) {
-            combinations.push(combination);
-        }
-    };
-    push_unique(vec![*field_inc_limbs]);
-    if let Some(untrusted) = untrusted {
-        push_unique(vec![untrusted, *field_inc_limbs]);
-    }
-    if let Some(trusted) = trusted {
-        push_unique(vec![trusted, *field_inc_limbs]);
-    }
-    if let (Some(untrusted), Some(trusted)) = (untrusted, trusted) {
-        push_unique(vec![untrusted, trusted, *field_inc_limbs]);
-    }
-    Ok(combinations)
-}
-
-/// Provision FR-composed grouped rows: for every reachable final arity, the
-/// arity's FR limb profile joins every advice presence combination.
-#[cfg(feature = "field-inline")]
-fn provision_field_inc_limbs_for_k(
-    untrusted_physical_vars: Option<usize>,
-    trusted_physical_vars: Option<usize>,
-    field_inc_limbs: FieldIncLimbScheduleParams,
-    one_hot_k: usize,
-    max_final_num_vars: usize,
-) -> Result<RegisteredRows, AkitaError> {
-    let layouts = AdvicePrecommitLayouts {
-        untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
-        trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
-    };
-    let Some(range) = grouped_final_arity_range(one_hot_k, max_final_num_vars)? else {
-        return Ok(RegisteredRows::default());
-    };
-    let mut keys = Vec::new();
-    for final_num_vars in range {
-        let Some(limb_physical) = field_inc_limbs.physical_num_vars(final_num_vars) else {
-            continue;
-        };
-        let limb_profile = dense_precommit_profile(PolynomialGroupLayout::new(limb_physical, 1))?;
-        for precommitteds in field_inc_limb_combinations(layouts, &limb_profile)? {
-            keys.push(AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::new(final_num_vars, 1),
-                precommitteds,
-            });
-        }
-    }
-    let policy = honest_fold_policy_of::<JoltDenseBounded>();
-    match one_hot_k {
-        AKITA_ONE_HOT_K256 => provision_keys::<JoltOneHotK256>(keys, policy),
-        AKITA_ONE_HOT_K16 => provision_keys::<JoltOneHotK16>(keys, policy),
-        _ => unreachable!("one-hot K was validated by grouped_final_arity_range"),
+        AKITA_ONE_HOT_K256 => provision::<JoltOneHotK256>(
+            &combinations,
+            honest_fold_policy_of::<JoltDenseBounded>(),
+            [final_num_vars],
+        ),
+        AKITA_ONE_HOT_K16 => provision::<JoltOneHotK16>(
+            &combinations,
+            honest_fold_policy_of::<JoltDenseBounded>(),
+            [final_num_vars],
+        ),
+        _ => unreachable!("one-hot K was validated above"),
     }
 }
 
@@ -579,9 +538,9 @@ mod tests {
 
     fn planned_profile<Cfg: akita_config::CommitmentConfig>(
         group: PolynomialGroupLayout,
-    ) -> Result<CommittedGroupProfile, AkitaError> {
+    ) -> Result<GroupCommitPhaseParams, AkitaError> {
         let schedule = emit::regen::<Cfg>(group)?;
-        CommittedGroupProfile::try_from_params(group, &schedule.root.params.final_group.commitment)
+        GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
     }
 
     #[test]
@@ -607,7 +566,7 @@ mod tests {
         let error = provision::<JoltOneHotK256>(
             &[vec![profile]],
             honest_fold_policy_of::<JoltDenseBounded>(),
-            0..=MAX_REGISTERED_ROWS,
+            0..=MAX_PROVISIONED_ROWS,
         )
         .expect_err("exceeding the row cap must be rejected");
         assert!(
@@ -617,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn publishing_cannot_grow_registry_past_the_cap() {
+    fn independently_provisioned_profiles_share_the_process_cache() {
         reset_for_tests();
         let profile =
             dense_precommit_profile(PolynomialGroupLayout::new(emit::DENSE_NUM_VARS.0, 1)).unwrap();
@@ -640,13 +599,26 @@ mod tests {
                 .collect(),
         };
 
-        let _published = publish::<JoltOneHotK256>(rows(0..MAX_REGISTERED_ROWS / 2)).unwrap();
-        let error =
-            publish::<JoltOneHotK256>(rows(MAX_REGISTERED_ROWS / 2..MAX_REGISTERED_ROWS + 1))
-                .expect_err("the accumulated registry must enforce the cap");
-        assert!(
-            format!("{error}").contains("cap"),
-            "unexpected error: {error}"
+        let _first = publish::<JoltOneHotK256>(rows(0..MAX_PROVISIONED_ROWS)).unwrap();
+        let _second =
+            publish::<JoltOneHotK256>(rows(MAX_PROVISIONED_ROWS..MAX_PROVISIONED_ROWS + 1))
+                .expect("a second setup must not be rejected by rows cached for the first");
+        reset_for_tests();
+    }
+
+    #[test]
+    fn setup_params_provision_only_the_setup_final_arity() {
+        reset_for_tests();
+        let params = PrecommittedScheduleParams::new(
+            None,
+            Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
+            FIXTURE_K16_FINAL_NUM_VARS.1,
+        );
+        let rows = params.provision(AKITA_ONE_HOT_K16).unwrap();
+        assert_eq!(rows.rows().count(), 1);
+        assert_eq!(
+            rows.rows().next().unwrap().profiles().final_group.group,
+            PolynomialGroupLayout::new(FIXTURE_K16_FINAL_NUM_VARS.1, 1)
         );
         reset_for_tests();
     }
@@ -664,7 +636,7 @@ mod tests {
 
         fn fixture_keys(
             final_num_vars: impl IntoIterator<Item = usize>,
-        ) -> (CommittedGroupProfile, Vec<AkitaScheduleLookupKey>) {
+        ) -> (GroupCommitPhaseParams, Vec<AkitaScheduleLookupKey>) {
             let profile = dense_precommit_profile(FIXTURE_TRUSTED_ADVICE_GROUP).unwrap();
             let keys = final_num_vars
                 .into_iter()
@@ -854,31 +826,48 @@ mod tests {
 
         #[cfg(feature = "field-inline")]
         mod field_inc_limbs {
+            use jolt_claims::lattice::MIN_DENSE_OBJECT_NUM_VARS;
             use jolt_claims::protocols::field_inline::lattice::{
                 field_inc_limb_count, FieldIncLimbPackingPlan, FieldIncLimbShape,
             };
             use jolt_claims::protocols::jolt::lattice::packing::one_hot_trace_column_capacity;
-            use jolt_field::AkitaField;
 
             use super::*;
+            use crate::adapters::AkitaField;
             use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+
+            /// The packed trace's arity overhead over its own `log_T`: the
+            /// chunk plus selector variables, constant per K.
+            fn trace_arity_overhead(one_hot_k: usize) -> usize {
+                let log_k_chunk = one_hot_k.ilog2() as usize;
+                log_k_chunk + one_hot_trace_column_capacity(log_k_chunk).unwrap().ilog2() as usize
+            }
 
             /// The production caller's derivation of the FR arity line, from
             /// the jolt-claims laws: the packed trace's arity overhead over
             /// `log_T` and the limb plan's floor/selector geometry.
             fn law_derived_params(one_hot_k: usize) -> FieldIncLimbScheduleParams {
-                let log_k_chunk = one_hot_k.ilog2() as usize;
-                let capacity = one_hot_trace_column_capacity(log_k_chunk).unwrap();
                 let limbs = field_inc_limb_count::<AkitaField>();
                 FieldIncLimbScheduleParams::new(
-                    log_k_chunk + capacity.ilog2() as usize,
-                    jolt_claims::lattice::MIN_AUXILIARY_PACKED_NUM_VARS,
+                    trace_arity_overhead(one_hot_k),
+                    MIN_DENSE_OBJECT_NUM_VARS,
                     limbs.next_power_of_two().ilog2() as usize,
                 )
             }
 
+            fn limb_profile(
+                params: FieldIncLimbScheduleParams,
+                final_num_vars: usize,
+            ) -> GroupCommitPhaseParams {
+                dense_precommit_profile(PolynomialGroupLayout::new(
+                    params.physical_num_vars(final_num_vars).unwrap(),
+                    1,
+                ))
+                .unwrap()
+            }
+
             /// The registry's carried arity line must equal the jolt-claims
-            /// packing law at every swept final arity, in both K regimes.
+            /// packing law at every final arity, in both K regimes.
             #[test]
             fn carried_arity_line_matches_the_packing_law() {
                 let limbs = field_inc_limb_count::<AkitaField>();
@@ -890,21 +879,14 @@ mod tests {
                     let params = law_derived_params(one_hot_k);
                     for final_num_vars in min..=max {
                         let carried = params.physical_num_vars(final_num_vars);
-                        let log_t = final_num_vars
-                            .checked_sub(one_hot_k.ilog2() as usize)
-                            .and_then(|vars| {
-                                vars.checked_sub(
-                                    one_hot_trace_column_capacity(one_hot_k.ilog2() as usize)
-                                        .unwrap()
-                                        .ilog2() as usize,
-                                )
+                        let expected = final_num_vars
+                            .checked_sub(trace_arity_overhead(one_hot_k))
+                            .map(|log_t| {
+                                FieldIncLimbPackingPlan::new(&FieldIncLimbShape { limbs, log_t })
+                                    .unwrap()
+                                    .packing()
+                                    .packed_num_vars()
                             });
-                        let expected = log_t.map(|log_t| {
-                            FieldIncLimbPackingPlan::new(&FieldIncLimbShape { limbs, log_t })
-                                .unwrap()
-                                .packing()
-                                .packed_num_vars()
-                        });
                         assert_eq!(
                             carried, expected,
                             "K={one_hot_k} final arity {final_num_vars}: carried arity diverges \
@@ -919,46 +901,40 @@ mod tests {
             /// reachable FR final arity is `overhead + 12`.
             const PROVER_MIN_LOG_T: usize = 12;
 
-            /// The planner must admit the FR limb profile beside the packed
-            /// trace across the reachable range up to the registry's own
-            /// arity ceiling (K16: 34, K256: 43 — the trace-scale shapes).
-            /// Doubles as the norm-budget check: the rows plan under the same
-            /// u64-bounded dense fold policy advice uses, so a planned row
-            /// means the limb words fit that budget. Sub-floor arities whose
-            /// limb profile is wider than the final group are planner-skipped
-            /// (all below the prover's trace floor, so unreachable).
-            fn fr_rows_plan_and_resolve_at_the_ceiling<Cfg: CommitmentConfig + 'static>(
+            /// Every reachable final arity of the K catalog provisions its own
+            /// FR row (production provisions the setup's single final arity)
+            /// that resolves through the hook. Doubles as the norm-budget
+            /// check: the rows plan under the same u64-bounded dense fold
+            /// policy advice uses, so a planned row means the limb words fit
+            /// that budget. Arities below the prover's trace floor are
+            /// unreachable; whether the planner admits them is not asserted.
+            fn fr_rows_plan_and_resolve_at_every_arity<Cfg: CommitmentConfig + 'static>(
                 one_hot_k: usize,
                 (declared_min, ceiling): (usize, usize),
             ) {
                 reset_for_tests();
                 let params = law_derived_params(one_hot_k);
-                let rows = AdviceScheduleParams::new(None, None, ceiling)
-                    .with_field_inc_limbs(params)
-                    .provision(one_hot_k)
-                    .expect("FR provisioning must plan the reachable range");
-                let plannable = (declared_min..=ceiling)
-                    .filter(|fa| {
-                        params
-                            .physical_num_vars(*fa)
-                            .is_some_and(|limb| limb <= *fa)
-                    })
-                    .count();
-                assert_eq!(rows.rows().count(), plannable);
-
-                let overhead = one_hot_k.ilog2() as usize
-                    + one_hot_trace_column_capacity(one_hot_k.ilog2() as usize)
-                        .unwrap()
-                        .ilog2() as usize;
-                for final_num_vars in (overhead + PROVER_MIN_LOG_T)..=ceiling {
-                    let limb_physical = params.physical_num_vars(final_num_vars).unwrap();
+                let reachable_min = trace_arity_overhead(one_hot_k) + PROVER_MIN_LOG_T;
+                for final_num_vars in declared_min..=ceiling {
+                    let rows = PrecommittedScheduleParams::new(None, None, final_num_vars)
+                        .with_field_inc_limbs(params)
+                        .provision(one_hot_k)
+                        .expect("FR provisioning must plan or skip every arity");
+                    assert!(
+                        rows.rows().count() <= 1,
+                        "K={one_hot_k} final arity {final_num_vars}: one FR row at most"
+                    );
+                    if final_num_vars < reachable_min {
+                        continue;
+                    }
+                    assert_eq!(
+                        rows.rows().count(),
+                        1,
+                        "K={one_hot_k} final arity {final_num_vars} must plan its FR row"
+                    );
                     let key = AkitaScheduleLookupKey {
                         final_group: PolynomialGroupLayout::new(final_num_vars, 1),
-                        precommitteds: vec![dense_precommit_profile(PolynomialGroupLayout::new(
-                            limb_physical,
-                            1,
-                        ))
-                        .unwrap()],
+                        precommitteds: vec![limb_profile(params, final_num_vars)],
                     };
                     let resolved = Cfg::resolve_catalog_row_for_key(&key).unwrap_or_else(|error| {
                         panic!(
@@ -972,32 +948,45 @@ mod tests {
             }
 
             #[test]
-            fn fr_rows_plan_and_resolve_at_the_k16_ceiling() {
-                fr_rows_plan_and_resolve_at_the_ceiling::<JoltOneHotK16>(
+            fn fr_rows_plan_and_resolve_at_every_k16_arity() {
+                fr_rows_plan_and_resolve_at_every_arity::<JoltOneHotK16>(
                     AKITA_ONE_HOT_K16,
                     K16_NUM_VARS,
                 );
             }
 
             #[test]
-            fn fr_rows_plan_and_resolve_at_the_k256_ceiling() {
-                fr_rows_plan_and_resolve_at_the_ceiling::<JoltOneHotK256>(
+            fn fr_rows_plan_and_resolve_at_every_k256_arity() {
+                fr_rows_plan_and_resolve_at_every_arity::<JoltOneHotK256>(
                     AKITA_ONE_HOT_K256,
                     K256_NUM_VARS,
                 );
             }
 
-            /// The full FR-composed combination sweep stays within the row
-            /// cap: both advice kinds declared, every final arity, FR always
-            /// appended — the widest reachable key set (K256: 4 x 31 = 124).
+            /// With both advice kinds declared, every advice presence
+            /// combination is provisioned with the FR profile as its last
+            /// group and no FR-absent row exists: an FR-on prover commits the
+            /// group on every proof, so none is constructible.
             #[test]
-            fn fr_combination_sweep_fits_the_row_cap() {
-                let params = law_derived_params(AKITA_ONE_HOT_K256);
-                let arities = (K256_NUM_VARS.0..=K256_NUM_VARS.1)
-                    .filter(|fa| params.physical_num_vars(*fa).is_some())
-                    .count();
-                assert_eq!(arities, 31);
-                assert!(4 * arities <= MAX_REGISTERED_ROWS);
+            fn fr_rows_append_the_limb_group_to_every_advice_combination() {
+                reset_for_tests();
+                let params = law_derived_params(AKITA_ONE_HOT_K16);
+                let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.1;
+                let trusted = FIXTURE_TRUSTED_ADVICE_GROUP.num_vars();
+                let rows = PrecommittedScheduleParams::new(
+                    Some(trusted + 1),
+                    Some(trusted),
+                    final_num_vars,
+                )
+                .with_field_inc_limbs(params)
+                .provision(AKITA_ONE_HOT_K16)
+                .expect("FR-composed provisioning must plan every combination");
+                assert_eq!(rows.rows().count(), 4);
+                let limb = limb_profile(params, final_num_vars);
+                for row in rows.rows() {
+                    assert_eq!(row.profiles().precommitteds.last(), Some(&limb));
+                }
+                reset_for_tests();
             }
         }
 

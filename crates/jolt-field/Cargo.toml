@@ -9,16 +9,12 @@ keywords = ["SNARK", "cryptography", "finite-fields", "BN254", "Solinas"]
 categories = ["cryptography"]
 
 [package.metadata.cargo-machete]
-ignored = ["cc"]
+ignored = ["cc", "allocative"]
 
 [lints]
 workspace = true
 
 [dependencies]
-# Temporary bootstrap edge for the pre-cutover akita-field types; removed in
-# the final migration PR together with the `akita` feature.
-akita-config = { workspace = true, optional = true }
-akita-field = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -31,7 +27,6 @@ thiserror = { workspace = true }
 
 [features]
 default = ["bn254"]
-akita = ["dep:akita-config", "dep:akita-field"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []
 asm = []
@@ -41,6 +36,10 @@ allocative = ["dep:allocative"]
 fp128-proof-linkage = ["asm"]
 
 [dev-dependencies]
+# The spine test's oracle field must satisfy `JoltField`, which requires
+# `Allocative` under the `allocative` feature; integration tests do not see
+# the optional dependency above.
+allocative = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
 num-bigint = { workspace = true }

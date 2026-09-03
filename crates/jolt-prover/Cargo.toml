@@ -47,7 +47,7 @@ akita = [
   "dep:jolt-akita",
   "jolt-verifier/akita",
   "jolt-claims/akita",
-  "jolt-field/akita",
+  "jolt-field/solinas",
   "jolt-kernels/akita",
   "jolt-prover-legacy/akita",
   # The packed axis proves over fp128, so FR execution and the value encoding

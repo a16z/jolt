@@ -547,6 +547,8 @@ fn invalid<T>(message: &'static str) -> Result<T, ProgramError> {
 mod tests {
     use super::*;
     use jolt_riscv::RV64IMAC_JOLT;
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 
     fn field_word(funct3: u32, rd: u8, rs1: u8, rs2_or_imm: u32) -> u32 {
         0x7b | (funct3 << 12) | (u32::from(rd) << 7) | (u32::from(rs1) << 15) | (rs2_or_imm << 20)
@@ -560,7 +562,7 @@ mod tests {
     #[cfg(feature = "field-inline")]
     #[test]
     fn decodes_field_inline_source_rows_only_for_fr_on_profile() {
-        let word = field_word(jolt_riscv::FieldInlineOp::Mul.funct3().into(), 1, 2, 3);
+        let word = field_word(FieldInlineOp::Mul.funct3().into(), 1, 2, 3);
         let fr_off = decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT);
         assert!(matches!(
             fr_off,
@@ -569,12 +571,7 @@ mod tests {
             ))
         ));
 
-        let fr_on = decode_instruction(
-            word,
-            0x8000_0000,
-            false,
-            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
-        );
+        let fr_on = decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE);
         let instruction = match fr_on {
             Ok(instruction) => instruction,
             Err(error) => panic!("field-inline decode failed: {error:?}"),
@@ -588,20 +585,9 @@ mod tests {
     #[cfg(feature = "field-inline")]
     #[test]
     fn rejects_unknown_field_inline_r_type_funct7() {
-        let word = field_r_word(
-            1,
-            u32::from(jolt_riscv::FieldInlineOp::Mul.funct3()),
-            1,
-            2,
-            3,
-        );
+        let word = field_r_word(1, u32::from(FieldInlineOp::Mul.funct3()), 1, 2, 3);
         assert!(matches!(
-            decode_instruction(
-                word,
-                0x8000_0000,
-                false,
-                jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE
-            ),
+            decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE),
             Err(ProgramError::MalformedImage(
                 "invalid field-inline encoding"
             ))

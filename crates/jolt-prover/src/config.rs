@@ -72,7 +72,7 @@ impl ProverConfig {
             min_bytecode_address,
             program_image_len_words,
             max_padded_trace_length,
-            |row| match row.ram_access {
+            |row| match row.ram_access() {
                 RamAccess::Read(read) => Some(read.address),
                 RamAccess::Write(write) => Some(write.address),
                 RamAccess::NoOp => None,

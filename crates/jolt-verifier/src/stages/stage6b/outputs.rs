@@ -15,6 +15,9 @@ pub use super::booleanity::BooleanityOutputClaims;
 pub use super::bytecode_read_raf::BytecodeReadRafOutputClaims;
 pub use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
+};
+#[cfg(not(feature = "akita"))]
+pub use super::committed_reduction_cycle_phase::{
     TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
 #[cfg(feature = "field-inline")]
@@ -29,9 +32,10 @@ pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::BytecodeReadRafCycle;
 use super::committed_reduction_cycle_phase::{
-    BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
-    UntrustedAdviceCyclePhase,
+    BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
 };
+#[cfg(not(feature = "akita"))]
+use super::committed_reduction_cycle_phase::{TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase};
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
@@ -91,11 +95,12 @@ pub struct Stage6bSumchecks<F: JoltField> {
     /// (`specs/field-inline-protocol.md`, "Stage 6 Composition").
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReduction<F>,
-    /// On the prove side the four precommitted reduction kernels span the
-    /// 6b→7 batch boundary as `ProofSession` carries: each cycle kernel parks
-    /// the shared two-phase state at prepare, and stage 7's address-phase
-    /// members reclaim it.
+    /// On the prove side the precommitted reduction kernels span the 6b→7 batch
+    /// boundary as `ProofSession` carries: each cycle kernel parks the shared
+    /// two-phase state at prepare, and stage 7's address-phase members reclaim it.
+    #[cfg(not(feature = "akita"))]
     pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
+    #[cfg(not(feature = "akita"))]
     pub untrusted_advice: Option<UntrustedAdviceCyclePhase<F>>,
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
     pub program_image_reduction: Option<ProgramImageReductionCyclePhase<F>>,
@@ -148,6 +153,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
 
     /// The advice cycle-phase opening point for `kind`, present only when that
     /// advice reduction ran a cycle phase.
+    #[cfg(not(feature = "akita"))]
     pub fn advice_cycle_phase_opening_point(
         &self,
         kind: jolt_claims::protocols::jolt::JoltAdviceKind,
@@ -185,6 +191,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     /// cycle challenges, recovered as `reverse(opening_point)` (the cycle opening
     /// point is the reverse of the variable challenges). Stage 7's address phase
     /// reconstructs its opening point from these.
+    #[cfg(not(feature = "akita"))]
     pub fn advice_cycle_phase_variables(
         &self,
         kind: jolt_claims::protocols::jolt::JoltAdviceKind,
@@ -278,6 +285,7 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
     /// untrusted slot of that advice member), present only when the advice
     /// reduction ran a cycle phase. Read by stage 7's advice input wiring and stage
     /// 8's precommitted finals resolution.
+    #[cfg(not(feature = "akita"))]
     pub fn advice_cycle_phase_claim(
         &self,
         kind: jolt_claims::protocols::jolt::JoltAdviceKind,

@@ -34,7 +34,11 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // mode-specific test fixtures. (The fail-closed
     // require_field_inline_slices gate lived here until the FR prover
     // fixtures landed.)
-    ("verifier.rs", 15, "commitment absorb seams + test fixtures"),
+    (
+        "verifier.rs",
+        19,
+        "commitment absorb seams + test fixtures + gated test imports",
+    ),
     // Module registration of the shared FR bytecode side-table seam, plus
     // the packed schedule's FR presence-marker field and its constructor.
     ("stages/mod.rs", 4, "seam registration + FR schedule marker"),
@@ -56,8 +60,8 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ("stages/stage6a/verify.rs", 2, "flagged seam calls"),
     (
         "stages/stage6b/verify.rs",
-        11,
-        "flagged seam calls + test fixtures",
+        12,
+        "flagged seam calls + test fixtures + gated test import",
     ),
     (
         "stages/stage8/verify.rs",
@@ -83,18 +87,18 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ),
     (
         "stages/stage2/outputs.rs",
-        18,
-        "FR carrier fields + test fixtures",
+        19,
+        "FR carrier fields + test fixtures + gated test import",
     ),
     (
         "stages/stage4/outputs.rs",
-        15,
-        "FR carrier fields + test fixtures",
+        16,
+        "FR carrier fields + test fixtures + gated test import",
     ),
     (
         "stages/stage5/outputs.rs",
-        9,
-        "FR carrier fields + test fixtures",
+        10,
+        "FR carrier fields + test fixtures + gated test import",
     ),
     ("stages/stage6b/outputs.rs", 6, "FR carrier fields"),
     // Relation files that carry an FR appendage: the OnceLock carrier field,
@@ -150,18 +154,18 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ),
     (
         "stages/zk/blindfold/stage2.rs",
-        22,
-        "flagged seam calls + tests",
+        23,
+        "flagged seam calls + tests + gated test import",
     ),
     (
         "stages/zk/blindfold/stage4.rs",
-        8,
-        "flagged seam calls + tests",
+        9,
+        "flagged seam calls + tests + gated test import",
     ),
     (
         "stages/zk/blindfold/stage5.rs",
-        8,
-        "flagged seam calls + tests",
+        10,
+        "flagged seam calls + tests + gated test imports",
     ),
     (
         "stages/zk/blindfold/stage6a.rs",
@@ -170,8 +174,8 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ),
     (
         "stages/zk/blindfold/stage6b.rs",
-        7,
-        "flagged seam calls + tests",
+        8,
+        "flagged seam calls + tests + gated test import",
     ),
 ];
 

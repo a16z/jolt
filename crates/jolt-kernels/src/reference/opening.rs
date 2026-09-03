@@ -29,15 +29,15 @@ impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
         _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
         let domain = 1usize << grid.total_vars;
         polynomials
             .iter()
             .map(|&polynomial| {
-                let table = match precommitted_tables.get(&polynomial) {
-                    Some(table) => table.clone(),
+                let table = match precommitted_tables.remove(&polynomial) {
+                    Some(table) => table,
                     None => dense_view(witness, final_opening_id(polynomial))?,
                 };
                 if table.len() > domain {

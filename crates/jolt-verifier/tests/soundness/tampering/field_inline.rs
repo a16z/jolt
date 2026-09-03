@@ -23,6 +23,8 @@
     not(feature = "zk")
 ))]
 mod active {
+    use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
+    use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
     use jolt_field::{Fr, Ring};
     use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 
@@ -56,7 +58,7 @@ mod active {
     fn tampered_field_inline_stage1_outer_claims_reject() {
         fn outer(
             claims: &mut ClearProofClaims<Fr>,
-        ) -> &mut jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims<Fr>{
+        ) -> &mut FieldRegistersSpartanOuterOutputClaims<Fr> {
             claims
                 .stage1
                 .field_inline_outer
@@ -119,7 +121,7 @@ mod active {
     fn tampered_field_inline_stage2_product_appendage_claims_reject() {
         fn product(
             claims: &mut ClearProofClaims<Fr>,
-        ) -> &mut jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims<Fr>{
+        ) -> &mut FieldRegistersProductOutputClaims<Fr> {
             claims
                 .stage2
                 .field_inline_product

@@ -199,7 +199,7 @@ mod field_inline_round_trip {
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::stages::stage1::field_inline as stage1_field_inline;
     use jolt_verifier::stages::stage2::product_tau_low;
-    use jolt_verifier::stages::uniskip;
+    use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
@@ -255,7 +255,7 @@ mod field_inline_round_trip {
         let tau = draw_spartan_outer_tau(&mut transcript, LOG_T);
         let uniskip_challenge = uniskip::verify_clear(
             &out.uniskip_proof,
-            &uniskip::UniskipParams::spartan_outer(),
+            &UniskipParams::spartan_outer(),
             Fr::from_u64(0),
             out.claims.uniskip_output_claim,
             &mut transcript,
@@ -318,19 +318,22 @@ mod field_inline_round_trip {
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
     use common::jolt_device::JoltDevice;
     use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_verifier::stages::uniskip;
+    #[cfg(feature = "akita")]
+    use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbsScheduled;
+    use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_verifier::stages::PrecommittedSchedule;
     use jolt_verifier::CheckedInputs;
 
     use super::*;
     use crate::stages::field_inline_fixtures::{fr_arithmetic_backend, ENTRY, LOG_T};
 
-    const CAPACITY: usize = common::constants::MAX_BLINDFOLD_GENERATORS;
+    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
 
     #[test]
     fn committed_stage1_shell_carries_the_composed_rows_and_replays() {
@@ -400,9 +403,7 @@ mod field_inline_zk {
                 bytecode: None,
                 program_image: None,
                 #[cfg(feature = "akita")]
-                field_inc_limbs: Some(
-                    jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbsScheduled,
-                ),
+                field_inc_limbs: Some(FieldIncLimbsScheduled),
             },
         };
         let mut transcript = Blake2bTranscript::new(b"stage1-fr-zk");
@@ -410,7 +411,7 @@ mod field_inline_zk {
         let uniskip_step = uniskip::verify_zk(
             &checked,
             &out.uniskip_proof,
-            &uniskip::UniskipParams::spartan_outer(),
+            &UniskipParams::spartan_outer(),
             &mut transcript,
         )
         .unwrap();

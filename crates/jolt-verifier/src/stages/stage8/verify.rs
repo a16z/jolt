@@ -7,6 +7,8 @@ use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening}
 use crate::proof::JoltCommitments;
 #[cfg(not(feature = "akita"))]
 use crate::stages::ids::VerifierOpeningId;
+#[cfg(feature = "akita")]
+use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
 use crate::stages::{stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims};
 use crate::{
@@ -428,15 +430,7 @@ where
                     id,
                 )?,
                 JoltCommittedPolynomial::BalancedIncDigit(_)
-                | JoltCommittedPolynomial::BalancedIncCarry
-                | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
-                | JoltCommittedPolynomial::BytecodeCircuitFlag { .. }
-                | JoltCommittedPolynomial::BytecodeInstructionFlag { .. }
-                | JoltCommittedPolynomial::BytecodeLookupSelector { .. }
-                | JoltCommittedPolynomial::BytecodeRafFlag { .. }
-                | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
-                | JoltCommittedPolynomial::BytecodeImmBytes { .. }
-                | JoltCommittedPolynomial::ProgramImageBytes => {
+                | JoltCommittedPolynomial::BalancedIncCarry => {
                     // Lattice-mode polynomials open through the fixed-prefix
                     // path in `stage8::packed`, never the homomorphic RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
@@ -673,6 +667,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
+    stage4: &Stage4Output<F, VC::Output>,
     stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
@@ -684,18 +679,6 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    // Settle committed-program word/chunk claims against their one-hot decompositions.
-    let reconstruction = super::reconstruction::verify(
-        checked,
-        proof.stages.reconstruction_sumcheck_proof.as_ref(),
-        &proof.clear_claims()?.reconstruction,
-        transcript,
-        stage6.clear()?,
-        stage7.clear()?,
-    )?;
-
-    // OneHotTrace then opens natively at its shared point; reconstruction leaves are
-    // discharged by separate auxiliary packed openings.
     super::packed::verify(
         formula_dimensions,
         proof.one_hot_config,
@@ -710,9 +693,9 @@ where
         &proof.joint_opening_proof,
         transcript,
         &checked.precommitted,
+        stage4.clear()?,
         stage6.clear()?,
         stage7.clear()?,
-        &reconstruction,
     )?;
 
     Ok(Stage8Output::Clear)

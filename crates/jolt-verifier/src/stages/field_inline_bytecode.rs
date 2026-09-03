@@ -258,11 +258,11 @@ mod tests {
     use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
     use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
     use jolt_field::{Fr, Ring};
-    use jolt_program::field_inline::FieldEncodedValue;
-    use jolt_riscv::NUM_CIRCUIT_FLAGS;
+    use jolt_program::field_inline::{
+        FieldEncodedValue, FieldInlineBytecodeRow as ProgramRow, FieldValueEncoding,
+    };
+    use jolt_riscv::{FIELD_REGISTER_LOG_K, NUM_CIRCUIT_FLAGS};
     use jolt_transcript::{Blake2bTranscript, Transcript};
-
-    type ProgramRow = jolt_program::field_inline::FieldInlineBytecodeRow;
 
     fn register(index: u8) -> Option<FieldRegister> {
         Some(FieldRegister::new(index).unwrap())
@@ -323,8 +323,8 @@ mod tests {
     fn metadata_of(rows: Vec<ProgramRow>) -> FieldInlineBytecodeMetadata {
         FieldInlineBytecodeMetadata {
             rows,
-            field_register_log_k: jolt_riscv::FIELD_REGISTER_LOG_K,
-            value_encoding: jolt_program::field_inline::FieldValueEncoding::BN254_SCALAR_CANONICAL,
+            field_register_log_k: FIELD_REGISTER_LOG_K,
+            value_encoding: FieldValueEncoding::BN254_SCALAR_CANONICAL,
             profile_fingerprint: 0,
         }
     }
@@ -385,20 +385,20 @@ mod tests {
     fn missing_side_table_is_a_verifier_error() {
         use common::jolt_device::{JoltDevice, MemoryConfig};
         use jolt_dory::DoryScheme;
+        use jolt_program::preprocess::{JoltProgramPreprocessing, RAMPreprocessing};
         use std::sync::Arc;
 
-        let program: ProgramPreprocessing<DoryScheme> = ProgramPreprocessing::Full(Arc::new(
-            jolt_program::preprocess::JoltProgramPreprocessing {
+        let program: ProgramPreprocessing<DoryScheme> =
+            ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
                 bytecode: Default::default(),
-                ram: jolt_program::preprocess::RAMPreprocessing::preprocess(Vec::new()),
+                ram: RAMPreprocessing::preprocess(Vec::new()),
                 memory_layout: JoltDevice::new(&MemoryConfig {
                     program_size: Some(1024),
                     ..Default::default()
                 })
                 .memory_layout,
                 max_padded_trace_length: 1 << 10,
-            },
-        ));
+            }));
         assert!(matches!(
             required_field_inline_bytecode(&program),
             Err(VerifierError::MissingPreprocessingPayload {

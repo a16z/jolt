@@ -23,23 +23,27 @@ mod support {
     use std::sync::Arc;
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+    use jolt_akita::{AkitaCommitment, PrecommittedScheduleParams};
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
     };
-    use jolt_field::CanonicalBytes;
+    use jolt_field::{CanonicalBytes, Ring};
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
+    use jolt_prover::akita::JoltAkitaBackend;
     use jolt_prover::{akita, JoltProverPreprocessing, ProverConfig};
-    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::field::akita::AkitaFp128;
+    use jolt_prover_legacy::host::Program;
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, field_inc_limb_schedule_params, AkitaField, AkitaJoltProof,
-        AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
+        AkitaNoCurve, AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
     };
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+    use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -78,11 +82,8 @@ mod support {
         inputs
     }
 
-    type LegacyPreprocessing = LegacyProverPreprocessing<
-        jolt_prover_legacy::field::akita::AkitaFp128,
-        jolt_prover_legacy::zkvm::packed::AkitaNoCurve,
-        AkitaPackedScheme,
-    >;
+    type LegacyPreprocessing =
+        LegacyProverPreprocessing<AkitaFp128, AkitaNoCurve, AkitaPackedScheme>;
 
     pub struct FrGuest {
         legacy_preprocessing: LegacyPreprocessing,
@@ -96,7 +97,7 @@ mod support {
     /// eq-MLE guest's FIELD_ASSERT_EQ already validates the fixture inputs
     /// at trace time).
     pub fn fr_guest(guest_name: &str, inputs: &[u8]) -> FrGuest {
-        let mut program = host::Program::new(guest_name);
+        let mut program = Program::new(guest_name);
         program.enable_field_inline();
 
         let (bytecode, memory_init, _, entry_address) = program.decode();
@@ -166,7 +167,7 @@ mod support {
     /// `FieldRdInc` values (the base material for forging limb commitments
     /// through the real commit path).
     pub struct ProveOutput {
-        pub verifier_preprocessing: jolt_verifier::JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
+        pub verifier_preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
         pub public_io: JoltDevice,
         pub proof: Proof,
         pub config: ProverConfig,
@@ -178,7 +179,7 @@ mod support {
     /// provision the [FieldIncLimbs] grouped rows every FR proof resolves.
     pub fn prove_fr(
         guest: FrGuest,
-        backend: akita::JoltAkitaBackend<AkitaField, AkitaScheme>,
+        backend: JoltAkitaBackend<AkitaField, AkitaScheme>,
     ) -> ProveOutput {
         let FrGuest {
             legacy_preprocessing,
@@ -207,21 +208,19 @@ mod support {
         let (setup_shape, layout_digest, one_hot_k) =
             akita::one_hot_trace_setup_shape(&config, bytecode_len)
                 .expect("OneHotTrace setup shape");
-        // Preprocessing must cover every arity a proof of this program can
-        // select, up to the padded ceiling (the derivation legacy's
-        // one_hot_trace_setup_params performs; the trace overhead over log_T
-        // is constant per K).
-        let ceiling_num_vars =
-            setup_shape.num_vars - log_t + MAX_PADDED_TRACE_LENGTH.ilog2() as usize;
-        let advice_schedule = jolt_akita::AdviceScheduleParams::new(None, None, ceiling_num_vars)
-            .with_field_inc_limbs(field_inc_limb_schedule_params(setup_shape.num_vars, log_t));
+        // The setup's final arity carries the FR limb group (the derivation
+        // legacy's one_hot_trace_setup_params performs).
+        let precommitted_schedule =
+            PrecommittedScheduleParams::new(None, None, setup_shape.num_vars).with_field_inc_limbs(
+                field_inc_limb_schedule_params(one_hot_k).expect("FR limb arity line"),
+            );
         let params = <<AkitaScheme as VerifierCommitmentScheme>::SetupParams>::one_hot_only_grouped(
             setup_shape.num_vars,
             setup_shape.num_polys,
             2,
             layout_digest,
             one_hot_k,
-            Some(advice_schedule),
+            Some(precommitted_schedule),
         );
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(params)
@@ -279,10 +278,10 @@ mod support {
     }
 
     pub fn verify_full(
-        preprocessing: &jolt_verifier::JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
+        preprocessing: &JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
         public_io: &JoltDevice,
         proof: &Proof,
-    ) -> Result<(), jolt_verifier::VerifierError> {
+    ) -> Result<(), VerifierError> {
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
             preprocessing,
             public_io,
@@ -294,13 +293,13 @@ mod support {
     /// A labeled packed kernel-backend constructor.
     pub type BackendCase = (
         &'static str,
-        fn() -> akita::JoltAkitaBackend<AkitaField, AkitaScheme>,
+        fn() -> JoltAkitaBackend<AkitaField, AkitaScheme>,
     );
 
     pub fn backends() -> [BackendCase; 2] {
         [
-            ("reference", akita::JoltAkitaBackend::reference),
-            ("optimized", akita::JoltAkitaBackend::optimized),
+            ("reference", JoltAkitaBackend::reference),
+            ("optimized", JoltAkitaBackend::optimized),
         ]
     }
 
@@ -310,7 +309,7 @@ mod support {
     pub fn commit_limb_words_with_digest(
         output: &ProveOutput,
         digest: [u8; 32],
-    ) -> jolt_akita::AkitaCommitment {
+    ) -> AkitaCommitment {
         use jolt_claims::protocols::field_inline::lattice::canonical_limbs;
         use jolt_openings::TransparentObjectSetup;
         use jolt_poly::Polynomial;
@@ -349,15 +348,19 @@ mod support {
     reason = "integration tests should fail loudly"
 )]
 mod clear {
+    use jolt_akita::AkitaScheme;
+    use jolt_field::Ring;
+    use jolt_openings::GroupCommitmentMetadata;
     use jolt_prover::akita::JoltAkitaBackend;
     use jolt_prover_legacy::zkvm::packed::AkitaField;
     use jolt_verifier::proof::JoltProofClaims;
+    use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
+    use jolt_verifier::VerifierError;
+    use serde_json::Value;
 
-    use super::support;
+    use super::support::{self, Proof, ProveOutput};
 
-    fn prove_eqpoly(
-        backend: JoltAkitaBackend<AkitaField, jolt_akita::AkitaScheme>,
-    ) -> support::ProveOutput {
+    fn prove_eqpoly(backend: JoltAkitaBackend<AkitaField, AkitaScheme>) -> ProveOutput {
         let guest = support::fr_guest("eqpoly-field-guest", &support::eqpoly_inputs());
         assert!(
             support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
@@ -366,9 +369,7 @@ mod clear {
         support::prove_fr(guest, backend)
     }
 
-    fn clear_limb_claims(
-        proof: &support::Proof,
-    ) -> &jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims<AkitaField> {
+    fn clear_limb_claims(proof: &Proof) -> &FieldIncLimbClaims<AkitaField> {
         let JoltProofClaims::Clear(claims) = &proof.claims else {
             panic!("packed proofs carry clear claims");
         };
@@ -479,12 +480,12 @@ mod clear {
                 .field_inc_limbs_commitment
                 .as_ref()
                 .expect("packed FR proofs carry the limb-group commitment");
-            let mut digest = jolt_openings::GroupCommitmentMetadata::layout_digest(honest);
+            let mut digest = GroupCommitmentMetadata::layout_digest(honest);
             digest[0] ^= 0x01;
             support::commit_limb_words_with_digest(&output, digest)
         };
 
-        type Tamper = (&'static str, Box<dyn Fn(&mut support::Proof)>);
+        type Tamper = (&'static str, Box<dyn Fn(&mut Proof)>);
         let tampers: Vec<Tamper> = vec![
             (
                 "limb evaluation offset (linear recomposition check)",
@@ -508,17 +509,17 @@ mod clear {
             (
                 "batched opening proof mutation",
                 Box::new(|proof| {
-                    let mut value = serde_json::to_value(&proof.joint_opening_proof.main_batch)
+                    let mut value = serde_json::to_value(&proof.joint_opening_proof)
                         .expect("serialize batch proof");
                     let bytes = value
                         .get_mut("serialized_akita_proof")
-                        .and_then(serde_json::Value::as_array_mut)
+                        .and_then(Value::as_array_mut)
                         .expect("batch proof carries the serialized backend proof");
                     let mid = bytes.len() / 2;
                     let byte = bytes.get_mut(mid).expect("nonempty backend proof");
                     let flipped = byte.as_u64().expect("byte value") ^ 0x01;
-                    *byte = serde_json::Value::from(flipped);
-                    proof.joint_opening_proof.main_batch =
+                    *byte = Value::from(flipped);
+                    proof.joint_opening_proof =
                         serde_json::from_value(value).expect("deserialize mutated batch proof");
                 }),
             ),
@@ -572,7 +573,7 @@ mod clear {
                 &output.public_io,
                 &offset_limb
             ),
-            Err(jolt_verifier::VerifierError::FieldIncLimbRecompositionMismatch)
+            Err(VerifierError::FieldIncLimbRecompositionMismatch)
         ));
     }
 
@@ -584,7 +585,7 @@ mod clear {
         use jolt_claims::protocols::field_inline::lattice::field_inc_limbs_precommitted_role;
         use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
         use jolt_openings::{GroupOpeningClaim, PrecommittedClaim};
-        use jolt_prover_legacy::zkvm::packed::{AkitaScheme, AkitaTranscript};
+        use jolt_prover_legacy::zkvm::packed::AkitaTranscript;
         use jolt_transcript::Transcript;
 
         let output = prove_eqpoly(JoltAkitaBackend::optimized());
@@ -593,10 +594,7 @@ mod clear {
             .field_inc_limbs_commitment
             .clone()
             .expect("packed FR proofs carry the limb-group commitment");
-        let point = vec![
-            AkitaField::from_u64(3);
-            jolt_openings::GroupCommitmentMetadata::num_vars(&commitment)
-        ];
+        let point = vec![AkitaField::from_u64(3); GroupCommitmentMetadata::num_vars(&commitment)];
         let fr_claim = PrecommittedClaim::new(
             field_inc_limbs_precommitted_role(),
             GroupOpeningClaim::new(commitment, point, vec![AkitaField::from_u64(0)]),
@@ -605,7 +603,7 @@ mod clear {
             output.proof.commitments.clone(),
             vec![
                 AkitaField::from_u64(3);
-                jolt_openings::GroupCommitmentMetadata::num_vars(&output.proof.commitments)
+                GroupCommitmentMetadata::num_vars(&output.proof.commitments)
             ],
             vec![AkitaField::from_u64(0)],
         );
@@ -615,7 +613,7 @@ mod clear {
                 &output.verifier_preprocessing.pcs_setup,
                 &[fr_claim.clone(), fr_claim],
                 &main,
-                &output.proof.joint_opening_proof.main_batch,
+                &output.proof.joint_opening_proof,
                 &mut transcript,
             )
             .is_err(),

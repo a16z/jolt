@@ -1,11 +1,16 @@
-use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_riscv::{JoltCycle, JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 use std::sync::Arc;
 
-#[cfg(feature = "field-inline")]
-use crate::field_inline::FieldInlineTraceData;
+use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 
 use super::{ExecutionBackend, TraceError, TraceSource};
+
+mod row;
+
+pub use row::{
+    RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceRow,
+    TraceRowError,
+};
 
 /// A Jolt-ready program built from an RV64 ELF image.
 ///
@@ -170,71 +175,6 @@ impl TraceInputs {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RegisterRead {
-    pub register: u8,
-    pub value: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RegisterWrite {
-    pub register: u8,
-    pub pre_value: u64,
-    pub post_value: u64,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RegisterState {
-    pub rs1: Option<RegisterRead>,
-    pub rs2: Option<RegisterRead>,
-    pub rd: Option<RegisterWrite>,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RamRead {
-    pub address: u64,
-    pub value: u64,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RamWrite {
-    pub address: u64,
-    pub pre_value: u64,
-    pub post_value: u64,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub enum RamAccess {
-    Read(RamRead),
-    Write(RamWrite),
-    #[default]
-    NoOp,
-}
-
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
@@ -242,72 +182,6 @@ pub enum RamAccess {
 )]
 pub struct MemoryImage {
     pub bytes: Vec<(u64, u8)>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(feature = "field-inline"), derive(Copy))]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct TraceRow {
-    pub instruction: JoltInstructionRow,
-    pub registers: RegisterState,
-    pub ram_access: RamAccess,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: Option<Arc<FieldInlineTraceData>>,
-}
-
-impl JoltCycle for TraceRow {
-    type Instruction = JoltInstructionRow;
-
-    #[inline]
-    fn instruction(&self) -> Self::Instruction {
-        self.instruction
-    }
-
-    #[inline]
-    fn rs1_val(&self) -> Option<u64> {
-        self.registers.rs1.map(|read| read.value)
-    }
-
-    #[inline]
-    fn rs2_val(&self) -> Option<u64> {
-        self.registers.rs2.map(|read| read.value)
-    }
-
-    #[inline]
-    fn rd_vals(&self) -> Option<(u64, u64)> {
-        self.registers
-            .rd
-            .map(|write| (write.pre_value, write.post_value))
-    }
-
-    #[inline]
-    fn ram_access_address(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Read(read) => Some(read.address),
-            RamAccess::Write(write) => Some(write.address),
-            RamAccess::NoOp => None,
-        }
-    }
-
-    #[inline]
-    fn ram_read_value(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Read(read) => Some(read.value),
-            RamAccess::Write(write) => Some(write.pre_value),
-            RamAccess::NoOp => None,
-        }
-    }
-
-    #[inline]
-    fn ram_write_value(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Write(write) => Some(write.post_value),
-            RamAccess::Read(_) | RamAccess::NoOp => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -373,8 +247,6 @@ impl From<Vec<TraceRow>> for OwnedTrace {
 
 impl TraceSource for OwnedTrace {
     fn next_row(&mut self) -> Option<TraceRow> {
-        // `TraceRow` is `Copy` only without `field-inline` (which adds a non-`Copy` `Arc`
-        // field), so the row is copied or cloned to match the active build.
         #[cfg(not(feature = "field-inline"))]
         let row = self.rows.get(self.next).copied();
         #[cfg(feature = "field-inline")]
@@ -384,8 +256,6 @@ impl TraceSource for OwnedTrace {
     }
 
     fn rows(&self) -> Option<&[TraceRow]> {
-        // Pristine sources only: after `next_row` consumption the full slice
-        // would diverge from the remaining stream.
         (self.next == 0).then(|| self.rows.as_slice())
     }
 }

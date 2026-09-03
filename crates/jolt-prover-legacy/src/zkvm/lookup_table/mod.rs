@@ -16,6 +16,9 @@ use prefixes::PrefixEval;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
 use serde::{Deserialize, Serialize};
+use shift_data_b::ShiftDataBTable;
+use shift_data_h::ShiftDataHTable;
+use shift_data_w::ShiftDataWTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
 use shift_right_bitmask_w::ShiftRightBitmaskWTable;
 use sign_extend_word::SignExtendWordTable;
@@ -40,6 +43,7 @@ use virtual_sraw::VirtualSRAWTable;
 use virtual_srl::VirtualSRLTable;
 use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
+use virtual_xor_rotl1::VirtualXORROTL1Table;
 use virtual_xor_rotw::VirtualXORROTWTable;
 use window_mask_b::WindowMaskBTable;
 use window_mask_h::WindowMaskHTable;
@@ -98,6 +102,9 @@ pub mod pow2;
 pub mod pow2_w;
 pub mod range_check;
 pub mod range_check_aligned;
+pub mod shift_data_b;
+pub mod shift_data_h;
+pub mod shift_data_w;
 pub mod shift_right_bitmask;
 pub mod shift_right_bitmask_w;
 pub mod sign_extend_word;
@@ -119,6 +126,7 @@ pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srlw;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod window_mask_b;
 pub mod window_mask_h;
@@ -187,6 +195,10 @@ pub enum LookupTables<const XLEN: usize> {
     WindowMaskB(WindowMaskBTable<XLEN>),
     WindowMaskH(WindowMaskHTable<XLEN>),
     AlignAddr(AlignAddrTable<XLEN>),
+    ShiftDataB(ShiftDataBTable<XLEN>),
+    ShiftDataH(ShiftDataHTable<XLEN>),
+    ShiftDataW(ShiftDataWTable<XLEN>),
+    VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -250,6 +262,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::WindowMaskB(table) => table.materialize(),
             LookupTables::WindowMaskH(table) => table.materialize(),
             LookupTables::AlignAddr(table) => table.materialize(),
+            LookupTables::ShiftDataB(table) => table.materialize(),
+            LookupTables::ShiftDataH(table) => table.materialize(),
+            LookupTables::ShiftDataW(table) => table.materialize(),
+            LookupTables::VirtualXORROTL1(table) => table.materialize(),
         }
     }
 
@@ -306,6 +322,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::WindowMaskB(table) => table.materialize_entry(index),
             LookupTables::WindowMaskH(table) => table.materialize_entry(index),
             LookupTables::AlignAddr(table) => table.materialize_entry(index),
+            LookupTables::ShiftDataB(table) => table.materialize_entry(index),
+            LookupTables::ShiftDataH(table) => table.materialize_entry(index),
+            LookupTables::ShiftDataW(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROTL1(table) => table.materialize_entry(index),
         }
     }
 
@@ -366,6 +386,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::WindowMaskB(table) => table.evaluate_mle(r),
             LookupTables::WindowMaskH(table) => table.evaluate_mle(r),
             LookupTables::AlignAddr(table) => table.evaluate_mle(r),
+            LookupTables::ShiftDataB(table) => table.evaluate_mle(r),
+            LookupTables::ShiftDataH(table) => table.evaluate_mle(r),
+            LookupTables::ShiftDataW(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROTL1(table) => table.evaluate_mle(r),
         }
     }
 
@@ -422,6 +446,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::WindowMaskB(table) => table.suffixes(),
             LookupTables::WindowMaskH(table) => table.suffixes(),
             LookupTables::AlignAddr(table) => table.suffixes(),
+            LookupTables::ShiftDataB(table) => table.suffixes(),
+            LookupTables::ShiftDataH(table) => table.suffixes(),
+            LookupTables::ShiftDataW(table) => table.suffixes(),
+            LookupTables::VirtualXORROTL1(table) => table.suffixes(),
         }
     }
 
@@ -482,6 +510,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::WindowMaskB(table) => table.combine(prefixes, suffixes),
             LookupTables::WindowMaskH(table) => table.combine(prefixes, suffixes),
             LookupTables::AlignAddr(table) => table.combine(prefixes, suffixes),
+            LookupTables::ShiftDataB(table) => table.combine(prefixes, suffixes),
+            LookupTables::ShiftDataH(table) => table.combine(prefixes, suffixes),
+            LookupTables::ShiftDataW(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROTL1(table) => table.combine(prefixes, suffixes),
         }
     }
 }

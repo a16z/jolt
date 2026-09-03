@@ -21,7 +21,10 @@ impl<T: TraceSource> TraceBackend<T> {
 
         let cycles = checked_pow2(self.config.log_t)?;
         let register_count = checked_pow2(REGISTER_ADDRESS_BITS)?;
-        let mut values = jolt_utils::unsafe_allocate_zero_vec(register_count * cycles);
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(checked_dense_grid_len::<F>(
+            register_count,
+            cycles,
+        )?);
 
         if id == JoltVirtualPolynomial::RegistersVal {
             let mut state = vec![0u64; register_count];

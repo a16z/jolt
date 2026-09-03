@@ -438,6 +438,10 @@ fn selected_product_remainder_output_expr<F: JoltField>(
 #[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 mod tests {
     use super::*;
+    #[cfg(feature = "field-inline")]
+    use crate::stages::stage2::outputs::{
+        FieldRegistersClaimReductionOutputClaims, FieldRegistersProductOutputClaims,
+    };
     use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
@@ -481,12 +485,11 @@ mod tests {
                 right_instruction_input: fr(5),
             },
             #[cfg(feature = "field-inline")]
-            field_registers_claim_reduction:
-                crate::stages::stage2::outputs::FieldRegistersClaimReductionOutputClaims {
-                    rd_value: fr(16),
-                    rs1_value: fr(17),
-                    rs2_value: fr(18),
-                },
+            field_registers_claim_reduction: FieldRegistersClaimReductionOutputClaims {
+                rd_value: fr(16),
+                rs1_value: fr(17),
+                rs2_value: fr(18),
+            },
             ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
             ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
         };
@@ -494,7 +497,7 @@ mod tests {
         // Resolve a lowered composite id against the claim structs (the FR
         // appendage rides beside the batch, so it has its own resolver).
         #[cfg(feature = "field-inline")]
-        let appendage = crate::stages::stage2::outputs::FieldRegistersProductOutputClaims::<Fr> {
+        let appendage = FieldRegistersProductOutputClaims::<Fr> {
             rs1_value: fr(201),
             rs2_value: fr(202),
             rd_value: fr(203),
@@ -650,7 +653,6 @@ mod tests {
     #[test]
     fn lowered_remainder_output_matches_the_clear_composed_claim() {
         use crate::stages::relations::ConcreteSumcheck as _;
-        use crate::stages::stage2::outputs::FieldRegistersProductOutputClaims;
         use crate::stages::stage2::product_remainder::{
             ProductRemainder, ProductRemainderInputClaims, ProductRemainderOutputClaims,
         };

@@ -171,6 +171,8 @@ impl<F: JoltField, C> Stage5Output<F, C> {
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
@@ -193,7 +195,7 @@ mod tests {
             registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
             #[cfg(feature = "field-inline")]
             field_registers_val_evaluation: FieldRegistersValEvaluation::new(
-                jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(4),
+                FieldRegistersTraceDimensions::new(4),
             ),
         }
     }

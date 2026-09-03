@@ -17,13 +17,6 @@ pub mod outputs;
 #[cfg(feature = "akita")]
 pub mod packed;
 pub mod precommitted;
-/// The reconstruction phase that opens the stage-8 region on the packed path:
-/// settles committed-program word/chunk claims against their committed one-hot
-/// decompositions, producing the packed leaf claims the opening consumes.
-/// Public because its output-claims aggregate is part of the proof's clear
-/// claims.
-#[cfg(feature = "akita")]
-pub mod reconstruction;
 mod verify;
 
 #[cfg(not(feature = "akita"))]

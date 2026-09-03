@@ -49,6 +49,13 @@ pub(crate) struct FrTraceFixture {
     counter: u64,
 }
 
+/// One FR-active cycle: the instruction row with its field-inline trace data.
+fn fr_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
+    let mut row = TraceRow::from_instruction(instruction).unwrap();
+    row.field_inline = Some(Arc::new(data));
+    row
+}
+
 impl FrTraceFixture {
     pub(crate) fn new() -> Self {
         Self {
@@ -110,10 +117,8 @@ impl FrTraceFixture {
     /// An ordinary (FR-inactive) row: an ADDI with no register traffic.
     pub(crate) fn noop(&mut self) {
         let instruction = self.instruction(JoltInstructionKind::ADDI, Some(1), Some(0), None, 0);
-        self.rows.push(TraceRow {
-            instruction,
-            ..TraceRow::default()
-        });
+        self.rows
+            .push(TraceRow::from_instruction(instruction).unwrap());
     }
 
     pub(crate) fn load_imm(&mut self, rd: u8, imm: u64) {
@@ -122,15 +127,14 @@ impl FrTraceFixture {
                 imm as i128
             });
         let rd = self.write(rd, Fr::from_u64(imm));
-        self.rows.push(TraceRow {
+        self.rows.push(fr_row(
             instruction,
-            field_inline: Some(Arc::new(FieldInlineTraceData {
+            FieldInlineTraceData {
                 op: Some(FieldInlineOp::LoadImm),
                 rd: Some(rd),
                 ..FieldInlineTraceData::default()
-            })),
-            ..TraceRow::default()
-        });
+            },
+        ));
     }
 
     /// One FR arithmetic row (`Add`/`Sub`/`Mul`): reads both operands off the
@@ -150,18 +154,17 @@ impl FrTraceFixture {
         let rs2 = self.read(rs2);
         let post = self.fresh_value();
         let rd = self.write(rd, post);
-        self.rows.push(TraceRow {
+        self.rows.push(fr_row(
             instruction,
-            field_inline: Some(Arc::new(FieldInlineTraceData {
+            FieldInlineTraceData {
                 op: Some(op),
                 rs1: Some(rs1),
                 rs2: Some(rs2),
                 rd: Some(rd),
                 product,
                 ..FieldInlineTraceData::default()
-            })),
-            ..TraceRow::default()
-        });
+            },
+        ));
     }
 
     pub(crate) fn assert_eq_row(&mut self, rs1: u8, rs2: u8) {
@@ -174,16 +177,15 @@ impl FrTraceFixture {
         );
         let rs1 = self.read(rs1);
         let rs2 = self.read(rs2);
-        self.rows.push(TraceRow {
+        self.rows.push(fr_row(
             instruction,
-            field_inline: Some(Arc::new(FieldInlineTraceData {
+            FieldInlineTraceData {
                 op: Some(FieldInlineOp::AssertEq),
                 rs1: Some(rs1),
                 rs2: Some(rs2),
                 ..FieldInlineTraceData::default()
-            })),
-            ..TraceRow::default()
-        });
+            },
+        ));
     }
 
     pub(crate) fn inv(&mut self, rd: u8, rs1: u8) {
@@ -193,17 +195,16 @@ impl FrTraceFixture {
         let inv_product = encode(self.state[usize::from(rs1)] * post);
         let rs1 = self.read(rs1);
         let rd = self.write(rd, post);
-        self.rows.push(TraceRow {
+        self.rows.push(fr_row(
             instruction,
-            field_inline: Some(Arc::new(FieldInlineTraceData {
+            FieldInlineTraceData {
                 op: Some(FieldInlineOp::Inv),
                 rs1: Some(rs1),
                 rd: Some(rd),
                 inv_product: Some(inv_product),
                 ..FieldInlineTraceData::default()
-            })),
-            ..TraceRow::default()
-        });
+            },
+        ));
     }
 
     /// Run `f` against an FR-profile trace backend padded to `2^log_t`

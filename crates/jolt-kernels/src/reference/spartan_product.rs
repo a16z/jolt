@@ -130,42 +130,26 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRem
 /// The shared product compute state: the eight cycle-indexed factor/wire
 /// tables and `eq(τ_low, ·)` — everything the uni-skip polynomial and the
 /// remainder member both consume.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct SpartanProductKernel<F: JoltField> {
     log_t: usize,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     eq_cycle: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     left_instruction_input: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     lookup_output: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     jump_flag: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     right_instruction_input: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     branch_flag: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     next_is_noop: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     write_lookup_output_to_rd: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     virtual_instruction: Vec<F>,
     /// The FR lane factor columns (`FieldRs1Value`, `FieldRs2Value`,
     /// `FieldRdValue`), cycle-indexed — the composed lanes' left/right
     /// factors per `FieldRegistersProductLane::factor_openings`.
     #[cfg(feature = "field-inline")]
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     field_rs1_value: Vec<F>,
     #[cfg(feature = "field-inline")]
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     field_rs2_value: Vec<F>,
     #[cfg(feature = "field-inline")]
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     field_rd_value: Vec<F>,
 }
 

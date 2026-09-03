@@ -200,6 +200,8 @@ impl<F: JoltField, C> Stage4Output<F, C> {
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::geometry::dimensions::{
         ReadWriteDimensions, TraceDimensions, REGISTER_ADDRESS_BITS,
     };
@@ -299,8 +301,7 @@ mod tests {
             )),
             #[cfg(feature = "field-inline")]
             field_registers_read_write: FieldRegistersReadWriteChecking::new(
-                jolt_claims::protocols::field_inline::FieldInlineConfig::enabled()
-                    .read_write_dimensions(log_t),
+                FieldInlineConfig::enabled().read_write_dimensions(log_t),
             ),
             ram_val_check: RamValCheck::new(
                 TraceDimensions::new(log_t),

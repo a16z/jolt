@@ -1,52 +1,18 @@
-//! The optimized registers read/write-checking (stage 4) kernel: the legacy
-//! prover's sparse-matrix algorithm behind the `PrepareKernel` seam.
+//! Optimized register read/write check (stage 4).
 //!
-//! Byte-parity contract: identical round polynomials and output claims to the
-//! reference kernel (`reference/registers_read_write.rs`), which sums the
-//! summand over dense `2^(log_K + log_T)` register-major tables. This kernel
-//! computes the same polynomials from the sparse structure of the one-hot
-//! grids — field arithmetic is exact, so algebraic refactorings (eq
-//! factoring, γ-combined ra, deferred-reduction accumulation) preserve every
-//! wire byte.
+//! Stores at most three sparse entries per cycle and combines reads as
+//! `ra = γ·rs1_ra + γ²·rs2_ra`. Gruen factoring handles cycle rounds;
+//! address rounds use three dense `K`-sized arrays.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/registers/read_write_checking.rs` and
-//! `subprotocols/read_write_matrix/{cycle_major,registers}.rs`:
+//! `SeedEntry` omits the round-0 field value. The first challenge is held
+//! without materializing `T/2`; the second bind creates the `T/4` indexed SoA
+//! layout. Coefficients stay as LUT indices until the `u16` domain saturates.
 //!
-//! - **Sparse cycle-major matrix**: `rd_wa`/`rs1_ra`/`rs2_ra`/`Val` are
-//!   represented by ≤ 3 entries per cycle (the touched registers) instead of
-//!   three dense `K × T` grids. Between touches a register's value is
-//!   constant, so a missing merge partner is inferred from its neighbor's
-//!   raw `prev_val`/`next_val` (a constant slice binds to itself).
-//! - **γ-combined read coefficient**: one `ra = γ·rs1_ra + γ²·rs2_ra` column
-//!   per entry (exact by distributivity).
-//! - **Gruen split-eq factoring** for the cycle rounds:
-//!   `s(t) = l(t) · Σ_z E_out·E_in·inner(t, z)` via
-//!   [`GruenSplitEqPolynomial::gruen_poly_deg_3`].
-//! - **Small fixed K**: after the cycle rounds the state collapses to three
-//!   `K = 2^REGISTER_ADDRESS_BITS` dense arrays plus two scalars (bound eq,
-//!   bound inc); address rounds cost O(K).
-//! - **Direct one-hot claims at extraction**: `rs1_ra(r)`/`rs2_ra(r)` are
-//!   computed straight from the per-cycle indices with a 2-way split-eq walk
-//!   (legacy's `compute_rs2_ra_claim`, applied to both operands — no γ⁻¹).
-//!
-//! - **Compact coefficient lookup tables** (legacy's
-//!   `OneHotCoeffLookupTable`): entries carry a `u16` read index and `u8`
-//!   write index instead of two field elements, and cycle rows fit in `u32` —
-//!   40 bytes per Fp128 entry through the first three cycle binds, exactly
-//!   where the entry count peaks (≤ 3·T). The
-//!   tables square on each bind (all `b + r·(a − b)` pairs) and the entries
-//!   combine indices, so every looked-up value equals the field element the
-//!   direct representation would hold; entries deref to field coefficients
-//!   when one more squaring would overflow the `u16` index domain.
-//!
-//! Like the reference kernel, only the default read-write config (phase 1 =
-//! all cycle rounds, phase 2 = 0) is supported.
+//! Only the default read-write config is supported.
 
-use jolt_claims::protocols::jolt::geometry::registers::rd_inc_read_write;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -75,9 +41,7 @@ mod tests;
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use rows::CollectRegisterEntries;
-use sparse::{
-    bind_sparse_entries, sparse_quadratic, CoeffLut, OneHotCoeff, ReadWriteKernel, SparseEntries,
-};
+use sparse::{CoeffLut, CycleState};
 
 pub struct OptimizedRegistersReadWrite;
 
@@ -114,21 +78,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
                 reason: "registers read-write input point has the wrong variable count",
             });
         }
-        if log_t >= 32 {
-            return Err(KernelError::Unsupported {
-                reason: "optimized registers read-write checking requires fewer than 2^32 cycles",
-            });
-        }
         let cycles = 1usize << log_t;
-
-        let inc_table: Vec<F> = witness.oracle_table(rd_inc_read_write().polynomial_id())?;
-        if inc_table.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{:?}", rd_inc_read_write()),
-                expected: cycles,
-                got: inc_table.len(),
-            });
-        }
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
@@ -141,12 +91,14 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             rs1_indices,
             rs2_indices,
             rd_indices,
+            rd_inc,
         } = CollectRegisterEntries::collect(witness, cycles)?;
-        let entries = SparseEntries::Indexed {
+        let cycle = CycleState::new(
             entries,
-            ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
-            wa_lut: CoeffLut::new(vec![F::zero(), F::one()]),
-        };
+            CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
+            CoeffLut::new(vec![F::zero(), F::one()]),
+            rd_inc,
+        );
 
         // Park the rd hot indices for the stage-5 val-evaluation kernel.
         session.park(SharedRdIndices(rd_indices));
@@ -154,9 +106,8 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         Ok(Box::new(ReadWriteKernel {
             log_t,
             log_k,
-            entries,
+            cycle,
             gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            inc: Polynomial::new(inc_table),
             ra: Vec::new(),
             wa: Vec::new(),
             val: Vec::new(),
@@ -169,9 +120,29 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
     }
 }
 
-/// The sparse entries in their round-dependent coefficient representation:
-/// `u16` LUT indices while the tables can still square (the first four cycle
-/// rounds — the peak-memory window), direct field values after.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct ReadWriteKernel<F: JoltField> {
+    log_t: usize,
+    log_k: usize,
+    /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
+    /// cycle→address transition.
+    cycle: CycleState<F>,
+    gruen: GruenSplitEqPolynomial<F>,
+    // Address-phase dense state (K-sized), materialized at the transition.
+    ra: Vec<F>,
+    wa: Vec<F>,
+    val: Vec<F>,
+    /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    eq_scalar: F,
+    /// Fully bound `rd_inc` — constant across the address rounds.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    inc_scalar: F,
+    rs1_indices: Vec<Option<u8>>,
+    rs2_indices: Vec<Option<u8>>,
+    challenges: RoundChallenges<F>,
+}
+
 impl<F: JoltField> ReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's
     /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
@@ -179,19 +150,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
     fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let inc = self.inc.evals();
-        let quadratic = match &self.entries {
-            SparseEntries::Indexed {
-                entries,
-                ra_lut,
-                wa_lut,
-            } => sparse_quadratic(entries, ra_lut, wa_lut, e_in, e_out, inc),
-            SparseEntries::Direct(entries) => {
-                let unused = SparseEntries::unused_lut();
-                sparse_quadratic(entries, &unused, &unused, e_in, e_out, inc)
-            }
-        };
-
+        let quadratic = self.cycle.quadratic(e_in, e_out);
         self.gruen
             .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
     }
@@ -234,55 +193,14 @@ impl<F: JoltField> ReadWriteKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn bind_sparse(&mut self, r: F) {
-        // Dereference to direct field coefficients when one more table
-        // squaring would overflow the u16 index domain (after the third
-        // cycle bind under the seed sizes) — by then the entry count has
-        // started merging down, so the wider entries no longer set the peak.
-        let saturated = matches!(
-            &self.entries,
-            SparseEntries::Indexed { ra_lut, wa_lut, .. }
-                if ra_lut.saturated() || wa_lut.saturated()
-        );
-        if saturated {
-            if let SparseEntries::Indexed {
-                entries,
-                ra_lut,
-                wa_lut,
-            } = std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new()))
-            {
-                self.entries =
-                    SparseEntries::Direct(SparseEntries::deref(entries, &ra_lut, &wa_lut));
-            }
-        }
-        match &mut self.entries {
-            SparseEntries::Indexed {
-                entries,
-                ra_lut,
-                wa_lut,
-            } => {
-                // Entries combine indices against the CURRENT table widths;
-                // the tables then square so the combined indices address the
-                // bound values.
-                bind_sparse_entries(entries, r, ra_lut, wa_lut);
-                ra_lut.bind(r);
-                wa_lut.bind(r);
-            }
-            SparseEntries::Direct(entries) => {
-                let unused = SparseEntries::unused_lut();
-                bind_sparse_entries(entries, r, &unused, &unused);
-            }
-        }
-    }
-
     /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
     /// sparse rows; the final cycle bind collapses to the K-sized dense
     /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
+        let mut layout_transitioned = false;
         if self.challenges.bound() < self.log_t {
             self.gruen.bind(r);
-            self.inc.bind_with_order(r, BindingOrder::LowToHigh);
-            self.bind_sparse(r);
+            layout_transitioned = self.cycle.bind(r);
         } else {
             for table in [&mut self.ra, &mut self.wa, &mut self.val] {
                 bind_pairs(table, r);
@@ -291,39 +209,16 @@ impl<F: JoltField> ReadWriteKernel<F> {
         self.challenges.push(r);
 
         if self.challenges.bound() == self.log_t {
-            let k = 1usize << self.log_k;
-            let mut ra = vec![F::zero(); k];
-            let mut wa = vec![F::zero(); k];
-            let mut val = vec![F::zero(); k];
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
-            match std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new())) {
-                SparseEntries::Indexed {
-                    entries,
-                    ra_lut,
-                    wa_lut,
-                } => {
-                    for entry in entries {
-                        debug_assert_eq!(entry.row, 0);
-                        ra[entry.col as usize] = entry.ra.value(&ra_lut);
-                        wa[entry.col as usize] = entry.wa.value(&wa_lut);
-                        val[entry.col as usize] = entry.val;
-                    }
-                }
-                SparseEntries::Direct(entries) => {
-                    for entry in entries {
-                        debug_assert_eq!(entry.row, 0);
-                        ra[entry.col as usize] = entry.ra;
-                        wa[entry.col as usize] = entry.wa;
-                        val[entry.col as usize] = entry.val;
-                    }
-                }
-            }
-            self.ra = ra;
-            self.wa = wa;
-            self.val = val;
+            (self.ra, self.wa, self.val, self.inc_scalar) =
+                self.cycle.take_dense(1usize << self.log_k);
             self.eq_scalar = self.gruen.current_scalar();
-            self.inc_scalar = self.inc.evals()[0];
+        }
+
+        // Return replaced entry generations immediately.
+        if layout_transitioned {
+            crate::mem::purge_retained_memory(self.log_t);
         }
     }
 
@@ -343,17 +238,17 @@ impl<F: JoltField> ReadWriteKernel<F> {
             .collect();
         (r_address, r_cycle)
     }
-}
 
-impl<F: JoltField> ReadWriteKernel<F> {
-    /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the two
-    /// read operands in one walk — the direct MLE of a one-hot `(K × T)` grid at
-    /// the bound point.
+    /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the
+    /// two read operands in one walk — the direct MLE of a one-hot `(K × T)`
+    /// grid at the bound point.
     ///
     /// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
     /// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
     /// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
     fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
+        let rs1_indices = &self.rs1_indices;
+        let rs2_indices = &self.rs2_indices;
         let log_t = r_cycle.len();
         let addr_bits = r_address.len();
         let n = log_t + addr_bits;
@@ -370,17 +265,17 @@ impl<F: JoltField> ReadWriteKernel<F> {
 
         let block_contribution = |idx_hi: usize| -> [F; 2] {
             let block_start = idx_hi << cycle_bits_in_lo;
-            let block_end = core::cmp::min(block_start + cycles_per_block, self.rs1_indices.len());
-            if block_start >= self.rs1_indices.len() {
+            let block_end = core::cmp::min(block_start + cycles_per_block, rs1_indices.len());
+            if block_start >= rs1_indices.len() {
                 return [F::zero(); 2];
             }
             let mut sums = [F::Accumulator::default(), F::Accumulator::default()];
             for j in block_start..block_end {
                 let j_in_block = (j & cycle_lo_mask) << addr_bits;
-                if let Some(rs1) = self.rs1_indices[j] {
+                if let Some(rs1) = rs1_indices[j] {
                     sums[0].add(e_lo[j_in_block | rs1 as usize]);
                 }
-                if let Some(rs2) = self.rs2_indices[j] {
+                if let Some(rs2) = rs2_indices[j] {
                     sums[1].add(e_lo[j_in_block | rs2 as usize]);
                 }
             }
@@ -458,10 +353,9 @@ impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        let id = JoltDerivedId::from(RegistersReadWritePublic::EqCycle);
         pin_derived_term(
             relation,
-            id,
+            JoltDerivedId::from(RegistersReadWritePublic::EqCycle),
             input_points,
             output_points,
             challenges,

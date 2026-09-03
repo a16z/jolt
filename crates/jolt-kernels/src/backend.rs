@@ -9,6 +9,8 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
 use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
@@ -203,15 +205,15 @@ where
     }
 }
 
-/// [`Allocative`](allocative::Allocative) when the `allocative` feature is
-/// on, vacuous otherwise. Everything stored in a [`ProofSession`] must be
-/// heap-measurable so the profile harness's per-stage flamegraphs can
-/// attribute the cross-stage carries — the dominant retained memory — rather
-/// than an opaque `Box<dyn Any>`.
+/// [`Allocative`] when the `allocative` feature is on, vacuous otherwise.
+/// Everything stored in a [`ProofSession`] must be heap-measurable so the
+/// profile harness's per-stage flamegraphs can attribute the cross-stage
+/// carries — the dominant retained memory — rather than an opaque
+/// `Box<dyn Any>`.
 #[cfg(feature = "allocative")]
-pub trait MaybeAllocative: allocative::Allocative {}
+pub trait MaybeAllocative: Allocative {}
 #[cfg(feature = "allocative")]
-impl<T: allocative::Allocative + ?Sized> MaybeAllocative for T {}
+impl<T: Allocative + ?Sized> MaybeAllocative for T {}
 /// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
 /// is on, vacuous otherwise.
 #[cfg(not(feature = "allocative"))]
@@ -225,7 +227,7 @@ impl<T: ?Sized> MaybeAllocative for T {}
 struct Carry {
     value: Box<dyn Any>,
     #[cfg(feature = "allocative")]
-    visit: fn(&dyn Any, &mut allocative::Visitor<'_>),
+    visit: fn(&dyn Any, &mut Visitor<'_>),
 }
 
 impl Carry {
@@ -241,34 +243,41 @@ impl Carry {
 /// Visits one carry's concrete value, keyed by its type name (the frame
 /// label in the rendered flamegraph).
 #[cfg(feature = "allocative")]
-fn visit_carry<T: Any + allocative::Allocative>(
-    value: &dyn Any,
-    visitor: &mut allocative::Visitor<'_>,
-) {
+fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) {
     if let Some(value) = value.downcast_ref::<T>() {
-        visitor.visit_field(allocative::Key::new(std::any::type_name::<T>()), value);
+        visitor.visit_field(Key::new(std::any::type_name::<T>()), value);
     }
 }
 
-/// Heap visitation the derive cannot reach: containers keyed by a foreign
-/// type without an `Allocative` impl. Everything else visits through
-/// `#[derive(Allocative)]`, with scalar tables routed to
-/// [`jolt_poly::visit_scalars`] so no `F: Allocative` bound leaks into the
-/// generic reference impls that park these kernels.
+/// Bytes an element table reserved, for element types that own no heap but
+/// carry no `Allocative` impl: the witness rows, selectors, opening ids, and
+/// prefix evaluations owned by jolt-claims, jolt-lookup-tables, and
+/// jolt-witness. Deriving `Allocative` across those crates to reach a handful
+/// of flat tables buys nothing the arithmetic does not.
+///
+/// Scalar tables need none of this — `F: JoltField` implies `F: Allocative`,
+/// so `Vec<F>` renders through the native impl.
+#[cfg(feature = "allocative")]
+pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor<'_>) {
+    const { assert!(!std::mem::needs_drop::<T>()) };
+    visitor.visit_simple(Key::new("elements"), values.capacity() * size_of::<T>());
+}
+
+/// [`visit_heap_free_elements`] for a table keyed by a foreign type.
 ///
 /// Sized arithmetically from `capacity()`; the key's own bytes ride along
 /// with the tuple spine.
 #[cfg(feature = "allocative")]
 pub(crate) fn visit_keyed_polys<K, T>(
     tables: &Vec<(K, Vec<Polynomial<T>>)>,
-    visitor: &mut allocative::Visitor<'_>,
+    visitor: &mut Visitor<'_>,
 ) {
     visitor.visit_simple(
-        allocative::Key::new("spine"),
+        Key::new("spine"),
         tables.capacity() * size_of::<(K, Vec<Polynomial<T>>)>(),
     );
     visitor.visit_simple(
-        allocative::Key::new("tables"),
+        Key::new("tables"),
         tables
             .iter()
             .map(|(_, polys)| {
@@ -282,20 +291,6 @@ pub(crate) fn visit_keyed_polys<K, T>(
     );
 }
 
-/// [`visit_keyed_polys`] for prefix–suffix table pairs.
-#[cfg(feature = "allocative")]
-pub(crate) fn visit_scalar_pairs<T>(
-    pairs: &[(Vec<T>, Vec<T>)],
-    visitor: &mut allocative::Visitor<'_>,
-) {
-    visitor.visit_simple(
-        allocative::Key::new("elements"),
-        pairs
-            .iter()
-            .map(|(p, q)| (p.capacity() + q.capacity()) * size_of::<T>())
-            .sum(),
-    );
-}
 /// Backend-owned state with proof lifetime, opaque to orchestration.
 ///
 /// Slots stash and share private state keyed by a backend-private type, so
@@ -371,8 +366,8 @@ impl ProofSession {
 /// attribute the parked kernel tables — the dominant retained memory —
 /// keyed by their type names.
 #[cfg(feature = "allocative")]
-impl allocative::Allocative for ProofSession {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl Allocative for ProofSession {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for carry in self.state.values() {
             (carry.visit)(carry.value.as_ref(), &mut visitor);

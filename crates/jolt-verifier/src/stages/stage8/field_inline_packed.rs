@@ -219,8 +219,6 @@ mod tests {
     #[test]
     fn resolve_rejects_every_presence_disagreement() {
         let schedule = PrecommittedSchedule {
-            trusted_advice: None,
-            untrusted_advice: None,
             bytecode: None,
             program_image: None,
             field_inc_limbs: Some(FieldIncLimbsScheduled),

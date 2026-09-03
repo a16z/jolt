@@ -243,6 +243,7 @@ mod tests {
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, Ring};
+    use jolt_witness::field_inline::FieldInlineWitnessOracle;
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
@@ -289,8 +290,7 @@ mod tests {
             match source {
                 IndexSource::Collect => {}
                 IndexSource::Parked => {
-                    let oracle: &dyn jolt_witness::field_inline::FieldInlineWitnessOracle<Fr> =
-                        backend.field_inline().unwrap();
+                    let oracle: &dyn FieldInlineWitnessOracle<Fr> = backend.field_inline().unwrap();
                     let writes = oracle
                         .field_inline_register_read_write_rows()
                         .unwrap()
@@ -300,12 +300,12 @@ mod tests {
                             row.rd.map(|write| (cycle as u32, write.register))
                         })
                         .collect();
-                    session.park(super::SharedFieldRdWrites(writes));
+                    session.park(SharedFieldRdWrites(writes));
                 }
                 IndexSource::StaleParked => {
                     // An out-of-domain cycle: prepare must fall back to
                     // collecting from the oracle rows.
-                    session.park(super::SharedFieldRdWrites(vec![(1 << log_t, 0)]));
+                    session.park(SharedFieldRdWrites(vec![(1 << log_t, 0)]));
                 }
             }
 

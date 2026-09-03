@@ -10,15 +10,18 @@ mod pipeline {
     use std::sync::Arc;
 
     use jolt::{
-        JoltSharedPreprocessing, JoltVerifierPreprocessing, MemoryConfig, OwnedTrace, TraceInputs,
-        TraceOutput, TracerBackend,
+        Curve, JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+        MemoryConfig, OwnedTrace, ProgramPreprocessing, TraceInputs, TraceOutput, TracerBackend,
+        VerifierField, VerifierPCS, VerifierTranscript, VerifierVC, F, PCS,
     };
     use jolt_field::{CanonicalBytes, Ring};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceRow};
-    use jolt_prover::{JoltBackend, ProverConfig};
+    use jolt_prover::{
+        JoltBackend, JoltProverPreprocessing as ModularProverPreprocessing, ProverConfig,
+    };
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
-    pub type Fr = jolt::VerifierField;
+    pub type Fr = VerifierField;
 
     /// Matches the guest's `max_trace_length` attribute.
     pub const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
@@ -77,7 +80,7 @@ mod pipeline {
         let elf_contents = program.get_elf_contents().expect("elf contents");
         // The FR profile must carry into preprocessing: the classic-profile
         // path rejects FIELD_* rows and derives no FR side-table metadata.
-        let preprocessed = jolt::ProgramPreprocessing::preprocess_with_profile(
+        let preprocessed = ProgramPreprocessing::preprocess_with_profile(
             bytecode,
             memory_init,
             entry_address,
@@ -89,8 +92,8 @@ mod pipeline {
             io_device.memory_layout.clone(),
             MAX_PADDED_TRACE_LENGTH,
         );
-        let legacy_preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS> =
-            jolt::JoltProverPreprocessing::new(shared);
+        let legacy_preprocessing: JoltProverPreprocessing<F, Curve, PCS> =
+            JoltProverPreprocessing::new(shared);
         let verifier_preprocessing =
             jolt::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover(
                 &legacy_preprocessing,
@@ -186,20 +189,13 @@ mod pipeline {
         // the verifier checks against.
         let max_log_k_chunk = 4usize; // MAX log_t = 16 < the 25-bit threshold
         let total_vars = max_log_k_chunk + MAX_PADDED_TRACE_LENGTH.ilog2() as usize;
-        let prover_preprocessing =
-            jolt_prover::JoltProverPreprocessing::<jolt::VerifierPCS, jolt::VerifierVC> {
-                verifier: verifier_preprocessing,
-                pcs_setup: jolt::VerifierPCS::setup_prover(total_vars),
-                committed_program: None,
-            };
-        let backend = JoltBackend::<Fr, jolt::VerifierPCS>::reference();
-        let proof = jolt_prover::prove::<
-            Fr,
-            jolt::VerifierPCS,
-            jolt::VerifierVC,
-            jolt::VerifierTranscript,
-            _,
-        >(
+        let prover_preprocessing = ModularProverPreprocessing::<VerifierPCS, VerifierVC> {
+            verifier: verifier_preprocessing,
+            pcs_setup: VerifierPCS::setup_prover(total_vars),
+            committed_program: None,
+        };
+        let backend = JoltBackend::<Fr, VerifierPCS>::reference();
+        let proof = jolt_prover::prove::<Fr, VerifierPCS, VerifierVC, VerifierTranscript, _>(
             &backend,
             &prover_preprocessing,
             &config,
@@ -209,12 +205,12 @@ mod pipeline {
         )
         .expect("modular FR prove");
 
-        jolt::jolt_verifier::verify::<
-            Fr,
-            jolt::VerifierPCS,
-            jolt::VerifierVC,
-            jolt::VerifierTranscript,
-        >(&prover_preprocessing.verifier, &public_io, &proof, None)
+        jolt::jolt_verifier::verify::<Fr, VerifierPCS, VerifierVC, VerifierTranscript>(
+            &prover_preprocessing.verifier,
+            &public_io,
+            &proof,
+            None,
+        )
         .expect("modular FR proof must verify");
 
         let (output, _) =

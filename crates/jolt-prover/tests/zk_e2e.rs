@@ -329,7 +329,7 @@ mod zk {
     use jolt_field::Fr;
     use jolt_program::execution::{JoltProgram, TraceRow};
     use jolt_prover::{CommittedProgramProverData, JoltBackend, JoltProverPreprocessing};
-    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::host::Program;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
@@ -341,10 +341,17 @@ mod zk {
 
     use super::support;
 
-    const KECCAK_ROTRI_ROWS: usize = 696;
+    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
+    const KECCAK_ROTRI_ROWS: usize = 576;
+    // The `&[u8]` guest input sits behind postcard's 2-byte length prefix, so
+    // `digest` takes its unaligned path: two fused absorb-permute blocks staged
+    // through stack copies, then a padded final block. The clear-mode byte-diff
+    // suite pins the aligned path through `sha3_aligned`.
+    const SHA3_INPUT_LEN: usize = 300;
+    const SHA3_PERMUTATIONS: usize = 3;
 
     fn prove_guest_zk(
-        guest_name: &str,
+        mut program: Program,
         inputs: Vec<u8>,
         backend: JoltBackend<Fr, DoryScheme>,
         inspect_trace: impl FnOnce(&[TraceRow]),
@@ -353,8 +360,6 @@ mod zk {
         common::jolt_device::JoltDevice,
         support::Proof,
     ) {
-        let mut program = host::Program::new(guest_name);
-
         // Legacy host preprocessing carries the program metadata and — under
         // the zk feature — the BlindFold vector-commitment setup.
         let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
@@ -414,7 +419,7 @@ mod zk {
         support::Proof,
     ) {
         prove_guest_zk(
-            "muldiv-guest",
+            Program::new("muldiv-guest"),
             postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
             backend,
             |_| {},
@@ -452,21 +457,23 @@ mod zk {
     #[test]
     fn zk_sha3_inline_modular_proof_is_accepted() {
         support::with_zk_stack(|| {
-            let inputs = postcard::to_stdvec(&[5u8; 32]).expect("serialize input");
+            let message: Vec<u8> = (0..SHA3_INPUT_LEN).map(|i| i as u8).collect();
+            let inputs = postcard::to_stdvec(&message).expect("serialize input");
+            let mut program = Program::new("sha3-guest");
+            program.set_func("sha3");
             let (preprocessing, public_io, proof) = prove_guest_zk(
-                "sha3-guest",
+                program,
                 inputs,
                 JoltBackend::<Fr, DoryScheme>::optimized(),
                 |rows| {
                     assert_eq!(
                         rows.iter()
                             .filter(|row| {
-                                row.instruction.instruction_kind
-                                    == JoltInstructionKind::VirtualROTRI
+                                row.instruction_kind() == JoltInstructionKind::VirtualROTRI
                             })
                             .count(),
-                        KECCAK_ROTRI_ROWS,
-                        "one Keccak permutation must be expanded into the modular trace",
+                        KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
+                        "two unaligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
                     );
                 },
             );
@@ -499,7 +506,7 @@ mod zk {
     #[test]
     fn zk_advice_consumer_modular_proof_is_accepted() {
         support::with_zk_stack(|| {
-            let mut program = host::Program::new("advice-consumer-guest");
+            let mut program = Program::new("advice-consumer-guest");
             let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
             let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
             let trusted_advice = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
@@ -588,7 +595,7 @@ mod zk {
         support::with_zk_stack(|| {
             let bytecode_chunk_count = 2usize;
             let order = jolt_claims::protocols::jolt::TracePolynomialOrder::CycleMajor;
-            let mut program = host::Program::new("muldiv-guest");
+            let mut program = Program::new("muldiv-guest");
             let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
 
             let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);

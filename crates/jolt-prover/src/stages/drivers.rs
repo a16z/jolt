@@ -12,6 +12,8 @@ mod stage1 {
         Stage1BatchChallenges, Stage1BatchInputClaims, Stage1BatchInputPoints,
         Stage1BatchOutputClaims, Stage1BatchOutputPoints, Stage1BatchSumchecks,
     };
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::VerifierError;
 
     use crate::driver::impl_stage_prover;
 
@@ -30,7 +32,7 @@ mod stage1 {
         curate = |batch, claims, points| {
             let mut values = batch.opening_values(claims);
             let field_inline = batch.outer_remainder.field_inline_outputs().ok_or_else(|| {
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "Stage1Batch".to_string(),
                     reason: "the composed stage-1 absorb needs the FR Spartan-outer \
                              appendage, but the remainder kernel published none"
@@ -55,6 +57,8 @@ mod stage2 {
     use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
     use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
     use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::VerifierError;
 
     use crate::driver::impl_stage_prover;
 
@@ -71,7 +75,7 @@ mod stage2 {
     jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover
         curate = |batch, claims, points| {
             let appendage = batch.product_remainder.field_inline_outputs().ok_or_else(|| {
-                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                VerifierError::StageClaimSumcheckFailed {
                     stage: "Stage2Batch".to_string(),
                     reason: "the curated stage-2 absorb needs the FR product appendage, \
                              but the remainder kernel published none"
@@ -148,8 +152,11 @@ mod stage6b {
     use jolt_verifier::stages::stage6b::booleanity::Booleanity;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
     use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
-        BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
-        UntrustedAdviceCyclePhase,
+        BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
+    };
+    #[cfg(not(feature = "akita"))]
+    use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
+        TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
     };
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
@@ -191,6 +198,7 @@ mod stage6b {
 }
 
 mod stage7 {
+    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
     };

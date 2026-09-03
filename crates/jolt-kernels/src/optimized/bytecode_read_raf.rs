@@ -494,26 +494,19 @@ enum StageVal {
     Complement(usize),
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct AddressKernel<F: JoltField> {
     progress: RoundProgress,
     committed_program: bool,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     stage_weights: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     entry_weight: F,
     /// Within-stage RAF `Int` weights, divided by the stage batching weight.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     raf_weights: Vec<F>,
     pushforwards: Vec<Polynomial<F>>,
     /// RAW stage-value tables — the RAF identity binds separately so
     /// committed mode can stage the raw bound `Val_s` wire claims.
     values: Vec<Polynomial<F>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     stage_values: Vec<StageVal>,
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
@@ -654,14 +647,9 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
 /// RA factors still retain their shared compact rows. The fourth bind
 /// materializes only `T / 16` field elements and releases this handle.
 #[cfg(feature = "akita")]
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum LazyFusedInc<F: JoltField> {
     Lazy {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         branch_weights: Vec<F>,
         rows: Arc<Vec<InstructionCycleRow>>,
     },
@@ -950,7 +938,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BytecodePcChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<RaChunkSelector>,
 }
 
@@ -969,11 +957,7 @@ impl ChunkIndexSource for BytecodePcChunks {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct CycleKernel<F: JoltField> {
     progress: RoundProgress,
     degree: usize,
@@ -985,7 +969,7 @@ struct CycleKernel<F: JoltField> {
     fused_combined: Polynomial<F>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     output_openings: Vec<JoltOpeningId>,
 }
 impl<F: JoltField> CycleKernel<F> {
@@ -1196,13 +1180,21 @@ mod stage_pushforward_tests {
 #[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
     use jolt_field::{Fr, Ring};
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::field_inline_bytecode::{
+        FieldInlineBytecodeFold, FieldInlineBytecodeTable,
+    };
     use jolt_verifier::stages::stage6a::bytecode_read_raf::{
         BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
     };
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
         BytecodeReadRafInputClaims, BytecodeReadRafTableFoldInputs,
@@ -1253,22 +1245,14 @@ mod tests {
             // reference kernels' FR legs vanish and byte-parity with the
             // (FR-less) optimized kernels is exact.
             #[cfg(feature = "field-inline")]
-            let field_inline_table =
-                jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeTable {
-                    rows: vec![Default::default(); bytecode_len],
-                    field_register_log_k:
-                        jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K,
-                };
+            let field_inline_table = FieldInlineBytecodeTable {
+                rows: vec![Default::default(); bytecode_len],
+                field_register_log_k: FIELD_REGISTERS_LOG_K,
+            };
             #[cfg(feature = "field-inline")]
-            let field_read_write_point = synthetic_point(
-                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
-                41,
-            );
+            let field_read_write_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 41);
             #[cfg(feature = "field-inline")]
-            let field_val_evaluation_point = synthetic_point(
-                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
-                43,
-            );
+            let field_val_evaluation_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 43);
 
             // ---- Stage 6a: address phase.
             let address_relation = BytecodeReadRafAddressPhase::new(
@@ -1279,13 +1263,11 @@ mod tests {
             );
             #[cfg(feature = "field-inline")]
             address_relation
-                .set_field_inline_geometry(
-                    jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry {
-                        table: field_inline_table.clone(),
-                        read_write_point: field_read_write_point.clone(),
-                        val_evaluation_point: field_val_evaluation_point.clone(),
-                    },
-                )
+                .set_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
+                    table: field_inline_table.clone(),
+                    read_write_point: field_read_write_point.clone(),
+                    val_evaluation_point: field_val_evaluation_point.clone(),
+                })
                 .unwrap();
             let address_challenges = BytecodeReadRafAddressPhaseChallenges {
                 gamma: fr(3),
@@ -1370,19 +1352,19 @@ mod tests {
                 // messages stay byte-equal to the FR-less optimized kernel's.
                 #[cfg(feature = "field-inline")]
                 field_inline:
-                    jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold {
+                    FieldInlineBytecodeFold {
                         table: field_inline_table.clone(),
                         read_write_address: field_read_write_point
-                            [..jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K]
+                            [..FIELD_REGISTERS_LOG_K]
                             .to_vec(),
                         read_write_cycle: field_read_write_point
-                            [jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K..]
+                            [FIELD_REGISTERS_LOG_K..]
                             .to_vec(),
                         val_evaluation_address: field_val_evaluation_point
-                            [..jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K]
+                            [..FIELD_REGISTERS_LOG_K]
                             .to_vec(),
                         val_evaluation_cycle: field_val_evaluation_point
-                            [jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K..]
+                            [FIELD_REGISTERS_LOG_K..]
                             .to_vec(),
                         gammas:
                             jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(
@@ -1450,11 +1432,19 @@ mod tests {
 #[cfg(all(test, feature = "akita"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod akita_tests {
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_field::{Fr, Ring};
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::field_inline_bytecode::{
+        FieldInlineBytecodeFold, FieldInlineBytecodeTable,
+    };
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
         BytecodeReadRafInputClaims, BytecodeReadRafTableFoldInputs,
@@ -1496,23 +1486,14 @@ mod akita_tests {
             // attach is required fail-closed under `field-inline`.
             #[cfg(feature = "field-inline")]
             relation
-                .set_field_inline_geometry(
-                    jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry {
-                        table: jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeTable {
-                            rows: vec![Default::default(); bytecode_len],
-                            field_register_log_k:
-                                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K,
-                        },
-                        read_write_point: synthetic_point(
-                            jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
-                            61,
-                        ),
-                        val_evaluation_point: synthetic_point(
-                            jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
-                            67,
-                        ),
+                .set_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
+                    table: FieldInlineBytecodeTable {
+                        rows: vec![Default::default(); bytecode_len],
+                        field_register_log_k: FIELD_REGISTERS_LOG_K,
                     },
-                )
+                    read_write_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 61),
+                    val_evaluation_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 67),
+                })
                 .unwrap();
             let challenges = BytecodeReadRafAddressPhaseChallenges {
                 gamma: Fr::from_u64(3),
@@ -1593,15 +1574,9 @@ mod akita_tests {
             };
             let stage_gammas = address_challenges.stage_gamma_powers();
             #[cfg(feature = "field-inline")]
-            let field_read_write_point = synthetic_point(
-                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
-                41,
-            );
+            let field_read_write_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 41);
             #[cfg(feature = "field-inline")]
-            let field_val_evaluation_point = synthetic_point(
-                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
-                43,
-            );
+            let field_val_evaluation_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 43);
             let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
                 dimensions,
                 r_address: synthetic_point(dimensions.log_k(), 19),
@@ -1619,23 +1594,23 @@ mod akita_tests {
                 // at these points, so parity with the optimized kernel holds.
                 #[cfg(feature = "field-inline")]
                 field_inline:
-                    jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold {
-                        table: jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeTable {
+                    FieldInlineBytecodeFold {
+                        table: FieldInlineBytecodeTable {
                             rows: vec![Default::default(); bytecode_len],
                             field_register_log_k:
-                                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K,
+                                FIELD_REGISTERS_LOG_K,
                         },
                         read_write_address: field_read_write_point
-                            [..jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K]
+                            [..FIELD_REGISTERS_LOG_K]
                             .to_vec(),
                         read_write_cycle: field_read_write_point
-                            [jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K..]
+                            [FIELD_REGISTERS_LOG_K..]
                             .to_vec(),
                         val_evaluation_address: field_val_evaluation_point
-                            [..jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K]
+                            [..FIELD_REGISTERS_LOG_K]
                             .to_vec(),
                         val_evaluation_cycle: field_val_evaluation_point
-                            [jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K..]
+                            [FIELD_REGISTERS_LOG_K..]
                             .to_vec(),
                         gammas:
                             jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(

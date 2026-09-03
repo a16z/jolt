@@ -287,6 +287,10 @@ Final per-file actuals are recorded in the file-structure table below
    This matches the old umbrella (`Field` never carried serde bounds); every
    first-party type keeps its `impl_serde_bytes!` impls. Restore the bounds
    at the akita cutover when the bootstrap edge is deleted.
+   **Discharged by the shared-field cutover chain:** Jolt #1810 lands the
+   rebuilt field, Akita #447 rebinds Akita to it, and Jolt #1796 completes
+   the downstream cutover. The bootstrap edge is deleted and `JoltField`
+   requires `Serialize + DeserializeOwned` again.
 2. **`CanonicalEncoding` re-split**: byte surface extracted as a bare
    `CanonicalBytes` supertrait (transcript absorption and `NoCommitment`
    bind to bytes only; same decision as the baseline's ff5bf9c split).
@@ -357,23 +361,28 @@ validated by the following battery, all green:
   field-inline; plus `+avx2` and `+avx512f,+avx512dq` `cargo check`
   cross-compiles to `x86_64-apple-darwin`.
 
-## Remaining after replacement
+## Post-replacement follow-ups
 
-1. **x86-64 runtime validation:** AVX2/AVX-512 packed backends and the
-   fp128 portable mul path are `cargo check`-validated with
-   `-C target-feature` only (checkpoint 8/9 acceptance); run the packed
-   differential suite and the fp128 differentials on real x86-64 hardware.
+1. **SIMD runtime validation and CI wiring — discharged.**
+   `.github/workflows/field-portability.yml` runs the packed differential and
+   fp128 portable-multiply suites on native x86-64 AVX2, the packed
+   differential suite on native AArch64 NEON, and the AVX-512 suite under
+   Intel SDE. The final Jolt #1796 head must pass all three jobs.
 2. **Bench re-evaluation resolved for the Akita production profile:** Akita's
    interleaved x86-64 end-to-end profile exposed the Fp32 loss and motivated
    the target-specific hook recorded in replacement-time deviation 6. Keep
    `benches/ext4_kernels.rs` as the focused architecture comparison harness.
-3. **CI wiring:** a target-feature lane so SIMD is not CI-dark.
-4. **Parallel helpers: deletion withdrawn.** The checkpoint 9 audit's
+3. **Parallel helpers: deletion withdrawn.** The checkpoint 9 audit's
    "zero consumers" verdict was workspace-blind: Akita's cutover branch
    consumes `jolt_field::parallel` at 32 sites. The helpers stay; the
    Akita rebind binds them at their new path.
-5. **Akita cutover follow-ups:** delete the `akita` bootstrap edge and
+4. **Akita cutover follow-ups:** delete the `akita` bootstrap edge and
    restore `JoltField`'s serde bounds (deviation 1 above).
+   **Discharged by Jolt #1810, Akita #447, and Jolt #1796:** `src/akita.rs`,
+   the `akita` feature, and the optional `akita-config`/`akita-field`
+   dependencies are gone; the serde bounds are back on the trait and the
+   blanket impl; the shared-field identity check rejects every `akita-field`
+   identity.
 
 ## Design pillars
 
@@ -491,8 +500,8 @@ compression, we discuss trade rather than golf. Riskiest: `packed/` and `ext.rs`
 
 - Replacing `jolt-field` in consumers (separate PR once accepted).
 - Porting the Criterion bench suite (thin comparison bench later; uncounted).
-- CI wiring (follows at replacement; will include a target-feature lane so
-  SIMD is not CI-dark — fixing a baseline gap).
+- CI wiring during the rebuild itself. Replacement later added
+  `.github/workflows/field-portability.yml` so SIMD is not CI-dark.
 
 ## Resolved questions
 

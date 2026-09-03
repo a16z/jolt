@@ -214,6 +214,8 @@ fn stage4_output_ids<F: JoltField>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "field-inline")]
+    use crate::stages::stage4::outputs::FieldRegistersReadWriteOutputClaims;
     use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
@@ -240,14 +242,13 @@ mod tests {
                 rd_inc: fr(5),
             },
             #[cfg(feature = "field-inline")]
-            field_registers_read_write:
-                crate::stages::stage4::outputs::FieldRegistersReadWriteOutputClaims {
-                    registers_val: fr(11),
-                    rs1_ra: fr(12),
-                    rs2_ra: fr(13),
-                    rd_wa: fr(14),
-                    rd_inc: fr(15),
-                },
+            field_registers_read_write: FieldRegistersReadWriteOutputClaims {
+                registers_val: fr(11),
+                rs1_ra: fr(12),
+                rs2_ra: fr(13),
+                rd_wa: fr(14),
+                rd_inc: fr(15),
+            },
             ram_val_check: RamValCheckOutputClaims {
                 untrusted_advice: None,
                 trusted_advice: None,

@@ -63,22 +63,29 @@ where
         != preprocessing.verifier.program.committed().is_some()
     {
         return Err(ProverError::Unsupported {
-            reason: "retained ProgramOneHot presence disagrees with the preprocessing mode",
+            reason: "retained direct-program presence disagrees with the preprocessing mode",
         });
     }
     if let (Some(data), Some(committed)) = (
         preprocessing.committed_program.as_ref(),
         preprocessing.verifier.program.committed(),
     ) {
-        let objects = &data.program_one_hot.objects;
-        if objects.len() != committed.program_one_hot_commitments.len()
+        let objects = &data.direct_program.objects;
+        if data.trace_order != config.trace_polynomial_order
+            || committed.trace_order != config.trace_polynomial_order
+        {
+            return Err(ProverError::Unsupported {
+                reason: "committed-program trace order disagrees with the proof configuration",
+            });
+        }
+        if objects.len() != committed.direct_program_commitments.len()
             || objects
                 .iter()
-                .zip(&committed.program_one_hot_commitments)
+                .zip(&committed.direct_program_commitments)
                 .any(|(object, commitment)| object.commitment != *commitment)
         {
             return Err(ProverError::Unsupported {
-                reason: "the retained ProgramOneHot commitments disagree with the preprocessing",
+                reason: "the retained direct-program commitments disagree with the preprocessing",
             });
         }
     }
@@ -91,7 +98,6 @@ where
         config.trace_polynomial_order,
         config.one_hot_config,
         trusted_advice.is_some(),
-        untrusted_advice_present,
         false,
     )?;
 
@@ -138,7 +144,7 @@ where
     // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
         Some(commit_advice::<PCS>(
-            jolt_claims::protocols::jolt::JoltAdviceKind::Untrusted,
+            JoltAdviceKind::Untrusted,
             &public_io.untrusted_advice,
             public_io.memory_layout.max_untrusted_advice_size as usize,
         )?)
@@ -148,18 +154,14 @@ where
     #[cfg(feature = "field-inline")]
     let field_inc_limbs = super::field_inline::commit_field_inc_limbs::<F, PCS>(log_t, witness)?;
 
-    // Canonical public batch order:
-    // [UntrustedAdvice, TrustedAdvice, FieldIncLimbs, OneHotTrace].
-    #[cfg_attr(
-        not(feature = "field-inline"),
-        expect(unused_mut, reason = "the FR-off build appends nothing")
-    )]
+    // Canonical public batch order: advice, (field-inline) the FR limb group,
+    // then the direct committed-program objects, then OneHotTrace.
     let mut precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> =
         untrusted_advice
             .as_ref()
             .map(|object| {
                 (
-                    JoltAdviceKind::Untrusted.precommitted_role(),
+                    object.plan.precommitted_role(),
                     &object.commitment,
                     &object.hint,
                 )
@@ -167,7 +169,7 @@ where
             .into_iter()
             .chain(trusted_advice.map(|object| {
                 (
-                    JoltAdviceKind::Trusted.precommitted_role(),
+                    object.plan.precommitted_role(),
                     &object.commitment,
                     &object.hint,
                 )
@@ -179,6 +181,19 @@ where
         &field_inc_limbs.commitment,
         &field_inc_limbs.hint,
     ));
+    if let Some(program) = preprocessing
+        .committed_program
+        .as_ref()
+        .map(|data| &data.direct_program)
+    {
+        for object in &program.objects {
+            precommitted.push((
+                object.plan.precommitted_role(),
+                &object.commitment,
+                &object.hint,
+            ));
+        }
+    }
     let required_batch_polys = precommitted.len() + 1;
     // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
@@ -232,7 +247,7 @@ where
             .verifier
             .program
             .committed()
-            .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
+            .map_or(&[][..], |committed| &committed.direct_program_commitments),
         &mut transcript,
     );
 

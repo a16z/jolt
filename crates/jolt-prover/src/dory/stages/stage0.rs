@@ -534,11 +534,9 @@ mod field_inline_tests {
     }
 
     fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-        TraceRow {
-            instruction,
-            field_inline: Some(data.into()),
-            ..TraceRow::default()
-        }
+        let mut row = TraceRow::from_instruction(instruction).unwrap();
+        row.field_inline = Some(data.into());
+        row
     }
 
     /// Two field loads and a multiply: `FieldRdInc` = [13, 17, 221, 0].
@@ -620,10 +618,7 @@ mod field_inline_tests {
     /// An FR-profile guest that executes zero FR instructions.
     fn no_fr_instruction_backend() -> TraceBackend<OwnedTrace> {
         let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
-        let rows = vec![TraceRow {
-            instruction: addi,
-            ..TraceRow::default()
-        }];
+        let rows = vec![TraceRow::from_instruction(addi).unwrap()];
         fr_backend(vec![addi], rows)
     }
 

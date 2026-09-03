@@ -1,12 +1,15 @@
 //! Typed verifier stage entry points.
 
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{
-    geometry::claim_reductions::{advice, bytecode, program_image},
+    geometry::claim_reductions::advice, AdviceClaimReductionLayout, JoltAdviceKind,
+};
+use jolt_claims::protocols::jolt::{
+    geometry::claim_reductions::{bytecode, program_image},
     geometry::dimensions::JoltFormulaDimensions,
     geometry::error::JoltFormulaPointError,
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltOneHotConfig,
-    JoltRelationId, PrecommittedClaimReduction, ProgramImageClaimReductionLayout,
-    TracePolynomialOrder,
+    BytecodeClaimReductionLayout, JoltOneHotConfig, JoltRelationId, PrecommittedClaimReduction,
+    ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -120,12 +123,15 @@ pub struct CommittedProgramSchedule {
 /// Per-polynomial claim-reduction layouts over the shared precommitted
 /// scheduling reference, derived once during input validation.
 ///
-/// The reference spans all present precommitted polynomials, so the layouts
-/// must be built together; stages read them from `CheckedInputs` instead of
+/// The reference spans all present polynomials that use claim reduction.
+/// Akita advice opens directly from stage 4 and is excluded. The layouts must
+/// be built together; stages read them from `CheckedInputs` instead of
 /// re-deriving the schedule.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrecommittedSchedule {
+    #[cfg(not(feature = "akita"))]
     pub trusted_advice: Option<AdviceClaimReductionLayout>,
+    #[cfg(not(feature = "akita"))]
     pub untrusted_advice: Option<AdviceClaimReductionLayout>,
     pub bytecode: Option<BytecodeClaimReductionLayout>,
     pub program_image: Option<ProgramImageClaimReductionLayout>,
@@ -143,12 +149,15 @@ impl PrecommittedSchedule {
         trace_order: TracePolynomialOrder,
         log_t: usize,
         log_k_chunk: usize,
-        trusted_max_advice_bytes: Option<usize>,
-        untrusted_max_advice_bytes: Option<usize>,
+        #[cfg(not(feature = "akita"))] trusted_max_advice_bytes: Option<usize>,
+        #[cfg(not(feature = "akita"))] untrusted_max_advice_bytes: Option<usize>,
         committed_program: Option<CommittedProgramSchedule>,
     ) -> Result<Self, JoltFormulaPointError> {
+        #[cfg(not(feature = "akita"))]
         let mut candidates =
             advice::candidate_total_vars(trusted_max_advice_bytes, untrusted_max_advice_bytes);
+        #[cfg(feature = "akita")]
+        let mut candidates = Vec::new();
         if let Some(committed) = committed_program {
             candidates.push(bytecode::precommitted_candidate(
                 committed.bytecode_len,
@@ -167,6 +176,7 @@ impl PrecommittedSchedule {
             &candidates,
             log_k_chunk,
         );
+        #[cfg(not(feature = "akita"))]
         let layout = |max_bytes: Option<usize>| {
             max_bytes
                 .map(|max_bytes| {
@@ -202,7 +212,9 @@ impl PrecommittedSchedule {
             })
             .transpose()?;
         Ok(Self {
+            #[cfg(not(feature = "akita"))]
             trusted_advice: layout(trusted_max_advice_bytes)?,
+            #[cfg(not(feature = "akita"))]
             untrusted_advice: layout(untrusted_max_advice_bytes)?,
             bytecode,
             program_image,
@@ -211,6 +223,7 @@ impl PrecommittedSchedule {
         })
     }
 
+    #[cfg(not(feature = "akita"))]
     pub fn advice(&self, kind: JoltAdviceKind) -> Option<&AdviceClaimReductionLayout> {
         match kind {
             JoltAdviceKind::Trusted => self.trusted_advice.as_ref(),

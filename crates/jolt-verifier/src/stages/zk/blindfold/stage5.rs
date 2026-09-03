@@ -225,14 +225,21 @@ fn stage5_output_ids<F: JoltField>(
 )]
 mod tests {
     use super::*;
+    #[cfg(feature = "field-inline")]
+    use crate::stages::stage5::outputs::{
+        FieldRegistersValEvaluation, FieldRegistersValEvaluationOutputClaims,
+    };
     use crate::stages::stage5::outputs::{Stage5OutputClaims, Stage5Sumchecks};
     use crate::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
     use crate::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
     use crate::stages::stage5::InstructionReadRaf;
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
+    use jolt_claims::protocols::jolt::TraceDimensions;
     use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
@@ -247,16 +254,15 @@ mod tests {
     fn stage5_output_ids_match_the_clear_absorb_order() {
         let log_t = 3usize;
         let dimensions = InstructionReadRafDimensions::try_from((log_t, 128, 3)).unwrap();
-        let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
+        let trace_dimensions = TraceDimensions::new(log_t);
         let sumchecks = Stage5Sumchecks::<Fr> {
             instruction_read_raf: InstructionReadRaf::new(dimensions),
             ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, 3),
             registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
             #[cfg(feature = "field-inline")]
-            field_registers_val_evaluation:
-                crate::stages::stage5::outputs::FieldRegistersValEvaluation::new(
-                    jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
-                ),
+            field_registers_val_evaluation: FieldRegistersValEvaluation::new(
+                FieldRegistersTraceDimensions::new(log_t),
+            ),
         };
         let openings = instruction::read_raf_output_openings(dimensions);
         let claims = Stage5OutputClaims::<Fr> {
@@ -275,11 +281,10 @@ mod tests {
                 rd_wa: fr(303),
             },
             #[cfg(feature = "field-inline")]
-            field_registers_val_evaluation:
-                crate::stages::stage5::outputs::FieldRegistersValEvaluationOutputClaims {
-                    rd_inc: fr(401),
-                    rd_wa: fr(402),
-                },
+            field_registers_val_evaluation: FieldRegistersValEvaluationOutputClaims {
+                rd_inc: fr(401),
+                rd_wa: fr(402),
+            },
         };
         let clear_values = sumchecks.opening_values(&claims);
 

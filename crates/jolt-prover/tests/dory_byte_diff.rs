@@ -940,7 +940,7 @@ mod muldiv {
                 &stage0.commitments,
                 None,
                 None,
-                &stage0.hints,
+                stage0.hints.as_slice(),
                 &stage6b.clear_output,
                 &stage7.clear_output,
                 witness.as_ref(),
@@ -1865,12 +1865,24 @@ mod inline_sha3 {
 
     use super::support;
 
-    const KECCAK_ROTRI_ROWS: usize = 696;
+    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
+    const KECCAK_ROTRI_ROWS: usize = 576;
+    // The `[[u64; 17]; 2]` message is 8-byte aligned in the guest, so `digest`
+    // takes its aligned path: two fused absorb-permute blocks read straight
+    // from the caller's memory through `rs2`, then the pad-only final block.
+    // The `&[u8]` entry point always sits behind postcard's length prefix and
+    // can only cover the stack-copy path; `zk_e2e` pins that one.
+    const SHA3_PERMUTATIONS: usize = 3;
 
     #[test]
     fn prover_matches_legacy_on_sha3_inline() {
         let mut program = host::Program::new("sha3-guest");
-        let inputs = postcard::to_stdvec(&[5u8; 32]).expect("serialize input");
+        program.set_func("sha3_aligned");
+        let mut message = [[0u64; 17]; 2];
+        for (i, word) in message.as_flattened_mut().iter_mut().enumerate() {
+            *word = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+        let inputs = postcard::to_stdvec(&message).expect("serialize input");
 
         let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
         let shared = JoltSharedPreprocessing::new(
@@ -1902,12 +1914,10 @@ mod inline_sha3 {
                 .trace
                 .rows()
                 .iter()
-                .filter(|row| {
-                    row.instruction.instruction_kind == JoltInstructionKind::VirtualROTRI
-                })
+                .filter(|row| row.instruction_kind() == JoltInstructionKind::VirtualROTRI)
                 .count(),
-            KECCAK_ROTRI_ROWS,
-            "one Keccak permutation must be expanded into the modular trace",
+            KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
+            "two aligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
         );
         let program_preprocessing = verifier_preprocessing
             .program
@@ -1988,10 +1998,10 @@ mod chunk_boundary {
     /// One power past the streaming chunk (and past the other arms' cap).
     const MAX_PADDED_TRACE_LENGTH: usize = 1 << 17;
 
-    /// sha2 iterations landing the raw trace in `(2^16, 2^17]` at ~3396
-    /// cycles per inlined hash (the legacy perf harness's calibration), so
-    /// the padded trace is exactly 2^17 — asserted below.
-    const SHA2_ITERATIONS: u32 = 30;
+    /// sha2 iterations landing the raw trace in `(2^16, 2^17]` at ~2,120
+    /// cycles per inlined hash (96,410 raw rows, ≥30k of margin to either
+    /// power of two), so the padded trace is exactly 2^17 — asserted below.
+    const SHA2_ITERATIONS: u32 = 45;
 
     #[test]
     fn prover_matches_legacy_on_sha2_chain_across_collect_rows_chunks() {
@@ -2047,7 +2057,8 @@ mod chunk_boundary {
         assert_eq!(
             config.trace_length,
             1usize << 17,
-            "the chunk-boundary gate needs a 2^17 padded trace; retune SHA2_ITERATIONS",
+            "the chunk-boundary gate needs a 2^17 padded trace ({} raw rows); retune SHA2_ITERATIONS",
+            trace_output.trace.rows().len(),
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = Arc::new(TraceBackend::new(

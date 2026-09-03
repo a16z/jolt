@@ -68,25 +68,24 @@ impl BalancedIncChunking {
     }
 }
 
-/// Minimum physical arity of a dense prefix-packed auxiliary commitment
-/// object (advice words, program bytecode/image, FR limb words). Akita's
-/// dense DP planner admits no fold schedule below 2^13 coefficients for
-/// these single-polynomial groups; one variable of headroom over the current
-/// floor absorbs upstream repricing. [`min_dense_slot_capacity`] pads slot
-/// capacity — never column arity — up to this bound, so claim reduction is
-/// unchanged. Like any unused slot, the padding is unconstrained committed
-/// data whose contribution to the single reduced opening is zero w.h.p.
-/// under the sampled selector; nothing may assume the padded region is
-/// identically zero.
-pub const MIN_AUXILIARY_PACKED_NUM_VARS: usize = 14;
+/// Minimum physical arity of a bounded-dense commitment object (advice words,
+/// program bytecode/image, FR limb words). Akita's dense DP planner admits no
+/// fold schedule below 2^13 coefficients for these single-polynomial groups;
+/// one variable of headroom over the current floor absorbs upstream
+/// repricing. [`min_dense_slot_capacity`] pads slot capacity — never column
+/// arity — up to this bound, so claim reduction is unchanged. Like any unused
+/// slot, the padding is unconstrained committed data whose contribution to
+/// the single reduced opening is zero w.h.p. under the sampled selector;
+/// nothing may assume the padded region is identically zero.
+pub const MIN_DENSE_OBJECT_NUM_VARS: usize = 14;
 
-/// Slot capacity of a dense prefix-packed auxiliary object: enough slots for
+/// Slot capacity of a bounded-dense prefix-packed object: enough slots for
 /// the columns, padded up so the physical arity reaches
-/// [`MIN_AUXILIARY_PACKED_NUM_VARS`] when the columns alone fall short.
+/// [`MIN_DENSE_OBJECT_NUM_VARS`] when the columns alone fall short.
 pub fn min_dense_slot_capacity(column_count: usize, logical_num_vars: usize) -> usize {
     column_count
         .next_power_of_two()
-        .max(1usize << MIN_AUXILIARY_PACKED_NUM_VARS.saturating_sub(logical_num_vars))
+        .max(1usize << MIN_DENSE_OBJECT_NUM_VARS.saturating_sub(logical_num_vars))
 }
 
 /// MLE of the centered row value used by balanced increment digits: the

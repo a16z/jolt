@@ -407,6 +407,14 @@ fn remap_field_inline_column(column: usize) -> usize {
     expect(clippy::expect_used, reason = "tests may unwind via panic")
 )]
 mod tests {
+    #[cfg(feature = "field-inline")]
+    use super::field_constraints::{
+        NUM_VARS_PER_CYCLE as FIELD_NUM_VARS_PER_CYCLE, ROW_FIELD_INV_PRODUCT, ROW_FIELD_PRODUCT,
+        V_CONST as FIELD_V_CONST, V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT, V_FIELD_RD_VALUE,
+        V_FIELD_RS1_VALUE, V_FIELD_RS2_VALUE,
+    };
+    #[cfg(feature = "field-inline")]
+    use super::rv64::V_CONST;
     use super::*;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::{
@@ -467,10 +475,7 @@ mod tests {
         assert_eq!(composed.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
         assert_eq!(composed.num_vars, NUM_VARS_PER_CYCLE);
         assert_eq!(field_inline_input_column(0), Some(FIELD_INLINE_COLUMN_BASE));
-        assert_eq!(
-            field_inline_column(field_constraints::V_CONST),
-            Some(rv64::V_CONST)
-        );
+        assert_eq!(field_inline_column(FIELD_V_CONST), Some(V_CONST));
         assert_eq!(
             field_inline_column(field_constraints::V_X_RS1_VALUE),
             Some(rv64::V_RS1_VALUE)
@@ -548,11 +553,11 @@ mod tests {
         assert_eq!(FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, expected_inputs);
 
         let local_columns = [
-            field_constraints::V_FIELD_RS1_VALUE,
-            field_constraints::V_FIELD_RS2_VALUE,
-            field_constraints::V_FIELD_RD_VALUE,
-            field_constraints::V_FIELD_PRODUCT,
-            field_constraints::V_FIELD_INV_PRODUCT,
+            V_FIELD_RS1_VALUE,
+            V_FIELD_RS2_VALUE,
+            V_FIELD_RD_VALUE,
+            V_FIELD_PRODUCT,
+            V_FIELD_INV_PRODUCT,
             field_constraints::V_IS_FIELD_ADD,
             field_constraints::V_IS_FIELD_SUB,
             field_constraints::V_IS_FIELD_MUL,
@@ -622,14 +627,13 @@ mod tests {
         let composed = trace_constraints::<Fr>();
         let mut witness = vec![Fr::zero(); composed.num_vars];
 
-        witness[rv64::V_CONST] = Fr::from_u64(1);
+        witness[V_CONST] = Fr::from_u64(1);
         witness[rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
-        witness[remap_field_inline_column(field_constraints::V_FIELD_RS1_VALUE)] = Fr::from_u64(5);
-        witness[remap_field_inline_column(field_constraints::V_FIELD_RS2_VALUE)] = Fr::from_u64(7);
-        witness[remap_field_inline_column(field_constraints::V_FIELD_RD_VALUE)] = Fr::from_u64(12);
-        witness[remap_field_inline_column(field_constraints::V_FIELD_PRODUCT)] = Fr::from_u64(35);
-        witness[remap_field_inline_column(field_constraints::V_FIELD_INV_PRODUCT)] =
-            Fr::from_u64(60);
+        witness[remap_field_inline_column(V_FIELD_RS1_VALUE)] = Fr::from_u64(5);
+        witness[remap_field_inline_column(V_FIELD_RS2_VALUE)] = Fr::from_u64(7);
+        witness[remap_field_inline_column(V_FIELD_RD_VALUE)] = Fr::from_u64(12);
+        witness[remap_field_inline_column(V_FIELD_PRODUCT)] = Fr::from_u64(35);
+        witness[remap_field_inline_column(V_FIELD_INV_PRODUCT)] = Fr::from_u64(60);
         witness[rv64::V_RS1_VALUE] = Fr::from_u64(12);
         witness[rv64::V_RD_WRITE_VALUE] = Fr::from_u64(5);
         witness[rv64::V_IMM] = Fr::from_u64(12);
@@ -653,25 +657,25 @@ mod tests {
             FieldProductLaneFactors, FieldProductLaneInputs,
         };
 
-        let mut z = vec![Fr::zero(); field_constraints::NUM_VARS_PER_CYCLE];
-        z[field_constraints::V_CONST] = Fr::from_u64(1);
-        z[field_constraints::V_FIELD_RS1_VALUE] = Fr::from_u64(7);
-        z[field_constraints::V_FIELD_RS2_VALUE] = Fr::from_u64(11);
-        z[field_constraints::V_FIELD_RD_VALUE] = Fr::from_u64(13);
-        z[field_constraints::V_FIELD_PRODUCT] = Fr::from_u64(17);
-        z[field_constraints::V_FIELD_INV_PRODUCT] = Fr::from_u64(19);
+        let mut z = vec![Fr::zero(); FIELD_NUM_VARS_PER_CYCLE];
+        z[FIELD_V_CONST] = Fr::from_u64(1);
+        z[V_FIELD_RS1_VALUE] = Fr::from_u64(7);
+        z[V_FIELD_RS2_VALUE] = Fr::from_u64(11);
+        z[V_FIELD_RD_VALUE] = Fr::from_u64(13);
+        z[V_FIELD_PRODUCT] = Fr::from_u64(17);
+        z[V_FIELD_INV_PRODUCT] = Fr::from_u64(19);
         let inputs = FieldProductLaneInputs {
-            product: z[field_constraints::V_FIELD_PRODUCT],
-            inv_product: z[field_constraints::V_FIELD_INV_PRODUCT],
+            product: z[V_FIELD_PRODUCT],
+            inv_product: z[V_FIELD_INV_PRODUCT],
         };
         let factors = FieldProductLaneFactors {
-            rs1_value: z[field_constraints::V_FIELD_RS1_VALUE],
-            rs2_value: z[field_constraints::V_FIELD_RS2_VALUE],
-            rd_value: z[field_constraints::V_FIELD_RD_VALUE],
+            rs1_value: z[V_FIELD_RS1_VALUE],
+            rs2_value: z[V_FIELD_RS2_VALUE],
+            rd_value: z[V_FIELD_RD_VALUE],
         };
 
         let matrices = field_constraints::field_inline_trace_constraints::<Fr>();
-        let eval_row = |row: &crate::SparseRow<Fr>| {
+        let eval_row = |row: &SparseRow<Fr>| {
             row.iter()
                 .map(|&(column, coefficient)| coefficient * z[column])
                 .sum::<Fr>()
@@ -679,10 +683,7 @@ mod tests {
         let weights = (1..=SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE as u64)
             .map(Fr::from_u64)
             .collect::<Vec<_>>();
-        let lane_rows = [
-            field_constraints::ROW_FIELD_PRODUCT,
-            field_constraints::ROW_FIELD_INV_PRODUCT,
-        ];
+        let lane_rows = [ROW_FIELD_PRODUCT, ROW_FIELD_INV_PRODUCT];
         let weighted = |rows_of: &dyn Fn(usize) -> Fr| {
             lane_rows
                 .iter()

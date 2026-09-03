@@ -20,7 +20,9 @@
 //! bytecode read-RAF points (which fires when the bytecode address width is
 //! a multiple of the committed chunk width).
 
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltAdviceKind;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
@@ -36,6 +38,7 @@ use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
 use jolt_verifier::stages::stage6b::batch::{Stage6bBuildParts, Stage6bDraws};
+#[cfg(not(feature = "akita"))]
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
 use jolt_verifier::stages::stage6b::outputs::{
     Stage6bClearOutput, Stage6bOutputClaims, Stage6bSumchecks,
@@ -143,10 +146,12 @@ where
         stage5_points: &stage5.output_points,
         stage6a_points: &stage6a.output_points,
         address_val_stages: stage6a.output_values.bytecode_read_raf.val_stages.clone(),
+        #[cfg(not(feature = "akita"))]
         trusted_advice_reference_point: advice_reference_point_from_upstream(
             &stage4.ram_val_check_init,
             JoltAdviceKind::Trusted,
         ),
+        #[cfg(not(feature = "akita"))]
         untrusted_advice_reference_point: advice_reference_point_from_upstream(
             &stage4.ram_val_check_init,
             JoltAdviceKind::Untrusted,
@@ -236,13 +241,15 @@ mod field_inline_round_trip {
     use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
+    use jolt_program::execution::OwnedTrace;
     use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
     use jolt_verifier::stages::stage6b::field_inline as stage6b_field_inline;
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
-    use jolt_witness::JoltWitnessOracle as _;
+    use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
+    use crate::stages::field_inline_fixtures::twins::FixturePreprocessing;
     use crate::stages::field_inline_fixtures::{
         addi_only_backend, addi_only_preprocessing, fr_arithmetic_backend,
         fr_arithmetic_preprocessing, test_checked_inputs, test_prover_config, test_public_io,
@@ -274,8 +281,8 @@ mod field_inline_round_trip {
     }
 
     fn stage6b_round_trips(
-        trace_backend: jolt_witness::TraceBackend<jolt_program::execution::OwnedTrace>,
-        preprocessing: crate::stages::field_inline_fixtures::twins::FixturePreprocessing,
+        trace_backend: TraceBackend<OwnedTrace>,
+        preprocessing: FixturePreprocessing,
         label: &'static [u8],
     ) {
         let witness = trace_backend.with_field_inline().unwrap();
@@ -461,10 +468,12 @@ mod field_inline_round_trip {
                 .bytecode_read_raf
                 .val_stages
                 .clone(),
+            #[cfg(not(feature = "akita"))]
             trusted_advice_reference_point: advice_reference_point_from_upstream(
                 &stage4.clear_output.ram_val_check_init,
                 JoltAdviceKind::Trusted,
             ),
+            #[cfg(not(feature = "akita"))]
             untrusted_advice_reference_point: advice_reference_point_from_upstream(
                 &stage4.clear_output.ram_val_check_init,
                 JoltAdviceKind::Untrusted,
@@ -608,6 +617,8 @@ mod field_inline_round_trip {
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
+    use jolt_claims::OutputClaims;
     use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
@@ -625,7 +636,7 @@ mod field_inline_zk {
     use crate::stages::stage5::prove_stage5;
     use crate::stages::stage6a::prove_stage6a;
 
-    const CAPACITY: usize = common::constants::MAX_BLINDFOLD_GENERATORS;
+    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
 
     #[test]
     fn committed_stage6b_shell_carries_the_curated_rows() {
@@ -755,10 +766,7 @@ mod field_inline_zk {
             cycle_points.point_count().saturating_sub(aliased)
         );
         assert_eq!(
-            jolt_claims::OutputClaims::opening_values(
-                &out.claims.field_registers_inc_claim_reduction
-            )
-            .len(),
+            OutputClaims::opening_values(&out.claims.field_registers_inc_claim_reduction).len(),
             1
         );
     }

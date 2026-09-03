@@ -10,6 +10,11 @@ use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
 #[cfg(not(feature = "akita"))]
+use super::committed_reduction_cycle_phase::{
+    trusted_advice_cycle_phase_input_values_from_upstream,
+    untrusted_advice_cycle_phase_input_values_from_upstream,
+};
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
 };
@@ -22,8 +27,6 @@ use super::{
     bytecode_read_raf::BytecodeReadRafInputClaims,
     committed_reduction_cycle_phase::{
         program_image_reduction_cycle_phase_input_values_from_upstream,
-        trusted_advice_cycle_phase_input_values_from_upstream,
-        untrusted_advice_cycle_phase_input_values_from_upstream,
         BytecodeReductionCyclePhaseInputClaims,
     },
     instruction_ra_virtualization::{
@@ -178,10 +181,12 @@ where
     // checks (`no_output_shape`, so no generated validator runs these guards
     // itself); one call per `Option` member. Transcript-free (runs before the
     // batched verify); the tampering suite asserts generic rejection.
+    #[cfg(not(feature = "akita"))]
     validate_member_presence(
         sumchecks.trusted_advice.as_ref(),
         claims.trusted_advice.as_ref(),
     )?;
+    #[cfg(not(feature = "akita"))]
     validate_member_presence(
         sumchecks.untrusted_advice.as_ref(),
         claims.untrusted_advice.as_ref(),
@@ -419,6 +424,7 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
             &stage4.output_values,
             stage5,
         ),
+        #[cfg(not(feature = "akita"))]
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
@@ -426,6 +432,7 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
                 trusted_advice_cycle_phase_input_values_from_upstream(&stage4.ram_val_check_init)
             })
             .transpose()?,
+        #[cfg(not(feature = "akita"))]
         untrusted_advice: sumchecks
             .untrusted_advice
             .as_ref()
@@ -519,9 +526,11 @@ pub fn stage6b_opening_values<F: JoltField>(
     super::field_inline::splice_inc_values(&mut values, claims);
     // Each advice member is a single-slot per-kind claims struct, so it
     // contributes exactly its own kind's opening.
+    #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.trusted_advice {
         values.extend(advice.opening_values());
     }
+    #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.untrusted_advice {
         values.extend(advice.opening_values());
     }
@@ -590,6 +599,8 @@ mod tests {
     use super::super::bytecode_read_raf::BytecodeReadRafOutputClaims;
     #[cfg(feature = "akita")]
     use super::super::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims;
+    #[cfg(feature = "field-inline")]
+    use super::super::field_registers_inc_claim_reduction::FieldRegistersIncClaimReductionOutputClaims;
     #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
@@ -665,13 +676,14 @@ mod tests {
                     rd_inc: fr(10),
                 },
                 #[cfg(feature = "field-inline")]
-                field_registers_inc_claim_reduction:
-                    super::super::field_registers_inc_claim_reduction::FieldRegistersIncClaimReductionOutputClaims {
-                        // The FR member appends last in canonical order on
-                        // both commitment axes.
-                        rd_inc: fr(last),
-                    },
+                field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
+                    // The FR member appends last in canonical order on
+                    // both commitment axes.
+                    rd_inc: fr(last),
+                },
+                #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
+                #[cfg(not(feature = "akita"))]
                 untrusted_advice: None,
                 bytecode_reduction: None,
                 program_image_reduction: None,
@@ -762,11 +774,12 @@ mod tests {
                 rd_inc: fr(12),
             },
             #[cfg(feature = "field-inline")]
-            field_registers_inc_claim_reduction:
-                super::super::field_registers_inc_claim_reduction::FieldRegistersIncClaimReductionOutputClaims {
-                    rd_inc: fr(13),
-                },
+            field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
+                rd_inc: fr(13),
+            },
+            #[cfg(not(feature = "akita"))]
             trusted_advice: None,
+            #[cfg(not(feature = "akita"))]
             untrusted_advice: None,
             bytecode_reduction: None,
             program_image_reduction: None,

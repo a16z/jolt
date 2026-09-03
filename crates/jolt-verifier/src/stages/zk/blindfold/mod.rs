@@ -1407,7 +1407,7 @@ mod field_inline_relation_parity {
     };
     use jolt_claims::protocols::field_inline::{
         FieldInlineChallengeId as FrChallengeId, FieldInlineDerivedId as FrDerivedId,
-        FieldInlineOpeningId,
+        FieldInlineOpeningId, FieldRegistersTraceDimensions,
     };
     use jolt_claims::{InputClaims, SumcheckChallenges};
     use jolt_field::{Fr, Ring};
@@ -1495,7 +1495,7 @@ mod field_inline_relation_parity {
 
         let log_t = 4usize;
         let relation = FieldRegistersClaimReduction::<Fr>::new(
-            jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
+            FieldRegistersTraceDimensions::new(log_t),
             point(50, log_t),
         );
         assert_relation_parity(
@@ -1562,9 +1562,8 @@ mod field_inline_relation_parity {
         use jolt_claims::NoChallenges;
 
         let log_t = 4usize;
-        let relation = FieldRegistersValEvaluation::<Fr>::new(
-            jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
-        );
+        let relation =
+            FieldRegistersValEvaluation::<Fr>::new(FieldRegistersTraceDimensions::new(log_t));
         assert_relation_parity(
             &relation,
             &FieldRegistersValEvaluationInputClaims {
@@ -1592,7 +1591,7 @@ mod field_inline_relation_parity {
 
         let log_t = 4usize;
         let relation = FieldRegistersIncClaimReduction::<Fr>::new(
-            jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
+            FieldRegistersTraceDimensions::new(log_t),
             point(110, log_t),
             point(120, log_t),
         );

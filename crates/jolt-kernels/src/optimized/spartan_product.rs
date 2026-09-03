@@ -206,22 +206,16 @@ fn extension_coefficient_fields<F: JoltField>() -> [[F; DOMAIN]; EXTENDED_SIZE] 
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
 /// challenge vector, and all extended-node values of `t1`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanProductCarry<F: JoltField> {
     log_t: usize,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau_low: Vec<F>,
     rows: BundleStore<SpartanProductRow>,
     /// The FR-active cycles' composed column values, sparse and sorted by
     /// cycle (only the three value columns feed the product lanes).
     #[cfg(feature = "field-inline")]
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     t1_values: Vec<F>,
 }
 
@@ -420,16 +414,12 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 
 /// The linear-time product remainder rounds over the cycle domain
 /// (bound `LowToHigh`).
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-    scratch: Vec<F>,
+    /// Whether the first-shrink purge ran.
+    purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
@@ -441,10 +431,9 @@ struct ProductRemainderKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     relation: ProductRemainder<F>,
     #[cfg(feature = "field-inline")]
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     lagrange_weights: Vec<F>,
 }
 impl<F: JoltField> ProductRemainderKernel<F> {
@@ -596,7 +585,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         Ok(Self {
             left: Polynomial::new(left),
             right: Polynomial::new(right),
-            scratch: Vec::new(),
+            purged: false,
             split_eq,
             pending_endpoints: Some(endpoints),
             challenges: RoundChallenges::new(rounds),
@@ -610,10 +599,13 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        self.left
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
-        self.right
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+        let shrunk = self.left.bind_low_to_high_in_place(challenge);
+        let _ = self.right.bind_low_to_high_in_place(challenge);
+        // Purge once after the first shrink.
+        if shrunk && !self.purged {
+            self.purged = true;
+            crate::mem::purge_retained_memory(self.challenges.total());
+        }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
@@ -804,13 +796,16 @@ mod tests {
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, Ring};
+    use jolt_program::execution::OwnedTrace;
     use jolt_verifier::stages::stage2::product_remainder::{
         product_remainder_input_values_from_uniskip_output, ProductRemainderInputClaims,
     };
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
+    #[cfg(feature = "field-inline")]
+    use jolt_witness::FixedFieldInline;
     use jolt_witness::{BundleSource, JoltWitnessOracle};
-    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
+    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape, TraceBackend};
 
     use super::*;
     use crate::reference::spartan_product::{ReferenceProductRemainder, SpartanProductKernel};
@@ -926,7 +921,7 @@ mod tests {
         }
         #[cfg(feature = "field-inline")]
         {
-            let mut field_inline = jolt_witness::FixedFieldInline::default();
+            let mut field_inline = FixedFieldInline::default();
             for (id, value) in [
                 (FieldInlineVirtualPolynomial::FieldRs1Value, 0usize),
                 (FieldInlineVirtualPolynomial::FieldRs2Value, 1),
@@ -1136,10 +1131,7 @@ mod tests {
     /// The trait-path parity body over a real trace backend, with the
     /// remainder driven by the true joint-domain sum (the trace fixtures are
     /// not constraint-satisfying; see the outer module's twin test).
-    fn sample_case(
-        backend: &jolt_witness::TraceBackend<jolt_program::execution::OwnedTrace>,
-        log_t: usize,
-    ) {
+    fn sample_case(backend: &TraceBackend<OwnedTrace>, log_t: usize) {
         {
             let tau_low: Vec<Fr> = (0..log_t)
                 .map(|i| Fr::from_u64(41 + 19 * i as u64))

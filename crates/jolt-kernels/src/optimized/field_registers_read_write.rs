@@ -78,6 +78,7 @@ const BLOCK_TARGET: usize = 1 << 12;
 /// registers hold full field values, so there is no raw-scalar shortcut for
 /// the untouched-neighbor boundary values.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct FieldSparseEntry<F> {
     /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     val: F,
@@ -334,10 +335,7 @@ fn bind_sparse_entries<F: JoltField>(
 /// stage-5 val-evaluation kernel (which folds the same one-hot `FieldRdWa`
 /// grid at its address prefix).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedFieldRdWrites(
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-    pub(crate)  Vec<(u32, u8)>,
-);
+pub(crate) struct SharedFieldRdWrites(pub(crate) Vec<(u32, u8)>);
 
 /// Sparse per-cycle FR access facts extracted from the oracle's decoded rows:
 /// the ≤3-entries-per-active-cycle matrix cells plus the raw read/write index
@@ -562,18 +560,13 @@ struct FieldReadWriteKernel<F: JoltField> {
     log_k: usize,
     /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
     /// cycle→address transition.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     entries: Vec<FieldSparseEntry<F>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     scratch: Vec<FieldSparseEntry<F>>,
     gruen: GruenSplitEqPolynomial<F>,
     inc: Polynomial<F>,
     // Address-phase dense state (K = 16), materialized at the transition.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     ra: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     wa: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     val: Vec<F>,
     /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -581,9 +574,7 @@ struct FieldReadWriteKernel<F: JoltField> {
     /// Fully bound `FieldRdInc` — constant across the address rounds.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     inc_scalar: F,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rs1_reads: Vec<(u32, u8)>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     rs2_reads: Vec<(u32, u8)>,
     challenges: RoundChallenges<F>,
 }
@@ -820,6 +811,7 @@ mod tests {
         FieldRegistersReadWriteChallenges, FieldRegistersReadWriteInputClaims,
     };
     use jolt_field::{Fr, Ring};
+    use jolt_riscv::FieldInlineOp;
     use jolt_verifier::stages::stage4::field_inline::read_write_member;
 
     use super::*;
@@ -928,7 +920,7 @@ mod tests {
     fn parity_single_cycle_round() {
         let mut fixture = FrTraceFixture::new();
         fixture.load_imm(2, 99);
-        fixture.arithmetic(jolt_riscv::FieldInlineOp::Mul, 2, 2, 2);
+        fixture.arithmetic(FieldInlineOp::Mul, 2, 2, 2);
         run_parity(fixture, 1, 109, true);
     }
 

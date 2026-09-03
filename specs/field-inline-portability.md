@@ -123,7 +123,7 @@ slice (Axis 2) lands with or after the field switch itself.
 The fp128 switch decision came down as a ruling: the packed (akita) axis
 proves exclusively over fp128, and no BN254 akita configuration will ever
 exist. FR execution is therefore configuration-selected — the akita feature
-chain repoints the tracer's `ProofField` to `jolt_field::AkitaField` and
+chain repoints the tracer's `ProofField` to `jolt_field::Prime128OffsetA7F7` and
 `FieldValueEncoding::ACTIVE` to `TWO_LIMB_128_CANONICAL` (inert while
 field-inline is off); Dory keeps BN254 Fr. FR guests are
 configuration-specific, and cross-configuration proofs reject fail-closed on
@@ -185,13 +185,13 @@ unchanged. The dense-group design:
   `(num_vars, num_polys)` shape, never content), enforced fail-closed both
   ways between `PrecommittedSchedule.field_inc_limbs` (always scheduled) and
   the proof's commitment/claims slots.
-- Provisioning: `AdviceScheduleParams` carries the FR limb arity line
+- Provisioning: `PrecommittedScheduleParams` carries the FR limb arity line
   (`jolt-akita` `FieldIncLimbScheduleParams`, law-derived data pinned to the
   jolt-claims packing law by the registry's FR provisioning tests), and the
   grouped schedule registry enumerates FR-present combinations only — every
-  advice subset (including advice-absent) with the per-final-arity FR
-  profile appended last, planned under the same u64-bounded dense fold
-  policy as advice.
+  advice subset (including advice-absent) with the setup arity's FR profile
+  as the first mandatory group (ahead of any direct committed-program
+  objects), planned under the same u64-bounded dense fold policy as advice.
 
 Review gates met: FR-off akita and dory byte-identity (the byte-diff
 ratchets), dory FR-on fixtures unchanged, and the packed accept/tamper suite

@@ -56,31 +56,6 @@ pub enum CommittedPolynomial {
     /// alphabet as the digits
     /// (lattice/packed mode only; a slot of the packed witness `W`).
     BalancedIncCarry,
-    /// One-hot register selector `(chunk, lane)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot). Lane
-    /// order is rs1, rs2, rd.
-    BytecodeRegisterSelector(usize, usize),
-    /// Boolean circuit-flag column `(chunk, flag)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeCircuitFlag(usize, usize),
-    /// Boolean instruction-flag column `(chunk, flag)` of the precommitted
-    /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeInstructionFlag(usize, usize),
-    /// One-hot lookup-table selector of a precommitted bytecode chunk
-    /// (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeLookupSelector(usize),
-    /// Boolean RAF flag column of a precommitted bytecode chunk
-    /// (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeRafFlag(usize),
-    /// Byte one-hot decomposition of a chunk's unexpanded PCs
-    /// (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeUnexpandedPcBytes(usize),
-    /// Byte one-hot decomposition of a chunk's canonical immediate field
-    /// bytes (lattice/packed mode; a `ProgramOneHot` slot).
-    BytecodeImmBytes(usize),
-    /// Byte one-hot decomposition of the program image words
-    /// (lattice/packed mode; a `ProgramOneHot` slot).
-    ProgramImageBytes,
 }
 
 /// Returns a list of symbols representing all committed polynomials.
@@ -174,16 +149,7 @@ impl CommittedPolynomial {
             | CommittedPolynomial::BytecodeChunk(_) => {
                 panic!("Precommitted polynomials should not use streaming witness generation")
             }
-            CommittedPolynomial::BytecodeRegisterSelector(..)
-            | CommittedPolynomial::BytecodeCircuitFlag(..)
-            | CommittedPolynomial::BytecodeInstructionFlag(..)
-            | CommittedPolynomial::BytecodeLookupSelector(_)
-            | CommittedPolynomial::BytecodeRafFlag(_)
-            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
-            | CommittedPolynomial::BytecodeImmBytes(_)
-            | CommittedPolynomial::ProgramImageBytes
-            | CommittedPolynomial::BalancedIncDigit(_)
-            | CommittedPolynomial::BalancedIncCarry => {
+            CommittedPolynomial::BalancedIncDigit(_) | CommittedPolynomial::BalancedIncCarry => {
                 panic!("Lattice columns commit through the packed witness, not per-polynomial streaming")
             }
         }
@@ -281,28 +247,8 @@ impl CommittedPolynomial {
             | CommittedPolynomial::BytecodeChunk(_) => {
                 panic!("Precommitted polynomials should not use generate_witness")
             }
-            #[cfg(feature = "prover")]
-            CommittedPolynomial::BytecodeRegisterSelector(..)
-            | CommittedPolynomial::BytecodeCircuitFlag(..)
-            | CommittedPolynomial::BytecodeInstructionFlag(..)
-            | CommittedPolynomial::BytecodeLookupSelector(_)
-            | CommittedPolynomial::BytecodeRafFlag(_)
-            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
-            | CommittedPolynomial::BytecodeImmBytes(_)
-            | CommittedPolynomial::ProgramImageBytes => {
-                panic!("ProgramOneHot sub-columns commit through the packed precommitted witness, not generate_witness")
-            }
             #[cfg(not(feature = "prover"))]
-            CommittedPolynomial::BytecodeRegisterSelector(..)
-            | CommittedPolynomial::BytecodeCircuitFlag(..)
-            | CommittedPolynomial::BytecodeInstructionFlag(..)
-            | CommittedPolynomial::BytecodeLookupSelector(_)
-            | CommittedPolynomial::BytecodeRafFlag(_)
-            | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
-            | CommittedPolynomial::BytecodeImmBytes(_)
-            | CommittedPolynomial::ProgramImageBytes
-            | CommittedPolynomial::BalancedIncDigit(_)
-            | CommittedPolynomial::BalancedIncCarry => {
+            CommittedPolynomial::BalancedIncDigit(_) | CommittedPolynomial::BalancedIncCarry => {
                 panic!("Lattice columns require the prover feature")
             }
         }

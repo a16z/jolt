@@ -26,6 +26,8 @@
 #[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod support {
     use std::sync::Arc;
+    #[cfg(feature = "zk")]
+    use std::thread::Builder;
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_crypto::{Bn254G1, Pedersen};
@@ -35,14 +37,17 @@ mod support {
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
     use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
-    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::ark_bn254::Fr as LegacyFr;
+    use jolt_prover_legacy::curve::Bn254Curve;
+    use jolt_prover_legacy::host::Program;
+    use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
     use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::proof::JoltProof;
-    use jolt_verifier::JoltVerifierPreprocessing;
+    use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -50,11 +55,8 @@ mod support {
 
     pub type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
     pub type VerifierPreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
-    pub type LegacyPreprocessing = jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing<
-        jolt_prover_legacy::ark_bn254::Fr,
-        jolt_prover_legacy::curve::Bn254Curve,
-        jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme,
-    >;
+    pub type LegacyPreprocessing =
+        LegacyProverPreprocessing<LegacyFr, Bn254Curve, DoryCommitmentScheme>;
 
     pub const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
 
@@ -95,7 +97,7 @@ mod support {
     /// that profile (the profile carry `preprocess_with_profile` exists for),
     /// and re-trace through the modular tracer backend.
     pub fn fr_guest(guest_name: &str, inputs: &[u8]) -> FrGuest {
-        let mut program = host::Program::new(guest_name);
+        let mut program = Program::new(guest_name);
         program.enable_field_inline();
 
         let (bytecode, memory_init, _, entry_address) = program.decode();
@@ -248,7 +250,7 @@ mod support {
         preprocessing: &VerifierPreprocessing,
         public_io: &JoltDevice,
         proof: &Proof,
-    ) -> Result<(), jolt_verifier::VerifierError> {
+    ) -> Result<(), VerifierError> {
         jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             preprocessing,
             public_io,
@@ -274,7 +276,7 @@ mod support {
     /// jolt-verifier ZK suites.
     #[cfg(feature = "zk")]
     pub fn with_zk_stack<R: Send + 'static>(body: impl FnOnce() -> R + Send + 'static) -> R {
-        std::thread::Builder::new()
+        Builder::new()
             .stack_size(128 * 1024 * 1024)
             .spawn(body)
             .expect("spawn ZK test thread")
@@ -295,13 +297,15 @@ mod support {
     reason = "integration tests should fail loudly"
 )]
 mod clear {
+    use common::jolt_device::JoltDevice;
+    use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
     use jolt_poly::CompressedPoly;
     use jolt_prover::JoltBackend;
     use jolt_sumcheck::{ClearProof, SumcheckProof};
     use jolt_verifier::proof::JoltProofClaims;
 
-    use super::support;
+    use super::support::{self, Proof, VerifierPreprocessing};
 
     /// The FR claim-reduction's gamma position in the stage-2 batch: the
     /// `Stage2BatchSumchecks` declaration order is [ram_read_write,
@@ -311,12 +315,8 @@ mod clear {
     const FR_CR_GAMMA_POSITION: usize = 3;
 
     fn prove_eqpoly(
-        backend: JoltBackend<jolt_field::Fr, jolt_dory::DoryScheme>,
-    ) -> (
-        support::VerifierPreprocessing,
-        common::jolt_device::JoltDevice,
-        support::Proof,
-    ) {
+        backend: JoltBackend<Fr, DoryScheme>,
+    ) -> (VerifierPreprocessing, JoltDevice, Proof) {
         let guest = support::fr_guest("eqpoly-field-guest", &support::eqpoly_inputs());
         assert!(
             support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
@@ -387,7 +387,7 @@ mod clear {
             .expect("base proof must verify before tampering");
         let one = Fr::from_u64(1);
 
-        type Tamper = (&'static str, Box<dyn Fn(&mut support::Proof)>);
+        type Tamper = (&'static str, Box<dyn Fn(&mut Proof)>);
         let tampers: Vec<Tamper> = vec![
             (
                 "stage1 FR rs1_value opening",

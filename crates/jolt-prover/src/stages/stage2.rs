@@ -239,12 +239,15 @@ where
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
+    use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+    use jolt_verifier::stages::stage1::outputs::{Stage1BatchInputClaims, Stage1BatchSumchecks};
     use jolt_verifier::stages::stage2::field_inline as stage2_field_inline;
-    use jolt_verifier::stages::uniskip;
+    use jolt_verifier::stages::uniskip::{self, UniskipParams};
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
@@ -301,21 +304,19 @@ mod field_inline_round_trip {
                 jolt_verifier::stages::uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T);
             let uniskip_challenge = uniskip::verify_clear(
                 &stage1.uniskip_proof,
-                &uniskip::UniskipParams::spartan_outer(),
+                &UniskipParams::spartan_outer(),
                 Fr::from_u64(0),
                 stage1.claims.uniskip_output_claim,
                 &mut transcript,
             )
             .unwrap();
-            let sumchecks =
-                jolt_verifier::stages::stage1::outputs::Stage1BatchSumchecks {
-                    outer_remainder:
-                        jolt_verifier::stages::stage1::outer_remainder::OuterRemainder::new(
-                            jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions::rv64(LOG_T),
-                            tau,
-                            uniskip_challenge,
-                        ),
-                };
+            let sumchecks = Stage1BatchSumchecks {
+                outer_remainder: OuterRemainder::new(
+                    SpartanOuterDimensions::rv64(LOG_T),
+                    tau,
+                    uniskip_challenge,
+                ),
+            };
             let batch_challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
             let input_points = sumchecks.empty_input_points();
             let attached = jolt_verifier::stages::stage1::field_inline::attach_outer_outputs(
@@ -323,7 +324,7 @@ mod field_inline_round_trip {
                 &stage1.claims,
             )
             .unwrap();
-            let input_values = jolt_verifier::stages::stage1::outputs::Stage1BatchInputClaims {
+            let input_values = Stage1BatchInputClaims {
                 outer_remainder: jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output(
                     stage1.claims.uniskip_output_claim,
                 ),
@@ -365,7 +366,7 @@ mod field_inline_round_trip {
             .unwrap();
         let uniskip_challenge = uniskip::verify_clear(
             &out.uniskip_proof,
-            &uniskip::UniskipParams::spartan_product(),
+            &UniskipParams::spartan_product(),
             uniskip_input_claim,
             out.claims.product_uniskip_output_claim,
             &mut transcript,
@@ -444,20 +445,28 @@ mod field_inline_round_trip {
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
+    use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
     use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+    use jolt_verifier::stages::stage1::outputs::Stage1BatchSumchecks;
     use jolt_verifier::stages::stage2::field_inline as stage2_field_inline;
-    use jolt_verifier::stages::uniskip;
+    #[cfg(feature = "akita")]
+    use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbsScheduled;
+    use jolt_verifier::stages::uniskip::{self, UniskipParams};
+    use jolt_verifier::stages::PrecommittedSchedule;
+    use jolt_verifier::CheckedInputs;
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        fr_arithmetic_backend, test_prover_config, test_public_io, LOG_T,
+        fr_arithmetic_backend, test_prover_config, test_public_io, ENTRY, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
 
-    const CAPACITY: usize = common::constants::MAX_BLINDFOLD_GENERATORS;
+    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
 
     #[test]
     fn committed_stage2_shell_carries_the_curated_rows_and_replays() {
@@ -514,24 +523,22 @@ mod field_inline_zk {
 
         // The replay (stage2::verify's zk body over its public constituents),
         // mirroring blindfold.rs's transcript hard check at stage scope.
-        let checked = jolt_verifier::CheckedInputs {
+        let checked = CheckedInputs {
             public_io: JoltDevice::default(),
             zk: true,
             trace_length: 1 << LOG_T,
             ram_K: 1 << 4,
-            entry_address: crate::stages::field_inline_fixtures::ENTRY,
+            entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),
-            precommitted: jolt_verifier::stages::PrecommittedSchedule {
+            precommitted: PrecommittedSchedule {
                 trusted_advice: None,
                 untrusted_advice: None,
                 bytecode: None,
                 program_image: None,
                 #[cfg(feature = "akita")]
-                field_inc_limbs: Some(
-                    jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbsScheduled,
-                ),
+                field_inc_limbs: Some(FieldIncLimbsScheduled),
             },
         };
         let mut transcript = Blake2bTranscript::new(b"stage2-fr-zk");
@@ -541,17 +548,16 @@ mod field_inline_zk {
             let uniskip_step = uniskip::verify_zk(
                 &checked,
                 &stage1.uniskip_proof,
-                &uniskip::UniskipParams::spartan_outer(),
+                &UniskipParams::spartan_outer(),
                 &mut transcript,
             )
             .unwrap();
-            let sumchecks = jolt_verifier::stages::stage1::outputs::Stage1BatchSumchecks {
-                outer_remainder:
-                    jolt_verifier::stages::stage1::outer_remainder::OuterRemainder::new(
-                        jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions::rv64(LOG_T),
-                        tau,
-                        uniskip_step.challenge,
-                    ),
+            let sumchecks = Stage1BatchSumchecks {
+                outer_remainder: OuterRemainder::new(
+                    SpartanOuterDimensions::rv64(LOG_T),
+                    tau,
+                    uniskip_step.challenge,
+                ),
             };
             let _stage1_consistency = sumchecks
                 .verify_zk(&stage1.sumcheck_proof, &mut transcript)
@@ -568,7 +574,7 @@ mod field_inline_zk {
         let product_uniskip_step = uniskip::verify_zk(
             &checked,
             &out.uniskip_proof,
-            &uniskip::UniskipParams::spartan_product(),
+            &UniskipParams::spartan_product(),
             &mut transcript,
         )
         .unwrap();

@@ -81,7 +81,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     commitments: &JoltCommitments<PCS::Output>,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    hints: &[(JoltCommittedPolynomial, PCS::OpeningHint)],
+    hints: impl Into<Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>>,
     #[cfg(feature = "field-inline")] field_inline_hints: &[(
         FieldInlineCommittedPolynomial,
         PCS::OpeningHint,
@@ -253,20 +253,22 @@ where
     .in_scope(|| {
         backend
             .joint_opening
-            .prepare(session, witness, &order, &precommitted_tables, grid)
+            .prepare(session, witness, &order, precommitted_tables, grid)
     })?;
+    // Move stage-0 hints; cloning would retain every row commitment.
+    let mut hint_by_id: BTreeMap<JoltCommittedPolynomial, PCS::OpeningHint> =
+        hints.into().into_iter().collect();
     let ordered_hints: Vec<PCS::OpeningHint> = order
         .iter()
         .map(|polynomial| {
-            hints
-                .iter()
-                .find(|(id, _)| id == polynomial)
-                .map(|(_, hint)| hint.clone())
+            hint_by_id
+                .remove(polynomial)
                 .ok_or(ProverError::InvariantViolation {
                     reason: "missing stage-0 opening hint for a batched polynomial",
                 })
         })
         .collect::<Result<_, _>>()?;
+    drop(hint_by_id);
 
     // The witness-side twin of the composed plan splice above: the statement
     // gained a `FieldRdInc` claim after `RdInc@IncClaimReduction`, and

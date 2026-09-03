@@ -295,6 +295,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
 #[cfg(all(test, feature = "field-inline"))]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use super::super::outputs::FieldRegistersProductOutputClaims;
     use super::*;
     use jolt_field::{Fr, Ring};
     use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
@@ -316,8 +317,8 @@ mod tests {
         }
     }
 
-    fn field_inline_outputs() -> super::super::outputs::FieldRegistersProductOutputClaims<Fr> {
-        super::super::outputs::FieldRegistersProductOutputClaims {
+    fn field_inline_outputs() -> FieldRegistersProductOutputClaims<Fr> {
+        FieldRegistersProductOutputClaims {
             rs1_value: fr(23),
             rs2_value: fr(29),
             rd_value: fr(31),
@@ -422,7 +423,7 @@ mod tests {
         let (relation, input_points, output_points) = fixture();
         let outputs = output_values();
         relation
-            .set_field_inline_outputs(super::super::outputs::FieldRegistersProductOutputClaims {
+            .set_field_inline_outputs(FieldRegistersProductOutputClaims {
                 rs1_value: Fr::from_u64(0),
                 rs2_value: Fr::from_u64(0),
                 rd_value: Fr::from_u64(0),

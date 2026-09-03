@@ -165,6 +165,7 @@ pub(crate) fn with_ram_fixture_init<R>(
             post: 1,
         });
     }
+    // Build RAM traffic as valid final LD/SD rows.
     let mut rd_value = 0;
     let rows: Vec<TraceRow> = script
         .into_iter()
@@ -218,13 +219,7 @@ pub(crate) fn with_ram_fixture_init<R>(
                     RamAccess::NoOp,
                 ),
             };
-            TraceRow {
-                instruction,
-                registers,
-                ram_access,
-                #[cfg(feature = "field-inline")]
-                field_inline: None,
-            }
+            TraceRow::new(instruction, registers, ram_access).unwrap()
         })
         .collect();
 
