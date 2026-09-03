@@ -143,6 +143,7 @@ where
         setup: &HyperKZGProverSetup<P>,
         evals: &[P::ScalarField],
         point: &[P::ScalarField],
+        claimed_eval: &P::ScalarField,
         transcript: &mut T,
     ) -> Result<HyperKZGProof<P>, HyperKZGError> {
         let ell = point.len();
@@ -156,10 +157,17 @@ where
         let polys = Self::fold_polynomials(evals, point);
         assert_eq!(polys.len(), ell);
         assert_eq!(polys.last().map(Vec::len), Some(2));
+        let Some([even, odd]) = polys.last().map(Vec::as_slice) else {
+            return Err(HyperKZGError::InvalidBatchShape);
+        };
+        let x = point.first().ok_or(HyperKZGError::EmptyPoint)?;
+        if *even + *x * (*odd - *even) != *claimed_eval {
+            return Err(HyperKZGError::FoldingConsistencyFailed { level: ell - 1 });
+        }
 
         // Commit to intermediate polynomials (skip polys[0] — already committed)
         let com: Vec<P::G1> = polys
-            .par_iter()
+            .iter()
             .skip(1)
             .map(|p| kzg::kzg_commit::<P>(p, setup).expect("SRS large enough for intermediate"))
             .collect();
@@ -436,13 +444,13 @@ where
     fn open<S: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &S,
         point: &[Self::Field],
-        _eval: Self::Field,
+        eval: Self::Field,
         setup: &Self::ProverSetup,
         _hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         let evaluations = poly.to_dense();
-        Self::open(setup, &evaluations, point, transcript)
+        Self::open(setup, &evaluations, point, &eval, transcript)
             .map_err(|e| OpeningsError::ProveFailed(format!("HyperKZG open failed: {e:?}")))
     }
 

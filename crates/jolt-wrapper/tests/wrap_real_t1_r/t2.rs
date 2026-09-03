@@ -1,5 +1,5 @@
 use jolt_field::Fr;
-use jolt_wrapper::limb_table::adapter::{from_jolt, AdapterError, JoltDoryInputs};
+use jolt_wrapper::limb_table::adapter::{from_jolt, AdapterError};
 use jolt_wrapper::limb_table::columns::Columns;
 use jolt_wrapper::limb_table::dory::FlattenedCheck;
 use jolt_wrapper::limb_table::layout::LOG_ROWS;
@@ -7,7 +7,6 @@ use jolt_wrapper::limb_table::schedule::{build, Layout};
 use jolt_wrapper::relation::{DoryScalar, Preprocessing, Proof, Relation, Witness};
 
 pub struct Base {
-    pub inputs: JoltDoryInputs,
     pub columns: Columns,
 }
 
@@ -39,16 +38,7 @@ impl Base {
             .evaluate(&coordinates)
             .unwrap_or_else(|_| unreachable!("verified Dory inputs satisfy the limb program"));
         let columns = Columns::generate(&layout.program, &values, LOG_ROWS);
-        Ok((Self { inputs, columns }, layout))
-    }
-
-    pub fn layout(&self) -> Layout {
-        build(
-            &self.inputs.check,
-            &self.inputs.values,
-            &self.inputs.setup,
-            &self.inputs.wire_order,
-        )
+        Ok((Self { columns }, layout))
     }
 }
 

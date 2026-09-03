@@ -143,6 +143,7 @@ fn tamper_suite(
     tamper(&|candidate| candidate.opening.p0_at_r_squared += Fr::one());
 }
 
+#[expect(clippy::too_many_arguments, reason = "fixture gate report")]
 fn report(
     proof: &WrapperProof,
     wire_phase_groups: [usize; 5],
@@ -150,7 +151,8 @@ fn report(
     cost: VerifierCost,
     statement_fields: usize,
     times: &[(&str, u128)],
-    uptime: &[u8],
+    uptime: (&[u8], &[u8]),
+    online: (u128, u128, f64),
 ) {
     let outer = committed_stage_bytes(&proof.stages[0]);
     let inner = clear_stage_bytes(&proof.stages[1]);
@@ -177,7 +179,18 @@ fn report(
         - reduced;
     let serialized = encode_to_vec(proof, standard()).expect("serialize wrapper");
     assert_eq!(serialized.len(), proof.bincode_bytes());
-    println!("uptime={}", String::from_utf8_lossy(uptime).trim());
+    println!(
+        "uptime_start={} uptime_end={}",
+        String::from_utf8_lossy(uptime.0).trim(),
+        String::from_utf8_lossy(uptime.1).trim()
+    );
+    println!(
+        "honest_online wall_ms={} phase_sum_ms={} cpu_seconds={:.3} cpu_per_wall={:.3}",
+        online.0,
+        online.1,
+        online.2,
+        online.2 / (online.0 as f64 / 1_000.0),
+    );
     let phases = times
         .iter()
         .map(|(name, ms)| format!("{name}={ms}"))

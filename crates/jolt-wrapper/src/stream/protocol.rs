@@ -5,7 +5,7 @@ use jolt_hyperkzg::{
     VariableBatchKzgProof, VerifierObserver,
 };
 use jolt_openings::AdditivelyHomomorphic;
-use jolt_poly::{EqPolynomial, MultilinearPoly};
+use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
 use jolt_transcript::{Keccak256Transcript, Transcript};
 
@@ -466,7 +466,6 @@ pub(crate) fn verify_spartan_assembly_from_transcript(
         },
     )?;
     cost.fr_mul += matrix_cost.fr_mul;
-    cost.matrix_fr_mul += matrix_cost.fr_mul;
     transcript.append(&witness_eval);
     let common_rounds = statement.rows.trailing_zeros() as usize;
     let prefix_rounds = common_rounds
@@ -858,12 +857,14 @@ fn prove_direct_opening(
 ) -> Result<WrapperProof, StreamError> {
     transcript.append(&claim.value);
     let combined_evaluations = packed.rlc_evaluations(&claim.polynomial_weights)?;
-    if combined_evaluations.as_slice().evaluate(&claim.point) != claim.value {
-        return Err(StreamError::OpeningClaim);
-    }
-    let opening =
-        HyperKZGScheme::<Bn254>::open(setup, &combined_evaluations, &claim.point, transcript)
-            .map_err(StreamError::HyperKzg)?;
+    let opening = HyperKZGScheme::<Bn254>::open(
+        setup,
+        &combined_evaluations,
+        &claim.point,
+        &claim.value,
+        transcript,
+    )
+    .map_err(StreamError::HyperKzg)?;
     Ok(WrapperProof {
         public_challenges: Vec::new(),
         commitments: packed.commitments.clone(),

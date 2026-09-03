@@ -71,7 +71,7 @@ impl T2Challenges {
 
     /// Extracts T2's phase challenges, skipping the wrapper link-challenge block
     /// after phase 1b when present.
-    pub fn from_transcript(
+    pub(crate) fn from_transcript(
         theta: Fr,
         challenges: &[Fr],
         challenge_offset: usize,

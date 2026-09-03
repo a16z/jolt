@@ -18,7 +18,6 @@ pub struct VerifierCost {
     pub ec_add: usize,
     pub pairing_pairs: usize,
     pub fr_mul: usize,
-    pub matrix_fr_mul: usize,
     pub fr_inv: usize,
     pub keccak: usize,
 }
