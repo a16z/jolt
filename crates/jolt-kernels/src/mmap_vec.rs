@@ -4,13 +4,11 @@
 //! `Vec`-backed lanes die at their designed drop sites but their pages stay
 //! RSS/phys_footprint-resident in libmalloc until an allocator-internal
 //! trigger returns them — at 2^27 a ~30 GiB corpse pile rides into stage 6b
-//! and the kernel compresses it mid-stage when ambient memory is tight
-//! (W3A root-cause, `.journals/lane-reports/w3a-rootcause.md`). An
+//! and the kernel compresses it mid-stage when ambient memory is tight. An
 //! anonymous-mmap backing munmaps on drop, so the ledger release is
 //! deterministic and immediate at the drop site. `madvise`-based decommit is
 //! NOT an alternative: it is a silent no-op on any range ever wrapped by a
-//! no-copy `MTLBuffer` (W1D §5), while munmap works even on live-wrapped
-//! ranges (`munmap_vs_metal_wrap` probe).
+//! no-copy `MTLBuffer`, while munmap works even on live-wrapped ranges.
 //!
 //! The mapping is page-aligned by construction, so no-copy Metal wrapping
 //! eligibility is guaranteed (the page-rounded wrap range stays inside the
@@ -18,30 +16,6 @@
 //! first touch — `zeroed` costs no memset.
 
 use std::ops::{Deref, DerefMut};
-
-/// Ask libmalloc to return cached dead pages to the kernel (macOS).
-///
-/// **Measured no-op on this system** (`relief_returns_freed_vec_pages`
-/// probe: 4 GiB of freed large `Vec`s stay in phys_footprint, the call
-/// returns 0) — libmalloc never voluntarily returns these pages, which is
-/// why freed-`Vec` corpses ride into later stages at all. Retained with its
-/// probe as the documented negative result; the working lever is
-/// [`MmapVec`]'s munmap-on-drop backing.
-pub fn reclaim_dead_pages() -> usize {
-    #[cfg(target_os = "macos")]
-    {
-        extern "C" {
-            /// libmalloc: returns freed-but-cached memory to the system;
-            /// `zone` null = every zone, `goal` 0 = everything reclaimable.
-            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
-        }
-        // SAFETY: null zone + zero goal is the documented "relieve
-        // everything" form; the call only touches allocator-internal state.
-        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) }
-    }
-    #[cfg(not(target_os = "macos"))]
-    0
-}
 
 /// Fixed-capacity contiguous storage; munmaps on drop (unix). `T: Copy`
 /// keeps drop glue out of the picture — elements are plain data.
@@ -273,56 +247,5 @@ mod tests {
         let mut v = MmapVec::<u8>::with_capacity(1);
         v.push(0);
         v.push(1);
-    }
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod relief_probe {
-    /// W3A diagnostic (ignored): does `malloc_zone_pressure_relief` return
-    /// freed-Vec pages to the kernel (phys_footprint drop)? Run explicitly:
-    /// `cargo nextest run -p jolt-kernels relief_returns --run-ignored all`
-    #[test]
-    #[ignore = "W3A diagnostic; prints footprint ledger deltas"]
-    #[expect(clippy::print_stdout, reason = "diagnostic output is the deliverable")]
-    fn relief_returns_freed_vec_pages() {
-        fn footprint() -> i64 {
-            #[repr(C)]
-            struct RusageInfoV4 {
-                uuid: [u8; 16],
-                counters: [u64; 35],
-            }
-            extern "C" {
-                fn proc_pid_rusage(
-                    pid: libc::c_int,
-                    flavor: libc::c_int,
-                    buffer: *mut RusageInfoV4,
-                ) -> libc::c_int;
-            }
-            let mut info = RusageInfoV4 {
-                uuid: [0; 16],
-                counters: [0; 35],
-            };
-            // SAFETY: flavor 4 fills exactly a rusage_info_v4.
-            let rc = unsafe { proc_pid_rusage(std::process::id() as i32, 4, &raw mut info) };
-            assert_eq!(rc, 0);
-            info.counters[7] as i64
-        }
-        let mib = |x: i64| x / (1 << 20);
-
-        let base = footprint();
-        // 16 × 256 MiB dirty Vecs — the shape of freed kernel tables.
-        let corpses: Vec<Vec<u8>> = (0..16).map(|i| vec![0x5a + i as u8; 256 << 20]).collect();
-        let dirtied = footprint() - base;
-        drop(corpses);
-        let after_free = footprint() - base;
-        let relieved = super::reclaim_dead_pages();
-        let after_relief = footprint() - base;
-        println!(
-            "dirty 4 GiB: +{} MiB; free(): {:+} MiB residual; relief returned {} MiB -> {:+} MiB residual",
-            mib(dirtied),
-            mib(after_free),
-            mib(relieved as i64),
-            mib(after_relief),
-        );
     }
 }

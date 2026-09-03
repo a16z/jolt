@@ -305,100 +305,6 @@ struct JkOuterPrepareParams {
     left_lookup, right_lookup, left_input, right_input, product_lo, product_hi, \
     lookup_output, flags)
 
-kernel void jk_outer_t1(
-    JK_OUTER_RECORD_ARGS,
-    device const uint* e_in [[buffer(17)]],
-    device const uint* e_out [[buffer(18)]],
-    device const long* coefficients [[buffer(19)]],
-    device uint* partials [[buffer(20)]],
-    constant JkOuterPrepareParams& p [[buffer(21)]],
-    uint gid [[thread_position_in_grid]],
-    uint lid [[thread_position_in_threadgroup]],
-    uint tg [[threadgroup_position_in_grid]])
-{
-    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
-    bool active = gid < p.len;
-    JkOuterGroups groups;
-    Fr256 w0 = fr_zero();
-    Fr256 w1 = fr_zero();
-    if (active) {
-        groups = jk_outer_groups(JK_OUTER_LOAD_ROW(gid, p.len));
-        uint j2 = gid << 1;
-        uint mask = (1u << p.log_in) - 1u;
-        Fr256 eo = fr_load(e_out, j2 >> p.log_in);
-        w0 = fr_mont_mul(eo, fr_load(e_in, j2 & mask));
-        w1 = fr_mont_mul(eo, fr_load(e_in, (j2 + 1u) & mask));
-    }
-    for (uint node = 0u; node < 9u; node++) {
-        Fr256 value = fr_zero();
-        if (active) {
-            long az0 = 0;
-            long az1 = 0;
-            JkI192 bz0 = JkI192{0ul, 0ul, 0ul};
-            JkI192 bz1 = JkI192{0ul, 0ul, 0ul};
-            for (uint i = 0u; i < JK_OUTER_DOMAIN; i++) {
-                long c = coefficients[node * JK_OUTER_DOMAIN + i];
-                az0 += c * groups.a_first[i];
-                bz0 = jk_i192_add(bz0, jk_i192_mul_i64(c, groups.b_first[i]));
-                if (i < JK_OUTER_SECOND) {
-                    az1 += c * groups.a_second[i];
-                    bz1 = jk_i192_add(bz1, jk_i192_mul_i64(c, groups.b_second[i]));
-                }
-            }
-            Fr256 first = fr_mont_mul(jk_fr_from_i192(jk_i192_i64(az0)), jk_fr_from_i192(bz0));
-            Fr256 second = fr_mont_mul(jk_fr_from_i192(jk_i192_i64(az1)), jk_fr_from_i192(bz1));
-            value = fr_add(fr_mont_mul(w0, first), fr_mont_mul(w1, second));
-        }
-        jk_tg_sum(scratch, lid, tg, value, partials, node, p.num_tgs);
-    }
-}
-
-kernel void jk_outer_azbz(
-    JK_OUTER_RECORD_ARGS,
-    device const uint* lagrange [[buffer(17)]],
-    device const uint* e_in [[buffer(18)]],
-    device const uint* e_out [[buffer(19)]],
-    device uint* tables [[buffer(20)]],
-    device uint* partials [[buffer(21)]],
-    constant JkOuterPrepareParams& p [[buffer(22)]],
-    uint gid [[thread_position_in_grid]],
-    uint lid [[thread_position_in_threadgroup]],
-    uint tg [[threadgroup_position_in_grid]])
-{
-    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
-    bool active = gid < p.len;
-    Fr256 q0 = fr_zero();
-    Fr256 qinf = fr_zero();
-    if (active) {
-        JkOuterGroups groups = jk_outer_groups(JK_OUTER_LOAD_ROW(gid, p.len));
-        Fr256 az0 = fr_zero();
-        Fr256 az1 = fr_zero();
-        Fr256 bz0 = fr_zero();
-        Fr256 bz1 = fr_zero();
-        for (uint i = 0u; i < JK_OUTER_DOMAIN; i++) {
-            Fr256 weight = fr_load(lagrange, i);
-            az0 = fr_add(az0, fr_mont_mul(weight, jk_fr_from_i192(jk_i192_i64(groups.a_first[i]))));
-            bz0 = fr_add(bz0, fr_mont_mul(weight, jk_fr_from_i192(groups.b_first[i])));
-            if (i < JK_OUTER_SECOND) {
-                az1 = fr_add(az1, fr_mont_mul(weight, jk_fr_from_i192(jk_i192_i64(groups.a_second[i]))));
-                bz1 = fr_add(bz1, fr_mont_mul(weight, jk_fr_from_i192(groups.b_second[i])));
-            }
-        }
-        fr_store(tables, 2u * gid, az0);
-        fr_store(tables, 2u * gid + 1u, az1);
-        uint table_len = 2u * p.len;
-        fr_store(tables, table_len + 2u * gid, bz0);
-        fr_store(tables, table_len + 2u * gid + 1u, bz1);
-        uint mask = (1u << p.log_in) - 1u;
-        Fr256 eq = fr_mont_mul(
-            fr_load(e_out, gid >> p.log_in), fr_load(e_in, gid & mask));
-        q0 = fr_mont_mul(eq, fr_mont_mul(az0, bz0));
-        qinf = fr_mont_mul(eq, fr_mont_mul(fr_sub(az1, az0), fr_sub(bz1, bz0)));
-    }
-    jk_tg_sum(scratch, lid, tg, q0, partials, 0u, p.num_tgs);
-    jk_tg_sum(scratch, lid, tg, qinf, partials, 1u, p.num_tgs);
-}
-
 struct JkOuterRoundParams {
     uint groups;
     uint num_tgs;
@@ -451,106 +357,6 @@ struct JkOuterClaimsParams {
     uint in_len;
     uint out_len;
 };
-
-inline Fr256 jk_outer_bool(bool value) {
-    Fr256 out;
-    uint mask = value ? 0xffffffffu : 0u;
-    for (uint limb = 0u; limb < FR_LIMBS; limb++) {
-        out.v[limb] = FR_ONE[limb] & mask;
-    }
-    return out;
-}
-
-inline Fr256 jk_outer_claim_value(
-    uint column,
-    uint j,
-    uint len,
-    device const ulong* pc,
-    device const ulong* upc,
-    device const uint* imm,
-    device const ulong* rs1,
-    device const ulong* rs2,
-    device const ulong* rd_write,
-    device const ulong* ram_address,
-    device const ulong* ram_read,
-    device const ulong* ram_write,
-    device const ulong* left_lookup,
-    device const uint* right_lookup,
-    device const ulong* left_input,
-    device const uint* right_input,
-    device const ulong* product_lo,
-    device const ulong* product_hi,
-    device const ulong* lookup_output,
-    device const uint* flags)
-{
-    uint f = flags[j];
-    switch (column) {
-        case 0u: return jk_fr_from_i192(jk_i192_u64(left_input[j]));
-        case 1u: return jk_fr_from_i192(jk_i192_i128(right_input + 4u * j));
-        case 2u: {
-            JkI192 product = JkI192{product_lo[j], product_hi[j], 0ul};
-            return jk_fr_from_i192(jk_outer_flag(f, 27u) ? product : jk_i192_neg(product));
-        }
-        case 3u: return jk_outer_bool(jk_outer_flag(f, 24u));
-        case 4u: return jk_fr_from_i192(jk_i192_u64(pc[j]));
-        case 5u: return jk_fr_from_i192(jk_i192_u64(upc[j]));
-        case 6u: return jk_fr_from_i192(jk_i192_i128(imm + 4u * j));
-        case 7u: return jk_fr_from_i192(jk_i192_u64(ram_address[j]));
-        case 8u: return jk_fr_from_i192(jk_i192_u64(rs1[j]));
-        case 9u: return jk_fr_from_i192(jk_i192_u64(rs2[j]));
-        case 10u: return jk_fr_from_i192(jk_i192_u64(rd_write[j]));
-        case 11u: return jk_fr_from_i192(jk_i192_u64(ram_read[j]));
-        case 12u: return jk_fr_from_i192(jk_i192_u64(ram_write[j]));
-        case 13u: return jk_fr_from_i192(jk_i192_u64(left_lookup[j]));
-        case 14u: return jk_fr_from_i192(jk_i192_u128(right_lookup + 4u * j));
-        case 15u: return jk_fr_from_i192(jk_i192_u64(j + 1u < len ? upc[j + 1u] : 0ul));
-        case 16u: return jk_fr_from_i192(jk_i192_u64(j + 1u < len ? pc[j + 1u] : 0ul));
-        case 17u: return jk_outer_bool(j + 1u < len && jk_outer_flag(flags[j + 1u], 7u));
-        case 18u: return jk_outer_bool(j + 1u < len && jk_outer_flag(flags[j + 1u], 12u));
-        case 19u: return jk_fr_from_i192(jk_i192_u64(lookup_output[j]));
-        case 20u: return jk_outer_bool(jk_outer_flag(f, 25u));
-        default: return jk_outer_bool(jk_outer_flag(f, column - 21u));
-    }
-}
-
-kernel void jk_outer_claims(
-    JK_OUTER_RECORD_ARGS,
-    device const uint* e_in [[buffer(17)]],
-    device uint* partials [[buffer(18)]],
-    constant JkOuterClaimsParams& p [[buffer(19)]],
-    uint lid [[thread_position_in_threadgroup]],
-    uint tg [[threadgroup_position_in_grid]])
-{
-    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
-    uint tile = tg / p.out_len;
-    uint x_out = tg - tile * p.out_len;
-    uint first_column = tile * JK_OUTER_CLAIM_TILE;
-    Fr256 accumulators[JK_OUTER_CLAIM_TILE] = {
-        fr_zero(), fr_zero(), fr_zero(), fr_zero()
-    };
-    for (uint x_in = lid; x_in < p.in_len; x_in += JK_TG_SIZE) {
-        uint j = x_out * p.in_len + x_in;
-        Fr256 weight = fr_load(e_in, x_in);
-        for (uint offset = 0u; offset < JK_OUTER_CLAIM_TILE; offset++) {
-            uint column = first_column + offset;
-            if (column < JK_OUTER_VARIABLES) {
-                Fr256 value = jk_outer_claim_value(
-                    column, j, p.len, pc, upc, imm, rs1, rs2, rd_write,
-                    ram_address, ram_read, ram_write, left_lookup, right_lookup,
-                    left_input, right_input, product_lo, product_hi, lookup_output, flags);
-                accumulators[offset] = fr_add(
-                    accumulators[offset], fr_mont_mul(weight, value));
-            }
-        }
-    }
-    for (uint offset = 0u; offset < JK_OUTER_CLAIM_TILE; offset++) {
-        uint column = first_column + offset;
-        if (column < JK_OUTER_VARIABLES) {
-            jk_tg_sum(
-                scratch, lid, x_out, accumulators[offset], partials, column, p.out_len);
-        }
-    }
-}
 
 struct JkI256 {
     ulong m0;
@@ -806,9 +612,8 @@ kernel void jk_icr_round(
 }
 
 // ---------------------------------------------------------------------------
-// Lazy-form outer kernels (`JOLT_METAL_OUTER_LAZY=0` restores the eager
-// twins above). Same values, fewer Montgomery multiplies: integer work stays
-// in the integer domain (mirroring the host `extended_products` pipeline,
+// Lazy-form outer kernels: integer work stays in the integer domain
+// (mirroring the host `extended_products` pipeline,
 // bounds |az| < 2^22, |bz| < 2^152, product < 2^174), and raw residues meet
 // their weight in ONE CIOS multiply instead of a convert-then-multiply pair.
 // `fr_mont_mul(a, b)` is exact for any a < 2^256 with b < p (T < 2p), so a

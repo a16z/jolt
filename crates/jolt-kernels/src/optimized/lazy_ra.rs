@@ -62,11 +62,11 @@ pub(crate) trait LazyRaDevice<F: JoltField>: Send + Sync {
     /// low-to-high bind schedule. Most consumers have no auxiliary table.
     fn bind_lazy(&mut self, _challenge: F) {}
 
-    /// Last lazy branch width before dense adoption. The default `4` is the
-    /// legacy schedule (three lazy rounds, then [`adopt_dense`](Self::adopt_dense)
-    /// materializes at width 8). A driver returning `8` defers adoption one
-    /// round: a fourth lazy round runs at width 8, and the adoption then
-    /// rides [`launch_adopt`](Self::launch_adopt)/[`adopt_round`](Self::adopt_round)
+    /// Last lazy branch width before dense adoption. At the default `4`,
+    /// three lazy rounds run and the third bind materializes at width 8
+    /// through [`adopt_dense`](Self::adopt_dense). At `8`, a fourth lazy
+    /// round runs at width 8 and the adoption rides
+    /// [`launch_adopt`](Self::launch_adopt)/[`adopt_round`](Self::adopt_round)
     /// at width 16 — half the dense footprint, fused with that round's
     /// message. Only `4` and `8` are meaningful.
     fn lazy_horizon(&self) -> usize {
@@ -114,11 +114,15 @@ pub(crate) trait LazyRaDevice<F: JoltField>: Send + Sync {
         e_out: &[F],
     ) -> Option<Vec<F>>;
 
-    /// The third bind's materialization: gather every polynomial dense at
-    /// `cycles / 8` into device-resident round state (from the DOUBLED
-    /// width-8 branch tables). `true` = adopted; the driver owns the dense
-    /// tables until [`take_dense`](Self::take_dense).
-    fn adopt_dense(&mut self, tables: &[Vec<F>]) -> bool;
+    /// The horizon-4 driver's materialization at the third bind: gather
+    /// every polynomial dense at `cycles / 8` into device-resident round
+    /// state (from the DOUBLED width-8 branch tables). `true` = adopted; the
+    /// driver owns the dense tables until [`take_dense`](Self::take_dense).
+    /// Horizon-8 drivers adopt through [`adopt_round`](Self::adopt_round)
+    /// instead.
+    fn adopt_dense(&mut self, _tables: &[Vec<F>]) -> bool {
+        false
+    }
 
     /// One fused dense round: fold `bind` (when present) low-to-high, then
     /// the message lanes against the CURRENT (post-bind) gruen levels.

@@ -1,5 +1,5 @@
 //! Unified-memory buffers. On Apple Silicon the CPU and GPU share one
-//! physical memory pool, so W1's whole buffer story is: every `MTLBuffer` is
+//! physical memory pool, so the whole buffer story is: every `MTLBuffer` is
 //! `storageModeShared`, and host allocations are wrapped in place with
 //! `newBufferWithBytesNoCopy` whenever they qualify — never a private+blit
 //! staging path.
@@ -54,38 +54,6 @@ use crate::mmap_vec::MmapVec;
 /// [`PageAlignedVec`] construction (defensive: this crate hard-codes it in
 /// eligibility checks and capacity rounding).
 pub const PAGE_SIZE: usize = 16384;
-
-/// `JOLT_METAL_ALLOC_TRACE=1` live-set census: every device-owned
-/// allocation ≥ 4 MiB emits paired `metal_alloc`/`metal_free` tracing
-/// events (id, bytes, kind), so a Chrome trace carries the transient
-/// buffers' exact lifetimes next to the stage spans. Id `0` = untraced;
-/// zero work when the env is unset.
-mod alloc_trace {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::OnceLock;
-
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-    const MIN_BYTES: usize = 4 << 20;
-
-    pub(super) fn allocated(bytes: usize, kind: &'static str) -> u64 {
-        let enabled = *ENABLED.get_or_init(|| {
-            std::env::var("JOLT_METAL_ALLOC_TRACE").is_ok_and(|v| !v.is_empty() && v != "0")
-        });
-        if !enabled || bytes < MIN_BYTES {
-            return 0;
-        }
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        tracing::info!(id, bytes, kind, "metal_alloc");
-        id
-    }
-
-    pub(super) fn freed(id: u64) {
-        if id != 0 {
-            tracing::info!(id, "metal_free");
-        }
-    }
-}
 
 /// macOS malloc's large-allocation threshold: at and above this size,
 /// allocations are `vm_allocate`d with page granularity (the invariant the
@@ -160,10 +128,6 @@ impl MetalContext {
             .device()
             .newBufferWithLength_options(len_bytes.max(4), MTLResourceOptions::StorageModeShared)
             .ok_or(MetalError::Alloc { bytes: len_bytes })?;
-        // Alloc-only census event: a `DeviceBuffer` cannot carry a `Drop`
-        // impl (it would pin every pass-scoped view to scope end), and
-        // Metal's actual release is deferred past the wrapper's drop anyway.
-        let _ = alloc_trace::allocated(len_bytes, "device");
         Ok(DeviceBuffer {
             raw,
             len_bytes,
@@ -196,7 +160,6 @@ impl MetalContext {
             )
         }
         .ok_or(MetalError::Alloc { bytes: len_bytes })?;
-        let _ = alloc_trace::allocated(len_bytes, "device_copy");
         Ok(DeviceBuffer {
             raw,
             len_bytes,
@@ -267,8 +230,6 @@ impl MetalContext {
             )
         }
         .ok_or(MetalError::Alloc { bytes: len_bytes })?;
-        // Alloc-only census event (see `alloc_u32s` on why no free pair).
-        let _ = alloc_trace::allocated(len_bytes, "wrap_copy");
         Ok(DeviceBuffer {
             raw,
             len_bytes,
@@ -328,23 +289,14 @@ pub struct OwnedDeviceBuffer<T: Copy> {
     backing: OwnedBacking<T>,
     raw: Retained<ProtocolObject<dyn MTLBuffer>>,
     copied: bool,
-    /// Census id for adopted-`Vec` backings; a `Page` backing traces its own
-    /// allocation, so it stays `0` here.
-    trace_id: u64,
-}
-
-impl<T: Copy> Drop for OwnedDeviceBuffer<T> {
-    fn drop(&mut self) {
-        alloc_trace::freed(self.trace_id);
-    }
 }
 
 enum OwnedBacking<T: Copy> {
     Vec(Vec<T>),
     Page(PageAlignedVec<T>),
     /// munmaps on drop — the backing for giant transient buffers whose
-    /// pages must leave phys_footprint at the drop site (W3A: freed-but-
-    /// malloc-cached corpses fed the stage-6b compressor storm).
+    /// pages must leave phys_footprint at the drop site (freed-but-
+    /// malloc-cached pages would feed the stage-6b compressor instead).
     Mmap(MmapVec<T>),
 }
 
@@ -414,7 +366,6 @@ impl MetalContext {
                 backing: OwnedBacking::Vec(vec),
                 raw,
                 copied: false,
-                trace_id: alloc_trace::allocated(len_bytes, "vec_adopt"),
             });
         }
         let mut owned = self.own_page_aligned(PageAlignedVec::from_slice(&vec))?;
@@ -438,7 +389,6 @@ impl MetalContext {
             backing: OwnedBacking::Page(vec),
             raw,
             copied: false,
-            trace_id: 0,
         })
     }
 
@@ -459,7 +409,6 @@ impl MetalContext {
             backing: OwnedBacking::Mmap(vec),
             raw,
             copied: false,
-            trace_id: alloc_trace::allocated(len_bytes, "mmap_adopt"),
         })
     }
 
@@ -496,7 +445,6 @@ pub struct PageAlignedVec<T: Copy> {
     ptr: NonNull<T>,
     len: usize,
     cap_bytes: usize,
-    trace_id: u64,
 }
 
 // SAFETY: the allocation is exclusively owned and never shared internally;
@@ -537,7 +485,6 @@ impl<T: Copy> PageAlignedVec<T> {
             ptr,
             len,
             cap_bytes,
-            trace_id: alloc_trace::allocated(cap_bytes, "page"),
         }
     }
 
@@ -592,234 +539,8 @@ impl<T: Copy> DerefMut for PageAlignedVec<T> {
 
 impl<T: Copy> Drop for PageAlignedVec<T> {
     fn drop(&mut self) {
-        alloc_trace::freed(self.trace_id);
         // SAFETY: ptr came from posix_memalign (malloc family) and is freed
         // exactly once; T: Copy, so elements need no drop.
         unsafe { libc::free(self.ptr.as_ptr().cast()) };
-    }
-}
-
-/// W1D diagnostic (ignored): does `MADV_FREE_REUSABLE` actually remove
-/// dirty anonymous pages from `phys_footprint` when the range is wrapped by
-/// a live no-copy `MTLBuffer`? Pins the W4-U1 failure mechanism — the
-/// campaign's retired-arena madvise returned 0 but the parked 30 GiB never
-/// left the ledger. Run explicitly:
-/// `cargo nextest run -p jolt-kernels madvise_reusable --features metal --run-ignored all`
-#[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test module")]
-mod madvise_probe {
-    use super::*;
-
-    fn phys_footprint_bytes() -> u64 {
-        // `rusage_info_v4`: 16 UUID bytes then 35 u64 counters;
-        // ri_phys_footprint at post-UUID index 7 — the layout jolt-profiling
-        // pins with its `footprint_tracks_dirty_memory` test.
-        #[repr(C)]
-        struct RusageInfoV4 {
-            uuid: [u8; 16],
-            counters: [u64; 35],
-        }
-        extern "C" {
-            fn proc_pid_rusage(
-                pid: libc::c_int,
-                flavor: libc::c_int,
-                buffer: *mut RusageInfoV4,
-            ) -> libc::c_int;
-        }
-        const RUSAGE_INFO_V4: libc::c_int = 4;
-        const RI_PHYS_FOOTPRINT_INDEX: usize = 7;
-        let mut info = RusageInfoV4 {
-            uuid: [0; 16],
-            counters: [0; 35],
-        };
-        // SAFETY: RUSAGE_INFO_V4 fills exactly a rusage_info_v4.
-        let rc =
-            unsafe { proc_pid_rusage(std::process::id() as i32, RUSAGE_INFO_V4, &raw mut info) };
-        assert_eq!(rc, 0);
-        info.counters[RI_PHYS_FOOTPRINT_INDEX]
-    }
-
-    struct Region {
-        base: NonNull<u8>,
-        bytes: usize,
-    }
-
-    impl Region {
-        fn dirty(bytes: usize) -> Self {
-            let mut raw: *mut c_void = std::ptr::null_mut();
-            // SAFETY: valid out-pointer, power-of-two alignment.
-            let rc = unsafe { libc::posix_memalign(&raw mut raw, PAGE_SIZE, bytes) };
-            assert_eq!(rc, 0);
-            let base = NonNull::new(raw.cast::<u8>()).unwrap();
-            // SAFETY: the allocation spans `bytes`.
-            unsafe { std::ptr::write_bytes(base.as_ptr(), 0xa5, bytes) };
-            Self { base, bytes }
-        }
-
-        fn reusable(&self) -> bool {
-            // SAFETY: page-aligned range inside the live allocation.
-            unsafe {
-                libc::madvise(
-                    self.base.as_ptr().cast(),
-                    self.bytes,
-                    libc::MADV_FREE_REUSABLE,
-                ) == 0
-            }
-        }
-    }
-
-    impl Drop for Region {
-        fn drop(&mut self) {
-            // SAFETY: exactly the posix_memalign allocation, freed once.
-            unsafe { libc::free(self.base.as_ptr().cast()) };
-        }
-    }
-
-    /// Footprint delta (MiB) from applying REUSABLE to a freshly dirtied
-    /// 1 GiB region under `configure`'s Metal wrapping choice.
-    fn probe(context: &MetalContext, wrap: bool, release_before: bool) -> (bool, i64) {
-        const BYTES: usize = 1 << 30;
-        let region = Region::dirty(BYTES);
-        let slice =
-            // SAFETY: live dirtied allocation of BYTES.
-            unsafe { std::slice::from_raw_parts(region.base.as_ptr(), region.bytes) };
-        let buffer = wrap.then(|| context.wrap_slice_nocopy(slice).unwrap());
-        let buffer = if release_before { None } else { buffer };
-        let before = phys_footprint_bytes();
-        let ok = region.reusable();
-        let after = phys_footprint_bytes();
-        drop(buffer);
-        (ok, (after as i64 - before as i64) / (1 << 20))
-    }
-
-    #[test]
-    #[ignore = "W1D diagnostic; prints footprint ledger deltas"]
-    #[expect(clippy::print_stdout, reason = "diagnostic output is the deliverable")]
-    fn madvise_reusable_vs_metal_wrap() {
-        let _lock = super::super::testing::gpu_lock();
-        let context = MetalContext::global().unwrap();
-
-        // Ledger sanity: dirtying and freeing 1 GiB must move phys_footprint
-        // by roughly that much, or the probe cannot be trusted.
-        let base = phys_footprint_bytes();
-        let region = Region::dirty(1 << 30);
-        let dirtied = phys_footprint_bytes() as i64 - base as i64;
-        drop(region);
-        let freed = phys_footprint_bytes() as i64 - base as i64;
-        println!(
-            "ledger sanity: dirty 1 GiB => +{} MiB, free => {:+} MiB residual",
-            dirtied / (1 << 20),
-            freed / (1 << 20)
-        );
-        assert!(
-            dirtied > (900 << 20),
-            "footprint ledger did not track dirty"
-        );
-
-        let (ok_plain, delta_plain) = probe(context, false, false);
-        let (ok_wrapped, delta_wrapped) = probe(context, true, false);
-        let (ok_released, delta_released) = probe(context, true, true);
-
-        println!("REUSABLE on 1 GiB dirty region, footprint delta:");
-        println!("  plain malloc:           ok={ok_plain} delta={delta_plain} MiB");
-        println!("  live MTLBuffer wrap:    ok={ok_wrapped} delta={delta_wrapped} MiB");
-        println!("  wrap released first:    ok={ok_released} delta={delta_released} MiB");
-    }
-
-    /// One page-aligned anonymous `mmap` region, dirtied; footprint-visible.
-    struct MmapRegion {
-        base: NonNull<u8>,
-        bytes: usize,
-    }
-
-    impl MmapRegion {
-        fn dirty(bytes: usize) -> Self {
-            // SAFETY: anonymous private mapping, no fd.
-            let raw = unsafe {
-                libc::mmap(
-                    std::ptr::null_mut(),
-                    bytes,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_ANON | libc::MAP_PRIVATE,
-                    -1,
-                    0,
-                )
-            };
-            assert_ne!(raw, libc::MAP_FAILED);
-            let base = NonNull::new(raw.cast::<u8>()).unwrap();
-            // SAFETY: the mapping spans `bytes`.
-            unsafe { std::ptr::write_bytes(base.as_ptr(), 0x5a, bytes) };
-            Self { base, bytes }
-        }
-
-        fn unmap(self) {
-            // SAFETY: exactly the mmap'd range, unmapped once (no Drop).
-            let rc = unsafe { libc::munmap(self.base.as_ptr().cast(), self.bytes) };
-            assert_eq!(rc, 0);
-            std::mem::forget(self);
-        }
-    }
-
-    impl Drop for MmapRegion {
-        fn drop(&mut self) {
-            // SAFETY: the mmap'd range, unmapped once (unmap() forgets self).
-            let _ = unsafe { libc::munmap(self.base.as_ptr().cast(), self.bytes) };
-        }
-    }
-
-    /// W3A diagnostic (ignored): does `munmap` remove dirty anonymous pages
-    /// from `phys_footprint` when the range was wrapped by a no-copy
-    /// `MTLBuffer`? The REUSABLE probe above pinned madvise as a silent
-    /// no-op on ever-wrapped ranges — this asks whether an mmap-backed
-    /// allocation whose drop actually unmaps is immune (the phase-2 lever
-    /// for the record family / IRR pair corpse pile). Run explicitly:
-    /// `cargo nextest run -p jolt-kernels munmap_vs_metal_wrap --features metal --run-ignored all`
-    #[test]
-    #[ignore = "W3A diagnostic; prints footprint ledger deltas"]
-    #[expect(clippy::print_stdout, reason = "diagnostic output is the deliverable")]
-    fn munmap_vs_metal_wrap() {
-        let _lock = super::super::testing::gpu_lock();
-        let context = MetalContext::global().unwrap();
-        const BYTES: usize = 1 << 30;
-        let mib = |delta: i64| delta / (1 << 20);
-
-        // Leg 1: never wrapped (the record-family lanes' case).
-        let region = MmapRegion::dirty(BYTES);
-        let before = phys_footprint_bytes() as i64;
-        region.unmap();
-        let plain = phys_footprint_bytes() as i64 - before;
-
-        // Leg 2: wrapped, buffer released BEFORE munmap (the IRR-pair case).
-        let region = MmapRegion::dirty(BYTES);
-        let slice =
-            // SAFETY: live dirtied mapping of BYTES.
-            unsafe { std::slice::from_raw_parts(region.base.as_ptr(), region.bytes) };
-        let buffer = context.wrap_slice_nocopy(slice).unwrap();
-        drop(buffer);
-        let before = phys_footprint_bytes() as i64;
-        region.unmap();
-        let released = phys_footprint_bytes() as i64 - before;
-
-        // Leg 3: wrapped, buffer still LIVE at munmap (measures whether the
-        // IOGPU reference keeps the pages on our ledger past the unmap).
-        let region = MmapRegion::dirty(BYTES);
-        let slice =
-            // SAFETY: live dirtied mapping of BYTES.
-            unsafe { std::slice::from_raw_parts(region.base.as_ptr(), region.bytes) };
-        let buffer = context.wrap_slice_nocopy(slice).unwrap();
-        let before = phys_footprint_bytes() as i64;
-        region.unmap();
-        let live = phys_footprint_bytes() as i64 - before;
-        drop(buffer);
-        let after_release = phys_footprint_bytes() as i64 - before;
-
-        println!("munmap of a dirty 1 GiB mmap region, footprint delta:");
-        println!("  never wrapped:                {} MiB", mib(plain));
-        println!("  wrapped, released, munmap:    {} MiB", mib(released));
-        println!(
-            "  wrapped, live at munmap:      {} MiB (after release: {} MiB)",
-            mib(live),
-            mib(after_release)
-        );
     }
 }

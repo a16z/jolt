@@ -39,7 +39,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{num_threadgroups, own_uninit_frs, DeviceRound, Partials};
+use super::{num_threadgroups, own_uninit_frs, wrap_eq, DeviceRound, Partials};
 use crate::metal::buffers::OwnedDeviceBuffer;
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
@@ -356,11 +356,7 @@ impl MetalInstructionInputKernel {
         ];
         params.extend_from_slice(&fr_to_u32_limbs(r));
         params.extend_from_slice(&fr_to_u32_limbs(self.gamma));
-        let e_in_buffer = context.wrap_slice(fr_as_u32s(e_in))?;
-        let e_out_buffer = context.wrap_slice(fr_as_u32s(e_out))?;
-        testing::note_copied_buffers(
-            u64::from(e_in_buffer.was_copied()) + u64::from(e_out_buffer.was_copied()),
-        );
+        let (e_in_buffer, e_out_buffer) = wrap_eq(context, e_in, e_out)?;
         let cur = self.cur.device_buffer();
         let nxt = self.nxt.device_buffer();
         let partials = self.partials.buffer().device_buffer();

@@ -173,7 +173,7 @@ kernel void jk_inc_prepare(
 
 // --- Slot-round machinery -------------------------------------------------
 //
-// The W2 slot kernels fuse one sumcheck round into a single dispatch: bind
+// The slot kernels fuse one sumcheck round into a single dispatch: bind
 // the previous round's challenge out of place (cur → nxt, so there is no
 // intra-dispatch hazard) and accumulate the NEW table's round-poly
 // evaluations as per-threadgroup partial sums the host finishes. Round 0 has
@@ -484,7 +484,7 @@ kernel void jk_hamming_round(
     jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, q_lead), partials, 1, p.num_tgs);
 }
 
-// --- Stage-8 joint-opening fold (W3b) ---------------------------------------
+// --- Stage-8 joint-opening fold ---------------------------------------------
 //
 // The batch opening's one vector-matrix product, distributed per committed
 // trace polynomial: result_p[c] = Σ_r left[r]·M_p[r][c] where M_p places one

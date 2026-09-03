@@ -24,7 +24,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{num_threadgroups, DeviceRound, Partials, RoundTable};
+use super::{concat_tables, num_threadgroups, DeviceRound, Partials, RoundTable};
 use crate::metal::field::fr_to_u32_limbs;
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
@@ -111,20 +111,13 @@ impl MetalHammingWeightKernel {
                 "hamming weight reduction needs at least one table pair of length >= 2",
             ));
         }
-        let concat = |tables: Vec<Vec<Fr>>| -> Vec<Fr> {
-            let mut flat = Vec::with_capacity(num_tables * len);
-            for table in tables {
-                flat.extend_from_slice(&table);
-            }
-            flat
-        };
         Ok(Self {
             rounds: tables.rounds,
             rounds_bound: 0,
             num_tables,
             len,
-            g: RoundTable::new(context, concat(tables.g_tables))?,
-            w: RoundTable::new(context, concat(tables.weight_tables))?,
+            g: RoundTable::new(context, concat_tables(&tables.g_tables, len))?,
+            w: RoundTable::new(context, concat_tables(&tables.weight_tables, len))?,
             output_openings: tables.output_openings,
             partials: Partials::new(context, 2, num_tables * len / 2)?,
             device: DeviceRound::new(context, KIND),

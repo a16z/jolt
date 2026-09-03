@@ -20,6 +20,7 @@
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
+use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::JoltField;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -104,18 +105,17 @@ pub(crate) fn materialize_inc_columns<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<(Vec<F>, Vec<F>), KernelError<F>> {
-    let dense =
-        |id: jolt_claims::protocols::jolt::JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
-            let table = witness.oracle_table(id.polynomial_id())?;
-            if table.len() != cycles {
-                return Err(KernelError::TableSizeMismatch {
-                    table: format!("{id:?}"),
-                    expected: cycles,
-                    got: table.len(),
-                });
-            }
-            Ok(table)
-        };
+    let dense = |id: JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
+        let table = witness.oracle_table(id.polynomial_id())?;
+        if table.len() != cycles {
+            return Err(KernelError::TableSizeMismatch {
+                table: format!("{id:?}"),
+                expected: cycles,
+                got: table.len(),
+            });
+        }
+        Ok(table)
+    };
     Ok((dense(ram_inc_reduced())?, dense(rd_inc_reduced())?))
 }
 

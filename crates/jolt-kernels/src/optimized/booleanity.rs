@@ -63,7 +63,6 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
-#[cfg(all(feature = "metal", target_os = "macos"))]
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::relations::booleanity::{
     lattice_booleanity_output_openings, LatticeBooleanityDimensions,
@@ -189,12 +188,26 @@ impl BooleanityColumns {
         }
     }
 
-    /// The layout's chunk selectors in canonical polynomial order, without
-    /// witness-shape validation (the bench seam's raw-parts path).
-    fn build<F: JoltField>(dimensions: BooleanityDimensions) -> Result<Self, KernelError<F>> {
+    /// The layout's chunk selectors, in canonical polynomial order, with the
+    /// witness shapes validated up front.
+    fn new<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        dimensions: BooleanityDimensions,
+    ) -> Result<Self, KernelError<F>> {
+        let log_t = dimensions.log_t;
         let log_k_chunk = dimensions.log_k_chunk;
         let layout = dimensions.layout;
         let openings = Self::openings(dimensions)?;
+        for opening in &openings {
+            let shape = witness.shape(opening.polynomial_id())?;
+            if shape.log_rows != log_k_chunk + log_t {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("{opening:?}"),
+                    expected: 1usize << (log_k_chunk + log_t),
+                    got: shape.rows(),
+                });
+            }
+        }
         let selectors = layout
             .polynomials()
             .map(|polynomial| {
@@ -235,27 +248,6 @@ impl BooleanityColumns {
             openings,
             selectors,
         })
-    }
-
-    /// [`Self::build`] with the witness shapes validated up front.
-    fn new<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        dimensions: BooleanityDimensions,
-    ) -> Result<Self, KernelError<F>> {
-        let log_t = dimensions.log_t;
-        let log_k_chunk = dimensions.log_k_chunk;
-        let columns = Self::build(dimensions)?;
-        for opening in &columns.openings {
-            let shape = witness.shape(opening.polynomial_id())?;
-            if shape.log_rows != log_k_chunk + log_t {
-                return Err(KernelError::TableSizeMismatch {
-                    table: format!("{opening:?}"),
-                    expected: 1usize << (log_k_chunk + log_t),
-                    got: shape.rows(),
-                });
-            }
-        }
-        Ok(columns)
     }
 }
 

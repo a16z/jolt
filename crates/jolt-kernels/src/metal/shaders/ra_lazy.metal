@@ -7,8 +7,9 @@
 // Phases mirror optimized/lazy_ra.rs exactly:
 // - Lazy rounds (widths 1/2/4): per-poly branch-table gathers off the rows,
 //   summand lanes reduced to lane-major per-threadgroup partials.
-// - Materialization (width 8): every poly gathered dense at cycles/8 into
-//   ONE flat poly-major buffer the dense rounds ping-pong.
+// - Adoption round (width 8): the lanes of a lazy round fused with every
+//   poly's dense gather at cycles/16 into ONE flat poly-major buffer the
+//   dense rounds ping-pong.
 // - Dense rounds: fold + lanes fused, compact strides len -> len/2.
 //
 // eq = e_out·e_in multiplies each row's lane sums (the CPU folds e_in into
@@ -59,36 +60,6 @@ inline Fr256 jk_ra_gather(device const uint* rows, device const uint* table, uin
         }
     }
     return sum;
-}
-
-struct RaMaterializeParams {
-    uint log_len;    // log2(dense length) = log2(cycles / 8)
-    uint num_polys;
-    uint k_entries;  // per-branch table stride (2^chunk_bits)
-    uint mask;       // chunk mask
-};
-
-// The third bind's materialization (lazy_ra::materialize, width 8): thread
-// (i, j) gathers polynomial i's dense value at j into the flat poly-major
-// output (stride 2^log_len). Pure map — a failed command buffer leaves
-// nothing to recover.
-kernel void jk_ra_materialize(
-    device const uint* rows [[buffer(0)]],
-    device const uint* meta [[buffer(1)]],
-    device const uint* tables [[buffer(2)]],
-    device uint* out [[buffer(3)]],
-    constant RaMaterializeParams& p [[buffer(4)]],
-    uint gid [[thread_position_in_grid]])
-{
-    if (gid >= (p.num_polys << p.log_len)) {
-        return;
-    }
-    uint i = gid >> p.log_len;
-    uint j = gid & ((1u << p.log_len) - 1u);
-    device const uint* table = tables + i * 8u * p.k_entries * FR_LIMBS;
-    fr_store(out, gid,
-             jk_ra_gather(rows, table, 8u, p.k_entries, meta[2u * i], meta[2u * i + 1u],
-                          p.mask, j));
 }
 
 struct BoolLazyParams {

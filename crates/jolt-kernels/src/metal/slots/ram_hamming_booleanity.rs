@@ -28,9 +28,9 @@ use jolt_verifier::stages::stage6b::ram_hamming_booleanity::{
 use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
-use super::{num_threadgroups, own_eq, st6b_detach_enabled, DeviceRound, Partials, RoundTable};
+use super::{num_threadgroups, own_eq, wrap_eq, DeviceRound, Partials, RoundTable};
 use crate::metal::buffers::{DeviceBuffer, OwnedDeviceBuffer};
-use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
+use crate::metal::field::fr_to_u32_limbs;
 use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::ram_hamming_booleanity::{
@@ -94,10 +94,6 @@ struct MetalHammingBooleanityKernel {
     hamming: RoundTable,
     partials: Partials,
     device: DeviceRound,
-    /// Two-phase rounds (`JOLT_ST6B_DETACH=0` restores synchronous rounds).
-    /// When set, `begin_round` owns the eq bind; `collect_round` never
-    /// re-binds.
-    detach: bool,
 }
 
 /// One two-phase round in flight (committed, not yet waited). `pass` first:
@@ -128,7 +124,6 @@ impl MetalHammingBooleanityKernel {
             hamming: RoundTable::new(context, built.hamming)?,
             partials: Partials::new(context, 2, len / 2)?,
             device: DeviceRound::new(context, KIND),
-            detach: st6b_detach_enabled(),
         })
     }
 
@@ -186,11 +181,7 @@ impl MetalHammingBooleanityKernel {
         let e_in = self.eq.e_in_current();
         let e_out = self.eq.e_out_current();
         let num_tgs = num_threadgroups(groups);
-        let e_in_buffer = context.wrap_slice(fr_as_u32s(e_in))?;
-        let e_out_buffer = context.wrap_slice(fr_as_u32s(e_out))?;
-        testing::note_copied_buffers(
-            u64::from(e_in_buffer.was_copied()) + u64::from(e_out_buffer.was_copied()),
-        );
+        let (e_in_buffer, e_out_buffer) = wrap_eq(context, e_in, e_out)?;
         self.commit_round(
             context,
             bind,
@@ -292,10 +283,7 @@ impl ProveRounds<Fr> for MetalHammingBooleanityKernel {
         _round: usize,
         _previous_claim: Fr,
     ) -> Result<bool, SumcheckError<Fr>> {
-        if !self.detach {
-            return Ok(false);
-        }
-        // The detach arm owns the eq bind (collect never re-binds).
+        // `begin_round` owns the eq bind (`collect_round` never re-binds).
         if let Some(challenge) = bind {
             self.eq.bind(challenge);
         }
@@ -344,7 +332,7 @@ impl ProveRounds<Fr> for MetalHammingBooleanityKernel {
     fn collect_round(
         &mut self,
         bind: Option<Fr>,
-        round: usize,
+        _round: usize,
         previous_claim: Fr,
     ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
         if let Some(flight) = self.in_flight.take() {
@@ -365,11 +353,8 @@ impl ProveRounds<Fr> for MetalHammingBooleanityKernel {
                 }
             }
         }
-        if self.detach {
-            // `begin_round` already bound eq.
-            return self.round_core(bind, previous_claim);
-        }
-        self.prove_round(bind, round, previous_claim)
+        // `begin_round` already bound eq.
+        self.round_core(bind, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {

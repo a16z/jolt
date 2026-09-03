@@ -450,13 +450,10 @@ impl<F: JoltField, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S>
     /// independently compute its own fold. No evaluation table is
     /// ever materialized — this is the key streaming win.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
-        let _span = tracing::info_span!("RlcSource::fold_rows").entered();
         let num_cols = 1usize << sigma;
         let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);
         for (source, &scalar) in self.sources.iter().zip(&self.scalars) {
-            let contribution = tracing::info_span!("rlc_constituent_fold")
-                .in_scope(|| source.fold_rows(left, sigma));
-            let _accumulate = tracing::info_span!("rlc_accumulate").entered();
+            let contribution = source.fold_rows(left, sigma);
             // Parallelism is across columns only: each column's op sequence
             // (one mul-add per source, source order) is the serial loop's.
             #[cfg(feature = "parallel")]

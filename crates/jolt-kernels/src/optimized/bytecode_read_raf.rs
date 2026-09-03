@@ -852,10 +852,6 @@ pub(crate) struct BytecodeCycleDeviceInputs<'a, F> {
 pub(crate) struct BytecodeCycleDevice<F: JoltField> {
     pub(crate) driver: Box<dyn LazyRaDevice<F>>,
     pub(crate) combined_recovery: Arc<Mutex<Option<Vec<F>>>>,
-    /// Two-phase rounds: launch the device round in `begin_round`, collect
-    /// after the batch's synchronous members. The driver decides at build
-    /// (kill switch `JOLT_ST6B_DETACH=0` restores synchronous rounds).
-    pub(crate) launch: bool,
 }
 
 pub(crate) fn prepare_bytecode_read_raf_cycle<F: JoltField>(
@@ -946,13 +942,9 @@ pub(crate) fn prepare_bytecode_read_raf_cycle<F: JoltField>(
     // free with the driver instead of living to the end of the proof.
     let _ = session.take::<PcRowsKey>();
 
-    let (driver, combined_recovery, combined, launch) = if let Some(device) = device {
-        (
-            Some(device.driver),
-            Some(device.combined_recovery),
-            None,
-            device.launch,
-        )
+    let launch = device.is_some();
+    let (driver, combined_recovery, combined) = if let Some(device) = device {
+        (Some(device.driver), Some(device.combined_recovery), None)
     } else {
         let mut combined = vec![F::zero(); cycles];
         for (point, weight) in stage_cycle_points[..base_stages].iter().zip(stage_weights) {
@@ -969,7 +961,7 @@ pub(crate) fn prepare_bytecode_read_raf_cycle<F: JoltField>(
                 .for_each(|(acc, term)| *acc += *term);
         }
         combined[0] += entry_term;
-        (None, None, Some(Polynomial::new(combined)), false)
+        (None, None, Some(Polynomial::new(combined)))
     };
 
     #[cfg(feature = "akita")]
@@ -1070,7 +1062,8 @@ struct CycleKernel<F: JoltField> {
     /// order (index-aligned with `ra`).
     #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     output_openings: Vec<JoltOpeningId>,
-    /// Two-phase device rounds enabled (see [`BytecodeCycleDevice::launch`]).
+    /// A device driver is installed: rounds run two-phase (launch in
+    /// `begin_round`, collect in `collect_round`).
     launch: bool,
     /// A device round is in flight for the current batch round.
     launched: bool,

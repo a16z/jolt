@@ -17,8 +17,8 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{num_threadgroups, own_uninit_frs, DeviceRound, Partials};
-use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
+use super::{num_threadgroups, own_device_frs, DeviceRound, Partials};
+use crate::metal::buffers::OwnedDeviceBuffer;
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
@@ -104,14 +104,6 @@ impl MetalInstructionClaimReductionKernel {
                 "instruction claim-reduction record shape",
             ));
         }
-        let alloc = |elements| -> Result<OwnedDeviceBuffer<Fr>, MetalError> {
-            match own_uninit_frs(context, elements)? {
-                Some(buffer) => Ok(buffer),
-                None => {
-                    context.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), elements))
-                }
-            }
-        };
         Ok(Self {
             log_t,
             gamma,
@@ -121,8 +113,8 @@ impl MetalInstructionClaimReductionKernel {
             gruen: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
             bound_challenges: Vec::with_capacity(log_t),
             record,
-            cur: alloc(len)?,
-            nxt: alloc(len / 2)?,
+            cur: own_device_frs(context, len)?,
+            nxt: own_device_frs(context, len / 2)?,
             partials: Partials::new(context, 3, len / 2)?,
             device: DeviceRound::new(context, KIND),
         })

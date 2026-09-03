@@ -13,8 +13,8 @@ use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::JoltWitnessPlane;
 
-use super::{num_threadgroups, own_uninit_frs, st6b_detach_enabled, DeviceRound, Partials};
-use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
+use super::{concat_tables, num_threadgroups, own_device_frs, DeviceRound, Partials};
+use crate::metal::buffers::OwnedDeviceBuffer;
 #[cfg(test)]
 use crate::metal::field::FR_U32_LIMBS;
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
@@ -43,21 +43,16 @@ impl PrepareKernel<Fr, BytecodeReadRafCycle<Fr>> for MetalBytecodeReadRafCycle {
     ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = BytecodeReadRafCycle<Fr>>>, KernelError<Fr>>
     {
         let mut kernel = prepare_bytecode_read_raf_cycle(session, witness, inputs, build_driver)?;
-        if st6b_detach_enabled() {
-            // Round 0 is bind-free, so its lanes are fully determined at
-            // prepare end: launch now and the device works under the batch's
-            // remaining serial prepares (the engine's round-0 `begin_round`
-            // adopts the flight idempotently).
-            let _ = kernel.begin_round(None, 0, Fr::from_u64(0));
-        }
+        // Round 0 is bind-free, so its lanes are fully determined at prepare
+        // end: launch now and the device works under the batch's remaining
+        // serial prepares (the engine's round-0 `begin_round` adopts the
+        // flight idempotently).
+        let _ = kernel.begin_round(None, 0, Fr::from_u64(0));
         Ok(kernel)
     }
 }
 
 fn build_driver(inputs: BytecodeCycleDeviceInputs<'_, Fr>) -> Option<BytecodeCycleDevice<Fr>> {
-    // With W3A's lean-memory regime, two 2^27 A/Bs reduced st6b
-    // 19.131→16.937 s and 18.476→15.826 s; CB timestamps showed no
-    // regression in the other members' device execution.
     if !metal_gate(KIND, inputs.rows.len()) {
         return None;
     }
@@ -73,7 +68,6 @@ fn build_driver(inputs: BytecodeCycleDeviceInputs<'_, Fr>) -> Option<BytecodeCyc
         Ok(driver) => Some(BytecodeCycleDevice {
             driver: Box::new(driver),
             combined_recovery: recovery,
-            launch: st6b_detach_enabled(),
         }),
         Err(error) => {
             tracing::warn!(slot = KIND, %error, "device prepare failed; staying on the CPU");
@@ -119,16 +113,6 @@ unsafe impl Send for BytecodeDriver {}
 // SAFETY: no shared-reference operation mutates or dispatches driver state.
 unsafe impl Sync for BytecodeDriver {}
 
-fn output_buffer(
-    context: &'static MetalContext,
-    len: usize,
-) -> Result<OwnedDeviceBuffer<Fr>, MetalError> {
-    if let Some(buffer) = own_uninit_frs(context, len)? {
-        return Ok(buffer);
-    }
-    context.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), len))
-}
-
 impl BytecodeDriver {
     fn build(
         context: &'static MetalContext,
@@ -167,8 +151,8 @@ impl BytecodeDriver {
                 + u64::from(shifts.was_copied()),
         );
 
-        let cur = output_buffer(context, cycles)?;
-        let nxt = output_buffer(context, cycles / 2)?;
+        let cur = own_device_frs(context, cycles)?;
+        let nxt = own_device_frs(context, cycles / 2)?;
         let rows = context.wrap_slice(inputs.rows.as_slice())?;
         testing::note_copied_buffers(u64::from(rows.was_copied()));
         let mut params = vec![cycles as u32, lo_bits as u32, in_len as u32, out_len as u32];
@@ -219,15 +203,6 @@ impl BytecodeDriver {
         self.pending_lazy_bind = None;
     }
 
-    fn flatten_tables(tables: &[Vec<Fr>], stride: usize) -> Vec<Fr> {
-        let mut flat = Vec::with_capacity(tables.len() * stride);
-        for table in tables {
-            debug_assert_eq!(table.len(), stride);
-            flat.extend_from_slice(table);
-        }
-        flat
-    }
-
     /// Encode + commit the lazy round without blocking; the caller decides
     /// whether to wait in place (synchronous tier) or park the flight.
     fn commit_lazy(
@@ -239,7 +214,7 @@ impl BytecodeDriver {
         groups: usize,
     ) -> Result<(DetachedPass, Vec<Fr>), MetalError> {
         let rows = context.wrap_slice(self.rows.as_slice())?;
-        let flat = Self::flatten_tables(tables, width * self.k_entries);
+        let flat = concat_tables(tables, width * self.k_entries);
         let tables = context.wrap_slice(fr_as_u32s(&flat))?;
         testing::note_copied_buffers(u64::from(rows.was_copied()) + u64::from(tables.was_copied()));
         let num_tgs = num_threadgroups(groups);
@@ -302,11 +277,11 @@ impl BytecodeDriver {
         let new_len = self.rows.len() / 8;
         let factors = self.num_ra + 1;
         let rows = context.wrap_slice(self.rows.as_slice())?;
-        let flat = Self::flatten_tables(tables, 8 * self.k_entries);
+        let flat = concat_tables(tables, 8 * self.k_entries);
         let tables = context.wrap_slice(fr_as_u32s(&flat))?;
         testing::note_copied_buffers(u64::from(rows.was_copied()) + u64::from(tables.was_copied()));
-        let cur = output_buffer(context, factors * new_len)?;
-        let nxt = output_buffer(context, factors * (new_len / 2))?;
+        let cur = own_device_frs(context, factors * new_len)?;
+        let nxt = own_device_frs(context, factors * (new_len / 2))?;
         let mut params = vec![
             new_len as u32,
             self.num_ra as u32,

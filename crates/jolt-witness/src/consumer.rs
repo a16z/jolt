@@ -67,12 +67,6 @@ fn deliver<C: StreamConsumer>(
     if !consumer.is_active() {
         return Ok(());
     }
-    let extract_span = tracing::info_span!(
-        "stream_extract",
-        bundle = core::any::type_name::<C::Witness>(),
-        rows = rows.len()
-    )
-    .entered();
     // Extraction is pure per cycle window, so buffers extract in parallel;
     // chunk order (the consumer's contract) is unchanged.
     let extract = |(index, row): (usize, &TraceRow)| {
@@ -96,7 +90,6 @@ fn deliver<C: StreamConsumer>(
         .enumerate()
         .map(extract)
         .collect::<Result<_, _>>()?;
-    drop(extract_span);
     consumer.consume(&bundles);
     Ok(())
 }
@@ -194,28 +187,6 @@ impl RandomAccessRows {
             (index + 1 < self.cycles).then(|| self.rows.get(index + 1).unwrap_or(&self.padding));
         B::from_row(current, next, &WitnessEnv::new(&self.preprocessing))
     }
-}
-
-/// Collects one bundle per cycle directly into an indexed destination.
-pub fn collect_bundles_par<B: WitnessBundle + Copy + Send>(
-    access: &RandomAccessRows,
-    cycles: usize,
-) -> Result<Vec<B>, WitnessError> {
-    collect_bundles_par_map(access, cycles, |bundle: B| bundle)
-}
-
-/// Fuse a representation change into random-access collection so callers
-/// do not stage the wider bundle form.
-pub fn collect_bundles_par_map<B: WitnessBundle, T: Copy + Send>(
-    access: &RandomAccessRows,
-    cycles: usize,
-    map: impl Fn(B) -> T + Send + Sync,
-) -> Result<Vec<T>, WitnessError> {
-    let window = |index| access.window::<B>(index).map(&map);
-    #[cfg(feature = "parallel")]
-    return jolt_utils::par_collect_windows(cycles, window);
-    #[cfg(not(feature = "parallel"))]
-    (0..cycles).map(window).collect()
 }
 
 /// The fused pass: walk `range` once and deliver each chunk to every
@@ -389,14 +360,6 @@ mod tests {
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
             stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
             assert_eq!(routed, consumers.0.into_rows());
-
-            let access = backend.random_access().unwrap();
-            let packed: Vec<u64> =
-                collect_bundles_par_map(&access, 4, |bundle: WindowBundle| bundle.pc.0).unwrap();
-            assert_eq!(
-                packed,
-                routed.iter().map(|bundle| bundle.pc.0).collect::<Vec<_>>()
-            );
         });
     }
 

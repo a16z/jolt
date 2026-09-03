@@ -26,8 +26,8 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{num_threadgroups, own_uninit_frs, DeviceRound, Partials};
-use crate::metal::buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec};
+use super::{num_threadgroups, own_device_frs, DeviceRound, Partials};
+use crate::metal::buffers::{DeviceBuffer, OwnedDeviceBuffer};
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
@@ -230,17 +230,9 @@ pub(super) struct PairTables {
 
 impl PairTables {
     pub(super) fn new(context: &'static MetalContext, len: usize) -> Result<Self, MetalError> {
-        let alloc = |elements| -> Result<OwnedDeviceBuffer<Fr>, MetalError> {
-            match own_uninit_frs(context, elements)? {
-                Some(buffer) => Ok(buffer),
-                None => {
-                    context.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), elements))
-                }
-            }
-        };
         Ok(Self {
-            cur: alloc(2 * len)?,
-            nxt: alloc(len)?,
+            cur: own_device_frs(context, 2 * len)?,
+            nxt: own_device_frs(context, len)?,
             len,
         })
     }
@@ -540,13 +532,6 @@ impl SumcheckKernel<Fr> for MetalOuterRemainderKernel {
     }
 }
 
-/// Lazy-form outer kernels (integer-domain products, raw-residue weight
-/// multiplies) are the default; `JOLT_METAL_OUTER_LAZY=0` restores the eager
-/// twins. Both arms produce identical field values.
-fn outer_lazy() -> bool {
-    !std::env::var("JOLT_METAL_OUTER_LAZY").is_ok_and(|v| v.trim() == "0")
-}
-
 /// Semantic `2^256 mod p`: multiplying a standard-form device sum by this
 /// returns it to the canonical Montgomery representation.
 fn mont_form_fix() -> Fr {
@@ -607,12 +592,6 @@ fn dispatch_claimed_inputs(
     if e_out.len() * e_in.len() != record.len() {
         return Err(MetalError::UnsupportedShape("outer claims geometry"));
     }
-    let lazy = outer_lazy();
-    let kernel = if lazy {
-        KernelId::OuterClaimsLazy
-    } else {
-        KernelId::OuterClaims
-    };
     let partials = Partials::new(context, VARIABLE_COUNT, e_out.len() * 256)?;
     let record_buffers = record_buffers(context, record)?;
     let e_in_buffer = context.wrap_slice(fr_as_u32s(&e_in))?;
@@ -622,7 +601,7 @@ fn dispatch_claimed_inputs(
     let params = [record.len() as u32, e_in.len() as u32, e_out.len() as u32];
     let threads = CLAIM_TILES * e_out.len() * 256;
     let mut pass = context.begin_pass()?;
-    pass.dispatch(kernel, &params, &buffers, threads);
+    pass.dispatch(KernelId::OuterClaimsLazy, &params, &buffers, threads);
     pass.run()?;
     testing::note_device_round();
 
@@ -636,10 +615,10 @@ fn dispatch_claimed_inputs(
                 .fold(Fr::from_u64(0), |sum, (partial, weight)| {
                     sum + *weight * *partial
                 });
-            if lazy && !outer_claim_is_bool(column) {
-                sum * form_fix
-            } else {
+            if outer_claim_is_bool(column) {
                 sum
+            } else {
+                sum * form_fix
             }
         })
         .collect())
@@ -674,22 +653,16 @@ fn dispatch_t1(
         &coefficient_buffer,
         &partial_buffer,
     ]);
-    let lazy = outer_lazy();
-    let kernel = if lazy {
-        KernelId::OuterT1Lazy
-    } else {
-        KernelId::OuterT1
-    };
     let params = [groups as u32, num_tgs as u32, e_in.len().trailing_zeros()];
     let mut pass = context.begin_pass()?;
-    pass.dispatch(kernel, &params, &buffers, groups);
+    pass.dispatch(KernelId::OuterT1Lazy, &params, &buffers, groups);
     pass.run()?;
     testing::note_device_round();
     let form_fix = mont_form_fix();
     let reduced = partials.sums(num_tgs);
     let mut values = vec![Fr::from_u64(0); EXTENDED_SIZE];
     for (((position, _), value), _) in extension_coefficients().into_iter().zip(reduced).zip(0..9) {
-        values[position] = if lazy { value * form_fix } else { value };
+        values[position] = value * form_fix;
     }
     Ok(values)
 }
@@ -719,18 +692,13 @@ fn dispatch_azbz(
         &table_buffer,
         &partial_buffer,
     ]);
-    let kernel = if outer_lazy() {
-        KernelId::OuterAzbzLazy
-    } else {
-        KernelId::OuterAzbz
-    };
     let params = [
         groups as u32,
         num_tgs as u32,
         split_eq.e_in_current().len().trailing_zeros(),
     ];
     let mut pass = context.begin_pass()?;
-    pass.dispatch(kernel, &params, &buffers, groups);
+    pass.dispatch(KernelId::OuterAzbzLazy, &params, &buffers, groups);
     pass.run()?;
     testing::note_device_round();
     Ok(partials.sums(num_tgs))

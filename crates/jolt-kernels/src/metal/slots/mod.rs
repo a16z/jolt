@@ -1,7 +1,7 @@
 //! Device sumcheck slots: `Metal*` twins of optimized kernels, installed by
 //! [`JoltBackend::metal`](crate::JoltBackend::metal).
 //!
-//! # The slot pattern (W2 — later waves copy this shape)
+//! # The slot pattern
 //!
 //! Each slot is a `MetalX { fallback: OptimizedX }` front whose `prepare`
 //! consults [`metal_gate`](super::metal_gate) with the slot's initial
@@ -69,9 +69,9 @@ pub use spartan_product::{MetalProductRemainder, MetalProductUniskip};
 
 use jolt_field::{Fr, Ring};
 
-use super::buffers::{OwnedDeviceBuffer, PageAlignedVec};
+use super::buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec};
 use super::error::MetalError;
-use super::field::fr_to_u32_limbs;
+use super::field::{fr_as_u32s, fr_to_u32_limbs};
 use super::runtime::{MetalContext, THREADGROUP_SIZE};
 use super::testing;
 use crate::mmap_vec::MmapVec;
@@ -94,13 +94,8 @@ impl RoundTable {
         let cur = ctx.own_vec(table)?;
         testing::note_copied_buffers(u64::from(cur.was_copied()));
         // The bind target is written out of place before any read (the
-        // ping-pong contract), so it takes the fresh never-zeroed uninit
-        // path. Zero-fill remains only for sizes the no-copy wrap can't
-        // serve.
-        let nxt = match own_uninit_frs(ctx, nxt_len)? {
-            Some(buffer) => buffer,
-            None => ctx.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), nxt_len))?,
-        };
+        // ping-pong contract).
+        let nxt = own_device_frs(ctx, nxt_len)?;
         Ok(Self { cur, nxt })
     }
 
@@ -206,13 +201,6 @@ pub(super) fn num_threadgroups(threads: usize) -> usize {
 /// An uninitialized device-owned field-element buffer, or `None` when the
 /// allocation would not wrap no-copy (see the SAFETY-adjacent contract on
 /// [`uninit_frs`] — a copy would read the uninitialized memory).
-///
-/// Always freshly allocated. A retired-buffer placement arena used to live
-/// here (park a finished slot's ping-pong pair, carve later adoptions from
-/// its pages); the W1D park-vs-free ablation measured it perf-neutral at
-/// every scale — malloc's large-entry cache recycles the just-freed pages
-/// into the next stage's allocations equally warm — so producers now simply
-/// drop their pairs (lane report `.journals/lane-reports/w1d-rootcause.md`).
 pub(super) fn own_uninit_frs(
     context: &'static MetalContext,
     len: usize,
@@ -223,11 +211,51 @@ pub(super) fn own_uninit_frs(
     // mmap-backed: page-aligned by construction (always no-copy eligible),
     // kernel-zeroed instead of uninit (device fills before any read either
     // way), and — the point — munmapped out of phys_footprint the moment
-    // the buffer drops, instead of lingering in libmalloc as the corpse
-    // pile that feeds the stage-6b compressor storm (W3A root-cause).
+    // the buffer drops, instead of lingering in libmalloc's large-entry
+    // cache where the freed pages feed the stage-6b compressor.
     let buffer = context.own_mmap(MmapVec::zeroed(len))?;
     debug_assert!(!buffer.was_copied());
     Ok(Some(buffer))
+}
+
+/// A device-owned field-element buffer the device fills before any read:
+/// [`own_uninit_frs`], with the zero-length case served by an empty
+/// page-aligned allocation.
+pub(super) fn own_device_frs(
+    context: &'static MetalContext,
+    len: usize,
+) -> Result<OwnedDeviceBuffer<Fr>, MetalError> {
+    match own_uninit_frs(context, len)? {
+        Some(buffer) => Ok(buffer),
+        None => context.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), len)),
+    }
+}
+
+/// Flatten per-poly branch tables for the device (uniform stride —
+/// asserted, since the kernels index `poly * stride`).
+pub(super) fn concat_tables(tables: &[Vec<Fr>], stride: usize) -> Vec<Fr> {
+    let mut flat = Vec::with_capacity(tables.len() * stride);
+    for table in tables {
+        debug_assert_eq!(table.len(), stride);
+        flat.extend_from_slice(table);
+    }
+    flat
+}
+
+/// Wrap the current gruen levels (tiny copies below the no-copy floor are
+/// expected and counted) — the synchronous tier, which waits with the
+/// borrows in scope.
+pub(super) fn wrap_eq<'a>(
+    context: &MetalContext,
+    e_in: &'a [Fr],
+    e_out: &'a [Fr],
+) -> Result<(DeviceBuffer<'a>, DeviceBuffer<'a>), MetalError> {
+    let e_in_buffer = context.wrap_slice(fr_as_u32s(e_in))?;
+    let e_out_buffer = context.wrap_slice(fr_as_u32s(e_out))?;
+    testing::note_copied_buffers(
+        u64::from(e_in_buffer.was_copied()) + u64::from(e_out_buffer.was_copied()),
+    );
+    Ok((e_in_buffer, e_out_buffer))
 }
 
 /// An uninitialized field-element buffer for device fills.
@@ -262,17 +290,6 @@ pub(super) fn own_eq(
         Ok(buffer)
     };
     Ok((own(e_in)?, own(e_out)?))
-}
-
-/// Stage 6b's synchronous device members (bytecode cycle, increment claim
-/// reduction, RAM Hamming booleanity) run two-phase: launch in
-/// `begin_round`, wait in `collect_round`, so one queue drain per round
-/// replaces three serial blocking waits behind the already-detached
-/// Bool/RAV gather command buffers. `JOLT_ST6B_DETACH=0` restores the
-/// synchronous rounds (same-binary ablation knob).
-pub(super) fn st6b_detach_enabled() -> bool {
-    !std::env::var("JOLT_ST6B_DETACH")
-        .is_ok_and(|value| matches!(value.trim(), "0" | "off" | "OFF"))
 }
 
 /// `[groups, do_bind, num_tgs, r]` — the shared `SlotRoundParams` head of

@@ -22,14 +22,10 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{
-    num_threadgroups, slot_round_params, st6b_detach_enabled, DeviceRound, Partials, RoundTable,
-};
+use super::{num_threadgroups, slot_round_params, DeviceRound, Partials, RoundTable};
 use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
 use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
 use crate::metal::{fr_to_u32_limbs, metal_gate, testing, MetalError};
-#[cfg(test)]
-use crate::optimized::inc_claim_reduction::IncTables;
 use crate::optimized::inc_claim_reduction::{
     materialize_inc_columns, validate_inc_relation, OptimizedIncClaimReduction,
 };
@@ -194,8 +190,6 @@ struct MetalIncKernel {
     rd_weights: RoundTable,
     partials: Partials,
     device: DeviceRound,
-    /// Two-phase rounds (`JOLT_ST6B_DETACH=0` restores synchronous rounds).
-    detach: bool,
 }
 
 /// One two-phase round in flight (committed, not yet waited).
@@ -208,20 +202,6 @@ struct IncFlight {
 }
 
 impl MetalIncKernel {
-    #[cfg(test)]
-    fn new(context: &'static MetalContext, tables: IncTables<Fr>) -> Result<Self, MetalError> {
-        let ram_weights = RoundTable::new(context, tables.ram_weights)?;
-        let rd_weights = RoundTable::new(context, tables.rd_weights)?;
-        Self::new_prepared(
-            context,
-            tables.rounds,
-            tables.ram_inc,
-            tables.rd_inc,
-            ram_weights,
-            rd_weights,
-        )
-    }
-
     fn new_prepared(
         context: &'static MetalContext,
         rounds: usize,
@@ -242,7 +222,6 @@ impl MetalIncKernel {
             rd_weights,
             partials: Partials::new(context, 2, len / 2)?,
             device: DeviceRound::new(context, KIND),
-            detach: st6b_detach_enabled(),
         })
     }
 
@@ -417,9 +396,6 @@ impl ProveRounds<Fr> for MetalIncKernel {
         _round: usize,
         _previous_claim: Fr,
     ) -> Result<bool, SumcheckError<Fr>> {
-        if !self.detach {
-            return Ok(false);
-        }
         let groups = if bind.is_some() {
             self.len / 4
         } else {
@@ -515,8 +491,6 @@ impl SumcheckKernel<Fr> for MetalIncKernel {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use std::time::Instant;
-
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
     use jolt_field::Ring;
@@ -527,7 +501,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
-    use crate::metal::testing::{copied_buffer_count, device_probe_count, gpu_lock, seeded_frs};
+    use crate::metal::testing::{device_probe_count, gpu_lock};
     use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
 
     fn force_device_gate() {
@@ -624,76 +598,5 @@ mod tests {
                 "the metal kernel never dispatched on the device"
             );
         });
-    }
-
-    /// Synthetic 2^16-scale parity + timing sanity: a device kernel against
-    /// an identical CPU-forced kernel, byte-equal rounds, zero buffer
-    /// copies (2 MiB tables are no-copy eligible), and a wall-clock print to
-    /// catch pathological slowness (NOT a benchmark).
-    #[test]
-    #[expect(clippy::print_stdout, reason = "timing sanity readout")]
-    fn inc_claim_reduction_device_parity_at_2e16() {
-        let _lock = gpu_lock();
-        force_device_gate();
-        let context = MetalContext::global().unwrap();
-        let len = 1usize << 16;
-        let tables = || IncTables {
-            rounds: 16,
-            ram_inc: seeded_frs(0xA1, len),
-            rd_inc: seeded_frs(0xA2, len),
-            ram_weights: seeded_frs(0xA3, len),
-            rd_weights: seeded_frs(0xA4, len),
-        };
-        // The honest input claim: the summand's full hypercube sum.
-        let reference = tables();
-        let mut claim = Fr::from_u64(0);
-        for j in 0..len {
-            claim += reference.ram_weights[j] * reference.ram_inc[j]
-                + reference.rd_weights[j] * reference.rd_inc[j];
-        }
-        assert_ne!(claim, Fr::from_u64(0), "degenerate fixture");
-
-        let copies_before = copied_buffer_count();
-        let mut device_kernel = MetalIncKernel::new(context, tables()).unwrap();
-        assert_eq!(
-            copied_buffer_count(),
-            copies_before,
-            "2^16 tables must wrap no-copy"
-        );
-        let mut cpu_kernel = MetalIncKernel::new(context, tables()).unwrap();
-        cpu_kernel.device = DeviceRound::disabled(KIND);
-
-        let rounds_before = device_probe_count();
-        let challenges = synthetic_point(16, 777);
-        let mut device_wall = std::time::Duration::ZERO;
-        let mut cpu_wall = std::time::Duration::ZERO;
-        for round in 0..16usize {
-            let bind = round.checked_sub(1).map(|previous| challenges[previous]);
-            let start = Instant::now();
-            let device_poly = device_kernel.prove_round(bind, round, claim).unwrap();
-            device_wall += start.elapsed();
-            let start = Instant::now();
-            let cpu_poly = cpu_kernel.prove_round(bind, round, claim).unwrap();
-            cpu_wall += start.elapsed();
-            assert_eq!(
-                device_poly.coefficients(),
-                cpu_poly.coefficients(),
-                "round {round} diverged"
-            );
-            claim = device_poly.evaluate(challenges[round]);
-        }
-        device_kernel.finish_rounds(challenges[15]).unwrap();
-        cpu_kernel.finish_rounds(challenges[15]).unwrap();
-        let claims = IncClaimReductionInputClaims::<Fr>::default();
-        assert_eq!(
-            device_kernel.output_claims(&claims).unwrap(),
-            cpu_kernel.output_claims(&claims).unwrap()
-        );
-        assert_eq!(
-            device_probe_count() - rounds_before,
-            16,
-            "every round must have dispatched on the device"
-        );
-        println!("inc 2^16, 16 rounds: device {device_wall:?}, cpu-in-kernel {cpu_wall:?}");
     }
 }

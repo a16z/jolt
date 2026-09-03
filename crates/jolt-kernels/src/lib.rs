@@ -53,7 +53,6 @@ pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, Wit
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;
 pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};
-pub use mmap_vec::reclaim_dead_pages;
 pub use optimized::OptimizedBackend;
 pub use reference::naive::NaiveSumcheckProver;
 pub use reference::ReferenceBackend;
