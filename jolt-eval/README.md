@@ -44,7 +44,6 @@ The motivation is twofold:
 |---|---|
 | `bind_parallel_low_to_high` | `DensePolynomial::bind_parallel` with LowToHigh binding (2^20 evaluations) |
 | `bind_parallel_high_to_low` | `DensePolynomial::bind_parallel` with HighToLow binding (2^20 evaluations) |
-| `hamming_weight_pushforward` | Stage-7 one-hot pushforward (2^22 rows, production 8-bit/16-2-3 geometry) |
 | `naive_sort_time` | Wall-clock time of the `naive_sort` function in `jolt-eval/src/sort_targets.rs` |
 | `prover_time_fibonacci_100` | End-to-end prover time for `fibonacci(100)` |
 | `prover_time_sha2_chain_100` | End-to-end prover time for 100 iterations of SHA-256 chain |

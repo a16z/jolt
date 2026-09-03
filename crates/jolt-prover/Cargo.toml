@@ -78,8 +78,7 @@ allocative = [
   "jolt-verifier/allocative",
 ]
 # Forwarded to jolt-kernels: Apple Metal device kernels (macOS only, no-op
-# elsewhere). Lets `modular_benchmark --backend metal` exist without touching
-# non-metal builds.
+# elsewhere); `profile --backend metal` needs it together with `profiling`.
 metal = ["jolt-kernels/metal"]
 
 [dependencies]
@@ -136,12 +135,6 @@ rand_core = { workspace = true, features = ["getrandom"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
 tracer.workspace = true
-
-# The end-to-end benchmark harness needs the legacy host toolchain (guest
-# compilation) behind the same feature gate as the byte-diff tests.
-[[example]]
-name = "modular_benchmark"
-required-features = ["prover-fixtures"]
 
 [[bin]]
 name = "jolt-prover"

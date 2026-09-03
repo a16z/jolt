@@ -201,6 +201,9 @@ impl OutputFormat {
 pub enum BackendKind {
     Reference,
     Optimized,
+    /// The Apple Metal device tier (`--features profiling,metal`, macOS only).
+    #[cfg(all(feature = "metal", target_os = "macos", not(feature = "akita")))]
+    Metal,
 }
 
 impl BackendKind {
@@ -212,6 +215,8 @@ impl BackendKind {
         match self {
             Self::Reference => "reference",
             Self::Optimized => "optimized",
+            #[cfg(all(feature = "metal", target_os = "macos", not(feature = "akita")))]
+            Self::Metal => "metal",
         }
     }
 
@@ -222,6 +227,8 @@ impl BackendKind {
         match self {
             Self::Reference => "",
             Self::Optimized => "_optimized",
+            #[cfg(all(feature = "metal", target_os = "macos", not(feature = "akita")))]
+            Self::Metal => "_metal",
         }
     }
 }
@@ -713,6 +720,8 @@ fn prove_workload(
     let backend = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
         BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        BackendKind::Metal => JoltBackend::<Fr, DoryScheme>::metal().expect("metal backend"),
     };
 
     // --- The measured window: the full modular prove (witness

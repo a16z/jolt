@@ -77,7 +77,7 @@ mod harness {
     };
     use tracer::execution_backend::TracerBackend;
 
-    /// Same guest-input mapping as `modular_benchmark` for sha2-chain.
+    /// Same guest-input mapping as the `profile` CLI for sha2-chain.
     const CYCLES_PER_SHA256: f64 = 3396.0;
     const SAFETY_MARGIN: f64 = 0.9;
 
@@ -268,7 +268,7 @@ mod harness {
         .concat();
 
         // --- Untimed setup: guest compile/decode/trace + preprocessing,
-        // exactly the modular_benchmark pipeline.
+        // exactly the `profile` CLI pipeline.
         let mut program = host::Program::new("sha2-chain-guest");
         let (bytecode, init_memory_state, _, entry_address) = program.decode();
         let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);

@@ -16,19 +16,20 @@ metal = [
   "dep:jolt-witness",
   "dep:jolt-claims",
   "dep:libc",
+  "dep:dory",
+  "dep:rayon",
 ]
 
 [dependencies]
 jolt-prover-legacy = { workspace = true, features = ["host"] }
 jolt-verifier = { workspace = true }
 jolt-dory = { workspace = true }
-dory = { workspace = true }
+dory = { workspace = true, optional = true }
 jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-tracer-x86 = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
-jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
   "transcript-keccak",
@@ -46,7 +47,7 @@ eyre = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 rand = { workspace = true }
-rayon = { workspace = true }
+rayon = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
