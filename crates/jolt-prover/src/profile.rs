@@ -534,13 +534,10 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     failed.is_empty()
 }
 
-/// One proved workload, as the reporting tail consumes it. `proof_size` is
-/// `None` on the packed build: the upstream akita field type has no serde
-/// support at the pinned revision, so the packed proof has no byte encoding
-/// to measure yet (the CSV rows carry 0 as an explicit placeholder).
+/// One proved workload, as the reporting tail consumes it.
 struct ProvenRun {
     duration: std::time::Duration,
-    proof_size: Option<usize>,
+    proof_size: usize,
 }
 
 fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
@@ -578,13 +575,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         trace_output,
         backend,
     );
-    let (duration, proof_size) = (run.duration, run.proof_size.unwrap_or(0));
-    if run.proof_size.is_none() {
-        println!(
-            "modular {bench_name} (2^{scale}): proof size unavailable \
-             (no packed-proof byte encoding yet); CSV carries 0"
-        );
-    }
+    let (duration, proof_size) = (run.duration, run.proof_size);
 
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
     let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
@@ -596,6 +587,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         proving_hz / 1000.0,
         padded_proving_hz / 1000.0,
     );
+    println!("modular {bench_name} (2^{scale}, {backend_label}): Proof size {proof_size} bytes");
     if let Some(peak) = peak_rss_bytes() {
         println!(
             "modular {} (2^{}, {backend_label}): Peak RSS {}",
@@ -745,7 +737,7 @@ fn prove_workload(
 
     ProvenRun {
         duration,
-        proof_size: Some(proof_size),
+        proof_size,
     }
 }
 
@@ -848,6 +840,21 @@ fn prove_workload(
     .expect("modular packed prove");
     let duration = now.elapsed();
 
+    let akita_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
+    let akita_opening_unframed_size = proof
+        .joint_opening_proof
+        .unframed_payload_size()
+        .expect("packed opening component lengths must fit usize");
+    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+        .expect("serialize packed proof")
+        .len();
+    tracing::info!(
+        akita_proof_body_size,
+        akita_opening_unframed_size,
+        jolt_proof_wire_size = proof_size,
+        "packed proof sizes"
+    );
+
     // --- Correctness gate (unmeasured): the proof must verify.
     jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
         &prover_preprocessing.verifier,
@@ -859,9 +866,7 @@ fn prove_workload(
 
     ProvenRun {
         duration,
-        // The packed proof has no byte encoding to measure: the upstream
-        // akita field type carries no serde support at the pinned revision.
-        proof_size: None,
+        proof_size,
     }
 }
 

@@ -613,6 +613,23 @@ pub struct AkitaBatchProof {
     pub(crate) serialized_akita_proof: Vec<u8>,
 }
 
+impl AkitaBatchProof {
+    /// Headerless backend proof body produced by Akita's canonical encoder.
+    pub fn backend_proof_body_size(&self) -> usize {
+        self.serialized_akita_proof.len()
+    }
+
+    /// Sum of the raw component bytes before the enclosing Jolt serializer
+    /// adds container tags or length prefixes.
+    pub fn unframed_payload_size(&self) -> Option<usize> {
+        self.statement_bridge
+            .len()
+            .checked_add(self.serialized_schedule_selection.len())?
+            .checked_add(self.serialized_akita_proof_shape.len())?
+            .checked_add(self.serialized_akita_proof.len())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaHidingCommitment {
