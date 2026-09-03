@@ -159,3 +159,78 @@ SPARK cannot consume the same challenges as the inner sumcheck under the current
   reduction exist.
 - The exact stage primitive needed for heterogeneous batching already exists; no duplicate builder
   was added.
+
+## 23:50 fallback baseline and carry-in-A
+
+Implemented the missing claim transport as `CarryProver`:
+
+```text
+input  = f(r_old)
+check  = sum_x eq(r_old, x) f(x)
+output = f(r_A)
+final  = eq(r_old, r_A) f(r_A)
+```
+
+All carries enter the existing 18-round stage A as degree-2 members. The generalized
+`prove_kzg_batch_stage` / `verify_kzg_batch_stage` path batches them with a degree-5 row member,
+retaining the 96 B/round KZG wire and adding no rounds. Each carry needs its new `f(r_A)` claim;
+the prior-point value is already an output claim of its owning earlier stage.
+
+The fallback SPARK relation has 2^16 entries for the real 5,254-row relation and 6,715 private
+columns. Its VK fixes row, column, A/B/C value, and row/column multiplicity columns; the prover
+commits `E_row`, `E_col`, and four inverse columns. One degree-3 sumcheck checks the matrix MLE,
+four pointwise inverse identities under a random eq weight, and two LogUp multiset sums. Fixed and
+dynamic partial commitments add to the final packed commitment. Table-evaluation and inverse
+tamper tests reject.
+
+Real fibonacci `2^18`, k=16 measurement (load 3.47 at start; the test's setup raised it to 15):
+
+| phase | ms | proof bytes |
+|---|---:|---:|
+| SPARK table build (VK) | 3 | 0 |
+| deterministic test SRS (not prover) | 62,027 | 0 |
+| fixed-table VK commitment | 172 | 0 |
+| SPARK witness | 615 | 0 |
+| dynamic witness commitment | 1,457 | 32 |
+| SPARK sumcheck, 16 degree-3 rounds | 60 | 1,536 |
+| SPARK prior-point claims | — | 416 |
+| 14 carries in stage A | 170 | 448 new `r_A` claims |
+| **fallback SPARK + carry online delta** | **2,302** | **2,432** |
+
+The measured k=16 G-shape core at 2^18 is 5,184 B. Adding 13 SPARK columns crosses 16 packed
+groups, adding one commitment (32 B) and one stage-B round (64 B), for a 5,280 B core. Full
+fallback projection:
+
+| item | bytes |
+|---|---:|
+| k=16 core with 267 columns, A/B/opening | 5,280 |
+| stage 0 Spartan outer | 1,248 |
+| stage 1 Spartan inner | 832 |
+| stage 2 SPARK | 1,536 |
+| outer `Az/Bz/Cz` | 96 |
+| W + 13 SPARK prior-point claims | 448 |
+| 14 carry outputs at `r_A` | 448 |
+| canonical public challenge words | 608 |
+| **projected fallback payload** | **10,496** |
+
+Gap: **+4,496 B over 6,000 B**. The largest individual item is the 2,144 B HyperKZG opening;
+the largest removable block is the 3,616 B sequential outer + inner + SPARK round wire. The core
+verifier count remains 100 ecMul / 99 ecAdd / 8 pairing pairs / 7,133 Fr mul / 281 Keccak before
+the fallback stages; their field/hash additions are not yet observer-instrumented, so no exact
+combined gas claim is made.
+
+## R-slot change
+
+The 23:40 decision replaces the fallback with W6-RT's R row table in stage A, deleting outer,
+inner, SPARK, W, and the 608 B public challenge block. W5 assembly will consume one pluggable R
+slot with:
+
+1. VK packed-group commitments and column descriptors;
+2. prover columns in the common `2^18` row domain;
+3. owned `ProveRounds` members plus degree/offset/input-claim metadata;
+4. verifier final-claim evaluation from `r_A` and stage-B column evaluations;
+5. link members and the column indices they expose to stage B.
+
+`.journals/lanes/w6-relation-table.md` is not present yet, so no speculative Rust trait was added.
+The existing Spartan/SPARK path remains a measured fallback. L4 stays after the first assembled
+e2e baseline.
