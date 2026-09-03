@@ -9,8 +9,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::Range;
 
+use crate::stream::TermObserver;
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_hyperkzg::VerifierObserver;
 
 use super::layout::{field_groups, Bits, Factor, Rel, LOG_ROWS};
 
@@ -34,7 +34,7 @@ fn block_end(bit: u8) -> u8 {
         .unwrap_or_else(|| unreachable!("bit {bit} beyond the row index"))
 }
 
-pub struct Evaluator<'o, O: VerifierObserver> {
+pub struct Evaluator<'o, O: TermObserver + ?Sized> {
     row: Vec<Fr>,
     src: Vec<Fr>,
     tables: HashMap<(Point, Bits), Vec<Fr>>,
@@ -44,7 +44,7 @@ pub struct Evaluator<'o, O: VerifierObserver> {
     observer: &'o mut O,
 }
 
-impl<'o, O: VerifierObserver> Evaluator<'o, O> {
+impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
     /// `row_le`: the kernel's row point (the copy identity's `τ`), `src_le`:
     /// the source point (the stage point `r`), both little-endian.
     pub fn new(row_le: &[Fr], src_le: &[Fr], observer: &'o mut O) -> Self {
@@ -320,7 +320,9 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
         product
     }
 
-    /// `Σ_{u ∈ range} eq(p_bits, u)·f(u)` (one multiplication per admitted value).
+    /// `Σ_{u ∈ range} eq(p_bits, u)·f(u)`: one multiplication per admitted
+    /// value plus one per high-block value when the field crosses a block
+    /// boundary (`eq = eq_lo·eq_hi` factored out of the inner sums).
     pub fn field_sum(
         &mut self,
         point: Point,
@@ -328,12 +330,33 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
         range: Range<u32>,
         f: &dyn Fn(u32) -> Fr,
     ) -> Fr {
-        let mut sum = Fr::zero();
-        for u in range {
-            let e = self.eq_const(point, bits, u);
-            sum += self.mul(e, f(u));
+        let split = block_end(bits.lo);
+        if split >= bits.hi {
+            let mut sum = Fr::zero();
+            for u in range {
+                let e = self.lookup(point, bits, u);
+                sum += self.mul(e, f(u));
+            }
+            return sum;
         }
-        sum
+        let lo_bits = Bits::new(bits.lo, split);
+        let hi_bits = Bits::new(split, bits.hi);
+        let lo_width = lo_bits.width();
+        let mut total = Fr::zero();
+        let mut u = range.start;
+        while u < range.end {
+            let hi = u >> lo_width;
+            let block_end_u = ((hi + 1) << lo_width).min(range.end);
+            let mut inner = Fr::zero();
+            for v in u..block_end_u {
+                let e = self.lookup(point, lo_bits, v & ((1 << lo_width) - 1));
+                inner += self.mul(e, f(v));
+            }
+            let e_hi = self.eq_const(point, hi_bits, hi);
+            total += self.mul(e_hi, inner);
+            u = block_end_u;
+        }
+        total
     }
 
     /// `(Σ_{u ∈ range} eq(p_bits, u), Σ_{u ∈ range} eq(p_bits, u)·u)` by bit

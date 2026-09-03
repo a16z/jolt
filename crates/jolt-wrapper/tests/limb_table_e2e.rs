@@ -7,6 +7,7 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     clippy::print_stdout,
     reason = "test"
 )]
@@ -15,15 +16,21 @@ mod common;
 
 use std::time::Instant;
 
-use ark_bn254::{Fq, Fq12, Fr as ArkFr};
+use ark_bn254::{Fq, Fq12, Fr as ArkFr, G1Affine, G1Projective};
+use ark_ec::AffineRepr;
 use ark_ff::{PrimeField, UniformRand};
+use jolt_dory::DoryProof;
 use jolt_field::{Field, Fr, Ring, Zero};
+use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::ProveRounds;
+use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::limb_table::columns::{
     operand_columns, q_biguint, Columns, CANON_CHUNKS, GROUP_SIZE, Z_CHUNKS,
 };
 use jolt_wrapper::limb_table::digit_link::{link_term, LinkMember};
-use jolt_wrapper::limb_table::dory::{ElementKind, FlattenedCheck, Wire, WireValues};
+use jolt_wrapper::limb_table::dory::{
+    DoryWitnessInputs, ElementKind, FlattenedCheck, Wire, WireValues,
+};
 use jolt_wrapper::limb_table::export::{exact_column, free_column, pin_columns, ClaimedColumns};
 use jolt_wrapper::limb_table::layout::LOG_ROWS;
 use jolt_wrapper::limb_table::lookup::{
@@ -87,6 +94,7 @@ struct Witness {
     check: FlattenedCheck,
     values: WireValues,
     columns: Columns,
+    opening: common::Opening,
 }
 
 fn witness(seed: u64) -> Witness {
@@ -96,7 +104,17 @@ fn witness(seed: u64) -> Witness {
 /// A witness whose byte-linked input coordinates are altered by `mutate`
 /// (pins are not checked: a dishonest input reaches the verifier's checks).
 fn witness_with(seed: u64, mutate: impl Fn(&Layout, &mut Vec<Fq>)) -> Witness {
-    let opening = common::synthetic_opening(8, 5, seed);
+    witness_at(8, 5, seed, mutate)
+}
+
+/// [`witness_with`] over a `2^num_vars` opening split into `n` commitments.
+fn witness_at(
+    num_vars: usize,
+    n: usize,
+    seed: u64,
+    mutate: impl Fn(&Layout, &mut Vec<Fq>),
+) -> Witness {
+    let opening = common::synthetic_opening(num_vars, n, seed);
     let sigma = opening.statement.challenges.beta.len();
     let n = opening.witness.commitments.len();
     let check = FlattenedCheck::derive(sigma, n);
@@ -115,6 +133,7 @@ fn witness_with(seed: u64, mutate: impl Fn(&Layout, &mut Vec<Fq>)) -> Witness {
         check,
         values,
         columns,
+        opening,
     }
 }
 
@@ -259,6 +278,69 @@ fn members_verify_and_terms_match_on_a_real_opening() {
     let start = Instant::now();
     let w = witness(0xE2E);
     println!("layout + witness {:?}", start.elapsed());
+    members_accept(&w);
+}
+
+/// The member protocol at the fibonacci profile (σ = 11, 42 commitments),
+/// the opening the 2^18 layout is sized for, with the tamper suite's
+/// representative rejections.
+#[test]
+fn members_verify_and_tampers_are_rejected_at_the_fibonacci_profile() {
+    let start = Instant::now();
+    let w = witness_at(22, 42, 0xF1B, |_, _| {});
+    println!(
+        "σ=11 layout + witness {:?} ({} rows used)",
+        start.elapsed(),
+        w.layout.used_rows()
+    );
+    assert_eq!(w.opening.statement.challenges.beta.len(), 11);
+    assert_eq!(w.opening.witness.commitments.len(), 42);
+    members_accept(&w);
+    let mut rng = ChaCha20Rng::seed_from_u64(13);
+    let relation = RowRelation::new(
+        challenges(&mut rng),
+        LookupConstants {
+            one_row: w.layout.one_cell * 16,
+        },
+    );
+    let public = PublicColumns::new(&w.layout);
+    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let row = w.layout.digit_ops[100].first_row as usize;
+    rejects(columns.clone(), &relation, &w.layout, |c| {
+        c[Col::CHUNKS + 3][row] += Fr::from_u64(1);
+    });
+    rejects(columns, &relation, &w.layout, |c| {
+        c[Col::E0][row] = Fr::from_u64(1) - c[Col::E0][row];
+    });
+}
+
+/// Independent oracle: the production Dory verifier and the table's pins
+/// agree on proofs with one replaced element (a G1 message, a GT message).
+#[test]
+fn production_verifier_and_pins_agree_on_tampered_proofs() {
+    let w = witness(0xE2E);
+    let honest = &w.opening.witness.proof;
+    assert!(w.opening.verifier.accepts(&DoryProof(honest.clone())));
+    let mut g1 = honest.clone();
+    g1.vmv_message.e1.0 += G1Projective::from(G1Affine::generator());
+    let mut gt = honest.clone();
+    gt.first_messages[0].d1_left.0 .0 *= Fq12::from(2u64);
+    for tampered in [g1, gt] {
+        assert!(!w.opening.verifier.accepts(&DoryProof(tampered.clone())));
+        let witness = DoryWitnessInputs {
+            commitments: w.opening.witness.commitments.clone(),
+            proof: tampered,
+        };
+        let coords = witness.coordinates_in(&w.layout.input_order);
+        let v = w.layout.program.evaluate(&coords).expect("evaluate");
+        assert!(w.layout.program.check_pins(&v).is_err(), "pins must fail");
+    }
+}
+
+/// Both members over `w` with random challenges: the verifier's closed forms
+/// against the prover's public columns, the term list against the final
+/// claim, and the digit link against the wire values.
+fn members_accept(w: &Witness) {
     let mut rng = ChaCha20Rng::seed_from_u64(7);
     let ch = challenges(&mut rng);
     let rho = fr(&mut rng);
@@ -271,7 +353,7 @@ fn members_verify_and_terms_match_on_a_real_opening() {
     let public = PublicColumns::new(&w.layout);
     let digits = public.digits.clone();
     let start = Instant::now();
-    let columns = matrix(&w, &relation, &public, &digits);
+    let columns = matrix(w, &relation, &public, &digits);
     println!("columns {:?}", start.elapsed());
 
     // Row member.
@@ -362,6 +444,36 @@ fn non_norm_one_gt_input_is_rejected() {
     rejects(columns, &relation, &w.layout, |_| {});
 }
 
+/// A cheating prover: every round polynomial is adjusted so the round check
+/// `s(0) + s(1) = claim` passes, so a tampered witness can only be caught by
+/// the verifier's final relation check.
+struct Cheating<'a, P: ProveRounds<Fr>>(&'a mut P);
+
+impl<P: ProveRounds<Fr>> ProveRounds<Fr> for Cheating<'_, P> {
+    fn num_rounds(&self) -> usize {
+        self.0.num_rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<Fr>,
+        round: usize,
+        previous_claim: Fr,
+    ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
+        let mut coefficients = self
+            .0
+            .prove_round(bind, round, previous_claim)?
+            .into_coefficients();
+        let tail: Fr = coefficients[1..].iter().fold(Fr::zero(), |acc, c| acc + *c);
+        coefficients[0] = (previous_claim - tail) * Field::inverse(&Fr::from_u64(2)).unwrap();
+        Ok(UnivariatePoly::new(coefficients))
+    }
+
+    fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
+        self.0.finish_rounds(bind)
+    }
+}
+
 /// A cheating prover (round checks forced) is caught by the term check.
 fn rejects(
     mut columns: Vec<Vec<Fr>>,
@@ -371,9 +483,8 @@ fn rejects(
 ) {
     tamper(&mut columns);
     let mut row = RowSumcheck::new(relation, &columns);
-    row.cheat = true;
     let mut driver = ChaCha20Rng::seed_from_u64(5);
-    let (r_le, final_claim) = drive(&mut row, Fr::zero(), &mut driver);
+    let (r_le, final_claim) = drive(&mut Cheating(&mut row), Fr::zero(), &mut driver);
     let claims = row.claims();
     let mut cost = VerifierCost::default();
     let evals = public_evals(
@@ -684,4 +795,147 @@ fn selected_operand_collision_for_a_guessed_fingerprint_root_is_rejected() {
             cols[Col::Y + slot][row] += change;
         }
     });
+}
+
+/// Milestone 2: through the stream interface — phase groups, physical ids,
+/// the two members and the `TermExporter` — the exported terms at the
+/// members' claims equal the batched final claim, and the digit link's
+/// input claim is R's link claim plus `ρ^K + ρ^{K+1}·θ`.
+#[test]
+fn stream_exporter_terms_match_the_members() {
+    use jolt_wrapper::limb_table::export::phases;
+    use jolt_wrapper::limb_table::stream::{
+        commitment_phases, link_input_claim, Members, StreamColumns, StreamTermExporter,
+        T2Challenges,
+    };
+    use jolt_wrapper::stream::{Column, TermContext, TermExporter, VerifierCost};
+    let w = witness(0xE2E);
+    let mut rng = ChaCha20Rng::seed_from_u64(0x57E4);
+    let theta = Fr::from(w.values.get(&Wire::Offset));
+    let phase_challenges: Vec<Fr> = (0..T2Challenges::count()).map(|_| fr(&mut rng)).collect();
+    let rho = fr(&mut rng);
+    let challenges = T2Challenges::from_challenges(theta, &phase_challenges, rho);
+    let relation = RowRelation::new(
+        challenges.row.clone(),
+        LookupConstants {
+            one_row: w.layout.one_cell * 16,
+        },
+    );
+    let public = PublicColumns::new(&w.layout);
+    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+
+    // Columns: kinds and ids in phase order, group counts as declared.
+    let packing = 4;
+    let claimed = ClaimedColumns {
+        columns: columns[..Col::CLAIMED].to_vec(),
+    };
+    let stream = StreamColumns::new(&claimed, &w.columns, &w.layout, packing, 3);
+    let declared: usize = commitment_phases(packing)
+        .iter()
+        .map(|p| p.group_count)
+        .sum();
+    assert_eq!(stream.vk_groups.start, 3 + declared);
+    assert_eq!(stream.vk_groups.end, 3 + stream.group_count);
+    for spec in phases() {
+        for local in spec.columns {
+            let id = stream.ids[local];
+            let physical = (id.group - 3) * packing + id.slot;
+            match (&stream.columns[physical], local) {
+                (Column::U16(values), l) if l < Col::DIGITS => {
+                    assert!(values
+                        .iter()
+                        .zip(&columns[l])
+                        .all(|(v, c)| Fr::from_u64(u64::from(*v)) == *c));
+                }
+                (Column::Bits(values), l) => {
+                    assert!(
+                        values
+                            .iter()
+                            .zip(&columns[l])
+                            .all(|(v, c)| Fr::from_u64(u64::from(*v)) == *c),
+                        "column {l}"
+                    );
+                }
+                (Column::U32(values), l) => {
+                    assert!(
+                        values
+                            .iter()
+                            .zip(&columns[l])
+                            .all(|(v, c)| Fr::from_u64(u64::from(*v)) == *c),
+                        "column {l}"
+                    );
+                }
+                (Column::Fr(values), l) => assert_eq!(values, &columns[l], "column {l}"),
+                (Column::U16(_), l) => panic!("column {l} is not a chunk"),
+            }
+        }
+    }
+
+    // Members driven jointly; the exporter's terms at their claims.
+    let mut members = Members::new(&relation, &columns, &w.layout, &public.digit_values, rho);
+    let r_link_claim = {
+        let mut expected = Fr::zero();
+        let mut power = Fr::from_u64(1);
+        for wire in w.check.wires() {
+            expected += power * Fr::from(w.values.get(&Wire::Named(wire)));
+            power *= rho;
+        }
+        expected
+    };
+    let named = w.check.wires().len();
+    assert_eq!(
+        members.link.input_claim(),
+        link_input_claim(r_link_claim, rho, theta, named),
+        "digit link pairs with R's scalar link claim"
+    );
+    assert_eq!(members.rows.input_claim(), Fr::zero());
+    let mut driver = ChaCha20Rng::seed_from_u64(99);
+    let (r_le, row_claim) = drive(&mut members.rows, Fr::zero(), &mut driver);
+    let link_input = members.link.input_claim();
+    let mut driver = ChaCha20Rng::seed_from_u64(99);
+    let (r_link, link_claim) = drive(&mut members.link, link_input, &mut driver);
+    assert_eq!(r_le, r_link);
+    let claims = members.rows.claims();
+    let batching = [fr(&mut rng), fr(&mut rng)];
+    let mut all_challenges = vec![theta];
+    all_challenges.extend(phase_challenges.iter().copied());
+    all_challenges.push(rho);
+    let exporter = StreamTermExporter {
+        layout: &w.layout,
+        challenge_offset: 1,
+        theta_offset: 0,
+        rho_offset: 1 + T2Challenges::count(),
+        columns: &stream.ids,
+        row_member: 0,
+        link_member: 1,
+    };
+    let mut cost = VerifierCost::default();
+    let terms = exporter.terms_observed(
+        &TermContext {
+            row_point: &r_le,
+            batching_coefficients: &batching,
+            challenges: &all_challenges,
+        },
+        &mut cost,
+    );
+    println!(
+        "stream exporter: {} terms, {} fr_mul",
+        terms.len(),
+        cost.fr_mul
+    );
+    let value: Fr = terms
+        .iter()
+        .map(|term| {
+            term.factors.iter().fold(term.coefficient, |acc, form| {
+                acc * form
+                    .weights
+                    .iter()
+                    .fold(form.constant, |acc, (id, weight)| {
+                        let local = stream.ids.iter().position(|i| i == id).unwrap();
+                        acc + *weight * claims[local]
+                    })
+            })
+        })
+        .sum();
+    assert_eq!(value, batching[0] * row_claim + batching[1] * link_claim);
 }

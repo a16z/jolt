@@ -8,19 +8,19 @@
 //! verifier consumes the same relation as [`Term`]s over the column
 //! evaluations at the stage point.
 
-use jolt_field::{Field, Fr, One, Ring, Zero};
+use jolt_field::{Fr, One, Ring, Zero};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 
 use super::columns::{
-    recompose, xi_powers, Constants, CANON_CHUNKS, CANON_SHIFT, CARRIES, CARRY_CHUNKS, CHUNK_BITS,
+    recompose, Constants, CANON_CHUNKS, CANON_SHIFT, CARRIES, CARRY_CHUNKS, CHUNK_BITS,
     CHUNK_COLUMNS, DIGIT_COLUMNS, GROUP_SIZE, HELPER_COLUMNS, K_CHUNKS, LIMBS, Q_HI, RANGE_COLUMNS,
     Z_CHUNKS,
 };
 use super::layout::LOG_ROWS;
-use super::terms::{fold_linear, AffineForm, ColumnId, Term};
+use super::terms::{plain, powers_with, AffineForm, ColumnId, Mul, Term};
 
 /// Slots per row (the dense `Fq12` product form).
 pub const SLOTS: usize = 22;
@@ -201,36 +201,77 @@ pub struct RowRelation {
     fp_pow: Vec<Fr>,
     copy_pow: Vec<Fr>,
     constancy_pow: Vec<Fr>,
-}
-
-fn powers(root: Fr, count: usize) -> Vec<Fr> {
-    let mut out = Vec::with_capacity(count);
-    let mut power = Fr::one();
-    for _ in 0..count {
-        out.push(power);
-        power *= root;
-    }
-    out
+    /// `Z(ξ)`, `k(ξ)`, `C(ξ)` over the chunk columns.
+    z_xi_form: AffineForm,
+    k_xi_form: AffineForm,
+    c_xi_form: AffineForm,
 }
 
 impl RowRelation {
     pub fn new(challenges: Challenges, lookup: LookupConstants) -> Self {
+        Self::new_with(challenges, lookup, &mut plain)
+    }
+
+    /// [`Self::new`] with every challenge-derived product routed through
+    /// `mul` (the verifier's statement derivation).
+    pub fn new_with(challenges: Challenges, lookup: LookupConstants, mul: Mul<'_>) -> Self {
         assert_eq!(challenges.tau.len(), LOG_ROWS);
         let constants = Constants::new();
-        let xi_pow = xi_powers(challenges.xi);
-        let q_xi = constants.q_xi(&xi_pow);
+        let xi = challenges.xi;
+        let xi_pow = [Fr::one(), xi, mul(xi, xi)];
+        let q_xi = xi_pow
+            .iter()
+            .zip(&constants.q_limbs)
+            .fold(Fr::zero(), |acc, (p, q)| acc + mul(*p, *q));
+        let flag_xi = mul(Fr::pow2(64), xi_pow[2]);
+        let chunk_form = |start: usize, count: usize| {
+            let mut form = AffineForm::default();
+            for j in 0..count {
+                form.add_column(
+                    ColumnId((Col::CHUNKS + start + j) as u32),
+                    constants.pow_chunk[j],
+                );
+            }
+            form
+        };
+        let z_xi_form = chunk_form(0, 6)
+            .plus(&chunk_form(6, 6).scale_with(xi_pow[1], mul))
+            .plus(&chunk_form(12, Z_CHUNKS - 12).scale_with(xi_pow[2], mul));
+        let top = chunk_form(Z_CHUNKS + 12, K_CHUNKS - 12)
+            .plus(&AffineForm::constant(-constants.k_offset_top_limb));
+        let k_xi_form = chunk_form(Z_CHUNKS, 6)
+            .plus(&chunk_form(Z_CHUNKS + 6, 6).scale_with(xi_pow[1], mul))
+            .plus(&top.scale_with(xi_pow[2], mul));
+        let mut c_xi_form = AffineForm::default();
+        let mut power = Fr::one();
+        for i in 0..CARRIES {
+            let start = Z_CHUNKS + K_CHUNKS + CARRY_CHUNKS * i;
+            let carry = chunk_form(start, CARRY_CHUNKS)
+                .plus(&AffineForm::constant(-constants.carry_offset));
+            c_xi_form.accumulate(&if i == 0 {
+                carry
+            } else {
+                carry.scale_with(power, mul)
+            });
+            if i + 1 < CARRIES {
+                power = mul(power, xi);
+            }
+        }
         Self {
-            gammas: powers(challenges.gamma, GAMMA_TERMS),
-            flag_xi: Fr::pow2(64) * xi_pow[2],
+            gammas: powers_with(challenges.gamma, GAMMA_TERMS, mul),
+            flag_xi,
             xi_pow,
             q_xi,
-            fp_pow: powers(challenges.fp_root, SLOTS),
+            fp_pow: powers_with(challenges.fp_root, SLOTS, mul),
             // Operand columns then the two fingerprint columns.
-            copy_pow: powers(challenges.copy_root, 2 * SLOTS + 2),
-            constancy_pow: powers(challenges.constancy_root, DIGIT_COLUMNS),
+            copy_pow: powers_with(challenges.copy_root, 2 * SLOTS + 2, mul),
+            constancy_pow: powers_with(challenges.constancy_root, DIGIT_COLUMNS, mul),
             challenges,
             lookup,
             constants,
+            z_xi_form,
+            k_xi_form,
+            c_xi_form,
         }
     }
 
@@ -573,6 +614,11 @@ impl RowRelation {
     /// evaluations (`Col::CLAIMED` columns), given the public multilinears
     /// at the stage point. `Σ_t term_t(v) == summand(v ∥ public)`.
     pub fn terms(&self, public: &PublicEvals) -> Vec<Term> {
+        self.terms_with(public, &mut plain)
+    }
+
+    /// The final relation as terms, every constant product observed by `mul`.
+    pub fn terms_with(&self, public: &PublicEvals, mul: Mul<'_>) -> Vec<Term> {
         let ch = &self.challenges;
         let c = &self.constants;
         let g = &self.gammas;
@@ -583,35 +629,38 @@ impl RowRelation {
         let mut terms = Vec::new();
         // Limb identity, on non-free rows.
         let bound = one_minus(Col::FREE);
+        let g_limb = mul(eq, g[GAMMA_LIMB]);
         for s in 0..SLOTS {
             terms.push(Term::new(
-                eq * g[GAMMA_LIMB],
+                g_limb,
                 vec![bound.clone(), column(Col::X + s), column(Col::Y + s)],
             ));
         }
-        let z_xi = self.z_xi_form();
+        let z_xi = self.z_xi_form.clone();
         let mut limb_linear = z_xi.clone().scale(-Fr::one());
-        limb_linear.accumulate(&self.k_xi_form().scale(-self.q_xi));
-        limb_linear.accumulate(&self.c_xi_form().scale(-(c.pow_limb - ch.xi)));
+        limb_linear.accumulate(&self.k_xi_form.clone().scale_with(-self.q_xi, mul));
+        limb_linear.accumulate(
+            &self
+                .c_xi_form
+                .clone()
+                .scale_with(-(c.pow_limb - ch.xi), mul),
+        );
+        terms.push(Term::new(g_limb, vec![bound.clone(), limb_linear]));
         terms.push(Term::new(
-            eq * g[GAMMA_LIMB],
-            vec![bound.clone(), limb_linear],
-        ));
-        terms.push(Term::new(
-            eq * g[GAMMA_LIMB] * self.flag_xi,
+            mul(g_limb, self.flag_xi),
             vec![bound, column(Col::EXACT), one_minus(Col::FLAG)],
         ));
         // Sign gadgets.
         terms.push(Term::new(
-            eq * g[GAMMA_FLAG_BOOL],
+            mul(eq, g[GAMMA_FLAG_BOOL]),
             vec![
                 column(Col::FLAG),
                 column(Col::FLAG).plus(&AffineForm::constant(-Fr::one())),
             ],
         ));
         terms.push(Term::new(
-            eq * g[GAMMA_EXACT],
-            vec![column(Col::EXACT), self.k_xi_form()],
+            mul(eq, g[GAMMA_EXACT]),
+            vec![column(Col::EXACT), self.k_xi_form.clone()],
         ));
         // Pins.
         let mut pin_xi = AffineForm::default();
@@ -619,7 +668,7 @@ impl RowRelation {
             pin_xi.add_column(ColumnId((Col::PIN_LIMBS + a) as u32), -self.xi_pow[a]);
         }
         terms.push(Term::new(
-            eq * g[GAMMA_PIN],
+            mul(eq, g[GAMMA_PIN]),
             vec![column(Col::PIN), z_xi.clone().plus(&pin_xi)],
         ));
         // Range groups and the LogUp sum.
@@ -630,10 +679,11 @@ impl RowRelation {
                         .plus(&Self::range_form(GROUP_SIZE * grp + i).scale(-Fr::one()))
                 })
                 .collect();
+            let g_range = mul(eq, g[GAMMA_RANGE + grp]);
             let mut factors = vec![column(Col::HELPERS + grp)];
             factors.extend(f.iter().cloned());
-            terms.push(Term::new(eq * g[GAMMA_RANGE + grp], factors));
-            terms.push(Term::new(-eq * g[GAMMA_RANGE + grp], vec![]));
+            terms.push(Term::new(g_range, factors));
+            terms.push(Term::new(-g_range, vec![]));
             for i in 0..GROUP_SIZE {
                 let mut factors = vec![column(Col::HELPERS + grp)];
                 factors.extend(
@@ -652,7 +702,7 @@ impl RowRelation {
         // Digit bits.
         for b in 0..DIGIT_COLUMNS {
             terms.push(Term::new(
-                eq * g[GAMMA_BOOL + b],
+                mul(eq, g[GAMMA_BOOL + b]),
                 vec![
                     column(Col::DIGITS + b),
                     column(Col::DIGITS + b).plus(&AffineForm::constant(-Fr::one())),
@@ -660,7 +710,7 @@ impl RowRelation {
             ));
         }
         terms.push(Term::new(
-            eq * g[GAMMA_DIGIT_RANGE],
+            mul(eq, g[GAMMA_DIGIT_RANGE]),
             vec![
                 one_minus(Col::NEG),
                 column(Col::E0),
@@ -672,42 +722,46 @@ impl RowRelation {
         let one_plus_e = AffineForm::constant(Fr::one()).plus(&e);
         let one_minus_2neg =
             AffineForm::constant(Fr::one()).plus(&column(Col::NEG).scale(-Fr::from_u64(2)));
-        terms.push(Term::new(eq * g[GAMMA_DIGIT_VALUE], vec![column(Col::D)]));
+        let g_digit = mul(eq, g[GAMMA_DIGIT_VALUE]);
+        terms.push(Term::new(g_digit, vec![column(Col::D)]));
         terms.push(Term::new(
-            -eq * g[GAMMA_DIGIT_VALUE] * public.sel,
+            -mul(g_digit, public.sel),
             vec![one_minus(Col::ZERO), one_minus_2neg, one_plus_e],
         ));
         // Lookup, reading side: h·(β + key + fp_combine·F) − sel.
         let sixteen = Fr::from_u64(16);
         let one_row = Fr::from_u64(u64::from(self.lookup.one_row));
-        let gr = eq * g[GAMMA_READ];
+        let gr = mul(eq, g[GAMMA_READ]);
         let h = column(Col::H);
-        terms.push(Term::new(gr * ch.beta, vec![h.clone()]));
+        terms.push(Term::new(mul(gr, ch.beta), vec![h.clone()]));
         // GT key.
+        let gr_gt = mul(gr, public.is_gt);
         terms.push(Term::new(
-            gr * public.is_gt * public.s0,
+            mul(gr_gt, public.s0),
             vec![h.clone(), one_minus(Col::ZERO)],
         ));
         terms.push(Term::new(
-            gr * public.is_gt * sixteen,
+            mul(gr_gt, sixteen),
             vec![h.clone(), one_minus(Col::ZERO), e.clone()],
         ));
         terms.push(Term::new(
-            gr * public.is_gt * (one_row + public.coord),
+            mul(gr_gt, one_row + public.coord),
             vec![h.clone(), column(Col::ZERO)],
         ));
         terms.push(Term::new(
-            gr * public.is_gt * Fr::from_u64(NEG_KEY_OFFSET),
+            mul(gr_gt, Fr::from_u64(NEG_KEY_OFFSET)),
             vec![h.clone(), column(Col::NEG)],
         ));
         // EC key.
-        let is_ec = Fr::one() - public.is_gt;
-        terms.push(Term::new(gr * is_ec * public.s0, vec![h.clone()]));
+        let gr_ec = mul(gr, Fr::one() - public.is_gt);
+        terms.push(Term::new(mul(gr_ec, public.s0), vec![h.clone()]));
+        let ec_scale = mul(sixteen, public.is_g1) + mul(Fr::from_u64(8), public.is_g2);
         terms.push(Term::new(
-            gr * (sixteen * public.is_g1 + Fr::from_u64(8) * public.is_g2),
+            mul(gr, ec_scale),
             vec![h.clone(), column(Col::D)],
         ));
         // Fingerprints.
+        let gr_combine = mul(gr, ch.fp_combine);
         for (indicator, n) in [
             (public.is_gt, FP_SLOTS_GT),
             (public.is_g1, FP_SLOTS_G1),
@@ -717,12 +771,9 @@ impl RowRelation {
             for s in 0..n {
                 fp.add_column(ColumnId((Col::Y + s) as u32), self.fp_pow[s]);
             }
-            terms.push(Term::new(
-                gr * ch.fp_combine * indicator,
-                vec![h.clone(), fp],
-            ));
+            terms.push(Term::new(mul(gr_combine, indicator), vec![h.clone(), fp]));
         }
-        terms.push(Term::new(-gr * public.sel, vec![]));
+        terms.push(Term::new(-mul(gr, public.sel), vec![]));
         // Lookup, table side.
         for (i, (gc, fc, mc)) in [
             (Col::G_POS, Col::F_POS, Col::M_POS),
@@ -736,28 +787,32 @@ impl RowRelation {
             } else {
                 Fr::zero()
             };
-            let gt = eq * g[GAMMA_TABLE + i];
+            let gt = mul(eq, g[GAMMA_TABLE + i]);
             terms.push(Term::new(
-                gt * (ch.beta + public.id + offset),
+                mul(gt, ch.beta + public.id + offset),
                 vec![column(gc)],
             ));
-            terms.push(Term::new(gt * ch.fp_combine, vec![column(gc), column(fc)]));
+            terms.push(Term::new(
+                mul(gt, ch.fp_combine),
+                vec![column(gc), column(fc)],
+            ));
             terms.push(Term::new(-gt, vec![column(mc)]));
         }
         // Range inverse table.
-        let gi = eq * g[GAMMA_INV] * public.small;
+        let g_inv = mul(eq, g[GAMMA_INV]);
+        let gi = mul(g_inv, public.small);
         terms.push(Term::new(
-            gi * (ch.alpha - public.id),
+            mul(gi, ch.alpha - public.id),
             vec![column(Col::INV)],
         ));
         terms.push(Term::new(-gi, vec![]));
-        let outside = eq * (Fr::one() - public.small);
+        let outside = mul(eq, Fr::one() - public.small);
         terms.push(Term::new(
-            outside * g[GAMMA_TABLE_GATE],
+            mul(outside, g[GAMMA_TABLE_GATE]),
             vec![column(Col::MULT)],
         ));
         terms.push(Term::new(
-            outside * g[GAMMA_TABLE_GATE + 1],
+            mul(outside, g[GAMMA_TABLE_GATE + 1]),
             vec![column(Col::INV)],
         ));
         // Canonicality of free rows.
@@ -771,7 +826,7 @@ impl RowRelation {
             );
         }
         terms.push(Term::new(
-            eq * g[GAMMA_CANON],
+            mul(eq, g[GAMMA_CANON]),
             vec![column(Col::FREE), one_minus(Col::PIN), canon],
         ));
         // Lookup sum.
@@ -791,7 +846,7 @@ impl RowRelation {
             }
             copied.add_column(
                 ColumnId((Col::Y + s) as u32),
-                self.copy_pow[SLOTS + s] * mask,
+                mul(self.copy_pow[SLOTS + s], mask),
             );
         }
         copied.add_column(ColumnId(Col::F_POS as u32), self.copy_pow[2 * SLOTS]);
@@ -804,50 +859,7 @@ impl RowRelation {
             bits.add_column(ColumnId((Col::DIGITS + b) as u32), self.constancy_pow[b]);
         }
         terms.push(Term::new(public.constancy, vec![bits]));
-        fold_linear(terms)
-    }
-
-    fn chunk_form(&self, start: usize, count: usize) -> AffineForm {
-        let mut form = AffineForm::default();
-        for j in 0..count {
-            form.add_column(
-                ColumnId((Col::CHUNKS + start + j) as u32),
-                self.constants.pow_chunk[j],
-            );
-        }
-        form
-    }
-
-    fn z_xi_form(&self) -> AffineForm {
-        self.chunk_form(0, 6)
-            .scale(self.xi_pow[0])
-            .plus(&self.chunk_form(6, 6).scale(self.xi_pow[1]))
-            .plus(&self.chunk_form(12, Z_CHUNKS - 12).scale(self.xi_pow[2]))
-    }
-
-    fn k_xi_form(&self) -> AffineForm {
-        let top = self
-            .chunk_form(Z_CHUNKS + 12, K_CHUNKS - 12)
-            .plus(&AffineForm::constant(-self.constants.k_offset_top_limb));
-        self.chunk_form(Z_CHUNKS, 6)
-            .plus(&self.chunk_form(Z_CHUNKS + 6, 6).scale(self.xi_pow[1]))
-            .plus(&top.scale(self.xi_pow[2]))
-    }
-
-    fn c_xi_form(&self) -> AffineForm {
-        let mut form = AffineForm::default();
-        let mut power = Fr::one();
-        for i in 0..CARRIES {
-            let start = Z_CHUNKS + K_CHUNKS + CARRY_CHUNKS * i;
-            form.accumulate(
-                &self
-                    .chunk_form(start, CARRY_CHUNKS)
-                    .plus(&AffineForm::constant(-self.constants.carry_offset))
-                    .scale(power),
-            );
-            power *= self.challenges.xi;
-        }
-        form
+        terms
     }
 
     fn range_form(i: usize) -> AffineForm {
@@ -888,9 +900,6 @@ pub struct RowSumcheck<'a> {
     rows: usize,
     round: usize,
     points: Vec<Fr>,
-    /// A cheating prover forces every round check to pass so that rejection
-    /// happens at the verifier's final relation check.
-    pub cheat: bool,
 }
 
 impl<'a> RowSumcheck<'a> {
@@ -920,7 +929,6 @@ impl<'a> RowSumcheck<'a> {
             points: (0..=(Self::degree() + 1) as u64)
                 .map(Fr::from_u64)
                 .collect(),
-            cheat: false,
         }
     }
 
@@ -937,7 +945,7 @@ impl<'a> RowSumcheck<'a> {
             .sum()
     }
 
-    fn round_poly(&self, claim: Fr) -> Vec<Fr> {
+    fn round_poly(&self) -> Vec<Fr> {
         let relation = self.relation;
         let width = Col::WIDTH;
         let evals: Vec<Fr> = self.matrix[..self.rows * width]
@@ -963,10 +971,6 @@ impl<'a> RowSumcheck<'a> {
         let mut coefficients = UnivariatePoly::from_evals(&evals).into_coefficients();
         while coefficients.len() > 2 && coefficients.last() == Some(&Fr::zero()) {
             let _ = coefficients.pop();
-        }
-        if self.cheat {
-            let tail: Fr = coefficients[1..].iter().fold(Fr::zero(), |acc, c| acc + *c);
-            coefficients[0] = (claim - tail) * two_inverse();
         }
         coefficients
     }
@@ -1027,12 +1031,6 @@ impl PublicEvals {
     }
 }
 
-fn two_inverse() -> Fr {
-    Fr::from_u64(2)
-        .inverse()
-        .unwrap_or_else(|| unreachable!("2 is invertible"))
-}
-
 impl ProveRounds<Fr> for RowSumcheck<'_> {
     fn num_rounds(&self) -> usize {
         LOG_ROWS
@@ -1042,13 +1040,13 @@ impl ProveRounds<Fr> for RowSumcheck<'_> {
         &mut self,
         bind: Option<Fr>,
         round: usize,
-        previous_claim: Fr,
+        _previous_claim: Fr,
     ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
         if let Some(r) = bind {
             self.bind(r);
         }
         debug_assert_eq!(round, self.round);
-        Ok(UnivariatePoly::new(self.round_poly(previous_claim)))
+        Ok(UnivariatePoly::new(self.round_poly()))
     }
 
     fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {

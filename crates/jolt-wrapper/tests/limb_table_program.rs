@@ -7,6 +7,7 @@
     reason = "tests report shapes and fail loudly"
 )]
 
+#[expect(dead_code, reason = "fixtures shared with the other limb-table test binaries")]
 mod common;
 
 use std::cmp::Reverse;
@@ -433,50 +434,48 @@ fn kernels_match_program_rows() {
 fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     use ark_ff::UniformRand;
     use jolt_field::Fr;
-    use jolt_wrapper::limb_table::layout::LOG_ROWS;
-    use jolt_wrapper::limb_table::lookup::{omega_eval, public_evals};
-    use jolt_wrapper::limb_table::relation::{Challenges, LookupConstants, RowRelation};
-    use jolt_wrapper::stream::VerifierCost;
+    use jolt_wrapper::limb_table::relation::Col;
+    use jolt_wrapper::limb_table::stream::{StreamTermExporter, T2Challenges};
+    use jolt_wrapper::stream::{ColumnId, TermContext, TermExporter, VerifierCost};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
-    let check = FlattenedCheck::derive(11, 42);
-    let setup = random_setup(11, 7);
-    let values = random_values(&check, 5);
+    let check = FlattenedCheck::derive(11, 5);
+    let values = random_values(&check, 1);
+    let setup = random_setup(11, 2);
     let layout = build(&check, &values, &setup, &check.wires());
-    let mut rng = ChaCha20Rng::seed_from_u64(3);
+    let mut rng = ChaCha20Rng::seed_from_u64(0xB0D6);
     let mut fr = || Fr::from(ArkFr::rand(&mut rng));
-    let challenges = Challenges {
-        tau: (0..LOG_ROWS).map(|_| fr()).collect(),
-        xi: fr(),
-        alpha: fr(),
-        gamma: fr(),
-        lambda: fr(),
-        beta: fr(),
-        fp_root: fr(),
-        fp_combine: fr(),
-        lambda_lookup: fr(),
-        copy_root: fr(),
-        constancy_root: fr(),
+    // θ, the per-phase challenges, ρ; the stage point; two batching coefficients.
+    let challenges: Vec<Fr> = (0..T2Challenges::count() + 2).map(|_| fr()).collect();
+    let point: Vec<Fr> = (0..18).map(|_| fr()).collect();
+    let batching = [fr(), fr()];
+    let ids: Vec<ColumnId> = (0..Col::CLAIMED)
+        .map(|i| ColumnId {
+            group: i / 4,
+            slot: i % 4,
+        })
+        .collect();
+    let exporter = StreamTermExporter {
+        layout: &layout,
+        challenge_offset: 1,
+        theta_offset: 0,
+        rho_offset: 1 + T2Challenges::count(),
+        columns: &ids,
+        row_member: 0,
+        link_member: 1,
     };
-    let tau_le: Vec<Fr> = challenges.tau.iter().rev().copied().collect();
-    let r_le: Vec<Fr> = (0..LOG_ROWS).map(|_| fr()).collect();
-    let rho = fr();
-    let relation = RowRelation::new(
-        challenges,
-        LookupConstants {
-            one_row: layout.one_cell * 16,
-        },
-    );
     let mut cost = VerifierCost::default();
-    let evals = public_evals(&layout, &relation, &tau_le, &r_le, &mut cost);
-    let public_cost = cost.fr_mul;
-    let _ = omega_eval(&layout, rho, &r_le, &mut cost);
-    let terms = relation.terms(&evals);
-    let max_degree = terms.iter().map(|t| t.degree()).max().expect("terms");
+    let terms = exporter.terms_observed(
+        &TermContext {
+            row_point: &point,
+            batching_coefficients: &batching,
+            challenges: &challenges,
+        },
+        &mut cost,
+    );
+    let max_degree = terms.iter().map(|t| t.factors.len()).max().expect("terms");
     println!(
-        "fibonacci profile: public evals {} + digit link {} = {} fr_mul; {} terms, max degree {}",
-        public_cost,
-        cost.fr_mul - public_cost,
+        "fibonacci profile: execution-derived verifier {} fr_mul (relation, public evaluations, digit link, terms); {} terms, max degree {}",
         cost.fr_mul,
         terms.len(),
         max_degree

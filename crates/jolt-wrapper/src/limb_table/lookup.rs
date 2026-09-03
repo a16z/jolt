@@ -5,8 +5,8 @@
 //! `S0`, the constancy weights) are built here for the prover and evaluated
 //! in closed form for the verifier.
 
+use crate::stream::TermObserver;
 use jolt_field::{Field, Fr, One, Ring, Zero};
-use jolt_hyperkzg::VerifierObserver;
 
 use super::layout::{Bits, Factor, Rel, LOG_ROWS, ROWS};
 use super::relation::{PublicEvals, RowRelation, FP_SLOTS_G1, FP_SLOTS_G2, FP_SLOTS_GT};
@@ -321,7 +321,7 @@ fn field_partition(domain: &[Factor]) -> Vec<(Bits, Range<u32>, Option<Factor>)>
 impl SelectedFamily {
     /// Per-field `(Σ eq, Σ eq·u)` over the family's rows at the evaluator's
     /// row point; `Weight` factors contribute their mask sum with a zero moment.
-    fn moments<O: VerifierObserver>(&self, ev: &mut Evaluator<'_, O>) -> Vec<(Bits, Fr, Fr)> {
+    fn moments<O: TermObserver + ?Sized>(&self, ev: &mut Evaluator<'_, O>) -> Vec<(Bits, Fr, Fr)> {
         field_partition(&self.domain)
             .into_iter()
             .map(|(bits, range, factor)| match factor {
@@ -337,12 +337,12 @@ impl SelectedFamily {
     }
 
     /// `Σ_{x ∈ family} eq(r, x)`.
-    pub fn indicator<O: VerifierObserver>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
+    pub fn indicator<O: TermObserver + ?Sized>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
         ev.kernel(&self.domain)
     }
 
     /// `Σ_{x ∈ family} eq(r, x)·c(x)`.
-    pub fn coord_eval<O: VerifierObserver>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
+    pub fn coord_eval<O: TermObserver + ?Sized>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
         let moments = self.moments(ev);
         let mut total = Fr::zero();
         for (i, (bits, _, moment)) in moments.iter().enumerate() {
@@ -360,7 +360,7 @@ impl SelectedFamily {
     }
 
     /// `Σ_{x ∈ family} eq(r, x)·S0(x)`.
-    pub fn s0_eval<O: VerifierObserver>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
+    pub fn s0_eval<O: TermObserver + ?Sized>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
         let moments = self.moments(ev);
         let indicator = moments
             .iter()
@@ -385,7 +385,7 @@ impl SelectedFamily {
     }
 
     /// `Σ_{x ∈ family, c(x) = first_c} eq(r, x)·ρ^{kd(k(x))}/mult(kd)·16^{63 − w(x)}`.
-    pub fn omega_eval<O: VerifierObserver>(
+    pub fn omega_eval<O: TermObserver + ?Sized>(
         &self,
         ev: &mut Evaluator<'_, O>,
         rho_weights: &[Fr],
@@ -432,7 +432,7 @@ impl SelectedFamily {
 
     /// The two constancy kernels at (`τ`, `r`): rows `c ∈ first_c+1..first_c+rows`
     /// reading themselves and their predecessor.
-    pub fn constancy_kernels<O: VerifierObserver>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
+    pub fn constancy_kernels<O: TermObserver + ?Sized>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
         let range = self.first_c + 1..self.first_c + self.rows;
         let kernel = |delta: i64| -> Vec<Factor> {
             field_partition(&self.domain)
@@ -486,7 +486,7 @@ pub fn omega_column(layout: &Layout, rho: Fr) -> Vec<Fr> {
 }
 
 /// Verifier: `ω̃(r)` over every selected family.
-pub fn omega_eval<O: VerifierObserver>(
+pub fn omega_eval<O: TermObserver + ?Sized>(
     layout: &Layout,
     rho: Fr,
     r_le: &[Fr],
@@ -501,7 +501,7 @@ pub fn omega_eval<O: VerifierObserver>(
 
 /// Verifier: the public multilinears of the row member at the stage point
 /// `r` (little-endian) for the copy point `τ` (little-endian).
-pub fn public_evals<O: VerifierObserver>(
+pub fn public_evals<O: TermObserver + ?Sized>(
     layout: &Layout,
     relation: &RowRelation,
     tau_le: &[Fr],

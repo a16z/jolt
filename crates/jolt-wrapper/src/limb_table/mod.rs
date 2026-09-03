@@ -16,6 +16,7 @@ pub mod ops;
 pub mod program;
 pub mod relation;
 pub mod schedule;
+pub mod stream;
 pub mod template;
 pub mod terms;
 pub mod tower;

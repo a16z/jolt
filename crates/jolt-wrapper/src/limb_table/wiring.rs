@@ -7,8 +7,8 @@
 //! table is `B(v) = Σ_i β_i·K_i(τ,v)`, the verifier evaluates
 //! `Σ_i β_i·K_i(τ, r)` from the layout's kernels ([`super::verifier`]).
 
+use crate::stream::TermObserver;
 use jolt_field::{Fr, Ring, Zero};
-use jolt_hyperkzg::VerifierObserver;
 
 use super::layout::{Factor, Side};
 use super::program::Program;
@@ -116,7 +116,7 @@ pub fn fingerprint_columns(
 
 /// Verifier: `Σ_i β_i·K_i(τ, r)` over the fixed copies and the fingerprint
 /// kernels, summing each weight's kernels before the one multiplication.
-pub fn copy_kernel_eval<O: VerifierObserver>(
+pub fn copy_kernel_eval<O: TermObserver + ?Sized>(
     evaluator: &mut Evaluator<'_, O>,
     copies: &[ElemWiring],
     fingerprints: &[FingerprintGroup],

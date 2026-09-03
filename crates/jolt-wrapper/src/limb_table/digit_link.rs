@@ -4,7 +4,7 @@
 //! the row member), so the sum equals `Σ_kd ρ^{kd}·s_kd` — the R lane's
 //! `Σ_s ρ^s·scalar_s` plus `ρ^K` for the constant-one base.
 
-use jolt_field::{Field, Fr, Ring, Zero};
+use jolt_field::{Fr, Zero};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
@@ -19,7 +19,6 @@ pub struct LinkMember {
     digit: Vec<Fr>,
     size: usize,
     round: usize,
-    pub cheat: bool,
 }
 
 impl LinkMember {
@@ -32,7 +31,6 @@ impl LinkMember {
             digit: digit_values.to_vec(),
             size,
             round: 0,
-            cheat: false,
         }
     }
 
@@ -48,7 +46,7 @@ impl LinkMember {
         2
     }
 
-    fn round_poly(&self, claim: Fr) -> Vec<Fr> {
+    fn round_poly(&self) -> Vec<Fr> {
         let half = self.size / 2;
         let evals: [Fr; 3] = (0..half)
             .into_par_iter()
@@ -67,12 +65,7 @@ impl LinkMember {
                 || [Fr::zero(); 3],
                 |a, b| std::array::from_fn(|i| a[i] + b[i]),
             );
-        let mut coefficients = UnivariatePoly::from_evals(&evals).into_coefficients();
-        if self.cheat {
-            let tail: Fr = coefficients[1..].iter().fold(Fr::zero(), |acc, c| acc + *c);
-            coefficients[0] = (claim - tail) * two_inverse();
-        }
-        coefficients
+        UnivariatePoly::from_evals(&evals).into_coefficients()
     }
 
     fn bind(&mut self, r: Fr) {
@@ -96,10 +89,6 @@ impl LinkMember {
     }
 }
 
-fn two_inverse() -> Fr {
-    Field::inverse(&Fr::from_u64(2)).unwrap_or_else(|| unreachable!("2 is invertible"))
-}
-
 impl ProveRounds<Fr> for LinkMember {
     fn num_rounds(&self) -> usize {
         LOG_ROWS
@@ -109,13 +98,13 @@ impl ProveRounds<Fr> for LinkMember {
         &mut self,
         bind: Option<Fr>,
         round: usize,
-        previous_claim: Fr,
+        _previous_claim: Fr,
     ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
         if let Some(r) = bind {
             self.bind(r);
         }
         debug_assert_eq!(round, self.round);
-        Ok(UnivariatePoly::new(self.round_poly(previous_claim)))
+        Ok(UnivariatePoly::new(self.round_poly()))
     }
 
     fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {

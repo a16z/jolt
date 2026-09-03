@@ -2,6 +2,10 @@
 //! (independent oracle: `G2Prepared` lines and `mul_by_034`).
 
 #![expect(clippy::expect_used, clippy::print_stdout)]
+#[expect(
+    dead_code,
+    reason = "fixtures shared with the other limb-table test binaries"
+)]
 mod common;
 
 use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, Fq6, G1Affine, G2Affine};
