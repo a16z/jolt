@@ -109,6 +109,24 @@ k=32 command-start load: `3.44 / 11.26 / 16.04`; honest-clock start/end:
 `4.05 / 11.02 / 15.87` -> `6.11 / 10.85 / 15.64`. Process CPU was
 242.390 s over 29.802 s wall. The k=16 timing column is pending a rerun.
 
+### PERF-5 lane 3 after lane 2
+
+| phase (ms) | lane 2 | lane 2 + lane 3 |
+|---|---:|---:|
+| wrapper preparation | 564 | 454 |
+| T2 adaptation | 1,426 | 640 |
+| T2 finish | 598 | 457 |
+| T2 member setup | ~691 | 36 |
+| T2 stage-A row member | 2,854 | 1,910 |
+| all member constructors | 1,440 | 785 |
+| proof stages/opening | 16,169 | 15,968 |
+| **honest online total** | **29,802** | **27,792** |
+
+Final command-start load: `3.10 / 6.82 / 10.49`; honest-clock start/end:
+`8.08 / 7.56 / 10.41` -> `9.10 / 7.84 / 10.42`. Process CPU was 219.040 s.
+Proof remained 7,392 B payload / 7,530 B bincode / 352 B statement; verifier
+cost remained 4,868,177 gas.
+
 ## Verifier cost
 
 | operation | k=32 | k=16 |
