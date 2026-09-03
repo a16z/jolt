@@ -161,6 +161,7 @@ fn term_compression_gate() {
                 challenge_count: 0,
             },
         ],
+        pinned_commitments: Vec::new(),
     };
     let exporter = RepeatedTerms {
         source_point: source_point.clone(),

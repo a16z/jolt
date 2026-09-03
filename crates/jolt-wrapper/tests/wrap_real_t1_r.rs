@@ -8,6 +8,7 @@
 )]
 
 use std::path::Path;
+use std::process::Command;
 use std::time::Instant;
 
 use bincode::config::standard;
@@ -15,7 +16,7 @@ use bincode::serde::{decode_from_slice, encode_to_vec};
 use common::jolt_device::JoltDevice;
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
+use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup, NoopVerifierObserver};
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 use jolt_wrapper::carry::CarryProver;
 use jolt_wrapper::hash_table::terms::{
@@ -23,20 +24,23 @@ use jolt_wrapper::hash_table::terms::{
     WIRED_WORD_BASE,
 };
 use jolt_wrapper::hash_table::{
-    Decoder, Members as HashMembers, StreamColumns, StreamTermExporter, T1Challenges, VkColumn,
+    Decoder, HashTable, Members as HashMembers, StreamColumns, StreamTermExporter, T1Challenges,
+    VkColumn,
 };
-use jolt_wrapper::relation::{Pcs, ScheduleEntry, SqueezeKind, Vc};
+use jolt_wrapper::relation::{Pcs, Relation, ScheduleEntry, SqueezeKind, Vc};
 use jolt_wrapper::relation_table::{
     CopyLink, CopyLinkSide, CopyLinkTermExporter, CopyLinkTermSide, RelationTable,
     RelationTableProver, RelationTermExporter, FIXED_COLUMNS, WIRES,
 };
 use jolt_wrapper::stream::{
-    combine_packed_phases, commit_packed, commitment_prefix_challenges, prove_assembly, AffineForm,
-    AssemblyMemberStatement, AssemblyStatement, Column, ColumnId, Commitment, CommitmentPhase,
-    StageMember, StageMemberSpec, StageProof, Term, TermContext, TermExporter, TermObserver,
-    VerifierCost, WrapperProof,
+    commit_packed, AffineForm, AssemblyMemberStatement, AssemblyStatement, Column, ColumnId,
+    Commitment, CommitmentPhase, StageMember, StageMemberSpec, StageProof, Term, TermContext,
+    TermExporter, TermObserver, VerifierCost, WrapperProof,
 };
-use jolt_wrapper::wrap::{verify_wrapped_with_key, WrapConfig, WrapPreparation, WrapVerifierKey};
+use jolt_wrapper::wrap::{
+    commit_wrap_phase_one, commit_wrap_phase_two, verify_wrapped_with_key, wrap as wrap_proof,
+    WrapConfig, WrapError, WrapHashKey, WrapPreparation, WrapVerifierKey,
+};
 
 type Proof = JoltProof<Pcs, Vc>;
 type Preprocessing = JoltVerifierPreprocessing<Pcs, Vc>;
@@ -56,7 +60,7 @@ struct CarryTerms {
 
 impl TermExporter for CarryTerms {
     fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
-        self.export(context, &mut jolt_hyperkzg::NoopVerifierObserver)
+        self.export(context, &mut NoopVerifierObserver)
     }
 
     fn terms_observed(
@@ -88,19 +92,38 @@ impl CarryTerms {
 #[test]
 #[ignore = "manual real fibonacci 2^18 wrapper gate"]
 fn real_t1_relation_table_round_trip_and_tampers() {
-    let uptime = std::process::Command::new("uptime")
-        .output()
-        .expect("uptime")
-        .stdout;
+    let uptime = Command::new("uptime").output().expect("uptime").stdout;
     let started = Instant::now();
     let (preprocessing, public_io, original_proof) = fixture();
-    let preparation = WrapPreparation::new(
+    let hash_key = WrapHashKey::from_reference(
         &preprocessing,
         &public_io,
         &original_proof,
         WrapConfig::default(),
     )
+    .expect("build trusted T1 key");
+    let key_profile_ms = started.elapsed().as_millis();
+    let started = Instant::now();
+    let preparation = WrapPreparation::new(
+        &preprocessing,
+        &public_io,
+        &original_proof,
+        WrapConfig::default(),
+        &hash_key,
+    )
     .expect("prepare real wrapper inputs");
+    let mut wrong_shape = original_proof.clone();
+    wrong_shape.trace_length *= 2;
+    assert!(matches!(
+        WrapPreparation::new(
+            &preprocessing,
+            &public_io,
+            &wrong_shape,
+            WrapConfig::default(),
+            &hash_key,
+        ),
+        Err(WrapError::ProfileMismatch)
+    ));
     let prepare_ms = started.elapsed().as_millis();
 
     let started = Instant::now();
@@ -149,13 +172,62 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     assert_eq!(phase_1_groups, 25);
 
     let started = Instant::now();
-    let phase_1 = commit_packed(&phase_1_columns, K, &setup).expect("phase 1 commitments");
-    let phase_1_commit_ms = started.elapsed().as_millis();
-    let phase_1_values = commitment_prefix_challenges(
-        &preparation.profile_digest,
-        &preparation.public_known,
-        &[(&phase_1.commitments, PHASE_1_CHALLENGES)],
+    let pinned_groups = [20, 21, relation_fixed_base / K, link_fixed_base / K];
+    let pinned_commitments = pinned_groups
+        .into_iter()
+        .map(|group| {
+            let start = group * K;
+            let packed = commit_packed(&phase_1_columns[start..start + K], K, &setup)
+                .expect("verifier-key group commitment");
+            (group, packed.commitments[0])
+        })
+        .collect();
+    let statement = AssemblyStatement {
+        key_digest: preparation.profile_digest,
+        public_inputs: preparation.public_known.clone(),
+        rows: ROWS,
+        column_count: phase_1_columns.len() + K,
+        k: K,
+        members: [3, 3, 5, 5, 2]
+            .into_iter()
+            .map(|degree| AssemblyMemberStatement {
+                input_claim: Fr::zero(),
+                spec: StageMemberSpec {
+                    rounds: LOG_ROWS,
+                    degree,
+                    offset: 0,
+                },
+            })
+            .collect(),
+        commitment_phases: vec![
+            CommitmentPhase {
+                group_count: phase_1_groups,
+                challenge_count: PHASE_1_CHALLENGES,
+            },
+            CommitmentPhase {
+                group_count: 1,
+                challenge_count: PHASE_2_CHALLENGES,
+            },
+        ],
+        pinned_commitments: Vec::new(),
+    };
+    let verifier_key = WrapVerifierKey::new(
+        statement,
+        hash_key.schedule().clone(),
+        hash_key.public().clone(),
+        4,
+        [0, 1],
+        pinned_commitments,
     );
+    assert_eq!(verifier_key.hash_links(), &links);
+    assert_eq!(verifier_key.hash_schedule(), &preparation.hash_key);
+    let key_commit_ms = started.elapsed().as_millis();
+
+    let started = Instant::now();
+    let phase_1 = commit_wrap_phase_one(&phase_1_columns, &verifier_key, &setup)
+        .expect("phase 1 commitments");
+    let phase_1_commit_ms = started.elapsed().as_millis();
+    let phase_1_values = phase_1.challenges().to_vec();
     let relation_beta = phase_1_values[0];
     let relation_gamma = phase_1_values[1];
     let copy_beta = phase_1_values[2];
@@ -186,27 +258,20 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     pad_fr(&mut phase_2_columns);
     let helper_ms = started.elapsed().as_millis();
     let started = Instant::now();
-    let phase_2 = commit_packed(&phase_2_columns, K, &setup).expect("phase 2 commitments");
+    let committed = commit_wrap_phase_two(phase_1, &phase_2_columns, &verifier_key, &setup)
+        .expect("phase 2 commitments");
     let phase_2_commit_ms = started.elapsed().as_millis();
     let phase_2_group = phase_1_groups;
-    let full_challenges = commitment_prefix_challenges(
-        &preparation.profile_digest,
-        &preparation.public_known,
-        &[
-            (&phase_1.commitments, PHASE_1_CHALLENGES),
-            (&phase_2.commitments, PHASE_2_CHALLENGES),
-        ],
-    );
+    let full_challenges = committed.challenges();
     assert_eq!(&full_challenges[..PHASE_1_CHALLENGES], phase_1_values);
     let mut cursor = PHASE_1_CHALLENGES;
-    let tau_relation = take_point(&full_challenges, &mut cursor);
-    let tau_copy = take_point(&full_challenges, &mut cursor);
-    let tau_t2 = take_point(&full_challenges, &mut cursor);
-    let relation_weights = take_array(&full_challenges, &mut cursor);
-    let copy_weights = take_array(&full_challenges, &mut cursor);
+    let tau_relation = take_point(full_challenges, &mut cursor);
+    let tau_copy = take_point(full_challenges, &mut cursor);
+    let tau_t2 = take_point(full_challenges, &mut cursor);
+    let relation_weights = take_array(full_challenges, &mut cursor);
+    let copy_weights = take_array(full_challenges, &mut cursor);
     assert_eq!(cursor, full_challenges.len());
 
-    let packed = combine_packed_phases(vec![phase_1, phase_2]).expect("combine phases");
     let relation_columns = std::array::from_fn(|column| {
         if column < FIXED_COLUMNS {
             physical_id(relation_fixed_base + column)
@@ -263,46 +328,6 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         copy_rows.input_claim(),
         Fr::zero(),
     ];
-    let statement = AssemblyStatement {
-        key_digest: preparation.profile_digest,
-        public_inputs: preparation.public_known.clone(),
-        rows: ROWS,
-        column_count: packed.layout.column_count,
-        k: K,
-        members: input_claims
-            .iter()
-            .enumerate()
-            .map(|(index, &input_claim)| AssemblyMemberStatement {
-                input_claim,
-                spec: StageMemberSpec {
-                    rounds: LOG_ROWS,
-                    degree: [3, 3, 5, 5, 2][index],
-                    offset: 0,
-                },
-            })
-            .collect(),
-        commitment_phases: vec![
-            CommitmentPhase {
-                group_count: phase_1_groups,
-                challenge_count: PHASE_1_CHALLENGES,
-            },
-            CommitmentPhase {
-                group_count: 1,
-                challenge_count: PHASE_2_CHALLENGES,
-            },
-        ],
-    };
-    let verifier_key = WrapVerifierKey::new(
-        statement,
-        preparation.hash_key.clone(),
-        [20, 21, relation_fixed_base / K, link_fixed_base / K]
-            .into_iter()
-            .map(|group| (group, packed.commitments[group]))
-            .collect(),
-    );
-    assert_eq!(verifier_key.hash_links(), &links);
-    assert_eq!(verifier_key.hash_schedule(), &preparation.hash_key);
-
     let hash_exporter = StreamTermExporter {
         log_rows: LOG_ROWS,
         challenge_offset: 4,
@@ -398,14 +423,8 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         },
     ];
     let started = Instant::now();
-    let wrapped = prove_assembly(
-        &packed,
-        &verifier_key.statement,
-        &mut members,
-        &exporters,
-        &setup,
-    )
-    .expect("prove real T1/R wrapper");
+    let wrapped = wrap_proof(committed, &verifier_key, &mut members, &exporters, &setup)
+        .expect("prove real T1/R wrapper");
     let prove_ms = started.elapsed().as_millis();
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
     let started = Instant::now();
@@ -418,12 +437,14 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     });
     report(
         &wrapped,
-        phase_1_groups,
+        phase_1_groups - 4,
         cost,
         [
+            key_profile_ms,
             prepare_ms,
             setup_ms,
             adapt_ms,
+            key_commit_ms,
             phase_1_commit_ms,
             helper_ms,
             phase_2_commit_ms,
@@ -488,9 +509,9 @@ fn pad_fr(columns: &mut Vec<Column>) {
 
 fn challenge_copy_link(
     links: &LinkMap,
-    relation: &jolt_wrapper::relation::Relation,
+    relation: &Relation,
     relation_base: usize,
-    table: &jolt_wrapper::hash_table::HashTable,
+    table: &HashTable,
     relation_a: Vec<Fr>,
 ) -> (CopyLink, Vec<Vec<Fr>>, [Vec<Fr>; 3], [Vec<Fr>; 3]) {
     let relation_squeezes = relation
@@ -539,10 +560,7 @@ fn challenge_copy_link(
     (copy, columns, left_values, right_values)
 }
 
-fn materialize_hash_form(
-    form: &HashAffineForm,
-    table: &jolt_wrapper::hash_table::HashTable,
-) -> Vec<Fr> {
+fn materialize_hash_form(form: &HashAffineForm, table: &HashTable) -> Vec<Fr> {
     let mut values = vec![form.constant; ROWS];
     for &(column, weight) in &form.weights {
         for (row, value) in values.iter_mut().enumerate() {
@@ -552,7 +570,7 @@ fn materialize_hash_form(
     values
 }
 
-fn hash_column_value(table: &jolt_wrapper::hash_table::HashTable, column: usize, row: usize) -> Fr {
+fn hash_column_value(table: &HashTable, column: usize, row: usize) -> Fr {
     if column < WIRED_BIT_BASE {
         Fr::from_u64(u64::from(table.bits[column][row]))
     } else if column < WIRED_WORD_BASE {
@@ -599,7 +617,7 @@ fn report(
     proof: &WrapperProof,
     phase_1_groups: usize,
     cost: VerifierCost,
-    times: [u128; 8],
+    times: [u128; 10],
     uptime: &[u8],
 ) {
     let stage_a = committed_stage_bytes(&proof.stages[0]);
@@ -621,10 +639,11 @@ fn report(
         - reduced;
     let serialized = encode_to_vec(proof, standard()).expect("serialize wrapper");
     assert_eq!(serialized.len(), proof.bincode_bytes());
-    let [prepare, setup, adapt, commit_1, helpers, commit_2, prove, verify] = times;
+    let [key_profile, prepare, setup, adapt, key_commit, commit_1, helpers, commit_2, prove, verify] =
+        times;
     println!("uptime={}", String::from_utf8_lossy(uptime).trim());
     println!(
-        "phases_ms prepare={prepare} setup={setup} adapt={adapt} commit1={commit_1} helpers={helpers} commit2={commit_2} prove={prove} verify={verify}"
+        "phases_ms key_profile={key_profile} prepare={prepare} setup={setup} adapt={adapt} key_commit={key_commit} commit1={commit_1} helpers={helpers} commit2={commit_2} prove={prove} verify={verify}"
     );
     println!(
         "bytes phase1={phase_1} phase2={phase_2} stage_a={stage_a} term={term_stage} shared_bdfg={shared} ell={ell} stage_b={stage_b} reduced={reduced} hyperkzg={opening} io_challenges=0 proof={} bincode={} public_known={}",

@@ -139,6 +139,7 @@ fn generic_assembly_round_trip_and_section_tampers() {
                 challenge_count: 0,
             },
         ],
+        pinned_commitments: vec![(0, packed.commitments[0])],
     };
     let term_exporters = [
         CarryTerms {
@@ -179,10 +180,11 @@ fn generic_assembly_round_trip_and_section_tampers() {
     let (results, cost) = verify(&proof).expect("verify assembly");
     assert_eq!(results.len(), 3);
     assert!(cost.pairing_pairs > 0);
+    assert_eq!(proof.commitments.len(), 1);
 
-    let mut commitment = proof.clone();
-    commitment.commitments[0] = Commitment::new(proof.opening.com[0]);
-    assert!(verify(&commitment).is_err());
+    let mut wrong_key = statement.clone();
+    wrong_key.pinned_commitments[0].1 = Commitment::new(proof.opening.com[0]);
+    assert!(verify_assembly_with_cost(&proof, &wrong_key, &exporters, &verifier_setup).is_err());
 
     let mut stage_a = proof.clone();
     stage_a.stages[0]
@@ -193,7 +195,7 @@ fn generic_assembly_round_trip_and_section_tampers() {
     assert!(verify(&stage_a).is_err());
 
     let mut phase_2 = proof.clone();
-    phase_2.commitments[1] = Commitment::new(proof.opening.com[0]);
+    phase_2.commitments[0] = Commitment::new(proof.opening.com[0]);
     assert!(verify(&phase_2).is_err());
 
     let mut term_evaluation = proof.clone();

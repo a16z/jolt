@@ -2,7 +2,7 @@ use jolt_crypto::Bn254;
 use jolt_field::{Fr, Zero};
 use jolt_hyperkzg::{
     HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup, NoopVerifierObserver,
-    VerifierObserver,
+    VariableBatchKzgProof, VerifierObserver,
 };
 use jolt_openings::AdditivelyHomomorphic;
 use jolt_poly::MultilinearPoly;
@@ -71,6 +71,7 @@ pub fn prove_assembly(
     setup: &HyperKZGProverSetup<Bn254>,
 ) -> Result<WrapperProof, StreamError> {
     validate_assembly(packed.layout, statement, members)?;
+    validate_pinned_values(&packed.commitments, statement)?;
     let (mut transcript, phase_challenges) = assembly_transcript::<Keccak256Transcript<Fr>>(
         &statement.key_digest,
         &statement.public_inputs,
@@ -155,7 +156,7 @@ pub fn prove_assembly(
         &column_result.point,
         reduced_claim,
     )?;
-    prove_direct_opening(
+    let mut proof = prove_direct_opening(
         packed,
         vec![row_stage, term_stage, column_stage],
         Some(round_opening),
@@ -164,7 +165,9 @@ pub fn prove_assembly(
         &claim,
         setup,
         &mut transcript,
-    )
+    )?;
+    proof.commitments = wire_commitments(&packed.commitments, statement)?;
+    Ok(proof)
 }
 
 pub fn verify_assembly(
@@ -182,10 +185,12 @@ pub fn verify_assembly_with_cost(
     exporters: &[&dyn TermExporter],
     setup: &HyperKZGVerifierSetup<Bn254>,
 ) -> Result<(Vec<StageResult>, VerifierCost), StreamError> {
+    let layout = PackingLayout::new(statement.rows, statement.column_count, statement.k)?;
+    let commitments = full_commitments(&proof.commitments, statement, layout.group_count)?;
     let (mut transcript, phase_challenges) = assembly_transcript::<CountingKeccakTranscript>(
         &statement.key_digest,
         &statement.public_inputs,
-        &proof.commitments,
+        &commitments,
         statement,
     )?;
     let mut cost = VerifierCost::default();
@@ -195,7 +200,7 @@ pub fn verify_assembly_with_cost(
         exporters,
         setup,
         &mut transcript,
-        &phase_challenges,
+        (&phase_challenges, &commitments),
         &mut cost,
     )?;
     cost.keccak = transcript.hashes;
@@ -208,12 +213,13 @@ fn verify_assembly_observed<T>(
     exporters: &[&dyn TermExporter],
     setup: &HyperKZGVerifierSetup<Bn254>,
     transcript: &mut T,
-    phase_challenges: &[Fr],
+    assembly: (&[Fr], &[Commitment]),
     observer: &mut VerifierCost,
 ) -> Result<Vec<StageResult>, StreamError>
 where
     T: Transcript<Challenge = Fr>,
 {
+    let (phase_challenges, commitments) = assembly;
     let layout = PackingLayout::new(statement.rows, statement.column_count, statement.k)?;
     validate_assembly_proof(layout, statement, proof)?;
     let row_proof = proof.stages.first().ok_or(StreamError::StageCount)?;
@@ -319,7 +325,7 @@ where
         reduced_claim,
         observer,
     )?;
-    verify_direct_opening(proof, &claim, setup, transcript, observer)?;
+    verify_direct_opening(proof, commitments, &claim, setup, transcript, observer)?;
     Ok(vec![row_result, term_result, column_result])
 }
 
@@ -344,7 +350,8 @@ fn validate_assembly(
             return Err(StreamError::StageMemberCount);
         }
     }
-    validate_commitment_phases(layout, statement)
+    validate_commitment_phases(layout, statement)?;
+    validate_pinned_commitments(layout.group_count, statement)
 }
 
 fn validate_assembly_proof(
@@ -357,13 +364,18 @@ fn validate_assembly_proof(
         || !proof.stage_claims.is_empty()
         || proof.term_evaluations.is_empty()
         || proof.round_opening.is_none()
-        || proof.commitments.len() != layout.group_count
+        || proof.commitments.len()
+            != layout
+                .group_count
+                .checked_sub(statement.pinned_commitments.len())
+                .ok_or(StreamError::StageCount)?
         || proof.reduced_claims.len() != 1
         || proof.opening.com.len() + 1 != layout.packed_vars()
     {
         return Err(StreamError::StageCount);
     }
-    validate_commitment_phases(layout, statement)
+    validate_commitment_phases(layout, statement)?;
+    validate_pinned_commitments(layout.group_count, statement)
 }
 
 fn validate_commitment_phases(
@@ -381,6 +393,76 @@ fn validate_commitment_phases(
         return Err(StreamError::StageCount);
     }
     Ok(())
+}
+
+fn validate_pinned_commitments(
+    group_count: usize,
+    statement: &AssemblyStatement,
+) -> Result<(), StreamError> {
+    for (position, &(group, _)) in statement.pinned_commitments.iter().enumerate() {
+        if group >= group_count
+            || statement.pinned_commitments[..position]
+                .iter()
+                .any(|(existing, _)| *existing == group)
+        {
+            return Err(StreamError::PinnedCommitment(group));
+        }
+    }
+    Ok(())
+}
+
+fn validate_pinned_values(
+    commitments: &[Commitment],
+    statement: &AssemblyStatement,
+) -> Result<(), StreamError> {
+    validate_pinned_commitments(commitments.len(), statement)?;
+    for &(group, expected) in &statement.pinned_commitments {
+        if commitments.get(group) != Some(&expected) {
+            return Err(StreamError::PinnedCommitment(group));
+        }
+    }
+    Ok(())
+}
+
+fn wire_commitments(
+    commitments: &[Commitment],
+    statement: &AssemblyStatement,
+) -> Result<Vec<Commitment>, StreamError> {
+    validate_pinned_values(commitments, statement)?;
+    Ok(commitments
+        .iter()
+        .enumerate()
+        .filter(|(group, _)| {
+            !statement
+                .pinned_commitments
+                .iter()
+                .any(|(pinned, _)| pinned == group)
+        })
+        .map(|(_, commitment)| *commitment)
+        .collect())
+}
+
+fn full_commitments(
+    wire: &[Commitment],
+    statement: &AssemblyStatement,
+    group_count: usize,
+) -> Result<Vec<Commitment>, StreamError> {
+    validate_pinned_commitments(group_count, statement)?;
+    let mut wire = wire.iter();
+    let mut commitments = Vec::with_capacity(group_count);
+    for group in 0..group_count {
+        let commitment = statement
+            .pinned_commitments
+            .iter()
+            .find_map(|&(pinned, commitment)| (pinned == group).then_some(commitment))
+            .or_else(|| wire.next().copied())
+            .ok_or(StreamError::StageCount)?;
+        commitments.push(commitment);
+    }
+    if wire.next().is_some() {
+        return Err(StreamError::StageCount);
+    }
+    Ok(commitments)
 }
 
 pub fn prove_stream(
@@ -503,7 +585,7 @@ pub fn prove_stream(
 fn prove_direct_opening(
     packed: &PackedColumns,
     stages: Vec<StageProof>,
-    round_opening: Option<jolt_hyperkzg::VariableBatchKzgProof<Bn254>>,
+    round_opening: Option<VariableBatchKzgProof<Bn254>>,
     stage_claims: Vec<Vec<Fr>>,
     term_evaluations: Vec<Fr>,
     claim: &ReductionClaim,
@@ -660,22 +742,29 @@ fn verify_stream_observed<T: Transcript<Challenge = Fr>>(
         reduced_claim,
         observer,
     )?;
-    verify_direct_opening(proof, &claim, setup, transcript, observer)?;
+    verify_direct_opening(
+        proof,
+        &proof.commitments,
+        &claim,
+        setup,
+        transcript,
+        observer,
+    )?;
     Ok(vec![row_result, column_result])
 }
 
 fn verify_direct_opening<T: Transcript<Challenge = Fr>>(
     proof: &WrapperProof,
+    commitments: &[Commitment],
     claim: &ReductionClaim,
     setup: &HyperKZGVerifierSetup<Bn254>,
     transcript: &mut T,
     observer: &mut VerifierCost,
 ) -> Result<(), StreamError> {
     transcript.append(&claim.value);
-    let commitment =
-        HyperKZGScheme::<Bn254>::combine(&proof.commitments, &claim.polynomial_weights);
-    observer.ec_mul(proof.commitments.len());
-    observer.ec_add(proof.commitments.len());
+    let commitment = HyperKZGScheme::<Bn254>::combine(commitments, &claim.polynomial_weights);
+    observer.ec_mul(commitments.len());
+    observer.ec_add(commitments.len());
     HyperKZGScheme::<Bn254>::verify_observed(
         setup,
         &commitment,

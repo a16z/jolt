@@ -485,6 +485,7 @@ fn statement(
             group_count: columns.group_count,
             challenge_count: T1Challenges::count(key.log_rows),
         }],
+        pinned_commitments: Vec::new(),
     }
 }
 

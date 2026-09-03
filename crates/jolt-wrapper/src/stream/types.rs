@@ -302,6 +302,8 @@ pub struct AssemblyStatement {
     pub k: usize,
     pub members: Vec<AssemblyMemberStatement>,
     pub commitment_phases: Vec<CommitmentPhase>,
+    /// Full packed-group positions whose commitments come from the verifier key.
+    pub pinned_commitments: Vec<(usize, Commitment)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -350,6 +352,8 @@ pub enum StreamError {
     StageScale,
     #[error("stage proof encoding does not match the statement")]
     StageEncoding,
+    #[error("verifier-key commitment at packed group {0} is invalid")]
+    PinnedCommitment(usize),
     #[error("column tensor must contain at least one factor")]
     EmptyTensor,
     #[error("column tensor term {term} has arity {actual}, expected {expected}")]
