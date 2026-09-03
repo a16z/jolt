@@ -152,6 +152,16 @@ mod layout;
 mod ops;
 
 pub(super) use layout::SeedEntry;
+
+/// Byte sizes of the seed and bound sparse entries, for the evaluator's shape
+/// snapshot.
+#[cfg(all(feature = "metal", feature = "test-utils"))]
+pub(super) fn evaluator_entry_sizes<F: JoltField>() -> (usize, usize) {
+    (
+        core::mem::size_of::<SeedEntry>(),
+        core::mem::size_of::<layout::SparseEntry<F, F>>(),
+    )
+}
 use layout::{merge_bind, split_pair_group, Cell, IndexedMeta, SparseEntry};
 use ops::{
     bind_indexed_in_place_soa, bind_indexed_to_direct, bind_seed_entries_fused,

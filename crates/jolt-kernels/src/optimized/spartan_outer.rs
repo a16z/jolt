@@ -2891,6 +2891,202 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
     }
 }
 
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OptimizedOuterEvalResult {
+    pub(crate) round_polynomials: Vec<Vec<AkitaField>>,
+    pub(crate) final_claim: AkitaField,
+    pub(crate) output_claims: Vec<AkitaField>,
+}
+
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+#[derive(Clone, Debug)]
+pub(crate) struct OptimizedOuterEvalSample {
+    pub(crate) result: OptimizedOuterEvalResult,
+    pub(crate) member_wall: std::time::Duration,
+    pub(crate) prepare_wall: std::time::Duration,
+    pub(crate) rounds_wall: std::time::Duration,
+    pub(crate) finish_wall: std::time::Duration,
+    pub(crate) output_wall: std::time::Duration,
+}
+
+/// The remainder's true input claim from the typed rows: the uni-skip output
+/// `eq(tau_low) * q(r0)` folded at both stream values, computed independently
+/// of any kernel so the evaluators start from an honest claim.
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+pub(crate) fn compute_optimized_outer_eval_input_claim(
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    log_t: usize,
+    tau: &[AkitaField],
+    uniskip_challenge: AkitaField,
+) -> Result<AkitaField, String> {
+    if tau.len() != log_t + 2 {
+        return Err("Outer evaluator tau geometry is invalid".to_owned());
+    }
+    let cycles = 1usize
+        .checked_shl(u32::try_from(log_t).map_err(|error| error.to_string())?)
+        .ok_or_else(|| "Outer evaluator trace domain overflows usize".to_owned())?;
+    let rows = BundleStore::<SpartanOuterRow>::resolve(witness, cycles)
+        .map_err(|error| error.to_string())?;
+    let tau_low = &tau[..=log_t];
+    let lagrange = centered_lagrange_evals::<AkitaField>(DOMAIN, uniskip_challenge)
+        .map_err(|error| error.to_string())?;
+    let scaling = centered_lagrange_kernel(DOMAIN, tau[log_t + 1], uniskip_challenge)
+        .map_err(|error| error.to_string())?;
+    let split_eq =
+        GruenSplitEqPolynomial::new_with_scaling(tau_low, BindingOrder::LowToHigh, Some(scaling));
+    let e_out = split_eq.e_out_current();
+    let e_in = split_eq.e_in_current();
+    let access = rows.access();
+    let block = |x_out: usize| -> Result<(AkitaField, AkitaField), WitnessError> {
+        let mut q_zero = AkitaField::zero();
+        let mut q_one = AkitaField::zero();
+        for (x_in, &weight) in e_in.iter().enumerate() {
+            let row = access.row(x_out * e_in.len() + x_in)?;
+            let values = row_group_values(&row);
+            let (az_zero, bz_zero) = fold_group(&lagrange, &values.a_first, &values.b_first);
+            let (az_one, bz_one) = fold_group(
+                &lagrange[..SECOND_GROUP_LEN],
+                &values.a_second,
+                &values.b_second,
+            );
+            q_zero += weight * az_zero * bz_zero;
+            q_one += weight * az_one * bz_one;
+        }
+        Ok((e_out[x_out] * q_zero, e_out[x_out] * q_one))
+    };
+    let add = |left: (AkitaField, AkitaField), right: (AkitaField, AkitaField)| {
+        (left.0 + right.0, left.1 + right.1)
+    };
+    #[cfg(feature = "parallel")]
+    let (q_zero, q_one) = (0..e_out.len())
+        .into_par_iter()
+        .map(block)
+        .try_reduce(
+            || (AkitaField::zero(), AkitaField::zero()),
+            |left, right| Ok(add(left, right)),
+        )
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(feature = "parallel"))]
+    let (q_zero, q_one) = {
+        let mut total = (AkitaField::zero(), AkitaField::zero());
+        for x_out in 0..e_out.len() {
+            total = add(total, block(x_out).map_err(|error| error.to_string())?);
+        }
+        total
+    };
+    let eq_one = split_eq.current_scalar() * tau_low[log_t];
+    let eq_zero = split_eq.current_scalar() - eq_one;
+    Ok(eq_zero * q_zero + eq_one * q_one)
+}
+
+/// Runs the optimized CPU remainder kernel end to end on fixed challenges:
+/// the evaluators' oracle for the Metal outer-remainder sequence.
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+pub(crate) fn run_optimized_outer_eval(
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    log_t: usize,
+    tau: &[AkitaField],
+    uniskip_challenge: AkitaField,
+    input_claim: AkitaField,
+    challenges: &[AkitaField],
+) -> Result<OptimizedOuterEvalSample, String> {
+    use std::time::Instant;
+
+    use jolt_claims::NoChallenges;
+    use jolt_verifier::stages::relations::ConcreteSumcheck as _;
+    use jolt_verifier::stages::stage1::outer_remainder::{
+        outer_remainder_input_values_from_uniskip_output, OuterRemainderInputClaims,
+    };
+
+    let cycles = 1usize
+        .checked_shl(u32::try_from(log_t).map_err(|error| error.to_string())?)
+        .ok_or_else(|| "Outer evaluator trace domain overflows usize".to_owned())?;
+    if tau.len() != log_t + 2 || challenges.len() != log_t + 1 {
+        return Err("Outer evaluator challenge geometry is invalid".to_owned());
+    }
+    let rows = BundleStore::<SpartanOuterRow>::resolve(witness, cycles)
+        .map_err(|error| error.to_string())?;
+    let relation = OuterRemainder::new(
+        SpartanOuterDimensions::rv64(log_t),
+        tau.to_vec(),
+        uniskip_challenge,
+    );
+    let claims = outer_remainder_input_values_from_uniskip_output(input_claim);
+    let points = OuterRemainderInputClaims::<Vec<AkitaField>>::default();
+    let no_challenges = NoChallenges::<AkitaField>::default();
+    let carry = SpartanOuterCarry {
+        log_t,
+        tau: tau.to_vec(),
+        rows,
+        t1_values: Vec::new(),
+    };
+
+    let member_started = Instant::now();
+    let prepare_started = Instant::now();
+    let mut kernel = OuterRemainderKernel::prepare(
+        carry,
+        &ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &no_challenges,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let prepare_wall = prepare_started.elapsed();
+
+    let rounds_started = Instant::now();
+    let mut bind = None;
+    let mut previous_claim = input_claim;
+    let mut round_polynomials = Vec::with_capacity(challenges.len());
+    for (round, &challenge) in challenges.iter().enumerate() {
+        let polynomial = kernel
+            .prove_round(bind, round, previous_claim)
+            .map_err(|error| error.to_string())?;
+        previous_claim = polynomial.evaluate(challenge);
+        round_polynomials.push(polynomial.coefficients().to_vec());
+        bind = Some(challenge);
+    }
+    let rounds_wall = rounds_started.elapsed();
+
+    let finish_started = Instant::now();
+    let final_challenge = challenges
+        .last()
+        .copied()
+        .ok_or_else(|| "Outer evaluator has no terminal challenge".to_owned())?;
+    kernel
+        .finish_rounds(final_challenge)
+        .map_err(|error| error.to_string())?;
+    let finish_wall = finish_started.elapsed();
+
+    let output_started = Instant::now();
+    let output_points = relation
+        .derive_opening_points(challenges, &points)
+        .map_err(|error| error.to_string())?;
+    let output_claims = kernel
+        .output_claims(&claims)
+        .map_err(|error| error.to_string())?;
+    kernel
+        .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
+        .map_err(|error| error.to_string())?;
+    let output_claims = output_claims.opening_values();
+    let output_wall = output_started.elapsed();
+
+    Ok(OptimizedOuterEvalSample {
+        result: OptimizedOuterEvalResult {
+            round_polynomials,
+            final_claim: previous_claim,
+            output_claims,
+        },
+        member_wall: member_started.elapsed(),
+        prepare_wall,
+        rounds_wall,
+        finish_wall,
+        output_wall,
+    })
+}
+
 /// Byte parity against the reference kernels: identical uni-skip first-round
 /// polynomials, identical remainder round polynomials at every round,
 /// identical typed output claims — from identical `ProverInputs`, over

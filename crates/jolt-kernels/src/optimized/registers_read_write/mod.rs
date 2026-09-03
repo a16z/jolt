@@ -55,6 +55,11 @@ use sparse::{CoeffLut, CycleState};
 pub struct OptimizedRegistersReadWrite;
 
 impl OptimizedRegistersReadWrite {
+    #[cfg(all(feature = "metal", feature = "test-utils"))]
+    pub(crate) fn evaluator_entry_sizes<F: JoltField>() -> (usize, usize) {
+        sparse::evaluator_entry_sizes::<F>()
+    }
+
     #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn prepare_after_cycle_phase<F: JoltField>(
         log_t: usize,

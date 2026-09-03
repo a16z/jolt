@@ -6,6 +6,8 @@ use std::{
 };
 
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
+#[cfg(feature = "test-utils")]
+use jolt_field::Zero as _;
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,

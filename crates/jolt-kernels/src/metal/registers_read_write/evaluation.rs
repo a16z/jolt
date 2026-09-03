@@ -8,8 +8,10 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
     ReadWriteDimensions, REGISTER_ADDRESS_BITS,
 };
 use jolt_claims::OutputClaims as _;
-use jolt_field::{Field as _, One as _, Zero as _};
-use jolt_field::{FixedBytes, Prime128OffsetA7F7 as AkitaField, TranscriptChallenge};
+use jolt_field::Zero as _;
+use jolt_field::{
+    CanonicalBytes as _, CanonicalEncoding as _, Prime128OffsetA7F7 as AkitaField, Ring as _,
+};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial};
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
@@ -28,7 +30,7 @@ use crate::optimized::registers_read_write::{
     AlignedPackedRegisterRows, OptimizedRegistersReadWrite, PackedRegisterCycleRow,
 };
 use crate::optimized::spartan_outer::prepare_metal_spartan_outer_stage1_owner_witness_rows;
-use crate::ProofSession;
+use crate::{PrepareKernel as _, ProofSession};
 
 const METAL_OPERAND_CLAIMS_LOG_T_MIN: usize = 25;
 
@@ -63,13 +65,13 @@ impl RegistersReadWriteEvalResult {
         for polynomial in &self.round_polynomials {
             write(&(polynomial.len() as u64).to_le_bytes());
             for value in polynomial {
-                write(&value.to_bytes_array());
+                write(&value.to_bytes_le_vec());
             }
         }
-        write(&self.final_claim.to_bytes_array());
+        write(&self.final_claim.to_bytes_le_vec());
         write(&(self.output_claims.len() as u64).to_le_bytes());
         for value in &self.output_claims {
-            write(&value.to_bytes_array());
+            write(&value.to_bytes_le_vec());
         }
         hash
     }
@@ -121,8 +123,8 @@ pub struct RegistersReadWriteShapeSnapshot {
     pub write_entries_by_cycle_level: Vec<usize>,
     pub value_change_entries_by_cycle_level: Vec<usize>,
     pub packed_source_row_bytes: usize,
-    pub indexed_entry_bytes: usize,
-    pub direct_entry_bytes: usize,
+    pub seed_entry_bytes: usize,
+    pub bound_entry_bytes: usize,
 }
 
 /// Optimized CPU service timings for one registers read/write member.
@@ -319,17 +321,21 @@ impl RegistersReadWriteCpuMetalEvalFixture {
         self.context.device_info()
     }
 
-    pub fn run_cpu(&self) -> Result<RegistersReadWriteCpuEvalSample, RegistersReadWriteEvalError> {
-        self.run_optimized_host(false)
+    pub fn run_cpu(
+        &self,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+    ) -> Result<RegistersReadWriteCpuEvalSample, RegistersReadWriteEvalError> {
+        self.run_optimized_host(witness, false)
     }
 
     pub fn run_metal(
         &self,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
     ) -> Result<RegistersReadWriteMetalEvalSample, RegistersReadWriteEvalError> {
         if self.log_t >= 16 {
             self.run_metal_cycle_sequence()
         } else {
-            self.run_optimized_host(false)
+            self.run_optimized_host(witness, false)
         }
     }
 
@@ -337,6 +343,7 @@ impl RegistersReadWriteCpuMetalEvalFixture {
     /// Metal sequence. This is an evaluator-only residency ablation.
     pub fn run_metal_primed(
         &self,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
     ) -> Result<RegistersReadWriteMetalEvalSample, RegistersReadWriteEvalError> {
         let (Some(source), Some(rd_post)) = (&self.stage1_source, &self.stage1_rd_post) else {
             return Err(RegistersReadWriteEvalError::Kernel(
@@ -357,7 +364,7 @@ impl RegistersReadWriteCpuMetalEvalFixture {
                 "resident-source primer returned invalid telemetry".to_owned(),
             ));
         }
-        self.run_metal()
+        self.run_metal(witness)
     }
 
     fn run_metal_cycle_sequence(
@@ -562,6 +569,7 @@ impl RegistersReadWriteCpuMetalEvalFixture {
 
     fn run_optimized_host(
         &self,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
         metal_first_message: bool,
     ) -> Result<RegistersReadWriteCpuEvalSample, RegistersReadWriteEvalError> {
         let dimensions = ReadWriteDimensions::new(self.log_t, REGISTER_ADDRESS_BITS, self.log_t, 0);
@@ -574,28 +582,25 @@ impl RegistersReadWriteCpuMetalEvalFixture {
         };
 
         let member_started = Instant::now();
+        // The production CPU prepare collects its sparse entries from the
+        // witness plane in one pass, so source-to-state and kernel setup are
+        // one span on this path.
         let source_to_state_started = Instant::now();
-        let prepared = OptimizedRegistersReadWrite::precompute_packed::<AkitaField>(
-            self.rows.as_slice(),
-            self.cycles(),
-        )
-        .map_err(|error| RegistersReadWriteEvalError::Kernel(error.to_string()))?;
-        let source_to_state_wall = source_to_state_started.elapsed();
-
-        let kernel_setup_started = Instant::now();
         let mut session = ProofSession::default();
-        let mut kernel = OptimizedRegistersReadWrite::prepare_precomputed(
-            &mut session,
-            crate::ProverInputs {
-                relation: &relation,
-                claims: &self.input_values,
-                points: &input_points,
-                challenges: &relation_challenges,
-            },
-            prepared,
-        )
-        .map_err(|error| RegistersReadWriteEvalError::Kernel(error.to_string()))?;
-        let kernel_setup_wall = kernel_setup_started.elapsed();
+        let mut kernel = OptimizedRegistersReadWrite
+            .prepare(
+                &mut session,
+                witness,
+                crate::ProverInputs {
+                    relation: &relation,
+                    claims: &self.input_values,
+                    points: &input_points,
+                    challenges: &relation_challenges,
+                },
+            )
+            .map_err(|error| RegistersReadWriteEvalError::Kernel(error.to_string()))?;
+        let source_to_state_wall = source_to_state_started.elapsed();
+        let kernel_setup_wall = Duration::ZERO;
         let metal_gruen = metal_first_message
             .then(|| GruenSplitEqPolynomial::new(&self.r_cycle, BindingOrder::LowToHigh));
         let metal_first_message_prepare_started = Instant::now();
@@ -1065,7 +1070,7 @@ fn source_shape(rows: &[PackedRegisterCycleRow]) -> RegistersReadWriteShapeSnaps
             .collect();
         masks = next;
     }
-    let (indexed_entry_bytes, direct_entry_bytes) =
+    let (seed_entry_bytes, bound_entry_bytes) =
         OptimizedRegistersReadWrite::evaluator_entry_sizes::<AkitaField>();
     RegistersReadWriteShapeSnapshot {
         rs1_reads,
@@ -1081,8 +1086,8 @@ fn source_shape(rows: &[PackedRegisterCycleRow]) -> RegistersReadWriteShapeSnaps
         write_entries_by_cycle_level,
         value_change_entries_by_cycle_level,
         packed_source_row_bytes: std::mem::size_of::<PackedRegisterCycleRow>(),
-        indexed_entry_bytes,
-        direct_entry_bytes,
+        seed_entry_bytes,
+        bound_entry_bytes,
     }
 }
 
@@ -1090,7 +1095,7 @@ fn challenge_field(seed: u64) -> AkitaField {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&splitmix(seed).to_le_bytes());
     bytes[8..].copy_from_slice(&splitmix(seed ^ 0xd1b5_4a32_d192_ed03).to_le_bytes());
-    AkitaField::from_challenge_bytes(&bytes)
+    AkitaField::from_bytes_le_reduced(&bytes)
 }
 
 fn splitmix(mut value: u64) -> u64 {

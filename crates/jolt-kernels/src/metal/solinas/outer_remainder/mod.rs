@@ -24,3 +24,5 @@ pub use sequence::OuterRemainderSequence;
 pub(crate) use sequence::PendingOuterRegistersClaimCarrier;
 pub(super) use shader::SOURCE;
 pub(crate) use storage::OuterRemainderSequenceStorage;
+#[cfg(feature = "test-utils")]
+pub(crate) use storage::OuterRemainderStorageEvalStats;

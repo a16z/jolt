@@ -363,6 +363,140 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
     }
 }
 
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+#[derive(Clone, Debug)]
+pub(crate) struct OptimizedRamReadWriteEvalResult {
+    pub(crate) round_polynomials: Vec<Vec<jolt_field::Prime128OffsetA7F7>>,
+    pub(crate) final_claim: jolt_field::Prime128OffsetA7F7,
+    pub(crate) output_claims: Vec<jolt_field::Prime128OffsetA7F7>,
+}
+
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+#[derive(Clone, Debug)]
+pub(crate) struct OptimizedRamReadWriteEvalSample {
+    pub(crate) result: OptimizedRamReadWriteEvalResult,
+    pub(crate) member_wall: std::time::Duration,
+    pub(crate) prepare_wall: std::time::Duration,
+    pub(crate) rounds_wall: std::time::Duration,
+    pub(crate) finish_wall: std::time::Duration,
+    pub(crate) output_wall: std::time::Duration,
+}
+
+/// The CPU oracle's inputs: the same relation geometry and challenges the
+/// Metal arm consumes. The kernel collects its own RAM columns from the
+/// witness, so the oracle never sees the device-side record model.
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+pub(crate) struct OptimizedRamReadWriteEvalInputs<'a> {
+    pub(crate) witness: &'a dyn JoltWitnessPlane<jolt_field::Prime128OffsetA7F7>,
+    pub(crate) log_t: usize,
+    pub(crate) log_k: usize,
+    pub(crate) tau_low: &'a [jolt_field::Prime128OffsetA7F7],
+    pub(crate) gamma: jolt_field::Prime128OffsetA7F7,
+    pub(crate) input_values:
+        &'a jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteInputClaims<
+            jolt_field::Prime128OffsetA7F7,
+        >,
+    pub(crate) input_claim: jolt_field::Prime128OffsetA7F7,
+    pub(crate) challenges: &'a [jolt_field::Prime128OffsetA7F7],
+}
+
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+pub(crate) fn run_optimized_ram_read_write_eval(
+    inputs: OptimizedRamReadWriteEvalInputs<'_>,
+) -> Result<OptimizedRamReadWriteEvalSample, String> {
+    use std::time::Instant;
+
+    use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
+    use jolt_claims::OutputClaims as _;
+    use jolt_verifier::stages::relations::ConcreteSumcheck as _;
+    use jolt_verifier::stages::stage2::ram_read_write_checking::{
+        RamReadWriteChallenges, RamReadWriteInputClaims,
+    };
+
+    type F = jolt_field::Prime128OffsetA7F7;
+
+    if inputs.tau_low.len() != inputs.log_t
+        || inputs.challenges.len() != inputs.log_t + inputs.log_k
+    {
+        return Err("RAM read-write evaluator challenge geometry is invalid".to_owned());
+    }
+    let dimensions =
+        ReadWriteDimensions::new(inputs.log_t, inputs.log_k, inputs.log_t, inputs.log_k);
+    let relation = RamReadWriteChecking::new(dimensions, inputs.log_k, inputs.tau_low.to_vec());
+    let challenge_values = RamReadWriteChallenges {
+        gamma: inputs.gamma,
+    };
+    let input_points = RamReadWriteInputClaims::<Vec<F>>::default();
+
+    let member_started = Instant::now();
+    let prepare_started = Instant::now();
+    let mut session = ProofSession::default();
+    let mut kernel = OptimizedBackend
+        .prepare(
+            &mut session,
+            inputs.witness,
+            ProverInputs {
+                relation: &relation,
+                claims: inputs.input_values,
+                points: &input_points,
+                challenges: &challenge_values,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let prepare_wall = prepare_started.elapsed();
+
+    let rounds_started = Instant::now();
+    let mut bind = None;
+    let mut previous_claim = inputs.input_claim;
+    let mut round_polynomials = Vec::with_capacity(inputs.challenges.len());
+    for (round, &challenge) in inputs.challenges.iter().enumerate() {
+        let polynomial = kernel
+            .prove_round(bind, round, previous_claim)
+            .map_err(|error| error.to_string())?;
+        previous_claim = polynomial.evaluate(challenge);
+        round_polynomials.push(polynomial.coefficients().to_vec());
+        bind = Some(challenge);
+    }
+    let rounds_wall = rounds_started.elapsed();
+
+    let final_challenge = inputs
+        .challenges
+        .last()
+        .copied()
+        .ok_or_else(|| "RAM read-write evaluator has no terminal challenge".to_owned())?;
+    let finish_started = Instant::now();
+    kernel
+        .finish_rounds(final_challenge)
+        .map_err(|error| error.to_string())?;
+    let finish_wall = finish_started.elapsed();
+
+    let output_started = Instant::now();
+    let output_points = relation
+        .derive_opening_points(inputs.challenges, &input_points)
+        .map_err(|error| error.to_string())?;
+    let output_claims = kernel
+        .output_claims(inputs.input_values)
+        .map_err(|error| error.to_string())?;
+    kernel
+        .validate_derived_tables(&relation, &input_points, &output_points, &challenge_values)
+        .map_err(|error| error.to_string())?;
+    let output_claims = output_claims.opening_values();
+    let output_wall = output_started.elapsed();
+
+    Ok(OptimizedRamReadWriteEvalSample {
+        result: OptimizedRamReadWriteEvalResult {
+            round_polynomials,
+            final_claim: previous_claim,
+            output_claims,
+        },
+        member_wall: member_started.elapsed(),
+        prepare_wall,
+        rounds_wall,
+        finish_wall,
+        output_wall,
+    })
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {

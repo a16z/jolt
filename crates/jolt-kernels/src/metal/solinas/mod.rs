@@ -133,6 +133,8 @@ pub(crate) use instruction_read_raf::{
 };
 #[cfg(feature = "allocative")]
 pub(crate) use outer_remainder::OuterRegistersClaimCarrierSubmission;
+#[cfg(feature = "test-utils")]
+pub(crate) use outer_remainder::OuterRemainderStorageEvalStats;
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRegistersClaimCarrier,
@@ -173,11 +175,15 @@ pub use ram_raf_evaluation::{
     RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS, RAM_RAF_SIMD_WIDTH,
     RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
 };
+#[cfg(feature = "test-utils")]
+pub(crate) use ram_read_write::RamReadWritePreparationTiming;
 pub(crate) use ram_read_write::{
     RamRafSegmentedAddressPlane, RamReadWriteDispatchTiming, RamReadWriteFinish,
     RamReadWriteSequence, SparseCycleProduct, RAM_READ_WRITE_CYCLE_TILE_LOG2,
 };
 pub(crate) use ram_val_sequence::RamValSequence;
+#[cfg(feature = "test-utils")]
+pub(crate) use registers_read_write::RegistersReadWriteCycleObservation;
 pub(crate) use registers_read_write::{
     PendingRegistersReadWriteStage1Pipelines, RegistersReadWriteStage1ChunkWriter,
     RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,

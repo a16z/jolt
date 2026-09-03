@@ -11,6 +11,8 @@ pub(super) const SOURCE: &str = concat!(
     include_str!("fused_sequence.metal")
 );
 
+#[cfg(feature = "test-utils")]
+pub(crate) use sequence::RegistersReadWriteCycleObservation;
 pub(crate) use sequence::{
     PendingRegistersReadWriteStage1Pipelines, RegistersReadWriteCycleFinish,
     RegistersReadWriteCycleSequence,

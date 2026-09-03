@@ -5,8 +5,10 @@ use std::{
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::OutputClaims as _;
-use jolt_field::{CanonicalU64, FixedBytes, Prime128OffsetA7F7 as AkitaField, TranscriptChallenge};
-use jolt_field::{Field as _, One as _, Zero as _};
+use jolt_field::Zero as _;
+use jolt_field::{
+    CanonicalBytes as _, CanonicalEncoding as _, Prime128OffsetA7F7 as AkitaField, Ring as _,
+};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial};
 use jolt_sumcheck::ProveRounds;
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;
@@ -61,13 +63,13 @@ impl RamReadWriteEvalResult {
         for polynomial in &self.round_polynomials {
             write(&(polynomial.len() as u64).to_le_bytes());
             for value in polynomial {
-                write(&value.to_bytes_array());
+                write(&value.to_bytes_le_vec());
             }
         }
-        write(&self.final_claim.to_bytes_array());
+        write(&self.final_claim.to_bytes_le_vec());
         write(&(self.output_claims.len() as u64).to_le_bytes());
         for value in &self.output_claims {
-            write(&value.to_bytes_array());
+            write(&value.to_bytes_le_vec());
         }
         hash
     }
@@ -351,9 +353,6 @@ impl RamReadWriteCpuMetalEvalFixture {
             input_values: &self.input_values,
             input_claim: self.input_claim,
             challenges: &self.challenges,
-            columns: &self.columns,
-            values: &self.values,
-            tape: &self.tape,
         })
         .map(Into::into)
         .map_err(RamReadWriteEvalError::Kernel)
@@ -427,11 +426,14 @@ impl RamReadWriteCpuMetalEvalFixture {
             .map_err(|error| RamReadWriteEvalError::Kernel(error.to_string()))?
             .into_iter()
             .map(|value| {
-                value.to_canonical_u64_checked().ok_or_else(|| {
-                    RamReadWriteEvalError::Kernel(
-                        "RAM final memory is not canonically representable as u64".to_owned(),
-                    )
-                })
+                value
+                    .to_u128_checked()
+                    .and_then(|value| u64::try_from(value).ok())
+                    .ok_or_else(|| {
+                        RamReadWriteEvalError::Kernel(
+                            "RAM final memory is not canonically representable as u64".to_owned(),
+                        )
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         if initial_memory.len() != address_count {
@@ -623,7 +625,7 @@ fn challenge_field(seed: u64) -> AkitaField {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&splitmix(seed).to_le_bytes());
     bytes[8..].copy_from_slice(&splitmix(seed ^ 0xd1b5_4a32_d192_ed03).to_le_bytes());
-    AkitaField::from_challenge_bytes(&bytes)
+    AkitaField::from_bytes_le_reduced(&bytes)
 }
 
 fn splitmix(mut value: u64) -> u64 {

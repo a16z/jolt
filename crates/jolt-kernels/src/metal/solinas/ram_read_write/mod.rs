@@ -12,6 +12,8 @@ mod runtime;
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 
+#[cfg(feature = "test-utils")]
+pub(crate) use runtime::RamReadWritePreparationTiming;
 pub(crate) use runtime::{
     RamRafSegmentedAddressPlane, RamReadWriteDispatchTiming, RamReadWriteFinish,
     RamReadWriteSequence,

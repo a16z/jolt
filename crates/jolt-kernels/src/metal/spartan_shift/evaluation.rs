@@ -3,8 +3,8 @@ use std::{slice, time::Duration, time::Instant};
 use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_claims::OutputClaims as _;
 use jolt_field::{
-    AdditiveAccumulator, AkitaField, FixedBytes, RingAccumulator, TranscriptChallenge,
-    WithAccumulator,
+    Accumulator as _, CanonicalBytes as _, CanonicalEncoding as _,
+    Prime128OffsetA7F7 as AkitaField, WithAccumulator,
 };
 use jolt_poly::EqPlusOnePrefixSuffix;
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;
@@ -18,9 +18,8 @@ use rayon::prelude::*;
 use super::super::backend::{MetalBackend, MetalConfig};
 use super::super::solinas::spartan_shift::{SpartanShiftPlan, SpartanShiftResidentRows};
 use super::super::spartan_dense::SpartanDenseResidentOwner;
-use crate::optimized::spartan_shift::{
-    prepare_metal_spartan_shift_witness_rows, OptimizedSpartanShift,
-};
+use crate::optimized::spartan_outer::prepare_metal_spartan_outer_shift_witness_rows;
+use crate::optimized::spartan_shift::OptimizedSpartanShift;
 use crate::{PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
 #[derive(Debug, thiserror::Error)]
@@ -49,13 +48,13 @@ impl SpartanShiftEvalResult {
         for polynomial in &self.round_polynomials {
             write(&(polynomial.len() as u64).to_le_bytes());
             for value in polynomial {
-                write(&value.to_bytes_array());
+                write(&value.to_bytes_le_vec());
             }
         }
-        write(&self.final_claim.to_bytes_array());
+        write(&self.final_claim.to_bytes_le_vec());
         write(&(self.output_claims.len() as u64).to_le_bytes());
         for value in &self.output_claims {
-            write(&value.to_bytes_array());
+            write(&value.to_bytes_le_vec());
         }
         hash
     }
@@ -183,9 +182,9 @@ impl SpartanShiftCpuMetalEvalFixture {
                 .fold_threads_per_threadgroup = value;
         }
         let backend = MetalBackend::new(metal_config).map_err(kernel_error)?;
-        let resident_rows =
-            prepare_metal_spartan_shift_witness_rows(&backend.context, witness, cycles)
-                .map_err(kernel_error)?;
+        let (_, resident_rows) =
+            prepare_metal_spartan_outer_shift_witness_rows(&backend.context, witness, cycles)
+                .map_err(|error| kernel_error(format!("{error:?}")))?;
         let census_started = Instant::now();
         let [unexpanded_pc_buffer, pc_buffer, _] = resident_rows.source_buffers();
         // SAFETY: each immutable shared buffer owns exactly `cycles` u64 values.
@@ -471,7 +470,7 @@ fn challenge_field(seed: u64) -> AkitaField {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&splitmix(seed).to_le_bytes());
     bytes[8..].copy_from_slice(&splitmix(seed ^ 0xd1b5_4a32_d192_ed03).to_le_bytes());
-    AkitaField::from_challenge_bytes(&bytes)
+    AkitaField::from_bytes_le_reduced(&bytes)
 }
 
 fn splitmix(mut value: u64) -> u64 {

@@ -5,9 +5,9 @@ use jolt_claims::protocols::jolt::geometry::ram::RamValCheckInit;
 use jolt_claims::protocols::jolt::relations::ram::{RamValCheckChallenges, RamValCheckInputClaims};
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_claims::OutputClaims as _;
-use jolt_field::{Field as _, One as _, Zero as _};
+use jolt_field::Zero as _;
 use jolt_field::{
-    FixedBytes, FromPrimitiveInt, Prime128OffsetA7F7 as AkitaField, TranscriptChallenge,
+    CanonicalBytes as _, CanonicalEncoding as _, FromPrimitiveInt, Prime128OffsetA7F7 as AkitaField,
 };
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutputClaims};
@@ -48,13 +48,13 @@ impl RamValCheckEvalResult {
         for polynomial in &self.round_polynomials {
             write(&(polynomial.len() as u64).to_le_bytes());
             for value in polynomial {
-                write(&value.to_bytes_array());
+                write(&value.to_bytes_le_vec());
             }
         }
-        write(&self.final_claim.to_bytes_array());
+        write(&self.final_claim.to_bytes_le_vec());
         write(&(self.output_claims.len() as u64).to_le_bytes());
         for value in &self.output_claims {
-            write(&value.to_bytes_array());
+            write(&value.to_bytes_le_vec());
         }
         hash
     }
@@ -500,7 +500,7 @@ fn challenge_field(seed: u64) -> AkitaField {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&splitmix(seed).to_le_bytes());
     bytes[8..].copy_from_slice(&splitmix(seed ^ 0xd1b5_4a32_d192_ed03).to_le_bytes());
-    AkitaField::from_challenge_bytes(&bytes)
+    AkitaField::from_bytes_le_reduced(&bytes)
 }
 
 fn splitmix(mut value: u64) -> u64 {

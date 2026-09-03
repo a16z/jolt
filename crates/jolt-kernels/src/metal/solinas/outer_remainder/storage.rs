@@ -7,6 +7,8 @@ use metal::{
 };
 
 use super::super::{completed_command_gpu_time, Fp128, MetalError, PipelineLimits, SolinasMetal};
+#[cfg(feature = "test-utils")]
+use super::plan::opening_threadgroup_memory_lengths;
 use super::{
     api::{
         OuterRemainderSequenceConfig, OuterRemainderStorageInitialization, DEVICE_BUFFERS,
