@@ -75,9 +75,13 @@ pub fn limb(v: &BigUint, index: usize) -> BigUint {
     (v >> (LIMB_BITS * index)) & ((BigUint::one() << LIMB_BITS) - BigUint::one())
 }
 
+fn big_limbs_of(v: &BigUint) -> [BigUint; LIMBS] {
+    std::array::from_fn(|index| limb(v, index))
+}
+
 /// The 96-bit limbs of an integer below `2^256` as field elements.
 pub fn limbs_of(v: &BigUint) -> [Fr; LIMBS] {
-    std::array::from_fn(|a| fr_from_biguint(&limb(v, a)))
+    big_limbs_of(v).each_ref().map(fr_from_biguint)
 }
 
 pub fn fq_limbs(v: &Fq) -> [Fr; LIMBS] {
@@ -128,20 +132,30 @@ fn slot_sum(slots: &[Slot], values: &[BigUint]) -> BigInt {
     })
 }
 
-fn row_chunks(slots: &[Slot], values: &[BigUint], z: &BigUint, q: &BigUint) -> RowChunks {
-    let q_limbs: [BigInt; LIMBS] = std::array::from_fn(|a| BigInt::from(limb(q, a)));
+fn row_chunks(
+    slots: &[Slot],
+    value_limbs: &[[BigUint; LIMBS]],
+    z: &BigUint,
+    q: &BigUint,
+    q_limbs: &[BigInt; LIMBS],
+) -> RowChunks {
     let mut positions = vec![BigInt::zero(); 2 * LIMBS - 1];
     for slot in slots {
-        let x = &values[slot.x as usize];
-        let y = &values[slot.y as usize];
+        let x = &value_limbs[slot.x as usize];
+        let y = &value_limbs[slot.y as usize];
         let kappa = BigInt::from(slot.coefficient());
         for a in 0..LIMBS {
             for b in 0..LIMBS {
-                positions[a + b] += &kappa * BigInt::from(limb(x, a) * limb(y, b));
+                positions[a + b] += &kappa * BigInt::from(&x[a] * &y[b]);
             }
         }
     }
-    let sum = slot_sum(slots, values);
+    let sum = positions
+        .iter()
+        .enumerate()
+        .fold(BigInt::zero(), |sum, (position, value)| {
+            sum + (value << (LIMB_BITS * position))
+        });
     let z_int = BigInt::from(z.clone());
     let q_int = BigInt::from(q.clone());
     // Exact rows: `z = Σ + (1 − flag)·2^256` differs from the sum by a
@@ -241,15 +255,24 @@ impl Columns {
     /// program are zero rows. Witness rows (quotients, inputs, constants)
     /// carry `z` with `k = 0` and zero carries.
     pub fn generate(program: &Program, values: &[Fq], log_rows: usize) -> Self {
-        assert!(program.len() <= 1 << log_rows);
-        assert!(log_rows >= TABLE_LOG);
-        let q = q_biguint();
+        let rows = 1usize << log_rows;
         let mut ints: Vec<BigUint> = values.par_iter().map(fq_to_biguint).collect();
+        ints.resize(rows, BigUint::zero());
+        assert!(program.len() <= 1 << log_rows);
+        assert_eq!(program.len(), values.len());
+        assert!(log_rows >= TABLE_LOG);
+        assert_eq!(ints.len(), rows);
+        let q = q_biguint();
         // Exact rows hold `Σ κ·x·y (+ (1 − flag)·2^256)` as an integer, which
         // may exceed `q`; their operands are never exact rows above `q`.
-        let mut flags = vec![0u8; 1 << log_rows];
+        let mut flags = vec![0u8; rows];
         let half = fq_to_biguint(&half_plus_one());
-        for row in program.exact_rows() {
+        for row in program
+            .order
+            .iter()
+            .map(|&row| row as usize)
+            .filter(|&row| program.rows[row].source.is_exact())
+        {
             let spec = &program.rows[row];
             let mut sum = slot_sum(&spec.slots, &ints);
             flags[row] = 1;
@@ -264,16 +287,26 @@ impl Columns {
                 .unwrap_or_else(|| unreachable!("exact row value is nonnegative"));
             assert!(ints[row].bits() as usize <= CHUNK_BITS * Z_CHUNKS);
         }
-        let mut chunks: Vec<RowChunks> = program
+        let mut used = vec![false; rows];
+        for &row in &program.order {
+            used[row as usize] = true;
+        }
+        let value_limbs: Vec<[BigUint; LIMBS]> = ints.par_iter().map(big_limbs_of).collect();
+        let q_limbs = big_limbs_of(&q).map(BigInt::from);
+        let mut chunks = program
             .rows
             .par_iter()
             .zip(&ints)
-            .map(|(spec, z)| {
+            .zip(&used)
+            .map(|((spec, z), &used)| {
+                if !used {
+                    return zero_row_chunks();
+                }
                 if spec.source == Source::Compute || spec.source.is_exact() {
-                    row_chunks(&spec.slots, &ints, z, &q)
+                    row_chunks(&spec.slots, &value_limbs, z, &q, &q_limbs)
                 } else {
-                    let mut row = zero_row_chunks();
-                    chunks_of(z, &mut row[..Z_CHUNKS]);
+                    let mut chunks = zero_row_chunks();
+                    chunks_of(z, &mut chunks[..Z_CHUNKS]);
                     if let Source::Input(_) | Source::Window(_) = spec.source {
                         // Canonicality witness `d = (q_hi − 1) − z_hi` (top 64 bits)
                         // in the otherwise idle low quotient chunks of an input row.
@@ -283,17 +316,18 @@ impl Columns {
                         let d = (Q_HI - 1).saturating_sub(z_hi);
                         chunks_of(
                             &BigUint::from(d),
-                            &mut row[Z_CHUNKS..Z_CHUNKS + CANON_CHUNKS],
+                            &mut chunks[Z_CHUNKS..Z_CHUNKS + CANON_CHUNKS],
                         );
                     }
-                    row
+                    chunks
                 }
             })
+            .collect::<Vec<_>>();
+        chunks.resize(rows, zero_row_chunks());
+        let limbs = value_limbs
+            .par_iter()
+            .map(|limbs| limbs.each_ref().map(fr_from_biguint))
             .collect();
-        let padding = (1usize << log_rows) - program.len();
-        chunks.extend(std::iter::repeat_n(zero_row_chunks(), padding));
-        ints.extend(std::iter::repeat_n(BigUint::zero(), padding));
-        let limbs = ints.par_iter().map(limbs_of).collect();
         Self {
             log_rows,
             chunks,

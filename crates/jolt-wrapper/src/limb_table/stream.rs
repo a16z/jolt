@@ -34,7 +34,7 @@ use super::export::{exact_column, free_column, phases, pin_columns};
 use super::layout::LOG_ROWS;
 use super::lookup::{public_and_link_evals, LinkPowers, LookupColumns, PublicColumns, DIGIT_BITS};
 use super::relation::{
-    eq_tau_column, Challenges, Col, LookupConstants, RowRelation, RowSumcheck, SLOTS,
+    eq_tau_column, Challenges, Col, LookupConstants, RowMatrix, RowRelation, RowSumcheck, SLOTS,
 };
 use super::schedule::Layout;
 use super::terms::{plain, powers_with, Mul};
@@ -340,7 +340,6 @@ impl LimbTableKey {
 /// groups. Chunks are `u16`, digit bits / flags / indicators are bits,
 /// multiplicities `u32`, everything else full field elements.
 pub struct StreamColumns {
-    pub columns: Vec<Column>,
     /// Physical id of every local column (`Col::CLAIMED`).
     pub ids: Vec<StreamColumnId>,
     pub group_count: usize,
@@ -353,7 +352,7 @@ pub struct StreamColumns {
 /// digit column — then the public ones) and the stream columns.
 pub struct StreamWitness {
     pub relation: RowRelation,
-    pub matrix: Vec<Vec<Fr>>,
+    pub matrix: RowMatrix,
     pub stream: StreamColumns,
 }
 
@@ -572,9 +571,6 @@ impl<'a> StreamBuilder<'a> {
                 one_row: self.layout.one_cell * 16,
             },
         );
-        let mut matrix: Vec<Vec<Fr>> = (0..Col::CLAIMED)
-            .map(|local| full_field(&self.columns[self.positions[local]]))
-            .collect();
         let eq_tau = eq_tau_column(&relation.challenges.tau);
         let copy = copy_kernel_table(
             &self.layout.program,
@@ -594,10 +590,6 @@ impl<'a> StreamBuilder<'a> {
             coord,
             ..
         } = self.public;
-        matrix.extend([
-            eq_tau, copy, sel, is_gt, is_g1, is_g2, s0, coord, constancy, small, id,
-        ]);
-        debug_assert_eq!(matrix.len(), Col::WIDTH);
         let group_count = self.columns.len() / self.packing;
         let vk_groups = vk_group_range_with_final_fill(self.packing, group_offset, self.final_fill);
         debug_assert_eq!(vk_groups.end, group_offset + group_count);
@@ -606,11 +598,33 @@ impl<'a> StreamBuilder<'a> {
             .iter()
             .map(|&position| physical_id(group_offset, position, self.packing))
             .collect();
+        let mut columns = self.columns.into_iter().map(Some).collect::<Vec<_>>();
+        let mut matrix = self
+            .positions
+            .into_iter()
+            .map(|position| {
+                columns[position]
+                    .take()
+                    .unwrap_or_else(|| unreachable!("one position per T2 column"))
+            })
+            .collect::<Vec<_>>();
+        matrix.extend([
+            Column::Fr(eq_tau),
+            Column::Fr(copy),
+            Column::Fr(sel),
+            Column::Fr(is_gt),
+            Column::Fr(is_g1),
+            Column::Fr(is_g2),
+            Column::Fr(s0),
+            Column::Fr(coord),
+            Column::Fr(constancy),
+            Column::Fr(small),
+            Column::Fr(id),
+        ]);
         StreamWitness {
             relation,
-            matrix,
+            matrix: RowMatrix::new(matrix),
             stream: StreamColumns {
-                columns: self.columns,
                 ids,
                 group_count,
                 vk_groups,
@@ -661,16 +675,6 @@ impl<'a> StreamBuilder<'a> {
     }
 }
 
-/// A stream column as field elements.
-fn full_field(column: &Column) -> Vec<Fr> {
-    match column {
-        Column::Bits(values) => values.iter().map(|v| Fr::from_u64(u64::from(*v))).collect(),
-        Column::U16(values) => values.iter().map(|v| Fr::from_u64(u64::from(*v))).collect(),
-        Column::U32(values) => values.iter().map(|v| Fr::from_u64(u64::from(*v))).collect(),
-        Column::Fr(values) => values.clone(),
-    }
-}
-
 fn physical_id(group_offset: usize, column: usize, packing: usize) -> StreamColumnId {
     StreamColumnId {
         group: group_offset + column / packing,
@@ -693,21 +697,14 @@ pub struct Members<'a> {
 
 impl<'a> Members<'a> {
     /// `matrix`: the row member's `Col::WIDTH` columns (claimed then public).
-    pub fn new(
-        relation: &'a RowRelation,
-        matrix: &[Vec<Fr>],
-        layout: &Layout,
-        digit_values: &[Fr],
-        rho: Fr,
-    ) -> Self {
+    pub fn new(relation: &'a RowRelation, matrix: &'a RowMatrix, layout: &Layout, rho: Fr) -> Self {
+        let digit_values = matrix.field_column(Col::D);
+        let chunks = (Col::CHUNKS..Col::CHUNKS + 8)
+            .map(|column| matrix.field_column(column))
+            .collect::<Vec<_>>();
         Self {
-            rows: RowSumcheck::new(relation, matrix),
-            link: LinkMember::new(
-                layout,
-                rho,
-                digit_values,
-                &matrix[Col::CHUNKS..Col::CHUNKS + 8],
-            ),
+            rows: RowSumcheck::new_typed(relation, matrix),
+            link: LinkMember::new(layout, rho, &digit_values, &chunks),
         }
     }
 }

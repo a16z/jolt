@@ -163,7 +163,10 @@ fn staged(w: &Witness, ch: &Challenges, packing: usize, group_offset: usize) -> 
 
 /// Every prover column (claimed then public) for the row member.
 fn matrix(w: &Witness, relation: &RowRelation) -> Vec<Vec<Fr>> {
-    staged(w, &relation.challenges, 4, 0).matrix
+    let witness = staged(w, &relation.challenges, 4, 0);
+    (0..Col::WIDTH)
+        .map(|column| witness.matrix.field_column(column))
+        .collect()
 }
 
 /// R's scalar-link claim `Σ_k W_k(ρ)·s_k` over the named wires of `w`.

@@ -19,7 +19,7 @@ use super::layout::LOG_ROWS;
 use super::literals::{EIGHT, NEG_KEY_OFFSET_FR, Q_HI_MINUS_ONE, SIXTEEN_POWERS};
 use super::terms::{plain, powers_with, AffineForm, ColumnId, Mul, Term};
 
-pub use super::row_sumcheck::{eq_tau_column, RowSumcheck};
+pub use super::row_sumcheck::{eq_tau_column, RowMatrix, RowSumcheck};
 
 /// Slots per row (the dense `Fq12` product form).
 pub const SLOTS: usize = 22;
@@ -333,7 +333,7 @@ impl RowRelation {
     }
 
     /// The `eq`-weighted part `Φ(row)` of the summand.
-    fn phi(&self, v: &[Fr]) -> Fr {
+    fn phi(&self, v: &[Fr], z_xi: Fr) -> Fr {
         let ch = &self.challenges;
         let c = &self.constants;
         let chunks = &v[Col::CHUNKS..Col::CHUNKS + CHUNK_COLUMNS];
@@ -343,7 +343,6 @@ impl RowRelation {
         for s in 0..SLOTS {
             products += v[Col::X + s] * v[Col::Y + s];
         }
-        let z_xi = self.z_xi(chunks);
         let k_xi = self.k_xi(chunks);
         let limb = products + v[Col::EXACT] * (Fr::one() - v[Col::FLAG]) * self.flag_xi
             - z_xi
@@ -449,15 +448,24 @@ impl RowRelation {
         // `stride` vanishes on GT rows, so it needs no `(1 − is_gt)` factor.
         let stride = sixteen * v[Col::IS_G1] + Fr::from_u64(8) * v[Col::IS_G2];
         let key = v[Col::IS_GT] * gt_key + (Fr::one() - v[Col::IS_GT]) * v[Col::S0] + stride * d;
-        let fp = |n: usize| (0..n).fold(Fr::zero(), |acc, s| acc + self.fp_pow[s] * v[Col::Y + s]);
-        let fingerprint = v[Col::IS_GT] * fp(FP_SLOTS_GT)
-            + v[Col::IS_G1] * fp(FP_SLOTS_G1)
-            + v[Col::IS_G2] * fp(FP_SLOTS_G2);
+        let mut fp = Fr::zero();
+        let mut fp_g1 = Fr::zero();
+        let mut fp_g2 = Fr::zero();
+        for s in 0..FP_SLOTS_GT {
+            fp += self.fp_pow[s] * v[Col::Y + s];
+            if s + 1 == FP_SLOTS_G1 {
+                fp_g1 = fp;
+            }
+            if s + 1 == FP_SLOTS_G2 {
+                fp_g2 = fp;
+            }
+        }
+        let fingerprint = v[Col::IS_GT] * fp + v[Col::IS_G1] * fp_g1 + v[Col::IS_G2] * fp_g2;
         (key, fingerprint)
     }
 
     /// The `Σ_x`-only part: LogUp sums, copy identities, digit constancy.
-    fn linear(&self, v: &[Fr]) -> Fr {
+    fn linear(&self, v: &[Fr], z_xi: Fr) -> Fr {
         let ch = &self.challenges;
         // Range LogUp: Σ_g h_g·e_{2,g} − mult·inv.
         let mut logup = Fr::zero();
@@ -473,13 +481,22 @@ impl RowRelation {
         // Copy identities: eq(τ,x)·Σ β_i·col_i(x) − B(x)·Z_ξ(x); looked-up
         // `Y_s` (the fingerprinted slots of selected rows) are not copies.
         let mut copied = Fr::zero();
+        let mask_gt = Fr::one() - v[Col::IS_GT];
+        let mask_g2 = mask_gt - v[Col::IS_G2];
+        let mask_g1_g2 = mask_g2 - v[Col::IS_G1];
         for s in 0..SLOTS {
             copied += self.copy_pow[s] * v[Col::X + s];
-            copied += self.copy_pow[SLOTS + s] * Self::copy_mask(v, s) * v[Col::Y + s];
+            let mask = if s < FP_SLOTS_G1 {
+                mask_g1_g2
+            } else if s < FP_SLOTS_G2 {
+                mask_g2
+            } else {
+                mask_gt
+            };
+            copied += self.copy_pow[SLOTS + s] * mask * v[Col::Y + s];
         }
         copied +=
             self.copy_pow[2 * SLOTS] * v[Col::F_POS] + self.copy_pow[2 * SLOTS + 1] * v[Col::F_NEG];
-        let z_xi = self.z_xi(&v[Col::CHUNKS..Col::CHUNKS + CHUNK_COLUMNS]);
         let copy = v[Col::EQ_TAU] * copied - v[Col::COPY_KERNEL] * z_xi;
         // Digit constancy: W(x)·Σ_b β'_b·bit_b(x).
         let bits = (0..DIGIT_COLUMNS).fold(Fr::zero(), |acc, b| {
@@ -502,7 +519,49 @@ impl RowRelation {
 
     /// The summand at one (possibly extrapolated) row of the matrix.
     pub fn summand(&self, v: &[Fr]) -> Fr {
-        v[Col::EQ_TAU] * self.phi(v) + self.linear(v)
+        let z_xi = self.z_xi(&v[Col::CHUNKS..Col::CHUNKS + CHUNK_COLUMNS]);
+        v[Col::EQ_TAU] * self.phi(v, z_xi) + self.linear(v, z_xi)
+    }
+
+    pub(crate) fn linear_summand(&self, v: &[Fr]) -> Fr {
+        let z_xi = self.z_xi(&v[Col::CHUNKS..Col::CHUNKS + CHUNK_COLUMNS]);
+        self.linear(v, z_xi)
+    }
+
+    pub(crate) fn leading_coefficient(&self, lo: &[Fr], hi: &[Fr]) -> Fr {
+        let delta = |column: usize| hi[column] - lo[column];
+        let eq = delta(Col::EQ_TAU);
+        let mut leading = Fr::zero();
+        for grp in 0..HELPER_COLUMNS {
+            let mut value = eq * delta(Col::HELPERS + grp) * self.gammas[GAMMA_RANGE + grp];
+            for i in 0..GROUP_SIZE {
+                value *= -delta(Self::range_column(GROUP_SIZE * grp + i).0 as usize);
+            }
+            leading += value;
+        }
+        leading += self.gammas[GAMMA_DIGIT_RANGE]
+            * eq
+            * -delta(Col::NEG)
+            * delta(Col::E0)
+            * delta(Col::E0 + 1)
+            * delta(Col::E0 + 2);
+        let e = delta(Col::E0)
+            + Fr::from_u64(2) * delta(Col::E0 + 1)
+            + Fr::from_u64(4) * delta(Col::E0 + 2);
+        leading -= Fr::from_u64(2)
+            * self.gammas[GAMMA_DIGIT_VALUE]
+            * eq
+            * delta(Col::SEL)
+            * delta(Col::ZERO)
+            * delta(Col::NEG)
+            * e;
+        leading += self.gammas[GAMMA_READ]
+            * eq
+            * delta(Col::H)
+            * delta(Col::IS_GT)
+            * delta(Col::ZERO)
+            * (delta(Col::COORD) - delta(Col::S0) - Fr::from_u64(16) * e);
+        leading
     }
 
     /// Every row-local constraint's unweighted value at a row (each is zero

@@ -2,8 +2,6 @@
 //! assign-mode walk reads challenge values and prover scalars from and asserts
 //! the circuit's schedule against.
 
-use std::cell::RefCell;
-
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::Fr;
@@ -13,6 +11,8 @@ use jolt_verifier::stages::{
     stage8,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::hash_table::{Decoder, Event as RecordedEvent, Recorded, RecordingTranscript};
 
 use super::{Pcs, Preprocessing, Proof, RelationError, Vc};
 
@@ -34,59 +34,7 @@ pub(crate) enum Event {
 pub(crate) struct Replay {
     pub events: Vec<Event>,
     pub state_in: [u8; 32],
-}
-
-thread_local! {
-    static LOG: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
-}
-
-fn take_log() -> Vec<Event> {
-    LOG.with(|log| std::mem::take(&mut *log.borrow_mut()))
-}
-
-fn push(event: Event) {
-    LOG.with(|log| log.borrow_mut().push(event));
-}
-
-/// Forwards every call to `T`, logging each `append_bytes` payload and each
-/// squeeze with its decoder kind. `Transcript::new` takes no state, so the log
-/// is thread-local (the replay is single-threaded on the transcript).
-#[derive(Default)]
-struct Recording<T>(T);
-
-impl<T: Transcript<Challenge = Fr>> Transcript for Recording<T> {
-    type Challenge = Fr;
-
-    fn new(label: &'static [u8]) -> Self {
-        Self(T::new(label))
-    }
-
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        push(Event::Append(bytes.to_vec()));
-        self.0.append_bytes(bytes);
-    }
-
-    fn challenge(&mut self) -> Fr {
-        let value = self.0.challenge();
-        push(Event::Squeeze {
-            kind: SqueezeKind::Challenge,
-            value,
-        });
-        value
-    }
-
-    fn challenge_scalar(&mut self) -> Fr {
-        let value = self.0.challenge_scalar();
-        push(Event::Squeeze {
-            kind: SqueezeKind::Scalar,
-            value,
-        });
-        value
-    }
-
-    fn state(&self) -> [u8; 32] {
-        self.0.state()
-    }
+    pub records: Vec<Recorded>,
 }
 
 /// The clear-mode stage spine of `jolt_verifier::verify` on a recording
@@ -97,15 +45,15 @@ pub(crate) fn replay(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<Replay, RelationError> {
-    let _ = take_log();
+    let _ = RecordingTranscript::<Blake3Transcript>::take_log();
     let (checked, mut transcript) = jolt_verifier::validate_and_seed_transcript::<
         Pcs,
         Vc,
-        Recording<Blake3Transcript>,
+        RecordingTranscript<Blake3Transcript>,
         _,
     >(preprocessing, public_io, proof, None)?;
-    let _ = take_log();
     let state_in = transcript.state();
+    let mut records = RecordingTranscript::<Blake3Transcript>::take_log();
     let formula_dimensions = build_formula_dimensions(
         proof,
         preprocessing,
@@ -175,6 +123,25 @@ pub(crate) fn replay(
         &stage6b,
         &stage7,
     )?);
-    let events = take_log();
-    Ok(Replay { events, state_in })
+    let stage_records = RecordingTranscript::<Blake3Transcript>::take_log();
+    let events = stage_records
+        .iter()
+        .map(|recorded| match &recorded.event {
+            RecordedEvent::Append { bytes, .. } => Event::Append(bytes.clone()),
+            RecordedEvent::Squeeze { decoder, value } => Event::Squeeze {
+                kind: match decoder {
+                    Decoder::Challenge125 => SqueezeKind::Challenge,
+                    Decoder::Scalar128 => SqueezeKind::Scalar,
+                },
+                value: *value,
+            },
+            RecordedEvent::Start { .. } => unreachable!("stage replay reuses the transcript"),
+        })
+        .collect();
+    records.extend(stage_records);
+    Ok(Replay {
+        events,
+        state_in,
+        records,
+    })
 }

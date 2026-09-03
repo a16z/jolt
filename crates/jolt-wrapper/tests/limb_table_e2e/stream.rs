@@ -22,11 +22,30 @@ fn stream_exporter_terms_match_the_members() {
 
     // Columns: kinds and ids in phase order, group counts as declared.
     let packing = 4;
+    let witness = staged(&w, &challenges.row, packing, 3);
+    let first_group = witness
+        .stream
+        .ids
+        .iter()
+        .map(|id| id.group)
+        .min()
+        .unwrap();
+    let mut physical_columns = vec![
+        Column::Bits(vec![0; 1usize << LOG_ROWS]);
+        witness.stream.group_count * packing
+    ];
+    for (local, id) in witness.stream.ids.iter().enumerate() {
+        let physical = (id.group - first_group) * packing + id.slot;
+        physical_columns[physical] = witness.matrix.column(local);
+    }
     let StreamWitness {
         relation,
-        matrix: columns,
+        matrix,
         stream,
-    } = staged(&w, &challenges.row, packing, 3);
+    } = witness;
+    let columns = (0..Col::WIDTH)
+        .map(|column| matrix.field_column(column))
+        .collect::<Vec<_>>();
     let declared: usize = commitment_phases(packing)
         .iter()
         .map(|p| p.group_count)
@@ -44,7 +63,7 @@ fn stream_exporter_terms_match_the_members() {
     };
     for spec in phases() {
         for local in spec.columns {
-            match (&stream.columns[physical(local)], local) {
+            match (&physical_columns[physical(local)], local) {
                 (Column::U16(values), l) if l < Col::DIGITS => {
                     assert!(values
                         .iter()
@@ -76,7 +95,7 @@ fn stream_exporter_terms_match_the_members() {
     }
 
     // Members driven jointly; the exporter's terms at their claims.
-    let mut members = Members::new(&relation, &columns, &w.layout, &columns[Col::D], rho);
+    let mut members = Members::new(&relation, &matrix, &w.layout, rho);
     assert_eq!(
         members.link.input_claim(),
         link_input_claim(r_link_claim(&w, rho), rho, theta, &w.layout),
@@ -144,7 +163,7 @@ fn stream_exporter_terms_match_the_members() {
         Bn254::g1_generator(),
         Bn254::g2_generator(),
     );
-    let packed = commit_packed(&stream.columns, packing, &setup).expect("packed columns");
+    let packed = commit_packed(&physical_columns, packing, &setup).expect("packed columns");
     let evaluations = packed.column_evaluations(&point).expect("evaluations");
     for (local, claim) in claims.iter().enumerate() {
         assert_eq!(evaluations[physical(local)], *claim, "column {local}");

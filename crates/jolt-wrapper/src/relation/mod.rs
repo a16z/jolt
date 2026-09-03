@@ -41,6 +41,7 @@ pub use dory::{DoryLinks, DoryScalar};
 pub use public_io::{outsourced_inputs, EvaluationPoints, OutsourcedInputs, StageValueInputs};
 pub use replay::SqueezeKind;
 
+use crate::hash_table::Recorded;
 use crate::profile::WrapperProfile;
 use ctx::Ctx;
 use replay::Replay;
@@ -174,7 +175,21 @@ pub fn generate_witness(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<Witness, RelationError> {
-    let Replay { events, state_in } = replay::replay(preprocessing, public_io, proof)?;
+    generate_witness_with_records(profile, preprocessing, public_io, proof)
+        .map(|(witness, _)| witness)
+}
+
+pub(crate) fn generate_witness_with_records(
+    profile: &WrapperProfile,
+    preprocessing: &Preprocessing,
+    public_io: &JoltDevice,
+    proof: &Proof,
+) -> Result<(Witness, Vec<Recorded>), RelationError> {
+    let Replay {
+        events,
+        state_in,
+        records,
+    } = replay::replay(preprocessing, public_io, proof)?;
     let mut ctx = Ctx::new(Some(events));
     let native = Native {
         preprocessing,
@@ -193,11 +208,14 @@ pub fn generate_witness(
         init_eval: read(public.init_eval),
         stage_values: public.stage_values.map(read),
     };
-    Ok(Witness {
-        values,
-        state_in,
-        outsourced,
-    })
+    Ok((
+        Witness {
+            values,
+            state_in,
+            outsourced,
+        },
+        records,
+    ))
 }
 
 /// The whole schedule, stage by stage. Build mode (`native == None`) leaves

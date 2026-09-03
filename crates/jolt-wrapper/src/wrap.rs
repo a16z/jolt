@@ -30,8 +30,8 @@ use crate::links::{
 };
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
-    build_relation, generate_witness, Pcs, Preprocessing, Proof, Relation, RelationError, Vc,
-    Witness,
+    build_relation, generate_witness_with_records, Pcs, Preprocessing, Proof, Relation,
+    RelationError, Vc, Witness,
 };
 use crate::stream::{
     assembly_transcript, combine_packed_phases, commit_packed, commitment_prefix_challenges,
@@ -778,13 +778,13 @@ impl WrapPreparation {
             return Err(WrapError::ProfileMismatch);
         }
         let relation = build_relation(&profile)?;
-        let relation_witness = generate_witness(&profile, preprocessing, public_io, proof)?;
+        let (relation_witness, records) =
+            generate_witness_with_records(&profile, preprocessing, public_io, proof)?;
         relation
             .matrices
             .check_witness(&relation_witness.values)
             .map_err(WrapError::UnsatisfiedRelation)?;
 
-        let records = verified_transcript(preprocessing, public_io, proof)?;
         let schedule = hash_key.schedule();
         let hash_public = PublicInputs::from_preamble(&preamble(&records), schedule)?;
         let hash_schedule = JoltSchedule::witness(&records, schedule)?;

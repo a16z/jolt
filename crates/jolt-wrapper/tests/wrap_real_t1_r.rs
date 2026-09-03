@@ -60,6 +60,45 @@ struct DoryLinkedProver {
     pending: Option<(UnivariatePoly<Fr>, UnivariatePoly<Fr>)>,
 }
 
+struct TimedProver<P> {
+    inner: P,
+    elapsed: Duration,
+}
+
+impl<P> TimedProver<P> {
+    fn new(inner: P) -> Self {
+        Self {
+            inner,
+            elapsed: Duration::ZERO,
+        }
+    }
+}
+
+impl<P: ProveRounds<Fr>> ProveRounds<Fr> for TimedProver<P> {
+    fn num_rounds(&self) -> usize {
+        self.inner.num_rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<Fr>,
+        round: usize,
+        previous_claim: Fr,
+    ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
+        let started = Instant::now();
+        let result = self.inner.prove_round(bind, round, previous_claim);
+        self.elapsed += started.elapsed();
+        result
+    }
+
+    fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
+        let started = Instant::now();
+        let result = self.inner.finish_rounds(bind);
+        self.elapsed += started.elapsed();
+        result
+    }
+}
+
 impl DoryLinkedProver {
     fn new(digit: LinkMember, scalar: DoryScalarLinkProver, input_claim: Fr) -> Self {
         let digit_claim = digit.input_claim();
@@ -440,16 +479,17 @@ fn real_wrapper_round_trip_and_tampers() {
                 .prover(witness, tau.clone(), beta, gamma, weights)
         })
         .collect::<Vec<_>>();
+    let t2_member_started = Instant::now();
     let T2Members {
-        rows: mut t2_rows,
+        rows: t2_rows,
         link: t2_digit_link,
     } = T2Members::new(
         &t2_witness.relation,
         &t2_witness.matrix,
         verifier_key.limb_layout(),
-        &t2_witness.matrix[T2Col::D],
         t2_rho,
     );
+    let t2_member_ms = t2_member_started.elapsed().as_millis();
     let scalar_link = verifier_key.dory_scalar_link(t2_rho);
     let scalar_prover = scalar_link.prover(&witness_values);
     let weights = link_weights(verifier_key.limb_layout(), t2_rho);
@@ -470,6 +510,7 @@ fn real_wrapper_round_trip_and_tampers() {
     assert!(hash_rows.input_claim().is_zero());
     assert!(copy_rows.iter().all(|rows| rows.input_claim().is_zero()));
     assert!(t2_rows.input_claim().is_zero());
+    let mut timed_t2_rows = TimedProver::new(t2_rows);
 
     let mut input_claims = vec![hash_input_claims[0], hash_input_claims[1]];
     input_claims.extend(copy_rows.iter().map(|rows| rows.input_claim()));
@@ -498,7 +539,7 @@ fn real_wrapper_round_trip_and_tampers() {
     }
     members.extend([
         StageMember {
-            prover: &mut t2_rows,
+            prover: &mut timed_t2_rows,
             input_claim: input_claims[t2_member],
             degree: 5,
             offset: 0,
@@ -520,6 +561,7 @@ fn real_wrapper_round_trip_and_tampers() {
         &setup,
     )
     .expect("prove real T1/T2/R wrapper");
+    let t2_stage_a_ms = timed_t2_rows.elapsed.as_millis();
     let prove_ms = lap_ms(&honest_started, &mut previous);
     let honest_online_ms = honest_started.elapsed().as_millis();
     let cpu_seconds = process_cpu_seconds() - cpu_start_s;
@@ -666,7 +708,9 @@ fn real_wrapper_round_trip_and_tampers() {
             ("commit_2c", phase_2c_commit_ms),
             ("t2_finish", t2_finish_ms),
             ("members", member_ms),
+            ("t2_member", t2_member_ms),
             ("prove", prove_ms),
+            ("t2_stage_a", t2_stage_a_ms),
             ("verify", verify_ms),
         ],
         (&uptime_start, &uptime_end),
@@ -744,10 +788,8 @@ fn commitment_link_order_handles_distinct_ram_and_bytecode_families() {
 }
 
 fn assert_t2_row_tamper_rejected(witness: &StreamWitness, column: usize, row: usize) {
-    let mut values = witness
-        .matrix
-        .iter()
-        .map(|values| values[row])
+    let mut values = (0..T2Col::WIDTH)
+        .map(|column| witness.matrix.value(column, row))
         .collect::<Vec<_>>();
     values[column] += Fr::one();
     assert!(witness
@@ -776,8 +818,12 @@ fn assert_t2_commitment_row_tamper_rejected(
         .expect("T2 stream columns");
     let local_group = id.group - group_offset;
     assert!(local_group < wire_phase_groups[1]);
-    let start = local_group * k;
-    let mut columns = witness.stream.columns[start..start + k].to_vec();
+    let mut columns = vec![Column::Bits(vec![0; ROWS]); k];
+    for (local, column_id) in witness.stream.ids.iter().enumerate() {
+        if column_id.group == id.group {
+            columns[column_id.slot] = witness.matrix.column(local);
+        }
+    }
     let Column::U16(values) = &mut columns[id.slot] else {
         panic!("T2 chunk column is u16");
     };
