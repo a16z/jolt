@@ -175,8 +175,8 @@ the bytecode Store flag; there is no separately committed selector.
 For chunk width `b = log_K`, the fused RV64 increment is represented by
 `64 / b` balanced radix-`2^b` one-hot digit columns plus one signed carry
 column. The carry uses the same `K × T` domain and encodes `-1`, `0`, or
-`1` modulo the radix. This uniform shape is required by the shared final
-point.
+`1` modulo the radix. This uniform shape is required by the shared
+OneHotTrace opening point.
 
 Lattice Booleanity proves the digit/carry cells boolean. Stage 7's digit-zero
 claim reduction accounts for the omitted zero row and folds the balanced
@@ -200,8 +200,9 @@ Stage 8 first resolves one final evaluation for every semantic column:
 - the program-image claim comes from the program-image claim reduction.
 
 Each object plan zero-prefix-embeds its logical claim to the object's physical
-arity and selector-reduces occupied slots. Akita then proves one grouped
-same-point statement. The canonical group order is:
+arity and selector-reduces occupied slots. Akita then proves one heterogeneous
+grouped opening statement whose groups use their own local evaluation points.
+The canonical group order is:
 
 ```text
 UntrustedAdvice?

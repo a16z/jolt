@@ -1063,8 +1063,8 @@ impl AkitaPackedProver<'_> {
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
             self.preprocessing.is_committed_mode(),
-            self.advice.trusted_advice_polynomial.is_some(),
-            self.advice.untrusted_advice_polynomial.is_some(),
+            false,
+            false,
         );
         let precommitted_scheduling_reference =
             PrecommittedClaimReduction::<AkitaFp128>::scheduling_reference(
@@ -1180,27 +1180,10 @@ impl AkitaPackedProver<'_> {
             &columns.one_hot,
         );
 
-        // The advice/committed address phases join at the batch tail
-        // (prefix-aligned within it), exactly as in the base stage-7
-        // assembly. The Stage 7 batch is address-reduction-sized — wider
-        // than the address alignment window the two-phase schedule assumes —
-        // so each instance compensates the batch's extra `2^Δ` claim
-        // scaling (see `boost_scale_pow_2`).
+        // The committed address phases join at the batch tail. The Stage 7
+        // batch is address-reduction-sized, so each instance compensates the
+        // batch's extra `2^Δ` claim scaling (see `boost_scale_pow_2`).
         use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams as _;
-        let mut advice_instances = Vec::new();
-        for advice in [
-            self.advice_reduction_prover_trusted.take(),
-            self.advice_reduction_prover_untrusted.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let mut advice = advice;
-            if advice.params().precommitted.num_address_phase_rounds() > 0 {
-                advice.transition_to_address_phase();
-                advice_instances.push(advice);
-            }
-        }
         let mut bytecode_reduction = self
             .bytecode_reduction_prover
             .take()
@@ -1218,11 +1201,6 @@ impl AkitaPackedProver<'_> {
         let batch_rounds = [hw_prover.params.num_rounds()]
             .into_iter()
             .chain(
-                advice_instances
-                    .iter()
-                    .map(|advice| advice.params().num_rounds()),
-            )
-            .chain(
                 bytecode_reduction
                     .iter()
                     .map(|prover| prover.params().num_rounds()),
@@ -1237,10 +1215,6 @@ impl AkitaPackedProver<'_> {
         let mut instances: Vec<
             Box<dyn crate::subprotocols::sumcheck_prover::SumcheckInstanceProver<_, _>>,
         > = vec![Box::new(hw_prover)];
-        for mut advice in advice_instances {
-            advice.boost_scale_pow_2(batch_rounds - advice.params().num_rounds());
-            instances.push(Box::new(advice));
-        }
         if let Some(mut prover) = bytecode_reduction {
             prover.boost_scale_pow_2(batch_rounds - prover.params().num_rounds());
             instances.push(Box::new(prover));

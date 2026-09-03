@@ -116,8 +116,9 @@ pub struct CommittedProgramSchedule {
 /// Per-polynomial claim-reduction layouts over the shared precommitted
 /// scheduling reference, derived once during input validation.
 ///
-/// The reference spans all present precommitted polynomials, so the layouts
-/// must be built together; stages read them from `CheckedInputs` instead of
+/// The reference spans all present polynomials that use claim reduction.
+/// Akita advice opens directly from stage 4 and is excluded. The layouts must
+/// be built together; stages read them from `CheckedInputs` instead of
 /// re-deriving the schedule.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrecommittedSchedule {

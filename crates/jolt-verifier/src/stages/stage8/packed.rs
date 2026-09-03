@@ -142,26 +142,25 @@ where
         .map_err(batch_failed)
 }
 
-/// Resolve one advice object's packing and commitment, or `None` when the
-/// reduction schedule says the kind is absent.
+/// Resolve one advice object's packing and commitment when both are present.
 fn advice_object<'a, PCS: CommitmentScheme>(
-    present: bool,
     leaf: Option<&EvaluationClaim<PCS::Field>>,
     commitment: Option<&'a PCS::Output>,
     kind: JoltAdviceKind,
 ) -> Result<Option<ResolvedObject<'a, PCS>>, VerifierError> {
-    if !present {
-        if commitment.is_some() || leaf.is_some() {
+    let (leaf, commitment) = match (leaf, commitment) {
+        (None, None) => return Ok(None),
+        (Some(_), None) => {
             return Err(batch_failed(format!(
-                "{kind:?} advice commitment or final claim supplied without a scheduled reduction"
+                "{kind:?} advice final claim supplied without a commitment"
             )));
         }
-        return Ok(None);
-    }
-    let (Some(leaf), Some(commitment)) = (leaf, commitment) else {
-        return Err(batch_failed(format!(
-            "{kind:?} advice object without a final claim or commitment"
-        )));
+        (None, Some(_)) => {
+            return Err(batch_failed(format!(
+                "{kind:?} advice commitment supplied without a final claim"
+            )));
+        }
+        (Some(leaf), Some(commitment)) => (leaf, commitment),
     };
     let plan = advice_packing_plan(kind, leaf.point.len()).map_err(batch_failed)?;
     Ok(Some(ResolvedObject { plan, commitment }))
@@ -225,13 +224,11 @@ where
         .reduce_claims(&packed_claims, transcript)
         .map_err(batch_failed)?;
     let untrusted = advice_object::<PCS>(
-        untrusted_advice_commitment.is_some(),
         leaves.get(&JoltCommittedPolynomial::UntrustedAdvice),
         untrusted_advice_commitment,
         JoltAdviceKind::Untrusted,
     )?;
     let trusted = advice_object::<PCS>(
-        trusted_advice_commitment.is_some(),
         leaves.get(&JoltCommittedPolynomial::TrustedAdvice),
         trusted_advice_commitment,
         JoltAdviceKind::Trusted,
@@ -384,9 +381,9 @@ pub fn object_leaf_claims<F: JoltField>(
         .collect()
 }
 
-/// Every packed column's single leaf claim, resolved from the precommitted
-/// reductions and stage 7, keyed by committed polynomial. The canonical
-/// object plans check coverage, point arity, and suffix compatibility.
+/// Every packed column's single leaf claim, resolved from stage 4, the
+/// precommitted reductions, and stage 7, keyed by committed polynomial. The
+/// canonical object plans check coverage, point arity, and suffix compatibility.
 /// Shared verbatim by the packed prover's stage 8.
 pub fn leaf_claims<F: JoltField>(
     schedule: &PrecommittedSchedule,
@@ -461,51 +458,33 @@ pub fn leaf_claims<F: JoltField>(
     )?;
 
     #[cfg(feature = "akita")]
-    {
-        for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
-            if let Some(contribution) = stage4.ram_val_check_init.advice_contribution(kind) {
-                let polynomial = match kind {
-                    JoltAdviceKind::Trusted => Poly::TrustedAdvice,
-                    JoltAdviceKind::Untrusted => Poly::UntrustedAdvice,
-                };
-                insert(
-                    &mut leaves,
-                    polynomial,
-                    leaf(contribution.opening_value, &contribution.opening_point),
-                )?;
-            }
-        }
-        for opening in precommitted_final_openings(
-            schedule,
-            &stage7.output_points,
-            &stage6b.output_points,
-            Some((&stage7.output_values, &stage6b.output_values)),
-        )? {
-            let value = opening.opening_claim.ok_or_else(|| {
-                batch_failed(format!(
-                    "missing clear final value for {:?}",
-                    opening.polynomial
-                ))
-            })?;
-            insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
+    for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
+        if let Some(contribution) = stage4.ram_val_check_init.advice_contribution(kind) {
+            let polynomial = match kind {
+                JoltAdviceKind::Trusted => Poly::TrustedAdvice,
+                JoltAdviceKind::Untrusted => Poly::UntrustedAdvice,
+            };
+            insert(
+                &mut leaves,
+                polynomial,
+                leaf(contribution.opening_value, &contribution.opening_point),
+            )?;
         }
     }
-    #[cfg(not(feature = "akita"))]
-    {
-        for opening in precommitted_final_openings(
-            schedule,
-            &stage7.output_points,
-            &stage6b.output_points,
-            Some((&stage7.output_values, &stage6b.output_values)),
-        )? {
-            let value = opening.opening_claim.ok_or_else(|| {
-                batch_failed(format!(
-                    "missing clear final value for {:?}",
-                    opening.polynomial
-                ))
-            })?;
-            insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
-        }
+
+    for opening in precommitted_final_openings(
+        schedule,
+        &stage7.output_points,
+        &stage6b.output_points,
+        Some((&stage7.output_values, &stage6b.output_values)),
+    )? {
+        let value = opening.opening_claim.ok_or_else(|| {
+            batch_failed(format!(
+                "missing clear final value for {:?}",
+                opening.polynomial
+            ))
+        })?;
+        insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
     }
 
     Ok(leaves)
