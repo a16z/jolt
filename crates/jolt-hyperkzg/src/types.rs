@@ -84,6 +84,33 @@ impl<P: PairingGroup> HyperKZGCommitment<P> {
     pub fn new(point: P::G1) -> Self {
         Self { point }
     }
+
+    /// Returns the committed G1 point.
+    pub fn point(&self) -> P::G1 {
+        self.point
+    }
+}
+
+impl<P: PairingGroup> HyperKZGVerifierSetup<P> {
+    /// G1 generator.
+    pub fn g1(&self) -> P::G1 {
+        self.g1
+    }
+
+    /// G2 generator.
+    pub fn g2(&self) -> P::G2 {
+        self.g2
+    }
+
+    /// G2 generator multiplied by the KZG trapdoor.
+    pub fn beta_g2(&self) -> P::G2 {
+        self.beta_g2
+    }
+
+    /// G2 generator multiplied by the square of the KZG trapdoor.
+    pub fn beta_sq_g2(&self) -> P::G2 {
+        self.beta_sq_g2
+    }
 }
 
 /// Opening proof for the HyperKZG protocol.

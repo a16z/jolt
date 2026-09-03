@@ -42,6 +42,7 @@ members = [
   "crates/jolt-witness-derive",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
+  "crates/jolt-zeromorph",
   "crates/jolt-wrapper",
   "crates/jolt-wrapper-bench",
   "crates/jolt-riscv",
@@ -438,6 +439,7 @@ jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
+jolt-zeromorph = { path = "./crates/jolt-zeromorph" }
 jolt-wrapper = { path = "./crates/jolt-wrapper" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
