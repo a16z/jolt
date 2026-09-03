@@ -85,6 +85,7 @@ pub struct BytecodeReadRafWitness {
 /// complement (the fused register legs read `1 − store`; the extension of
 /// `1 − f` is `1 − ext(f)`, so no second table binds).
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum StageVal {
     Table(usize),
     Complement(usize),
@@ -162,7 +163,6 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     /// store column the fused stages read.
     values: Vec<Polynomial<F>>,
     /// Each stage's raw-value source over `values`.
-    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     stage_vals: Vec<StageVal>,
     /// The RAF address identity `Int(k) = k`, bound alongside.
     int_table: Polynomial<F>,

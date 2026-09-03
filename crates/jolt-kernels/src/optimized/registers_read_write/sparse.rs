@@ -123,6 +123,7 @@ impl<F: JoltField> OneHotCoeff<F> for F {
 /// A `u16` index into a [`CoeffLut`] (newtype: a bare `u16` would collide
 /// with the blanket field-value impl under coherence).
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct LutIndex(u16);
 
 impl<F: JoltField> OneHotCoeff<F> for LutIndex {
@@ -165,6 +166,7 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
 /// A `u8` index for the write-coefficient table. That table reaches at most
 /// 256 entries before the read table forces both columns into field form.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct SmallLutIndex(u8);
 
 impl<F: JoltField> OneHotCoeff<F> for SmallLutIndex {
@@ -216,6 +218,7 @@ type SparseEntrySlot<F, R, W> = core::mem::MaybeUninit<SparseEntry<F, R, W>>;
 /// so the values neighboring this entry's slice never need field form until
 /// they participate in a merge.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct SparseEntry<F, R, W> {
     /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     pub(super) val: F,
@@ -485,15 +488,11 @@ fn split_pair_group<F, R, W>(
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) enum SparseEntries<F: JoltField> {
     Indexed {
-        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
         entries: Vec<IndexedSparseEntry<F>>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
     },
-    Direct(
-        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
-         Vec<DirectSparseEntry<F>>,
-    ),
+    Direct(Vec<DirectSparseEntry<F>>),
 }
 
 impl<F: JoltField> SparseEntries<F> {

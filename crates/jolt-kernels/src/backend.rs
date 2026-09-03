@@ -238,6 +238,7 @@ fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) 
 /// so `Vec<F>` renders through the native impl.
 #[cfg(feature = "allocative")]
 pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor<'_>) {
+    const { assert!(!std::mem::needs_drop::<T>()) };
     visitor.visit_simple(Key::new("elements"), values.capacity() * size_of::<T>());
 }
 

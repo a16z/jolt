@@ -53,6 +53,7 @@ use crate::{
 /// Per-cycle `[rd write value, rs1 value, rs2 value]`, kept as raw `u64`s so
 /// the eq folds run on small-scalar fused multiply-adds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RegisterValuesRow([u64; 3]);
 
 impl WitnessBundle for RegisterValuesRow {
@@ -172,7 +173,6 @@ struct ClaimReductionKernel<F: JoltField> {
     /// The full `τ_low` point (big-endian) the summand's eq factor fixes.
     tau: Vec<F>,
     /// Raw per-cycle `u64` values, kept for the phase-2 regeneration.
-    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     values: Vec<RegisterValuesRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
