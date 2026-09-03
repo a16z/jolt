@@ -11,6 +11,7 @@ pub mod hash_table;
 pub mod limb_table;
 pub mod profile;
 pub mod relation;
+pub mod spark;
 pub mod spartan;
 pub mod stream;
 pub mod wrap;
