@@ -4,12 +4,13 @@
 //! table and a non-native limb table bind its witness to the original proof.
 //! One batched stream and one HyperKZG opening verify the tables and links.
 
-pub mod carry;
+mod carry;
 pub mod hash_table;
 pub mod limb_table;
 pub mod links;
 pub mod profile;
 pub mod relation;
-pub mod spartan;
+mod spartan;
+pub use spartan::SpartanError;
 pub mod stream;
 pub mod wrap;

@@ -30,13 +30,11 @@ use jolt_wrapper::limb_table::schedule::WINDOW_ROW_BASE;
 use jolt_wrapper::limb_table::stream::{
     commitment_phases as t2_commitment_phases, link_input_claim,
     vk_group_range as t2_vk_group_range, LimbTableKey, Members as T2Members,
-    StreamBuilder as T2StreamBuilder, StreamWitness, T2Challenges,
+    StreamBuilder as T2StreamBuilder, StreamWitness, T2Challenges, PHASE_CHALLENGES,
 };
 use jolt_wrapper::links::DoryScalarLinkProver;
 use jolt_wrapper::profile::WrapperProfile;
 use jolt_wrapper::relation::{Pcs, ScheduleEntry, Vc};
-use jolt_wrapper::spartan::matrix_nnz;
-use jolt_wrapper::spartan::SharedWitnessColumn;
 use jolt_wrapper::stream::{
     commit_packed, Column, Commitment, StageMember, StageProof, TermContext, VerifierCost,
     WrapperProof,
@@ -175,10 +173,9 @@ fn real_wrapper_round_trip_and_tampers() {
     let started = Instant::now();
     let hash_columns = HashStreamColumns::new(&preparation.hash_table, k, 0);
     let public_columns = 1 + preparation.relation.public.num_public;
-    let shared_witness =
-        SharedWitnessColumn::new(&preparation.relation_witness.values[public_columns..], ROWS)
-            .expect("shared Spartan witness");
-    let witness_values = shared_witness.evaluations().to_vec();
+    let witness = &preparation.relation_witness.values[public_columns..];
+    let mut witness_values = vec![Fr::zero(); ROWS];
+    witness_values[..witness.len()].copy_from_slice(witness);
     let links = LinkMap::new(&preparation.hash_key);
     let (_, reference_layout) = T2Base::new(
         &preprocessing,
@@ -195,6 +192,7 @@ fn real_wrapper_round_trip_and_tampers() {
     key_profile_ms += started_key.elapsed().as_millis();
     let wrong_hash_key = hash_key.clone();
     let public_hash_key = hash_key.clone();
+    let preamble_hash_key = hash_key.clone();
     let program_hash_key = hash_key.clone();
     let started_key = Instant::now();
     let verifier_key = WrapVerifierKey::new(
@@ -208,11 +206,13 @@ fn real_wrapper_round_trip_and_tampers() {
     .expect("wrapper verifier key");
     let fixed_key_commit_ms = started_key.elapsed().as_millis();
     let copy_count = verifier_key.copy_count();
-    let t1_challenge_offset = 2 * copy_count;
+    let t1_challenge_offset = 0;
     let theta_offset = t1_challenge_offset + T1Challenges::count(LOG_ROWS);
-    let rho_offset = theta_offset + 1;
-    let t2_challenge_offset = rho_offset + 1;
-    let r_stage_challenge_offset = t2_challenge_offset + T2Challenges::count();
+    let t2_challenge_offset = theta_offset + 1;
+    let copy_challenge_offset = t2_challenge_offset + PHASE_CHALLENGES[0];
+    let rho_offset = copy_challenge_offset + 2 * copy_count;
+    let t2_after_1b_offset = rho_offset + 1;
+    let r_stage_challenge_offset = t2_after_1b_offset + T2Challenges::count() - PHASE_CHALLENGES[0];
     let statement = verifier_key.assembly_statement().clone();
     let adapt_r_ms = started.elapsed().as_millis();
 
@@ -233,6 +233,16 @@ fn real_wrapper_round_trip_and_tampers() {
     let phase_1a_groups = phase_1a_columns.len() / k;
     let t2_group_offset = phase_1a_groups;
     let t2_phases = t2_commitment_phases(k);
+    assert_eq!(
+        statement.commitment_phases[0].challenge_count,
+        T1Challenges::count(LOG_ROWS) + 1,
+        "phase 1a may draw only T1 randomizers and theta before T2 link values are committed"
+    );
+    assert_eq!(
+        statement.commitment_phases[1].challenge_count,
+        t2_phases[0].challenge_count + 2 * copy_count + 1,
+        "CopyLink beta/gamma and scalar-link rho must follow the T2 phase-1b commitment"
+    );
     let t2_vk_groups = t2_vk_group_range(k, 0).len();
     let helper_groups = (2 * copy_count).div_ceil(k);
     let total_groups = statement
@@ -248,14 +258,10 @@ fn real_wrapper_round_trip_and_tampers() {
         .expect("phase 1a commitments");
     let phase_1a_commit_ms = started.elapsed().as_millis();
     let phase_1_values = commitments.challenges().to_vec();
-    let copy_challenges = (0..copy_count)
-        .map(|index| (phase_1_values[2 * index], phase_1_values[2 * index + 1]))
-        .collect::<Vec<_>>();
     let hash_challenges =
         T1Challenges::from_challenges(&phase_1_values[t1_challenge_offset..theta_offset], LOG_ROWS);
     let hash_relation = hash_challenges.relation();
     let theta = phase_1_values[theta_offset];
-    let t2_rho = phase_1_values[rho_offset];
 
     let started = Instant::now();
     let (t2_base, t2_layout) = T2Base::new(
@@ -281,23 +287,35 @@ fn real_wrapper_round_trip_and_tampers() {
         .expect("T2 phase 1b commitments");
     let phase_1b_commit_ms = started.elapsed().as_millis();
 
-    let [xi, alpha] = commitments.challenges()[t2_challenge_offset..]
+    let phase_1b_values = commitments.challenges();
+    let [xi, alpha] = phase_1b_values[t2_challenge_offset..copy_challenge_offset]
         .try_into()
         .expect("T2 phase 1b challenges");
+    let copy_challenges = (0..copy_count)
+        .map(|index| {
+            (
+                phase_1b_values[copy_challenge_offset + 2 * index],
+                phase_1b_values[copy_challenge_offset + 2 * index + 1],
+            )
+        })
+        .collect::<Vec<_>>();
+    let t2_rho = phase_1b_values[rho_offset];
     let started = Instant::now();
     commitments = commitments
         .commit(t2_builder.phase_2a(xi, alpha), &statement, &setup)
         .expect("T2 phase 2a commitments");
     let phase_2a_commit_ms = started.elapsed().as_millis();
 
-    let fp_root = commitments.challenges()[t2_challenge_offset + 2];
+    let fp_root = commitments.challenges()[t2_after_1b_offset];
     let started = Instant::now();
     commitments = commitments
         .commit(t2_builder.phase_2b(fp_root), &statement, &setup)
         .expect("T2 phase 2b commitments");
     let phase_2b_commit_ms = started.elapsed().as_millis();
 
-    let known = commitments.challenges()[t2_challenge_offset..].to_vec();
+    let beta = commitments.challenges()[t2_after_1b_offset + 1];
+    let fp_combine = commitments.challenges()[t2_after_1b_offset + 2];
+    let copy_root = commitments.challenges()[t2_after_1b_offset + 3];
 
     let started = Instant::now();
     let copy_witnesses = (0..copy_count)
@@ -328,7 +346,7 @@ fn real_wrapper_round_trip_and_tampers() {
     pad_fr(&mut helper_columns, k);
     let helper_ms = started.elapsed().as_millis();
 
-    let mut final_phase_columns = t2_builder.phase_2c(known[3], known[4], known[5]).to_vec();
+    let mut final_phase_columns = t2_builder.phase_2c(beta, fp_combine, copy_root).to_vec();
     final_phase_columns.extend(helper_columns);
     let started = Instant::now();
     commitments = commitments
@@ -339,9 +357,9 @@ fn real_wrapper_round_trip_and_tampers() {
         .finish(&statement)
         .expect("all commitment phases");
     let full_challenges = committed.challenges();
-    assert_eq!(&full_challenges[..t2_challenge_offset], phase_1_values);
-    let t2_phase_challenges = &full_challenges[t2_challenge_offset..r_stage_challenge_offset];
-    let t2_challenges = T2Challenges::from_challenges(theta, t2_phase_challenges, t2_rho);
+    assert_eq!(&full_challenges[..=theta_offset], phase_1_values);
+    let t2_challenges =
+        T2Challenges::from_transcript(theta, full_challenges, t2_challenge_offset, rho_offset);
     let row = t2_challenges.row;
     let t2_witness = t2_builder.finish(
         row.tau,
@@ -374,6 +392,17 @@ fn real_wrapper_round_trip_and_tampers() {
         &setup,
     )
     .expect("wrong-pin wrapper key");
+    let mut wrong_hash_public = preparation.hash_public.clone();
+    wrong_hash_public.state_in[0] ^= 1;
+    let preamble_verifier_key = WrapVerifierKey::new(
+        &preparation.profile,
+        preamble_hash_key,
+        wrong_hash_public,
+        LimbTableKey::new(reference_layout.clone(), k, &setup).expect("preamble-mismatch T2 key"),
+        preparation.public_known.clone(),
+        &setup,
+    )
+    .expect("preamble-mismatch wrapper key");
     let mut wrong_public = preparation.public_known.clone();
     wrong_public[0] += Fr::one();
     let public_verifier_key = WrapVerifierKey::new(
@@ -569,6 +598,7 @@ fn real_wrapper_round_trip_and_tampers() {
         |proof| verify_wrapped_with_key(&verifier_key, proof, &verifier_setup).is_err(),
     );
     assert!(verify_wrapped_with_key(&wrong_verifier_key, &wrapped, &verifier_setup).is_err());
+    assert!(verify_wrapped_with_key(&preamble_verifier_key, &wrapped, &verifier_setup).is_err());
     assert!(verify_wrapped_with_key(&public_verifier_key, &wrapped, &verifier_setup).is_err());
     assert_t2_row_tamper_rejected(
         &t2_witness,
@@ -610,17 +640,15 @@ fn real_wrapper_round_trip_and_tampers() {
         ],
         &uptime,
     );
-    let matrix_nnz = matrix_nnz(&preparation.relation.matrices);
-    let public_nnz = preparation
+    let matrix_nnz = preparation
         .relation
         .matrices
         .a
         .iter()
         .chain(&preparation.relation.matrices.b)
         .chain(&preparation.relation.matrices.c)
-        .flatten()
-        .filter(|(column, _)| *column < public_columns)
-        .count();
+        .map(Vec::len)
+        .sum::<usize>();
     println!(
         "r1cs constraints={} variables={} public=7 witness={} matrix_nnz={} native_matrix_fr={}",
         preparation.relation.matrices.num_constraints,
@@ -629,7 +657,7 @@ fn real_wrapper_round_trip_and_tampers() {
             .len()
             .min(preparation.relation.matrices.num_vars - public_columns),
         matrix_nnz,
-        2 * public_nnz + 4 * (matrix_nnz - public_nnz),
+        cost.matrix_fr_mul,
     );
     println!(
         "links challenges={} absorbed_fr={} element_bytes=45152 copy_links={} copy_terms={} dory_scalars=173",

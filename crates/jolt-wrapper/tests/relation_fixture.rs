@@ -53,14 +53,14 @@ const FIBONACCI_UNITS_2_18: u32 = 19_660;
 const CACHE_DIR: &str = "/Volumes/Dev/scratch/wrapper-fixtures";
 
 /// Pinned row counts of the fibonacci 2^18 relation (L = 18, K = 13, σ = 11).
-const EXPECTED_CONSTRAINTS_2_18: usize = 5_254;
+const EXPECTED_CONSTRAINTS_2_18: usize = 5_323;
 const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage1", 268),
     ("stage2", 365),
     ("stage3", 342),
     ("stage4", 212),
-    ("stage5", 1_790),
-    ("stage6a", 229),
+    ("stage5", 1_857),
+    ("stage6a", 231),
     ("stage6b", 974),
     ("stage7", 795),
     ("stage8", 279),
@@ -249,7 +249,7 @@ fn fibonacci_2_18_relation() {
         relation, witness, ..
     } = &built;
     assert_eq!(relation.matrices.num_constraints, EXPECTED_CONSTRAINTS_2_18);
-    assert_eq!(relation.matrices.num_vars, 6_761);
+    assert_eq!(relation.matrices.num_vars, 6_831);
     assert_eq!(relation.public.num_public, 7);
     for (stage, rows) in EXPECTED_PER_STAGE_2_18 {
         assert_eq!(per_stage[stage], rows, "{stage}");

@@ -16,6 +16,8 @@ use super::{
     KZG_STAGE_SUM_ZERO_LABEL,
 };
 
+// The shared degree-5 opening also covers declared-degree-3 outer rounds; its
+// per-round soundness term is therefore 5/|Fr|.
 const MIN_SHARED_DEGREE: usize = 5;
 
 pub(crate) struct PendingRoundStage {

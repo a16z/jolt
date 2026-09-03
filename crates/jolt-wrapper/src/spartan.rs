@@ -13,8 +13,7 @@ use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::stream::{
-    AffineForm, Column, ColumnId, StageMemberSpec, StreamError, Term, TermContext, TermExporter,
-    TermObserver,
+    AffineForm, Column, ColumnId, StreamError, Term, TermContext, TermExporter, TermObserver,
 };
 
 pub(crate) const OUTER_DEGREE: usize = 3;
@@ -80,14 +79,6 @@ impl SharedWitnessColumn {
         })
     }
 
-    pub fn inner_member(&self) -> StageMemberSpec {
-        StageMemberSpec {
-            rounds: self.inner_rounds,
-            degree: INNER_DEGREE,
-            offset: 0,
-        }
-    }
-
     pub fn source_point(&self, inner_point: &[Fr]) -> Result<Vec<Fr>, SpartanError> {
         if inner_point.len() != self.inner_rounds {
             return Err(SpartanError::SharedPointDimension {
@@ -111,10 +102,6 @@ impl SharedWitnessColumn {
 
     pub fn inner_evaluations(&self) -> &[Fr] {
         &self.evaluations()[..1 << self.inner_rounds]
-    }
-
-    pub fn into_column(self) -> Column {
-        self.column
     }
 }
 
@@ -282,12 +269,8 @@ pub(crate) fn witness_linear_eval_observed<O: VerifierObserver>(
             actual: column_weights.len(),
         });
     }
-    let mut sum = Fr::zero();
-    for (matrix, matrix_weight) in [
-        (&r1cs.a, matrix_weights[0]),
-        (&r1cs.b, matrix_weights[1]),
-        (&r1cs.c, matrix_weights[2]),
-    ] {
+    let mut sums = [Fr::zero(); 3];
+    for (sum, matrix) in sums.iter_mut().zip([&r1cs.a, &r1cs.b, &r1cs.c]) {
         for (row, &row_weight) in matrix.iter().zip(row_weights) {
             for &(column, coefficient) in row {
                 if let Some(offset) = column.checked_sub(public_columns) {
@@ -299,21 +282,16 @@ pub(crate) fn witness_linear_eval_observed<O: VerifierObserver>(
                     )?;
                     let term = observer.fr_mul(row_weight, column_weight);
                     let term = observer.fr_mul(term, coefficient);
-                    sum += observer.fr_mul(term, matrix_weight);
+                    *sum += term;
                 }
             }
         }
     }
-    Ok(sum)
-}
-
-pub fn matrix_nnz(r1cs: &ConstraintMatrices<Fr>) -> usize {
-    r1cs.a
-        .iter()
-        .chain(&r1cs.b)
-        .chain(&r1cs.c)
-        .map(Vec::len)
-        .sum()
+    Ok(sums
+        .into_iter()
+        .zip(matrix_weights)
+        .map(|(sum, weight)| observer.fr_mul(sum, weight))
+        .sum())
 }
 
 pub(crate) fn project_witness_columns(

@@ -60,7 +60,7 @@ pub fn prove_assembly(
     )
 }
 
-pub struct SpartanAssembly<'a> {
+pub(crate) struct SpartanAssembly<'a> {
     pub matrices: &'a ConstraintMatrices<Fr>,
     pub public_inputs: &'a [Fr],
     pub witness: &'a [Fr],
@@ -75,7 +75,7 @@ pub(crate) struct SpartanVerifierAssembly<'a> {
     pub carry_member: usize,
 }
 
-pub fn prove_spartan_assembly(
+pub(crate) fn prove_spartan_assembly(
     packed: &PackedColumns,
     statement: &AssemblyStatement,
     mut members: Vec<StageMember<'_>>,
@@ -156,7 +156,7 @@ pub fn prove_spartan_assembly(
     let source_point = shared_witness.source_point(&inner_result.point)?;
     let mut carry = CarryProver::new(shared_witness.evaluations(), &source_point, witness_eval)
         .map_err(|_| StreamError::StageLink)?;
-    let carry_degree = carry.degree();
+    let carry_degree = CarryProver::degree();
     let mut stage_members = members
         .iter_mut()
         .map(|member| StageMember {
@@ -420,12 +420,13 @@ pub(crate) fn verify_spartan_assembly_from_transcript(
         transcript.append(&value);
     }
     let matrix_weights = draw_matrix_weights(transcript);
-    let row_weights = eq_evaluations_observed(&outer.point, &mut cost);
+    let mut matrix_cost = VerifierCost::default();
+    let row_weights = eq_evaluations_observed(&outer.point, &mut matrix_cost);
     let contributions = public_contributions_observed(
         spartan.matrices,
         &row_weights,
         spartan.public_inputs,
-        &mut cost,
+        &mut matrix_cost,
     )?;
     let mut inner_claim = Fr::zero();
     for (weight, value) in matrix_weights.into_iter().zip([
@@ -433,7 +434,7 @@ pub(crate) fn verify_spartan_assembly_from_transcript(
         bz - contributions.b,
         cz - contributions.c,
     ]) {
-        inner_claim += cost.fr_mul(weight, value);
+        inner_claim += matrix_cost.fr_mul(weight, value);
     }
     let inner_rounds = witness_len
         .checked_next_power_of_two()
@@ -451,19 +452,21 @@ pub(crate) fn verify_spartan_assembly_from_transcript(
         &[inner_claim],
         transcript,
         &mut cost,
-        |result, observer| {
-            let column_weights = eq_evaluations_observed(&result.point, observer);
+        |result, _observer| {
+            let column_weights = eq_evaluations_observed(&result.point, &mut matrix_cost);
             let linear_eval = witness_linear_eval_observed(
                 spartan.matrices,
                 &row_weights,
                 &column_weights,
                 1 + spartan.public_inputs.len(),
                 matrix_weights,
-                observer,
+                &mut matrix_cost,
             )?;
-            Ok(vec![observer.fr_mul(linear_eval, witness_eval)])
+            Ok(vec![matrix_cost.fr_mul(linear_eval, witness_eval)])
         },
     )?;
+    cost.fr_mul += matrix_cost.fr_mul;
+    cost.matrix_fr_mul += matrix_cost.fr_mul;
     transcript.append(&witness_eval);
     let common_rounds = statement.rows.trailing_zeros() as usize;
     let prefix_rounds = common_rounds

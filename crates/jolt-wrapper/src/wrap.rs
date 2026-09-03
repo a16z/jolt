@@ -33,7 +33,6 @@ use crate::relation::{
     build_relation, generate_witness, Pcs, Preprocessing, Proof, Relation, RelationError, Vc,
     Witness,
 };
-use crate::spartan::SpartanError;
 use crate::stream::{
     assembly_transcript, combine_packed_phases, commit_packed, commitment_prefix_challenges,
     prove_spartan_assembly, verify_spartan_assembly_from_transcript, AssemblyStatement, Column,
@@ -41,6 +40,7 @@ use crate::stream::{
     SpartanVerifierAssembly, StageMember, StageResult, StreamError, Term, TermContext,
     TermExporter, TermObserver, VerifierCost, WrapperProof,
 };
+use crate::SpartanError;
 
 pub const DEFAULT_COMMON_LOG_ROWS: usize = 18;
 pub const DEFAULT_PACKING_FACTOR: usize = 32;
@@ -268,7 +268,7 @@ impl WrapVerifierKey {
             public_inputs,
             setup,
         )?;
-        hash.challenge_offset = 2 * assembly.copies.len();
+        hash.challenge_offset = 0;
         Ok(Self {
             statement: assembly.statement,
             hash,

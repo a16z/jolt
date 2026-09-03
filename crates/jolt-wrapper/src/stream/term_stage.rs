@@ -420,8 +420,9 @@ pub(crate) fn eq_evaluations_observed<O: VerifierObserver>(
     for &challenge in point {
         let mut next = Vec::with_capacity(2 * evaluations.len());
         for value in evaluations {
-            next.push(observer.fr_mul(value, Fr::one() - challenge));
-            next.push(observer.fr_mul(value, challenge));
+            let first = observer.fr_mul(value, Fr::one() - challenge);
+            next.push(first);
+            next.push(value - first);
         }
         evaluations = next;
     }

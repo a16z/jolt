@@ -18,11 +18,13 @@ use super::schedule::Layout;
 /// (functions of earlier challenges and committed values) follow a challenge.
 /// The table has no phase-1a columns: everything depends on the offset
 /// challenge `θ` (drawn after T1's phase 1a), which the digits encode.
+/// Wrapper CopyLink challenges and `ρ` are drawn after phase 1b, alongside
+/// `ξ, α`, before any linked helper column is committed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     /// After `θ`, before `ξ, α`: chunks, digit bits and values, multiplicities, sign flags.
     OneB,
-    /// After `ξ, α`, before `fp_root`: operands `X, Y`, range helpers, the inverse table.
+    /// After `ξ, α` and wrapper link challenges, before `fp_root`: operands, range helpers, inverse.
     TwoA,
     /// After `fp_root`, before `β, fp_combine, copy_root`: the table fingerprints.
     TwoB,

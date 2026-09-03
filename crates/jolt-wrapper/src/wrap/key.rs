@@ -18,7 +18,7 @@ use crate::limb_table::dory::{input_elements, ElementKind as LimbElementKind, In
 use crate::limb_table::relation::Col as LimbCol;
 use crate::limb_table::schedule::Layout as LimbTableLayout;
 use crate::limb_table::stream::{
-    commitment_phases as limb_commitment_phases, LimbTableKey, T2Challenges,
+    commitment_phases as limb_commitment_phases, LimbTableKey, T2Challenges, PHASE_CHALLENGES,
 };
 use crate::links::{CopyLink, CopyLinkSide, CopyLinkTermSide, WIRES};
 use crate::profile::WrapperProfile;
@@ -95,11 +95,12 @@ pub(super) fn build_key_assembly(
     let helper_groups = helper_count.div_ceil(packing);
     let helper_base = (t2_group_offset + t2_groups) * packing;
 
-    let t1_challenge_offset = 2 * copies.len();
+    let t1_challenge_offset = 0;
     let theta_offset = t1_challenge_offset + T1Challenges::count(hash.schedule().log_rows);
-    let rho_offset = theta_offset + 1;
-    let t2_challenge_offset = rho_offset + 1;
-    let r_stage_challenge_offset = t2_challenge_offset + T2Challenges::count();
+    let t2_challenge_offset = theta_offset + 1;
+    let copy_challenge_offset = t2_challenge_offset + PHASE_CHALLENGES[0];
+    let rho_offset = copy_challenge_offset + 2 * copies.len();
+    let r_stage_challenge_offset = rho_offset + 1 + T2Challenges::count() - PHASE_CHALLENGES[0];
     let weights_offset = r_stage_challenge_offset + copies.len() * hash.schedule().log_rows;
     let t2_member = 2 + copies.len();
     let dory_member = t2_member + 1;
@@ -107,9 +108,14 @@ pub(super) fn build_key_assembly(
 
     let mut commitment_phases = vec![CommitmentPhase {
         group_count: phase_1a_groups,
-        challenge_count: t2_challenge_offset,
+        challenge_count: theta_offset + 1,
     }];
-    commitment_phases.extend(t2_phases);
+    commitment_phases.extend(t2_phases.into_iter().enumerate().map(|(index, mut phase)| {
+        if index == 0 {
+            phase.challenge_count += 2 * copies.len() + 1;
+        }
+        phase
+    }));
     let final_phase = commitment_phases
         .last_mut()
         .ok_or(WrapError::CommitmentPhases)?;
@@ -182,8 +188,8 @@ pub(super) fn build_key_assembly(
                 right,
                 tau: r_stage_challenge_offset + index * hash.schedule().log_rows
                     ..r_stage_challenge_offset + (index + 1) * hash.schedule().log_rows,
-                beta: 2 * index,
-                gamma: 2 * index + 1,
+                beta: copy_challenge_offset + 2 * index,
+                gamma: copy_challenge_offset + 2 * index + 1,
                 weights: weights_offset + 3 * index..weights_offset + 3 * (index + 1),
                 member: 2 + index,
             }

@@ -49,12 +49,8 @@ impl CarryProver {
         })
     }
 
-    pub fn degree(&self) -> usize {
+    pub const fn degree() -> usize {
         DEGREE
-    }
-
-    pub fn final_evaluation(&self) -> Fr {
-        self.polynomial.evals()[0]
     }
 
     fn bind(&mut self, challenge: Fr) {
@@ -114,18 +110,4 @@ impl ProveRounds<Fr> for CarryProver {
         self.bind(bind);
         Ok(())
     }
-}
-
-pub fn carried_final(
-    source_point: &[Fr],
-    target_point: &[Fr],
-    target_evaluation: Fr,
-) -> Result<Fr, CarryError> {
-    if source_point.len() != target_point.len() {
-        return Err(CarryError::PointDimension {
-            expected: source_point.len(),
-            actual: target_point.len(),
-        });
-    }
-    Ok(EqPolynomial::<Fr>::mle(source_point, target_point) * target_evaluation)
 }

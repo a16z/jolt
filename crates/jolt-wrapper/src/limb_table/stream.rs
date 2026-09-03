@@ -43,9 +43,8 @@ use super::wiring::{copy_kernel_table, fingerprint_columns};
 /// The challenges drawn after each committed phase (`phases()` order).
 pub const PHASE_CHALLENGES: [usize; 4] = [2, 1, 3, LOG_ROWS + 4];
 
-/// T2's transcript challenges: the offset challenge (drawn before phase
-/// 1b), the per-phase challenges, and the digit link's `ρ` (R's link
-/// challenge).
+/// T2's transcript challenges: the offset challenge, the per-phase challenges,
+/// and the digit link's `ρ`, which follows the phase-1b commitment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct T2Challenges {
     pub theta: Fr,
@@ -68,6 +67,27 @@ impl T2Challenges {
             row: row_challenges(phase_challenges),
             rho,
         }
+    }
+
+    /// Extracts T2's phase challenges, skipping the wrapper link-challenge block
+    /// after phase 1b when present.
+    pub fn from_transcript(
+        theta: Fr,
+        challenges: &[Fr],
+        challenge_offset: usize,
+        rho_offset: usize,
+    ) -> Self {
+        let phase_challenges = if rho_offset == challenge_offset + Self::count() {
+            challenges[challenge_offset..rho_offset].to_vec()
+        } else {
+            let first_end = challenge_offset + PHASE_CHALLENGES[0];
+            let remaining = Self::count() - PHASE_CHALLENGES[0];
+            let mut phase_challenges = challenges[challenge_offset..first_end].to_vec();
+            phase_challenges
+                .extend_from_slice(&challenges[rho_offset + 1..rho_offset + 1 + remaining]);
+            phase_challenges
+        };
+        Self::from_challenges(theta, &phase_challenges, challenges[rho_offset])
     }
 
     /// Little-endian `τ` (the kernels' row point).
@@ -637,11 +657,11 @@ pub struct StreamTermExporter<'a> {
 
 impl StreamTermExporter<'_> {
     pub fn challenges(&self, challenges: &[Fr]) -> T2Challenges {
-        let count = T2Challenges::count();
-        T2Challenges::from_challenges(
+        T2Challenges::from_transcript(
             challenges[self.theta_offset],
-            &challenges[self.challenge_offset..self.challenge_offset + count],
-            challenges[self.rho_offset],
+            challenges,
+            self.challenge_offset,
+            self.rho_offset,
         )
     }
 

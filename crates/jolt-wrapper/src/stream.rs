@@ -34,11 +34,11 @@ pub(crate) use shared_rounds::{
     verify_shared_opening, PendingRoundStage, VerifiedRoundStage,
 };
 mod protocol;
-pub use protocol::{
-    prove_assembly, prove_spartan_assembly, verify_assembly, verify_assembly_with_cost,
-    SpartanAssembly,
+pub use protocol::{prove_assembly, verify_assembly, verify_assembly_with_cost};
+pub(crate) use protocol::{
+    prove_spartan_assembly, verify_spartan_assembly_from_transcript, SpartanAssembly,
+    SpartanVerifierAssembly,
 };
-pub(crate) use protocol::{verify_spartan_assembly_from_transcript, SpartanVerifierAssembly};
 mod transcript;
 pub use transcript::commitment_prefix_challenges;
 pub(crate) use transcript::{assembly_transcript, CountingKeccakTranscript};
