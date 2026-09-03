@@ -142,23 +142,17 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     rounds: usize,
     /// Committed-program mode stages the raw bound `Val_s` wire claims.
     committed_program: bool,
     /// `γ^s` batching weights for the stage products, then `γ^{S+2}` for the
     /// entry product.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     stage_weights: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     entry_weight: F,
     /// The per-stage `Int` weights inside `Val'_s = Val_s + raf_weight_s·Int`.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     raf_weights: Vec<F>,
     /// The per-stage cycle-eq pushforwards `F_s` (the fused stages weighted
     /// by the fused deltas).
@@ -168,7 +162,7 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     /// store column the fused stages read.
     values: Vec<Polynomial<F>>,
     /// Each stage's raw-value source over `values`.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     stage_vals: Vec<StageVal>,
     /// The RAF address identity `Int(k) = k`, bound alongside.
     int_table: Polynomial<F>,

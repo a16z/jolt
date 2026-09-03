@@ -101,11 +101,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     progress: RoundProgress,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
@@ -113,10 +109,9 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     combined: Polynomial<F>,
     /// Native per-cycle operand values, kept for the post-hoc output-claim
     /// walk.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     rows: Vec<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bound_challenges: Vec<F>,
 }
 impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {

@@ -258,13 +258,9 @@ fn split_row_pair<F>(
 }
 
 /// The cycle-major sparse matrix: entries sorted by `(row, col)`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct CycleMajorMatrix<F> {
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     pub entries: Vec<CycleMajorEntry<F>>,
 }
 
@@ -607,13 +603,9 @@ fn merge_address_round_evals<F: JoltField>(
 }
 
 /// The address-major sparse matrix: entries sorted by `(col, row)`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct AddressMajorMatrix<F> {
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     pub entries: Vec<AddressMajorEntry<F>>,
 }
 

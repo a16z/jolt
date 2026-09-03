@@ -39,4 +39,6 @@ ignored = ["rand"]
 default = ["parallel"]
 parallel = ["rayon"]
 # Heap visitation of this crate's tables for the profile harness.
-allocative = ["dep:allocative"]
+# Forwards to jolt-field so `F: JoltField` implies `F: Allocative`; without
+# it this crate's field-generic derives cannot discharge their scalar bound.
+allocative = ["dep:allocative", "jolt-field/allocative"]

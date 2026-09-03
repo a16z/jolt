@@ -8,16 +8,11 @@ use rayon::prelude::*;
 use super::super::support::RoundChallenges;
 use super::rows::RegisterCycleRow;
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CoeffLut<F> {
     /// Power-of-two length; index 0 is always zero (zero seeds stay zero
     /// under `b + r·(a − b)`), which is what lets an absent merge partner
     /// keep index arithmetic pure.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) values: Vec<F>,
 }
 
@@ -487,21 +482,17 @@ fn split_pair_group<F, R, W>(
     group.split_at(odd_start)
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) enum SparseEntries<F: JoltField> {
     Indexed {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
         entries: Vec<IndexedSparseEntry<F>>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
     },
     Direct(
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-        Vec<DirectSparseEntry<F>>,
+        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
+         Vec<DirectSparseEntry<F>>,
     ),
 }
 
@@ -538,11 +529,7 @@ impl<F: JoltField> SparseEntries<F> {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct ReadWriteKernel<F: JoltField> {
     pub(super) log_t: usize,
     pub(super) log_k: usize,
@@ -552,11 +539,8 @@ pub(super) struct ReadWriteKernel<F: JoltField> {
     pub(super) gruen: GruenSplitEqPolynomial<F>,
     pub(super) inc: Polynomial<F>,
     // Address-phase dense state (K-sized), materialized at the transition.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) ra: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) wa: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) val: Vec<F>,
     /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
     #[cfg_attr(feature = "allocative", allocative(skip))]

@@ -139,17 +139,11 @@ fn extended_products(
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
 /// challenge vector, and all extended-node values of `t1`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanProductCarry<F: JoltField> {
     log_t: usize,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau_low: Vec<F>,
     rows: BundleStore<SpartanProductRow>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     t1_values: Vec<F>,
 }
 
@@ -294,15 +288,10 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 
 /// The linear-time product remainder rounds over the cycle domain
 /// (bound `LowToHigh`).
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -310,7 +299,6 @@ struct ProductRemainderKernel<F: JoltField> {
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     lagrange_weights: Vec<F>,
 }
 impl<F: JoltField> ProductRemainderKernel<F> {

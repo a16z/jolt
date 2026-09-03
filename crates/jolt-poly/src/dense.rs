@@ -27,6 +27,7 @@ const PAR_THRESHOLD: usize = 1024;
     clippy::unsafe_derive_deserialize,
     reason = "deserialization goes through PolynomialRaw and validates the polynomial dimensions"
 )]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     bound(serialize = "T: Serialize", deserialize = "T: for<'a> Deserialize<'a>"),
@@ -35,17 +36,6 @@ const PAR_THRESHOLD: usize = 1024;
 pub struct Polynomial<T> {
     evals: Vec<T>,
     num_vars: usize,
-}
-
-/// Sized from the evaluation table's reservation, without a `T: Allocative`
-/// bound — see [`crate::visit_scalars`].
-#[cfg(feature = "allocative")]
-impl<T> allocative::Allocative for Polynomial<T> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        crate::visit_scalars(&self.evals, &mut visitor);
-        visitor.exit();
-    }
 }
 
 /// Wire-format helper for validated deserialization.
