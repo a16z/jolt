@@ -19,6 +19,8 @@ use jolt_transcript::domain::{Label, LabelWithCount};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use super::tower::fq12_coords;
+use crate::relation::DoryScalar;
+use std::collections::HashMap;
 
 /// Fiat-Shamir challenges of one transparent Dory opening, in derivation order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -267,11 +269,16 @@ impl DoryWitnessInputs {
             .unwrap_or_else(|| unreachable!("transparent proofs carry a final message"))
     }
 
-    /// Every element's `Fq` coordinates in [`input_elements`] order; the
-    /// table's input rows hold exactly this vector.
+    /// Every element's `Fq` coordinates in [`input_elements`] order.
     pub fn coordinates(&self) -> Vec<ark_bn254::Fq> {
+        self.coordinates_in(&input_elements(self.sigma(), self.commitments.len()))
+    }
+
+    /// The elements' `Fq` coordinates in the given order (the layout's
+    /// `input_order`); the table's `Input` rows hold exactly this vector.
+    pub fn coordinates_in(&self, order: &[InputElement]) -> Vec<ark_bn254::Fq> {
         let mut out = Vec::new();
-        for element in input_elements(self.sigma(), self.commitments.len()) {
+        for &element in order {
             match element.kind() {
                 ElementKind::Gt => out.extend(fq12_coords(&self.gt(element))),
                 ElementKind::G1 => {
@@ -288,48 +295,215 @@ impl DoryWitnessInputs {
     }
 }
 
-/// A base of one of the multi-exponentiations: a committed input or a
-/// verifier-key constant (`chi[k]`, `delta_1r[k]`, `delta_2r[k]`, `ht`,
-/// `g1_0`, `g2_0`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Base {
-    Input(InputElement),
-    Chi(usize),
-    Delta1R(usize),
-    Delta2R(usize),
-    Ht,
-    G1Zero,
-    G2Zero,
-}
-
-/// One multi-exponentiation `Σ scalar_i · base_i` of the flattened check.
-#[derive(Clone, Debug)]
-pub struct MultiExp {
-    pub bases: Vec<Base>,
-    pub scalars: Vec<Fr>,
-}
-
-/// The flattened deferred check: `RHS = Σ_k s_k X_k` over the GT bases and
-/// the four pairing inputs, each a G1/G2 multi-exponentiation or a constant.
-/// `LHS = e(p1) e(H1, p2_g2) e(p3_g1, H2) e(p4_g1, Γ2_0)`.
-#[derive(Clone, Debug)]
-pub struct FlattenedCheck {
-    pub gt: MultiExp,
-    /// `E1_fin + d·Γ1_0`, `-γ⁻¹·(E1_acc + d·s2·Γ1_0)`, `d²·E1_init`.
-    pub g1: [MultiExp; 3],
-    /// `E2_fin + d⁻¹·Γ2_0`, `-γ·(E2_acc + d⁻¹·s1·Γ2_0)`.
-    pub g2: [MultiExp; 2],
-}
-
 fn inv(x: Fr) -> Fr {
     x.inverse()
         .unwrap_or_else(|| unreachable!("transcript challenges are nonzero"))
 }
 
+/// The scalar of one base: a named verifier wire of the R1CS lane
+/// (`jolt_wrapper::relation::DoryScalar`) or the constant one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Wire {
+    Named(DoryScalar),
+    One,
+}
+
+/// A GT base of `RHS = Σ_k s_k X_k`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GtBase {
+    Input(InputElement),
+    /// `χ[k]` of the verifier key.
+    Chi(usize),
+    /// `Δ1R[k]` of the verifier key (`k = σ − round`).
+    Delta1R(usize),
+    Delta2R(usize),
+    Ht,
+}
+
+/// A G1 base: a committed element, the setup generator `Γ1_0`, or the
+/// negated output of the accumulator chain (`−E1_acc`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum G1Base {
+    Input(InputElement),
+    Gamma1Zero,
+    NegAcc,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum G2Base {
+    Input(InputElement),
+    Gamma2Zero,
+    NegAcc,
+}
+
+/// `Σ_i wire_i · base_i`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Msm<B> {
+    pub bases: Vec<(B, Wire)>,
+}
+
+/// The flattened deferred check with the pairing inputs regrouped so that
+/// every scalar is a named wire: `RHS = Σ_k s_k X_k` and
+/// `LHS = e(A1, E2_fin) · e(H1, B2) · e(A3, H2) · e(A4, Γ2_0)` with
+/// `A1 = E1_fin + d·Γ1_0`, `A3 = γ⁻¹·(−E1_acc) + (−γ⁻¹ d s2)·Γ1_0`,
+/// `A4 = d²·E1_init + d⁻¹·E1_fin + Γ1_0` (the `d⁻¹·A1` term of the original
+/// `e(A1, E2_fin + d⁻¹Γ2_0)` moved onto the `Γ2_0` pair by bilinearity),
+/// `B2 = γ·(−E2_acc') + (−γ d⁻¹ s1)·Γ2_0`, `E2_acc' = E2_acc + y·Γ2_0`.
+/// The structure depends only on `(σ, n)`; the wire values on the statement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlattenedCheck {
+    pub sigma: usize,
+    pub n: usize,
+    pub gt: Msm<GtBase>,
+    /// `E1_acc = Σ_j β_j E1β_j + α_j E1+_j + α_j⁻¹ E1−_j + E1_init` (`3σ + 1` bases).
+    pub g1_acc: Msm<G1Base>,
+    pub g1_a3: Msm<G1Base>,
+    pub g1_a1: Msm<G1Base>,
+    pub g1_a4: Msm<G1Base>,
+    /// `E2_acc' = Σ_j β_j⁻¹ E2β_j + α_j E2+_j + α_j⁻¹ E2−_j + y·Γ2_0` (`3σ + 1` bases).
+    pub g2_acc: Msm<G2Base>,
+    pub g2_b2: Msm<G2Base>,
+}
+
 impl FlattenedCheck {
     /// The closed form of `dory-offload-study.md` §1.4 (the one owner of the
-    /// base/scalar pairing).
+    /// base/wire pairing).
+    pub fn derive(sigma: usize, n: usize) -> Self {
+        use DoryScalar as S;
+        let mut gt: Vec<(GtBase, Wire)> = Vec::with_capacity(9 * sigma + n + 4);
+        gt.push((GtBase::Input(InputElement::VmvC), Wire::One));
+        for i in 0..n {
+            gt.push((
+                GtBase::Input(InputElement::Commitment(i)),
+                Wire::Named(S::CommitmentWeight(i)),
+            ));
+        }
+        gt.push((GtBase::Input(InputElement::VmvD2), Wire::Named(S::D2Init)));
+        for round in 0..sigma {
+            let k = sigma - 1 - round;
+            gt.extend([
+                (
+                    GtBase::Input(InputElement::CPlus(round)),
+                    Wire::Named(S::Alpha(round)),
+                ),
+                (
+                    GtBase::Input(InputElement::CMinus(round)),
+                    Wire::Named(S::AlphaInv(round)),
+                ),
+                (
+                    GtBase::Input(InputElement::D1Left(round)),
+                    Wire::Named(S::UAlpha(round)),
+                ),
+                (
+                    GtBase::Input(InputElement::D1Right(round)),
+                    Wire::Named(S::U(round)),
+                ),
+                (
+                    GtBase::Input(InputElement::D2Left(round)),
+                    Wire::Named(S::VAlphaInv(round)),
+                ),
+                (
+                    GtBase::Input(InputElement::D2Right(round)),
+                    Wire::Named(S::V(round)),
+                ),
+                (GtBase::Delta1R(sigma - round), Wire::Named(S::Delta1R(k))),
+                (GtBase::Delta2R(sigma - round), Wire::Named(S::Delta2R(k))),
+            ]);
+        }
+        for k in 0..sigma {
+            gt.push((GtBase::Chi(k), Wire::Named(S::Chi(k))));
+        }
+        gt.push((GtBase::Chi(sigma), Wire::One));
+        gt.push((GtBase::Ht, Wire::Named(S::Ht)));
+
+        let mut g1_acc = Vec::with_capacity(3 * sigma + 1);
+        let mut g2_acc = Vec::with_capacity(3 * sigma + 1);
+        for round in 0..sigma {
+            g1_acc.extend([
+                (
+                    G1Base::Input(InputElement::E1Beta(round)),
+                    Wire::Named(S::Beta(round)),
+                ),
+                (
+                    G1Base::Input(InputElement::E1Plus(round)),
+                    Wire::Named(S::Alpha(round)),
+                ),
+                (
+                    G1Base::Input(InputElement::E1Minus(round)),
+                    Wire::Named(S::AlphaInv(round)),
+                ),
+            ]);
+            g2_acc.extend([
+                (
+                    G2Base::Input(InputElement::E2Beta(round)),
+                    Wire::Named(S::BetaInv(round)),
+                ),
+                (
+                    G2Base::Input(InputElement::E2Plus(round)),
+                    Wire::Named(S::Alpha(round)),
+                ),
+                (
+                    G2Base::Input(InputElement::E2Minus(round)),
+                    Wire::Named(S::AlphaInv(round)),
+                ),
+            ]);
+        }
+        g1_acc.push((G1Base::Input(InputElement::VmvE1), Wire::One));
+        g2_acc.push((G2Base::Gamma2Zero, Wire::Named(S::Evaluation)));
+        Self {
+            sigma,
+            n,
+            gt: Msm { bases: gt },
+            g1_acc: Msm { bases: g1_acc },
+            g1_a3: Msm {
+                bases: vec![
+                    (G1Base::NegAcc, Wire::Named(S::GammaInv)),
+                    (G1Base::Gamma1Zero, Wire::Named(S::PairingG1ZeroScalar)),
+                ],
+            },
+            g1_a1: Msm {
+                bases: vec![
+                    (G1Base::Input(InputElement::FinalE1), Wire::One),
+                    (G1Base::Gamma1Zero, Wire::Named(S::D)),
+                ],
+            },
+            g1_a4: Msm {
+                bases: vec![
+                    (G1Base::Input(InputElement::VmvE1), Wire::Named(S::DSquared)),
+                    (G1Base::Input(InputElement::FinalE1), Wire::Named(S::DInv)),
+                    (G1Base::Gamma1Zero, Wire::One),
+                ],
+            },
+            g2_acc: Msm { bases: g2_acc },
+            g2_b2: Msm {
+                bases: vec![
+                    (G2Base::NegAcc, Wire::Named(S::Gamma)),
+                    (G2Base::Gamma2Zero, Wire::Named(S::PairingG2ZeroScalar)),
+                ],
+            },
+        }
+    }
+
+    /// The four G1 chains in evaluation order (`A3` reads the accumulator).
+    pub fn g1_chains(&self) -> [&Msm<G1Base>; 4] {
+        [&self.g1_acc, &self.g1_a3, &self.g1_a1, &self.g1_a4]
+    }
+
+    pub fn g2_chains(&self) -> [&Msm<G2Base>; 2] {
+        [&self.g2_acc, &self.g2_b2]
+    }
+}
+
+/// The verifier wires' values for one statement (what the R1CS lane's
+/// witness holds; the oracle for the digit link).
+#[derive(Clone, Debug)]
+pub struct WireValues {
+    values: HashMap<DoryScalar, Fr>,
+}
+
+impl WireValues {
     pub fn derive(statement: &DoryStatement, sigma: usize, n: usize) -> Self {
+        use DoryScalar as S;
         let ch = &statement.challenges;
         assert_eq!(ch.beta.len(), sigma);
         assert_eq!(ch.alpha.len(), sigma);
@@ -338,148 +512,92 @@ impl FlattenedCheck {
         let point = &statement.point;
         let d = ch.d;
         let d_inv = inv(d);
-        let d_sq = d * d;
         let gamma_inv = inv(ch.gamma);
-        let beta0_inv = inv(ch.beta[0]);
-
         let mut s2_coords = vec![Fr::zero(); sigma];
         s2_coords[..nu].copy_from_slice(&point[sigma..]);
+        let mut values = HashMap::new();
+        let mut set = |wire: S, value: Fr| {
+            let _ = values.insert(wire, value);
+        };
+        set(S::Evaluation, statement.evaluation);
+        let mut rho_power = inv(ch.beta[0]);
+        for i in 0..n {
+            set(S::CommitmentWeight(i), rho_power);
+            rho_power *= statement.rho;
+        }
+        set(S::Gamma, ch.gamma);
+        set(S::GammaInv, gamma_inv);
+        set(S::D, d);
+        set(S::DInv, d_inv);
+        set(S::DSquared, d * d);
+        set(S::D2Init, ch.beta[0] + d * d);
         let mut s1_acc = Fr::one();
         let mut s2_acc = Fr::one();
-        let mut chi_scalars = vec![Fr::one(); sigma + 1];
-        let uv = |round: usize| {
-            if round + 1 < sigma {
+        let mut chi = vec![Fr::one(); sigma];
+        for round in 0..sigma {
+            let alpha = ch.alpha[round];
+            let alpha_inv = inv(alpha);
+            let beta = ch.beta[round];
+            let beta_inv = inv(beta);
+            let (u, v) = if round + 1 < sigma {
                 (inv(ch.beta[round + 1]), ch.beta[round + 1])
             } else {
                 (d_inv, d)
-            }
-        };
-        for round in 0..sigma {
-            let alpha = ch.alpha[round];
-            let alpha_inv = inv(alpha);
-            let idx = sigma - round - 1;
-            s1_acc *= alpha * (Fr::one() - point[idx]) + point[idx];
-            s2_acc *= alpha_inv * (Fr::one() - s2_coords[idx]) + s2_coords[idx];
-            let (u, v) = uv(round);
-            chi_scalars[idx] += u * alpha * ch.beta[round] + v * alpha_inv * inv(ch.beta[round]);
+            };
+            let k = sigma - 1 - round;
+            s1_acc *= alpha * (Fr::one() - point[k]) + point[k];
+            s2_acc *= alpha_inv * (Fr::one() - s2_coords[k]) + s2_coords[k];
+            chi[k] += u * alpha * beta + v * alpha_inv * beta_inv;
+            set(S::Beta(round), beta);
+            set(S::BetaInv(round), beta_inv);
+            set(S::Alpha(round), alpha);
+            set(S::AlphaInv(round), alpha_inv);
+            set(S::U(round), u);
+            set(S::V(round), v);
+            set(S::UAlpha(round), u * alpha);
+            set(S::VAlphaInv(round), v * alpha_inv);
+            set(S::Delta1R(k), u * beta);
+            set(S::Delta2R(k), v * beta_inv);
         }
+        for (k, value) in chi.into_iter().enumerate() {
+            set(S::Chi(k), value);
+        }
+        set(S::S1Acc, s1_acc);
+        set(S::S2Acc, s2_acc);
+        set(S::Ht, s1_acc * s2_acc);
+        set(S::PairingG2ZeroScalar, -ch.gamma * d_inv * s1_acc);
+        set(S::PairingG1ZeroScalar, -gamma_inv * d * s2_acc);
+        Self { values }
+    }
 
-        let mut gt = MultiExp {
-            bases: Vec::with_capacity(9 * sigma + n + 4),
-            scalars: Vec::with_capacity(9 * sigma + n + 4),
-        };
-        let push = |m: &mut MultiExp, base: Base, scalar: Fr| {
-            m.bases.push(base);
-            m.scalars.push(scalar);
-        };
-        push(&mut gt, Base::Input(InputElement::VmvC), Fr::one());
-        let mut rho_power = Fr::one();
-        for i in 0..n {
-            push(
-                &mut gt,
-                Base::Input(InputElement::Commitment(i)),
-                beta0_inv * rho_power,
-            );
-            rho_power *= statement.rho;
-        }
-        push(&mut gt, Base::Input(InputElement::VmvD2), ch.beta[0] + d_sq);
-        for round in 0..sigma {
-            let alpha = ch.alpha[round];
-            let alpha_inv = inv(alpha);
-            let beta = ch.beta[round];
-            let (u, v) = uv(round);
-            push(&mut gt, Base::Input(InputElement::CPlus(round)), alpha);
-            push(&mut gt, Base::Input(InputElement::CMinus(round)), alpha_inv);
-            push(&mut gt, Base::Input(InputElement::D1Left(round)), u * alpha);
-            push(&mut gt, Base::Input(InputElement::D1Right(round)), u);
-            push(
-                &mut gt,
-                Base::Input(InputElement::D2Left(round)),
-                v * alpha_inv,
-            );
-            push(&mut gt, Base::Input(InputElement::D2Right(round)), v);
-            push(&mut gt, Base::Delta1R(sigma - round), u * beta);
-            push(&mut gt, Base::Delta2R(sigma - round), v * inv(beta));
-        }
-        for (k, scalar) in chi_scalars.into_iter().enumerate() {
-            push(&mut gt, Base::Chi(k), scalar);
-        }
-        push(&mut gt, Base::Ht, s1_acc * s2_acc);
-
-        let mut p3_g1 = MultiExp {
-            bases: Vec::with_capacity(3 * sigma + 2),
-            scalars: Vec::with_capacity(3 * sigma + 2),
-        };
-        let mut p2_g2 = MultiExp {
-            bases: Vec::with_capacity(3 * sigma + 1),
-            scalars: Vec::with_capacity(3 * sigma + 1),
-        };
-        for round in 0..sigma {
-            let alpha = ch.alpha[round];
-            let alpha_inv = inv(alpha);
-            let beta = ch.beta[round];
-            push(
-                &mut p3_g1,
-                Base::Input(InputElement::E1Beta(round)),
-                -gamma_inv * beta,
-            );
-            push(
-                &mut p3_g1,
-                Base::Input(InputElement::E1Plus(round)),
-                -gamma_inv * alpha,
-            );
-            push(
-                &mut p3_g1,
-                Base::Input(InputElement::E1Minus(round)),
-                -gamma_inv * alpha_inv,
-            );
-            push(
-                &mut p2_g2,
-                Base::Input(InputElement::E2Beta(round)),
-                -ch.gamma * inv(beta),
-            );
-            push(
-                &mut p2_g2,
-                Base::Input(InputElement::E2Plus(round)),
-                -ch.gamma * alpha,
-            );
-            push(
-                &mut p2_g2,
-                Base::Input(InputElement::E2Minus(round)),
-                -ch.gamma * alpha_inv,
-            );
-        }
-        push(&mut p3_g1, Base::Input(InputElement::VmvE1), -gamma_inv);
-        push(&mut p3_g1, Base::G1Zero, -gamma_inv * d * s2_acc);
-        push(
-            &mut p2_g2,
-            Base::G2Zero,
-            -ch.gamma * (statement.evaluation + d_inv * s1_acc),
-        );
-        let p1_g1 = MultiExp {
-            bases: vec![Base::Input(InputElement::FinalE1), Base::G1Zero],
-            scalars: vec![Fr::one(), d],
-        };
-        let p4_g1 = MultiExp {
-            bases: vec![Base::Input(InputElement::VmvE1)],
-            scalars: vec![d_sq],
-        };
-        let p1_g2 = MultiExp {
-            bases: vec![Base::Input(InputElement::FinalE2), Base::G2Zero],
-            scalars: vec![Fr::one(), d_inv],
-        };
+    /// Wire values taken from an R1CS witness (the committed adapter path).
+    pub fn from_wires(pairs: Vec<(DoryScalar, Fr)>) -> Self {
         Self {
-            gt,
-            g1: [p1_g1, p3_g1, p4_g1],
-            g2: [p1_g2, p2_g2],
+            values: pairs.into_iter().collect(),
         }
+    }
+
+    pub fn get(&self, wire: &Wire) -> Fr {
+        match wire {
+            Wire::One => Fr::one(),
+            Wire::Named(name) => *self
+                .values
+                .get(name)
+                .unwrap_or_else(|| unreachable!("wire {name:?} has a value")),
+        }
+    }
+
+    pub fn scalars<B>(&self, msm: &Msm<B>) -> Vec<Fr> {
+        msm.bases.iter().map(|(_, wire)| self.get(wire)).collect()
     }
 }
 
 /// Native evaluation of the flattened check (the test oracle): plain
-/// exponentiations and arkworks' multi-pairing.
+/// exponentiations and arkworks' multi-pairing over the regrouped pairs.
 pub struct NativeCheck {
     pub rhs: Fq12,
+    pub e1_acc: G1Affine,
+    pub e2_acc: G2Affine,
     pub pairs: [(G1Affine, G2Affine); 4],
     pub miller: Fq12,
     pub lhs: Fq12,
@@ -488,54 +606,54 @@ pub struct NativeCheck {
 impl NativeCheck {
     pub fn evaluate(
         check: &FlattenedCheck,
+        values: &WireValues,
         setup: &DorySetupInputs,
         witness: &DoryWitnessInputs,
     ) -> Self {
-        let gt_base = |base: Base| match base {
-            Base::Input(e) => witness.gt(e),
-            Base::Chi(k) => setup.chi[k],
-            Base::Delta1R(k) => setup.delta_1r[k],
-            Base::Delta2R(k) => setup.delta_2r[k],
-            Base::Ht => setup.ht,
-            Base::G1Zero | Base::G2Zero => unreachable!("not a GT base"),
+        let gt_base = |base: GtBase| match base {
+            GtBase::Input(e) => witness.gt(e),
+            GtBase::Chi(k) => setup.chi[k],
+            GtBase::Delta1R(k) => setup.delta_1r[k],
+            GtBase::Delta2R(k) => setup.delta_2r[k],
+            GtBase::Ht => setup.ht,
         };
         let mut rhs = Fq12::one();
-        for (base, scalar) in check.gt.bases.iter().zip(&check.gt.scalars) {
-            rhs *= gt_base(*base).pow(scalar.into_bigint());
+        for (base, wire) in &check.gt.bases {
+            rhs *= gt_base(*base).pow(values.get(wire).into_bigint());
         }
-        let g1 = |m: &MultiExp| {
+        let g1 = |m: &Msm<G1Base>, acc: G1Affine| {
             m.bases
                 .iter()
-                .zip(&m.scalars)
-                .fold(G1Projective::zero(), |acc, (base, scalar)| {
+                .fold(G1Projective::zero(), |sum, (base, wire)| {
                     let point = match base {
-                        Base::Input(e) => witness.g1(*e),
-                        Base::G1Zero => setup.g1_0,
-                        _ => unreachable!("not a G1 base"),
+                        G1Base::Input(e) => witness.g1(*e),
+                        G1Base::Gamma1Zero => setup.g1_0,
+                        G1Base::NegAcc => -acc,
                     };
-                    acc + point.mul_bigint(scalar.into_bigint())
+                    sum + point.mul_bigint(values.get(wire).into_bigint())
                 })
                 .into_affine()
         };
-        let g2 = |m: &MultiExp| {
+        let g2 = |m: &Msm<G2Base>, acc: G2Affine| {
             m.bases
                 .iter()
-                .zip(&m.scalars)
-                .fold(G2Projective::zero(), |acc, (base, scalar)| {
+                .fold(G2Projective::zero(), |sum, (base, wire)| {
                     let point = match base {
-                        Base::Input(e) => witness.g2(*e),
-                        Base::G2Zero => setup.g2_0,
-                        _ => unreachable!("not a G2 base"),
+                        G2Base::Input(e) => witness.g2(*e),
+                        G2Base::Gamma2Zero => setup.g2_0,
+                        G2Base::NegAcc => -acc,
                     };
-                    acc + point.mul_bigint(scalar.into_bigint())
+                    sum + point.mul_bigint(values.get(wire).into_bigint())
                 })
                 .into_affine()
         };
+        let e1_acc = g1(&check.g1_acc, G1Affine::identity());
+        let e2_acc = g2(&check.g2_acc, G2Affine::identity());
         let pairs = [
-            (g1(&check.g1[0]), g2(&check.g2[0])),
-            (setup.h1, g2(&check.g2[1])),
-            (g1(&check.g1[1]), setup.h2),
-            (g1(&check.g1[2]), setup.g2_0),
+            (g1(&check.g1_a1, e1_acc), witness.g2(InputElement::FinalE2)),
+            (setup.h1, g2(&check.g2_b2, e2_acc)),
+            (g1(&check.g1_a3, e1_acc), setup.h2),
+            (g1(&check.g1_a4, e1_acc), setup.g2_0),
         ];
         let miller = Bn254::multi_miller_loop(pairs.map(|p| p.0), pairs.map(|p| p.1)).0;
         let lhs = Bn254::final_exponentiation(ark_ec::pairing::MillerLoopOutput(miller))
@@ -543,6 +661,8 @@ impl NativeCheck {
             .0;
         Self {
             rhs,
+            e1_acc,
+            e2_acc,
             pairs,
             miller,
             lhs,

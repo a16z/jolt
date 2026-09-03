@@ -1,310 +1,567 @@
-//! Symbolic tower and curve arithmetic over [`Program`] rows: `Fq2`/`Fq12`
-//! products from the probed bilinear forms, affine short-Weierstrass group
-//! law with inverse witnesses, GLV endomorphisms and Frobenius maps.
+//! The template catalog: every operation's rows as slots over its own rows
+//! and its input elements (arkworks' formulas row for row). Element
+//! coordinate conventions: GT = the twelve tower coordinates; G1 = `(x, y)`;
+//! G2 affine = `(x0, x1, y0, y1)`; G2 homogeneous projective = `(x0, x1, y0,
+//! y1, z0, z1)`; `Fq2` values = `(re, im)`.
 
-use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, G1Affine, G2Affine};
-use ark_ec::bn::BnConfig;
-use ark_ec::scalar_mul::glv::GLVConfig;
-use ark_ff::{AdditiveGroup, Field, Zero};
+use ark_bn254::Fq;
+use ark_ff::{AdditiveGroup, Field};
 
-use super::program::{
-    lin, lin_add, lin_neg, lin_scale, lin_sub, mul_terms, Lin, Program, Slot, Source,
+use super::template::{at, conjugated, own, Ref, RefSlots, RowKind, Template, TemplateRow};
+use super::tower::{mul_form, FrobeniusForm, LINE_COORDS};
+
+type Slots = RefSlots;
+
+/// A GT operand: which of its twelve coordinates are structurally nonzero
+/// and whether it enters conjugated (coordinates `≥ 6` negated).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GtOperand {
+    pub elem: u8,
+    pub nonzero: [bool; 12],
+    pub conj: bool,
+}
+
+impl GtOperand {
+    pub const fn dense(elem: u8) -> Self {
+        Self {
+            elem,
+            nonzero: [true; 12],
+            conj: false,
+        }
+    }
+
+    pub const fn conj(elem: u8) -> Self {
+        Self {
+            elem,
+            nonzero: [true; 12],
+            conj: true,
+        }
+    }
+
+    /// The identity: only coordinate 0.
+    pub const fn one(elem: u8) -> Self {
+        let mut nonzero = [false; 12];
+        nonzero[0] = true;
+        Self {
+            elem,
+            nonzero,
+            conj: false,
+        }
+    }
+
+    fn sign(&self, coord: u8) -> i32 {
+        if self.conj && conjugated(coord) {
+            -1
+        } else {
+            1
+        }
+    }
+}
+
+/// Slots of the twelve product coordinates `z_c = Σ κ x_a y_b`, with `y`
+/// coordinates resolved through `y_ref` (lines mix own rows and step rows).
+fn gt_product_rows(
+    x: GtOperand,
+    y_nonzero: [bool; 12],
+    y_conj: bool,
+    y_ref: impl Fn(u8) -> Ref,
+) -> Vec<TemplateRow> {
+    mul_form()
+        .iter()
+        .map(|terms| {
+            let slots = terms
+                .iter()
+                .filter(|t| x.nonzero[t.a as usize] && y_nonzero[t.b as usize])
+                .map(|t| {
+                    let y_sign = if y_conj && conjugated(t.b) { -1 } else { 1 };
+                    (
+                        at(x.elem, t.a),
+                        y_ref(t.b),
+                        i32::from(t.kappa) * x.sign(t.a) * y_sign,
+                    )
+                })
+                .collect();
+            TemplateRow::compute(slots)
+        })
+        .collect()
+}
+
+/// `x · y` over full GT elements (twelve rows).
+pub fn gt_mul(x: GtOperand, y: GtOperand) -> Template {
+    Template::new(gt_product_rows(x, y.nonzero, y.conj, |b| at(y.elem, b)))
+}
+
+/// Frobenius power of element 1: each coordinate is a linear form over public
+/// tower constants held by element 2 (`constants[i]` is its coordinate `i`).
+pub fn gt_frobenius(form: &FrobeniusForm) -> (Template, Vec<Fq>) {
+    let mut constants: Vec<Fq> = Vec::new();
+    let rows = form
+        .iter()
+        .map(|terms| {
+            let slots = terms
+                .iter()
+                .map(|(a, constant)| {
+                    let index = constants
+                        .iter()
+                        .position(|c| c == constant)
+                        .unwrap_or_else(|| {
+                            constants.push(*constant);
+                            constants.len() - 1
+                        });
+                    (at(1, *a), at(2, index as u8), 1)
+                })
+                .collect();
+            TemplateRow::compute(slots)
+        })
+        .collect();
+    (Template::new(rows), constants)
+}
+
+/// Witness `x⁻¹` (element 1 = `x`): twelve witness rows.
+pub fn gt_inverse_witness() -> Template {
+    Template::new(
+        (0..12u8)
+            .map(|coord| TemplateRow::witness(RowKind::InverseFq12 { coord }))
+            .collect(),
+    )
+}
+
+/// The pinned product `x · x⁻¹ = 1` (element 1 = `x`, element 2 = the witness).
+pub fn gt_inverse_pin() -> Template {
+    let mut rows = gt_product_rows(GtOperand::dense(1), [true; 12], false, |b| at(2, b));
+    for (c, row) in rows.iter_mut().enumerate() {
+        row.pin = Some(if c == 0 { Fq::ONE } else { Fq::ZERO });
+    }
+    Template::new(rows)
+}
+
+/// Which step rows hold a line's three `Fq2` coefficients.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineRows {
+    pub c0: [u8; 2],
+    pub c1: [u8; 2],
+    pub c2: [u8; 2],
+    /// Signs folding arkworks' `(-h, 3j, i)` / `(λ, -θ, j)` into the rows.
+    pub scale: [i32; 3],
+}
+
+/// Doubling-step lines `(-h, 3j, i)` in [`miller_double_step`]'s rows.
+pub const DOUBLE_LINE: LineRows = LineRows {
+    c0: [12, 13],
+    c1: [14, 15],
+    c2: [18, 19],
+    scale: [-1, 3, 1],
 };
-use super::tower::{conjugated, fq12_coords, frobenius_form, mul_form, LINE_COORDS};
 
-pub type Lin2 = [Lin; 2];
-pub type Lin12 = [Lin; 12];
-/// Affine point `(x, y)`.
-pub type G1Point = [Lin; 2];
-pub type G2Point = [Lin2; 2];
+/// Addition-step lines `(λ, -θ, j)` in [`miller_add_step`]'s rows.
+pub const ADD_LINE: LineRows = LineRows {
+    c0: [2, 3],
+    c1: [0, 1],
+    c2: [22, 23],
+    scale: [1, -1, 1],
+};
 
-/// Slots of `kappa · a · b` over `Fq2` (`u² = -1`).
-pub fn fq2_mul_terms(a: &Lin2, b: &Lin2, kappa: i32) -> [Vec<Slot>; 2] {
-    let mut re = mul_terms(&a[0], &b[0], kappa);
-    re.extend(mul_terms(&a[1], &b[1], -kappa));
-    let mut im = mul_terms(&a[0], &b[1], kappa);
-    im.extend(mul_terms(&a[1], &b[0], kappa));
-    [re, im]
-}
+/// Public line coefficients as six pinned rows `(c0, c1, c2)`.
+pub const CONST_LINE: LineRows = LineRows {
+    c0: [0, 1],
+    c1: [2, 3],
+    c2: [4, 5],
+    scale: [1, 1, 1],
+};
 
-pub fn fq2_add(a: &Lin2, b: &Lin2) -> Lin2 {
-    [lin_add(&a[0], &b[0]), lin_add(&a[1], &b[1])]
-}
-
-pub fn fq2_sub(a: &Lin2, b: &Lin2) -> Lin2 {
-    [lin_sub(&a[0], &b[0]), lin_sub(&a[1], &b[1])]
-}
-
-pub fn fq2_neg(a: &Lin2) -> Lin2 {
-    [lin_neg(&a[0]), lin_neg(&a[1])]
-}
-
-pub fn fq2_scale(a: &Lin2, k: i32) -> Lin2 {
-    [lin_scale(&a[0], k), lin_scale(&a[1], k)]
-}
-
-pub fn fq2_conj(a: &Lin2) -> Lin2 {
-    [a[0].clone(), lin_neg(&a[1])]
-}
-
-/// Conjugation (`Fq12.c1` negated): the cyclotomic inverse of a unitary element.
-pub fn gt_conj(x: &Lin12) -> Lin12 {
-    std::array::from_fn(|c| {
-        if conjugated(c) {
-            lin_neg(&x[c])
+/// `Bn::ell` (TwistType::D): rows 12–15 scale `c0` by `P.y` and `c1` by
+/// `P.x`, rows 0–11 multiply `f` (element 1) by the sparse line
+/// `(c0·P.y, c1·P.x, c2)` at coordinates `LINE_COORDS`. Element 2 holds
+/// the line rows, element 3 the point `P = (x, y)`.
+pub fn ell(line: LineRows) -> Template {
+    let mut nonzero = [false; 12];
+    for pair in LINE_COORDS {
+        nonzero[pair[0]] = true;
+        nonzero[pair[1]] = true;
+    }
+    let y_ref = |b: u8| -> Ref {
+        let b = usize::from(b);
+        if LINE_COORDS[0].contains(&b) {
+            own(12 + (b - LINE_COORDS[0][0]) as u8)
+        } else if LINE_COORDS[1].contains(&b) {
+            own(14 + (b - LINE_COORDS[1][0]) as u8)
         } else {
-            x[c].clone()
+            at(2, line.c2[b - LINE_COORDS[2][0]])
         }
-    })
-}
-
-/// The sparse line element `(c0, c3, c4)` of `mul_by_034` as twelve coordinates.
-pub fn gt_line(c0: &Lin2, c3: &Lin2, c4: &Lin2) -> Lin12 {
-    let mut out: Lin12 = Default::default();
-    for (coords, value) in LINE_COORDS.iter().zip([c0, c3, c4]) {
-        out[coords[0]].clone_from(&value[0]);
-        out[coords[1]].clone_from(&value[1]);
-    }
-    out
-}
-
-impl Program {
-    pub fn emit(&mut self, slots: Vec<Slot>) -> Lin {
-        lin(self.compute(slots))
-    }
-
-    pub fn emit2(&mut self, slots: [Vec<Slot>; 2]) -> Lin2 {
-        let [re, im] = slots;
-        [self.emit(re), self.emit(im)]
-    }
-
-    /// Slots of `kappa · l` (each term times the constant one).
-    pub fn linear(&self, l: &Lin, kappa: i32) -> Vec<Slot> {
-        mul_terms(l, &lin(self.one), kappa)
-    }
-
-    pub fn fq2_constant(&mut self, value: Fq2) -> Lin2 {
-        [self.fq_lin(value.c0), self.fq_lin(value.c1)]
-    }
-
-    /// Constant as a linear combination; zero is the empty combination.
-    pub fn fq_lin(&mut self, value: Fq) -> Lin {
-        if value.is_zero() {
-            Vec::new()
-        } else {
-            self.constant_lin(value)
+    };
+    let mut rows = gt_product_rows(GtOperand::dense(1), nonzero, false, y_ref);
+    // c2 enters with its sign through the mult slots.
+    if line.scale[2] != 1 {
+        for row in &mut rows {
+            for slot in &mut row.slots {
+                if slot.1.elem == 2 {
+                    slot.2 *= line.scale[2];
+                }
+            }
         }
     }
-
-    pub fn fq2_mul(&mut self, a: &Lin2, b: &Lin2) -> Lin2 {
-        self.emit2(fq2_mul_terms(a, b, 1))
+    for i in 0..2u8 {
+        rows.push(TemplateRow::compute(vec![(
+            at(2, line.c0[i as usize]),
+            at(3, 1),
+            line.scale[0],
+        )]));
     }
-
-    pub fn fq2_sqr(&mut self, a: &Lin2) -> Lin2 {
-        self.fq2_mul(a, a)
+    for i in 0..2u8 {
+        rows.push(TemplateRow::compute(vec![(
+            at(2, line.c1[i as usize]),
+            at(3, 0),
+            line.scale[1],
+        )]));
     }
+    // The scaled coefficients (rows 12–15) feed the product rows.
+    Template::new(rows).with_order((12..16).chain(0..12).collect())
+}
 
-    /// `Fq2 × Fq`.
-    pub fn fq2_mul_fq(&mut self, a: &Lin2, b: &Lin) -> Lin2 {
+fn fq2_mul(a: [Ref; 2], b: [Ref; 2], kappa: i32) -> [Slots; 2] {
+    [
+        vec![(a[0], b[0], kappa), (a[1], b[1], -kappa)],
+        vec![(a[0], b[1], kappa), (a[1], b[0], kappa)],
+    ]
+}
+
+fn extend2(rows: &mut [Slots; 2], extra: [Slots; 2]) {
+    for (row, more) in rows.iter_mut().zip(extra) {
+        row.extend(more);
+    }
+}
+
+/// Element 1 = `r = (x, y, z)`, element 2 = constants `(1/2, 3b.re, 3b.im, 1)`.
+/// Outputs `x3 y3 z3` at rows 20–25; lines per [`DOUBLE_LINE`].
+pub fn miller_double_step() -> Template {
+    let (x, y, z) = (
+        [at(1, 0), at(1, 1)],
+        [at(1, 2), at(1, 3)],
+        [at(1, 4), at(1, 5)],
+    );
+    let (two_inv, three_b, one) = (at(2, 0), [at(2, 1), at(2, 2)], at(2, 3));
+    let pair = |base: u8| [own(base), own(base + 1)];
+    let (xy, a, b, c, e, g, h, e2) = (
+        pair(0),
+        pair(2),
+        pair(4),
+        pair(6),
+        pair(8),
+        pair(10),
+        pair(12),
+        pair(16),
+    );
+    let mut rows: Vec<[Slots; 2]> = Vec::with_capacity(13);
+    rows.push(fq2_mul(x, y, 1));
+    rows.push([vec![(xy[0], two_inv, 1)], vec![(xy[1], two_inv, 1)]]);
+    rows.push(fq2_mul(y, y, 1));
+    rows.push(fq2_mul(z, z, 1));
+    rows.push(fq2_mul(three_b, c, 1));
+    rows.push([
+        vec![(b[0], two_inv, 1), (e[0], two_inv, 3)],
+        vec![(b[1], two_inv, 1), (e[1], two_inv, 3)],
+    ]);
+    rows.push(fq2_mul(y, z, 2));
+    rows.push(fq2_mul(x, x, 1));
+    rows.push(fq2_mul(e, e, 1));
+    rows.push([
+        vec![(e[0], one, 1), (b[0], one, -1)],
+        vec![(e[1], one, 1), (b[1], one, -1)],
+    ]);
+    let mut x3 = fq2_mul(a, b, 1);
+    extend2(&mut x3, fq2_mul(a, e, -3));
+    rows.push(x3);
+    let mut y3 = fq2_mul(g, g, 1);
+    extend2(&mut y3, [vec![(e2[0], one, -3)], vec![(e2[1], one, -3)]]);
+    rows.push(y3);
+    rows.push(fq2_mul(b, h, 1));
+    Template::new(
+        rows.into_iter()
+            .flatten()
+            .map(TemplateRow::compute)
+            .collect(),
+    )
+}
+
+/// Element 1 = `r = (x, y, z)`, element 2 = `q = (x0, x1, y0, y1)` affine
+/// (negated when `neg_q`), element 3 = constants `(1,)`. Outputs `x3 y3 z3`
+/// at rows 16–21; lines per [`ADD_LINE`].
+pub fn miller_add_step(neg_q: bool) -> Template {
+    let s = if neg_q { -1 } else { 1 };
+    let (x, y, z) = (
+        [at(1, 0), at(1, 1)],
+        [at(1, 2), at(1, 3)],
+        [at(1, 4), at(1, 5)],
+    );
+    let (qx, qy) = ([at(2, 0), at(2, 1)], [at(2, 2), at(2, 3)]);
+    let one = at(3, 0);
+    let pair = |base: u8| [own(base), own(base + 1)];
+    let (theta, lambda, c, d, e, f, g, h) = (
+        pair(0),
+        pair(2),
+        pair(4),
+        pair(6),
+        pair(8),
+        pair(10),
+        pair(12),
+        pair(14),
+    );
+    let mut rows: Vec<[Slots; 2]> = Vec::with_capacity(12);
+    let mut th = [vec![(y[0], one, 1)], vec![(y[1], one, 1)]];
+    extend2(&mut th, fq2_mul(qy, z, -s));
+    rows.push(th);
+    let mut la = [vec![(x[0], one, 1)], vec![(x[1], one, 1)]];
+    extend2(&mut la, fq2_mul(qx, z, -1));
+    rows.push(la);
+    rows.push(fq2_mul(theta, theta, 1));
+    rows.push(fq2_mul(lambda, lambda, 1));
+    rows.push(fq2_mul(lambda, d, 1));
+    rows.push(fq2_mul(z, c, 1));
+    rows.push(fq2_mul(x, d, 1));
+    rows.push([
+        vec![(e[0], one, 1), (f[0], one, 1), (g[0], one, -2)],
+        vec![(e[1], one, 1), (f[1], one, 1), (g[1], one, -2)],
+    ]);
+    rows.push(fq2_mul(lambda, h, 1));
+    let mut y3 = fq2_mul(theta, g, 1);
+    extend2(&mut y3, fq2_mul(theta, h, -1));
+    extend2(&mut y3, fq2_mul(e, y, -1));
+    rows.push(y3);
+    rows.push(fq2_mul(z, e, 1));
+    let mut jj = fq2_mul(theta, qx, 1);
+    extend2(&mut jj, fq2_mul(lambda, qy, -s));
+    rows.push(jj);
+    Template::new(
+        rows.into_iter()
+            .flatten()
+            .map(TemplateRow::compute)
+            .collect(),
+    )
+}
+
+/// `ψ(P) = (conj(x)·cx, conj(y)·cy)` (arkworks' `mul_by_char`), element 1 =
+/// `P` affine, element 2 = constants `(cx.re, cx.im, cy.re, cy.im)`;
+/// `negate_y` folds the sign of `q2 = -ψ(q1)`.
+pub fn g2_psi(negate_y: bool) -> Template {
+    let (x, y) = ([at(1, 0), at(1, 1)], [at(1, 2), at(1, 3)]);
+    let (cx, cy) = ([at(2, 0), at(2, 1)], [at(2, 2), at(2, 3)]);
+    let conj_mul = |v: [Ref; 2], c: [Ref; 2], s: i32| -> [Slots; 2] {
         [
-            self.emit(mul_terms(&a[0], b, 1)),
-            self.emit(mul_terms(&a[1], b, 1)),
+            vec![(v[0], c[0], s), (v[1], c[1], s)],
+            vec![(v[0], c[1], s), (v[1], c[0], -s)],
         ]
-    }
+    };
+    let sy = if negate_y { -1 } else { 1 };
+    let rows = [conj_mul(x, cx, 1), conj_mul(y, cy, sy)];
+    Template::new(
+        rows.into_iter()
+            .flatten()
+            .map(TemplateRow::compute)
+            .collect(),
+    )
+}
 
-    /// Witness `d⁻¹` bound by the pinned row `d · d⁻¹ = 1`.
-    pub fn fq_inverse(&mut self, d: &Lin) -> Lin {
-        let inverse = lin(self.witness(Source::Inverse(d.clone())));
-        let _ = self.pinned(mul_terms(d, &inverse, 1), Fq::ONE);
-        inverse
-    }
+/// Affine G2 addition `p ± q` (elements 1, 2; element 3 = `(1,)`): rows
+/// `λ` (witness, 0–1), pin `λ·(x2−x1) − (±y2−y1) = 0` (2–3), `x3` (4–5), `y3` (6–7).
+pub fn g2_add(neg_q: bool) -> Template {
+    let (x1, y1) = ([at(1, 0), at(1, 1)], [at(1, 2), at(1, 3)]);
+    let (x2, y2) = ([at(2, 0), at(2, 1)], [at(2, 2), at(2, 3)]);
+    let one = at(3, 0);
+    let s = if neg_q { -1 } else { 1 };
+    let lambda = [own(0), own(1)];
+    let x3 = [own(4), own(5)];
+    let num: [Slots; 2] = [
+        vec![(y2[0], one, s), (y1[0], one, -1)],
+        vec![(y2[1], one, s), (y1[1], one, -1)],
+    ];
+    let den: [Slots; 2] = [
+        vec![(x2[0], one, 1), (x1[0], one, -1)],
+        vec![(x2[1], one, 1), (x1[1], one, -1)],
+    ];
+    let mut rows = vec![
+        TemplateRow::witness(RowKind::QuotientFq2 {
+            num: num.clone(),
+            den: den.clone(),
+            coord: 0,
+        }),
+        TemplateRow::witness(RowKind::QuotientFq2 { num, den, coord: 1 }),
+    ];
+    let mut pin = fq2_mul(lambda, x2, 1);
+    extend2(&mut pin, fq2_mul(lambda, x1, -1));
+    extend2(
+        &mut pin,
+        [
+            vec![(y2[0], one, -s), (y1[0], one, 1)],
+            vec![(y2[1], one, -s), (y1[1], one, 1)],
+        ],
+    );
+    rows.extend(
+        pin.into_iter()
+            .map(|slots| TemplateRow::pinned(slots, Fq::ZERO)),
+    );
+    let mut x3_rows = fq2_mul(lambda, lambda, 1);
+    extend2(
+        &mut x3_rows,
+        [
+            vec![(x1[0], one, -1), (x2[0], one, -1)],
+            vec![(x1[1], one, -1), (x2[1], one, -1)],
+        ],
+    );
+    rows.extend(x3_rows.into_iter().map(TemplateRow::compute));
+    let mut y3 = fq2_mul(lambda, x1, 1);
+    extend2(&mut y3, fq2_mul(lambda, x3, -1));
+    extend2(&mut y3, [vec![(y1[0], one, -1)], vec![(y1[1], one, -1)]]);
+    rows.extend(y3.into_iter().map(TemplateRow::compute));
+    Template::new(rows)
+}
 
-    /// Witness `d⁻¹ ∈ Fq2` bound by the pinned rows `d · d⁻¹ = 1 + 0u`.
-    pub fn fq2_inverse(&mut self, d: &Lin2) -> Lin2 {
-        let inverse: Lin2 = std::array::from_fn(|coord| {
-            lin(self.witness(Source::InverseFq2 {
-                re: d[0].clone(),
-                im: d[1].clone(),
-                coord: coord as u8,
-            }))
-        });
-        let [re, im] = fq2_mul_terms(d, &inverse, 1);
-        let _ = self.pinned(re, Fq::ONE);
-        let _ = self.pinned(im, Fq::ZERO);
-        inverse
-    }
+/// Affine G2 doubling (element 1 = `p`, element 2 = `(1,)`): `λ = 3x²/(2y)`,
+/// pin `2y·λ − 3x² = 0` (rows 2–3), `x3` (4–5), `y3` (6–7).
+pub fn g2_dbl() -> Template {
+    let (x, y) = ([at(1, 0), at(1, 1)], [at(1, 2), at(1, 3)]);
+    let one = at(2, 0);
+    let lambda = [own(0), own(1)];
+    let x3 = [own(4), own(5)];
+    let num = fq2_mul(x, x, 3);
+    let den: [Slots; 2] = [vec![(y[0], one, 2)], vec![(y[1], one, 2)]];
+    let mut rows = vec![
+        TemplateRow::witness(RowKind::QuotientFq2 {
+            num: num.clone(),
+            den: den.clone(),
+            coord: 0,
+        }),
+        TemplateRow::witness(RowKind::QuotientFq2 { num, den, coord: 1 }),
+    ];
+    let mut pin = fq2_mul(y, lambda, 2);
+    extend2(&mut pin, fq2_mul(x, x, -3));
+    rows.extend(
+        pin.into_iter()
+            .map(|slots| TemplateRow::pinned(slots, Fq::ZERO)),
+    );
+    let mut x3_rows = fq2_mul(lambda, lambda, 1);
+    extend2(&mut x3_rows, [vec![(x[0], one, -2)], vec![(x[1], one, -2)]]);
+    rows.extend(x3_rows.into_iter().map(TemplateRow::compute));
+    let mut y3 = fq2_mul(lambda, x, 1);
+    extend2(&mut y3, fq2_mul(lambda, x3, -1));
+    extend2(&mut y3, [vec![(y[0], one, -1)], vec![(y[1], one, -1)]]);
+    rows.extend(y3.into_iter().map(TemplateRow::compute));
+    Template::new(rows)
+}
 
-    pub fn gt_one(&self) -> Lin12 {
-        let mut out: Lin12 = Default::default();
-        out[0] = lin(self.one);
-        out
-    }
+/// Copy of an affine G2 point (element 1) with optional `y` negation;
+/// element 2 = `(1,)`.
+pub fn g2_copy(negate_y: bool) -> Template {
+    let one = at(2, 0);
+    let sy = if negate_y { -1 } else { 1 };
+    Template::new(vec![
+        TemplateRow::compute(vec![(at(1, 0), one, 1)]),
+        TemplateRow::compute(vec![(at(1, 1), one, 1)]),
+        TemplateRow::compute(vec![(at(1, 2), one, sy)]),
+        TemplateRow::compute(vec![(at(1, 3), one, sy)]),
+    ])
+}
 
-    pub fn gt_constant(&mut self, value: Fq12) -> Lin12 {
-        let coords = fq12_coords(&value);
-        std::array::from_fn(|c| self.fq_lin(coords[c]))
-    }
+/// On-curve check of a G2 point (element 1 = `x0 x1 y0 y1`): `t = x²`
+/// (rows 0–1), pin `y² − t·x − b = 0` (rows 2–3); element 2 = constants
+/// `(b.re, b.im, 1)`.
+pub fn g2_on_curve() -> Template {
+    let (x, y) = ([at(1, 0), at(1, 1)], [at(1, 2), at(1, 3)]);
+    let t = [own(0), own(1)];
+    let (b, one) = ([at(2, 0), at(2, 1)], at(2, 2));
+    let mut rows: Vec<TemplateRow> = fq2_mul(x, x, 1)
+        .into_iter()
+        .map(TemplateRow::compute)
+        .collect();
+    let mut pin = fq2_mul(y, y, 1);
+    extend2(&mut pin, fq2_mul(t, x, -1));
+    extend2(&mut pin, [vec![(b[0], one, -1)], vec![(b[1], one, -1)]]);
+    rows.extend(
+        pin.into_iter()
+            .map(|slots| TemplateRow::pinned(slots, Fq::ZERO)),
+    );
+    Template::new(rows)
+}
 
-    /// Twelve rows of the product; structurally zero coordinates stay empty.
-    pub fn gt_mul(&mut self, x: &Lin12, y: &Lin12) -> Lin12 {
-        let form = mul_form();
-        std::array::from_fn(|c| {
-            let mut slots = Vec::new();
-            for term in &form[c] {
-                let (a, b) = (&x[term.a as usize], &y[term.b as usize]);
-                if !a.is_empty() && !b.is_empty() {
-                    slots.extend(mul_terms(a, b, i32::from(term.kappa)));
-                }
-            }
-            if slots.is_empty() {
-                Vec::new()
-            } else {
-                self.emit(slots)
-            }
-        })
-    }
+/// Affine G1 addition `p ± q` (elements 1, 2; element 3 = `(1,)`) in the
+/// four spare rows of a GT cell: `λ` (witness, row 0), pin
+/// `λ·(x2−x1) − (±y2−y1) = 0` (1), `x3` (2), `y3` (3).
+pub fn g1_add(neg_q: bool) -> Template {
+    let (x1, y1, x2, y2) = (at(1, 0), at(1, 1), at(2, 0), at(2, 1));
+    let one = at(3, 0);
+    let s = if neg_q { -1 } else { 1 };
+    let (lambda, x3) = (own(0), own(2));
+    Template::new(vec![
+        TemplateRow::witness(RowKind::Quotient {
+            num: vec![(y2, one, s), (y1, one, -1)],
+            den: vec![(x2, one, 1), (x1, one, -1)],
+        }),
+        TemplateRow::pinned(
+            vec![
+                (lambda, x2, 1),
+                (lambda, x1, -1),
+                (y2, one, -s),
+                (y1, one, 1),
+            ],
+            Fq::ZERO,
+        ),
+        TemplateRow::compute(vec![(lambda, lambda, 1), (x1, one, -1), (x2, one, -1)]),
+        TemplateRow::compute(vec![(lambda, x1, 1), (lambda, x3, -1), (y1, one, -1)]),
+    ])
+}
 
-    pub fn gt_sqr(&mut self, x: &Lin12) -> Lin12 {
-        self.gt_mul(x, x)
-    }
+/// Affine G1 doubling (element 1 = `p`, element 2 = `(1,)`): `λ = 3x²/(2y)`.
+pub fn g1_dbl() -> Template {
+    let (x, y) = (at(1, 0), at(1, 1));
+    let one = at(2, 0);
+    let (lambda, x3) = (own(0), own(2));
+    Template::new(vec![
+        TemplateRow::witness(RowKind::Quotient {
+            num: vec![(x, x, 3)],
+            den: vec![(y, one, 2)],
+        }),
+        TemplateRow::pinned(vec![(y, lambda, 2), (x, x, -3)], Fq::ZERO),
+        TemplateRow::compute(vec![(lambda, lambda, 1), (x, one, -2)]),
+        TemplateRow::compute(vec![(lambda, x, 1), (lambda, x3, -1), (y, one, -1)]),
+    ])
+}
 
-    /// `Frob^power(x)`: each coordinate is a row over public tower constants.
-    pub fn gt_frobenius(&mut self, x: &Lin12, power: usize) -> Lin12 {
-        let form = frobenius_form(power);
-        std::array::from_fn(|c| {
-            let mut slots = Vec::new();
-            for (a, constant) in &form[c] {
-                let source = &x[*a as usize];
-                if !source.is_empty() {
-                    let constant = self.constant_lin(*constant);
-                    slots.extend(mul_terms(source, &constant, 1));
-                }
-            }
-            if slots.is_empty() {
-                Vec::new()
-            } else {
-                self.emit(slots)
-            }
-        })
-    }
+/// Copy of a G1 point (element 1) with optional `y` negation; element 2 = `(1,)`.
+pub fn g1_copy(negate_y: bool) -> Template {
+    let one = at(2, 0);
+    let sy = if negate_y { -1 } else { 1 };
+    Template::new(vec![
+        TemplateRow::compute(vec![(at(1, 0), one, 1)]),
+        TemplateRow::compute(vec![(at(1, 1), one, sy)]),
+    ])
+}
 
-    /// Witness `x⁻¹ ∈ Fq12` bound by twelve pinned product rows.
-    pub fn gt_inverse(&mut self, x: &Lin12) -> Lin12 {
-        let inverse: Lin12 = std::array::from_fn(|coord| {
-            lin(self.witness(Source::InverseFq12 {
-                coords: Box::new(x.clone()),
-                coord: coord as u8,
-            }))
-        });
-        for (c, terms) in mul_form().iter().enumerate() {
-            let mut slots = Vec::new();
-            for term in terms {
-                let (a, b) = (&x[term.a as usize], &inverse[term.b as usize]);
-                if !a.is_empty() {
-                    slots.extend(mul_terms(a, b, i32::from(term.kappa)));
-                }
-            }
-            let expected = if c == 0 { Fq::ONE } else { Fq::ZERO };
-            let _ = self.pinned(slots, expected);
-        }
-        inverse
-    }
+/// On-curve check of a G1 point (element 1 = `(x, y)`): `t = x²` (row 0),
+/// pin `y² − t·x − 3 = 0` (row 1); element 2 = constants `(3, 1)`.
+pub fn g1_on_curve() -> Template {
+    let (x, y, t) = (at(1, 0), at(1, 1), own(0));
+    let (b, one) = (at(2, 0), at(2, 1));
+    Template::new(vec![
+        TemplateRow::compute(vec![(x, x, 1)]),
+        TemplateRow::pinned(vec![(y, y, 1), (t, x, -1), (b, one, -1)], Fq::ZERO),
+    ])
+}
 
-    pub fn g1_constant(&mut self, point: G1Affine) -> G1Point {
-        [self.fq_lin(point.x), self.fq_lin(point.y)]
-    }
-
-    /// Affine `p + q` (or `p - q`): `λ = Δy/Δx`, with `Δx⁻¹` a witness.
-    pub fn g1_add(&mut self, p: &G1Point, q: &G1Point, neg_q: bool) -> G1Point {
-        let qy = if neg_q { lin_neg(&q[1]) } else { q[1].clone() };
-        let dx = lin_sub(&q[0], &p[0]);
-        let dy = lin_sub(&qy, &p[1]);
-        let inverse = self.fq_inverse(&dx);
-        let lambda = self.emit(mul_terms(&dy, &inverse, 1));
-        let mut x3 = mul_terms(&lambda, &lambda, 1);
-        x3.extend(self.linear(&lin_add(&p[0], &q[0]), -1));
-        let x3 = self.emit(x3);
-        let mut y3 = mul_terms(&lambda, &lin_sub(&p[0], &x3), 1);
-        y3.extend(self.linear(&p[1], -1));
-        [x3, self.emit(y3)]
-    }
-
-    /// Affine doubling: `λ = 3x²/(2y)`.
-    pub fn g1_dbl(&mut self, p: &G1Point) -> G1Point {
-        let inverse = self.fq_inverse(&lin_scale(&p[1], 2));
-        let xx = self.emit(mul_terms(&p[0], &p[0], 1));
-        let lambda = self.emit(mul_terms(&xx, &inverse, 3));
-        let mut x3 = mul_terms(&lambda, &lambda, 1);
-        x3.extend(self.linear(&p[0], -2));
-        let x3 = self.emit(x3);
-        let mut y3 = mul_terms(&lambda, &lin_sub(&p[0], &x3), 1);
-        y3.extend(self.linear(&p[1], -1));
-        [x3, self.emit(y3)]
-    }
-
-    /// `φ(x, y) = (β·x, y)`, arkworks' GLV endomorphism (eigenvalue `LAMBDA`).
-    pub fn g1_endomorphism(&mut self, p: &G1Point) -> G1Point {
-        let beta = self.constant_lin(<ark_bn254::g1::Config as GLVConfig>::ENDO_COEFFS[0]);
-        [self.emit(mul_terms(&p[0], &beta, 1)), p[1].clone()]
-    }
-
-    pub fn g2_constant(&mut self, point: G2Affine) -> G2Point {
-        [self.fq2_constant(point.x), self.fq2_constant(point.y)]
-    }
-
-    pub fn g2_add(&mut self, p: &G2Point, q: &G2Point, neg_q: bool) -> G2Point {
-        let qy = if neg_q { fq2_neg(&q[1]) } else { q[1].clone() };
-        let dx = fq2_sub(&q[0], &p[0]);
-        let dy = fq2_sub(&qy, &p[1]);
-        let inverse = self.fq2_inverse(&dx);
-        let lambda = self.fq2_mul(&dy, &inverse);
-        let mut x3 = fq2_mul_terms(&lambda, &lambda, 1);
-        let sum = fq2_add(&p[0], &q[0]);
-        for (slots, coord) in x3.iter_mut().zip(&sum) {
-            slots.extend(self.linear(coord, -1));
-        }
-        let x3 = self.emit2(x3);
-        let mut y3 = fq2_mul_terms(&lambda, &fq2_sub(&p[0], &x3), 1);
-        for (slots, coord) in y3.iter_mut().zip(&p[1]) {
-            slots.extend(self.linear(coord, -1));
-        }
-        [x3, self.emit2(y3)]
-    }
-
-    pub fn g2_dbl(&mut self, p: &G2Point) -> G2Point {
-        let inverse = self.fq2_inverse(&fq2_scale(&p[1], 2));
-        let xx = self.fq2_sqr(&p[0]);
-        let lambda = self.emit2(fq2_mul_terms(&xx, &inverse, 3));
-        let mut x3 = fq2_mul_terms(&lambda, &lambda, 1);
-        for (slots, coord) in x3.iter_mut().zip(&p[0]) {
-            slots.extend(self.linear(coord, -2));
-        }
-        let x3 = self.emit2(x3);
-        let mut y3 = fq2_mul_terms(&lambda, &fq2_sub(&p[0], &x3), 1);
-        for (slots, coord) in y3.iter_mut().zip(&p[1]) {
-            slots.extend(self.linear(coord, -1));
-        }
-        [x3, self.emit2(y3)]
-    }
-
-    /// `ψ^power`: arkworks' `mul_by_char` iterated (conjugate, then multiply by
-    /// the twist Frobenius coefficients).
-    pub fn g2_psi(&mut self, p: &G2Point, power: usize) -> G2Point {
-        let (cx, cy) = psi_coefficients(power);
-        let mut point = p.clone();
-        if power % 2 == 1 {
-            point = [fq2_conj(&point[0]), fq2_conj(&point[1])];
-        }
-        let cx = self.fq2_constant(cx);
-        let cy = self.fq2_constant(cy);
-        [self.fq2_mul(&point[0], &cx), self.fq2_mul(&point[1], &cy)]
-    }
+/// `lhs_c − rhs_c = 0` over two GT elements (elements 1, 2; element 3 = `(1,)`).
+pub fn gt_difference_pins() -> Template {
+    let one = at(3, 0);
+    Template::new(
+        (0..12u8)
+            .map(|c| TemplateRow::pinned(vec![(at(1, c), one, 1), (at(2, c), one, -1)], Fq::ZERO))
+            .collect(),
+    )
 }
 
 /// `ψ^power(x, y) = (conj^power(x)·cx, conj^power(y)·cy)`, folded from
 /// arkworks' `TWIST_MUL_BY_Q_{X,Y}` (`ψ = mul_by_char`).
-pub fn psi_coefficients(power: usize) -> (Fq2, Fq2) {
-    let (mut cx, mut cy) = (Fq2::ONE, Fq2::ONE);
+pub fn psi_coefficients(power: usize) -> (ark_bn254::Fq2, ark_bn254::Fq2) {
+    use ark_bn254::Config as Bn254Config;
+    use ark_ec::bn::BnConfig;
+    let (mut cx, mut cy) = (ark_bn254::Fq2::ONE, ark_bn254::Fq2::ONE);
     for _ in 0..power {
         let mut cx_conj = cx;
         let mut cy_conj = cy;
@@ -314,15 +571,4 @@ pub fn psi_coefficients(power: usize) -> (Fq2, Fq2) {
         cy = cy_conj * Bn254Config::TWIST_MUL_BY_Q_Y;
     }
     (cx, cy)
-}
-
-/// Native `ψ^power` on an affine point, the oracle for [`Program::g2_psi`].
-pub fn psi_native(point: G2Affine, power: usize) -> G2Affine {
-    let (cx, cy) = psi_coefficients(power);
-    let (mut x, mut y) = (point.x, point.y);
-    if power % 2 == 1 {
-        let _ = x.conjugate_in_place();
-        let _ = y.conjugate_in_place();
-    }
-    G2Affine::new_unchecked(x * cx, y * cy)
 }

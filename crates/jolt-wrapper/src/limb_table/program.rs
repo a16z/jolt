@@ -10,6 +10,7 @@ use std::ops::Range;
 use ark_bn254::{Fq, Fq2};
 use ark_ff::{AdditiveGroup, Field, PrimeField, Zero};
 
+use super::layout::{CELL_ROWS, ROWS};
 use super::tower::{fq12_coords, fq12_from_coords};
 
 pub type RowId = u32;
@@ -79,12 +80,16 @@ pub enum Source {
     Input(usize),
     /// Public value, pinned by the verifier.
     Constant(Fq),
-    /// Prover witness `(Σ κ Z(row))⁻¹`, bound by a pinned product row.
-    Inverse(Lin),
-    /// Prover witness: coordinate `coord` of `(re + im·u)⁻¹ ∈ Fq2`.
-    InverseFq2 {
-        re: Lin,
-        im: Lin,
+    /// Prover witness `num / den` (a curve slope; sums of products), bound
+    /// by a pinned row.
+    Quotient {
+        num: Vec<Slot>,
+        den: Vec<Slot>,
+    },
+    /// Prover witness: coordinate `coord` of the `Fq2` quotient `num / den`.
+    QuotientFq2 {
+        num: [Vec<Slot>; 2],
+        den: [Vec<Slot>; 2],
         coord: u8,
     },
     /// Prover witness: coordinate `coord` of the `Fq12` inverse of `coords`.
@@ -102,12 +107,6 @@ pub struct RowSpec {
     pub pin: Option<Fq>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Section {
-    pub name: &'static str,
-    pub rows: Range<usize>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EvaluationError {
     #[error("row {row}: inverse of zero (exceptional case)")]
@@ -120,35 +119,43 @@ pub enum EvaluationError {
     },
 }
 
-/// The fixed row program of one profile; the schedule (sources, slots, pins)
-/// is public and instance-dependent only through public digits and constants.
+/// The fixed row program of one profile: `ROWS` rows at fixed positions
+/// (`layout`), filled through a cursor; rows never written are padding
+/// (`z = 0`). Emission order is the evaluation order, so a row may read
+/// rows placed after it.
 #[derive(Clone, Debug)]
 pub struct Program {
     pub rows: Vec<RowSpec>,
     pub one: RowId,
     pub zero: RowId,
-    pub sections: Vec<Section>,
     pub input_rows: Vec<RowId>,
+    /// Rows in emission (evaluation) order.
+    pub order: Vec<RowId>,
     constants: HashMap<[u64; 4], RowId>,
-    section_start: usize,
-}
-
-impl Default for Program {
-    fn default() -> Self {
-        Self::new()
-    }
+    cursor: RowId,
+    constant_cursor: RowId,
+    constant_end: RowId,
 }
 
 impl Program {
-    pub fn new() -> Self {
+    /// An all-padding program whose public constants are allocated from the
+    /// rows `constants` (the `one` and `zero` rows come first).
+    pub fn new(constants: Range<RowId>) -> Self {
+        let padding = RowSpec {
+            slots: Vec::new(),
+            source: Source::Compute,
+            pin: None,
+        };
         let mut program = Self {
-            rows: Vec::new(),
+            rows: vec![padding; ROWS],
             one: 0,
             zero: 0,
-            sections: Vec::new(),
             input_rows: Vec::new(),
+            order: Vec::new(),
             constants: HashMap::new(),
-            section_start: 0,
+            cursor: 0,
+            constant_cursor: constants.start,
+            constant_end: constants.end,
         };
         program.one = program.constant(Fq::ONE);
         program.zero = program.constant(Fq::ZERO);
@@ -163,84 +170,125 @@ impl Program {
         self.rows.is_empty()
     }
 
-    /// Closes the current section under `name`.
-    pub fn end_section(&mut self, name: &'static str) {
-        self.sections.push(Section {
-            name,
-            rows: self.section_start..self.rows.len(),
-        });
-        self.section_start = self.rows.len();
+    /// Moves the emission cursor to `row`.
+    pub fn at(&mut self, row: RowId) {
+        self.cursor = row;
     }
 
-    fn self_row(&mut self, source: Source, pin: Option<Fq>) -> RowId {
-        let id = self.rows.len() as RowId;
-        let one = if self.rows.is_empty() { id } else { self.one };
-        self.rows.push(RowSpec {
-            slots: vec![Slot {
-                x: id,
-                y: one,
-                kappa: 1,
-            }],
-            source,
-            pin,
-        });
+    /// The first row of `cell`.
+    pub const fn cell_row(cell: u32) -> RowId {
+        cell * CELL_ROWS
+    }
+
+    pub fn cursor(&self) -> RowId {
+        self.cursor
+    }
+
+    /// Number of rows written so far.
+    pub fn emitted(&self) -> usize {
+        self.order.len()
+    }
+
+    /// Writes `spec` at `id` (a padding row so far) and appends it to the
+    /// evaluation order.
+    pub fn write_row(&mut self, id: RowId, spec: RowSpec) {
+        self.write(id, spec);
+    }
+
+    fn write(&mut self, id: RowId, spec: RowSpec) {
+        let slot = &mut self.rows[id as usize];
+        assert!(
+            slot.slots.is_empty() && slot.source == Source::Compute && slot.pin.is_none(),
+            "row {id} written twice"
+        );
+        *slot = spec;
+        self.order.push(id);
+    }
+
+    fn next(&mut self) -> RowId {
+        let id = self.cursor;
+        self.cursor += 1;
         id
     }
 
-    /// A public constant row (deduplicated by value).
+    fn self_row_at(&mut self, id: RowId, source: Source, pin: Option<Fq>) {
+        let one = if self.order.is_empty() { id } else { self.one };
+        self.write(
+            id,
+            RowSpec {
+                slots: vec![Slot {
+                    x: id,
+                    y: one,
+                    kappa: 1,
+                }],
+                source,
+                pin,
+            },
+        );
+    }
+
+    /// A public constant row (deduplicated by value) in the constants region.
     pub fn constant(&mut self, value: Fq) -> RowId {
         let key = value.into_bigint().0;
         if let Some(&row) = self.constants.get(&key) {
             return row;
         }
-        let row = self.self_row(Source::Constant(value), Some(value));
+        assert!(
+            self.constant_cursor < self.constant_end,
+            "constants region full"
+        );
+        let row = self.constant_cursor;
+        self.constant_cursor += 1;
+        self.self_row_at(row, Source::Constant(value), Some(value));
         let _ = self.constants.insert(key, row);
         row
+    }
+
+    /// A pinned public constant at a fixed row (setup elements, line
+    /// coefficients) outside the constants region.
+    pub fn pinned_constant_at(&mut self, row: RowId, value: Fq) {
+        self.self_row_at(row, Source::Constant(value), Some(value));
+    }
+
+    /// Committed input coordinate `index` at a fixed row.
+    pub fn input_at(&mut self, row: RowId, index: usize) {
+        assert_eq!(index, self.input_rows.len(), "inputs are declared in order");
+        self.self_row_at(row, Source::Input(index), None);
+        self.input_rows.push(row);
     }
 
     pub fn constant_lin(&mut self, value: Fq) -> Lin {
         lin(self.constant(value))
     }
 
-    /// The row holding committed input coordinate `index`.
+    /// The row at the cursor holding committed input coordinate `index`.
     pub fn input(&mut self, index: usize) -> RowId {
         assert_eq!(index, self.input_rows.len(), "inputs are declared in order");
-        let row = self.self_row(Source::Input(index), None);
+        let row = self.next();
+        self.self_row_at(row, Source::Input(index), None);
         self.input_rows.push(row);
         row
     }
 
     pub fn witness(&mut self, source: Source) -> RowId {
-        self.self_row(source, None)
+        let row = self.next();
+        self.self_row_at(row, source, None);
+        row
     }
 
-    /// Merges slots with equal unordered operand pairs and drops zero terms.
-    fn normalize(mut slots: Vec<Slot>) -> Vec<Slot> {
-        for slot in &mut slots {
-            if slot.x > slot.y {
-                std::mem::swap(&mut slot.x, &mut slot.y);
-            }
-        }
-        slots.sort_unstable_by_key(|slot| (slot.x, slot.y));
-        let mut out: Vec<Slot> = Vec::with_capacity(slots.len());
-        for slot in slots {
-            match out.last_mut() {
-                Some(last) if last.x == slot.x && last.y == slot.y => last.kappa += slot.kappa,
-                _ => out.push(slot),
-            }
-        }
-        out.retain(|slot| slot.kappa != 0);
-        out
-    }
-
-    /// A computed row `z = Σ slots`.
+    /// A computed row `z = Σ slots` at the cursor; slot positions are kept
+    /// (they are the wiring's slot index), including zero-coefficient
+    /// placeholders.
     pub fn compute(&mut self, slots: Vec<Slot>) -> RowId {
-        let id = self.rows.len() as RowId;
-        self.rows.push(RowSpec {
-            slots: Self::normalize(slots),
-            source: Source::Compute,
-            pin: None,
-        });
+        let id = self.next();
+        self.write(
+            id,
+            RowSpec {
+                slots,
+                source: Source::Compute,
+                pin: None,
+            },
+        );
         id
     }
 
@@ -280,33 +328,45 @@ impl Program {
             .filter_map(|(row, spec)| spec.pin.map(|value| (row, value)))
     }
 
-    /// Evaluates every row in order; `inputs` are the committed coordinates
-    /// in [`super::dory::input_elements`] order.
+    /// Evaluates every row in emission order (padding rows are zero);
+    /// `inputs` are the committed coordinates in
+    /// [`super::dory::input_elements`] order.
     pub fn evaluate(&self, inputs: &[Fq]) -> Result<Vec<Fq>, EvaluationError> {
-        let mut values = Vec::with_capacity(self.rows.len());
+        let mut values = vec![Fq::ZERO; self.rows.len()];
         let eval_lin = |values: &[Fq], l: &Lin| {
             l.iter().fold(Fq::ZERO, |acc, &(row, k)| {
                 acc + values[row as usize] * signed(k)
             })
         };
-        for (row, spec) in self.rows.iter().enumerate() {
+        let eval_slots = |values: &[Fq], slots: &[Slot]| {
+            slots.iter().fold(Fq::ZERO, |acc, slot| {
+                acc + values[slot.x as usize] * values[slot.y as usize] * signed(slot.kappa)
+            })
+        };
+        for &id in &self.order {
+            let row = id as usize;
+            let spec = &self.rows[row];
             let value = match &spec.source {
-                Source::Compute => spec.slots.iter().fold(Fq::ZERO, |acc, slot| {
-                    acc + values[slot.x as usize] * values[slot.y as usize] * signed(slot.kappa)
-                }),
+                Source::Compute => eval_slots(&values, &spec.slots),
                 Source::Input(index) => inputs[*index],
                 Source::Constant(value) => *value,
-                Source::Inverse(l) => eval_lin(&values, l)
-                    .inverse()
-                    .ok_or(EvaluationError::NonInvertible { row })?,
-                Source::InverseFq2 { re, im, coord } => {
-                    let inverse = Fq2::new(eval_lin(&values, re), eval_lin(&values, im))
-                        .inverse()
-                        .ok_or(EvaluationError::NonInvertible { row })?;
+                Source::Quotient { num, den } => {
+                    eval_slots(&values, num)
+                        * eval_slots(&values, den)
+                            .inverse()
+                            .ok_or(EvaluationError::NonInvertible { row })?
+                }
+                Source::QuotientFq2 { num, den, coord } => {
+                    let num = Fq2::new(eval_slots(&values, &num[0]), eval_slots(&values, &num[1]));
+                    let den = Fq2::new(eval_slots(&values, &den[0]), eval_slots(&values, &den[1]));
+                    let quotient = num
+                        * den
+                            .inverse()
+                            .ok_or(EvaluationError::NonInvertible { row })?;
                     if *coord == 0 {
-                        inverse.c0
+                        quotient.c0
                     } else {
-                        inverse.c1
+                        quotient.c1
                     }
                 }
                 Source::InverseFq12 { coords, coord } => {
@@ -317,7 +377,7 @@ impl Program {
                     fq12_coords(&inverse)[*coord as usize]
                 }
             };
-            values.push(value);
+            values[row] = value;
         }
         Ok(values)
     }

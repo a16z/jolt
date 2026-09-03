@@ -1,5 +1,5 @@
-//! The row program reproduces the deferred check bit for bit on a real
-//! opening, and its fixed shape at the fibonacci-2^18 profile fits 2^18 rows.
+//! The fixed-layout program reproduces the deferred check bit for bit on a
+//! real opening, and its shape at the fibonacci-2^18 profile fits 2^18 rows.
 
 #![expect(
     clippy::expect_used,
@@ -11,43 +11,62 @@ mod common;
 
 use std::time::Instant;
 
-use ark_bn254::{Fq12, Fr as ArkFr, G1Affine, G2Affine};
-use ark_ff::UniformRand;
-use jolt_wrapper::limb_table::dory::{
-    DoryChallenges, DorySetupInputs, DoryStatement, FlattenedCheck, NativeCheck,
-};
-use jolt_wrapper::limb_table::program::Program;
+use ark_bn254::Fq12;
+use ark_ff::Zero;
+use jolt_wrapper::limb_table::dory::{FlattenedCheck, NativeCheck, WireValues};
+use jolt_wrapper::limb_table::layout::ROWS;
 use jolt_wrapper::limb_table::schedule::{build, Layout};
 use jolt_wrapper::limb_table::tower::fq12_from_coords;
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
 
-fn cell(values: &[ark_bn254::Fq], lins: &[Vec<(u32, i32)>; 12]) -> Fq12 {
-    fq12_from_coords(&std::array::from_fn(|c| {
-        Program::lin_value(values, &lins[c])
-    }))
+fn gt(values: &[ark_bn254::Fq], rows: &[u32; 12]) -> Fq12 {
+    fq12_from_coords(&std::array::from_fn(|c| values[rows[c] as usize]))
 }
 
-fn print_sections(layout: &Layout) {
-    let program = &layout.program;
-    for section in &program.sections {
+fn print_shape(layout: &Layout) {
+    let mut total_rows = 0;
+    let mut merged: Vec<(&str, usize, usize, usize, usize, usize)> = Vec::new();
+    for family in &layout.families {
+        total_rows += family.rows;
+        match merged.iter_mut().find(|m| m.0 == family.name) {
+            Some(m) => {
+                m.1 += family.ops;
+                m.2 += family.rows;
+                m.3 += family.fixed_pieces;
+                m.4 += family.selected_pieces;
+                m.5 += 1;
+            }
+            None => merged.push((
+                family.name,
+                family.ops,
+                family.rows,
+                family.fixed_pieces,
+                family.selected_pieces,
+                1,
+            )),
+        }
+    }
+    for (name, ops, rows, fixed, selected, families) in &merged {
         println!(
-            "section {:<14} rows {:>7}  [{}..{})",
-            section.name,
-            section.rows.len(),
-            section.rows.start,
-            section.rows.end
+            "{name:<22} ops {ops:>6} rows {rows:>7} pieces {fixed:>4} selected {selected:>3} families {families:>2}"
         );
     }
+    let program = &layout.program;
     println!(
-        "rows {} (2^{:.3})  max_slots {}  max_kappa_sum {}  pins {}  inputs {}",
-        program.len(),
-        (program.len() as f64).log2(),
+        "used rows {} of {} (families {}, leaves/constants {})  max_slots {}  max_kappa_sum {}  pins {}  inputs {}  fixed pieces {}  selected pieces {}  digits {}",
+        layout.used_rows(),
+        ROWS,
+        total_rows,
+        layout.used_rows() - total_rows,
         program.max_slots(),
         program.max_kappa_sum(),
         program.pinned_rows().count(),
-        program.input_rows.len()
+        program.input_rows.len(),
+        layout.pieces.len(),
+        layout.selected.len(),
+        layout.digits.len()
     );
+    let cost: usize = layout.pieces.iter().map(|p| p.kernel.cost()).sum();
+    println!("fixed-kernel verifier cost ≈ {cost} field multiplications");
 }
 
 #[test]
@@ -55,70 +74,87 @@ fn program_reproduces_the_deferred_check_on_a_real_opening() {
     let opening = common::synthetic_opening(8, 5, 0xD0);
     let sigma = opening.witness.sigma();
     let n = opening.witness.commitments.len();
-    let check = FlattenedCheck::derive(&opening.statement, sigma, n);
-    let native = NativeCheck::evaluate(&check, &opening.setup, &opening.witness);
+    let check = FlattenedCheck::derive(sigma, n);
+    let values = WireValues::derive(&opening.statement, sigma, n);
+    let native = NativeCheck::evaluate(&check, &values, &opening.setup, &opening.witness);
     assert!(native.holds(), "flattened deferred check holds natively");
 
     let start = Instant::now();
-    let layout = build(&check, &opening.setup, sigma, n);
+    let layout = build(&check, &values, &opening.setup);
     println!("build {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
-    print_sections(&layout);
+    print_shape(&layout);
     let start = Instant::now();
-    let values = layout
+    let coords = opening.witness.coordinates_in(&layout.input_order);
+    let row_values = layout
         .program
-        .evaluate(&opening.witness.coordinates())
+        .evaluate(&coords)
         .expect("no exceptional case");
     println!("evaluate {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
     assert_eq!(
-        cell(&values, &layout.rhs),
+        gt(&row_values, &layout.rhs),
         native.rhs,
         "RHS multi-exponentiation"
     );
-    assert_eq!(cell(&values, &layout.miller), native.miller, "Miller loop");
     assert_eq!(
-        cell(&values, &layout.lhs),
+        gt(&row_values, &layout.miller),
+        native.miller,
+        "Miller loop"
+    );
+    assert_eq!(
+        gt(&row_values, &layout.lhs),
         native.lhs,
         "final exponentiation"
     );
-    layout.program.check_pins(&values).expect("pins hold");
+    layout
+        .program
+        .check_pins(&row_values)
+        .expect("every pinned row holds");
+    for row in layout.final_check {
+        assert!(row_values[row as usize].is_zero());
+    }
+}
+
+/// Random wire values for every named scalar the check reads (the shape
+/// does not depend on them).
+fn random_values(check: &FlattenedCheck, seed: u64) -> WireValues {
+    use ark_ff::UniformRand;
+    use jolt_wrapper::limb_table::dory::Wire;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let mut pairs = Vec::new();
+    let mut push = |wire: &Wire| {
+        if let Wire::Named(name) = wire {
+            pairs.push((name.clone(), ark_bn254::Fr::rand(&mut rng)));
+        }
+    };
+    for (_, wire) in &check.gt.bases {
+        push(wire);
+    }
+    for msm in check.g1_chains() {
+        for (_, wire) in &msm.bases {
+            push(wire);
+        }
+    }
+    for msm in check.g2_chains() {
+        for (_, wire) in &msm.bases {
+            push(wire);
+        }
+    }
+    WireValues::from_wires(pairs)
 }
 
 #[test]
 fn fibonacci_profile_fits_2_18_rows() {
-    let mut rng = ChaCha20Rng::seed_from_u64(0xF1B);
+    // σ = 11 (2^22 → 2^11 × 2^11 matrix), n = 42 committed polynomials.
     let (sigma, n) = (11, 42);
-    let random = |rng: &mut ChaCha20Rng| ArkFr::rand(rng);
-    let statement = DoryStatement {
-        rho: random(&mut rng),
-        point: (0..2 * sigma).map(|_| random(&mut rng)).collect(),
-        evaluation: random(&mut rng),
-        challenges: DoryChallenges {
-            beta: (0..sigma).map(|_| random(&mut rng)).collect(),
-            alpha: (0..sigma).map(|_| random(&mut rng)).collect(),
-            gamma: random(&mut rng),
-            d: random(&mut rng),
-        },
-    };
-    let gt = |rng: &mut ChaCha20Rng| Fq12::rand(rng);
-    let setup = DorySetupInputs {
-        chi: (0..=sigma).map(|_| gt(&mut rng)).collect(),
-        delta_1r: (0..=sigma).map(|_| gt(&mut rng)).collect(),
-        delta_2r: (0..=sigma).map(|_| gt(&mut rng)).collect(),
-        ht: gt(&mut rng),
-        g1_0: G1Affine::rand(&mut rng),
-        g2_0: G2Affine::rand(&mut rng),
-        h1: G1Affine::rand(&mut rng),
-        h2: G2Affine::rand(&mut rng),
-    };
-    let check = FlattenedCheck::derive(&statement, sigma, n);
-    assert_eq!(check.gt.bases.len(), 9 * sigma + n + 4);
+    let check = FlattenedCheck::derive(sigma, n);
+    let values = random_values(&check, 0xF1);
+    let setup = common::random_setup(sigma, 0xF2);
     let start = Instant::now();
-    let layout = build(&check, &setup, sigma, n);
+    let layout = build(&check, &values, &setup);
     println!("build {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
-    print_sections(&layout);
-    assert!(
-        layout.program.len() <= 1 << 18,
-        "{} rows",
-        layout.program.len()
-    );
+    print_shape(&layout);
+    assert_eq!(layout.program.len(), ROWS);
+    assert!(layout.used_rows() <= ROWS);
 }

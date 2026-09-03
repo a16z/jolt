@@ -1,12 +1,14 @@
 //! Wiring: the program's slots are a public sparse matrix
-//! `X_{s}(row) = κ_s(row)·Z(src_x(row, s))`, `Y_s(row) = Z(src_y(row, s))`.
+//! `X_s(row) = κ_s(row)·Z(src_x(row, s))`, `Y_s(row) = Z(src_y(row, s))`.
 //! The row sumcheck consumes the operand limbs as virtual polynomials; the
 //! linking sumcheck proves their claimed evaluations at the row point `r`
 //! against the committed `z` chunks:
-//! `Σ_{s,a} γ_{s,a}·X_{s,a}(r) + γ'_{s,a}·Y_{s,a}(r) = Σ_src Σ_a Wc_a(src)·Z_a(src)`,
-//! with `Wc_a(src) = Σ_row eq(r,row)·Σ_s (γ_{s,a}·κ·[src = src_x] + γ'_{s,a}·[src = src_y])`
-//! public. The verifier evaluates `Wc_a(r')` from the edge list with two eq
-//! tables (`O(#edges)` native work).
+//! `Σ_{s,side,a} γ_{s,side,a}·V_{s,side,a}(r) = Σ_v Σ_a Wc_a(v)·Z_a(v)`,
+//! with `Wc_a(v) = Σ_row eq(r,row)·Σ_{s,side} γ_{s,side,a}·κ·[v = src]`.
+//! At the end the verifier needs `Σ_a Z_a(r')·Wc_a(r')`, which regroups as
+//! `Σ_pieces K_piece(r, r')·G_{s,side}` with `G_{s,side} = Σ_a γ_{s,side,a}·Z_a(r')`:
+//! the fixed pieces are kernel MLEs ([`super::layout::Kernel::mle`]), the
+//! digit-selected pieces are proven by the operand-selection sumcheck.
 
 use jolt_field::{Field, Fr, One, Ring, Zero};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
@@ -15,6 +17,7 @@ use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 
 use super::columns::{recompose, Columns, Constants, LIMBS, Z_CHUNKS};
+use super::layout::{Piece, Side};
 use super::program::{signed, Program};
 use super::relation::RowClaims;
 
@@ -26,13 +29,17 @@ pub struct Wiring<'p> {
 
 impl Wiring<'_> {
     /// Fills `out` (`6·num_slots` entries, slot-major `x_0 x_1 x_2 y_0 y_1 y_2`)
-    /// with the operand limbs of `row`; padding rows and unused slots are zero.
+    /// with the operand limbs of `row`; padding rows, unused slots and
+    /// zero-coefficient placeholders are zero.
     pub fn operand_limbs(&self, columns: &Columns, row: usize, out: &mut [Fr]) {
         out.fill(Fr::zero());
         let Some(spec) = self.program.rows.get(row) else {
             return;
         };
         for (s, slot) in spec.slots.iter().enumerate() {
+            if slot.kappa == 0 {
+                continue;
+            }
             let kappa = fr_signed(slot.kappa);
             let x = &columns.limbs[slot.x as usize];
             let y = &columns.limbs[slot.y as usize];
@@ -55,6 +62,22 @@ pub struct LinkParams {
     pub gamma: Vec<Fr>,
 }
 
+/// `G_{s,side} = Σ_a γ_{s,side,a}·Z_a(r')`: the per-slot-side weight of a
+/// wiring piece once the source point's limb claims are known.
+pub struct SlotWeights {
+    weights: Vec<[Fr; 2]>,
+}
+
+impl SlotWeights {
+    pub fn get(&self, slot: u8, side: Side) -> Fr {
+        let pair = self.weights[usize::from(slot)];
+        match side {
+            Side::X => pair[0],
+            Side::Y => pair[1],
+        }
+    }
+}
+
 impl LinkParams {
     pub fn new(log_rows: usize, num_slots: usize, gamma_root: Fr) -> Self {
         let mut gamma = Vec::with_capacity(2 * LIMBS * num_slots);
@@ -66,6 +89,10 @@ impl LinkParams {
         Self { log_rows, gamma }
     }
 
+    pub fn num_slots(&self) -> usize {
+        self.gamma.len() / (2 * LIMBS)
+    }
+
     /// The linking sumcheck's input claim from the row sumcheck's operand claims.
     pub fn claim(&self, claims: &RowClaims) -> Fr {
         assert_eq!(claims.operand_limbs.len(), self.gamma.len());
@@ -75,48 +102,33 @@ impl LinkParams {
             .fold(Fr::zero(), |acc, (g, v)| acc + *g * *v)
     }
 
-    /// `Wc_a(r')` for `a < 3`: the eq-weighted edge sums, computed from the
-    /// public program with two eq tables.
-    pub fn weights_at(&self, program: &Program, r_be: &[Fr], r_prime_be: &[Fr]) -> [Fr; LIMBS] {
-        let eq_r = EqPolynomial::<Fr>::evals(r_be, None);
-        let eq_src = EqPolynomial::<Fr>::evals(r_prime_be, None);
-        program
-            .rows
-            .par_iter()
-            .zip(&eq_r)
-            .map(|(spec, &weight)| {
-                let mut out = [Fr::zero(); LIMBS];
-                for (s, slot) in spec.slots.iter().enumerate() {
-                    let x = eq_src[slot.x as usize] * fr_signed(slot.kappa);
-                    let y = eq_src[slot.y as usize];
-                    let gamma = &self.gamma[2 * LIMBS * s..2 * LIMBS * (s + 1)];
-                    for (a, acc) in out.iter_mut().enumerate() {
-                        *acc += gamma[a] * x + gamma[LIMBS + a] * y;
-                    }
-                }
-                out.map(|v| v * weight)
+    pub fn slot_weights(&self, z_limbs: &[Fr; LIMBS]) -> SlotWeights {
+        let weights = (0..self.num_slots())
+            .map(|s| {
+                let g = &self.gamma[2 * LIMBS * s..2 * LIMBS * (s + 1)];
+                let side = |offset: usize| {
+                    (0..LIMBS).fold(Fr::zero(), |acc, a| acc + g[offset + a] * z_limbs[a])
+                };
+                [side(0), side(LIMBS)]
             })
-            .reduce(
-                || [Fr::zero(); LIMBS],
-                |a, b| std::array::from_fn(|i| a[i] + b[i]),
-            )
+            .collect();
+        SlotWeights { weights }
     }
 
-    /// The relation at the linking sumcheck's end: `Σ_a Wc_a(r')·Z_a(r')`
-    /// with `Z_a` recomposed from the `z`-chunk claims at `r'`.
-    pub fn final_value(
+    /// The fixed pieces' contribution `Σ_pieces K_piece(r, r')·G_{s,side}`
+    /// (little-endian points); the selected pieces' contribution comes from
+    /// the operand-selection sumcheck.
+    pub fn fixed_value(
         &self,
-        program: &Program,
-        r_be: &[Fr],
-        r_prime_be: &[Fr],
-        z_chunk_claims: &[Fr],
+        pieces: &[Piece],
+        r_le: &[Fr],
+        r_src_le: &[Fr],
+        weights: &SlotWeights,
     ) -> Fr {
-        let weights = self.weights_at(program, r_be, r_prime_be);
-        let limbs = z_limbs(z_chunk_claims, &Constants::new());
-        weights
-            .iter()
-            .zip(&limbs)
-            .fold(Fr::zero(), |acc, (w, z)| acc + *w * *z)
+        pieces
+            .par_iter()
+            .map(|piece| piece.kernel.mle(r_le, r_src_le) * weights.get(piece.slot, piece.side))
+            .sum()
     }
 }
 
@@ -131,7 +143,8 @@ pub fn z_limbs(chunks: &[Fr], constants: &Constants) -> [Fr; LIMBS] {
 }
 
 /// The linking sumcheck prover: dense `Wc_a` and `Z_a` columns over the row
-/// index, degree 2, folded low bit first.
+/// index (every slot, fixed and selected, from the explicit rows), degree 2,
+/// folded low bit first.
 pub struct WiringSumcheck {
     wc: [Vec<Fr>; LIMBS],
     z: [Vec<Fr>; LIMBS],
@@ -149,6 +162,9 @@ impl WiringSumcheck {
         let mut wc: [Vec<Fr>; LIMBS] = std::array::from_fn(|_| vec![Fr::zero(); rows]);
         for (spec, &weight) in program.rows.iter().zip(&eq_r) {
             for (s, slot) in spec.slots.iter().enumerate() {
+                if slot.kappa == 0 {
+                    continue;
+                }
                 let x = weight * fr_signed(slot.kappa);
                 let gamma = &params.gamma[2 * LIMBS * s..2 * LIMBS * (s + 1)];
                 for (a, column) in wc.iter_mut().enumerate() {
@@ -169,7 +185,7 @@ impl WiringSumcheck {
         }
     }
 
-    /// `Σ_src Σ_a Wc_a(src)·Z_a(src)`, the honest input claim.
+    /// `Σ_v Σ_a Wc_a(v)·Z_a(v)`, the honest input claim.
     pub fn input_claim(&self) -> Fr {
         (0..self.rows)
             .into_par_iter()

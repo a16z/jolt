@@ -2,12 +2,16 @@
 //! identity, grouped-inverse LogUp range checks) for the Dory deferred check,
 //! wired by a signed-digit Straus schedule.
 
+pub mod adapter;
 pub mod columns;
+pub mod digits;
 pub mod dory;
-pub mod glv;
+pub mod layout;
 pub mod ops;
 pub mod program;
 pub mod relation;
 pub mod schedule;
+pub mod selection;
+pub mod template;
 pub mod tower;
 pub mod wiring;
