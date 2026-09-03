@@ -335,7 +335,6 @@ struct Buffers {
     selectors: Buffer,
     rho: Buffer,
     initial_constant: Buffer,
-    initial_leading: Buffer,
     branches_a: Buffer,
     branches_b: Buffer,
     dense_a: Buffer,
@@ -546,9 +545,6 @@ impl SolinasMetal {
             .len()
             .checked_mul(initial_stride)
             .ok_or(MetalError::InputTooLong(selectors.len()))?;
-        let initial_leading_elements = initial_constant_elements
-            .checked_mul(initial_stride)
-            .ok_or(MetalError::InputTooLong(initial_constant_elements))?;
         let initial_dense_elements = rows_len / config.materialize_width;
         let dense_a_elements = selectors
             .len()
@@ -563,7 +559,6 @@ impl SolinasMetal {
             byte_length::<SelectorAbi>(selector_abi.len())?,
             byte_length::<Fp128>(rho.len())?,
             byte_length::<Fp128>(initial_constant_elements)?,
-            byte_length::<Fp128>(initial_leading_elements)?,
             byte_length::<Fp128>(branch_capacity)?,
             byte_length::<Fp128>(dense_a_elements)?,
             byte_length::<Fp128>(dense_b_elements)?,
@@ -582,8 +577,7 @@ impl SolinasMetal {
         let rho_buffer = self.new_booleanity_buffer(rho.len())?;
         write_fields(&rho_buffer, rho.len(), rho)?;
         let initial_constant = self.new_booleanity_buffer(initial_constant_elements)?;
-        let initial_leading = self.new_booleanity_buffer(initial_leading_elements)?;
-        write_initial_pair_tables(&initial_constant, &initial_leading, base_tables, rho, k)?;
+        write_initial_constant_table(&initial_constant, base_tables, rho, k)?;
         let branches_a = self.new_booleanity_buffer(branch_capacity)?;
         write_fields(&branches_a, branch_capacity, base_tables)?;
 
@@ -599,7 +593,6 @@ impl SolinasMetal {
                 selectors: selectors_buffer,
                 rho: rho_buffer,
                 initial_constant,
-                initial_leading,
                 branches_a,
                 branches_b: self.new_booleanity_buffer(branch_capacity)?,
                 dense_a: self.new_booleanity_buffer(dense_a_elements)?,
@@ -676,9 +669,8 @@ impl BooleanitySequence {
         }
         let branch_capacity = self.polys * self.materialize_width * self.k;
         write_fields(&self.buffers.branches_a, branch_capacity, base_tables)?;
-        write_initial_pair_tables(
+        write_initial_constant_table(
             &self.buffers.initial_constant,
-            &self.buffers.initial_leading,
             base_tables,
             &self.rho_values,
             self.k,
@@ -809,8 +801,7 @@ impl BooleanitySequence {
             encoder.set_buffer(6, Some(&self.buffers.e_out), 0);
             encoder.set_buffer(7, Some(&self.buffers.partial_a), 0);
             encoder.set_buffer(8, Some(&self.buffers.initial_constant), 0);
-            encoder.set_buffer(9, Some(&self.buffers.initial_leading), 0);
-            set_inline_bytes(encoder, 10, &params);
+            set_inline_bytes(encoder, 9, &params);
             Self::encode_message_dispatch(encoder, e_out.len(), self.threads_per_threadgroup);
             let final_in_a = encode_column_reductions(
                 encoder,
@@ -1069,9 +1060,8 @@ pub(super) fn write_fields(
     Ok(())
 }
 
-fn write_initial_pair_tables(
+fn write_initial_constant_table(
     constant_buffer: &Buffer,
-    leading_buffer: &Buffer,
     base_tables: &[AkitaField],
     rho: &[AkitaField],
     k: usize,
@@ -1082,7 +1072,7 @@ fn write_initial_pair_tables(
         .ok_or(MetalError::InputTooLong(rho.len()))?;
     if base_tables.len() != expected {
         return Err(MetalError::BooleanityStorageLength {
-            name: "initial pair tables",
+            name: "initial constant table",
             expected,
             got: base_tables.len(),
         });
@@ -1092,31 +1082,18 @@ fn write_initial_pair_tables(
         .len()
         .checked_mul(stride)
         .ok_or(MetalError::InputTooLong(rho.len()))?;
-    let leading_elements = constant_elements
-        .checked_mul(stride)
-        .ok_or(MetalError::InputTooLong(constant_elements))?;
-    // SAFETY: both fresh shared buffers have the checked capacities below and
-    // no command buffer uses them while the host refreshes a sequence.
+    // SAFETY: the fresh shared buffer has the checked capacity below and no
+    // command buffer uses it while the host refreshes a sequence.
     let constants = unsafe {
         slice::from_raw_parts_mut(
             constant_buffer.contents().cast::<Fp128>(),
             constant_elements,
         )
     };
-    // SAFETY: see the allocation and exclusivity argument above.
-    let leading = unsafe {
-        slice::from_raw_parts_mut(leading_buffer.contents().cast::<Fp128>(), leading_elements)
-    };
     for (poly, (table, rho)) in base_tables.chunks_exact(k).zip(rho).enumerate() {
         for first in 0..stride {
             let h_0 = table.get(first).copied().unwrap_or_else(AkitaField::zero);
             constants[poly * stride + first] = Fp128::from_jolt_field(&(h_0 * (h_0 - *rho)));
-            for second in 0..stride {
-                let h_1 = table.get(second).copied().unwrap_or_else(AkitaField::zero);
-                let delta = h_1 - h_0;
-                leading[(poly * stride + first) * stride + second] =
-                    Fp128::from_jolt_field(&(delta * delta));
-            }
         }
     }
     Ok(())
