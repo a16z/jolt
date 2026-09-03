@@ -29,9 +29,9 @@ pub use prover::RelationTableProver;
 pub use scalar_link::{DoryScalarLink, DoryScalarLinkProver};
 pub use terms::{
     evaluate_terms, evaluate_terms_observed, CopyLinkTermExporter, CopyLinkTermSide,
-    CopyLinkTermsContext, DoryScalarTermExporter, DoryScalarTermsContext, RelationTermExporter,
-    RelationTermsContext, COPY_LINK_TERM_COUNT, DORY_SCALAR_TERM_COUNT, MAX_FACTORS,
-    RELATION_TERM_COUNT,
+    CopyLinkTermsContext, DoryScalarTermExporter, DoryScalarTermsContext,
+    PublicCopyLinkTermExporter, RelationTermExporter, RelationTermsContext, COPY_LINK_TERM_COUNT,
+    DORY_SCALAR_TERM_COUNT, MAX_FACTORS, RELATION_TERM_COUNT,
 };
 
 pub const WIRES: usize = 3;
@@ -207,6 +207,8 @@ impl GateBuilder {
 pub struct RelationCellLayout {
     pub absorbed_word_base: usize,
     pub absorbed_words: usize,
+    pub public_input_base: usize,
+    pub public_inputs: usize,
     pub challenge_base: usize,
     pub challenges: usize,
     pub dory_scalar_base: usize,
@@ -227,7 +229,7 @@ pub struct RelationTable {
 
 impl RelationTable {
     pub fn new(matrices: &ConstraintMatrices<Fr>, rows: usize) -> Result<Self, RelationTableError> {
-        Self::lower(matrices, &[], &[], &[], rows)
+        Self::lower(matrices, &[], &[], &[], &[], rows)
     }
 
     pub fn from_relation(relation: &Relation, rows: usize) -> Result<Self, RelationTableError> {
@@ -247,9 +249,15 @@ impl RelationTable {
             .iter()
             .map(|(_, variable)| variable.index())
             .collect::<Vec<_>>();
+        let public_inputs = std::iter::once(relation.public.val_io)
+            .chain(std::iter::once(relation.public.init_eval))
+            .chain(relation.public.stage_values)
+            .map(|variable| variable.index())
+            .collect::<Vec<_>>();
         Self::lower(
             &relation.matrices,
             &absorbed_words,
+            &public_inputs,
             &challenges,
             &dory_scalars,
             rows,
@@ -259,6 +267,7 @@ impl RelationTable {
     fn lower(
         matrices: &ConstraintMatrices<Fr>,
         absorbed_words: &[usize],
+        public_inputs: &[usize],
         challenges: &[usize],
         dory_scalars: &[usize],
         rows: usize,
@@ -270,6 +279,10 @@ impl RelationTable {
         let gate_rows = builder.gates.len();
         let absorbed_word_base = builder.gates.len();
         for &variable in absorbed_words {
+            builder.anchor(variable);
+        }
+        let public_input_base = builder.gates.len();
+        for &variable in public_inputs {
             builder.anchor(variable);
         }
         let challenge_base = builder.gates.len();
@@ -341,6 +354,8 @@ impl RelationTable {
             cell_layout: RelationCellLayout {
                 absorbed_word_base,
                 absorbed_words: absorbed_words.len(),
+                public_input_base,
+                public_inputs: public_inputs.len(),
                 challenge_base,
                 challenges: challenges.len(),
                 dory_scalar_base,

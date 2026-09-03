@@ -14,6 +14,7 @@ use num_integer::Integer;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
 
+use super::literals::{CARRY_OFFSET, K_OFFSET_TOP_LIMB, POW_64, POW_CHUNK, POW_LIMB, Q_LIMBS};
 use super::program::{half_plus_one, Program, Slot, Source};
 
 pub const CHUNK_BITS: usize = 16;
@@ -273,7 +274,7 @@ impl Columns {
                 } else {
                     let mut row = zero_row_chunks();
                     chunks_of(z, &mut row[..Z_CHUNKS]);
-                    if let Source::Input(_) = spec.source {
+                    if let Source::Input(_) | Source::Window(_) = spec.source {
                         // Canonicality witness `d = (q_hi − 1) − z_hi` (top 64 bits)
                         // in the otherwise idle low quotient chunks of an input row.
                         // The `2^-62` fraction of canonical inputs with `z_hi = q_hi`
@@ -378,7 +379,10 @@ pub fn operand_columns(program: &Program, z_xi: &[Fr], num_slots: usize) -> Vec<
     columns
 }
 
-/// Field constants of the row relation, shared by prover and verifier.
+/// Field constants of the row relation, shared by prover and verifier:
+/// compile-time literals ([`super::literals`]), so no fixed-power arithmetic
+/// runs cold or warm.
+#[derive(Clone, Copy)]
 pub struct Constants {
     pub q_limbs: [Fr; LIMBS],
     pub pow_limb: Fr,
@@ -386,23 +390,20 @@ pub struct Constants {
     pub carry_offset: Fr,
     /// `2^267` in top-limb form (`2^75`).
     pub k_offset_top_limb: Fr,
-}
-
-impl Default for Constants {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// `2^64` (the sign rows' `2^256` term in limb form is `2^64·ξ²`).
+    pub pow_64: Fr,
 }
 
 impl Constants {
-    pub fn new() -> Self {
-        let q = q_biguint();
+    /// The constants from their literals (moves, no arithmetic).
+    pub fn get() -> Self {
         Self {
-            q_limbs: std::array::from_fn(|a| fr_from_biguint(&limb(&q, a))),
-            pow_limb: Fr::pow2(LIMB_BITS),
-            pow_chunk: std::array::from_fn(|j| Fr::pow2(CHUNK_BITS * j)),
-            carry_offset: Fr::pow2(CARRY_OFFSET_BITS),
-            k_offset_top_limb: Fr::pow2(K_OFFSET_BITS - 2 * LIMB_BITS),
+            q_limbs: Q_LIMBS.map(Fr::from),
+            pow_limb: Fr::from(POW_LIMB),
+            pow_chunk: POW_CHUNK.map(Fr::from),
+            carry_offset: Fr::from(CARRY_OFFSET),
+            k_offset_top_limb: Fr::from(K_OFFSET_TOP_LIMB),
+            pow_64: Fr::from(POW_64),
         }
     }
 

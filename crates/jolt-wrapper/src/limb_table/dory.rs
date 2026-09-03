@@ -520,11 +520,6 @@ impl FlattenedCheck {
             )
     }
 
-    /// How many MSM bases carry `wire` (the digit link divides by it).
-    pub fn wire_multiplicity(&self, wire: &Wire) -> usize {
-        self.all_wires().filter(|w| *w == wire).count()
-    }
-
     /// The four G1 chains in evaluation order (`A3` reads the accumulator).
     pub fn g1_chains(&self) -> [&Msm<G1Base>; 4] {
         [&self.g1_acc, &self.g1_a3, &self.g1_a1, &self.g1_a4]

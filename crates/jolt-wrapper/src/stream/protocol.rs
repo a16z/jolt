@@ -22,7 +22,7 @@ use super::{
 
 const TERM_EVALUATION_LABEL: &[u8] = b"term_evaluation";
 
-struct CountingKeccakTranscript {
+pub(crate) struct CountingKeccakTranscript {
     inner: Keccak256Transcript<Fr>,
     hashes: usize,
 }
@@ -193,14 +193,32 @@ pub fn verify_assembly_with_cost(
         &commitments,
         statement,
     )?;
-    let mut cost = VerifierCost::default();
+    verify_assembly_from_transcript(
+        proof,
+        statement,
+        exporters,
+        setup,
+        (&mut transcript, &phase_challenges, &commitments),
+        VerifierCost::default(),
+    )
+}
+
+pub(crate) fn verify_assembly_from_transcript(
+    proof: &WrapperProof,
+    statement: &AssemblyStatement,
+    exporters: &[&dyn TermExporter],
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    prefix: (&mut CountingKeccakTranscript, &[Fr], &[Commitment]),
+    mut cost: VerifierCost,
+) -> Result<(Vec<StageResult>, VerifierCost), StreamError> {
+    let (transcript, phase_challenges, commitments) = prefix;
     let results = verify_assembly_observed(
         proof,
         statement,
         exporters,
         setup,
-        &mut transcript,
-        (&phase_challenges, &commitments),
+        transcript,
+        (phase_challenges, commitments),
         &mut cost,
     )?;
     cost.keccak = transcript.hashes;
@@ -804,7 +822,7 @@ pub fn commitment_prefix_challenges(
     challenges
 }
 
-fn assembly_transcript<T: Transcript<Challenge = Fr>>(
+pub(crate) fn assembly_transcript<T: Transcript<Challenge = Fr>>(
     key_digest: &[u8; 32],
     public_statement: &[Fr],
     commitments: &[Commitment],

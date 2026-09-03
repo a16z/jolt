@@ -75,13 +75,30 @@ impl CopyLink {
         {
             return Err(RelationTableError::Claims);
         }
-        let mut denominators = Vec::with_capacity(2 * WIRES * self.rows);
+        let mut denominators = Vec::new();
+        let mut positions = Vec::new();
         for row in 0..self.rows {
-            for (values, ids) in left_values.iter().zip(&self.left.ids) {
-                denominators.push(gamma + values[row] + beta * ids[row]);
+            for (wire, ((values, ids), selectors)) in left_values
+                .iter()
+                .zip(&self.left.ids)
+                .zip(&self.left.selectors)
+                .enumerate()
+            {
+                if !selectors[row].is_zero() {
+                    denominators.push(gamma + values[row] + beta * ids[row]);
+                    positions.push((0, row, wire));
+                }
             }
-            for (values, ids) in right_values.iter().zip(&self.right.ids) {
-                denominators.push(gamma + values[row] + beta * ids[row]);
+            for (wire, ((values, ids), selectors)) in right_values
+                .iter()
+                .zip(&self.right.ids)
+                .zip(&self.right.selectors)
+                .enumerate()
+            {
+                if !selectors[row].is_zero() {
+                    denominators.push(gamma + values[row] + beta * ids[row]);
+                    positions.push((1, row, wire));
+                }
             }
         }
         if denominators.iter().any(Zero::is_zero) {
@@ -90,17 +107,13 @@ impl CopyLink {
         let mut inverses: Vec<ArkFr> = denominators.iter().copied().map(ArkFr::from).collect();
         batch_inversion(&mut inverses);
         let mut helpers = [vec![Fr::zero(); self.rows], vec![Fr::zero(); self.rows]];
-        for (row, chunk) in inverses.chunks_exact(2 * WIRES).enumerate() {
-            helpers[0][row] = chunk[..WIRES]
-                .iter()
-                .enumerate()
-                .map(|(wire, &inverse)| self.left.selectors[wire][row] * Fr::from(inverse))
-                .sum();
-            helpers[1][row] = chunk[WIRES..]
-                .iter()
-                .enumerate()
-                .map(|(wire, &inverse)| self.right.selectors[wire][row] * Fr::from(inverse))
-                .sum();
+        for (&(side, row, wire), inverse) in positions.iter().zip(inverses) {
+            let selectors = if side == 0 {
+                &self.left.selectors
+            } else {
+                &self.right.selectors
+            };
+            helpers[side][row] += selectors[wire][row] * Fr::from(inverse);
         }
         Ok(CopyLinkWitness {
             left_values,

@@ -21,7 +21,11 @@
 //! the window's doublings it is `θ·A_w·G − k_K·P_w·G + H` with `A_w = 16^w +
 //! λ·n·(16^w − 1)/15` (the consumed correction prefix not yet doubled).
 //! `K = k_K·G`, `P_w` is the integer formed by the `w` digits of `θ` the
-//! correction base has consumed, and `H` the partial MSM, fixed before `θ`.
+//! correction base has consumed, and `H` the partial MSM, fixed before `θ`:
+//! every occurrence's digit string is the unique admitted recoding of its
+//! scalar (the digit link's window check, [`super::super::digits::WINDOW_BOUND`]),
+//! so the proof bases' digits are functions of the pre-`θ` transcript and
+//! `θ`'s digits of `θ` alone — no digit can be chosen after `θ`.
 //! Writing `θ = 16^{64−w}·P_w + S_w`, `acc = ±entry` (or `acc = 0`) is
 //! `(A ∓ λ)·S_w + ((A ∓ λ)·16^{64−w} − 16·k_K)·P_w ≡ c` for an add and
 //! `A_w·S_w + (A_w·16^{64−w} − k_K)·P_w ≡ c` for a doubling, `c` fixed:

@@ -217,8 +217,42 @@ fn fibonacci_profile_fits_2_18_rows() {
     let layout = build(&check, &values, &setup, &check.wires());
     println!("build {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
     print_shape(&layout);
+    println!("used rows {} of {ROWS}", layout.used_rows());
     assert_eq!(layout.program.len(), ROWS);
     assert!(layout.used_rows() <= ROWS);
+}
+
+/// Every occurrence of the fibonacci profile owns one complete radix-16
+/// string and one `Source::Window` row; the spare rows cannot hide an
+/// omitted occurrence.
+#[test]
+fn fibonacci_profile_binds_every_link_occurrence_to_one_window_row() {
+    use jolt_wrapper::limb_table::digits::{WINDOWS, WINDOW_ROWS};
+    use jolt_wrapper::limb_table::schedule::WINDOW_ROW_BASE;
+
+    let check = FlattenedCheck::derive(11, 42);
+    let values = random_values(&check, 0x5E05E);
+    let setup = random_setup(11, 0x5E05F);
+    let layout = build(&check, &values, &setup, &check.wires());
+    assert_eq!(check.wires().len(), 173);
+    assert_eq!(layout.digit_bases, 175);
+    assert_eq!(layout.link_occurrences, 230);
+    let mut windows = vec![[0u8; WINDOWS]; layout.link_occurrences as usize];
+    for op in &layout.digit_ops {
+        windows[op.link as usize][op.w as usize] += 1;
+    }
+    for (occurrence, counts) in windows.iter().enumerate() {
+        assert!(
+            counts.iter().all(|&count| count == 1),
+            "occurrence {occurrence} owns every window exactly once"
+        );
+    }
+    for occurrence in 0..WINDOW_ROWS {
+        assert!(matches!(
+            layout.program.rows[WINDOW_ROW_BASE as usize + occurrence].source,
+            Source::Window(_)
+        ));
+    }
 }
 
 /// The memoized evaluator agrees with the brute-force kernel MLEs on every
@@ -439,7 +473,7 @@ fn kernels_match_program_rows() {
 fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     use ark_ff::UniformRand;
     use jolt_field::Fr;
-    use jolt_wrapper::limb_table::lookup::public_and_omega_evals;
+    use jolt_wrapper::limb_table::lookup::public_and_link_evals;
     use jolt_wrapper::limb_table::relation::{Col, LookupConstants, RowRelation};
     use jolt_wrapper::limb_table::stream::{StreamTermExporter, T2Challenges};
     use jolt_wrapper::stream::{ColumnId, TermContext, TermExporter, TermObserver, VerifierCost};
@@ -494,11 +528,11 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     let tau_le = t2.tau_le();
     let r_le: Vec<Fr> = point.iter().rev().copied().collect();
     let mut public_cost = VerifierCost::default();
-    let (public, _omega) =
-        public_and_omega_evals(&layout, &relation, &tau_le, &r_le, t2.rho, &mut public_cost);
+    let (public, _link) =
+        public_and_link_evals(&layout, &relation, &tau_le, &r_le, t2.rho, &mut public_cost);
     let mut terms_cost = VerifierCost::default();
     let _ = relation.batched_terms(&public, batching[0], &mut |a, b| terms_cost.fr_mul(a, b));
-    let link_batching = 1;
+    let link_batching = 3;
     assert_eq!(
         relation_cost.fr_mul + public_cost.fr_mul + terms_cost.fr_mul + link_batching,
         cost.fr_mul,
@@ -506,8 +540,8 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     );
     println!(
         "fibonacci profile: execution-derived verifier {} fr_mul = relation {} + public \
-         evaluations and ω̃ {} + terms {} + link batching {}; {} terms, max degree {}, {} link \
-         occurrences over {} digit bases",
+         evaluations and link weights {} + terms {} + link batching {}; {} terms, max degree \
+         {}, {} link occurrences over {} digit bases",
         cost.fr_mul,
         relation_cost.fr_mul,
         public_cost.fr_mul,
@@ -519,4 +553,7 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
         layout.digit_bases
     );
     assert!(cost.fr_mul <= 10_000, "{} fr_mul", cost.fr_mul);
+    // The measured count at this profile; every field constant is a literal,
+    // so a cold process observes the same number (update deliberately).
+    assert_eq!(cost.fr_mul, 9_973, "fr_mul at σ = 11, N = 42");
 }

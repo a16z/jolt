@@ -16,6 +16,7 @@ use super::columns::{
     Z_CHUNKS,
 };
 use super::layout::LOG_ROWS;
+use super::literals::{EIGHT, NEG_KEY_OFFSET_FR, Q_HI_MINUS_ONE, SIXTEEN_POWERS};
 use super::terms::{plain, powers_with, AffineForm, ColumnId, Mul, Term};
 
 pub use super::row_sumcheck::{eq_tau_column, RowSumcheck};
@@ -225,14 +226,14 @@ impl RowRelation {
     /// `mul` (the verifier's statement derivation).
     pub fn new_with(challenges: Challenges, lookup: LookupConstants, mul: Mul<'_>) -> Self {
         assert_eq!(challenges.tau.len(), LOG_ROWS);
-        let constants = Constants::new();
+        let constants = Constants::get();
         let xi = challenges.xi;
         let xi_pow = [Fr::one(), xi, mul(xi, xi)];
         let q_xi = xi_pow
             .iter()
             .zip(&constants.q_limbs)
             .fold(Fr::zero(), |acc, (p, q)| acc + mul(*p, *q));
-        let flag_xi = mul(Fr::pow2(64), xi_pow[2]);
+        let flag_xi = mul(constants.pow_64, xi_pow[2]);
         let chunk_form = |start: usize, count: usize| {
             let mut form = AffineForm::default();
             for j in 0..count {
@@ -768,7 +769,7 @@ impl RowRelation {
             vec![one_minus(Col::ZERO), one_minus_2neg, one_plus_e],
         ));
         // Lookup, reading side: h·(β + key + fp_combine·F) − sel.
-        let sixteen = Fr::from_u64(16);
+        let sixteen = Fr::from(SIXTEEN_POWERS[1]);
         let one_row = Fr::from_u64(u64::from(self.lookup.one_row));
         let gr = mul(eq, g[GAMMA_READ]);
         let h = column(Col::H);
@@ -788,13 +789,13 @@ impl RowRelation {
             vec![h.clone(), column(Col::ZERO)],
         ));
         terms.push(Term::new(
-            mul(gr_gt, Fr::from_u64(NEG_KEY_OFFSET)),
+            mul(gr_gt, Fr::from(NEG_KEY_OFFSET_FR)),
             vec![h.clone(), column(Col::NEG)],
         ));
         // EC key.
         let gr_ec = mul(gr, Fr::one() - public.is_gt);
         terms.push(Term::new(mul(gr_ec, public.s0), vec![h.clone()]));
-        let ec_scale = mul(sixteen, public.is_g1) + mul(Fr::from_u64(8), public.is_g2);
+        let ec_scale = mul(sixteen, public.is_g1) + mul(Fr::from(EIGHT), public.is_g2);
         terms.push(Term::new(
             mul(gr, ec_scale),
             vec![h.clone(), column(Col::D)],
@@ -822,7 +823,7 @@ impl RowRelation {
         .enumerate()
         {
             let offset = if i == 1 {
-                Fr::from_u64(NEG_KEY_OFFSET)
+                Fr::from(NEG_KEY_OFFSET_FR)
             } else {
                 Fr::zero()
             };
@@ -855,9 +856,9 @@ impl RowRelation {
             vec![column(Col::INV)],
         ));
         // Canonicality of free rows.
-        let mut canon = AffineForm::constant(-Fr::from_u64(Q_HI - 1));
+        let mut canon = AffineForm::constant(-Fr::from(Q_HI_MINUS_ONE));
         for i in 0..CANON_CHUNKS {
-            let weight = Fr::from_u64(1u64 << (CHUNK_BITS * i));
+            let weight = c.pow_chunk[i];
             canon.add_column(ColumnId((Col::CHUNKS + Z_CHUNKS + i) as u32), weight);
             canon.add_column(
                 ColumnId((Col::CHUNKS + CANON_SHIFT / CHUNK_BITS + i) as u32),

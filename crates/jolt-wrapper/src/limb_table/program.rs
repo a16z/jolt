@@ -91,6 +91,10 @@ pub enum Source {
     Input(usize),
     /// Public value, pinned by the verifier.
     Constant(Fq),
+    /// Prover witness of a recoding window check (`schedule::Cells::WINDOW`):
+    /// `V_hi + 2^64·(WINDOW_BOUND − V_hi)`, a free row whose low chunks the
+    /// digit link binds to one occurrence's top digits.
+    Window(Fq),
     /// Prover witness `num / den` (a curve slope; sums of products), bound
     /// by a pinned row.
     Quotient {
@@ -268,10 +272,15 @@ impl Program {
             .filter_map(|(row, spec)| spec.source.is_exact().then_some(row))
     }
 
-    /// Rows exempt from the limb identity: inputs and public constants.
+    /// Rows exempt from the limb identity: inputs, public constants and the
+    /// recoding window rows.
     pub fn free_rows(&self) -> impl Iterator<Item = usize> + '_ {
         self.rows.iter().enumerate().filter_map(|(row, spec)| {
-            matches!(spec.source, Source::Input(_) | Source::Constant(_)).then_some(row)
+            matches!(
+                spec.source,
+                Source::Input(_) | Source::Constant(_) | Source::Window(_)
+            )
+            .then_some(row)
         })
     }
 
@@ -296,6 +305,11 @@ impl Program {
     /// coefficients) outside the constants region.
     pub fn pinned_constant_at(&mut self, row: RowId, value: Fq) {
         self.self_row_at(row, Source::Constant(value), Some(value));
+    }
+
+    /// A recoding window row (`Source::Window`) at a fixed row.
+    pub fn window_at(&mut self, row: RowId, value: Fq) {
+        self.self_row_at(row, Source::Window(value), None);
     }
 
     /// Committed input coordinate `index` at a fixed row.
@@ -397,7 +411,7 @@ impl Program {
             let value = match &spec.source {
                 Source::Compute => eval_slots(&values, &spec.slots),
                 Source::Input(index) => inputs[*index],
-                Source::Constant(value) => *value,
+                Source::Constant(value) | Source::Window(value) => *value,
                 // A zero denominator is an exceptional affine add; the slope
                 // is set to zero and the gadget's pinned slope row fails, so
                 // the case surfaces as a pin violation, not an evaluation error.

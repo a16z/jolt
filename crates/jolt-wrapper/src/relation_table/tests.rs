@@ -54,7 +54,9 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         RelationCellLayout {
             absorbed_word_base: 38_977,
             absorbed_words: 1_222,
-            challenge_base: 40_199,
+            public_input_base: 40_199,
+            public_inputs: 7,
+            challenge_base: 40_206,
             challenges: 376,
             dory_scalar_base: 40_704,
             dory_scalars: 172,

@@ -240,6 +240,79 @@ pub struct CopyLinkTermExporter<'a> {
     pub member_index: usize,
 }
 
+pub struct PublicCopyLinkTermExporter<'a> {
+    pub link: &'a CopyLink,
+    pub left: CopyLinkTermSide,
+    pub right: CopyLinkTermSide,
+    pub public_wire: usize,
+    pub public_rows: &'a [usize],
+    pub public_values: &'a [Fr],
+    pub tau: &'a [Fr],
+    pub beta: Fr,
+    pub gamma: Fr,
+    pub relation_weights: [Fr; 3],
+    pub member_index: usize,
+}
+
+impl PublicCopyLinkTermExporter<'_> {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "the key validates public rows, values, and the copy-link wire"
+    )]
+    fn terms_observed<O: TermObserver + ?Sized>(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut O,
+    ) -> Vec<Term> {
+        assert_eq!(self.public_rows.len(), self.public_values.len());
+        let mut public_evaluation = Fr::zero();
+        for (&row, &value) in self.public_rows.iter().zip(self.public_values) {
+            let eq = context.row_point.iter().enumerate().fold(
+                Fr::one(),
+                |acc, (index, &coordinate)| {
+                    let bit = (row >> (context.row_point.len() - index - 1)) & 1;
+                    observer.fr_mul(
+                        acc,
+                        if bit == 1 {
+                            coordinate
+                        } else {
+                            Fr::one() - coordinate
+                        },
+                    )
+                },
+            );
+            public_evaluation += observer.fr_mul(value, eq);
+        }
+        let mut left = self.left.clone();
+        left.values[self.public_wire] = constant_form(public_evaluation);
+        CopyLinkTermExporter {
+            link: self.link,
+            left,
+            right: self.right.clone(),
+            tau: self.tau,
+            beta: self.beta,
+            gamma: self.gamma,
+            relation_weights: self.relation_weights,
+            member_index: self.member_index,
+        }
+        .terms_observed(context, observer)
+    }
+}
+
+impl TermExporter for PublicCopyLinkTermExporter<'_> {
+    fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
+        self.terms_observed(context, &mut NoopVerifierObserver)
+    }
+
+    fn terms_observed(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term> {
+        PublicCopyLinkTermExporter::terms_observed(self, context, observer)
+    }
+}
+
 impl CopyLinkTermExporter<'_> {
     #[expect(
         clippy::indexing_slicing,

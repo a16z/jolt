@@ -40,6 +40,9 @@ pub(crate) use shared_rounds::{
     verify_shared_opening,
 };
 mod protocol;
+pub(crate) use protocol::{
+    assembly_transcript, verify_assembly_from_transcript, CountingKeccakTranscript,
+};
 pub use protocol::{
     commitment_prefix_challenges, new_stream_transcript, prove_assembly, prove_stream,
     verify_assembly, verify_assembly_with_cost, verify_stream, verify_stream_with_cost,
