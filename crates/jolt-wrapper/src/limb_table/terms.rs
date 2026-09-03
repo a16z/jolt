@@ -3,6 +3,8 @@
 //! affine `L`. Prover and verifier build the same list from the transcript
 //! challenges; the stream's term stage compresses it to one claim.
 
+use std::ops::Neg;
+
 use jolt_field::{Fr, Ring, Zero};
 
 /// A (possibly observed) field multiplication the verifier-side derivations
@@ -94,7 +96,7 @@ impl AffineForm {
 }
 
 /// `−form`, no field multiplication.
-impl std::ops::Neg for AffineForm {
+impl Neg for AffineForm {
     type Output = Self;
 
     fn neg(mut self) -> Self {
