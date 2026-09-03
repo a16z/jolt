@@ -4,8 +4,9 @@ Source: non-ignored `wrap_real_t1_r::real_wrapper_round_trip_and_tampers`, cache
 fibonacci `2^18` proof, Mac mini M4, 10 Rayon threads. Default `k=32`;
 `WRAP_K=16` selects the comparison.
 
-The k=32 column was rerun after review #3. The k=16 timing and verifier-cost columns
-remain the pre-review-3 measurements; its commitment geometry and proof bytes are unchanged.
+The k=32 timing column was rerun after PERF-5 lane 1. The k=16 timing and
+verifier-cost columns remain the pre-review-3 measurements; its commitment
+geometry and proof bytes are unchanged.
 
 ## Link coverage
 
@@ -86,22 +87,27 @@ to R and do not enter the 173-scalar link.
 
 | phase (ms) | k=32 | k=16 |
 |---|---:|---:|
-| deterministic SRS setup | 9,246 | 3,773 |
-| key/profile | 441 | 355 |
-| wrapper preparation | 748 | 602 |
-| R adaptation | 3,080 | 2,080 |
-| T2 adaptation | 1,728 | 1,432 |
-| offline key commitments | 1,074 | 517 |
-| phase 1a commitment | 2,375 | 790 |
-| T2 phase 1b commitment | 1,347 | 979 |
-| T2 phase 2a commitment | 9,204 | 7,481 |
-| T2 phase 2b commitment | 329 | 78 |
-| CopyLink helpers | 3,391 | 2,709 |
-| T2 phase 2c + helpers | 578 | 206 |
-| proof stages/opening | 26,835 | 13,428 |
-| verifier | 35 | 27 |
+| deterministic SRS setup (offline) | 8,161 | 3,773 |
+| key/profile (offline) | 160 | 355 |
+| offline key commitments | 973 | 517 |
+| wrapper preparation | 550 | 602 |
+| T1/R stream adaptation | 270 | — |
+| T2 adaptation | 1,261 | 1,432 |
+| phase 1a commitment | 1,945 | 790 |
+| T2 phase 1b commitment | 1,050 | 979 |
+| T2 phase 2a commitment | 7,271 | 7,481 |
+| T2 phase 2b commitment | 101 | 78 |
+| CopyLink helpers | 2,960 | 2,709 |
+| T2 phase 2c + helpers | 344 | 206 |
+| T2 finish | 457 | — |
+| member construction | 1,983 | — |
+| proof stages/opening | 19,326 | 13,428 |
+| **honest online total** | **37,523** | — |
+| verifier (outside online clock) | 25 | 27 |
 
-Start loads: k=32 `12.67 / 22.99 / 16.05`; k=16 `8.80 / 9.87 / 8.27`.
+k=32 command-start load: `3.95 / 11.31 / 20.64`; honest-clock start/end:
+`8.72 / 10.49 / 18.98` -> `9.94 / 10.57 / 18.66`. Process CPU was
+274.380 s over 37.523 s wall. k=16 old start load: `8.80 / 9.87 / 8.27`.
 
 ## Verifier cost
 
@@ -130,8 +136,9 @@ The real gate mutates every serialized field independently and requires rejectio
 - shared BDFG shifted commitment, quotient, and evaluation witness;
 - every factor evaluation and final HyperKZG fold commitment/evaluation/quotient field;
 - direct T2 window/sign/psi/digit/input-row mutations, an absorbed-Fr W row, T2 VK pin,
-  statement mismatch, a changed T1 public-preamble word, and program/profile mismatch.
+  statement mismatch, a fixed-challenge T1 initial-state claim change, and program/profile
+  mismatch.
 
 The permanent scalar contract pins the 173-wire order and occurrence-weight formula. Feature-enabled
-all-target clippy passed with warnings denied. The unit suite passed 64/64; the feature-enabled real
-gate passed 1/1 in 74.691 s.
+all-target clippy passed with warnings denied. The combined HyperKZG/wrapper suite passed 89/89;
+the feature-enabled real gate passed 1/1 in 55.562 s.
