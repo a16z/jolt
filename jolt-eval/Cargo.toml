@@ -10,6 +10,7 @@ default = []
 metal = [
   "dep:jolt-kernels",
   "jolt-kernels/metal",
+  "jolt-kernels/bench-utils",
   "dep:jolt-prover",
   "jolt-prover/metal",
   "dep:jolt-witness",
@@ -28,7 +29,6 @@ jolt-tracer-x86 = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
 jolt-poly = { workspace = true }
-jolt-kernels = { workspace = true, features = ["bench-utils"] }
 jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
   "transcript-keccak",
@@ -103,10 +103,6 @@ harness = false
 
 [[bench]]
 name = "field_mul_u64"
-harness = false
-
-[[bench]]
-name = "hamming_weight_pushforward"
 harness = false
 
 [[bench]]
