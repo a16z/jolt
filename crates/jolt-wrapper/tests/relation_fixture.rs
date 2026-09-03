@@ -40,6 +40,7 @@ use jolt_wrapper::relation::{
     StageValueInputs, Witness,
 };
 use jolt_wrapper::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn};
+use jolt_wrapper::wrap::{WrapConfig, WrapPreparation};
 use tracer::execution_backend::TracerBackend;
 
 type Pcs = DoryScheme;
@@ -259,7 +260,24 @@ fn relation_on_fixture(log_t: usize) -> (Built, BTreeMap<String, usize>) {
 #[test]
 fn fibonacci_2_18_relation() {
     let (built, per_stage) = relation_on_fixture(18);
-    let (preprocessing, public_io, _) = fixture(18);
+    let (preprocessing, public_io, proof) = fixture(18);
+    let prepare_start = Instant::now();
+    let preparation =
+        WrapPreparation::new(&preprocessing, &public_io, &proof, WrapConfig::default())
+            .expect("prepare wrapper inputs");
+    println!(
+        "wrap preparation: {:.1} ms; T1 rows {} / 2^{}; R rows {}; public {}+{}",
+        prepare_start.elapsed().as_secs_f64() * 1e3,
+        preparation.hash_table.rows,
+        preparation.hash_table.log_rows,
+        preparation.relation.matrices.num_constraints,
+        preparation.public_known.len(),
+        preparation.public_challenges.len(),
+    );
+    assert_eq!(preparation.hash_table.log_rows, 18);
+    assert_eq!(preparation.public_known.len(), 7);
+    assert_eq!(preparation.public_challenges.len(), 38);
+    assert_eq!(preparation.shared_witness.inner_member().rounds, 13);
     let Built {
         relation, witness, ..
     } = &built;
