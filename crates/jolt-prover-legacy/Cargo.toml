@@ -67,7 +67,7 @@ prover = [
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
 allocative = ["dep:inferno"]
 monitor = ["dep:sysinfo"]
-pprof = ["dep:pprof", "dep:prost"]
+pprof = ["dep:pprof"]
 test_incremental = []
 challenge-254-bit = []
 field-inline = [
@@ -142,10 +142,6 @@ jolt-inlines-keccak256 = { workspace = true, features = [
 ], optional = true }
 sysinfo = { workspace = true, optional = true }
 pprof = { workspace = true, optional = true }
-prost = { workspace = true, optional = true }
-
-[package.metadata.cargo-machete]
-ignored = ["prost"]
 
 [dev-dependencies]
 criterion.workspace = true

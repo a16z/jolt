@@ -369,7 +369,6 @@ allocative = { version = "=0.3.6" }
 # No `flamegraph` feature: it pulls in inferno 0.11 (quick-xml 0.26,
 # RUSTSEC-2026-0194/0195) and only the `.pprof()` protobuf output is used.
 pprof = { version = "0.15", features = ["prost-codec", "frame-pointer"] }
-prost = "0.14"
 
 # Parsing
 syn = { version = "3", features = ["full"] }
