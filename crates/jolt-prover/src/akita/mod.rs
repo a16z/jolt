@@ -6,6 +6,8 @@ use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
 use jolt_kernels::{JoltBackend, KernelSlots, ProofSession, ReferenceBackend};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_openings::OpeningsError;
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };

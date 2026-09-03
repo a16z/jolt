@@ -29,18 +29,18 @@ pub(crate) enum GroupedRootSource {
 }
 
 pub(crate) struct GroupedRootView<'view, const D: usize> {
-    source: &'view GroupedRootSource,
+    pub(super) source: &'view GroupedRootSource,
 }
 
 pub(crate) struct GroupedRootBatchView<'view, const D: usize> {
-    sources: &'view [&'view GroupedRootSource],
+    pub(super) sources: &'view [&'view GroupedRootSource],
 }
 
 #[expect(
     clippy::panic,
     reason = "grouped root sources are constructed only after validating singleton hint storage"
 )]
-fn grouped_singleton<T>(values: &[T]) -> &T {
+pub(super) fn grouped_singleton<T>(values: &[T]) -> &T {
     let [value] = values else {
         panic!("grouped root source must retain exactly one polynomial")
     };

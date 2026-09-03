@@ -2,6 +2,7 @@
 //! 2026-09-01 port line; compiles only against the fork's Metal-enabled Akita).
 
 use akita_error::AkitaError;
+use akita_prover::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use akita_prover::compute::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
@@ -9,8 +10,8 @@ use akita_prover::compute::{
     SubringCoefficientPackingPlan,
 };
 use akita_prover::{
-    BatchDecomposeFoldOutcome, CommitInnerWitness, CpuBackend, DecomposeFoldWitness,
-    RootOpeningSource,
+    BatchDecomposeFoldOutcome, CommitInnerWitness, CpuBackend, DecomposeFoldWitness, DensePoly,
+    OneHotPoly, RootOpeningSource,
 };
 
 use super::commit::commit_packed;
