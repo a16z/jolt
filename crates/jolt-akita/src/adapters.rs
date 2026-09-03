@@ -1,7 +1,7 @@
 use std::{fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 #[cfg(feature = "profiling")]
-use std::cell::Cell;
+use std::{cell::Cell, num::NonZeroUsize};
 
 use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
@@ -17,6 +17,7 @@ use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
@@ -67,8 +68,8 @@ const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
     clippy::expect_used,
     reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
 )]
-fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> rayon::ThreadPool {
-    let mut builder = rayon::ThreadPoolBuilder::new()
+fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> ThreadPool {
+    let mut builder = ThreadPoolBuilder::new()
         .thread_name(move |index| format!("{name}-{index}"))
         .stack_size(BACKEND_WORKER_STACK_BYTES);
     if let Some(num_threads) = num_threads {
@@ -79,24 +80,23 @@ fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> rayon::
         .expect("the Akita backend thread pool must build")
 }
 
-fn backend_pool() -> &'static rayon::ThreadPool {
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+fn backend_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| build_backend_pool("jolt-akita", None))
 }
 
 #[cfg(feature = "profiling")]
-fn host_parallel_verifier_pool() -> &'static rayon::ThreadPool {
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+fn host_parallel_verifier_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
-        let num_threads =
-            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        let num_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
         build_backend_pool("jolt-akita-verify-parallel", Some(num_threads))
     })
 }
 
 #[cfg(feature = "profiling")]
-fn single_threaded_verifier_pool() -> &'static rayon::ThreadPool {
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+fn single_threaded_verifier_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| build_backend_pool("jolt-akita-verify-single", Some(1)))
 }
 

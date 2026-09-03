@@ -32,8 +32,11 @@
     reason = "profile harness: fail loudly and report to stdout"
 )]
 
+use std::env::VarError;
 use std::fs;
-use std::io::Write as _;
+use std::io::{Result, Write as _};
+#[cfg(not(feature = "akita"))]
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -69,8 +72,12 @@ use jolt_riscv::{JoltTraceRow, RV64IMAC_JOLT};
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+#[cfg(not(feature = "akita"))]
+use rayon::ThreadPoolBuilder;
 use tracer::execution_backend::TracerBackend;
 
+#[cfg(feature = "akita")]
+use crate::config::{NARROW_ONE_HOT_CONFIG, WIDE_ONE_HOT_CONFIG};
 #[cfg(not(feature = "akita"))]
 use crate::JoltBackend;
 use crate::{JoltProverPreprocessing, ProverConfig};
@@ -595,8 +602,8 @@ fn verifier_repetitions() -> u32 {
             );
             repetitions
         }
-        Err(std::env::VarError::NotPresent) => DEFAULT_VERIFIER_REPETITIONS,
-        Err(std::env::VarError::NotUnicode(_)) => {
+        Err(VarError::NotPresent) => DEFAULT_VERIFIER_REPETITIONS,
+        Err(VarError::NotUnicode(_)) => {
             panic!("JOLT_PROFILE_VERIFY_REPETITIONS must be valid UTF-8")
         }
     }
@@ -633,7 +640,7 @@ fn measure_verifier(
     }
 }
 
-fn migrate_legacy_timings_csv(path: &Path) -> std::io::Result<()> {
+fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
@@ -879,14 +886,13 @@ fn prove_workload(
         .expect("serialize proof")
         .len();
 
-    let parallel_threads =
-        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    let parallel_pool = rayon::ThreadPoolBuilder::new()
+    let parallel_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    let parallel_pool = ThreadPoolBuilder::new()
         .num_threads(parallel_threads)
         .thread_name(|index| format!("jolt-verify-parallel-{index}"))
         .build()
         .expect("parallel verifier pool must build");
-    let single_threaded_pool = rayon::ThreadPoolBuilder::new()
+    let single_threaded_pool = ThreadPoolBuilder::new()
         .num_threads(1)
         .thread_name(|_| "jolt-verify-single".to_string())
         .build()
@@ -972,8 +978,8 @@ fn prove_workload(
     .expect("derive config");
     if let Some(one_hot_k) = akita_one_hot_k {
         config.one_hot_config = match one_hot_k {
-            16 => crate::config::NARROW_ONE_HOT_CONFIG,
-            256 => crate::config::WIDE_ONE_HOT_CONFIG,
+            16 => NARROW_ONE_HOT_CONFIG,
+            256 => WIDE_ONE_HOT_CONFIG,
             _ => panic!("--akita-one-hot-k must be 16 or 256, got {one_hot_k}"),
         };
     }
