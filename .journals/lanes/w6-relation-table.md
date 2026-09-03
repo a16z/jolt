@@ -109,6 +109,24 @@ Code commit: `f845ec8ad`.
   stage and 544 B committed-round saving are shared whole-stream items owned by W5, not isolated R
   measurements.
 
+## Exact W5 integration (01:13)
+
+- Main-branch checkpoint: `d363c3e82`. Exact shared-interface follow-up: `1b4a8303c`, based on
+  W5's `5ca9bfa52`; it replaces the provisional identical structs with
+  `stream::{ColumnId, AffineForm, Term, TermContext, TermExporter}`. Native final evaluators are
+  test-only there; the standalone protocol also checks its final relation through the term list.
+- Exact-interface verification: relation-table unit tests **3/3**; real-shape/fixture tests **2/2**;
+  `cargo fmt` and fixture-enabled library clippy with `-D warnings` pass in the detached W5 stack.
+- With W5's 64-byte committed rounds, standalone R payload/bincode becomes **4,352 / 4,415 B**
+  (−544 B). Executed verifier: **108 ecMul, 107 ecAdd, 8 pairing pairs, 8,847 Fr mul, 6
+  inversions, 310 Keccak**. With 5,824 expanded-calldata bytes, N4 gas is **1,568,173**. The cost
+  increase versus the old standalone protocol comes from W5's new BDFG round checks; R term export
+  itself remains 171 Fr multiplications / 3,420 gas.
+- W5's current 17-group full-stream projection is **6,112 B**, 112 B above the hard decimal 6,000 B
+  target. R has no remaining per-column claims; its exact contribution is 26 terms and the two
+  commitment phases already counted by W5. Full-statement soundness/size remains an assembly gate
+  until T1 and T2 land their real column layouts.
+
 ## Measurements
 
 Real `/Volumes/Dev/scratch/wrapper-fixtures/fibonacci_2_18_blake3.bin`, 10 Rayon threads. Load
