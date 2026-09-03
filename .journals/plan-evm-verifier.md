@@ -1,3 +1,59 @@
+# Plan — EVM verifier for the single-layer Spartan+HyperKZG wrapper (lane P-EVM, card 135)
+
+Date 2026-09-02 21:20–22:15 · tree a79d406ce (`wrap/spartan-hyperkzg`), production stream = 19872523d · read-only planner.
+Binding: USER 21:17 — no Groth16, no trusted-setup layer; single-layer stream made small; objectives bytes → gas → prover s.
+Tags: **M** = measured or counted from code/lane journals; **E** = estimate. Gas model = N4 Cancun measurements (M): 2-pair pairing 114.7k,
+4-pair 183.4k, ecMul+ecAdd ≈ 7.7k per MSM term, Blake2b-F ×7 5.4k, Keccak over 770 B 0.75k, calldata 16/B, base 21k. Fr op (mulmod/addmod +
+operand traffic in Yul) = **20 gas** (E; opcode 8 + ≈12 overhead). Profile L=20, K=16, σ=12, N=42 unless noted. Byte-audit journal absent → default
+field counts from the brief. `.journals/lanes/w4s-byte-audit.md` supersedes §4 line items when it lands.
+
+## 0. Verdict (one screen)
+
+| | now (stream 19872523d formats, full statement) | best single-layer EVM design (§4) | + unbuilt levers (§4) |
+|---|---:|---:|---:|
+| proof bytes (wire) | ≈11.6 KB (E from M formats) | **10,784 B** (E) | 9,276 B (Mercury-class PCS) · 8,156 B (+committed stage-A rounds) |
+| EVM calldata | — | 12,032 B (E) | ≈9.9 KB / ≈9.4 KB |
+| gas (Cancun) | n/a (Blake3 transcript, O(nnz) matrices, O(rows) wiring ≈ 3M) | **≈1.13 M** (E) | ≈0.80 M (Mercury + closed-form T1 kernels + k=32) · ≈0.71 M (+3-witness HyperKZG) |
+| prover | 4.95 s @2^17×k=8 G-shape (M) | ≈25 s @2^19 rows, k=16 (E) · ≈20 s @k=8 (+512 B, +123k gas) | ≈13 s if T2 fits 2^18 |
+| trusted setup | universal KZG SRS 2^23 | same | same |
+
+- **Matrix MLEs → (a) SPARK with LogUp memory checking, hosted in stage C** (degree 2→3): +800 B, +25k gas, +0.3 s, verifier O(log). (b) uniform
+  R1CS rejected (60% of constraints are 54 irregular table gadgets; still needs SPARK), (c) bit-product form rejected (≥1.7 KB). §2.
+- **Selectors/wiring → committed one-hot digit columns + power-of-two-strided T2 row layout + Spartan witness indexed by T1 rows**: every public MLE the
+  verifier evaluates is an eq/shift kernel or a ≤256-entry sparse map → ≈13k Fr ops total on-chain (≈260k gas), no O(rows) term. Price: T2 rows
+  ×1.4–1.7 → **2^19** (E). §3.
+- Byte floor of this architecture ≈ 9–11 KB: 74 sumcheck rounds = 7.3 KB (68%). "Few KB" is not reachable single-layer without committed rounds
+  (−1.2 KB for +150k gas) — reported, not hidden. Two biggest risks §6: T2 stride padding → 2^19 (prover ≈25 s); round-poly floor.
+- Two code facts that change the on-chain design: (i) `kzg_verify_batch` (`jolt-hyperkzg/src/kzg.rs:111`) forms `[Z(β)]₂` with **3 G2 scalar
+  multiplications** — no EVM precompile; rearrange to a 4-pair pairing (0 B, +90k gas) or 3 witnesses (+64 B, +2 full MSMs prover). (ii) the outer
+  transcript is `Blake3Transcript` — no precompile; switch to a Keccak256 **chained digest** (`DigestTranscript<Keccak256>`, `digest.rs:91`
+  framing: 30+6·⌈(64+len)/32⌉ gas per event) — the spongefish `KeccakTranscript` duplex (keccak-f permutation) is *not* EVM-cheap.
+
+## 1. On-chain work list (best design, k=16, rows 2^19, 254 columns → log 8, ℓ = 23)
+
+| # | item | count | Fr ops / EC ops | gas (E) | notes |
+|---|---|---:|---:|---:|---|
+| 1 | tx base | 1 | — | 21,000 | |
+| 2 | calldata | 10,784 B wire + 39 G1 × 32 (uncompressed on EVM) = 12,032 B | — | 192,500 | decompression via modexp ≥1.3k/pt > 512 gas of 32 B (E) |
+| 3 | transcript (Keccak chained digest) | ≈140 events: 16 commitments (1 hash of 1 KB), 74 rounds (absorb+squeeze), ≈12 heads/claims, HyperKZG 6 | ≈140 × 100 | 15,000 | Blake2b-F alternative ≈700/compression (M) → ≈100k; Keccak wins 7× |
+| 4 | round checks | A 19 (deg 5), B 32 (deg 2), C 23 (deg 3) = 74 | ≈12 ops/round → 900 | 18,000 | derive missing coeff from claim, Horner at rᵢ |
+| 5 | eq / Lagrange / tensor tables | eq(τ,r_A) 19, eq tables eq(s_d,·) 4×256, 16 group eqs ×5 points, zero-prefix paddings, eq(τ_R1CS,rx) 14, eq(τ_C,·) | ≈2,000 | 40,000 | |
+| 6 | T1 final relation | γ-weights 229 + Q̃_T1 (230 bilinear terms, 2 eq lookups each) + sel(r) | ≈1,300 | 26,000 | `hash_table/layout.rs` CONSTRAINTS = 229, DEGREE 3 (M) |
+| 7 | T1 wiring kernels | 12 shapes × 128-entry sparse maps (eq(r_comp,u_comp)·P̃(r_pos,u_pos)) + chaining EqPlusOne | ≈5,000 (E) | 100,000 | lever: Blake3 G/rotation regularity → closed forms ≈1.5k ops (E) → 30k |
+| 8 | T2 final relation | Q̃_T2: 360 bilinear CRT/native terms + 18 helpers × 8 monomials (arity ≤4) + γ/α constants | ≈4,000 (E) | 80,000 | plan-v3 said 8k; recount §3 |
+| 9 | T2 wiring kernels | 11 shift relations (EqPlusOne-class), region eqs, selector kernel Σ_j δ_j(r)·eq(u_j, j)·eq(r_k,u_k)·eq(r_c,u_c) | ≈1,500 | 30,000 | N1: 11 shift relations (M) |
+| 10 | links L1/L2/L4/L5 + digit→scalar recomposition | eq/shift kernels on (comp, pos) index; pow-2 closed form Π(1−x+x·2^{5·2^i}) | ≈1,000 | 20,000 | requires W index space = T1 row space (§3) |
+| 11 | Spartan | public columns Σ_{j∈x} M_j(rx)x_j (|x|≈12, ≈5 nnz each ×14), eq(τ,rx), inner claim assembly | ≈1,000 | 20,000 | |
+| 12 | SPARK closed forms | eq(rx, r'), eq(ry, r''), identity MLE, LogUp RHS assembly | ≈500 | 10,000 | §2 |
+| 13 | inversions | batched → 1 modexp + ≈10 muls | — | 5,000 | |
+| 14 | final eq-weighted RLC | 16 table groups + 1 SPARK group + 2 VK groups | 19 ecMul + 19 ecAdd | 146,000 | k=32 → 11 terms (−62k) |
+| 15 | HyperKZG B-commitment MSM | ℓ = 23 com + 3 remainder | 26 ecMul + 26 ecAdd | 200,000 | Mercury-class PCS → O(1) (−180k) |
+| 16 | HyperKZG divisor on G1 side + pairing | 3 ecMul; 4 pairs (B−R−z₀W,[1]₂),(−z₁W,[β]₂),(−z₂W,[β²]₂),(−W,[β³]₂) | 3 ecMul, 4-pair | 23,000 + 183,400 | alt: 3 witnesses → 2-pair 114.7k + 2 ecMul, +64 B, +2 MSMs prover |
+| | **total** | | ≈13k Fr ops, 48 ecMul, 4 pairs | **≈1,130k** | levers → ≈0.71–0.80 M |
+
+Contract constants (VK): 4 G2 (`[1],[β],[β²],[β³]`) + 3 G1 SRS · SPARK key group commitments (2 G1) · Q̃_T1/Q̃_T2 term lists ≈730 × (coeff id, ≤4 column
+ids) ≈ 6 KB · 12 T1 wiring maps × 128 B · Blake3 IV/flags · Dory VK GT constants as T2 public operand rows (≈ 200–1,000 Fr, evaluated at r_A ≈ 1k ops,
+or 1 more VK commitment) · profile digest. ≈ 20–30 KB → exceeds EIP-170 (24 KB) with code → constants in a data contract (EXTCODECOPY 2.6k + 3/word).
 
 ## 2. The matrix-MLE problem: Ã(rx,ry), B̃, C̃ of the verifier-algebra R1CS
 
