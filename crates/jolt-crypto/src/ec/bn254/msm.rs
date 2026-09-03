@@ -10,6 +10,10 @@ use super::Bn254G1Affine;
 
 const MAX_WINDOW_BITS: usize = 15;
 const LARGE_MSM_WINDOW_BITS: usize = 16;
+// One affine batch step consumes at most one entry from each bucket. Highly
+// skewed digits therefore serialize; projective buckets remain one-pass.
+const SKEW_SAMPLE_SIZE: usize = 1 << 16;
+const SKEW_BUCKET_THRESHOLD: u32 = 64;
 
 pub(super) fn g1_msm(bases: &[Bn254G1Affine], scalars: &[JoltFr]) -> G1Projective {
     if bases.is_empty() {
@@ -94,6 +98,10 @@ fn pippenger_bigints(bases: &[G1Affine], scalars: &[BigInteger256]) -> G1Project
         (bases.len().ilog2() as usize * 69 / 100 + 3).min(max_window_bits)
     };
     let window_count = Fr::MODULUS_BIT_SIZE as usize / window_bits + 1;
+    let max_sample_bucket = sampled_max_bucket_occupancy(scalars, window_bits);
+    if max_sample_bucket > SKEW_BUCKET_THRESHOLD {
+        return projective_pippenger(bases, scalars, window_bits, window_count);
+    }
     let point_chunks = if bases.len() < 1 << 16 {
         1
     } else {
@@ -122,6 +130,93 @@ fn pippenger_bigints(bases: &[G1Affine], scalars: &[BigInteger256]) -> G1Project
         .map(sum_buckets)
         .collect::<Vec<_>>();
 
+    combine_window_sums(&window_sums, window_bits)
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "nonzero signed-digit magnitudes are bounded by the configured window"
+)]
+fn sampled_max_bucket_occupancy(scalars: &[BigInteger256], window_bits: usize) -> u32 {
+    let sample_size = scalars.len().min(SKEW_SAMPLE_SIZE);
+    let stride = scalars.len().div_ceil(sample_size);
+    let mut buckets = vec![0u32; 1 << (window_bits - 1)];
+    for scalar in scalars.iter().step_by(stride).take(sample_size) {
+        let digit = booth_digit(scalar, 0, window_bits);
+        if digit != 0 {
+            buckets[digit.unsigned_abs() as usize - 1] += 1;
+        }
+    }
+    buckets.into_iter().max().unwrap_or(0)
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "flat task indices and chunk bounds are derived from the input length"
+)]
+fn projective_pippenger(
+    bases: &[G1Affine],
+    scalars: &[BigInteger256],
+    window_bits: usize,
+    window_count: usize,
+) -> G1Projective {
+    let point_chunks = if bases.len() < 1 << 16 {
+        1
+    } else {
+        (4 * rayon::current_num_threads())
+            .div_ceil(window_count)
+            .max(1)
+    };
+    let chunk_len = bases.len().div_ceil(point_chunks);
+    let mut partials = (0..window_count * point_chunks)
+        .into_par_iter()
+        .map(|task| {
+            let window = task / point_chunks;
+            let chunk = task % point_chunks;
+            let start = chunk * chunk_len;
+            let end = (start + chunk_len).min(bases.len());
+            let mut buckets = vec![Bucket::<G1Config>::ZERO; 1 << (window_bits - 1)];
+            for (base, scalar) in bases[start..end].iter().zip(&scalars[start..end]) {
+                let digit = booth_digit(scalar, window, window_bits);
+                if digit > 0 {
+                    buckets[digit as usize - 1] += base;
+                } else if digit < 0 {
+                    buckets[digit.unsigned_abs() as usize - 1] -= base;
+                }
+            }
+            buckets
+        })
+        .collect::<Vec<_>>();
+    let window_sums = partials
+        .par_chunks_mut(point_chunks)
+        .map(sum_projective_buckets)
+        .collect::<Vec<_>>();
+    combine_window_sums(&window_sums, window_bits)
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "the last partial is removed before the remaining prefix is merged"
+)]
+fn sum_projective_buckets(partials: &mut [Vec<Bucket<G1Config>>]) -> G1Projective {
+    let mut buckets = partials.last_mut().map(std::mem::take).unwrap_or_default();
+    let prefix_len = partials.len().saturating_sub(1);
+    for partial in &partials[..prefix_len] {
+        for (bucket, other) in buckets.iter_mut().zip(partial) {
+            *bucket += other;
+        }
+    }
+
+    let mut running_sum = Bucket::<G1Config>::ZERO;
+    let mut sum = Bucket::<G1Config>::ZERO;
+    for bucket in buckets.iter().rev() {
+        running_sum += bucket;
+        sum += &running_sum;
+    }
+    G1Projective::from(sum)
+}
+
+fn combine_window_sums(window_sums: &[G1Projective], window_bits: usize) -> G1Projective {
     window_sums
         .iter()
         .rev()
@@ -448,6 +543,36 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(g1_msm(&bases, &scalars), naive(&bases, &scalars));
+    }
+
+    #[test]
+    fn full_width_msm_handles_skewed_digits() {
+        let mut rng = ChaCha20Rng::seed_from_u64(37);
+        let bases = bases(257, &mut rng);
+        let scalar = loop {
+            let scalar = JoltFr::random(&mut rng);
+            let bigint = Fr::from(scalar).into_bigint();
+            if as_u16_scalar(&bigint).is_none() && booth_digit(&bigint, 0, 16) != 0 {
+                break scalar;
+            }
+        };
+        let scalars = vec![scalar; bases.len()];
+        let bigints = scalars
+            .iter()
+            .map(|scalar| Fr::from(*scalar).into_bigint())
+            .collect::<Vec<_>>();
+        assert!(sampled_max_bucket_occupancy(&bigints, 16) > SKEW_BUCKET_THRESHOLD);
+        let expected = naive(&bases, &scalars);
+        assert_eq!(g1_msm(&bases, &scalars), expected);
+        assert_eq!(
+            projective_pippenger(
+                Bn254G1Affine::as_inner_slice(&bases),
+                &bigints,
+                16,
+                Fr::MODULUS_BIT_SIZE as usize / 16 + 1,
+            ),
+            expected
+        );
     }
 
     #[test]
