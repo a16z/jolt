@@ -484,6 +484,43 @@ impl FlattenedCheck {
         }
     }
 
+    /// Every named wire in first-use order (GT bases, then the G1 and G2
+    /// chains): the published digit-base order when no link order is given.
+    pub fn wires(&self) -> Vec<DoryScalar> {
+        let mut out: Vec<DoryScalar> = Vec::new();
+        for wire in self.all_wires() {
+            if let Wire::Named(scalar) = wire {
+                if !out.contains(scalar) {
+                    out.push(scalar.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Every base's wire over all seven MSMs.
+    pub fn all_wires(&self) -> impl Iterator<Item = &Wire> {
+        self.gt
+            .bases
+            .iter()
+            .map(|(_, w)| w)
+            .chain(
+                self.g1_chains()
+                    .into_iter()
+                    .flat_map(|m| m.bases.iter().map(|(_, w)| w)),
+            )
+            .chain(
+                self.g2_chains()
+                    .into_iter()
+                    .flat_map(|m| m.bases.iter().map(|(_, w)| w)),
+            )
+    }
+
+    /// How many MSM bases carry `wire` (the digit link divides by it).
+    pub fn wire_multiplicity(&self, wire: &Wire) -> usize {
+        self.all_wires().filter(|w| *w == wire).count()
+    }
+
     /// The four G1 chains in evaluation order (`A3` reads the accumulator).
     pub fn g1_chains(&self) -> [&Msm<G1Base>; 4] {
         [&self.g1_acc, &self.g1_a3, &self.g1_a1, &self.g1_a4]

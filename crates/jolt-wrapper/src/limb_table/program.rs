@@ -20,7 +20,17 @@ pub type RowId = u32;
 pub struct Slot {
     pub x: RowId,
     pub y: RowId,
+    /// Public coefficient (the `X` operand column holds `kappa·Z(x)`).
     pub kappa: i32,
+    /// Sign carried by the `Y` operand (`±1`: a conjugated digit-selected
+    /// coordinate); the slot's total coefficient is `kappa·y_sign`.
+    pub y_sign: i32,
+}
+
+impl Slot {
+    pub const fn coefficient(&self) -> i32 {
+        self.kappa * self.y_sign
+    }
 }
 
 /// A public small-integer linear combination of rows; empty is zero.
@@ -64,6 +74,7 @@ pub fn mul_terms(a: &Lin, b: &Lin, kappa: i32) -> Vec<Slot> {
                 x,
                 y,
                 kappa: kappa * kx * ky,
+                y_sign: 1,
             });
         }
     }
@@ -211,20 +222,24 @@ impl Program {
         id
     }
 
+    /// A row whose value is not computed from operands (an input or a
+    /// public constant): no slots, exempt from the limb identity (`free`).
     fn self_row_at(&mut self, id: RowId, source: Source, pin: Option<Fq>) {
-        let one = if self.order.is_empty() { id } else { self.one };
         self.write(
             id,
             RowSpec {
-                slots: vec![Slot {
-                    x: id,
-                    y: one,
-                    kappa: 1,
-                }],
+                slots: Vec::new(),
                 source,
                 pin,
             },
         );
+    }
+
+    /// Rows exempt from the limb identity: inputs and public constants.
+    pub fn free_rows(&self) -> impl Iterator<Item = usize> + '_ {
+        self.rows.iter().enumerate().filter_map(|(row, spec)| {
+            matches!(spec.source, Source::Input(_) | Source::Constant(_)).then_some(row)
+        })
     }
 
     /// A public constant row (deduplicated by value) in the constants region.
@@ -340,7 +355,7 @@ impl Program {
         };
         let eval_slots = |values: &[Fq], slots: &[Slot]| {
             slots.iter().fold(Fq::ZERO, |acc, slot| {
-                acc + values[slot.x as usize] * values[slot.y as usize] * signed(slot.kappa)
+                acc + values[slot.x as usize] * values[slot.y as usize] * signed(slot.coefficient())
             })
         };
         for &id in &self.order {

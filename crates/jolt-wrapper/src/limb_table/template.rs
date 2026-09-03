@@ -7,7 +7,7 @@
 
 use ark_bn254::Fq;
 
-use super::layout::{Bits, Factor, Kernel, Piece, Side, LOG_ROWS};
+use super::layout::{normalize, Bits, Factor, Kernel, Piece, Side, LOG_ROWS};
 use super::program::{Program, RowId, RowSpec, Slot, Source};
 
 /// Coordinate `coord` of element `elem`; element 0 is the op's own rows.
@@ -23,6 +23,27 @@ pub const fn own(coord: u8) -> Ref {
 
 pub const fn at(elem: u8, coord: u8) -> Ref {
     Ref { elem, coord }
+}
+
+/// The public `one` row (the first constant), read by every witness row's
+/// self slot `z = z·1`.
+pub const ONE_ELEM: u8 = u8::MAX;
+pub const ONE_REF: Ref = Ref {
+    elem: ONE_ELEM,
+    coord: 0,
+};
+pub const ONE_ROW: RowId = super::schedule::cells::CONSTANTS.start * 16;
+
+impl TemplateRow {
+    /// The row's operand slots: witness rows (quotients, inverses) carry the
+    /// self slot `(own, one, 1)` so the limb identity holds on them too.
+    pub fn slots_of(&self, index: usize) -> RefSlots {
+        if self.slots.is_empty() && self.kind != RowKind::Compute {
+            vec![(own(index as u8), ONE_REF, 1)]
+        } else {
+            self.slots.clone()
+        }
+    }
 }
 
 /// A sum of products `Σ κ · a · b` over references.
@@ -110,9 +131,28 @@ impl Template {
     pub fn max_slots(&self) -> usize {
         self.rows
             .iter()
-            .map(|row| row.slots.len())
+            .enumerate()
+            .map(|(i, row)| row.slots_of(i).len())
             .max()
             .unwrap_or(0)
+    }
+
+    /// Pads every slotted row to the template's slot count with
+    /// zero-coefficient slots reading coordinate 0 of `elem` on the `Y`
+    /// side, so a digit-selected `elem` is fingerprinted through the same
+    /// slots on every row.
+    pub fn padded(mut self, elem: u8) -> Self {
+        let width = self.max_slots();
+        for row in &mut self.rows {
+            if row.slots.is_empty() {
+                continue;
+            }
+            let x = row.slots[0].0;
+            while row.slots.len() < width {
+                row.slots.push((x, at(elem, 0), 0));
+            }
+        }
+        self
     }
 }
 
@@ -144,7 +184,8 @@ pub enum ElemRel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DigitRule {
     /// GT: entry `|d| − 1` holds `X^{|d|}`, negative digits read its conjugate
-    /// (coordinates `≥ 6` negated), `d = 0` reads the identity row.
+    /// (coordinates `≥ 6` negated), `d = 0` reads the `one` element cell
+    /// (coordinate `c` at `one + c`).
     Gt { one: RowId },
     /// EC: entry `j` holds `d·P + Z0`.
     Ec,
@@ -194,7 +235,7 @@ impl ElemRel {
                 match rule {
                     DigitRule::Gt { one } => {
                         if d == 0 {
-                            return (coord == 0).then_some((*one, 1));
+                            return Some((*one + u32::from(coord), 1));
                         }
                         let mut src = apply_factors(factors, row)?;
                         entry_bits.insert(&mut src, d.unsigned_abs() - 1);
@@ -238,7 +279,35 @@ pub struct SelectedPiece {
     pub own_coord_bits: Bits,
 }
 
+/// The fixed wiring of one element read by a family: the cell factors every
+/// slot side shares (domain and element relation) and the per-(slot, side)
+/// own-coordinate ↦ (source coordinate, κ) maps. The verifier evaluates the
+/// cell part once and combines the maps with the slot weights.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ElemWiring {
+    pub cell: Vec<Factor>,
+    pub maps: Vec<(u8, Side, Factor)>,
+}
+
+impl ElemWiring {
+    pub fn pieces(&self) -> Vec<Piece> {
+        self.maps
+            .iter()
+            .map(|(slot, side, map)| {
+                let mut factors = self.cell.clone();
+                factors.push(map.clone());
+                Piece {
+                    slot: *slot,
+                    side: *side,
+                    kernel: Kernel::new(factors),
+                }
+            })
+            .collect()
+    }
+}
+
 /// One family of ops sharing a template and element relations.
+#[derive(Clone)]
 pub struct Family<'a> {
     pub name: &'static str,
     pub template: &'a Template,
@@ -259,7 +328,9 @@ impl Family<'_> {
             let row = &self.template.rows[i];
             let id = base + self.own_offset + i as u32;
             let resolve = |r: Ref| -> Option<(RowId, i32)> {
-                if r.elem == 0 {
+                if r.elem == ONE_ELEM {
+                    Some((ONE_ROW, 1))
+                } else if r.elem == 0 {
                     Some((base + self.own_offset + u32::from(r.coord), 1))
                 } else {
                     self.elems[usize::from(r.elem) - 1].resolve(id, r.coord, digit)
@@ -271,7 +342,8 @@ impl Family<'_> {
                         (Some((x, sx)), Some((y, sy))) => Slot {
                             x,
                             y,
-                            kappa: kappa * sx * sy,
+                            kappa: kappa * sx,
+                            y_sign: sy,
                         },
                         // Structurally zero operand: the slot keeps its
                         // position with a zero coefficient.
@@ -279,11 +351,12 @@ impl Family<'_> {
                             x: id,
                             y: id,
                             kappa: 0,
+                            y_sign: 1,
                         },
                     })
                     .collect()
             };
-            let slots = slots_of(&row.slots);
+            let slots = slots_of(&row.slots_of(i));
             let source = match &row.kind {
                 RowKind::Compute => Source::Compute,
                 RowKind::Quotient { num, den } => Source::Quotient {
@@ -315,15 +388,16 @@ impl Family<'_> {
         }
     }
 
-    /// The wiring kernels of this family: one piece per (slot, side, element).
-    pub fn pieces(&self) -> (Vec<Piece>, Vec<SelectedPiece>) {
-        let mut fixed = Vec::new();
+    /// The wiring of this family: the fixed elements' cell factors and
+    /// coordinate maps, and the digit-selected pieces.
+    pub fn wiring(&self) -> (Vec<ElemWiring>, Vec<SelectedPiece>) {
+        let mut fixed: Vec<(u8, ElemWiring)> = Vec::new();
         let mut selected = Vec::new();
         let width = 1usize << self.own_bits.width();
         for s in 0..self.template.max_slots() {
             for side in [Side::X, Side::Y] {
-                let refs = |row: &TemplateRow| {
-                    row.slots.get(s).map(|(x, y, k)| match side {
+                let refs = |i: usize, row: &TemplateRow| {
+                    row.slots_of(i).get(s).map(|(x, y, k)| match side {
                         Side::X => (*x, *k),
                         Side::Y => (*y, 1),
                     })
@@ -332,41 +406,73 @@ impl Family<'_> {
                     .template
                     .rows
                     .iter()
-                    .filter_map(|row| refs(row).map(|(r, _)| r.elem))
+                    .enumerate()
+                    .filter_map(|(i, row)| refs(i, row).map(|(r, _)| r.elem))
                     .collect();
                 elems.sort_unstable();
                 elems.dedup();
                 for elem in elems {
+                    // Zero-coefficient `X` operands are zero: nothing to copy.
                     let mut coords: Vec<Option<(u32, i32)>> = vec![None; width];
                     for (i, row) in self.template.rows.iter().enumerate() {
-                        if let Some((r, k)) = refs(row) {
-                            if r.elem == elem {
+                        if let Some((r, k)) = refs(i, row) {
+                            if r.elem == elem && k != 0 {
                                 coords[self.own_offset as usize + i] =
                                     Some((u32::from(r.coord), k));
                             }
                         }
                     }
-                    let piece = |factors: &[Factor], coord_bits: Bits, offset: u32| {
-                        let map = coords
-                            .iter()
-                            .map(|entry| entry.map(|(c, k)| (offset + c, k)))
-                            .collect();
+                    if coords.iter().all(Option::is_none) {
+                        continue;
+                    }
+                    let mut push_fixed = |cell: Vec<Factor>, map: Factor| match fixed
+                        .iter_mut()
+                        .find(|(e, _)| *e == elem)
+                    {
+                        Some((_, wiring)) => wiring.maps.push((s as u8, side, map)),
+                        None => fixed.push((
+                            elem,
+                            ElemWiring {
+                                cell,
+                                maps: vec![(s as u8, side, map)],
+                            },
+                        )),
+                    };
+                    let coord_map = |coord_bits: Bits, offset: u32| {
+                        Factor::map(
+                            self.own_bits,
+                            coord_bits,
+                            coords
+                                .iter()
+                                .map(|entry| entry.map(|(c, k)| (offset + c, k)))
+                                .collect(),
+                        )
+                    };
+                    let cell_of = |factors: &[Factor]| {
                         let mut all = self.domain.clone();
                         all.extend_from_slice(factors);
-                        all.push(Factor::map(self.own_bits, coord_bits, map));
-                        Piece {
-                            slot: s as u8,
-                            side,
-                            kernel: Kernel::new(all),
-                        }
+                        normalize(all)
                     };
                     if elem == 0 {
                         let index = Bits::new(self.own_bits.hi, LOG_ROWS as u8);
-                        fixed.push(piece(
-                            &[Factor::same(index, index)],
-                            self.own_bits,
-                            self.own_offset,
-                        ));
+                        push_fixed(
+                            cell_of(&[Factor::same(index, index)]),
+                            coord_map(self.own_bits, self.own_offset),
+                        );
+                        continue;
+                    }
+                    if elem == ONE_ELEM {
+                        push_fixed(
+                            self.domain.clone(),
+                            Factor::map(
+                                self.own_bits,
+                                Bits::new(0, LOG_ROWS as u8),
+                                coords
+                                    .iter()
+                                    .map(|entry| entry.map(|(_, k)| (ONE_ROW, k)))
+                                    .collect(),
+                            ),
+                        );
                         continue;
                     }
                     match &self.elems[usize::from(elem) - 1] {
@@ -374,51 +480,101 @@ impl Family<'_> {
                             factors,
                             coord_bits,
                             offset,
-                        } => fixed.push(piece(factors, *coord_bits, *offset)),
-                        ElemRel::Rows(rows) => {
-                            let map = coords
-                                .iter()
-                                .map(|entry| entry.map(|(c, k)| (rows[c as usize], k)))
-                                .collect();
-                            let mut all = self.domain.clone();
-                            all.push(Factor::map(
+                        } => push_fixed(cell_of(factors), coord_map(*coord_bits, *offset)),
+                        ElemRel::Rows(rows) => push_fixed(
+                            self.domain.clone(),
+                            Factor::map(
                                 self.own_bits,
                                 Bits::new(0, LOG_ROWS as u8),
-                                map,
-                            ));
-                            fixed.push(Piece {
-                                slot: s as u8,
-                                side,
-                                kernel: Kernel::new(all),
-                            });
-                        }
+                                coords
+                                    .iter()
+                                    .map(|entry| entry.map(|(c, k)| (rows[c as usize], k)))
+                                    .collect(),
+                            ),
+                        ),
                         ElemRel::Selected {
                             factors,
                             coord_bits,
                             offset,
                             entry_bits,
                             rule,
-                        } => {
-                            let mut all = self.domain.clone();
-                            all.extend_from_slice(factors);
-                            selected.push(SelectedPiece {
-                                slot: s as u8,
-                                side,
-                                factors: all,
-                                entry_bits: *entry_bits,
-                                rule: *rule,
-                                coords: coords
-                                    .iter()
-                                    .map(|entry| entry.map(|(c, k)| (offset + c, k)))
-                                    .collect(),
-                                coord_bits: *coord_bits,
-                                own_coord_bits: self.own_bits,
-                            });
-                        }
+                        } => selected.push(SelectedPiece {
+                            slot: s as u8,
+                            side,
+                            factors: {
+                                let mut all = self.domain.clone();
+                                all.extend_from_slice(factors);
+                                all
+                            },
+                            entry_bits: *entry_bits,
+                            rule: *rule,
+                            coords: coords
+                                .iter()
+                                .map(|entry| entry.map(|(c, k)| (offset + c, k)))
+                                .collect(),
+                            coord_bits: *coord_bits,
+                            own_coord_bits: self.own_bits,
+                        }),
                     }
                 }
             }
         }
-        (fixed, selected)
+        (fixed.into_iter().map(|(_, w)| w).collect(), selected)
     }
+
+    /// The wiring kernels of this family: one piece per (slot, side, element).
+    pub fn pieces(&self) -> (Vec<Piece>, Vec<SelectedPiece>) {
+        let (fixed, selected) = self.wiring();
+        (
+            fixed.iter().flat_map(ElemWiring::pieces).collect(),
+            selected,
+        )
+    }
+}
+
+/// The `Y`-side coordinate maps of the fingerprinted slots of a selected
+/// element: own coordinate `c` ↦ `(offset + element coordinate, ±1)` for
+/// slots `s < fp_slots`, once with weight `+1` and once with the
+/// conjugation sign (coordinates `≥ 6` negated). Every slotted row must read
+/// the selected element in every fingerprinted slot.
+/// Per fingerprinted slot: the row-coordinate → source-coordinate map.
+pub type SlotMaps = Vec<(u8, Factor)>;
+
+pub fn fingerprint_maps(
+    template: &Template,
+    elem: u8,
+    own_bits: Bits,
+    own_offset: u32,
+    coord_bits: Bits,
+    offset: u32,
+    fp_slots: usize,
+) -> (SlotMaps, SlotMaps) {
+    let width = 1usize << own_bits.width();
+    let mut maps = Vec::with_capacity(fp_slots);
+    let mut conj_maps = Vec::with_capacity(fp_slots);
+    for s in 0..fp_slots {
+        let mut plain: Vec<Option<(u32, i32)>> = vec![None; width];
+        let mut conj: Vec<Option<(u32, i32)>> = vec![None; width];
+        for (i, row) in template.rows.iter().enumerate() {
+            if row.kind != RowKind::Compute {
+                continue;
+            }
+            let Some((_, y, _)) = row.slots.get(s) else {
+                unreachable!("slotted row {i} lacks fingerprinted slot {s}")
+            };
+            assert_eq!(
+                y.elem, elem,
+                "slot {s} of row {i} does not read the selected element"
+            );
+            let c = own_offset as usize + i;
+            plain[c] = Some((offset + u32::from(y.coord), 1));
+            conj[c] = Some((
+                offset + u32::from(y.coord),
+                if conjugated(y.coord) { -1 } else { 1 },
+            ));
+        }
+        maps.push((s as u8, Factor::map(own_bits, coord_bits, plain)));
+        conj_maps.push((s as u8, Factor::map(own_bits, coord_bits, conj)));
+    }
+    (maps, conj_maps)
 }

@@ -17,7 +17,7 @@ pub const LOG_CELLS: usize = LOG_ROWS - LOG_CELL as usize;
 pub const CELLS: u32 = 1 << LOG_CELLS;
 
 /// A bit-field `[lo, hi)` of the row index (bit 0 is the coordinate's low bit).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Bits {
     pub lo: u8,
     pub hi: u8,
@@ -54,7 +54,7 @@ impl Bits {
 }
 
 /// How a source field is determined by a row field.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Rel {
     /// `v = u + delta`, no carry or borrow out of the field (`delta = 0`: `v = u`).
     Shift(i64),
@@ -72,7 +72,7 @@ pub enum Rel {
 
 /// One factor of a kernel: the relation between row field `u` and source
 /// field `v`, restricted to rows whose `u` value lies in `range`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Factor {
     pub u: Bits,
     pub v: Bits,
@@ -334,11 +334,132 @@ fn range_mle(ru: &[Fr], range: Option<&Range<u32>>) -> Fr {
         .fold(Fr::zero(), |acc, state| acc + states[state])
 }
 
+/// Splits every unrestricted identity factor (`same(F, F)`) and every
+/// single-value restriction at the field boundaries of the other factors, so
+/// that overlapping row fields become identical ones ([`field_groups`] then
+/// sums each field once). Multi-value restrictions must already be aligned.
+pub fn normalize(factors: Vec<Factor>) -> Vec<Factor> {
+    let cuts_of = |i: usize, field: Bits| -> Vec<u8> {
+        let mut cuts: Vec<u8> = vec![field.lo, field.hi];
+        for (j, other) in factors.iter().enumerate() {
+            if i == j || other.u.width() == 0 {
+                continue;
+            }
+            for edge in [other.u.lo, other.u.hi] {
+                if edge > field.lo && edge < field.hi {
+                    cuts.push(edge);
+                }
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        cuts
+    };
+    let mut out = Vec::with_capacity(factors.len());
+    for (i, factor) in factors.iter().enumerate() {
+        let cuts = cuts_of(i, factor.u);
+        if cuts.len() == 2 || factor.u.width() == 0 {
+            out.push(factor.clone());
+            continue;
+        }
+        let identity =
+            factor.rel == Rel::Shift(0) && factor.range.is_none() && factor.u == factor.v;
+        let single = factor.v.width() == 0
+            && matches!(factor.rel, Rel::Const(_))
+            && factor.range.as_ref().is_some_and(|r| r.end == r.start + 1);
+        assert!(
+            identity || single,
+            "row field {:?} straddles other fields and cannot be split: {factor:?}",
+            factor.u
+        );
+        for pair in cuts.windows(2) {
+            let piece = Bits::new(pair[0], pair[1]);
+            if identity {
+                out.push(Factor::same(piece, piece));
+            } else {
+                let Some(range) = &factor.range else {
+                    unreachable!("single-value restriction")
+                };
+                let value =
+                    (range.start >> (piece.lo - factor.u.lo)) & ((1u32 << piece.width()) - 1);
+                out.push(Factor::restrict(piece, value..value + 1));
+            }
+        }
+    }
+    out
+}
+
+/// Groups a kernel's factors by row field: factors on the same `u` field
+/// restrict one sum (at most one of them has a source field); source-only
+/// constants form singleton groups.
+pub fn field_groups(factors: &[Factor]) -> Vec<Vec<Factor>> {
+    let mut groups: Vec<Vec<Factor>> = Vec::new();
+    for factor in factors {
+        if factor.u.width() == 0 {
+            groups.push(vec![factor.clone()]);
+            continue;
+        }
+        debug_assert!(
+            groups.iter().all(|g| {
+                let u = g[0].u;
+                u.width() == 0 || u == factor.u || u.hi <= factor.u.lo || factor.u.hi <= u.lo
+            }),
+            "overlapping row fields need identical bit ranges: {factor:?} in {factors:?}"
+        );
+        match groups
+            .iter_mut()
+            .find(|g| g[0].u.width() > 0 && g[0].u == factor.u)
+        {
+            Some(group) => {
+                debug_assert!(
+                    group.iter().filter(|f| f.v.width() > 0).count()
+                        + usize::from(factor.v.width() > 0)
+                        <= 1,
+                    "two source relations on one field"
+                );
+                group.push(factor.clone());
+            }
+            None => groups.push(vec![factor.clone()]),
+        }
+    }
+    groups
+}
+
+/// `Σ_u eq(r_u, u)·Π_f w_f(u)·eq(r'_v, v(u))` over the values every factor of
+/// the group admits (brute force over the field; the test reference).
+pub fn field_mle(group: &[Factor], r: &[Fr], r_src: &[Fr]) -> Fr {
+    let u = group[0].u;
+    if u.width() == 0 {
+        return group.iter().fold(Fr::one(), |acc, f| acc * f.mle(r, r_src));
+    }
+    let ru = u.slice(r);
+    let mut sum = Fr::zero();
+    for value in 0..1u32 << u.width() {
+        let mut weight = 1i32;
+        let mut src = Fr::one();
+        let mut admitted = true;
+        for f in group {
+            let Some((v, w)) = f.apply(value) else {
+                admitted = false;
+                break;
+            };
+            weight *= w;
+            if f.v.width() > 0 {
+                src *= eq_const(f.v.slice(r_src), v);
+            }
+        }
+        if admitted && weight != 0 {
+            sum += eq_const(ru, value) * src * Fr::from_i64(i64::from(weight));
+        }
+    }
+    sum
+}
+
 /// A wiring kernel: the product of its factors. Source fields partition the
 /// 18 row bits; row fields may repeat (a range on one field and a shift on
 /// the same field are two factors) but at most one factor carries a `Map`
 /// or `Weight` so the weight is a product of public integers.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct Kernel {
     pub factors: Vec<Factor>,
 }
@@ -378,12 +499,14 @@ impl Kernel {
     }
 
     /// `Σ_row eq(r, row)·w(row)·eq(r', src(row))` for little-endian points
-    /// (`r` over the kernel's row or extended index, `r_src` over the 18 row bits).
+    /// (`r` over the kernel's row index, `r_src` over the 18 row bits): the
+    /// product over row fields of each field group's sum
+    /// ([`field_groups`]); factors sharing a field restrict the same sum.
     pub fn mle(&self, r: &[Fr], r_src: &[Fr]) -> Fr {
         debug_assert_eq!(r_src.len(), LOG_ROWS);
-        self.factors
-            .iter()
-            .fold(Fr::one(), |acc, factor| acc * factor.mle(r, r_src))
+        field_groups(&self.factors)
+            .into_iter()
+            .fold(Fr::one(), |acc, group| acc * field_mle(&group, r, r_src))
     }
 
     /// Native verifier cost in field multiplications, the reporting unit.
@@ -425,7 +548,7 @@ pub struct Piece {
 impl Factor {
     /// The row-field values this factor admits (all `2^width` values when
     /// unrestricted).
-    fn admitted(&self) -> Vec<u32> {
+    pub fn admitted(&self) -> Vec<u32> {
         let all = 0..1u32 << self.u.width();
         let in_range = |u: &u32| self.range.as_ref().is_none_or(|range| range.contains(u));
         match &self.rel {

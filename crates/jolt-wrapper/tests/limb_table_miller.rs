@@ -1,7 +1,7 @@
 //! The Miller loop cells reproduce arkworks' `multi_miller_loop` step by step
 //! (independent oracle: `G2Prepared` lines and `mul_by_034`).
 
-#![expect(clippy::expect_used, clippy::print_stdout, clippy::unwrap_used)]
+#![expect(clippy::expect_used, clippy::print_stdout)]
 mod common;
 
 use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, Fq6};
@@ -27,7 +27,7 @@ fn miller_cells_match_arkworks_step_by_step() {
     let check = FlattenedCheck::derive(sigma, n);
     let values = WireValues::derive(&opening.statement, sigma, n);
     let native = NativeCheck::evaluate(&check, &values, &opening.setup, &opening.witness);
-    let layout = build(&check, &values, &opening.setup);
+    let layout = build(&check, &values, &opening.setup, &check.wires());
     let coords = opening.witness.coordinates_in(&layout.input_order);
     let v = layout.program.evaluate(&coords).expect("eval");
 

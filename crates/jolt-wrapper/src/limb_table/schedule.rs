@@ -2,10 +2,11 @@
 //! 16 rows): GT operations occupy rows `0..12` of a cell, four-row G1
 //! operations ride in rows `12..16` of GT cells, eight-row G2 operations
 //! pack two per cell. Every region is a bit-field box of the row index, so
-//! each operand relation is a [`Kernel`] the verifier evaluates in
-//! `O(bits)`; the digit-selected table reads are [`SelectedPiece`]s proven
-//! by the operand-selection sumcheck; the few irregular final-exponentiation
-//! glue rows use explicit `Table` edge lists (`≤ 64` edges per family).
+//! each operand relation is a kernel ([`super::layout::Kernel`]) the
+//! verifier evaluates in `O(bits)`; the digit-selected table reads are proven
+//! by the operand lookup ([`super::lookup`]); the few irregular
+//! final-exponentiation glue rows use explicit `Table` edge lists (`≤ 64`
+//! edges per family).
 
 use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, G1Affine, G2Affine};
 use ark_ec::bn::BnConfig;
@@ -13,20 +14,25 @@ use ark_ec::short_weierstrass::SWCurveConfig;
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
 use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
 use num_bigint::BigUint;
+use std::collections::HashMap;
+
+use crate::relation::DoryScalar;
 
 use super::digits::{digits, WINDOWS};
 use super::dory::{
-    DorySetupInputs, FlattenedCheck, G1Base, G2Base, GtBase, InputElement, WireValues,
+    DorySetupInputs, FlattenedCheck, G1Base, G2Base, GtBase, InputElement, Wire, WireValues,
 };
-use super::layout::{Bits, Factor, Piece};
+use super::layout::{Bits, Factor, Piece, Rel, LOG_ROWS};
 use super::ops::{
     ell, g1_add, g1_copy, g1_dbl, g1_on_curve, g2_add, g2_copy, g2_dbl, g2_on_curve, g2_psi,
     gt_difference_pins, gt_frobenius, gt_inverse_pin, gt_inverse_witness, gt_mul, miller_add_step,
     miller_double_step, GtOperand, ADD_LINE, CONST_LINE, DOUBLE_LINE,
 };
 use super::program::{Program, RowId};
-use super::template::{DigitRule, ElemRel, Family, SelectedPiece, Template};
+use super::relation::FP_SLOTS_GT;
+use super::template::{fingerprint_maps, DigitRule, ElemRel, ElemWiring, Family, Template};
 use super::tower::{fq12_coords, frobenius_form};
+use super::wiring::{FingerprintGroup, ReadKind, TableRead};
 
 /// Row-count profile of one opening: `σ` reduction rounds, `n` commitments.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,30 +168,45 @@ pub struct FamilyStats {
     pub selected_pieces: usize,
 }
 
-/// Which digit column a selected piece reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum DigitColumn {
-    Gt,
-    G1,
-    G2,
-}
-
-/// One digit-driven op: its column, the column index `u` (the op's cell or
-/// half-cell field, 14 bits) and the selector.
+/// One digit-driven op: its first slotted row, the number of slotted rows,
+/// what it looks up, its digit `j`, digit-base index `kd` and window `w`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DigitEntry {
-    pub column: DigitColumn,
-    pub index: u32,
+pub struct DigitOp {
+    pub first_row: RowId,
+    pub rows: u8,
+    pub kind: ReadKind,
+    /// Index into [`Layout::selected`].
+    pub family: u8,
     pub j: u8,
+    pub kd: u32,
+    pub w: u32,
 }
 
-/// A selected piece tagged with its digit column.
+/// `S0(x) = x + constant + k_coeff·k(x) + w_coeff·w(x)`: the row of the
+/// reference table entry (`e = 0` for GT, `d = 0` for EC) aligned with row `x`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyBase {
+    pub constant: i64,
+    pub k_coeff: i64,
+    pub w_coeff: i64,
+}
+
+/// A family of digit-selected ops: the domain of its slotted rows (bit-field
+/// restrictions), its fields, the key base, and the digit-base index of every
+/// admitted `k` field value.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ColumnSelectedPiece {
-    pub column: DigitColumn,
-    /// Row field holding the column index `u`.
-    pub index_bits: Bits,
-    pub piece: SelectedPiece,
+pub struct SelectedFamily {
+    pub kind: ReadKind,
+    pub domain: Vec<Factor>,
+    pub c_bits: Bits,
+    /// Slotted rows of an op are coordinates `first_c..first_c + rows`.
+    pub first_c: u32,
+    pub rows: u32,
+    pub k_bits: Bits,
+    pub w_bits: Bits,
+    pub key: KeyBase,
+    /// `(k field value, digit-base index)`.
+    pub digit_base: Vec<(u32, u32)>,
 }
 
 /// The built layout: explicit rows for the prover, kernels for the verifier.
@@ -193,10 +214,18 @@ pub struct Layout {
     pub profile: Profile,
     pub check: FlattenedCheck,
     pub program: Program,
-    pub pieces: Vec<Piece>,
-    pub selected: Vec<ColumnSelectedPiece>,
+    /// Fixed copies: every operand column's kernel groups.
+    pub copies: Vec<ElemWiring>,
+    /// Fingerprint kernels of the table regions and the table rows' reads.
+    pub fingerprints: Vec<FingerprintGroup>,
+    pub table_reads: Vec<TableRead>,
+    pub selected: Vec<SelectedFamily>,
+    pub digit_ops: Vec<DigitOp>,
     pub families: Vec<FamilyStats>,
-    pub digits: Vec<DigitEntry>,
+    /// The `one` element cell (rows `0..12` hold `1, 0, …, 0`).
+    pub one_cell: u32,
+    /// Digit bases: the named wires in the published order, then the constant one.
+    pub digit_bases: u32,
     /// Committed input elements in the order of the `Input` rows (the T1 link order).
     pub input_order: Vec<InputElement>,
     /// The pinned rows `lhs_c − rhs_c = 0`.
@@ -219,17 +248,26 @@ impl Layout {
     pub fn used_rows(&self) -> usize {
         self.program.emitted()
     }
+
+    /// Every fixed-copy kernel as a flat piece list.
+    pub fn pieces(&self) -> Vec<Piece> {
+        self.copies.iter().flat_map(ElemWiring::pieces).collect()
+    }
 }
 
 /// Accumulates rows, kernels and statistics while the regions are placed.
 struct Builder {
     program: Program,
-    pieces: Vec<Piece>,
-    selected: Vec<ColumnSelectedPiece>,
+    copies: Vec<ElemWiring>,
+    fingerprints: Vec<FingerprintGroup>,
+    table_reads: Vec<TableRead>,
+    selected: Vec<SelectedFamily>,
+    digit_ops: Vec<DigitOp>,
     families: Vec<FamilyStats>,
-    digits: Vec<DigitEntry>,
     input_order: Vec<InputElement>,
     glue_next: u32,
+    wire_index: HashMap<DoryScalar, u32>,
+    one_cell: u32,
 }
 
 /// What a GT leaf cell holds.
@@ -254,16 +292,125 @@ impl GtCell {
 }
 
 impl Builder {
-    fn new() -> Self {
+    fn new(wire_order: &[DoryScalar]) -> Self {
+        let wire_index = wire_order
+            .iter()
+            .enumerate()
+            .map(|(i, wire)| (wire.clone(), i as u32))
+            .collect();
+        let mut program = Program::new(row(cells::CONSTANTS.start)..row(cells::CONSTANTS.end));
+        assert_eq!(program.one, super::template::ONE_ROW);
+        // The `one` element cell shares the point-constants cell (rows 0..12).
+        let one_cell = cells::POINT_CONSTANTS;
+        for c in 0..12u32 {
+            let value = if c == 0 { Fq::ONE } else { Fq::ZERO };
+            program.pinned_constant_at(row(one_cell) + c, value);
+        }
         Self {
-            program: Program::new(row(cells::CONSTANTS.start)..row(cells::CONSTANTS.end)),
-            pieces: Vec::new(),
+            program,
+            copies: Vec::new(),
+            fingerprints: Vec::new(),
+            table_reads: Vec::new(),
             selected: Vec::new(),
+            digit_ops: Vec::new(),
             families: Vec::new(),
-            digits: Vec::new(),
             input_order: Vec::new(),
             glue_next: cells::GLUE,
+            wire_index,
+            one_cell,
         }
+    }
+
+    /// Digit-base index of a wire: its position in the published order, or
+    /// the extra index after every named wire for the constant one.
+    pub(super) fn digit_index(&self, wire: &Wire) -> u32 {
+        match wire {
+            Wire::Named(scalar) => self.wire_index[scalar],
+            Wire::One => self.wire_index.len() as u32,
+        }
+    }
+
+    /// Registers a table region: its fingerprint kernels (rows read their
+    /// own cell through the reading template's fingerprinted `Y` maps) and
+    /// the explicit reads of every entry (`first_rows` are the entries'
+    /// coordinate-0 rows).
+    #[expect(clippy::too_many_arguments, reason = "one region descriptor")]
+    fn table_region(
+        &mut self,
+        domain: Vec<Factor>,
+        cell_bits: Bits,
+        first_rows: impl Iterator<Item = RowId>,
+        template: &Template,
+        own_bits: Bits,
+        own_offset: u32,
+        coord_offset: u32,
+        fp_slots: usize,
+    ) {
+        let (maps, conj_maps) = fingerprint_maps(
+            template,
+            2,
+            own_bits,
+            own_offset,
+            own_bits,
+            coord_offset,
+            fp_slots,
+        );
+        // Rows read their own cell: `same` on every field of the cell index,
+        // restricted where the domain restricts it.
+        let mut cell: Vec<Factor> = Vec::new();
+        let mut lo = cell_bits.lo;
+        let mut restricted: Vec<&Factor> = domain.iter().collect();
+        restricted.sort_by_key(|f| f.u.lo);
+        for factor in restricted {
+            assert!(factor.u.lo >= lo, "overlapping domain fields");
+            if factor.u.lo > lo {
+                let gap = Bits::new(lo, factor.u.lo);
+                cell.push(Factor::same(gap, gap));
+            }
+            let mut same = Factor::same(factor.u, factor.u);
+            same.range.clone_from(&factor.range);
+            cell.push(same);
+            lo = factor.u.hi;
+        }
+        if lo < cell_bits.hi {
+            let gap = Bits::new(lo, cell_bits.hi);
+            cell.push(Factor::same(gap, gap));
+        }
+        // The conjugated map's weight is the one owner of the `f_neg` sign.
+        for first in first_rows {
+            for ((slot, map), (_, conj_map)) in maps.iter().zip(&conj_maps) {
+                let (
+                    Factor {
+                        rel: Rel::Map(entries),
+                        ..
+                    },
+                    Factor {
+                        rel: Rel::Map(conj),
+                        ..
+                    },
+                ) = (map, conj_map)
+                else {
+                    unreachable!("fingerprint maps are maps")
+                };
+                for (c, (entry, conj_entry)) in entries.iter().zip(conj).enumerate() {
+                    let Some((coord, _)) = entry else { continue };
+                    let Some((_, sign)) = conj_entry else {
+                        unreachable!("conjugated map covers the same rows")
+                    };
+                    self.table_reads.push(TableRead {
+                        row: first + c as u32,
+                        slot: *slot,
+                        src: first + coord,
+                        conjugated: *sign < 0,
+                    });
+                }
+            }
+        }
+        self.fingerprints.push(FingerprintGroup {
+            cell,
+            maps,
+            conj_maps,
+        });
     }
 
     fn one(&self) -> RowId {
@@ -292,16 +439,25 @@ impl Builder {
 
     /// Places every op of `family` (coordinate-0 row and digit, in
     /// evaluation order) and records its kernels.
-    fn place(
-        &mut self,
-        family: &Family,
-        ops: &[(RowId, Option<u8>)],
-        column: Option<(DigitColumn, Bits)>,
-    ) {
+    fn place(&mut self, family: &Family, ops: &[(RowId, Option<u8>)], selected: bool) {
         for &(base, digit) in ops {
             family.emit(&mut self.program, base, digit);
         }
-        self.record(family, ops.len(), column);
+        if family.domain.is_empty() {
+            // Scattered glue ops: the row set is exactly the placed cells, so
+            // constant and `ONE` operands must not leak onto other cells.
+            let mut mask = vec![0i32; 1 << CELL.width()];
+            for &(base, _) in ops {
+                mask[CELL.extract(base) as usize] = 1;
+            }
+            let scattered = Family {
+                domain: vec![Factor::weight(CELL, mask)],
+                ..family.clone()
+            };
+            self.record(&scattered, ops.len(), selected);
+        } else {
+            self.record(family, ops.len(), selected);
+        }
     }
 
     /// A GT leaf cell: committed input (twelve `Input` rows) or a pinned
@@ -340,6 +496,7 @@ impl Builder {
             }
         }
         let template = gt_mul(GtOperand::dense(1), GtOperand::dense(2));
+        let reading = template.clone().padded(2);
         let family = Family {
             name: "gt_table",
             template: &template,
@@ -377,7 +534,35 @@ impl Builder {
         let ops: Vec<(RowId, Option<u8>)> = (0..bases as u32)
             .flat_map(|k| (1..8u32).map(move |e| (row(cells::GT_TABLE + 8 * k + e), None)))
             .collect();
-        self.place(&family, &ops, None);
+        self.place(&family, &ops, false);
+        // Fingerprints of every entry (`e ∈ 0..8`) and of the `one` cell.
+        let hi_t = hi(cells::GT_TABLE, HI_T);
+        let entries = (0..bases as u32)
+            .flat_map(|k| (0..8u32).map(move |e| row(cells::GT_TABLE + 8 * k + e)));
+        self.table_region(
+            vec![
+                Factor::restrict(K_T, 0..bases as u32),
+                Factor::restrict(HI_T, hi_t..hi_t + 1),
+            ],
+            CELL,
+            entries,
+            &reading,
+            C,
+            0,
+            0,
+            FP_SLOTS_GT,
+        );
+        let one_cell = self.one_cell;
+        self.table_region(
+            vec![Factor::restrict(CELL, one_cell..one_cell + 1)],
+            CELL,
+            std::iter::once(row(one_cell)),
+            &reading,
+            C,
+            0,
+            0,
+            FP_SLOTS_GT,
+        );
     }
 
     /// Straus over the 64 windows: per window four squarings of the
@@ -389,7 +574,7 @@ impl Builder {
         let scalars = values.scalars(&check.gt);
         let digit_table: Vec<[u8; WINDOWS]> = scalars.iter().map(|s| digits(*s)).collect();
         let cell = |k: u32, w: u32| cells::GT_ONLINE + 64 * k + w;
-        let one_row = self.one();
+        let one_row = row(self.one_cell);
         let table_entry = ElemRel::Selected {
             factors: vec![
                 Factor::same(K_ON, K_T),
@@ -401,13 +586,13 @@ impl Builder {
             rule: DigitRule::Gt { one: one_row },
         };
         let dense = gt_mul(GtOperand::dense(1), GtOperand::dense(1));
-        let dense2 = gt_mul(GtOperand::dense(1), GtOperand::dense(2));
+        let dense2 = gt_mul(GtOperand::dense(1), GtOperand::dense(2)).padded(2);
         let identity = gt_mul(GtOperand::one(1), GtOperand::one(1));
         let restrict_k = |lo: u32, hi_: u32| Factor::restrict(K_ON, lo..hi_);
         let const_k = |value: u32, at: u32| Factor {
             u: K_ON,
             v: K_ON,
-            rel: super::layout::Rel::Const(value),
+            rel: Rel::Const(value),
             range: Some(at..at + 1),
         };
         let sq_init = Family {
@@ -487,10 +672,14 @@ impl Builder {
             }
             for k in 0..bases {
                 let j = digit_table[k as usize][WINDOWS - 1 - w as usize];
-                self.digits.push(DigitEntry {
-                    column: DigitColumn::Gt,
-                    index: cell(k, w),
+                self.digit_ops.push(DigitOp {
+                    first_row: row(cell(k, w)),
+                    rows: 12,
+                    kind: ReadKind::Gt,
+                    family: self.selected.len() as u8,
                     j,
+                    kd: self.digit_index(&check.gt.bases[k as usize].1),
+                    w,
                 });
                 if k == 0 {
                     o_m0.push((row(cell(k, w)), Some(j)));
@@ -513,40 +702,55 @@ impl Builder {
                 fam.emit(&mut self.program, row(cell(k, w)), Some(j));
             }
         }
-        for (family, ops) in [
-            (&sq_init, &o_init),
-            (&sq0, &o_sq0),
-            (&sq, &o_sq),
-            (&mult0, &o_m0),
-            (&mult, &o_m),
+        for (family, ops, selected) in [
+            (&sq_init, &o_init, false),
+            (&sq0, &o_sq0, false),
+            (&sq, &o_sq, false),
+            (&mult0, &o_m0, true),
+            (&mult, &o_m, true),
         ] {
-            self.record(family, ops.len(), Some((DigitColumn::Gt, CELL)));
+            self.record(family, ops.len(), selected);
         }
+        // Reference entry `e = 0` of base `k`: row `16·(GT_TABLE + 8k) + c`
+        // from op row `16·(GT_ONLINE + 64k + w) + c`.
+        self.selected.push(SelectedFamily {
+            kind: ReadKind::Gt,
+            domain: vec![Factor::restrict(C, 0..12), restrict_k(0, b)],
+            c_bits: C,
+            first_c: 0,
+            rows: 12,
+            k_bits: K_ON,
+            w_bits: W_ON,
+            key: KeyBase {
+                constant: 16 * (i64::from(cells::GT_TABLE) - i64::from(cells::GT_ONLINE)),
+                k_coeff: -(16 * 64 - 16 * 8),
+                w_coeff: -16,
+            },
+            digit_base: (0..b)
+                .map(|k| (k, self.digit_index(&check.gt.bases[k as usize].1)))
+                .collect(),
+        });
         GtCell(cell(b - 1, WINDOWS as u32 - 1))
     }
 
-    /// Records the kernels and statistics of an already emitted family.
-    fn record(&mut self, family: &Family, ops: usize, column: Option<(DigitColumn, Bits)>) {
-        let (fixed, selected) = family.pieces();
+    /// Records the kernels and statistics of an already emitted family; the
+    /// digit-selected reads of a `selected` family are proven by the lookup.
+    fn record(&mut self, family: &Family, ops: usize, selected: bool) {
+        let (fixed, looked_up) = family.wiring();
+        assert_eq!(
+            looked_up.is_empty(),
+            !selected,
+            "{}: selected elements need the lookup",
+            family.name
+        );
         self.families.push(FamilyStats {
             name: family.name,
             ops,
             rows: ops * family.template.rows.len(),
-            fixed_pieces: fixed.len(),
-            selected_pieces: selected.len(),
+            fixed_pieces: fixed.iter().map(|w| w.maps.len()).sum(),
+            selected_pieces: looked_up.len(),
         });
-        self.pieces.extend(fixed);
-        if !selected.is_empty() {
-            let Some((column, index_bits)) = column else {
-                unreachable!("selected pieces need a digit column")
-            };
-            self.selected
-                .extend(selected.into_iter().map(|piece| ColumnSelectedPiece {
-                    column,
-                    index_bits,
-                    piece,
-                }));
-        }
+        self.copies.extend(fixed);
     }
 }
 
@@ -642,7 +846,7 @@ impl Builder {
                                 own_offset: 12,
                                 domain: vec![Factor::restrict(CELL, input_cell..input_cell + 1)],
                             };
-                            self.place(&family, &[(row(input_cell), None)], None);
+                            self.place(&family, &[(row(input_cell), None)], false);
                         } else {
                             let _ = first_input.insert(*element, input_cell);
                             for r in point_rows {
@@ -670,7 +874,7 @@ impl Builder {
                             own_offset: 12,
                             domain: vec![Factor::restrict(CELL, input_cell..input_cell + 1)],
                         };
-                        self.place(&family, &[(row(input_cell), None)], None);
+                        self.place(&family, &[(row(input_cell), None)], false);
                     }
                 }
             }
@@ -743,9 +947,25 @@ impl Builder {
                 }
             }
             let nb = msm.bases.len();
-            self.record(&z0_family, nb, None);
-            self.record(&up, 7 * nb, None);
-            self.record(&down, 8 * nb, None);
+            self.record(&z0_family, nb, false);
+            self.record(&up, 7 * nb, false);
+            self.record(&down, 8 * nb, false);
+            let entries = b_range
+                .clone()
+                .flat_map(|b| (0..16u32).map(move |j| row(tcell(b, j))));
+            self.table_region(
+                vec![
+                    Factor::restrict(B1, b_range.clone()),
+                    Factor::restrict(HI1T, hi1..hi1 + 1),
+                ],
+                CELL,
+                entries,
+                &add,
+                C,
+                12,
+                14,
+                super::relation::FP_SLOTS_G1,
+            );
 
             // Online: doublings then adds per window, then the correction.
             let n = chain.bases as u32;
@@ -754,7 +974,7 @@ impl Builder {
             let const_k = |value: u32, at: u32| Factor {
                 u: KM1,
                 v: KM1,
-                rel: super::layout::Rel::Const(k_field(value)),
+                rel: Rel::Const(k_field(value)),
                 range: Some(k_field(at)..k_field(at) + 1),
             };
             let acc_prev = |delta: i64, lo: u32, hi_: u32| {
@@ -854,10 +1074,14 @@ impl Builder {
                 }
                 for k in 0..n {
                     let j = chain.digits[k as usize][WINDOWS - 1 - w as usize];
-                    self.digits.push(DigitEntry {
-                        column: DigitColumn::G1,
-                        index: cell(k, w),
+                    self.digit_ops.push(DigitOp {
+                        first_row: row(cell(k, w)) + 13,
+                        rows: 3,
+                        kind: ReadKind::G1,
+                        family: self.selected.len() as u8,
                         j,
+                        kd: self.digit_index(&msm.bases[k as usize].1),
+                        w,
                     });
                     if k == 0 {
                         add0.emit(&mut self.program, row(cell(k, w)), Some(j));
@@ -869,12 +1093,33 @@ impl Builder {
                 }
             }
             corr.emit(&mut self.program, row(cell(n + 4, 63)), None);
-            self.record(&dbl_init, c_init, None);
-            self.record(&dbl0, c_dbl0, None);
-            self.record(&dbls, c_dbl, None);
-            self.record(&add0, c_add0, Some((DigitColumn::G1, CELL)));
-            self.record(&adds, c_add, Some((DigitColumn::G1, CELL)));
-            self.record(&corr, 1, None);
+            self.record(&dbl_init, c_init, false);
+            self.record(&dbl0, c_dbl0, false);
+            self.record(&dbls, c_dbl, false);
+            self.record(&add0, c_add0, true);
+            self.record(&adds, c_add, true);
+            self.record(&corr, 1, false);
+            // Reference entry `j = 8` of base `b = table_base + k`: row
+            // `16·(G1_TABLE + 16b + 8) + c` from op row `16·(4096m + 64k + w) + c`,
+            // with the `KM1` field holding `64m + k`.
+            self.selected.push(SelectedFamily {
+                kind: ReadKind::G1,
+                domain: vec![Factor::restrict(C, 13..16), restrict(0, n)],
+                c_bits: C,
+                first_c: 13,
+                rows: 3,
+                k_bits: KM1,
+                w_bits: W1,
+                key: KeyBase {
+                    constant: 16 * i64::from(cells::G1_TABLE) + 128 + 256 * i64::from(table_base)
+                        - 16384 * i64::from(m32),
+                    k_coeff: -768,
+                    w_coeff: -16,
+                },
+                digit_base: (0..n)
+                    .map(|k| (k_field(k), self.digit_index(&msm.bases[k as usize].1)))
+                    .collect(),
+            });
             outputs[m] = cell(n + 4, 63);
             table_base += msm.bases.len() as u32;
         }
@@ -901,7 +1146,7 @@ impl Builder {
             .iter()
             .map(|b| (row(cells::G1_INPUT + b), None))
             .collect();
-        self.place(&family, &ops, None);
+        self.place(&family, &ops, false);
         outputs
     }
 }
@@ -973,7 +1218,7 @@ impl Builder {
                                 own_offset: 0,
                                 domain: vec![Factor::restrict(Bits::new(3, 18), h..h + 1)],
                             };
-                            self.place(&family, &[(half_row(h), None)], None);
+                            self.place(&family, &[(half_row(h), None)], false);
                         } else {
                             let _ = first_input.insert(*element, h);
                             self.g2_input_leaf(h, *element);
@@ -1006,7 +1251,7 @@ impl Builder {
                             own_offset: 0,
                             domain: vec![Factor::restrict(Bits::new(3, 18), h..h + 1)],
                         };
-                        self.place(&family, &[(half_row(h), None)], None);
+                        self.place(&family, &[(half_row(h), None)], false);
                     }
                 }
             }
@@ -1075,9 +1320,25 @@ impl Builder {
                 }
             }
             let nb = msm.bases.len();
-            self.record(&z0_family, nb, None);
-            self.record(&up, 7 * nb, None);
-            self.record(&down, 8 * nb, None);
+            self.record(&z0_family, nb, false);
+            self.record(&up, 7 * nb, false);
+            self.record(&down, 8 * nb, false);
+            let entries = b_range
+                .clone()
+                .flat_map(|b| (0..16u32).map(move |j| half_row(thalf(b, j))));
+            self.table_region(
+                vec![
+                    Factor::restrict(B2, b_range.clone()),
+                    Factor::restrict(HI2T, hi_t..hi_t + 1),
+                ],
+                Bits::new(3, LOG_ROWS as u8),
+                entries,
+                &add,
+                C3,
+                0,
+                4,
+                super::relation::FP_SLOTS_G2,
+            );
 
             let n = chain.bases as u32;
             let kb = chain.kbase;
@@ -1085,7 +1346,7 @@ impl Builder {
             let const_k = |value: u32, at: u32| Factor {
                 u: K2,
                 v: K2,
-                rel: super::layout::Rel::Const(kb + value),
+                rel: Rel::Const(kb + value),
                 range: Some(kb + at..kb + at + 1),
             };
             let acc_prev = |delta: i64, lo: u32, hi_: u32| {
@@ -1206,7 +1467,11 @@ impl Builder {
                 ],
                 own_bits: C3,
                 own_offset: 0,
-                domain: vec![restrict(n + 4, n + 5), Factor::restrict(W2, 63..64), region],
+                domain: vec![
+                    restrict(n + 4, n + 5),
+                    Factor::restrict(W2, 63..64),
+                    region.clone(),
+                ],
             };
             let (mut c_init, mut c_dbl0, mut c_dbl, mut c_add0, mut c_add) = (0, 0, 0, 0, 0);
             for w in 0..WINDOWS as u32 {
@@ -1223,10 +1488,14 @@ impl Builder {
                 }
                 for k in 0..n {
                     let j = chain.digits[k as usize][WINDOWS - 1 - w as usize];
-                    self.digits.push(DigitEntry {
-                        column: DigitColumn::G2,
-                        index: half(kb + k, w) & ((1 << 14) - 1),
+                    self.digit_ops.push(DigitOp {
+                        first_row: half_row(half(kb + k, w)) + 2,
+                        rows: 6,
+                        kind: ReadKind::G2,
+                        family: self.selected.len() as u8,
                         j,
+                        kd: self.digit_index(&msm.bases[k as usize].1),
+                        w,
                     });
                     if k == 0 {
                         add0.emit(&mut self.program, half_row(half(kb + k, w)), Some(j));
@@ -1238,13 +1507,35 @@ impl Builder {
                 }
             }
             corr.emit(&mut self.program, half_row(half(kb + n + 4, 63)), None);
-            let index_bits = Bits::new(3, 17);
-            self.record(&dbl_init, c_init, None);
-            self.record(&dbl0, c_dbl0, None);
-            self.record(&dbls, c_dbl, None);
-            self.record(&add0, c_add0, Some((DigitColumn::G2, index_bits)));
-            self.record(&adds, c_add, Some((DigitColumn::G2, index_bits)));
-            self.record(&corr, 1, None);
+            self.record(&dbl_init, c_init, false);
+            self.record(&dbl0, c_dbl0, false);
+            self.record(&dbls, c_dbl, false);
+            self.record(&add0, c_add0, true);
+            self.record(&adds, c_add, true);
+            self.record(&corr, 1, false);
+            // Reference entry `j = 8` of base `b = table_base + k`: row
+            // `8·(G2_TABLE_HALF + 16b + 8) + c` from op row
+            // `8·(G2_ONLINE_HALF + 64·k2 + w) + c`, `k2 = kb + k` the `K2` field.
+            self.selected.push(SelectedFamily {
+                kind: ReadKind::G2,
+                domain: vec![Factor::restrict(C3, 2..8), restrict(0, n), region.clone()],
+                c_bits: C3,
+                first_c: 2,
+                rows: 6,
+                k_bits: K2,
+                w_bits: W2,
+                key: KeyBase {
+                    constant: 8
+                        * (i64::from(cells::G2_TABLE_HALF) - i64::from(cells::G2_ONLINE_HALF))
+                        + 64
+                        + 128 * (i64::from(table_base) - i64::from(kb)),
+                    k_coeff: -(8 * 64 - 8 * 16),
+                    w_coeff: -8,
+                },
+                digit_base: (0..n)
+                    .map(|k| (kb + k, self.digit_index(&msm.bases[k as usize].1)))
+                    .collect(),
+            });
             outputs[m] = half(kb + n + 4, 63);
             table_base += msm.bases.len() as u32;
         }
@@ -1265,7 +1556,7 @@ impl Builder {
             own_offset: 0,
             domain: vec![Factor::restrict(Bits::new(3, 18), b2..b2 + 1)],
         };
-        self.place(&family, &[(half_row(b2), None)], None);
+        self.place(&family, &[(half_row(b2), None)], false);
         (outputs, [e2_fin, b2])
     }
 
@@ -1310,7 +1601,7 @@ impl Builder {
             ],
         };
         let ops: Vec<(RowId, Option<u8>)> = halves.iter().map(|h| (half_row(*h), None)).collect();
-        self.place(&family, &ops, None);
+        self.place(&family, &ops, false);
     }
 }
 
@@ -1416,7 +1707,7 @@ impl Builder {
             own_offset: 0,
             domain: vec![],
         };
-        self.place(&q1, &q1_cells.map(|c| (row(c), None)), None);
+        self.place(&q1, &q1_cells.map(|c| (row(c), None)), false);
         let q2 = Family {
             name: "ml_psi_neg",
             template: &psi_neg,
@@ -1434,7 +1725,7 @@ impl Builder {
             own_offset: 0,
             domain: vec![],
         };
-        self.place(&q2, &q2_cells.map(|c| (row(c), None)), None);
+        self.place(&q2, &q2_cells.map(|c| (row(c), None)), false);
 
         // Doubling steps.
         let first: Vec<Family> = (0..2u32)
@@ -1454,11 +1745,18 @@ impl Builder {
                 ],
                 own_bits: C5,
                 own_offset: 0,
-                domain: vec![Factor::restrict(CELL, dcell(0, p)..dcell(0, p) + 1)],
+                // A 32-row op: its block of two cells.
+                domain: vec![Factor::restrict(
+                    GROUP,
+                    dcell(0, p) / 2..dcell(0, p) / 2 + 1,
+                )],
             })
             .collect();
         let after_dbl_mask: Vec<i32> = (0..64)
             .map(|t| i32::from(t >= 1 && t < steps && !add_after[t as usize - 1]))
+            .collect();
+        let after_add_mask: Vec<i32> = (0..64)
+            .map(|t| i32::from(t >= 1 && t < steps && add_after[t as usize - 1]))
             .collect();
         let after_dbl = Family {
             name: "ml_dbl_after_dbl",
@@ -1502,7 +1800,10 @@ impl Builder {
             ],
             own_bits: C5,
             own_offset: 0,
-            domain: vec![Factor::restrict(HI_LD, hi_ld..hi_ld + 1)],
+            domain: vec![
+                Factor::weight(T_LD, after_add_mask),
+                Factor::restrict(HI_LD, hi_ld..hi_ld + 1),
+            ],
         };
         // Addition steps.
         let q_elem = Self::table_elem(
@@ -1641,15 +1942,15 @@ impl Builder {
             add_q2.emit(&mut self.program, row(acell(loop_adds + 1, p)), None);
         }
         for family in &first {
-            self.record(family, n_first / 2, None);
+            self.record(family, n_first / 2, false);
         }
-        self.record(&after_dbl, n_ad, None);
-        self.record(&after_add, n_aa, None);
+        self.record(&after_dbl, n_ad, false);
+        self.record(&after_add, n_aa, false);
         let n_neg = 2 * signs.iter().filter(|s| **s < 0).count();
-        self.record(&add_loop, n_loop - n_neg, None);
-        self.record(&add_loop_neg, n_neg, None);
-        self.record(&add_q1, 2, None);
-        self.record(&add_q2, 2, None);
+        self.record(&add_loop, n_loop - n_neg, false);
+        self.record(&add_loop_neg, n_neg, false);
+        self.record(&add_q1, 2, false);
+        self.record(&add_q2, 2, false);
 
         // Public lines of pairs 2–3.
         for (i, q) in const_q.iter().enumerate() {
@@ -1752,6 +2053,9 @@ impl Builder {
         let after_dbl_mask: Vec<i32> = (0..64)
             .map(|t| i32::from(t >= 1 && t < steps && !add_after[t as usize - 1]))
             .collect();
+        let after_add_mask: Vec<i32> = (0..64)
+            .map(|t| i32::from(t >= 1 && t < steps && add_after[t as usize - 1]))
+            .collect();
         let sq_after_dbl = Family {
             name: "mg_sq_after_dbl",
             template: &dense,
@@ -1761,7 +2065,7 @@ impl Builder {
                     Factor {
                         u: S_MD,
                         v: S_MD,
-                        rel: super::layout::Rel::Const(4),
+                        rel: Rel::Const(4),
                         range: Some(0..1),
                     },
                     Factor::constant(HI_MD, hi_md),
@@ -1771,7 +2075,11 @@ impl Builder {
             )],
             own_bits: C,
             own_offset: 0,
-            domain: vec![Factor::weight(T_MD, after_dbl_mask), region_d.clone()],
+            domain: vec![
+                Factor::restrict(S_MD, 0..1),
+                Factor::weight(T_MD, after_dbl_mask),
+                region_d.clone(),
+            ],
         };
         let after_add_pairs: Vec<(u32, u32)> = (1..steps)
             .filter_map(|t| add_index[t as usize - 1].map(|a| (t, a)))
@@ -1785,7 +2093,7 @@ impl Builder {
                     Factor {
                         u: S_MD,
                         v: P_MA,
-                        rel: super::layout::Rel::Const(3),
+                        rel: Rel::Const(3),
                         range: Some(0..1),
                     },
                     Factor::constant(HI_MA, hi_ma),
@@ -1795,7 +2103,11 @@ impl Builder {
             )],
             own_bits: C,
             own_offset: 0,
-            domain: vec![region_d.clone()],
+            domain: vec![
+                Factor::restrict(S_MD, 0..1),
+                Factor::weight(T_MD, after_add_mask),
+                region_d.clone(),
+            ],
         };
         let prev_slot = ElemRel::structured(
             vec![
@@ -1837,7 +2149,11 @@ impl Builder {
             ],
             own_bits: C,
             own_offset: 0,
-            domain: vec![Factor::restrict(S_MD, 1..3), region_d.clone()],
+            domain: vec![
+                Factor::restrict(S_MD, 1..3),
+                Factor::restrict(T_MD, 0..steps),
+                region_d.clone(),
+            ],
         };
         let ell_dbl_const = Family {
             name: "mg_ell_dbl_const",
@@ -1870,7 +2186,11 @@ impl Builder {
             ],
             own_bits: C,
             own_offset: 0,
-            domain: vec![Factor::restrict(S_MD, 3..5), region_d],
+            domain: vec![
+                Factor::restrict(S_MD, 3..5),
+                Factor::restrict(T_MD, 0..steps),
+                region_d,
+            ],
         };
         // Addition ells: slot 0 reads the loop's `f` through an edge table.
         let last_t = steps - 1;
@@ -1905,7 +2225,11 @@ impl Builder {
             ],
             own_bits: C,
             own_offset: 0,
-            domain: vec![Factor::restrict(P_MA, 0..1), region_a.clone()],
+            domain: vec![
+                Factor::restrict(P_MA, 0..1),
+                Factor::restrict(A_MA, 0..loop_adds + 2),
+                region_a.clone(),
+            ],
         };
         let prev_p = ElemRel::structured(
             vec![
@@ -1922,7 +2246,11 @@ impl Builder {
             elems: vec![prev_p.clone(), computed_line, p_add.clone()],
             own_bits: C,
             own_offset: 0,
-            domain: vec![Factor::restrict(P_MA, 1..2), region_a.clone()],
+            domain: vec![
+                Factor::restrict(P_MA, 1..2),
+                Factor::restrict(A_MA, 0..loop_adds + 2),
+                region_a.clone(),
+            ],
         };
         let ell_add_const = Family {
             name: "ma_ell_const",
@@ -1942,7 +2270,11 @@ impl Builder {
             ],
             own_bits: C,
             own_offset: 0,
-            domain: vec![Factor::restrict(P_MA, 2..4), region_a],
+            domain: vec![
+                Factor::restrict(P_MA, 2..4),
+                Factor::restrict(A_MA, 0..loop_adds + 2),
+                region_a,
+            ],
         };
         let mut counts = [0usize; 8];
         let emit_adds = |this: &mut Self, a: u32, counts: &mut [usize; 8]| {
@@ -1989,7 +2321,7 @@ impl Builder {
             (&ell_add1, counts[6]),
             (&ell_add_const, counts[7]),
         ] {
-            self.record(family, count, None);
+            self.record(family, count, false);
         }
         GtCell(acell(loop_adds + 1, 3))
     }
@@ -2020,7 +2352,7 @@ impl Builder {
         };
         let placed: Vec<(RowId, Option<u8>)> =
             ops.iter().map(|(op, _, _)| (row(*op), None)).collect();
-        self.place(&family, &placed, None);
+        self.place(&family, &placed, false);
     }
 
     fn frobenius(&mut self, name: &'static str, power: usize, ops: &[(u32, u32)]) {
@@ -2042,7 +2374,7 @@ impl Builder {
             domain: vec![],
         };
         let placed: Vec<(RowId, Option<u8>)> = ops.iter().map(|(op, _)| (row(*op), None)).collect();
-        self.place(&family, &placed, None);
+        self.place(&family, &placed, false);
     }
 
     /// Arkworks' BN final exponentiation of `f`: easy part with an inverse
@@ -2082,7 +2414,7 @@ impl Builder {
                 domain: vec![Factor::restrict(CELL, inv_w..inv_w + 1)],
             },
             &[(row(inv_w), None)],
-            None,
+            false,
         );
         let pin = gt_inverse_pin();
         self.place(
@@ -2095,7 +2427,7 @@ impl Builder {
                 domain: vec![Factor::restrict(CELL, inv_pin..inv_pin + 1)],
             },
             &[(row(inv_pin), None)],
-            None,
+            false,
         );
         let conj_dense = gt_mul(GtOperand::conj(1), GtOperand::dense(2));
         let dense_dense = gt_mul(GtOperand::dense(1), GtOperand::dense(2));
@@ -2191,7 +2523,7 @@ impl Builder {
                     Factor {
                         u: SLOT_FE,
                         v: SLOT_FE,
-                        rel: super::layout::Rel::Const(1),
+                        rel: Rel::Const(1),
                         range: Some(0..1),
                     },
                     Factor::same(CHAIN_FE, CHAIN_FE),
@@ -2202,14 +2534,19 @@ impl Builder {
             )],
             own_bits: C,
             own_offset: 0,
-            domain: vec![this_chain.clone(), region.clone()],
+            domain: vec![
+                Factor::restrict(STEP_FE, 1..steps as u32),
+                Factor::restrict(SLOT_FE, 0..1),
+                this_chain.clone(),
+                region.clone(),
+            ],
         };
         let sq_elem = ElemRel::structured(
             vec![
                 Factor {
                     u: SLOT_FE,
                     v: SLOT_FE,
-                    rel: super::layout::Rel::Const(0),
+                    rel: Rel::Const(0),
                     range: Some(1..2),
                 },
                 Factor::same(STEP_FE, STEP_FE),
@@ -2226,6 +2563,7 @@ impl Builder {
             own_bits: C,
             own_offset: 0,
             domain: vec![
+                Factor::restrict(SLOT_FE, 1..2),
                 Factor::weight(STEP_FE, digit_mask(value)),
                 this_chain.clone(),
                 region.clone(),
@@ -2266,14 +2604,19 @@ impl Builder {
             (&mul_neg, counts[3]),
             (&mul_zero, counts[4]),
         ] {
-            self.record(family, count, None);
+            self.record(family, count, false);
         }
     }
 }
 
 /// Builds the fixed layout for `check` with the digits of `values`;
 /// `setup` supplies the pinned verifier-key constants.
-pub fn build(check: &FlattenedCheck, values: &WireValues, setup: &DorySetupInputs) -> Layout {
+pub fn build(
+    check: &FlattenedCheck,
+    values: &WireValues,
+    setup: &DorySetupInputs,
+    wire_order: &[DoryScalar],
+) -> Layout {
     let profile = Profile {
         sigma: check.sigma,
         n: check.n,
@@ -2282,7 +2625,7 @@ pub fn build(check: &FlattenedCheck, values: &WireValues, setup: &DorySetupInput
         profile.gt_bases() + 4 <= 150,
         "GT online region holds at most 150 bases"
     );
-    let mut b = Builder::new();
+    let mut b = Builder::new(wire_order);
     // H1 in output layout (rows 14–15) so every pairing point shares one elem shape.
     let h1_cell = cells::POINT_CONSTANTS;
     b.program.pinned_constant_at(row(h1_cell) + 14, setup.h1.x);
@@ -2307,17 +2650,21 @@ pub fn build(check: &FlattenedCheck, values: &WireValues, setup: &DorySetupInput
             domain: vec![Factor::restrict(CELL, cells::FINAL..cells::FINAL + 1)],
         },
         &[(row(cells::FINAL), None)],
-        None,
+        false,
     );
     let final_check = GtCell(cells::FINAL).rows();
     Layout {
         profile,
         check: check.clone(),
         program: b.program,
-        pieces: b.pieces,
+        copies: b.copies,
+        fingerprints: b.fingerprints,
+        table_reads: b.table_reads,
         selected: b.selected,
+        digit_ops: b.digit_ops,
         families: b.families,
-        digits: b.digits,
+        one_cell: b.one_cell,
+        digit_bases: b.wire_index.len() as u32 + 1,
         input_order: b.input_order,
         pairing_points: p_cells,
         q_halves,

@@ -362,7 +362,9 @@ pub fn g2_psi(negate_y: bool) -> Template {
 }
 
 /// Affine G2 addition `p ± q` (elements 1, 2; element 3 = `(1,)`): rows
-/// `λ` (witness, 0–1), pin `λ·(x2−x1) − (±y2−y1) = 0` (2–3), `x3` (4–5), `y3` (6–7).
+/// `λ` (witness, 0–1), pin `λ·(x2−x1) − (±y2−y1) = 0` (2–3), `x3` (4–5), `y3`
+/// (6–7). Element 2 is the digit-selected point: every slotted row reads its
+/// four coordinates in slots 0–3 (zero-coefficient slots where unused).
 pub fn g2_add(neg_q: bool) -> Template {
     let (x1, y1) = ([at(1, 0), at(1, 1)], [at(1, 2), at(1, 3)]);
     let (x2, y2) = ([at(2, 0), at(2, 1)], [at(2, 2), at(2, 3)]);
@@ -378,6 +380,16 @@ pub fn g2_add(neg_q: bool) -> Template {
         vec![(x2[0], one, 1), (x1[0], one, -1)],
         vec![(x2[1], one, 1), (x1[1], one, -1)],
     ];
+    // Slots 0–3 always hold `x2.0 x2.1 y2.0 y2.1` on the Y side.
+    let sel = |k: [i32; 4], x: [Ref; 4]| -> Slots {
+        vec![
+            (x[0], x2[0], k[0]),
+            (x[1], x2[1], k[1]),
+            (x[2], y2[0], k[2]),
+            (x[3], y2[1], k[3]),
+        ]
+    };
+    let ones = [one; 4];
     let mut rows = vec![
         TemplateRow::witness(RowKind::QuotientFq2 {
             num: num.clone(),
@@ -386,32 +398,51 @@ pub fn g2_add(neg_q: bool) -> Template {
         }),
         TemplateRow::witness(RowKind::QuotientFq2 { num, den, coord: 1 }),
     ];
-    let mut pin = fq2_mul(lambda, x2, 1);
-    extend2(&mut pin, fq2_mul(lambda, x1, -1));
-    extend2(
-        &mut pin,
-        [
-            vec![(y2[0], one, -s), (y1[0], one, 1)],
-            vec![(y2[1], one, -s), (y1[1], one, 1)],
-        ],
-    );
-    rows.extend(
-        pin.into_iter()
-            .map(|slots| TemplateRow::pinned(slots, Fq::ZERO)),
-    );
-    let mut x3_rows = fq2_mul(lambda, lambda, 1);
-    extend2(
-        &mut x3_rows,
-        [
-            vec![(x1[0], one, -1), (x2[0], one, -1)],
-            vec![(x1[1], one, -1), (x2[1], one, -1)],
-        ],
-    );
-    rows.extend(x3_rows.into_iter().map(TemplateRow::compute));
-    let mut y3 = fq2_mul(lambda, x1, 1);
-    extend2(&mut y3, fq2_mul(lambda, x3, -1));
-    extend2(&mut y3, [vec![(y1[0], one, -1)], vec![(y1[1], one, -1)]]);
-    rows.extend(y3.into_iter().map(TemplateRow::compute));
+    // Pin: λ·(x2 − x1) − (s·y2 − y1) = 0.
+    let mut pin0 = sel([1, -1, -s, 0], [lambda[0], lambda[1], one, one]);
+    pin0.extend([
+        (x1[0], lambda[0], -1),
+        (x1[1], lambda[1], 1),
+        (y1[0], one, 1),
+    ]);
+    let mut pin1 = sel([1, 1, 0, -s], [lambda[1], lambda[0], one, one]);
+    pin1.extend([
+        (x1[1], lambda[0], -1),
+        (x1[0], lambda[1], -1),
+        (y1[1], one, 1),
+    ]);
+    rows.push(TemplateRow::pinned(pin0, Fq::ZERO));
+    rows.push(TemplateRow::pinned(pin1, Fq::ZERO));
+    // x3 = λ² − x1 − x2.
+    let mut x30 = sel([-1, 0, 0, 0], ones);
+    x30.extend([
+        (lambda[0], lambda[0], 1),
+        (lambda[1], lambda[1], -1),
+        (x1[0], one, -1),
+    ]);
+    let mut x31 = sel([0, -1, 0, 0], ones);
+    x31.extend([(lambda[0], lambda[1], 2), (x1[1], one, -1)]);
+    rows.push(TemplateRow::compute(x30));
+    rows.push(TemplateRow::compute(x31));
+    // y3 = λ·(x1 − x3) − y1.
+    let mut y30 = sel([0, 0, 0, 0], ones);
+    y30.extend([
+        (lambda[0], x1[0], 1),
+        (lambda[0], x3[0], -1),
+        (lambda[1], x1[1], -1),
+        (lambda[1], x3[1], 1),
+        (y1[0], one, -1),
+    ]);
+    let mut y31 = sel([0, 0, 0, 0], ones);
+    y31.extend([
+        (lambda[0], x1[1], 1),
+        (lambda[0], x3[1], -1),
+        (lambda[1], x1[0], 1),
+        (lambda[1], x3[0], -1),
+        (y1[1], one, -1),
+    ]);
+    rows.push(TemplateRow::compute(y30));
+    rows.push(TemplateRow::compute(y31));
     Template::new(rows)
 }
 
@@ -481,10 +512,12 @@ pub fn g2_on_curve() -> Template {
     );
     Template::new(rows)
 }
-
-/// Affine G1 addition `p ± q` (elements 1, 2; element 3 = `(1,)`) in the
-/// four spare rows of a GT cell: `λ` (witness, row 0), pin
-/// `λ·(x2−x1) − (±y2−y1) = 0` (1), `x3` (2), `y3` (3).
+/// Affine G1 addition `p ± q` (element 1 = `p`, element 2 = `q`, element 3 =
+/// `(1,)`) in the four spare rows of a GT cell: `λ` (witness, row 0), pin
+/// `λ·(x2−x1) − (±y2−y1) = 0` (1), `x3` (2), `y3` (3). Element 2 is the
+/// digit-selected point: every slotted row reads `x2, y2` in slots 0–1 (with
+/// zero-coefficient slots where unused) so the operand lookup fingerprints
+/// the same slots on every row.
 pub fn g1_add(neg_q: bool) -> Template {
     let (x1, y1, x2, y2) = (at(1, 0), at(1, 1), at(2, 0), at(2, 1));
     let one = at(3, 0);
@@ -498,14 +531,25 @@ pub fn g1_add(neg_q: bool) -> Template {
         TemplateRow::pinned(
             vec![
                 (lambda, x2, 1),
-                (lambda, x1, -1),
-                (y2, one, -s),
+                (one, y2, -s),
+                (x1, lambda, -1),
                 (y1, one, 1),
             ],
             Fq::ZERO,
         ),
-        TemplateRow::compute(vec![(lambda, lambda, 1), (x1, one, -1), (x2, one, -1)]),
-        TemplateRow::compute(vec![(lambda, x1, 1), (lambda, x3, -1), (y1, one, -1)]),
+        TemplateRow::compute(vec![
+            (one, x2, -1),
+            (one, y2, 0),
+            (lambda, lambda, 1),
+            (x1, one, -1),
+        ]),
+        TemplateRow::compute(vec![
+            (one, x2, 0),
+            (one, y2, 0),
+            (lambda, x1, 1),
+            (lambda, x3, -1),
+            (y1, one, -1),
+        ]),
     ])
 }
 

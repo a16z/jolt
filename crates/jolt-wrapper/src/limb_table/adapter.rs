@@ -13,6 +13,9 @@ use crate::relation::{DoryLinks, DoryScalar};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AdapterError {
+    /// The relation links a wire set different from the deferred check's bases.
+    #[error("the linked Dory wires differ from the deferred check's bases ({links} linked, {check} used)")]
+    WireSet { links: usize, check: usize },
     #[error("the opening proof has {proof} reduction rounds, the relation links {links}")]
     SigmaMismatch { proof: usize, links: usize },
     #[error("wire {wire:?} references variable {index} beyond the {len}-entry witness")]
@@ -31,6 +34,9 @@ pub struct JoltDoryInputs {
     pub check: FlattenedCheck,
     pub witness: DoryWitnessInputs,
     pub values: WireValues,
+    /// Digit-base order: the relation's linked wires in `DoryLinks` order
+    /// (the R lane's consecutive scalar cells).
+    pub wire_order: Vec<DoryScalar>,
 }
 
 /// The joint opening's commitment order (`final_opening_polynomial_order`
@@ -95,13 +101,23 @@ pub fn from_jolt(
             })?;
         pairs.push((wire.clone(), ark_bn254::Fr::from(value)));
     }
+    let check = FlattenedCheck::derive(proof.sigma, ordered.len());
+    let wire_order: Vec<DoryScalar> = links.scalars.iter().map(|(w, _)| w.clone()).collect();
+    let used = check.wires();
+    if wire_order.len() != used.len() || used.iter().any(|w| !wire_order.contains(w)) {
+        return Err(AdapterError::WireSet {
+            links: wire_order.len(),
+            check: used.len(),
+        });
+    }
     Ok(JoltDoryInputs {
         setup: DorySetupInputs::from(&pcs_setup.0),
-        check: FlattenedCheck::derive(proof.sigma, ordered.len()),
+        check,
         witness: DoryWitnessInputs {
             commitments: ordered,
             proof,
         },
         values: WireValues::from_wires(pairs),
+        wire_order,
     })
 }

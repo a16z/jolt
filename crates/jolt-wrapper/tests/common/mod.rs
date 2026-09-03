@@ -105,20 +105,3 @@ pub fn synthetic_opening(num_vars: usize, n: usize, seed: u64) -> Opening {
         },
     }
 }
-
-/// Random verifier-key constants of the right shape (for layout-shape tests).
-pub fn random_setup(sigma: usize, seed: u64) -> DorySetupInputs {
-    use ark_bn254::{Fq12, G1Affine, G2Affine};
-    let mut rng = ChaCha20Rng::seed_from_u64(seed);
-    let gt = |rng: &mut ChaCha20Rng| Fq12::rand(rng);
-    DorySetupInputs {
-        chi: (0..=sigma).map(|_| gt(&mut rng)).collect(),
-        delta_1r: (0..=sigma).map(|_| gt(&mut rng)).collect(),
-        delta_2r: (0..=sigma).map(|_| gt(&mut rng)).collect(),
-        ht: gt(&mut rng),
-        g1_0: G1Affine::rand(&mut rng),
-        g2_0: G2Affine::rand(&mut rng),
-        h1: G1Affine::rand(&mut rng),
-        h2: G2Affine::rand(&mut rng),
-    }
-}
