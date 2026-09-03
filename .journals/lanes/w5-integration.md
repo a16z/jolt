@@ -24,6 +24,31 @@ must be derived or removed before the proof-size target can use 28 words.
 
 ## Interfaces still blocking `wrap` / `verify_wrapped`
 
+### Fiat–Shamir dependency
+
+The requested member list is not a sound single batch:
+
+```text
+commitments
+  -> Spartan outer rounds
+  -> rx, Az(rx), Bz(rx), Cz(rx)
+  -> inner linear form + input claim
+  -> Spartan inner rounds
+  -> ry
+  -> SPARK matrix-memory members
+```
+
+The inner prover cannot be constructed until the outer batch ends. Reusing that batch's already
+known challenges for inner round polynomials would let the prover choose each polynomial after its
+evaluation point. SPARK likewise cannot be a stage-A member because its tables use `rx` and `ry`.
+
+The sound one-opening order is: (0) Spartan outer as its own 13-round degree-3 stage; (A) T1/T2 row
+members plus the now-constructible 13-round Spartan inner, head-aligned under the fresh 18-round
+row point; (B) packed-column and link reductions; (C) SPARK after `rx,ry`. Splitting outer costs
+`13 * 3 * 32 = 1,248 B`; sharing W removes 1,312 B, so W co-pointing nets only **64 B** before the
+new SPARK stage. Keeping outer in A forces inner to a later point and requires either a second PCS
+opening or a point-reduction stage.
+
 ### Stream assembly
 
 `stream::prove_stream` accepts one row prover plus a fixed equal-arity tensor over committed column
@@ -74,11 +99,15 @@ current Spartan verifier can evaluate matrix MLEs in `O(nnz)` and remains the na
 but it is a standalone transcript with a standalone W opening. Treating that component proof as the
 full wrapper would leave T1/T2 and their links unbound, so no such proof is emitted.
 
+The native fallback can replace SPARK's matrix-memory argument only after stages 0/A/B exist: it
+computes the same matrix MLEs from the verifier key in `O(nnz)` and adds no proof bytes, but it does
+not remove the outer→inner dependency above.
+
 ## Current result
 
 - Real proof preparation: **passes**.
 - Full wrapped proof / verification: **blocked before stage assembly**; no unsound partial proof.
 - Payload/bincode/prover phase/gas: not measurable until the stream/T1/T2/SPARK interfaces above
   exist.
-- W co-pointing remains 0 extra rounds and projects a 1,312 B saving once the shared proof merger
-  removes its standalone commitment/opening.
+- W itself adds 0 rounds inside the fresh row stage and removes 1,312 B, but the required outer
+  pre-stage adds 1,248 B; net **−64 B** before SPARK.
