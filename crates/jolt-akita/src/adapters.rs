@@ -1,14 +1,13 @@
 use std::{fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 use akita_config::CommitmentConfig;
-use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
+use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize, AkitaTranscript};
 use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
-use akita_transcript::Transcript as AkitaBackendTranscript;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
-    CommittedGroup as AkitaBackendCommittedGroup,
+    CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };
 use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
@@ -55,6 +54,7 @@ pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaFi
 pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
 
 pub(crate) type AkitaLayoutDigest = [u8; 32];
+const SCHEDULE_SELECTION_BYTES: usize = 32;
 
 /// Worker stack size for [`with_backend_pool`]. Stacks are lazily committed,
 /// so oversizing costs virtual address space only.
@@ -604,29 +604,36 @@ impl AppendToTranscript for AkitaCommitment {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
-    pub(crate) statement_bridge: Vec<u8>,
     /// Fixed-width public identity of the exact generated row selected by the
     /// prover. The verifier resolves this digest under its configured catalog;
     /// the backend proof body does not encode the selection itself.
-    pub(crate) serialized_schedule_selection: Vec<u8>,
-    pub(crate) serialized_akita_proof_shape: Vec<u8>,
-    pub(crate) serialized_akita_proof: Vec<u8>,
+    pub(crate) schedule_selection: [u8; SCHEDULE_SELECTION_BYTES],
+    pub(crate) backend_proof: Vec<u8>,
 }
 
 impl AkitaBatchProof {
+    pub(crate) fn new(selection: OpeningScheduleSelection, backend_proof: Vec<u8>) -> Self {
+        Self {
+            schedule_selection: *selection.row_digest.as_bytes(),
+            backend_proof,
+        }
+    }
+
+    pub(crate) fn selection(&self) -> OpeningScheduleSelection {
+        OpeningScheduleSelection {
+            row_digest: ScheduleRowDigest::from_bytes(self.schedule_selection),
+        }
+    }
+
     /// Headerless backend proof body produced by Akita's canonical encoder.
     pub fn backend_proof_body_size(&self) -> usize {
-        self.serialized_akita_proof.len()
+        self.backend_proof.len()
     }
 
     /// Sum of the raw component bytes before the enclosing Jolt serializer
     /// adds container tags or length prefixes.
     pub fn unframed_payload_size(&self) -> Option<usize> {
-        self.statement_bridge
-            .len()
-            .checked_add(self.serialized_schedule_selection.len())?
-            .checked_add(self.serialized_akita_proof_shape.len())?
-            .checked_add(self.serialized_akita_proof.len())
+        SCHEDULE_SELECTION_BYTES.checked_add(self.backend_proof.len())
     }
 }
 
@@ -947,36 +954,31 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
 impl AppendToTranscript for AkitaBatchProof {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         transcript.append(&LabelWithCount(
-            b"akita_stmt_bridge",
-            self.statement_bridge.len() as u64,
-        ));
-        transcript.append_bytes(&self.statement_bridge);
-        transcript.append(&LabelWithCount(
             b"akita_schedule_selection",
-            self.serialized_schedule_selection.len() as u64,
+            SCHEDULE_SELECTION_BYTES as u64,
         ));
-        transcript.append_bytes(&self.serialized_schedule_selection);
-        transcript.append(&LabelWithCount(
-            b"akita_proof_shape",
-            self.serialized_akita_proof_shape.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_akita_proof_shape);
+        transcript.append_bytes(&self.schedule_selection);
         transcript.append(&LabelWithCount(
             b"akita_proof",
-            self.serialized_akita_proof.len() as u64,
+            self.backend_proof.len() as u64,
         ));
-        transcript.append_bytes(&self.serialized_akita_proof);
+        transcript.append_bytes(&self.backend_proof);
     }
 }
 
-pub(crate) fn bridge_jolt_statement_challenge<T>(
+pub(crate) fn bridged_akita_transcript<T>(
     jolt_transcript: &mut T,
-    akita_transcript: &mut impl AkitaBackendTranscript<AkitaField>,
-) -> Vec<u8>
+    session_label: &[u8],
+) -> AkitaTranscript<AkitaField>
 where
     T: Transcript<Challenge = AkitaField>,
 {
     let bridge = jolt_transcript.challenge_scalar();
-    akita_transcript.append_field(b"jolt_statement_bridge", &bridge);
-    bridge.to_bytes_le_vec()
+    let bridge_bytes = bridge.to_bytes_le_vec();
+    // Akita replaces its sponge state when it binds the concrete instance but
+    // preserves the session label, so the cross-protocol bridge belongs here.
+    let mut bridged_session_label = Vec::with_capacity(session_label.len() + bridge_bytes.len());
+    bridged_session_label.extend_from_slice(session_label);
+    bridged_session_label.extend_from_slice(&bridge_bytes);
+    AkitaTranscript::new(&bridged_session_label)
 }
