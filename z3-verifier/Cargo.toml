@@ -8,13 +8,13 @@ paste.workspace = true
 jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
 common = { path = "../common" }
 tracer = { path = "../tracer" }
-z3 = "0.20.0"
+z3 = "0.21.0"
 # Never used from Rust — declared only to pin the Z3 that `vendored-z3` builds.
 # z3-sys asks for `z3-src = "416"`, which would let the solver change under the
 # nightly between runs and surface as a spurious soundness signal. 416.0.2 is
 # Z3 release 4.16.0. A future `z3` bump that needs a different z3-src major
 # fails resolution here rather than drifting silently.
-z3-src = { version = "=416.0.2", optional = true }
+z3-src = { version = "=500.0.0", optional = true }
 
 [features]
 # Build Z3 from pinned vendored source instead of linking the runner's libz3.

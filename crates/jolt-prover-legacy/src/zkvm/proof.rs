@@ -239,7 +239,7 @@ where
                 ),
             })
         }
-        // The packed committed-program preprocessing (one ProgramOneHot commitment
+        // The packed committed-program preprocessing (direct program commitments
         // plus its chunk count) is assembled by the akita prove path.
         #[cfg(feature = "akita")]
         ProverProgramPreprocessing::Committed(_) => {
@@ -779,21 +779,6 @@ pub(crate) fn convert_opening_id(id: prover_opening::OpeningId) -> JoltOpeningId
         prover_opening::OpeningId::Polynomial(poly, sumcheck) => {
             JoltOpeningId::polynomial(convert_polynomial_id(poly), convert_sumcheck_id(sumcheck))
         }
-        // The packed byte-column reconstructions produce COMMITTED byte-lane
-        // openings; the advice accumulator slot is just where the legacy
-        // prover carries them.
-        prover_opening::OpeningId::UntrustedAdvice(
-            prover_opening::SumcheckId::UntrustedAdviceReconstruction,
-        ) => JoltOpeningId::committed(
-            JoltCommittedPolynomial::UntrustedAdviceBytes,
-            JoltRelationId::UntrustedAdviceReconstruction,
-        ),
-        prover_opening::OpeningId::TrustedAdvice(
-            prover_opening::SumcheckId::TrustedAdviceReconstruction,
-        ) => JoltOpeningId::committed(
-            JoltCommittedPolynomial::TrustedAdviceBytes,
-            JoltRelationId::TrustedAdviceReconstruction,
-        ),
         prover_opening::OpeningId::UntrustedAdvice(sumcheck) => {
             JoltOpeningId::untrusted_advice(convert_sumcheck_id(sumcheck))
         }
@@ -873,18 +858,6 @@ pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelatio
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
         }
-        prover_opening::SumcheckId::UntrustedAdviceReconstruction => {
-            JoltRelationId::UntrustedAdviceReconstruction
-        }
-        prover_opening::SumcheckId::TrustedAdviceReconstruction => {
-            JoltRelationId::TrustedAdviceReconstruction
-        }
-        prover_opening::SumcheckId::BytecodeChunkReconstruction => {
-            JoltRelationId::BytecodeChunkReconstruction
-        }
-        prover_opening::SumcheckId::ProgramImageReconstruction => {
-            JoltRelationId::ProgramImageReconstruction
-        }
     }
 }
 
@@ -920,44 +893,6 @@ fn convert_committed_polynomial(
         prover_witness::CommittedPolynomial::BalancedIncCarry => {
             JoltCommittedPolynomial::BalancedIncCarry
         }
-        prover_witness::CommittedPolynomial::BytecodeRegisterSelector(chunk, lane) => {
-            JoltCommittedPolynomial::BytecodeRegisterSelector {
-                chunk,
-                lane: convert_register_lane(lane),
-            }
-        }
-        prover_witness::CommittedPolynomial::BytecodeCircuitFlag(chunk, flag) => {
-            JoltCommittedPolynomial::BytecodeCircuitFlag { chunk, flag }
-        }
-        prover_witness::CommittedPolynomial::BytecodeInstructionFlag(chunk, flag) => {
-            JoltCommittedPolynomial::BytecodeInstructionFlag { chunk, flag }
-        }
-        prover_witness::CommittedPolynomial::BytecodeLookupSelector(chunk) => {
-            JoltCommittedPolynomial::BytecodeLookupSelector { chunk }
-        }
-        prover_witness::CommittedPolynomial::BytecodeRafFlag(chunk) => {
-            JoltCommittedPolynomial::BytecodeRafFlag { chunk }
-        }
-        prover_witness::CommittedPolynomial::BytecodeUnexpandedPcBytes(chunk) => {
-            JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk }
-        }
-        prover_witness::CommittedPolynomial::BytecodeImmBytes(chunk) => {
-            JoltCommittedPolynomial::BytecodeImmBytes { chunk }
-        }
-        prover_witness::CommittedPolynomial::ProgramImageBytes => {
-            JoltCommittedPolynomial::ProgramImageBytes
-        }
-    }
-}
-
-#[cfg(not(feature = "zk"))]
-fn convert_register_lane(lane: usize) -> jolt_claims::protocols::jolt::BytecodeRegisterLane {
-    use jolt_claims::protocols::jolt::BytecodeRegisterLane;
-    match lane {
-        0 => BytecodeRegisterLane::Rs1,
-        1 => BytecodeRegisterLane::Rs2,
-        2 => BytecodeRegisterLane::Rd,
-        _ => panic!("register selector lane index {lane} out of range (rs1, rs2, rd)"),
     }
 }
 

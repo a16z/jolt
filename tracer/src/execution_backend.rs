@@ -355,13 +355,18 @@ impl ChunkedExecutionBackend for TracerBackend {
 }
 
 fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
-    Ok(TraceRow {
-        instruction: jolt_instruction_row(&cycle)?,
-        registers: register_state(&cycle),
-        ram_access: cycle.ram_access().into(),
-        #[cfg(feature = "field-inline")]
-        field_inline: cycle.field_inline_trace().map(Into::into),
-    })
+    let row = TraceRow::new(
+        jolt_instruction_row(&cycle)?,
+        register_state(&cycle),
+        cycle.ram_access().into(),
+    )?;
+    #[cfg(feature = "field-inline")]
+    let row = {
+        let mut row = row;
+        row.field_inline = cycle.field_inline_trace().map(Into::into);
+        row
+    };
+    Ok(row)
 }
 
 fn jolt_instruction_row(cycle: &Cycle) -> Result<JoltInstructionRow, TraceError> {
@@ -644,10 +649,10 @@ mod tests {
         assert_eq!(trace.len(), 1);
 
         let row = super::trace_row_from_cycle(trace.remove(0)).unwrap();
-        assert_eq!(row.registers.rs1.unwrap().register, 5);
-        assert_eq!(row.registers.rs1.unwrap().value, 11);
-        assert!(row.registers.rs2.is_none());
-        assert!(row.registers.rd.is_none());
+        assert_eq!(row.rs1_read().unwrap().register, 5);
+        assert_eq!(row.rs1_read().unwrap().value, 11);
+        assert!(row.rs2_read().is_none());
+        assert!(row.rd_write().is_none());
         let field_trace = row.field_inline.unwrap();
         assert_eq!(field_trace.op, Some(FieldInlineOp::LoadFromX));
         assert_eq!(

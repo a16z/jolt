@@ -49,3 +49,34 @@ JOLT_FS_BLESS=1 cargo nextest run -p jolt-verifier \
 
 Review the resulting diff as a list of new or removed security obligations.
 Never regenerate it merely to make CI pass.
+
+## Akita committed-program batching
+
+Committed-program Akita preprocessing must provision one native grouped
+opening for every direct bytecode chunk, the program image, optional advice,
+and the main trace. The largest admitted statement has 256 chunks plus the
+image, two advice objects, and the trace: 260 groups/polynomials. The schedule
+registry plans only the setup's final arity, with at most four rows for the
+reachable advice-presence combinations. Its 128-row bound applies to one
+provisioning request, not to the process cache.
+
+Run the focused committed-program and byte-parity gates with:
+
+```bash
+cargo nextest run -p jolt-prover muldiv_e2e_akita_committed_program \
+  --features akita,prover-fixtures --cargo-quiet
+cargo nextest run -p jolt-prover prover_matches_legacy_on_committed_muldiv_akita \
+  --features akita,prover-fixtures --cargo-quiet
+```
+
+Run the schedule and catalog gates with:
+
+```bash
+cargo nextest run -p jolt-akita --cargo-quiet
+cargo nextest run -p jolt-akita --run-ignored all \
+  -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
+```
+
+Failures at the 128-row or 260-group shape limit are protocol-capacity
+failures. Do not work around them by lowering the public 256-chunk limit or
+selecting a different committed-program encoding.

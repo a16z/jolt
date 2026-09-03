@@ -35,6 +35,12 @@ pub trait GroupCommitmentMetadata {
 pub trait GroupSetupMetadata {
     fn max_num_vars(&self) -> usize;
     fn max_num_polys_per_commitment_group(&self) -> usize;
+    /// Total number of polynomials admitted across every group in one native
+    /// opening. For ordinary single-group schemes this is identical to the
+    /// group-local limit.
+    fn max_total_batch_polys(&self) -> usize {
+        self.max_num_polys_per_commitment_group()
+    }
     fn default_layout_digest(&self) -> [u8; 32];
     fn one_hot_k(&self) -> usize;
 }
@@ -81,8 +87,7 @@ pub trait CommitmentScheme: Commitment {
     ) -> Result<(), OpeningsError>;
 
     /// Commits a group of polynomials as one commitment object whose members
-    /// are opened together at a shared point
-    /// ([`open_batch_from_hint`](Self::open_batch_from_hint)). Only schemes
+    /// are opened together at a shared point. Only schemes
     /// with a native commitment group (e.g. Akita's one-hot flavor) support
     /// this; `layout_digest` is the protocol-owned digest binding the ordered
     /// member identities.
@@ -96,40 +101,35 @@ pub trait CommitmentScheme: Commitment {
         ))
     }
 
-    /// Opens every member of one commitment group at a shared point in a
-    /// single proof, from the scheme's retained commit-time state: `hint` is
-    /// the committed object [`commit_batch`](Self::commit_batch) produced and
-    /// owns everything the opening consumes (witness forms plus any
-    /// commit-time opening data, e.g. Akita's Ajtai digit decompositions).
-    /// There is deliberately no polynomial argument — a scheme whose openings
-    /// cannot run from retained state alone does not implement this.
+    /// Proves one batch containing zero or more independently committed groups
+    /// followed by a final commitment group. Every opening runs from retained
+    /// commit-time state; there is deliberately no polynomial argument.
     // TODO(#1782): fold the retained-state contract into a first-class
     // committed-object type on this trait instead of the `OpeningHint`
     // side-channel.
-    fn open_batch_from_hint(
-        _point: &[Self::Field],
-        _evaluations: &[Self::Field],
+    fn prove_batch(
         _setup: &Self::ProverSetup,
-        _hint: Self::OpeningHint,
+        _precommitted: Vec<PrecommittedOpening<Self::Field, Self::Output, Self::OpeningHint>>,
+        _final_group: GroupOpeningClaim<Self::Field, Self::Output>,
+        _final_hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no retained-state batch opening".to_owned(),
+            "this commitment scheme has no native group-batch opening".to_owned(),
         ))
     }
 
-    /// Verifies a single proof opening every member of one commitment group
-    /// at a shared point.
+    /// Verifies one proof opening zero or more independently committed groups
+    /// at their group-local points, followed by a final commitment group.
     fn verify_batch(
-        _commitment: &Self::Output,
-        _point: &[Self::Field],
-        _evaluations: &[Self::Field],
-        _proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
+        _precommitted: &[PrecommittedClaim<Self::Field, Self::Output>],
+        _final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
+        _proof: &Self::Proof,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
         Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native same-point batch opening".to_owned(),
+            "this commitment scheme has no native group-batch opening".to_owned(),
         ))
     }
 }
@@ -137,12 +137,17 @@ pub trait CommitmentScheme: Commitment {
 /// Transparent derivation of a singleton commitment-object setup from the
 /// object's public shape alone (one polynomial at `num_vars`, seeded by the
 /// object plan's layout digest): prover and verifier re-derive
-/// byte-identical setups independently, so auxiliary packed objects (advice
-/// byte columns, the precommitted program) need no setup ceremony or
-/// transport.
+/// byte-identical setups independently, so packed objects need no setup
+/// ceremony or transport.
 pub trait TransparentObjectSetup: CommitmentScheme {
     fn transparent_object_setup(
         num_vars: usize,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Reuses an object's backend setup for another layout at the same arity.
+    fn retag_transparent_object_setup(
+        setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 }
@@ -724,5 +729,99 @@ where
         ZkEvaluationClaim::new(point.as_slice(), &hiding_commitment)
             .append_to_transcript(transcript);
         Ok(hiding_commitment)
+    }
+}
+
+/// One physical commitment group's opening claim. Precommitted groups carry
+/// their own [`PrecommittedRole`]; the final trace group is always last.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupOpeningClaim<F, C> {
+    pub commitment: C,
+    pub point: Vec<F>,
+    pub evaluations: Vec<F>,
+}
+
+impl<F, C> GroupOpeningClaim<F, C> {
+    pub fn new(commitment: C, point: Vec<F>, evaluations: Vec<F>) -> Self {
+        Self {
+            commitment,
+            point,
+            evaluations,
+        }
+    }
+}
+
+/// Protocol-supplied identity of one precommitted group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrecommittedRole {
+    order: u64,
+    transcript_label: &'static [u8],
+    diagnostic_name: &'static str,
+    transcript_index: Option<u64>,
+}
+
+impl PrecommittedRole {
+    pub const fn new(
+        order: u64,
+        transcript_label: &'static [u8],
+        diagnostic_name: &'static str,
+    ) -> Self {
+        Self {
+            order,
+            transcript_label,
+            diagnostic_name,
+            transcript_index: None,
+        }
+    }
+
+    pub const fn new_indexed(
+        order: u64,
+        transcript_label: &'static [u8],
+        diagnostic_name: &'static str,
+        transcript_index: u64,
+    ) -> Self {
+        Self {
+            order,
+            transcript_label,
+            diagnostic_name,
+            transcript_index: Some(transcript_index),
+        }
+    }
+
+    /// Protocol-defined canonical batch position.
+    pub const fn order(self) -> u64 {
+        self.order
+    }
+
+    /// Protocol-defined domain-separating transcript tag.
+    pub const fn transcript_label(self) -> &'static [u8] {
+        self.transcript_label
+    }
+
+    /// Protocol-defined name used in validation diagnostics.
+    pub const fn diagnostic_name(self) -> &'static str {
+        self.diagnostic_name
+    }
+
+    /// Optional semantic index for repeated protocol roles.
+    pub const fn transcript_index(self) -> Option<u64> {
+        self.transcript_index
+    }
+}
+
+/// One precommitted group's public opening claim, tagged with its role.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecommittedClaim<F, C> {
+    pub role: PrecommittedRole,
+    pub claim: GroupOpeningClaim<F, C>,
+}
+
+/// One precommitted group's public claim paired with the prover's retained
+/// opening hint.
+pub type PrecommittedOpening<F, C, H> = (PrecommittedClaim<F, C>, H);
+
+impl<F, C> PrecommittedClaim<F, C> {
+    pub fn new(role: PrecommittedRole, claim: GroupOpeningClaim<F, C>) -> Self {
+        Self { role, claim }
     }
 }

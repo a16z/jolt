@@ -98,18 +98,13 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OutputCheckKernel<F: JoltField> {
     progress: RoundProgress,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
     val_io: Polynomial<F>,
     val_final: Polynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
 }
 impl<F: JoltField> OutputCheckKernel<F> {
@@ -295,10 +290,7 @@ mod tests {
             memory_layout: device.memory_layout.clone(),
             max_padded_trace_length: 1 << log_t,
         });
-        let rows = vec![TraceRow {
-            instruction,
-            ..TraceRow::default()
-        }];
+        let rows = vec![TraceRow::from_instruction(instruction).unwrap()];
         // Post-execution DRAM bytes (outside the IO mask): nonzero
         // `val_final − val_io` there keeps the later round polynomials
         // nontrivial while the Boolean-point sum stays zero.

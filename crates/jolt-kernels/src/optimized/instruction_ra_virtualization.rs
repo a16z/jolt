@@ -115,18 +115,13 @@ impl ChunkIndexSource for LookupIndexChunks {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     num_committed_per_virtual: usize,
     /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
     /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
     /// exactly, so unscaling is byte-exact).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_powers_inv: Vec<F>,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual

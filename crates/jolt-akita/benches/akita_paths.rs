@@ -46,12 +46,12 @@ use akita_types::{
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
-    configs::{JoltDense as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
+    configs::{JoltDenseBounded as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
     AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
-use jolt_field::{Fr, JoltField, Ring};
+use jolt_field::{Fr, JoltField, Ring, Zero};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, PrefixPackedClaims, PrefixPackedLayout,
     VerifierOpeningClaim,
@@ -74,8 +74,6 @@ type BackendHint = AkitaCommitmentHint<AkitaField>;
 type BackendSetup = BackendProverSetup<AkitaField>;
 type BackendPreparedSetup = CpuPreparedSetup<AkitaField>;
 type BackendOneHotPoly = OneHotPoly<AkitaField, u8>;
-
-const AKITA_D: usize = <AkitaConfig as CommitmentConfig>::D;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum BatchId {
@@ -300,13 +298,13 @@ fn materialize_packed(
 }
 
 fn make_backend_one_hot_poly(poly: &OneHotPolynomial) -> BackendOneHotPoly {
-    BackendOneHotPoly::new(AKITA_ONE_HOT_K256, AKITA_D, poly.indices().to_vec())
+    BackendOneHotPoly::new(AKITA_ONE_HOT_K256, poly.indices().to_vec())
         .expect("valid one-hot backend polynomial")
 }
 
 fn make_backend_dense_poly(poly: &Polynomial<AkitaField>) -> BackendDensePoly {
     let evals = jolt_to_akita_evals(poly.num_vars(), poly.evals()).expect("valid dimensions");
-    BackendDensePoly::from_field_evals(poly.num_vars(), AKITA_D, &evals)
+    BackendDensePoly::from_field_evals(poly.num_vars(), evals)
         .expect("valid dense backend polynomial")
 }
 

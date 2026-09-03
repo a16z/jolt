@@ -27,8 +27,8 @@
 //!   joint `(cycle ‖ stream)` domain and the first round's endpoints are
 //!   produced by one pass over the typed rows
 //!   (`OuterLinearStage::fused_materialise_polynomials_round_zero`).
-//! - **In-place binding**: `Az`/`Bz` bind low-to-high in place with a reused
-//!   scratch buffer; the 35 input tables are never bound at all.
+//! - **In-place binding**: `Az`/`Bz` bind without swap buffers; the 35 input
+//!   tables are never bound.
 //! - **Post-hoc opening evaluation**: the 35 produced opening claims come
 //!   from one final eq-weighted walk over the typed rows
 //!   (`R1CSEval::compute_claimed_inputs`), not from binding 35 polynomials
@@ -414,19 +414,13 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) 
 /// remainder slot reclaims — the typed-row store (reused for
 /// materialization and the final opening walk), the stage challenge vector,
 /// and the extended-node evaluations of `t1`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
     rows: BundleStore<SpartanOuterRow>,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     t1_values: Vec<F>,
 }
 
@@ -582,15 +576,9 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemaind
 /// The `Az`/`Bz` linear forms folded at both stream values — the closed forms
 /// of the relation's derived leaves after the stream bind, kept for
 /// [`SumcheckKernel::validate_derived_tables`].
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct DerivedWeights<F> {
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     az_weights: [Vec<F>; 2],
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     bz_weights: [Vec<F>; 2],
     #[cfg_attr(feature = "allocative", allocative(skip))]
     az_constant: [F; 2],
@@ -600,23 +588,20 @@ struct DerivedWeights<F> {
 
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
+    /// `(Az, Bz)` over the joint domain.
     az: Polynomial<F>,
     bz: Polynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-    scratch: Vec<F>,
+    /// Whether the first-shrink purge ran.
+    purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     /// Round-0 endpoints, fused into the materialization pass.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanOuterRow>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
@@ -716,7 +701,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         Ok(Self {
             az: Polynomial::new(az),
             bz: Polynomial::new(bz),
-            scratch: Vec::new(),
+            purged: false,
             split_eq,
             pending_endpoints: Some(endpoints),
             challenges: RoundChallenges::new(rounds),
@@ -756,10 +741,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        self.az
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
-        self.bz
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+        let shrunk = self.az.bind_low_to_high_in_place(challenge);
+        let _ = self.bz.bind_low_to_high_in_place(challenge);
+        // Purge once after the first shrink.
+        if shrunk && !self.purged {
+            self.purged = true;
+            // `rounds = log_t + 1`.
+            crate::mem::purge_retained_memory(self.challenges.total() - 1);
+        }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;

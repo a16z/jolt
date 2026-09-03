@@ -106,14 +106,19 @@ pub use m::Rem;
 pub use m::RemU;
 pub use m::RemUW;
 pub use m::RemW;
+pub use virt::AlignAddr;
 pub use virt::MovSign;
 pub use virt::MulI;
 pub use virt::MulIW;
+pub use virt::Pext;
 pub use virt::PextSigned;
 pub use virt::Pow2;
 pub use virt::Pow2I;
 pub use virt::Pow2IW;
 pub use virt::Pow2W;
+pub use virt::ShiftDataB;
+pub use virt::ShiftDataH;
+pub use virt::ShiftDataW;
 pub use virt::VirtualAdvice;
 pub use virt::VirtualAdviceLen;
 pub use virt::VirtualAdviceLoad;
@@ -138,6 +143,7 @@ pub use virt::VirtualXorRot16;
 pub use virt::VirtualXorRot24;
 pub use virt::VirtualXorRot32;
 pub use virt::VirtualXorRot63;
+pub use virt::VirtualXorRotL1;
 pub use virt::VirtualXorRotW12;
 pub use virt::VirtualXorRotW16;
 pub use virt::VirtualXorRotW19;
@@ -146,6 +152,8 @@ pub use virt::VirtualXorRotW6;
 pub use virt::VirtualXorRotW7;
 pub use virt::VirtualXorRotW8;
 pub use virt::VirtualZeroExtendWord;
+pub use virt::WindowMaskB;
+pub use virt::WindowMaskH;
 pub use virt::WindowMaskW;
 
 // Atomic + system + advice-load + virtual lw/sw additions
@@ -422,6 +430,14 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualSrliw(VirtualSrliw<T>),
     VirtualSraw(VirtualSraw<T>),
     VirtualSraiw(VirtualSraiw<T>),
+    Pext(Pext<T>),
+    WindowMaskB(WindowMaskB<T>),
+    WindowMaskH(WindowMaskH<T>),
+    AlignAddr(AlignAddr<T>),
+    ShiftDataB(ShiftDataB<T>),
+    ShiftDataH(ShiftDataH<T>),
+    ShiftDataW(ShiftDataW<T>),
+    VirtualXorRotL1(VirtualXorRotL1<T>),
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
@@ -638,6 +654,14 @@ impl_jolt_instructions_flags! {
     VirtualSrliw => VirtualSRLIW,
     VirtualSraw => VirtualSRAW,
     VirtualSraiw => VirtualSRAIW,
+    Pext => VirtualPext,
+    WindowMaskB => VirtualWindowMaskB,
+    WindowMaskH => VirtualWindowMaskH,
+    AlignAddr => VirtualAlignAddr,
+    ShiftDataB => VirtualShiftDataB,
+    ShiftDataH => VirtualShiftDataH,
+    ShiftDataW => VirtualShiftDataW,
+    VirtualXorRotL1 => VirtualXORROTL1,
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,

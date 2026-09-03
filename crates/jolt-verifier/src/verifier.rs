@@ -166,11 +166,9 @@ where
     Ok(())
 }
 
-/// The Akita verification path: the same stage spine, with the reconstruction
-/// phase producing auxiliary leaves, a random-selector opening of the
-/// prefix-packed OneHotTrace polynomial, and separate packed openings for
-/// auxiliary objects in place of the homomorphic RLC batch. No homomorphism
-/// bounds and no ZK tail.
+/// The Akita verification path: the same stage spine, with a random-selector
+/// reduction of the packed trace and one native opening for the trace, advice,
+/// and committed-program objects. No homomorphism bounds and no ZK tail.
 #[cfg(feature = "akita")]
 pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -263,6 +261,7 @@ where
         &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
+        &stage4,
         &stage6b,
         &stage7,
     )?;
@@ -343,6 +342,7 @@ where
     let ram_k = proof.ram_K;
     let trace_polynomial_order = proof.trace_polynomial_order;
     let one_hot_config = proof.one_hot_config;
+    #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
     // The zk axis is fixed at compile time; every branch below const-folds.
     let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
@@ -416,6 +416,12 @@ where
         program
             .committed()
             .map(|committed| {
+                #[cfg(feature = "akita")]
+                if committed.trace_order != trace_polynomial_order {
+                    return Err(VerifierError::InvalidCommittedProgram {
+                        reason: "committed-program trace order disagrees with the proof".to_owned(),
+                    });
+                }
                 let meta = &committed.meta;
                 let program_image_start_index = memory_layout
                     .remapped_word_address(meta.min_bytecode_address)
@@ -444,9 +450,11 @@ where
                 })
             })
             .transpose()?;
+    #[cfg(not(feature = "akita"))]
     let trusted_advice_size = trusted_advice_commitment_present
         .then(|| advice_size_to_usize(memory_layout.max_trusted_advice_size, "trusted"))
         .transpose()?;
+    #[cfg(not(feature = "akita"))]
     let untrusted_advice_size = untrusted_advice_commitment_present
         .then(|| advice_size_to_usize(memory_layout.max_untrusted_advice_size, "untrusted"))
         .transpose()?;
@@ -454,7 +462,9 @@ where
         trace_polynomial_order,
         num::ilog2(trace_length),
         one_hot_config.committed_chunk_bits(),
+        #[cfg(not(feature = "akita"))]
         trusted_advice_size,
+        #[cfg(not(feature = "akita"))]
         untrusted_advice_size,
         committed_program,
     )
@@ -475,6 +485,7 @@ where
     })
 }
 
+#[cfg(not(feature = "akita"))]
 fn advice_size_to_usize(value: u64, kind: &'static str) -> Result<usize, VerifierError> {
     usize::try_from(value).map_err(|_| VerifierError::InvalidMemoryLayout {
         reason: format!("maximum {kind} advice size {value} does not fit usize"),
@@ -536,11 +547,6 @@ where
     for (stage_proof, field) in stage_proofs {
         validate_sumcheck_representation(stage_proof, field, zk)?;
     }
-    #[cfg(feature = "akita")]
-    if let Some(reconstruction) = proof.stages.reconstruction_sumcheck_proof.as_ref() {
-        validate_sumcheck_representation(reconstruction, "reconstruction_sumcheck_proof", zk)?;
-    }
-
     match (&proof.claims, zk) {
         (crate::proof::JoltProofClaims::Clear(_), false)
         | (crate::proof::JoltProofClaims::Zk { .. }, true) => {}
@@ -656,7 +662,7 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
 /// program's preprocessing-held commitments. WARNING: the prover must absorb
 /// identically or the transcripts diverge. On the `akita` build the order is
 /// the canonical commitment-object order: `OneHotTrace`, untrusted advice, trusted
-/// advice, `ProgramOneHot`.
+/// advice, and direct program objects.
 #[jolt_verifier_derive::fs_scope(Commitments)]
 pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -693,21 +699,21 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         preprocessing
             .program
             .committed()
-            .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
+            .map_or(&[][..], |committed| &committed.direct_program_commitments),
         transcript,
     );
 }
 
 /// Absorbs the packed commitment objects in canonical object order:
-/// `OneHotTrace`, untrusted advice, trusted advice, the `ProgramOneHot`
-/// objects (bytecode, then program image). Shared verbatim by the packed
+/// `OneHotTrace`, untrusted advice, trusted advice, then direct bytecode
+/// chunks and program image. Shared verbatim by the packed
 /// prover's stage 0.
 #[cfg(feature = "akita")]
 pub fn absorb_packed_commitments<C, T>(
     one_hot_trace: &C,
     untrusted_advice_commitment: Option<&C>,
     trusted_advice_commitment: Option<&C>,
-    program_one_hot_commitments: &[C],
+    direct_program_commitments: &[C],
     transcript: &mut T,
 ) where
     C: AppendToTranscript,
@@ -720,7 +726,7 @@ pub fn absorb_packed_commitments<C, T>(
     if let Some(commitment) = trusted_advice_commitment {
         append_length_prefixed(transcript, b"trusted_advice", commitment);
     }
-    absorb_packed_program_commitments(program_one_hot_commitments, transcript);
+    absorb_packed_program_commitments(direct_program_commitments, transcript);
 }
 
 #[cfg(feature = "akita")]
@@ -729,9 +735,14 @@ where
     C: AppendToTranscript,
     T: Transcript,
 {
-    for commitment in commitments {
-        append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
+    let Some((image, chunks)) = commitments.split_last() else {
+        return;
+    };
+    for (index, commitment) in chunks.iter().enumerate() {
+        transcript.append(&U64Word(num::u64_from_usize(index)));
+        append_length_prefixed(transcript, b"bytecode_chunk_commitment", commitment);
     }
+    append_length_prefixed(transcript, b"program_image_init_commitment", image);
 }
 
 /// Absorbs the preprocessing-held committed-program commitments (per-chunk
@@ -939,7 +950,7 @@ pub fn validate_inputs_from_parts<PCS, VC>(
     trace_polynomial_order: TracePolynomialOrder,
     one_hot_config: JoltOneHotConfig,
     trusted_advice_commitment_present: bool,
-    untrusted_advice_commitment_present: bool,
+    #[cfg(not(feature = "akita"))] untrusted_advice_commitment_present: bool,
     zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
@@ -1019,6 +1030,12 @@ where
             .program
             .committed()
             .map(|committed| {
+                #[cfg(feature = "akita")]
+                if committed.trace_order != trace_polynomial_order {
+                    return Err(VerifierError::InvalidCommittedProgram {
+                        reason: "committed-program trace order disagrees with the proof".to_owned(),
+                    });
+                }
                 let program_image_start_index = memory_layout
                     .remapped_word_address(committed.meta.min_bytecode_address)
                     .map_err(|error| VerifierError::InvalidCommittedProgram {
@@ -1046,9 +1063,11 @@ where
                 })
             })
             .transpose()?;
+    #[cfg(not(feature = "akita"))]
     let trusted_advice_size = trusted_advice_commitment_present
         .then(|| advice_size_to_usize(memory_layout.max_trusted_advice_size, "trusted"))
         .transpose()?;
+    #[cfg(not(feature = "akita"))]
     let untrusted_advice_size = untrusted_advice_commitment_present
         .then(|| advice_size_to_usize(memory_layout.max_untrusted_advice_size, "untrusted"))
         .transpose()?;
@@ -1056,7 +1075,9 @@ where
         trace_polynomial_order,
         num::ilog2(trace_length),
         one_hot_config.committed_chunk_bits(),
+        #[cfg(not(feature = "akita"))]
         trusted_advice_size,
+        #[cfg(not(feature = "akita"))]
         untrusted_advice_size,
         committed_program,
     )
@@ -1451,7 +1472,7 @@ mod tests {
             #[cfg(not(feature = "akita"))]
             joint_opening_proof: (),
             #[cfg(feature = "akita")]
-            joint_opening_proof: crate::proof::AkitaJointOpeningProof::new((), Vec::new()),
+            joint_opening_proof: (),
             untrusted_advice_commitment: None,
             claims,
             trace_length: 1,
@@ -1488,13 +1509,6 @@ mod tests {
             stage1: stage1::outputs::Stage1OutputClaims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
-            },
-            #[cfg(feature = "akita")]
-            reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims {
-                untrusted_advice: None,
-                trusted_advice: None,
-                bytecode: None,
-                program_image: None,
             },
             stage2: stage2::outputs::Stage2OutputClaims {
                 product_uniskip_output_claim: zero,
@@ -1632,7 +1646,9 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
+                #[cfg(not(feature = "akita"))]
                 untrusted_advice: None,
                 bytecode_reduction: None,
                 program_image_reduction: None,
@@ -1648,7 +1664,9 @@ mod tests {
                         #[cfg(feature = "akita")]
                         balanced_inc_carry: zero,
                     },
+                #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
+                #[cfg(not(feature = "akita"))]
                 untrusted_advice: None,
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
@@ -1748,8 +1766,6 @@ mod tests {
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
-            #[cfg(feature = "akita")]
-            reconstruction_sumcheck_proof: None,
         }
     }
 

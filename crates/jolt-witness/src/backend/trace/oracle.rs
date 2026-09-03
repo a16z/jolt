@@ -24,9 +24,6 @@ use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 /// never derived from the execution trace.
 pub(crate) const COMMITTED_PROGRAM_REASON: &str =
     "committed-program polynomial served from preprocessing, not the execution trace";
-/// Lattice-mode slots of the packed witness; base mode never constructs them.
-pub(crate) const LATTICE_REASON: &str =
-    "lattice-mode packed-witness polynomial; base mode never constructs it";
 /// Openings produced by kernels during proving (owned by the proof session).
 pub(crate) const PROTOCOL_INTERMEDIATE_REASON: &str =
     "protocol intermediate produced during proving, never served by a witness backend";
@@ -95,40 +92,6 @@ impl<T: TraceSource> TraceBackend<T> {
                     Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
                 }
                 C::BalancedIncCarry => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
-                C::TrustedAdviceBytes => {
-                    if !self.config.include_trusted_advice {
-                        return Err(WitnessError::UnknownOracle {
-                            label: JOLT_VM_LABEL,
-                        });
-                    }
-                    Ok(Shape::new(
-                        advice_bytes_cell_vars(
-                            self.preprocessing.memory_layout.max_trusted_advice_size as usize,
-                        ),
-                        Dense,
-                    ))
-                }
-                C::UntrustedAdviceBytes => {
-                    if !self.config.include_untrusted_advice {
-                        return Err(WitnessError::UnknownOracle {
-                            label: JOLT_VM_LABEL,
-                        });
-                    }
-                    Ok(Shape::new(
-                        advice_bytes_cell_vars(
-                            self.preprocessing.memory_layout.max_untrusted_advice_size as usize,
-                        ),
-                        Dense,
-                    ))
-                }
-                C::BytecodeRegisterSelector { .. }
-                | C::BytecodeCircuitFlag { .. }
-                | C::BytecodeInstructionFlag { .. }
-                | C::BytecodeLookupSelector { .. }
-                | C::BytecodeRafFlag { .. }
-                | C::BytecodeUnexpandedPcBytes { .. }
-                | C::BytecodeImmBytes { .. }
-                | C::ProgramImageBytes => Err(not_served(id, LATTICE_REASON)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => Ok(Shape::new(self.ram_read_write_log_rows()?, Dense)),
@@ -196,15 +159,6 @@ impl<T: TraceSource> TraceBackend<T> {
     }
 }
 
-/// An advice byte one-hot column's cell variable count, from the configured
-/// maximum advice size — the `(byte ‖ place ‖ word)` domain over the
-/// power-of-two padded word count.
-fn advice_bytes_cell_vars(max_bytes: usize) -> usize {
-    jolt_claims::protocols::jolt::lattice::geometry::word_byte_num_vars(
-        advice::advice_words(max_bytes).ilog2() as usize,
-    )
-}
-
 impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         self.shape_of(id)
@@ -252,16 +206,6 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
                         width: self.config.one_hot.committed_chunk_bits(),
                     },
                 ),
-                C::TrustedAdviceBytes => self.materialize_trusted_advice_bytes(),
-                C::UntrustedAdviceBytes => self.materialize_untrusted_advice_bytes(),
-                C::BytecodeRegisterSelector { .. }
-                | C::BytecodeCircuitFlag { .. }
-                | C::BytecodeInstructionFlag { .. }
-                | C::BytecodeLookupSelector { .. }
-                | C::BytecodeRafFlag { .. }
-                | C::BytecodeUnexpandedPcBytes { .. }
-                | C::BytecodeImmBytes { .. }
-                | C::ProgramImageBytes => Err(not_served(id, LATTICE_REASON)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => self.materialize_ram_read_write_virtual(virtual_id),

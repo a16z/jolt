@@ -84,6 +84,35 @@ impl BytecodePreprocessing {
     }
 }
 
+/// An address expands to a full descending `virtual_sequence_remaining` run —
+/// `virtual_sequence_length - 1` down to 0 — at consecutive PCs, so these two
+/// fields determine every `(address, vsr) -> pc`. `try_new` rejects any bytecode
+/// that violates it.
+#[repr(C)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(
+        CanonicalSerialize,
+        CanonicalDeserialize,
+        serde::Serialize,
+        serde::Deserialize
+    )
+)]
+struct PcSlot {
+    /// PC of the address's first row.
+    first_pc: u32,
+    /// Number of bytecode rows the address expands to; 0 marks an unmapped slot,
+    /// which is why `MAX_INLINE_ROWS_PER_SOURCE` stops one short of `u16` range.
+    virtual_sequence_length: u16,
+}
+
+impl PcSlot {
+    const fn is_empty(&self) -> bool {
+        self.virtual_sequence_length == 0
+    }
+}
+
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
@@ -95,47 +124,114 @@ impl BytecodePreprocessing {
     )
 )]
 pub struct BytecodePCMapper {
-    indices: Vec<Vec<(u16, usize)>>,
+    slots: Vec<PcSlot>,
 }
 
 impl BytecodePCMapper {
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
-        let mut last_pc = 0;
         // One allocation at the final size; the no-op sentinel lives in the
-        // first bucket (`index_count` is always >= 1).
-        let mut indices = vec![Vec::new(); Self::index_count(bytecode)?];
-        if let Some(first) = indices.first_mut() {
-            first.push((0, last_pc));
+        // first slot (`index_count` is always >= 1).
+        let mut slots = vec![PcSlot::default(); Self::index_count(bytecode)?];
+        if let Some(first) = slots.first_mut() {
+            first.virtual_sequence_length = 1;
         }
 
-        for instruction in bytecode {
-            if instruction.address == 0 {
+        // The leading no-op sentinel is the only row allowed at address 0.
+        let rows = match bytecode.split_first() {
+            Some((first, rest)) if first.address == 0 => rest,
+            _ => bytecode,
+        };
+
+        // Rows sharing an address must be adjacent, so every maximal run of
+        // equal addresses is exactly one inline sequence.
+        let mut last_pc = 0u32;
+        for run in rows.chunk_by(|a, b| a.address == b.address) {
+            let Some((first_row, rest)) = run.split_first() else {
                 continue;
+            };
+            let address = first_row.address;
+            if address == 0 {
+                return Err(PreprocessingError::InvalidBytecodeAddress(0));
             }
+            let bytecode_index = Self::try_get_index(address)?;
+            let virtual_sequence_length =
+                Self::validate_run(bytecode_index, address, first_row, rest)?;
 
-            last_pc += 1;
-            let bytecode_index = Self::try_get_index(instruction.address)?;
-            indices
+            let first_pc = last_pc
+                .checked_add(1)
+                .ok_or(PreprocessingError::BytecodeTooLarge)?;
+            last_pc = first_pc
+                .checked_add(u32::from(virtual_sequence_length - 1))
+                .ok_or(PreprocessingError::BytecodeTooLarge)?;
+
+            let slot = slots
                 .get_mut(bytecode_index)
-                .ok_or(PreprocessingError::InvalidBytecodeAddress(
-                    instruction.address,
-                ))?
-                .push((instruction.virtual_sequence_remaining.unwrap_or(0), last_pc));
+                .ok_or(PreprocessingError::InvalidBytecodeAddress(address))?;
+            if !slot.is_empty() {
+                return Err(PreprocessingError::NonContiguousInlineSequence {
+                    bytecode_index,
+                    address,
+                });
+            }
+            *slot = PcSlot {
+                first_pc,
+                virtual_sequence_length,
+            };
         }
 
-        for (bytecode_index, entries) in indices.iter().enumerate() {
-            Self::validate_indices(bytecode_index, entries)?;
-        }
+        Ok(Self { slots })
+    }
 
-        Ok(Self { indices })
+    /// Checks that the run headed by `first_row` counts down by one to its
+    /// anchor at 0, returning its length.
+    fn validate_run(
+        bytecode_index: usize,
+        address: usize,
+        first_row: &JoltInstructionRow,
+        rest: &[JoltInstructionRow],
+    ) -> Result<u16, PreprocessingError> {
+        let first_sequence = first_row.virtual_sequence_remaining.unwrap_or(0);
+        let mut previous_sequence = first_sequence;
+        for row in rest {
+            let sequence = row.virtual_sequence_remaining.unwrap_or(0);
+            let expected_sequence = previous_sequence.checked_sub(1);
+            if expected_sequence != Some(sequence) {
+                return Err(PreprocessingError::InvalidInlineSequence {
+                    bytecode_index,
+                    address,
+                    previous_sequence,
+                    expected_sequence: expected_sequence.unwrap_or(0),
+                    new_sequence: sequence,
+                });
+            }
+            previous_sequence = sequence;
+        }
+        if previous_sequence != 0 {
+            return Err(PreprocessingError::UnterminatedInlineSequence {
+                bytecode_index,
+                address,
+                last_sequence: previous_sequence,
+            });
+        }
+        // The run counts down to 0, so its length is `first_sequence + 1`.
+        first_sequence
+            .checked_add(1)
+            .ok_or(PreprocessingError::InlineSequenceTooLong {
+                bytecode_index,
+                address,
+                length: rest.len() + 1,
+            })
     }
 
     pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> Option<usize> {
         let index = Self::try_get_index(address).ok()?;
-        self.indices
-            .get(index)?
-            .iter()
-            .find_map(|(sequence, pc)| (*sequence == virtual_sequence_remaining).then_some(*pc))
+        let slot = *self.slots.get(index)?;
+        // An unmapped slot has length 0, so this also rejects it.
+        if virtual_sequence_remaining >= slot.virtual_sequence_length {
+            return None;
+        }
+        let offset = slot.virtual_sequence_length - 1 - virtual_sequence_remaining;
+        Some(slot.first_pc as usize + offset as usize)
     }
 
     pub fn get_first_pc(&self, address: usize) -> Option<usize> {
@@ -144,7 +240,8 @@ impl BytecodePCMapper {
         } else {
             Self::try_get_index(address).ok()?
         };
-        self.indices.get(index)?.first().map(|(_sequence, pc)| *pc)
+        let slot = *self.slots.get(index)?;
+        (!slot.is_empty()).then_some(slot.first_pc as usize)
     }
 
     fn try_get_index(address: usize) -> Result<usize, PreprocessingError> {
@@ -160,43 +257,6 @@ impl BytecodePCMapper {
         assert!(address >= RAM_START_ADDRESS as usize);
         assert!(address.is_multiple_of(ALIGNMENT_FACTOR_BYTECODE));
         (address - RAM_START_ADDRESS as usize) / ALIGNMENT_FACTOR_BYTECODE + 1
-    }
-
-    const fn address_for_index(index: usize) -> usize {
-        if index == 0 {
-            0
-        } else {
-            RAM_START_ADDRESS as usize + (index - 1) * ALIGNMENT_FACTOR_BYTECODE
-        }
-    }
-
-    fn validate_indices(
-        bytecode_index: usize,
-        entries: &[(u16, usize)],
-    ) -> Result<(), PreprocessingError> {
-        for ((previous_sequence, _), (new_sequence, _)) in
-            entries.iter().zip(entries.iter().skip(1))
-        {
-            let Some(expected_sequence) = previous_sequence.checked_sub(1) else {
-                return Err(PreprocessingError::InvalidInlineSequence {
-                    bytecode_index,
-                    address: Self::address_for_index(bytecode_index),
-                    previous_sequence: *previous_sequence,
-                    expected_sequence: 0,
-                    new_sequence: *new_sequence,
-                });
-            };
-            if *new_sequence != expected_sequence {
-                return Err(PreprocessingError::InvalidInlineSequence {
-                    bytecode_index,
-                    address: Self::address_for_index(bytecode_index),
-                    previous_sequence: *previous_sequence,
-                    expected_sequence,
-                    new_sequence: *new_sequence,
-                });
-            }
-        }
-        Ok(())
     }
 
     fn index_count(bytecode: &[JoltInstructionRow]) -> Result<usize, PreprocessingError> {
@@ -301,6 +361,10 @@ mod tests {
             preprocessing.get_pc(&instruction(0x8000_0004, Some(0))),
             Some(3)
         );
+        assert_eq!(
+            preprocessing.get_pc(&instruction(0x8000_0004, Some(3))),
+            None
+        );
     }
 
     #[test]
@@ -341,6 +405,56 @@ mod tests {
                 new_sequence: 0,
             }
         );
+    }
+
+    #[test]
+    fn rejects_interleaved_inline_sequences() {
+        let bytecode = vec![
+            instruction(0x8000_0004, Some(1)),
+            instruction(0x8000_0004, Some(0)),
+            instruction(0x8000_0008, None),
+            instruction(0x8000_0004, Some(0)),
+        ];
+
+        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::NonContiguousInlineSequence {
+                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
+                address: 0x8000_0004,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_inline_sequences() {
+        let bytecode = vec![
+            instruction(0x8000_0004, Some(1)),
+            instruction(0x8000_0008, None),
+        ];
+
+        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::UnterminatedInlineSequence {
+                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
+                address: 0x8000_0004,
+                last_sequence: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_zero_address_outside_sentinel() {
+        let bytecode = vec![
+            instruction(0x8000_0004, None),
+            instruction(0, None),
+            instruction(0x8000_0008, None),
+        ];
+
+        let err =
+            BytecodePreprocessing::preprocess(bytecode, 0x8000_0004, RV64IMAC_JOLT).unwrap_err();
+        assert_eq!(err, PreprocessingError::InvalidBytecodeAddress(0));
     }
 
     #[test]

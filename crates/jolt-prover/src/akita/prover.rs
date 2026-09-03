@@ -6,16 +6,17 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
-use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
+use jolt_openings::{
+    CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
+};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_witness::JoltWitnessPlane;
 
-use super::reconstruction::prove_reconstruction;
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
-use super::witness::AdviceOneHot;
+use super::witness::AdviceObject;
 use super::JoltAkitaBackend;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -33,7 +34,7 @@ pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    trusted_advice: Option<&AdviceOneHot<PCS>>,
+    trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
@@ -41,7 +42,7 @@ where
     F: JoltField + CanonicalBytes + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
-    PCS::Output: Clone + PartialEq + AppendToTranscript,
+    PCS::Output: Clone + PartialEq + AppendToTranscript + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -158,33 +159,21 @@ where
         witness,
         &mut transcript,
     )?;
-    let reconstruction = prove_reconstruction::<F, PCS, VC::Output, T>(
-        backend,
-        &mut session,
-        &checked,
-        &stage6b.clear_output,
-        &stage7.clear_output,
-        witness,
-        &mut transcript,
-    )?;
-
-    // The precommitted auxiliary objects arrive whole — the trusted-advice
-    // object as an argument, the ProgramOneHot objects retained in the
-    // preprocessing — so stage 8 opens them directly; stage 0 already
-    // cross-checked their commitments against the verifier preprocessing.
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
         preprocessing,
+        &stage0.commitment,
         stage0.hint,
         stage0.untrusted_advice.as_ref(),
         trusted_advice,
         preprocessing
             .committed_program
             .as_ref()
-            .map(|data| &data.program_one_hot),
+            .map(|data| &data.direct_program),
+        &stage4.clear_output,
+        &stage6b.clear_output,
         &stage7.clear_output,
-        &reconstruction.clear_output,
         &mut transcript,
     )?;
 
@@ -202,7 +191,6 @@ where
             stage6a_sumcheck_proof: stage6a.sumcheck_proof,
             stage6b_sumcheck_proof: stage6b.sumcheck_proof,
             stage7_sumcheck_proof: stage7.sumcheck_proof,
-            reconstruction_sumcheck_proof: reconstruction.sumcheck_proof,
         },
         joint_opening_proof,
         untrusted_advice_commitment: stage0
@@ -217,7 +205,6 @@ where
             stage6a: stage6a.claims,
             stage6b: stage6b.claims,
             stage7: stage7.claims,
-            reconstruction: reconstruction.claims,
         }),
         trace_length: config.trace_length,
         ram_K: config.ram_K,

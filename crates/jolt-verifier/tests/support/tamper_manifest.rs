@@ -863,6 +863,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets the register increment reduction output claim",
     ),
+    #[cfg(not(feature = "akita"))]
     checked_standard(
         "stage6.claims.trusted_advice.trusted",
         "claims.stage6b.trusted_advice.trusted",
@@ -871,6 +872,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice cycle-phase output claim",
     ),
+    #[cfg(not(feature = "akita"))]
     checked_standard(
         "stage6.claims.untrusted_advice.untrusted",
         "claims.stage6b.untrusted_advice.untrusted",
@@ -962,6 +964,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets every HammingWeight RAM RA output claim",
     ),
+    #[cfg(not(feature = "akita"))]
     checked_standard(
         "stage7.claims.trusted_advice.trusted",
         "claims.stage7.trusted_advice.trusted",
@@ -970,6 +973,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice address-phase output claim",
     ),
+    #[cfg(not(feature = "akita"))]
     checked_standard(
         "stage7.claims.untrusted_advice.untrusted",
         "claims.stage7.untrusted_advice.untrusted",
@@ -1035,8 +1039,7 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
 ];
 
 /// The Akita-path claim cells: the read-raf fused-inc opening, lattice
-/// Booleanity, the fused Stage-7 Hamming reduction, and the stage-8
-/// reconstruction leaves. All active: the fixture-driven sweep in
+/// Booleanity, and the fused Stage-7 Hamming reduction. All active: the fixture-driven sweep in
 /// `soundness/tampering/akita.rs` (`every_clear_claim_wire_rejects_offset`)
 /// offsets every clear-claim scalar of the real packed-prover fixtures and
 /// asserts each offset rejects.
@@ -1081,38 +1084,6 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "the hamming-weight reduction final-claim fold covers the increment carry",
-    ),
-    checked_standard(
-        "reconstruction.claims.untrusted_advice",
-        "claims.reconstruction.untrusted_advice",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the untrusted advice leaf",
-    ),
-    checked_standard(
-        "reconstruction.claims.trusted_advice",
-        "claims.reconstruction.trusted_advice",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the trusted advice leaf",
-    ),
-    checked_standard(
-        "reconstruction.claims.bytecode",
-        "claims.reconstruction.bytecode",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers every bytecode lane leaf",
-    ),
-    checked_standard(
-        "reconstruction.claims.program_image",
-        "claims.reconstruction.program_image",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the reconstruction final-claim fold covers the program image leaf",
     ),
 ];
 
@@ -1520,13 +1491,6 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
     let optional = fill_optionals.then_some(zero);
 
     ClearProofClaims {
-        #[cfg(feature = "akita")]
-        reconstruction: jolt_verifier::stages::stage8::reconstruction::ReconstructionOutputClaims {
-            untrusted_advice: None,
-            trusted_advice: None,
-            bytecode: None,
-            program_image: None,
-        },
         stage1: stage1::outputs::Stage1OutputClaims {
             uniskip_output_claim: zero,
             outer: stage1::outputs::Stage1BatchOutputClaims {
@@ -1701,9 +1665,11 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 ram_inc: zero,
                 rd_inc: zero,
             },
+            #[cfg(not(feature = "akita"))]
             trusted_advice: fill_optionals.then_some(
                 stage6b::outputs::TrustedAdviceCyclePhaseOutputClaims { trusted: zero },
             ),
+            #[cfg(not(feature = "akita"))]
             untrusted_advice: fill_optionals.then_some(
                 stage6b::outputs::UntrustedAdviceCyclePhaseOutputClaims { untrusted: zero },
             ),
@@ -1730,11 +1696,13 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     #[cfg(feature = "akita")]
                     balanced_inc_carry: zero,
                 },
+            #[cfg(not(feature = "akita"))]
             trusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::TrustedAdviceAddressPhaseOutputClaims {
                     trusted: zero,
                 },
             ),
+            #[cfg(not(feature = "akita"))]
             untrusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::UntrustedAdviceAddressPhaseOutputClaims {
                     untrusted: zero,

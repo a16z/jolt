@@ -4,19 +4,21 @@
 //! stage 6a and the post-6a draws, directly from the upstream stage outputs. It
 //! derives the mode-agnostic constructor legs (per-stage cycle bindings, reduced
 //! points, the stage-6a address openings) plus the clear-only value aux
-//! (`table_fold`, `address_val_stages`, advice reference points — each
+//! (`table_fold`, `address_val_stages`, base advice reference points — each
 //! empty/`None` in ZK, where `expected_output` never runs) as a single contiguous
 //! block before constructing the members. The four `Option` members are present
-//! exactly when their precommitted layout is committed, in both proving modes,
-//! so the batch's instance count matches the prover's.
+//! exactly when their precommitted layout needs a cycle-phase reduction, so the
+//! batch's instance count matches the prover's.
 
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::{
     geometry::{
         booleanity::BooleanityDimensions,
         claim_reductions::bytecode::BytecodeLaneWeightInputs,
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
     },
-    JoltAdviceKind, JoltRelationId,
+    JoltRelationId,
 };
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
@@ -31,11 +33,14 @@ use super::bytecode_read_raf::{
     BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafTableFoldInputs,
     READ_RAF_CYCLE_STAGES,
 };
+#[cfg(not(feature = "akita"))]
+use super::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
 use super::committed_reduction_cycle_phase::{
-    advice_reference_point_from_upstream, bytecode_reduction_weights, BytecodeReductionCyclePhase,
-    BytecodeReductionCyclePhaseChallenges, ProgramImageReductionCyclePhase,
-    TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
+    bytecode_reduction_weights, BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseChallenges,
+    ProgramImageReductionCyclePhase,
 };
+#[cfg(not(feature = "akita"))]
+use super::committed_reduction_cycle_phase::{TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase};
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionChallenges};
 use super::instruction_ra_virtualization::{
@@ -86,7 +91,9 @@ pub struct Stage6bBuildParts<'a, F: JoltField> {
     /// The staged `BytecodeValClaim` openings (clear committed-program mode;
     /// empty otherwise).
     pub address_val_stages: Vec<F>,
+    #[cfg(not(feature = "akita"))]
     pub trusted_advice_reference_point: Option<Vec<F>>,
+    #[cfg(not(feature = "akita"))]
     pub untrusted_advice_reference_point: Option<Vec<F>>,
 }
 
@@ -167,28 +174,32 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                     .as_slice(),
             )
         };
-        let (address_val_stages, trusted_advice_reference_point, untrusted_advice_reference_point) =
-            if checked.zk {
-                (Vec::new(), None, None)
-            } else {
-                let stage4 = stage4.clear()?;
-                (
-                    stage6a
-                        .clear()?
-                        .output_values
-                        .bytecode_read_raf
-                        .val_stages
-                        .clone(),
-                    advice_reference_point_from_upstream(
-                        &stage4.ram_val_check_init,
-                        JoltAdviceKind::Trusted,
-                    ),
-                    advice_reference_point_from_upstream(
-                        &stage4.ram_val_check_init,
-                        JoltAdviceKind::Untrusted,
-                    ),
-                )
-            };
+        let address_val_stages = if checked.zk {
+            Vec::new()
+        } else {
+            stage6a
+                .clear()?
+                .output_values
+                .bytecode_read_raf
+                .val_stages
+                .clone()
+        };
+        #[cfg(not(feature = "akita"))]
+        let (trusted_advice_reference_point, untrusted_advice_reference_point) = if checked.zk {
+            (None, None)
+        } else {
+            let stage4 = stage4.clear()?;
+            (
+                advice_reference_point_from_upstream(
+                    &stage4.ram_val_check_init,
+                    JoltAdviceKind::Trusted,
+                ),
+                advice_reference_point_from_upstream(
+                    &stage4.ram_val_check_init,
+                    JoltAdviceKind::Untrusted,
+                ),
+            )
+        };
 
         Self::build_from_parts(Stage6bBuildParts {
             formula_dimensions,
@@ -206,7 +217,9 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             stage5_points: stage5.output_points(),
             stage6a_points: stage6a.output_points(),
             address_val_stages,
+            #[cfg(not(feature = "akita"))]
             trusted_advice_reference_point,
+            #[cfg(not(feature = "akita"))]
             untrusted_advice_reference_point,
         })
     }
@@ -232,13 +245,17 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             stage5_points,
             stage6a_points,
             address_val_stages,
+            #[cfg(not(feature = "akita"))]
             trusted_advice_reference_point,
+            #[cfg(not(feature = "akita"))]
             untrusted_advice_reference_point,
         } = parts;
         let log_t = formula_dimensions.trace.log_t();
         let trace_dimensions = formula_dimensions.trace;
 
+        #[cfg(not(feature = "akita"))]
         let trusted_advice_layout = precommitted.trusted_advice.as_ref();
+        #[cfg(not(feature = "akita"))]
         let untrusted_advice_layout = precommitted.untrusted_advice.as_ref();
         let bytecode_reduction_layout = precommitted.bytecode.as_ref();
         let program_image_reduction_layout = precommitted.program_image.as_ref();
@@ -428,8 +445,10 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             registers_val_evaluation_cycle,
         );
 
+        #[cfg(not(feature = "akita"))]
         let trusted_advice = trusted_advice_layout
             .map(|layout| TrustedAdviceCyclePhase::new(layout, trusted_advice_reference_point));
+        #[cfg(not(feature = "akita"))]
         let untrusted_advice = untrusted_advice_layout
             .map(|layout| UntrustedAdviceCyclePhase::new(layout, untrusted_advice_reference_point));
         let bytecode_reduction = bytecode_reduction_layout
@@ -447,7 +466,9 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             instruction_ra_virtualization,
             #[cfg(not(feature = "akita"))]
             inc_claim_reduction,
+            #[cfg(not(feature = "akita"))]
             trusted_advice,
+            #[cfg(not(feature = "akita"))]
             untrusted_advice,
             bytecode_reduction,
             program_image_reduction,
@@ -481,10 +502,12 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             inc_claim_reduction: IncClaimReductionChallenges {
                 gamma: draws.inc_gamma,
             },
+            #[cfg(not(feature = "akita"))]
             trusted_advice: self
                 .trusted_advice
                 .as_ref()
                 .map(|_| NoChallenges::default()),
+            #[cfg(not(feature = "akita"))]
             untrusted_advice: self
                 .untrusted_advice
                 .as_ref()

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::traits::LookupTable;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
@@ -23,12 +24,16 @@ pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
+pub mod pext;
 pub mod pext_signed;
 pub mod pow2;
 pub mod pow2_w;
 pub mod prefixes;
 pub mod range_check;
 pub mod range_check_aligned;
+pub mod shift_data_b;
+pub mod shift_data_h;
+pub mod shift_data_w;
 pub mod shift_right_bitmask;
 pub mod shift_right_bitmask_w;
 pub mod sign_extend_word;
@@ -51,7 +56,10 @@ pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srlw;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
+pub mod window_mask_b;
+pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod word_alignment;
 pub mod xor;
@@ -59,6 +67,7 @@ pub mod xor;
 pub use prefixes::{PrefixEval, Prefixes};
 pub use suffixes::{SuffixEval, Suffixes};
 
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
@@ -67,11 +76,15 @@ use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
+use pext::PextTable;
 use pext_signed::PextSignedTable;
 use pow2::Pow2Table;
 use pow2_w::Pow2WTable;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
+use shift_data_b::ShiftDataBTable;
+use shift_data_h::ShiftDataHTable;
+use shift_data_w::ShiftDataWTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
 use shift_right_bitmask_w::ShiftRightBitmaskWTable;
 use sign_extend_word::SignExtendWordTable;
@@ -93,7 +106,10 @@ use virtual_sraw::VirtualSRAWTable;
 use virtual_srl::VirtualSRLTable;
 use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
+use virtual_xor_rotl1::VirtualXORROTL1Table;
 use virtual_xor_rotw::VirtualXORROTWTable;
+use window_mask_b::WindowMaskBTable;
+use window_mask_h::WindowMaskHTable;
 use window_mask_w::WindowMaskWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
@@ -168,6 +184,14 @@ pub enum LookupTableKind<const XLEN: usize> {
     ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
     VirtualSRLW(VirtualSRLWTable<XLEN>),
     VirtualSRAW(VirtualSRAWTable<XLEN>),
+    Pext(PextTable<XLEN>),
+    WindowMaskB(WindowMaskBTable<XLEN>),
+    WindowMaskH(WindowMaskHTable<XLEN>),
+    AlignAddr(AlignAddrTable<XLEN>),
+    ShiftDataB(ShiftDataBTable<XLEN>),
+    ShiftDataH(ShiftDataHTable<XLEN>),
+    ShiftDataW(ShiftDataWTable<XLEN>),
+    VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -224,6 +248,14 @@ macro_rules! dispatch {
             Self::ShiftRightBitmaskW($t) => $expr,
             Self::VirtualSRLW($t) => $expr,
             Self::VirtualSRAW($t) => $expr,
+            Self::Pext($t) => $expr,
+            Self::WindowMaskB($t) => $expr,
+            Self::WindowMaskH($t) => $expr,
+            Self::AlignAddr($t) => $expr,
+            Self::ShiftDataB($t) => $expr,
+            Self::ShiftDataH($t) => $expr,
+            Self::ShiftDataW($t) => $expr,
+            Self::VirtualXORROTL1($t) => $expr,
         }
     };
 }

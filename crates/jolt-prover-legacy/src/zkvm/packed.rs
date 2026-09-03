@@ -7,9 +7,8 @@
 //! (producing the `FusedInc` opening at the shared 6b cycle point), the
 //! lattice booleanity carries the fused-inc columns, stage 7 folds the
 //! increment one-hot claims into `HammingWeightClaimReduction`, the
-//! reconstruction phase settles auxiliary advice/bytecode/image columns, and
-//! stage 8 uses one native same-point Akita opening for `OneHotTrace` plus
-//! direct fixed-prefix openings for auxiliaries.
+//! stage 8 uses one native grouped Akita opening for the trace and every
+//! precommitted object.
 //!
 //! The prover runs over the `AkitaFp128` newtype (the legacy `JoltField`
 //! impl of the same underlying fp128 element the verifier stack uses), so
@@ -20,20 +19,27 @@
 //! proofs use the same transcript object as the stage provers: one digest
 //! engine, with no state conversions or mirrored transcript interaction.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+use jolt_akita::{AkitaSetupParams, PrecommittedScheduleParams};
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
+    is_valid_committed_program_immediate, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
+};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
 use jolt_claims::protocols::jolt::lattice::{
-    advice_bytes_packing_plan, precommitted_packing_plan, OneHotTraceLayoutPlan, OneHotTraceShape,
-    PrecommittedPackingShape, PrefixPackedObjectPlan, ONE_HOT_TRACE_LAYOUT,
+    advice_packing_plan, committed_program_packing_plan, OneHotTraceLayoutPlan, OneHotTraceShape,
+    PrefixPackedObjectPlan, ONE_HOT_TRACE_LAYOUT,
 };
-use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_openings::{
-    CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, PrefixPackedClaims,
-    TransparentObjectSetup,
+    CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, GroupOpeningClaim,
+    PrecommittedClaim, PrefixPackedClaims, TransparentObjectSetup,
 };
+use jolt_poly::Polynomial;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{
@@ -44,6 +50,7 @@ use jolt_verifier::preprocessing::{
     JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
 };
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
+use jolt_verifier::verifier::absorb_packed_program_commitments;
 use jolt_verifier::VerifierError;
 
 use crate::curve::{JoltCurve, JoltGroupElement};
@@ -65,25 +72,20 @@ use crate::zkvm::bytecode::read_raf_checking::{
     BytecodeReadRafSumcheckParams,
 };
 use crate::zkvm::claim_reductions::{
-    AdviceClaimReductionParams, AdviceClaimReductionProver, BytecodeReconstructionSumcheckParams,
-    BytecodeReconstructionSumcheckProver, HammingWeightClaimReductionParams,
-    HammingWeightClaimReductionProver, PrecommittedClaimReduction,
-    ProgramImageReconstructionSumcheckParams, ProgramImageReconstructionSumcheckProver,
-    TrustedAdviceReconstructionSumcheckParams, TrustedAdviceReconstructionSumcheckProver,
-    UntrustedAdviceReconstructionSumcheckParams, UntrustedAdviceReconstructionSumcheckProver,
+    AdviceKind, HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
+    PrecommittedClaimReduction,
 };
 use crate::zkvm::fiat_shamir_preamble;
 use crate::zkvm::instruction_lookups::ra_virtual::{
     InstructionRaSumcheckParams, InstructionRaSumcheckProver as LookupsRaSumcheckProver,
 };
 use crate::zkvm::packed_witness::{
-    pack_one_hot_columns, DigitZeroRow, FusedIncValue, SparseUnitPolynomial, FUSED_INC_BITS,
+    pack_one_hot_columns, DigitZeroRow, FusedIncValue, FUSED_INC_BITS,
 };
 use crate::zkvm::prover::JoltCpuProver;
 use crate::zkvm::ram::hamming_booleanity::{
     HammingBooleanitySumcheckParams, HammingBooleanitySumcheckProver,
 };
-use crate::zkvm::ram::populate_memory_states;
 use crate::zkvm::ram::ra_virtual::{RamRaVirtualParams, RamRaVirtualSumcheckProver};
 use crate::zkvm::witness::CommittedPolynomial;
 
@@ -385,8 +387,8 @@ impl crate::zkvm::proof::ProofCurve<AkitaFp128> for AkitaNoCurve {
     }
 }
 
-/// The transparent setup of a singleton commitment object (advice byte
-/// columns, `ProgramOneHot`): one polynomial at `num_vars`, seeded by the
+/// The transparent setup of a singleton commitment object (advice word
+/// objects, including direct program objects): one polynomial at `num_vars`, seeded by the
 /// object plan's layout digest — the shared [`TransparentObjectSetup`]
 /// convention `akita_verifier_preprocessing` and the modular packed prover
 /// re-derive independently, so all sides stay on a single definition.
@@ -403,45 +405,12 @@ fn transparent_object_setup(
     <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(num_vars, layout_digest)
 }
 
-fn open_prefix_object<P>(
-    plan: &PrefixPackedObjectPlan,
-    polynomial: &P,
-    setup: &<AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
-    hint: <AkitaScheme as VerifierCommitmentScheme>::OpeningHint,
-    claims: &PrefixPackedClaims<AkitaField>,
-    transcript: &mut AkitaTranscript,
-) -> Result<<AkitaScheme as VerifierCommitmentScheme>::Proof, VerifierError>
-where
-    P: jolt_poly::MultilinearPoly<AkitaField> + ?Sized,
-{
-    let physical = plan
-        .packing()
-        .reduce_claims(claims, transcript)
-        .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-            reason: error.to_string(),
-        })?;
-    AkitaScheme::open(
-        polynomial,
-        physical.point.as_slice(),
-        physical.value,
-        setup,
-        Some(hint),
-        transcript,
-    )
-    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-        reason: error.to_string(),
-    })
-}
-
-/// Builds the advice commitment object's prover setup from the public advice
-/// shape alone — preprocessing-time data, so per-prove commits reuse it via
-/// [`JoltProverPreprocessing::untrusted_advice_object_setup`].
-pub fn advice_object_setup(
+fn advice_object_setup(
     kind: JoltAdviceKind,
     max_advice_bytes: usize,
 ) -> Result<<AkitaScheme as VerifierCommitmentScheme>::ProverSetup, VerifierError> {
     let word_vars = (max_advice_bytes / 8).next_power_of_two().log_2();
-    let plan = advice_bytes_packing_plan(kind, word_vars).map_err(|error| {
+    let plan = advice_packing_plan(kind, word_vars).map_err(|error| {
         VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
         }
@@ -455,75 +424,115 @@ pub fn advice_object_setup(
     Ok(setup)
 }
 
-/// A packed advice commitment object (`UntrustedAdviceOneHot` per proof, `TrustedAdviceOneHot`
-/// precommitted): the word polynomial the base advice reductions run over,
-/// the byte one-hot column, and its commitment data.
-pub struct AdviceOneHot {
+fn advice_physical_num_vars(
+    kind: JoltAdviceKind,
+    max_advice_bytes: usize,
+) -> Result<usize, VerifierError> {
+    let words = (max_advice_bytes / 8).next_power_of_two();
+    let plan = advice_packing_plan(kind, words.log_2()).map_err(|error| {
+        VerifierError::FinalOpeningVerificationFailed {
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(plan.packing().packed_num_vars())
+}
+
+pub fn provision_precommitted_schedules(
+    max_untrusted_advice_bytes: usize,
+    max_trusted_advice_bytes: usize,
+    direct_program_physical_vars: &[usize],
+    one_hot_k: usize,
+    final_num_vars: usize,
+) -> Result<(), VerifierError> {
+    let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
+        .then(|| advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes))
+        .transpose()?;
+    let trusted_physical_vars = (max_trusted_advice_bytes > 0)
+        .then(|| advice_physical_num_vars(JoltAdviceKind::Trusted, max_trusted_advice_bytes))
+        .transpose()?;
+    jolt_akita::schedule_registry::provision_precommitted_for_k(
+        untrusted_physical_vars,
+        trusted_physical_vars,
+        direct_program_physical_vars,
+        one_hot_k,
+        final_num_vars,
+    )
+    .map(|_| ())
+    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+        reason: error.to_string(),
+    })
+}
+
+fn grouped_batch_poly_capacity(
+    max_untrusted_advice_bytes: usize,
+    max_trusted_advice_bytes: usize,
+    direct_program_objects: usize,
+) -> usize {
+    1 + direct_program_objects
+        + usize::from(max_untrusted_advice_bytes > 0)
+        + usize::from(max_trusted_advice_bytes > 0)
+}
+
+/// An advice commitment object: the canonical word polynomial used by
+/// both the base advice reductions and the Akita PCS opening.
+pub struct AdviceObject {
     pub words: Vec<u64>,
     pub plan: PrefixPackedObjectPlan,
-    pub byte_column: SparseUnitPolynomial<AkitaField>,
+    pub polynomial: Polynomial<AkitaField>,
     pub commitment: <AkitaScheme as jolt_crypto::Commitment>::Output,
     pub hint: <AkitaScheme as VerifierCommitmentScheme>::OpeningHint,
     pub setup: <AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
 }
 
-/// Builds a packed advice byte commitment object from raw advice bytes: per
-/// `(place ‖ word)` row the hot value is the advice byte, zero-padded
-/// past the actual advice length — the same zero padding the base word
-/// polynomial carries. The setup is derived from the public advice shape
+/// Builds the canonical zero-padded advice-word commitment. The setup is derived from the public advice shape
 /// with the same fixed seed on both sides (the Akita setup is transparent).
-pub fn commit_advice_one_hot(
+pub fn commit_advice(
     kind: JoltAdviceKind,
     advice_bytes: &[u8],
     max_advice_bytes: usize,
     setup: &<AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
-) -> Result<AdviceOneHot, VerifierError> {
+) -> Result<AdviceObject, VerifierError> {
     let commit_failed = |reason: String| VerifierError::FinalOpeningVerificationFailed { reason };
 
-    let mut words = vec![0u64; max_advice_bytes / 8];
-    populate_memory_states(0, advice_bytes, Some(&mut words), None);
-
-    let word_vars = words.len().next_power_of_two().log_2();
-    let plan = advice_bytes_packing_plan(kind, word_vars)
+    let words = common::advice::canonical_advice_words(advice_bytes, max_advice_bytes)
         .map_err(|error| commit_failed(error.to_string()))?;
-    let cell_vars = plan.packing().packed_num_vars();
+    let word_vars = words.len().log_2();
+    let plan =
+        advice_packing_plan(kind, word_vars).map_err(|error| commit_failed(error.to_string()))?;
+    let physical_vars = plan.packing().packed_num_vars();
     debug_assert_eq!(
         setup.max_num_vars(),
-        cell_vars,
-        "advice object setup shape must match the advice cell domain"
+        physical_vars,
+        "advice object setup shape must match the dense advice domain"
     );
-    let limb_bits = WORD_BYTES.log_2();
-    let mut one_positions = Vec::with_capacity(WORD_BYTES << word_vars);
-    for limb in 0..WORD_BYTES {
-        for (word_index, word) in words.iter().enumerate() {
-            let byte = (word >> (8 * limb)) as u8 as usize;
-            one_positions.push((((byte << limb_bits) | limb) << word_vars) | word_index);
-        }
+    let mut evaluations = vec![AkitaField::zero(); 1usize << physical_vars];
+    for (evaluation, word) in evaluations.iter_mut().zip(&words) {
+        *evaluation = AkitaField::from_u64(*word);
     }
-    let byte_column = SparseUnitPolynomial::<AkitaField>::new(cell_vars, one_positions);
+    let polynomial = Polynomial::new(evaluations);
 
-    let (commitment, hint) = <AkitaScheme as VerifierCommitmentScheme>::commit(&byte_column, setup)
+    let (commitment, hint) = <AkitaScheme as VerifierCommitmentScheme>::commit(&polynomial, setup)
         .map_err(|error| commit_failed(error.to_string()))?;
-    Ok(AdviceOneHot {
+    Ok(AdviceObject {
         words,
         plan,
-        byte_column,
+        polynomial,
         commitment,
         hint,
         setup: setup.clone(),
     })
 }
 
-/// Precommits the trusted-advice byte one-hot column (`TrustedAdviceOneHot`) out of band.
+/// Precommits the trusted advice-word polynomial out of band.
 /// The caller passes the returned object to the packed prove and its
 /// commitment to the verifier. Runs at preprocessing time, so it builds its
 /// own object setup.
-pub fn commit_trusted_advice_one_hot(
+pub fn commit_trusted_advice(
     trusted_advice_bytes: &[u8],
     max_trusted_advice_bytes: usize,
-) -> Result<AdviceOneHot, VerifierError> {
+) -> Result<AdviceObject, VerifierError> {
     let setup = advice_object_setup(JoltAdviceKind::Trusted, max_trusted_advice_bytes)?;
-    commit_advice_one_hot(
+    commit_advice(
         JoltAdviceKind::Trusted,
         trusted_advice_bytes,
         max_trusted_advice_bytes,
@@ -531,96 +540,118 @@ pub fn commit_trusted_advice_one_hot(
     )
 }
 
-/// The precommitted `ProgramOneHot` commitment object (committed-program mode):
-/// the packed sub-column witness (bytecode lanes + program image), its
-/// Akita commitment/hint, the shape-exact setup, and the packing shape —
-/// assembled and committed once at preprocessing time.
-pub struct ProgramOneHotObject {
+/// One direct bounded-dense committed-program object.
+pub struct DirectProgramObject {
     pub plan: PrefixPackedObjectPlan,
-    pub witness: SparseUnitPolynomial<AkitaField>,
     pub commitment: <AkitaScheme as jolt_crypto::Commitment>::Output,
     pub hint: <AkitaScheme as VerifierCommitmentScheme>::OpeningHint,
-    pub setup: <AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
 }
 
-pub struct ProgramOneHot {
-    pub objects: Vec<ProgramOneHotObject>,
+pub struct DirectProgramObjects {
+    pub objects: Vec<DirectProgramObject>,
 }
 
-/// Assembles and commits `ProgramOneHot` from the full (public) program: every
-/// bytecode sub-column plus the program image, packed per the canonical
-/// `precommitted_packing_plan`. The setup is derived from the public program
-/// shape with the same fixed seed on both sides (the Akita setup is
-/// transparent). The imm lane uses the field's canonical byte width, so
-/// negative immediates (`p − |imm|`) reconstruct exactly.
-pub fn commit_program_one_hot(
+/// Assembles and commits the direct bounded-dense bytecode chunks and program
+/// image under their transparent object setups.
+pub fn commit_direct_program(
     program: &crate::zkvm::program::FullProgramPreprocessing,
     memory_layout: &common::jolt_device::MemoryLayout,
     bytecode_chunk_count: usize,
-) -> Result<ProgramOneHot, VerifierError> {
+) -> Result<DirectProgramObjects, VerifierError> {
     let commit_failed = |reason: String| VerifierError::FinalOpeningVerificationFailed { reason };
-    let imm_byte_width = <AkitaFp128 as crate::field::JoltField>::NUM_BYTES;
+    if program
+        .bytecode
+        .bytecode
+        .iter()
+        .any(|instruction| !is_valid_committed_program_immediate(instruction.operands.imm))
+    {
+        return Err(commit_failed(
+            INVALID_COMMITTED_PROGRAM_IMMEDIATE.to_owned(),
+        ));
+    }
     let bytecode_len = program.bytecode_len();
     assert!(
         bytecode_len.is_multiple_of(bytecode_chunk_count),
         "bytecode chunk count must divide bytecode length"
     );
-    let log_bytecode_rows = (bytecode_len / bytecode_chunk_count).log_2();
     let image_words_padded = program.committed_program_image_num_words(memory_layout);
     let image_words =
         crate::zkvm::program::build_program_image_words_padded(program, image_words_padded);
-    let shape = PrecommittedPackingShape {
-        bytecode_chunks: bytecode_chunk_count,
-        log_bytecode_rows,
-        imm_byte_width,
-        program_image_log_words: Some(image_words_padded.log_2()),
-    };
-    let plan =
-        precommitted_packing_plan(&shape).map_err(|error| commit_failed(error.to_string()))?;
+    let plan = committed_program_packing_plan(
+        bytecode_len,
+        bytecode_chunk_count,
+        program.program_image_len_words(),
+        TracePolynomialOrder::CycleMajor,
+    )
+    .map_err(|error| commit_failed(error.to_string()))?;
+    let mut chunks =
+        crate::zkvm::bytecode::chunks::build_committed_bytecode_chunk_coeffs_with_layout::<
+            AkitaFp128,
+        >(
+            &program.bytecode.bytecode,
+            bytecode_chunk_count,
+            DoryLayout::CycleMajor,
+        )
+        .into_iter()
+        .map(|chunk| chunk.into_iter().map(|value| value.0).collect::<Vec<_>>());
+    let mut setups = HashMap::new();
     let objects = plan
         .objects()
         .map(|object_plan| {
-            let one_positions =
-                crate::zkvm::packed_witness::assemble_precommitted_witness::<AkitaFp128>(
-                    object_plan,
-                    &program.bytecode.bytecode,
-                    log_bytecode_rows,
-                    imm_byte_width,
-                    Some(&image_words),
-                )
-                .map_err(&commit_failed)?;
-            let witness = SparseUnitPolynomial::<AkitaField>::new(
-                object_plan.packing().packed_num_vars(),
-                one_positions,
+            let mut evaluations = match object_plan.packing().ids()[0] {
+                JoltCommittedPolynomial::BytecodeChunk(_) => chunks.next().ok_or_else(|| {
+                    commit_failed("missing direct bytecode chunk witness".to_owned())
+                })?,
+                JoltCommittedPolynomial::ProgramImageInit => image_words
+                    .iter()
+                    .map(|word| AkitaField::from_u64(*word))
+                    .collect(),
+                _ => {
+                    return Err(commit_failed(
+                        "unexpected direct committed-program object".to_owned(),
+                    ))
+                }
+            };
+            evaluations.resize(
+                1usize << object_plan.packing().packed_num_vars(),
+                AkitaField::default(),
             );
-            let (setup, _verifier_setup) = transparent_object_setup(
-                object_plan.packing().packed_num_vars(),
-                object_plan.layout_digest(),
-            )
-            .map_err(|error| commit_failed(error.to_string()))?;
+            let witness = Polynomial::new(evaluations);
+            let physical_vars = object_plan.packing().packed_num_vars();
+            let setup = if let Some(setup) = setups.get(&physical_vars) {
+                <AkitaScheme as TransparentObjectSetup>::retag_transparent_object_setup(
+                    setup,
+                    object_plan.layout_digest(),
+                )
+                .map_err(|error| commit_failed(error.to_string()))?
+                .0
+            } else {
+                transparent_object_setup(physical_vars, object_plan.layout_digest())
+                    .map_err(|error| commit_failed(error.to_string()))?
+                    .0
+            };
             let (commitment, hint) =
                 <AkitaScheme as VerifierCommitmentScheme>::commit(&witness, &setup)
                     .map_err(|error| commit_failed(error.to_string()))?;
-            Ok(ProgramOneHotObject {
+            let _ = setups.entry(physical_vars).or_insert_with(|| setup.clone());
+            Ok(DirectProgramObject {
                 plan: object_plan.clone(),
-                witness,
                 commitment,
                 hint,
-                setup,
             })
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
-    Ok(ProgramOneHot { objects })
+    Ok(DirectProgramObjects { objects })
 }
 
 /// The packed sibling of `JoltSharedPreprocessing::new_committed`: marks the
-/// program committed (metadata + digest) and assembles/commits `ProgramOneHot`
-/// through [`commit_program_one_hot`] instead of per-polynomial commitments.
+/// program committed (metadata + digest) and assembles/commits the direct
+/// program objects instead of per-polynomial commitments.
 /// The placeholder per-polynomial structs carry unit commitments and zeroed
-/// shape fields — the packed path never reads them; the real `ProgramOneHot`
+/// shape fields — the packed path never reads them; the real direct-program
 /// commitment binds via explicit transcript absorption in canonical object
 /// order, exactly like the base committed chunk commitments.
-pub fn shared_preprocessing_with_program_one_hot(
+pub fn shared_preprocessing_with_direct_program(
     program: crate::zkvm::program::ProgramPreprocessing<AkitaPackedScheme>,
     memory_layout: common::jolt_device::MemoryLayout,
     max_padded_trace_length: usize,
@@ -629,7 +660,7 @@ pub fn shared_preprocessing_with_program_one_hot(
     (
         crate::zkvm::preprocessing::JoltSharedPreprocessing<AkitaPackedScheme>,
         crate::zkvm::program::CommittedProgramProverData<AkitaPackedScheme>,
-        ProgramOneHot,
+        DirectProgramObjects,
     ),
     VerifierError,
 > {
@@ -638,7 +669,7 @@ pub fn shared_preprocessing_with_program_one_hot(
             reason: "packed committed preprocessing starts from a full program".to_string(),
         });
     };
-    let program_one_hot = commit_program_one_hot(&full, &memory_layout, bytecode_chunk_count)?;
+    let direct_program = commit_direct_program(&full, &memory_layout, bytecode_chunk_count)?;
     let meta = full.meta();
     let meta_for_shared = meta.clone();
     let bytecode_len = full.bytecode_len();
@@ -673,7 +704,7 @@ pub fn shared_preprocessing_with_program_one_hot(
             program_image_hint: AkitaPackedScheme,
         },
     };
-    Ok((shared, prover_data, program_one_hot))
+    Ok((shared, prover_data, direct_program))
 }
 
 /// The packed prover pinned to the Akita stack.
@@ -682,7 +713,14 @@ pub type AkitaPackedProver<'a> =
 
 impl AkitaPackedProver<'_> {
     /// Akita setup parameters sized to the physical `OneHotTrace` polynomial.
-    pub fn one_hot_trace_setup_params(&self) -> jolt_akita::AkitaSetupParams {
+    ///
+    /// Provisions this proof's grouped precommit rows before setup sizing.
+    #[expect(
+        clippy::expect_used,
+        reason = "consistent with the canonical-layout expects below; a program whose \
+                  advice capacity cannot be scheduled is a preprocessing-time invariant break"
+    )]
+    pub fn one_hot_trace_setup_params(&self) -> AkitaSetupParams {
         let one_hot_trace_shape = self.one_hot_trace_shape();
         let shape = ONE_HOT_TRACE_LAYOUT
             .setup_shape(&one_hot_trace_shape)
@@ -690,11 +728,66 @@ impl AkitaPackedProver<'_> {
         let layout_digest = ONE_HOT_TRACE_LAYOUT
             .layout_digest(&one_hot_trace_shape)
             .expect("canonical OneHotTrace layout digest must exist");
-        jolt_akita::AkitaSetupParams::one_hot_only(
+        let one_hot_k = 1usize << self.one_hot_params.log_k_chunk;
+        let max_trusted_advice_bytes =
+            self.program_io.memory_layout.max_trusted_advice_size as usize;
+        let max_untrusted_advice_bytes =
+            self.program_io.memory_layout.max_untrusted_advice_size as usize;
+        let direct_program_physical_vars = if self.preprocessing.is_committed_mode() {
+            let bytecode_len = self.preprocessing.shared.bytecode_size();
+            let chunk_count = self.preprocessing.shared.bytecode_chunk_count;
+            let packing = committed_program_packing_plan(
+                bytecode_len,
+                chunk_count,
+                self.preprocessing.shared.program.program_image_len_words(),
+                TracePolynomialOrder::CycleMajor,
+            )
+            .expect("canonical direct program layout must exist");
+            packing
+                .objects()
+                .map(|object| object.packing().packed_num_vars())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let has_precommitted = max_trusted_advice_bytes > 0
+            || max_untrusted_advice_bytes > 0
+            || !direct_program_physical_vars.is_empty();
+        let precommitted_schedule = if has_precommitted {
+            let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
+                .then(|| {
+                    advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes)
+                })
+                .transpose()
+                .expect("untrusted-advice physical arity must derive");
+            let trusted_physical_vars = (max_trusted_advice_bytes > 0)
+                .then(|| {
+                    advice_physical_num_vars(JoltAdviceKind::Trusted, max_trusted_advice_bytes)
+                })
+                .transpose()
+                .expect("trusted-advice physical arity must derive");
+            Some(
+                PrecommittedScheduleParams::new(
+                    untrusted_physical_vars,
+                    trusted_physical_vars,
+                    shape.num_vars,
+                )
+                .with_direct_program_physical_arities(direct_program_physical_vars.clone()),
+            )
+        } else {
+            None
+        };
+        AkitaSetupParams::one_hot_only_grouped(
             shape.num_vars,
             shape.num_polys,
+            grouped_batch_poly_capacity(
+                max_untrusted_advice_bytes,
+                max_trusted_advice_bytes,
+                direct_program_physical_vars.len(),
+            ),
             layout_digest,
-            1 << self.one_hot_params.log_k_chunk,
+            one_hot_k,
+            precommitted_schedule,
         )
     }
 
@@ -826,13 +919,17 @@ impl AkitaPackedProver<'_> {
         FusedIncColumns { one_hot, fused }
     }
 
-    /// Builds and commits the untrusted-advice byte one-hot column (`UntrustedAdviceOneHot`).
+    /// Builds and commits the untrusted advice-word polynomial.
     /// Also materializes the base advice *word* polynomial on `self.advice`
     /// so the shared stage-4/6b/7 advice reduction machinery runs unchanged.
+    ///
+    /// Does not absorb: the untrusted object is a precommitted batch group, so
+    /// it is committed before the trace, while its commitment must still be
+    /// absorbed at the canonical position *after* the trace commitment.
     #[tracing::instrument(skip_all, name = "generate_and_commit_untrusted_advice_packed")]
     fn generate_and_commit_untrusted_advice_packed(
         &mut self,
-    ) -> Result<Option<AdviceOneHot>, VerifierError> {
+    ) -> Result<Option<AdviceObject>, VerifierError> {
         if self.program_io.untrusted_advice.is_empty() {
             return Ok(None);
         }
@@ -848,17 +945,12 @@ impl AkitaPackedProver<'_> {
                     .get_or_init(|| built)
             }
         };
-        let object = commit_advice_one_hot(
+        let object = commit_advice(
             JoltAdviceKind::Untrusted,
             &self.program_io.untrusted_advice,
             max_advice_bytes,
             setup,
         )?;
-        append_length_prefixed(
-            &mut self.transcript,
-            b"untrusted_advice",
-            &object.commitment,
-        );
         self.advice.untrusted_advice_polynomial =
             Some(MultilinearPolynomial::from(object.words.clone()));
         Ok(Some(object))
@@ -968,55 +1060,21 @@ impl AkitaPackedProver<'_> {
         let mut lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
 
-        // The advice claim-reduction cycle phases join at the bundle's
-        // canonical tail, exactly as in the base 6b assembly (the lattice
-        // batch has no inc slot — the fused-inc claims are discharged inside
-        // the read-raf's fused stages).
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
             self.preprocessing.is_committed_mode(),
-            self.advice.trusted_advice_polynomial.is_some(),
-            self.advice.untrusted_advice_polynomial.is_some(),
+            false,
+            false,
         );
         let precommitted_scheduling_reference =
             PrecommittedClaimReduction::<AkitaFp128>::scheduling_reference(
                 main_total_vars,
                 &precommitted_candidates,
             );
-        for (kind, max_size, polynomial) in [
-            (
-                crate::zkvm::claim_reductions::AdviceKind::Trusted,
-                self.program_io.memory_layout.max_trusted_advice_size as usize,
-                &self.advice.trusted_advice_polynomial,
-            ),
-            (
-                crate::zkvm::claim_reductions::AdviceKind::Untrusted,
-                self.program_io.memory_layout.max_untrusted_advice_size as usize,
-                &self.advice.untrusted_advice_polynomial,
-            ),
-        ] {
-            if let Some(polynomial) = polynomial {
-                let params = AdviceClaimReductionParams::new(
-                    kind,
-                    max_size,
-                    precommitted_scheduling_reference,
-                    &self.opening_accumulator,
-                );
-                let prover = AdviceClaimReductionProver::initialize(params, polynomial.clone());
-                match kind {
-                    crate::zkvm::claim_reductions::AdviceKind::Trusted => {
-                        self.advice_reduction_prover_trusted = Some(prover)
-                    }
-                    crate::zkvm::claim_reductions::AdviceKind::Untrusted => {
-                        self.advice_reduction_prover_untrusted = Some(prover)
-                    }
-                }
-            }
-        }
         // Committed-program mode: the bytecode/program-image claim-reduction
-        // cycle phases join after the advice slots (the bundle's canonical
-        // tail). `BytecodeClaimReductionParams::new` draws eta internally —
-        // after the instruction-RA gamma, matching the lattice verifier.
+        // cycle phases join at the bundle's canonical tail.
+        // `BytecodeClaimReductionParams::new` draws eta internally — after the
+        // instruction-RA gamma, matching the lattice verifier.
         if self.preprocessing.is_committed_mode() {
             let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_reduction_params =
@@ -1073,8 +1131,6 @@ impl AkitaPackedProver<'_> {
             );
         }
 
-        let mut advice_trusted = self.advice_reduction_prover_trusted.take();
-        let mut advice_untrusted = self.advice_reduction_prover_untrusted.take();
         let mut bytecode_reduction = self.bytecode_reduction_prover.take();
         let mut program_image_reduction = self.program_image_reduction_prover.take();
 
@@ -1087,12 +1143,6 @@ impl AkitaPackedProver<'_> {
             &mut ram_ra_virtual,
             &mut lookups_ra_virtual,
         ];
-        if let Some(ref mut advice) = advice_trusted {
-            instances.push(advice);
-        }
-        if let Some(ref mut advice) = advice_untrusted {
-            instances.push(advice);
-        }
         if let Some(ref mut reduction) = bytecode_reduction {
             instances.push(reduction);
         }
@@ -1103,8 +1153,6 @@ impl AkitaPackedProver<'_> {
         let (sumcheck_proof, _r, _claim) =
             self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
 
-        self.advice_reduction_prover_trusted = advice_trusted;
-        self.advice_reduction_prover_untrusted = advice_untrusted;
         self.bytecode_reduction_prover = bytecode_reduction;
         self.program_image_reduction_prover = program_image_reduction;
         sumcheck_proof
@@ -1132,27 +1180,10 @@ impl AkitaPackedProver<'_> {
             &columns.one_hot,
         );
 
-        // The advice/committed address phases join at the batch tail
-        // (prefix-aligned within it), exactly as in the base stage-7
-        // assembly. The Stage 7 batch is address-reduction-sized — wider
-        // than the address alignment window the two-phase schedule assumes —
-        // so each instance compensates the batch's extra `2^Δ` claim
-        // scaling (see `boost_scale_pow_2`).
+        // The committed address phases join at the batch tail. The Stage 7
+        // batch is address-reduction-sized, so each instance compensates the
+        // batch's extra `2^Δ` claim scaling (see `boost_scale_pow_2`).
         use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams as _;
-        let mut advice_instances = Vec::new();
-        for advice in [
-            self.advice_reduction_prover_trusted.take(),
-            self.advice_reduction_prover_untrusted.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let mut advice = advice;
-            if advice.params().precommitted.num_address_phase_rounds() > 0 {
-                advice.transition_to_address_phase();
-                advice_instances.push(advice);
-            }
-        }
         let mut bytecode_reduction = self
             .bytecode_reduction_prover
             .take()
@@ -1170,11 +1201,6 @@ impl AkitaPackedProver<'_> {
         let batch_rounds = [hw_prover.params.num_rounds()]
             .into_iter()
             .chain(
-                advice_instances
-                    .iter()
-                    .map(|advice| advice.params().num_rounds()),
-            )
-            .chain(
                 bytecode_reduction
                     .iter()
                     .map(|prover| prover.params().num_rounds()),
@@ -1189,10 +1215,6 @@ impl AkitaPackedProver<'_> {
         let mut instances: Vec<
             Box<dyn crate::subprotocols::sumcheck_prover::SumcheckInstanceProver<_, _>>,
         > = vec![Box::new(hw_prover)];
-        for mut advice in advice_instances {
-            advice.boost_scale_pow_2(batch_rounds - advice.params().num_rounds());
-            instances.push(Box::new(advice));
-        }
         if let Some(mut prover) = bytecode_reduction {
             prover.boost_scale_pow_2(batch_rounds - prover.params().num_rounds());
             instances.push(Box::new(prover));
@@ -1207,141 +1229,21 @@ impl AkitaPackedProver<'_> {
         sumcheck_proof
     }
 
-    /// The reconstruction phase (the head of the stage-8 region): settles
-    /// the completed advice word claims, the bytecode chunk claims, and the
-    /// program-image claim against the packed byte/lane columns. Members in
-    /// canonical order — untrusted advice, trusted advice, bytecode, image —
-    /// matching the verifier's declaration order; runs exactly when any
-    /// member is present.
-    #[tracing::instrument(skip_all, name = "prove_reconstruction_phase")]
-    fn prove_reconstruction_phase(
-        &mut self,
-        untrusted: Option<&AdviceOneHot>,
-        trusted: Option<&AdviceOneHot>,
-    ) -> Option<
-        crate::subprotocols::sumcheck::SumcheckInstanceProof<
-            AkitaFp128,
-            AkitaNoCurve,
-            AkitaTranscript,
-        >,
-    > {
-        let committed_program = self.preprocessing.is_committed_mode();
-        if untrusted.is_none() && trusted.is_none() && !committed_program {
-            return None;
-        }
-
-        let word_vars = |object: &AdviceOneHot| object.words.len().next_power_of_two().log_2();
-        let mut untrusted_prover = untrusted.map(|object| {
-            let params = UntrustedAdviceReconstructionSumcheckParams::new(
-                word_vars(object),
-                &self.opening_accumulator,
-                &mut self.transcript,
-            );
-            UntrustedAdviceReconstructionSumcheckProver::initialize(params, &object.words)
-        });
-        let mut trusted_prover = trusted.map(|object| {
-            let params = TrustedAdviceReconstructionSumcheckParams::new(
-                word_vars(object),
-                &self.opening_accumulator,
-            );
-            TrustedAdviceReconstructionSumcheckProver::initialize(params, &object.words)
-        });
-        let mut program_provers = committed_program.then(|| {
-            let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
-            let log_rows =
-                (self.preprocessing.shared.bytecode_size() / bytecode_chunk_count).log_2();
-            let bytecode_params = BytecodeReconstructionSumcheckParams::new(
-                bytecode_chunk_count,
-                <AkitaFp128 as crate::field::JoltField>::NUM_BYTES,
-                &self.opening_accumulator,
-                &mut self.transcript,
-            );
-            let bytecode_prover = BytecodeReconstructionSumcheckProver::initialize(
-                bytecode_params,
-                &self.preprocessing.materialized_program().bytecode.bytecode,
-                log_rows,
-            );
-            let image_params =
-                ProgramImageReconstructionSumcheckParams::new(&self.opening_accumulator);
-            let padded_len_words = self
-                .preprocessing
-                .shared
-                .program
-                .committed_program_image_num_words(&self.program_io.memory_layout);
-            let image_words = crate::zkvm::program::build_program_image_words_padded(
-                self.preprocessing.materialized_program(),
-                padded_len_words,
-            );
-            let image_prover =
-                ProgramImageReconstructionSumcheckProver::initialize(image_params, &image_words);
-            (bytecode_prover, image_prover)
-        });
-
-        let mut instances: Vec<
-            &mut dyn crate::subprotocols::sumcheck_prover::SumcheckInstanceProver<_, _>,
-        > = Vec::new();
-        if let Some(prover) = untrusted_prover.as_mut() {
-            instances.push(prover);
-        }
-        if let Some(prover) = trusted_prover.as_mut() {
-            instances.push(prover);
-        }
-        if let Some((bytecode, image)) = program_provers.as_mut() {
-            instances.push(bytecode);
-            instances.push(image);
-        }
-
-        let (proof, _r, _claim) = self.prove_batched_sumcheck(instances);
-        Some(proof)
-    }
-
     /// The `(polynomial, relation)` pair holding a semantic column's final
-    /// claim on the accumulator. This covers `OneHotTrace` columns and
-    /// `ProgramOneHot` sub-columns (their variant sets are disjoint).
+    /// claim on the accumulator. This covers `OneHotTrace` and the direct
+    /// committed-program objects.
     fn leaf_source(
         polynomial: JoltCommittedPolynomial,
     ) -> Result<(CommittedPolynomial, SumcheckId), VerifierError> {
         Ok(match polynomial {
-            JoltCommittedPolynomial::BytecodeRegisterSelector { chunk, lane } => {
-                let lane = match lane {
-                    BytecodeRegisterLane::Rs1 => 0,
-                    BytecodeRegisterLane::Rs2 => 1,
-                    BytecodeRegisterLane::Rd => 2,
-                };
-                (
-                    CommittedPolynomial::BytecodeRegisterSelector(chunk, lane),
-                    SumcheckId::BytecodeChunkReconstruction,
-                )
-            }
-            JoltCommittedPolynomial::BytecodeCircuitFlag { chunk, flag } => (
-                CommittedPolynomial::BytecodeCircuitFlag(chunk, flag),
-                SumcheckId::BytecodeChunkReconstruction,
+            JoltCommittedPolynomial::BytecodeChunk(chunk) => (
+                CommittedPolynomial::BytecodeChunk(chunk),
+                SumcheckId::BytecodeClaimReduction,
             ),
-            JoltCommittedPolynomial::BytecodeInstructionFlag { chunk, flag } => (
-                CommittedPolynomial::BytecodeInstructionFlag(chunk, flag),
-                SumcheckId::BytecodeChunkReconstruction,
+            JoltCommittedPolynomial::ProgramImageInit => (
+                CommittedPolynomial::ProgramImageInit,
+                SumcheckId::ProgramImageClaimReduction,
             ),
-            JoltCommittedPolynomial::BytecodeLookupSelector { chunk } => (
-                CommittedPolynomial::BytecodeLookupSelector(chunk),
-                SumcheckId::BytecodeChunkReconstruction,
-            ),
-            JoltCommittedPolynomial::BytecodeRafFlag { chunk } => (
-                CommittedPolynomial::BytecodeRafFlag(chunk),
-                SumcheckId::BytecodeChunkReconstruction,
-            ),
-            JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk } => (
-                CommittedPolynomial::BytecodeUnexpandedPcBytes(chunk),
-                SumcheckId::BytecodeChunkReconstruction,
-            ),
-            JoltCommittedPolynomial::BytecodeImmBytes { chunk } => (
-                CommittedPolynomial::BytecodeImmBytes(chunk),
-                SumcheckId::BytecodeChunkReconstruction,
-            ),
-            JoltCommittedPolynomial::ProgramImageBytes => (
-                CommittedPolynomial::ProgramImageBytes,
-                SumcheckId::ProgramImageReconstruction,
-            ),
-
             JoltCommittedPolynomial::InstructionRa(index) => (
                 CommittedPolynomial::InstructionRa(index),
                 SumcheckId::HammingWeightClaimReduction,
@@ -1386,33 +1288,29 @@ impl AkitaPackedProver<'_> {
         Ok((point.r.iter().map(|value| value.0).collect(), value.0))
     }
 
-    /// The fixed-prefix advice claim produced by its reconstruction sumcheck.
+    /// The fixed-prefix advice claim opened directly at stage 4's RAM value-check
+    /// point, then folded into the advice object's Akita group opening.
     fn packed_advice_claims(
         &self,
         kind: JoltAdviceKind,
-        object: &AdviceOneHot,
+        object: &AdviceObject,
     ) -> Result<PrefixPackedClaims<AkitaField>, VerifierError> {
         let batch_failed = |reason: String| VerifierError::FinalOpeningBatchFailed { reason };
-        let (advice_kind, sumcheck) = match kind {
-            JoltAdviceKind::Untrusted => (
-                crate::zkvm::claim_reductions::AdviceKind::Untrusted,
-                SumcheckId::UntrustedAdviceReconstruction,
-            ),
-            JoltAdviceKind::Trusted => (
-                crate::zkvm::claim_reductions::AdviceKind::Trusted,
-                SumcheckId::TrustedAdviceReconstruction,
-            ),
+        let advice_kind = match kind {
+            JoltAdviceKind::Untrusted => AdviceKind::Untrusted,
+            JoltAdviceKind::Trusted => AdviceKind::Trusted,
         };
         let (point, value) = self
             .opening_accumulator
-            .get_advice_opening(advice_kind, sumcheck)
-            .ok_or_else(|| batch_failed("missing packed advice byte-column claim".to_string()))?;
+            .get_advice_opening(advice_kind, SumcheckId::RamValCheck)
+            .ok_or_else(|| batch_failed("missing stage-4 dense advice claim".to_string()))?;
+        let logical_point = point.r.iter().map(|value| value.0).collect::<Vec<_>>();
         let claims = BTreeMap::from([(
-            JoltCommittedPolynomial::advice_bytes(kind),
-            EvaluationClaim::new(
-                point.r.iter().map(|value| value.0).collect::<Vec<_>>(),
-                value.0,
-            ),
+            match kind {
+                JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
+                JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
+            },
+            EvaluationClaim::new(logical_point, value.0),
         )]);
         object
             .plan
@@ -1441,26 +1339,25 @@ impl AkitaPackedProver<'_> {
 
     /// The Akita prove pipeline. `object_setup` is the Akita prover setup
     /// sized to OneHotTrace ([`Self::one_hot_trace_setup_params`]);
-    /// `trusted_advice` is the precommitted `TrustedAdviceOneHot` object, passed exactly
+    /// `trusted_advice` is the precommitted trusted-advice object, passed exactly
     /// when trusted advice exists.
     #[tracing::instrument(skip_all, name = "prove_packed")]
     pub fn prove_packed(
         mut self,
         object_setup: &<AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
-        trusted_advice: Option<&AdviceOneHot>,
-        program: Option<&ProgramOneHot>,
+        trusted_advice: Option<&AdviceObject>,
+        program: Option<&DirectProgramObjects>,
     ) -> Result<AkitaJoltProof, VerifierError> {
         assert_eq!(
             program.is_some(),
             self.preprocessing.is_committed_mode(),
-            "committed-program mode and the ProgramOneHot object must agree"
+            "committed-program mode and the direct program objects must agree"
         );
         assert_eq!(
             trusted_advice.is_some(),
             !self.program_io.trusted_advice.is_empty(),
-            "the precommitted TrustedAdviceOneHot object must be passed exactly when trusted advice exists"
+            "the precommitted dense trusted-advice object must be passed exactly when trusted advice exists"
         );
-
         let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
@@ -1489,33 +1386,81 @@ impl AkitaPackedProver<'_> {
         let plan = ONE_HOT_TRACE_LAYOUT
             .plan(&self.one_hot_trace_shape())
             .expect("canonical OneHotTrace layout must exist");
+        // Both advice objects are precommitted batch groups, so both are
+        // committed before the trace: the final commit is conditioned on the
+        // frozen profile of every precommitted group.
+        let advice_object = self.generate_and_commit_untrusted_advice_packed()?;
+        let mut precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
+        if let Some(object) = advice_object.as_ref() {
+            precommitted.push((
+                object.plan.precommitted_role(),
+                &object.commitment,
+                &object.hint,
+            ));
+        }
+        if let Some(object) = trusted_advice {
+            precommitted.push((
+                object.plan.precommitted_role(),
+                &object.commitment,
+                &object.hint,
+            ));
+        }
+        if let Some(program) = program {
+            for object in &program.objects {
+                precommitted.push((
+                    object.plan.precommitted_role(),
+                    &object.commitment,
+                    &object.hint,
+                ));
+            }
+        }
         let one_hot_trace_witness = self.assemble_one_hot_trace(&plan, &fused_cycles);
-        let (commitment, hint) = AkitaScheme::commit_one_hot_group_owned(
-            object_setup,
-            plan.layout_digest(),
-            vec![one_hot_trace_witness],
-        )
-        .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-            reason: error.to_string(),
-        })?;
+        let precommitted_hints = precommitted
+            .iter()
+            .map(|(_, _, hint)| *hint)
+            .collect::<Vec<_>>();
+        let committed = if precommitted_hints.is_empty() {
+            AkitaScheme::commit_one_hot_group_owned(
+                object_setup,
+                plan.layout_digest(),
+                vec![one_hot_trace_witness],
+            )
+        } else {
+            AkitaScheme::commit_one_hot_group_owned_with_precommitted(
+                object_setup,
+                plan.layout_digest(),
+                vec![one_hot_trace_witness],
+                &precommitted_hints,
+            )
+        };
+        let (commitment, hint) =
+            committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })?;
 
         // Absorb the packed commitment objects exactly where and how the
-        // verifier's `absorb_commitments` akita arm does.
+        // verifier's `absorb_commitments` akita arm does. The commit order above
+        // is independent of this absorb order.
         append_length_prefixed(&mut self.transcript, b"commitment", &commitment);
-        let advice_object = self.generate_and_commit_untrusted_advice_packed()?;
+        if let Some(object) = advice_object.as_ref() {
+            append_length_prefixed(
+                &mut self.transcript,
+                b"untrusted_advice",
+                &object.commitment,
+            );
+        }
         if let Some(trusted) = trusted_advice {
             append_length_prefixed(&mut self.transcript, b"trusted_advice", &trusted.commitment);
             self.advice.trusted_advice_polynomial =
                 Some(MultilinearPolynomial::from(trusted.words.clone()));
         }
         if let Some(program) = program {
-            for object in &program.objects {
-                append_length_prefixed(
-                    &mut self.transcript,
-                    b"program_one_hot_commitment",
-                    &object.commitment,
-                );
-            }
+            let commitments = program
+                .objects
+                .iter()
+                .map(|object| object.commitment.clone())
+                .collect::<Vec<_>>();
+            absorb_packed_program_commitments(&commitments, &mut self.transcript);
         }
 
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, _r_stage1) =
@@ -1533,11 +1478,6 @@ impl AkitaPackedProver<'_> {
             std::mem::take(&mut fused_inc_columns.fused),
         );
         let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns);
-        let reconstruction_proof =
-            self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice);
-
-        // Stage 8: OneHotTrace opens as one native same-point batch. Advice
-        // and ProgramOneHot remain auxiliary packed objects.
         let mut common_point: Option<Vec<AkitaField>> = None;
         let mut evaluations = Vec::with_capacity(plan.packing().ids().len());
         for polynomial in plan.packing().ids() {
@@ -1570,54 +1510,90 @@ impl AkitaPackedProver<'_> {
             .map_err(|error| VerifierError::FinalOpeningBatchFailed {
                 reason: error.to_string(),
             })?;
-        let one_hot_trace_opening = AkitaScheme::open_one_hot_group_from_hint(
-            packed_claim.point.as_slice(),
-            std::slice::from_ref(&packed_claim.value),
+        let untrusted_physical = advice_object
+            .as_ref()
+            .map(|object| {
+                let claims = self.packed_advice_claims(JoltAdviceKind::Untrusted, object)?;
+                object
+                    .plan
+                    .packing()
+                    .reduce_claims(&claims, &mut self.transcript)
+                    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                        reason: error.to_string(),
+                    })
+            })
+            .transpose()?;
+        let trusted_physical = trusted_advice
+            .map(|object| {
+                let claims = self.packed_advice_claims(JoltAdviceKind::Trusted, object)?;
+                object
+                    .plan
+                    .packing()
+                    .reduce_claims(&claims, &mut self.transcript)
+                    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                        reason: error.to_string(),
+                    })
+            })
+            .transpose()?;
+
+        let mut batch_precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
+        for (object, claim) in [
+            (advice_object.as_ref(), untrusted_physical.as_ref()),
+            (trusted_advice, trusted_physical.as_ref()),
+        ] {
+            if let (Some(object), Some(claim)) = (object, claim) {
+                batch_precommitted.push((
+                    PrecommittedClaim::new(
+                        object.plan.precommitted_role(),
+                        GroupOpeningClaim::new(
+                            object.commitment.clone(),
+                            claim.point.as_slice().to_vec(),
+                            vec![claim.value],
+                        ),
+                    ),
+                    object.hint.clone(),
+                ));
+            }
+        }
+        if let Some(program) = program {
+            for object in &program.objects {
+                let claims = self.packed_program_claims(&object.plan)?;
+                let physical = object
+                    .plan
+                    .packing()
+                    .reduce_claims(&claims, &mut self.transcript)
+                    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                        reason: error.to_string(),
+                    })?;
+                batch_precommitted.push((
+                    PrecommittedClaim::new(
+                        object.plan.precommitted_role(),
+                        GroupOpeningClaim::new(
+                            object.commitment.clone(),
+                            physical.point.as_slice().to_vec(),
+                            vec![physical.value],
+                        ),
+                    ),
+                    object.hint.clone(),
+                ));
+            }
+        }
+
+        let main_group = GroupOpeningClaim::new(
+            commitment.clone(),
+            packed_claim.point.as_slice().to_vec(),
+            vec![packed_claim.value],
+        );
+        let joint_opening_proof = <AkitaScheme as VerifierCommitmentScheme>::prove_batch(
             object_setup,
+            batch_precommitted,
+            main_group,
             hint,
             &mut self.transcript,
         )
         .map_err(|error| VerifierError::FinalOpeningBatchFailed {
             reason: error.to_string(),
         })?;
-        let mut auxiliary = Vec::new();
-        if let Some(object) = advice_object.as_ref() {
-            let claims = self.packed_advice_claims(JoltAdviceKind::Untrusted, object)?;
-            auxiliary.push(open_prefix_object(
-                &object.plan,
-                &object.byte_column,
-                &object.setup,
-                object.hint.clone(),
-                &claims,
-                &mut self.transcript,
-            )?);
-        }
-        if let Some(object) = trusted_advice {
-            let claims = self.packed_advice_claims(JoltAdviceKind::Trusted, object)?;
-            auxiliary.push(open_prefix_object(
-                &object.plan,
-                &object.byte_column,
-                &object.setup,
-                object.hint.clone(),
-                &claims,
-                &mut self.transcript,
-            )?);
-        }
-        if let Some(program) = program {
-            for object in &program.objects {
-                let claims = self.packed_program_claims(&object.plan)?;
-                auxiliary.push(open_prefix_object(
-                    &object.plan,
-                    &object.witness,
-                    &object.setup,
-                    object.hint.clone(),
-                    &claims,
-                    &mut self.transcript,
-                )?);
-            }
-        }
-        let joint_opening_proof =
-            jolt_verifier::proof::AkitaJointOpeningProof::new(one_hot_trace_opening, auxiliary);
 
         let claims = crate::zkvm::clear_claims::build_packed_clear_claims(
             self.opening_accumulator
@@ -1643,8 +1619,6 @@ impl AkitaPackedProver<'_> {
             stage6a_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage6a_sumcheck_proof),
             stage6b_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage6b_sumcheck_proof),
             stage7_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage7_sumcheck_proof),
-            reconstruction_sumcheck_proof: reconstruction_proof
-                .map(crate::zkvm::proof::convert_sumcheck),
         };
 
         Ok(JoltProof {
@@ -1682,7 +1656,7 @@ pub fn akita_verifier_preprocessing(
         AkitaPackedScheme,
     >,
     akita_verifier_setup: <AkitaScheme as VerifierCommitmentScheme>::VerifierSetup,
-    program_one_hot: Option<&ProgramOneHot>,
+    direct_program: Option<&DirectProgramObjects>,
 ) -> JoltVerifierPreprocessing<AkitaScheme, AkitaVc> {
     let program = match &preprocessing.shared.program {
         crate::zkvm::program::ProgramPreprocessing::Full(full) => {
@@ -1694,8 +1668,8 @@ pub fn akita_verifier_preprocessing(
             }))
         }
         crate::zkvm::program::ProgramPreprocessing::Committed(committed) => {
-            let program_one_hot = program_one_hot
-                .expect("committed-program mode requires ProgramOneHot preprocessing");
+            let direct_program = direct_program
+                .expect("committed-program mode requires direct program preprocessing");
             VerifierProgramPreprocessing::Committed(VerifierCommittedProgramPreprocessing {
                 meta: ProgramMetadata {
                     entry_address: committed.meta.entry_address,
@@ -1706,76 +1680,53 @@ pub fn akita_verifier_preprocessing(
                 },
                 memory_layout: preprocessing.shared.memory_layout.clone(),
                 max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                program_one_hot_commitments: program_one_hot
+                direct_program_commitments: direct_program
                     .objects
                     .iter()
                     .map(|object| object.commitment.clone())
                     .collect(),
                 bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
+                trace_order: TracePolynomialOrder::CycleMajor,
             })
         }
     };
-    let committed_mode = preprocessing.shared.program.is_committed();
-    let mut verifier_preprocessing = JoltVerifierPreprocessing::new(
+    let one_hot_k = akita_verifier_setup.one_hot_k();
+    let akita_verifier_final_num_vars = akita_verifier_setup.max_num_vars();
+    let layout = &preprocessing.shared.memory_layout;
+    let direct_program_plan = preprocessing.shared.program.is_committed().then(|| {
+        let bytecode_len = preprocessing.shared.bytecode_size();
+        let bytecode_chunk_count = preprocessing.shared.bytecode_chunk_count;
+        committed_program_packing_plan(
+            bytecode_len,
+            bytecode_chunk_count,
+            preprocessing.shared.program.program_image_len_words(),
+            TracePolynomialOrder::CycleMajor,
+        )
+        .expect("the canonical precommitted packing plan must exist")
+    });
+    let direct_program_physical_vars = direct_program_plan
+        .as_ref()
+        .map(|plan| {
+            plan.objects()
+                .map(|object| object.packing().packed_num_vars())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    provision_precommitted_schedules(
+        layout.max_untrusted_advice_size as usize,
+        layout.max_trusted_advice_size as usize,
+        &direct_program_physical_vars,
+        one_hot_k,
+        akita_verifier_final_num_vars,
+    )
+    .expect("precommitted grouped schedules must provision for the verifier");
+
+    JoltVerifierPreprocessing::new(
         program,
         preprocessing.shared.digest(),
         akita_verifier_setup,
         None,
-    );
-    // The per-kind advice commitment-object setups are derived from the
-    // public advice shapes with the same fixed seed the prover uses (the
-    // Akita setup is transparent).
-    let advice_setup = |kind: JoltAdviceKind, max_bytes: usize| {
-        (max_bytes > 0).then(|| {
-            let word_vars = (max_bytes / 8).next_power_of_two().log_2();
-            let plan = advice_bytes_packing_plan(kind, word_vars)
-                .expect("the canonical advice layout must derive");
-            let (_, verifier_setup) =
-                transparent_object_setup(plan.packing().packed_num_vars(), plan.layout_digest())
-                    .expect("the transparent advice-shape setup must derive");
-            verifier_setup
-        })
-    };
-    let layout = &preprocessing.shared.memory_layout;
-    verifier_preprocessing.untrusted_advice_setup = advice_setup(
-        JoltAdviceKind::Untrusted,
-        layout.max_untrusted_advice_size as usize,
-    );
-    verifier_preprocessing.trusted_advice_setup = advice_setup(
-        JoltAdviceKind::Trusted,
-        layout.max_trusted_advice_size as usize,
-    );
-    // The ProgramOneHot setup is derived from the public program shape (transparent
-    // setup, fixed seed) — the same shape `commit_program_one_hot` committed
-    // at.
-    if committed_mode {
-        let imm_byte_width = <AkitaFp128 as crate::field::JoltField>::NUM_BYTES;
-        let bytecode_len = preprocessing.shared.bytecode_size();
-        let bytecode_chunk_count = preprocessing.shared.bytecode_chunk_count;
-        let shape = PrecommittedPackingShape {
-            bytecode_chunks: bytecode_chunk_count,
-            log_bytecode_rows: (bytecode_len / bytecode_chunk_count).log_2(),
-            imm_byte_width,
-            program_image_log_words: Some(
-                preprocessing
-                    .shared
-                    .program
-                    .committed_program_image_num_words(&preprocessing.shared.memory_layout)
-                    .log_2(),
-            ),
-        };
-        let plan = precommitted_packing_plan(&shape)
-            .expect("the canonical precommitted packing plan must exist");
-        verifier_preprocessing.program_one_hot_setups = plan
-            .objects()
-            .map(|object| {
-                transparent_object_setup(object.packing().packed_num_vars(), object.layout_digest())
-                    .expect("the transparent program-shape setup must derive")
-                    .1
-            })
-            .collect();
-    }
-    verifier_preprocessing
+    )
 }
 
 #[cfg(all(test, feature = "host"))]
@@ -1955,7 +1906,7 @@ mod advice_tests {
     use serial_test::serial;
 
     /// The packed advice e2e: a guest consuming both advice kinds, proved
-    /// over three commitment objects (`OneHotTrace`, `UntrustedAdviceOneHot`, `TrustedAdviceOneHot`), with
+    /// over three commitment objects (`OneHotTrace`, untrusted advice, trusted advice), with
     /// per-object tamper rejection.
     #[test]
     #[serial]
@@ -1980,7 +1931,7 @@ mod advice_tests {
         let prover_preprocessing = JoltProverPreprocessing::new(shared);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
-        let trusted_object = commit_trusted_advice_one_hot(
+        let trusted_object = commit_trusted_advice(
             &trusted_advice,
             io_device.memory_layout.max_trusted_advice_size as usize,
         )
@@ -2007,10 +1958,6 @@ mod advice_tests {
             .prove_packed(&object_setup, Some(&trusted_object), None)
             .expect("packed prover should produce a verifier-native proof");
         assert!(proof.untrusted_advice_commitment.is_some());
-        assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // OneHotTrace is discharged by its native same-point batch. Each
-        // advice object has one direct fixed-prefix opening.
-        assert_eq!(proof.joint_opening_proof.auxiliary.len(), 2);
 
         let verifier_preprocessing =
             akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
@@ -2023,28 +1970,6 @@ mod advice_tests {
             )
         };
         verify(&proof).expect("packed verifier should accept the packed proof");
-
-        // The two advice proofs are bound to distinct ordered statements.
-        let mut tampered = proof.clone();
-        tampered.joint_opening_proof.auxiliary.swap(0, 1);
-        assert!(
-            verify(&tampered).is_err(),
-            "swapped advice opening proofs must be rejected"
-        );
-        let mut tampered = proof.clone();
-        tampered.stages.reconstruction_sumcheck_proof = None;
-        assert!(
-            verify(&tampered).is_err(),
-            "a dropped reconstruction proof must be rejected"
-        );
-        // The auxiliary joint opening is mandatory whenever auxiliary
-        // objects exist: dropping it must break fail-closed.
-        let mut tampered = proof.clone();
-        let _dropped = tampered.joint_opening_proof.auxiliary.pop();
-        assert!(
-            verify(&tampered).is_err(),
-            "a dropped auxiliary opening proof must be rejected"
-        );
     }
 
     /// The advice-size boundary e2e: the untrusted advice buffer fills
@@ -2086,7 +2011,7 @@ mod advice_tests {
         let prover_preprocessing = JoltProverPreprocessing::new(shared);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
-        let trusted_object = commit_trusted_advice_one_hot(
+        let trusted_object = commit_trusted_advice(
             &trusted_advice,
             io_device.memory_layout.max_trusted_advice_size as usize,
         )
@@ -2133,9 +2058,8 @@ mod committed_tests {
     use crate::zkvm::prover::JoltProverPreprocessing;
     use serial_test::serial;
 
-    /// The committed-program packed e2e: `ProgramOneHot` joins as the second
-    /// commitment object (muldiv carries no advice), with tamper rejection
-    /// on its claimed evaluation and a reconstruction wire.
+    /// The committed-program packed e2e: the direct bytecode chunks and
+    /// program image join the main trace in one native Akita batch.
     fn committed_e2e(bytecode_chunk_count: usize) {
         DoryGlobals::reset();
         let mut program = host::Program::new("muldiv-guest");
@@ -2145,7 +2069,7 @@ mod committed_tests {
 
         let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry)
             .expect("program preprocessing");
-        let (shared, prover_data, program_one_hot) = shared_preprocessing_with_program_one_hot(
+        let (shared, prover_data, direct_program) = shared_preprocessing_with_direct_program(
             program_data,
             io_device.memory_layout.clone(),
             1 << 16,
@@ -2173,17 +2097,13 @@ mod committed_tests {
             <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
                 .expect("the transparent packed setup must derive");
         let proof = prover
-            .prove_packed(&object_setup, None, Some(&program_one_hot))
+            .prove_packed(&object_setup, None, Some(&direct_program))
             .expect("packed prover should produce a verifier-native proof");
-        assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // Bytecode columns and the independently pointed image are the two
-        // fixed-prefix auxiliary objects.
-        assert_eq!(proof.joint_opening_proof.auxiliary.len(), 2);
 
         let verifier_preprocessing = akita_verifier_preprocessing(
             &prover_preprocessing,
             verifier_setup,
-            Some(&program_one_hot),
+            Some(&direct_program),
         );
         let verify = |proof: &AkitaJoltProof| {
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
@@ -2194,29 +2114,6 @@ mod committed_tests {
             )
         };
         verify(&proof).expect("packed verifier should accept the committed packed proof");
-
-        // Swapping the bytecode/image proofs breaks their distinct canonical
-        // statements; a mutated reconstruction wire breaks the output check.
-        let mut tampered = proof.clone();
-        tampered.joint_opening_proof.auxiliary.swap(0, 1);
-        assert!(
-            verify(&tampered).is_err(),
-            "swapped ProgramOneHot proofs must be rejected"
-        );
-        let mut tampered = proof.clone();
-        let jolt_verifier::proof::JoltProofClaims::Clear(claims) = &mut tampered.claims else {
-            panic!("packed proofs carry clear claims");
-        };
-        let bytecode_cell = claims
-            .reconstruction
-            .bytecode
-            .as_mut()
-            .expect("committed proofs carry the bytecode reconstruction cell");
-        bytecode_cell.pc_bytes[0] += AkitaField::from_u64(1);
-        assert!(
-            verify(&tampered).is_err(),
-            "tampered bytecode reconstruction wire must be rejected"
-        );
     }
 
     #[test]
@@ -2249,6 +2146,14 @@ mod committed_tests {
             postcard::to_stdvec(&iters).unwrap(),
         ]
         .concat();
+        let mut trusted_advice = vec![0u8; 1 << 23];
+        trusted_advice
+            .iter_mut()
+            .enumerate()
+            .for_each(|(index, byte)| *byte = (index.wrapping_mul(31).wrapping_add(7)) as u8);
+        // The guest's fixed-size argument consumes this prefix; all remaining
+        // bytes still belong to, and are bound by, the trusted-advice object.
+        trusted_advice[..32].fill(7);
         // PERF_TRACE=1 dumps a Perfetto (chrome) trace of the run to the
         // repo-root benchmark-runs/perfetto_traces/ directory.
         let _trace_guard = std::env::var("PERF_TRACE").ok().map(|_| {
@@ -2267,11 +2172,18 @@ mod committed_tests {
         });
 
         eprintln!("sha2-chain/akita: {iters} iterations, target 2^{log_t}");
+        eprintln!(
+            "trusted advice: {} bytes ({} u64 words)",
+            trusted_advice.len(),
+            trusted_advice.len() / 8
+        );
 
         crate::poly::commitment::dory::DoryGlobals::reset();
         let mut program = host::Program::new("sha2-chain-guest");
+        program.set_func("sha2_chain");
+        program.set_max_trusted_advice_size(trusted_advice.len() as u64);
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
-        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &trusted_advice);
         let program_data =
             ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
         let shared: JoltSharedPreprocessing<AkitaPackedScheme> =
@@ -2284,7 +2196,7 @@ mod committed_tests {
             elf_contents,
             &inputs,
             &[],
-            &[],
+            &trusted_advice,
             None,
             None,
             None,
@@ -2299,11 +2211,71 @@ mod committed_tests {
             <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params).unwrap();
         eprintln!("akita setup: {:.2?}", setup_start.elapsed());
 
+        let commit_start = Instant::now();
+        let trusted_object = commit_trusted_advice(
+            &trusted_advice,
+            io_device.memory_layout.max_trusted_advice_size as usize,
+        )
+        .expect("trusted advice object must commit");
+        eprintln!(
+            "akita trusted advice commit: {:.2?}",
+            commit_start.elapsed()
+        );
+
         let prove_start = Instant::now();
         let proof = prover
-            .prove_packed(&object_setup, None, None)
+            .prove_packed(&object_setup, Some(&trusted_object), None)
             .expect("packed prover should produce a verifier-native proof");
         eprintln!("akita prove: {:.2?}", prove_start.elapsed());
+        // Akita's native field deliberately has no Serde implementation, so
+        // the packed proof has no top-level postcard/bincode wire encoding yet.
+        // Report the fixed-width field payload plus the already-serialized
+        // commitment/opening envelopes; this excludes only container tags and
+        // length prefixes.
+        let field_elements = format!("{proof:?}").matches("Fp128(").count();
+        assert!(field_elements > 0, "Akita field Debug format changed");
+        let config = bincode::config::standard();
+        let commitment_bytes = bincode::serde::encode_to_vec(&proof.commitments, config)
+            .unwrap()
+            .len();
+        let opening_bytes = bincode::serde::encode_to_vec(&proof.joint_opening_proof, config)
+            .unwrap()
+            .len();
+        let main_commitment_bytes = bincode::serde::encode_to_vec(&proof.commitments, config)
+            .unwrap()
+            .len();
+        let trusted_commitment_bytes =
+            bincode::serde::encode_to_vec(&trusted_object.commitment, config)
+                .unwrap()
+                .len();
+        let untrusted_commitment_bytes =
+            bincode::serde::encode_to_vec(&proof.untrusted_advice_commitment, config)
+                .unwrap()
+                .len();
+        let metadata_bytes = bincode::serde::encode_to_vec(
+            (
+                &proof.protocol,
+                &proof.trace_length,
+                &proof.ram_K,
+                &proof.rw_config,
+                &proof.one_hot_config,
+                &proof.trace_polynomial_order,
+            ),
+            config,
+        )
+        .unwrap()
+        .len();
+        let proof_payload_size = field_elements * 16
+            + commitment_bytes
+            + opening_bytes
+            + untrusted_commitment_bytes
+            + metadata_bytes;
+        eprintln!(
+            "akita proof payload size: {proof_payload_size} bytes ({field_elements} field elements; excludes container framing)"
+        );
+        eprintln!("akita grouped opening proof size: {opening_bytes} bytes");
+        eprintln!("akita main commitment size: {main_commitment_bytes} bytes");
+        eprintln!("akita trusted commitment size: {trusted_commitment_bytes} bytes");
 
         let verifier_preprocessing_start = Instant::now();
         let verifier_preprocessing =
@@ -2317,7 +2289,7 @@ mod committed_tests {
             &verifier_preprocessing,
             &io_device,
             &proof,
-            None,
+            Some(&trusted_object.commitment),
         )
         .expect("packed verifier should accept the packed proof");
         eprintln!("akita verify: {:.2?}", verify_start.elapsed());
@@ -2325,7 +2297,7 @@ mod committed_tests {
 }
 
 use jolt_crypto::{Commitment, HomomorphicCommitment, VectorCommitment};
-use jolt_field::{CanonicalBytes, JoltField};
+use jolt_field::{CanonicalBytes, JoltField, Ring, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug};
 
@@ -2362,8 +2334,7 @@ pub struct NoCommitment;
 
 // `AppendToTranscript` comes from jolt-transcript's blanket impl over
 // `CanonicalBytes`: an empty canonical encoding, so absorbing a
-// `NoCommitment` is a no-op. Deliberately NOT `CanonicalEncoding`: a commitment
-// placeholder is not a decodable field element.
+// `NoCommitment` is a no-op.
 impl CanonicalBytes for NoCommitment {
     const NUM_BYTES: usize = 0;
 
@@ -2418,10 +2389,10 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 #[expect(clippy::unwrap_used)]
 mod advice_object_tests {
     use super::*;
-    use jolt_poly::MultilinearPoly;
+    use jolt_field::Zero;
 
     /// A couple of bytes of advice must stay provable: without the packing
-    /// plan's capacity padding, the 11-variable cell domain of a one-word
+    /// plan's capacity padding, the zero-variable dense domain of a one-word
     /// region has no dense fold schedule and `advice_object_setup` fails
     /// before anything is committed.
     #[test]
@@ -2431,25 +2402,28 @@ mod advice_object_tests {
 
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
             let setup = advice_object_setup(kind, max_advice_bytes).unwrap();
-            let AdviceOneHot {
+            let AdviceObject {
                 plan,
-                byte_column,
+                polynomial,
                 commitment,
                 hint,
                 ..
-            } = commit_advice_one_hot(kind, &advice_bytes, max_advice_bytes, &setup).unwrap();
-            let column = JoltCommittedPolynomial::advice_bytes(kind);
+            } = commit_advice(kind, &advice_bytes, max_advice_bytes, &setup).unwrap();
+            let column = match kind {
+                JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
+                JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
+            };
             let logical_vars = plan.logical_num_vars(column).unwrap();
             let selector_vars = plan.packing().selector_num_vars();
             assert!(selector_vars > 0, "tiny advice must pad selector capacity");
 
-            // Logical claim: the byte column restricted to slot zero.
+            // Logical claim: the dense word polynomial restricted to slot zero.
             let logical_point = (0..logical_vars)
                 .map(|index| AkitaField::from_u64(index as u64 + 2))
                 .collect::<Vec<_>>();
             let mut physical_point = vec![AkitaField::zero(); selector_vars];
             physical_point.extend_from_slice(&logical_point);
-            let value = byte_column.evaluate(&physical_point);
+            let value = polynomial.evaluate(&physical_point);
 
             let claims = std::collections::BTreeMap::from([(
                 column,
@@ -2464,7 +2438,7 @@ mod advice_object_tests {
                 .reduce_claims(&packed, &mut prover_transcript)
                 .unwrap();
             let proof = <AkitaScheme as VerifierCommitmentScheme>::open(
-                &byte_column,
+                &polynomial,
                 physical.point.as_slice(),
                 physical.value,
                 &setup,
