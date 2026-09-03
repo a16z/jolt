@@ -533,14 +533,15 @@ struct T2Witness {
 /// `2^18` compute rows of twelve products over random earlier rows.
 fn t2_witness() -> T2Witness {
     let mut rng = StdRng::seed_from_u64(0x72);
-    let mut program = Program::new();
+    let constants_start = (ROWS - 2) as u32;
+    let mut program = Program::new(constants_start..ROWS as u32);
     let input_count = 16;
     for index in 0..input_count {
         let _ = program.input(index);
     }
     let kappas = [1, -1, 2, -2, 3, -3];
-    while program.len() < ROWS {
-        let id = program.len() as u32;
+    while program.cursor() < constants_start {
+        let id = program.cursor();
         let slots = (0..T2_SLOTS)
             .map(|_| Slot {
                 x: rng.gen_range(0..id),
