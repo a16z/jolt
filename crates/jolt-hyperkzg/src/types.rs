@@ -91,28 +91,6 @@ impl<P: PairingGroup> HyperKZGCommitment<P> {
     }
 }
 
-impl<P: PairingGroup> HyperKZGVerifierSetup<P> {
-    /// G1 generator.
-    pub fn g1(&self) -> P::G1 {
-        self.g1
-    }
-
-    /// G2 generator.
-    pub fn g2(&self) -> P::G2 {
-        self.g2
-    }
-
-    /// G2 generator multiplied by the KZG trapdoor.
-    pub fn beta_g2(&self) -> P::G2 {
-        self.beta_g2
-    }
-
-    /// G2 generator multiplied by the square of the KZG trapdoor.
-    pub fn beta_sq_g2(&self) -> P::G2 {
-        self.beta_sq_g2
-    }
-}
-
 /// Opening proof for the HyperKZG protocol.
 ///
 /// - `com`: intermediate polynomial commitments from the Gemini folding (ell - 1 elements)
@@ -132,9 +110,9 @@ pub struct HyperKZGProof<P: PairingGroup> {
 
 /// Prover setup: SRS G1 and G2 powers.
 ///
-/// G1 powers: `[g1, beta * g1, beta^2 * g1, ..., beta^n * g1]`
+/// G1 powers: `[g1, beta * g1, beta^2 * g1, ..., beta^(N-1) * g1]`
 /// G2 powers through `beta^3 * g2` for the degree-three batch opening divisor, plus the
-/// `beta^(N-5)` shift used by degree-five round-polynomial commitments.
+/// `beta^(N-6)` shift used by degree-five round-polynomial commitments.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "P::G1Affine: Serialize, P::G2: Serialize",
@@ -151,6 +129,11 @@ impl<P: PairingGroup> HyperKZGProverSetup<P> {
     /// generic `CommitmentScheme::commit` path (e.g. small-scalar MSMs).
     pub fn g1_powers(&self) -> &[P::G1Affine] {
         &self.g1_powers
+    }
+
+    /// Consumes the setup and returns its G1 powers.
+    pub fn into_g1_powers(self) -> Vec<P::G1Affine> {
+        self.g1_powers
     }
 }
 

@@ -28,9 +28,7 @@ use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, JoltGroup, PairingGroup};
 use jolt_field::{Field, JoltField};
-use jolt_hyperkzg::{
-    HyperKZGCommitment, HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup,
-};
+use jolt_hyperkzg::{HyperKZGCommitment, HyperKZGScheme};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, Transcript, U64Word};
@@ -45,14 +43,15 @@ pub type ZeromorphCommitment<P> = HyperKZGCommitment<P>;
 /// Prover setup backed by HyperKZG's monomial KZG SRS.
 #[derive(Clone, Debug)]
 pub struct ZeromorphProverSetup<P: PairingGroup> {
-    inner: HyperKZGProverSetup<P>,
+    g1_powers: Vec<P::G1Affine>,
     num_vars: usize,
+    verifier_setup: ZeromorphVerifierSetup<P>,
 }
 
 impl<P: PairingGroup> ZeromorphProverSetup<P> {
-    /// Underlying KZG SRS, suitable for committing the same table with HyperKZG.
-    pub fn kzg_setup(&self) -> &HyperKZGProverSetup<P> {
-        &self.inner
+    /// Exact G1 SRS `[1, beta, ..., beta^(N-1)]`.
+    pub fn g1_powers(&self) -> &[P::G1Affine] {
+        &self.g1_powers
     }
 
     /// Supported multilinear arity.
@@ -68,7 +67,9 @@ impl<P: PairingGroup> ZeromorphProverSetup<P> {
     deserialize = "P::G1: for<'a> Deserialize<'a>, P::G2: for<'a> Deserialize<'a>"
 ))]
 pub struct ZeromorphVerifierSetup<P: PairingGroup> {
-    inner: HyperKZGVerifierSetup<P>,
+    g1: P::G1,
+    g2: P::G2,
+    beta_g2: P::G2,
     num_vars: usize,
 }
 
@@ -121,6 +122,9 @@ pub enum ZeromorphError {
     /// A Fiat-Shamir challenge that must be invertible was zero.
     #[error("degenerate Fiat-Shamir challenge: {0} = 0")]
     DegenerateChallenge(&'static str),
+    /// The trait opening path did not receive the commitment returned by `commit`.
+    #[error("opening requires the commitment hint returned by commit")]
+    MissingOpeningHint,
     /// Final KZG equation failed.
     #[error("pairing check failed")]
     PairingCheckFailed,
@@ -153,9 +157,25 @@ where
             });
         }
         let coefficient_count = coefficient_count(num_vars)?;
-        let inner = HyperKZGScheme::<P>::setup_from_secret(beta, coefficient_count, g1, g2);
-        let prover = ZeromorphProverSetup { inner, num_vars };
-        let verifier = Self::verifier_setup(&prover);
+        let mut g1_powers = HyperKZGScheme::<P>::setup_from_secret(
+            beta,
+            coefficient_count,
+            g1,
+            g2,
+        )
+        .into_g1_powers();
+        g1_powers.truncate(coefficient_count);
+        let verifier = ZeromorphVerifierSetup {
+            g1,
+            g2,
+            beta_g2: g2.scalar_mul(&beta),
+            num_vars,
+        };
+        let prover = ZeromorphProverSetup {
+            g1_powers,
+            num_vars,
+            verifier_setup: verifier.clone(),
+        };
         Ok((prover, verifier))
     }
 
@@ -168,7 +188,7 @@ where
         validate_evaluations(setup, evaluations)?;
         Ok(HyperKZGCommitment::new(commit_coefficients(
             evaluations,
-            &setup.inner,
+            setup,
         )?))
     }
 
@@ -177,6 +197,7 @@ where
     pub fn open<T: Transcript<Challenge = P::ScalarField>>(
         setup: &ZeromorphProverSetup<P>,
         evaluations: &[P::ScalarField],
+        commitment: &ZeromorphCommitment<P>,
         point: &[P::ScalarField],
         claimed_eval: P::ScalarField,
         transcript: &mut T,
@@ -184,6 +205,7 @@ where
         Self::open_multi(
             setup,
             evaluations,
+            commitment,
             &[point.to_vec()],
             &[claimed_eval],
             transcript,
@@ -195,12 +217,20 @@ where
     pub fn open_multi<T: Transcript<Challenge = P::ScalarField>>(
         setup: &ZeromorphProverSetup<P>,
         evaluations: &[P::ScalarField],
+        commitment: &ZeromorphCommitment<P>,
         points: &[Vec<P::ScalarField>],
         claimed_evals: &[P::ScalarField],
         transcript: &mut T,
     ) -> Result<ZeromorphMultiPointProof<P>, ZeromorphError> {
         validate_evaluations(setup, evaluations)?;
         validate_claims(setup.num_vars, points, claimed_evals)?;
+        absorb_statement::<P, _>(
+            transcript,
+            setup.num_vars,
+            commitment,
+            points,
+            claimed_evals,
+        );
 
         let quotient_sets = points
             .par_iter()
@@ -211,29 +241,27 @@ where
             .map(|quotients| {
                 quotients
                     .par_iter()
-                    .map(|q| commit_coefficients(q, &setup.inner))
+                    .map(|q| commit_coefficients(q, setup))
                     .collect::<Result<Vec<_>, _>>()
             })
             .collect::<Result<Vec<_>, _>>()?;
         let quotient_commitments = quotient_commitment_rows.into_iter().flatten().collect::<Vec<_>>();
 
-        absorb_quotient_commitments::<P, _>(transcript, points.len(), &quotient_commitments);
-        let y = nonzero_challenge(transcript, "y")?;
+        absorb_quotient_commitments::<P, _>(transcript, &quotient_commitments);
+        let y = nonzero_challenge(transcript, b"zeromorph-y", "y")?;
         let lifted_quotients = quotient_sets
             .par_iter()
             .map(|quotients| lifted_degree_quotient(quotients, y, evaluations.len()))
             .collect::<Vec<_>>();
         let lifted_degree_quotients = lifted_quotients
             .par_iter()
-            .map(|q| commit_shifted_coefficients(q, evaluations.len() / 2, &setup.inner))
+            .map(|q| commit_shifted_coefficients(q, evaluations.len() / 2, setup))
             .collect::<Result<Vec<_>, _>>()?;
-        for commitment in &lifted_degree_quotients {
-            transcript.append(commitment);
-        }
+        absorb_lifted_commitments::<P, _>(transcript, &lifted_degree_quotients);
 
-        let x = nonzero_challenge(transcript, "x")?;
-        let z = nonzero_challenge(transcript, "z")?;
-        let rho = nonzero_challenge(transcript, "rho")?;
+        let x = nonzero_challenge(transcript, b"zeromorph-x", "x")?;
+        let z = nonzero_challenge(transcript, b"zeromorph-z", "z")?;
+        let rho = nonzero_challenge(transcript, b"zeromorph-rho", "rho")?;
         let challenges = ProtocolChallenges { y, x, z, rho };
         let combined = combined_identity(
             evaluations,
@@ -244,7 +272,8 @@ where
             challenges,
         );
         let witness = divide_by_linear(&combined, x);
-        let opening_proof = commit_shifted_coefficients(&witness, 2, &setup.inner)?;
+        let opening_proof = commit_shifted_coefficients(&witness, 1, setup)?;
+        transcript.append(&Label(b"zeromorph-opening"));
         transcript.append(&opening_proof);
 
         Ok(ZeromorphMultiPointProof {
@@ -286,33 +315,35 @@ where
     ) -> Result<(), ZeromorphError> {
         validate_claims(setup.num_vars, points, claimed_evals)?;
         validate_proof_shape(setup.num_vars, points.len(), proof)?;
-        absorb_quotient_commitments::<P, _>(
+        absorb_statement::<P, _>(
             transcript,
-            points.len(),
-            &proof.quotient_commitments,
+            setup.num_vars,
+            commitment,
+            points,
+            claimed_evals,
         );
-        let y = nonzero_challenge(transcript, "y")?;
-        for lifted in &proof.lifted_degree_quotients {
-            transcript.append(lifted);
-        }
-        let x = nonzero_challenge(transcript, "x")?;
-        let z = nonzero_challenge(transcript, "z")?;
-        let rho = nonzero_challenge(transcript, "rho")?;
+        absorb_quotient_commitments::<P, _>(transcript, &proof.quotient_commitments);
+        let y = nonzero_challenge(transcript, b"zeromorph-y", "y")?;
+        absorb_lifted_commitments::<P, _>(transcript, &proof.lifted_degree_quotients);
+        let x = nonzero_challenge(transcript, b"zeromorph-x", "x")?;
+        let z = nonzero_challenge(transcript, b"zeromorph-z", "z")?;
+        let rho = nonzero_challenge(transcript, b"zeromorph-rho", "rho")?;
         let challenges = ProtocolChallenges { y, x, z, rho };
+        transcript.append(&Label(b"zeromorph-opening"));
         transcript.append(&proof.opening_proof);
 
         let identity_commitment = combined_identity_commitment(
-            &setup.inner,
+            setup,
             commitment,
             points,
             claimed_evals,
             proof,
             challenges,
         );
-        let divisor = setup.inner.beta_g2() - setup.inner.g2().scalar_mul(&x);
+        let scaled_opening = proof.opening_proof.scalar_mul(&x);
         let result = P::multi_pairing(
-            &[identity_commitment, -proof.opening_proof],
-            &[setup.inner.beta_sq_g2(), divisor],
+            &[identity_commitment - proof.opening_proof, scaled_opening],
+            &[setup.beta_g2, setup.g2],
         );
         if result.is_identity() {
             Ok(())
@@ -322,10 +353,7 @@ where
     }
 
     fn verifier_setup(setup: &ZeromorphProverSetup<P>) -> ZeromorphVerifierSetup<P> {
-        ZeromorphVerifierSetup {
-            inner: HyperKZGVerifierSetup::from(&setup.inner),
-            num_vars: setup.num_vars,
-        }
+        setup.verifier_setup.clone()
     }
 }
 
@@ -396,13 +424,13 @@ fn validate_proof_shape<P: PairingGroup>(
 
 fn commit_coefficients<P: PairingGroup>(
     coefficients: &[P::ScalarField],
-    setup: &HyperKZGProverSetup<P>,
+    setup: &ZeromorphProverSetup<P>,
 ) -> Result<P::G1, ZeromorphError> {
     let bases = setup
-        .g1_powers()
+        .g1_powers
         .get(..coefficients.len())
         .ok_or(ZeromorphError::SrsTooSmall {
-            have: setup.g1_powers().len(),
+            have: setup.g1_powers.len(),
             need: coefficients.len(),
         })?;
     Ok(P::g1_affine_msm(bases, coefficients))
@@ -411,30 +439,60 @@ fn commit_coefficients<P: PairingGroup>(
 fn commit_shifted_coefficients<P: PairingGroup>(
     coefficients: &[P::ScalarField],
     shift: usize,
-    setup: &HyperKZGProverSetup<P>,
+    setup: &ZeromorphProverSetup<P>,
 ) -> Result<P::G1, ZeromorphError> {
     let end = shift + coefficients.len();
     let bases = setup
-        .g1_powers()
+        .g1_powers
         .get(shift..end)
         .ok_or(ZeromorphError::SrsTooSmall {
-            have: setup.g1_powers().len(),
+            have: setup.g1_powers.len(),
             need: end,
         })?;
     Ok(P::g1_affine_msm(bases, coefficients))
 }
 
-fn absorb_quotient_commitments<P, T>(
+fn absorb_statement<P, T>(
     transcript: &mut T,
-    point_count: usize,
-    commitments: &[P::G1],
+    num_vars: usize,
+    commitment: &ZeromorphCommitment<P>,
+    points: &[Vec<P::ScalarField>],
+    claimed_evals: &[P::ScalarField],
 )
 where
     P: PairingGroup,
     T: Transcript<Challenge = P::ScalarField>,
+    P::ScalarField: AppendToTranscript,
 {
-    transcript.append(&Label(b"zeromorph"));
-    transcript.append(&U64Word(point_count as u64));
+    transcript.append(&Label(b"zeromorph-statement"));
+    transcript.append(commitment);
+    transcript.append(&U64Word(num_vars as u64));
+    transcript.append(&U64Word(points.len() as u64));
+    for (point, claimed_eval) in points.iter().zip(claimed_evals) {
+        for coordinate in point {
+            transcript.append(coordinate);
+        }
+        transcript.append(claimed_eval);
+    }
+}
+
+fn absorb_quotient_commitments<P, T>(transcript: &mut T, commitments: &[P::G1])
+where
+    P: PairingGroup,
+    T: Transcript<Challenge = P::ScalarField>,
+{
+    transcript.append(&Label(b"zeromorph-quotients"));
+    for commitment in commitments {
+        transcript.append(commitment);
+    }
+}
+
+fn absorb_lifted_commitments<P, T>(transcript: &mut T, commitments: &[P::G1])
+where
+    P: PairingGroup,
+    T: Transcript<Challenge = P::ScalarField>,
+{
+    transcript.append(&Label(b"zeromorph-lifted"));
     for commitment in commitments {
         transcript.append(commitment);
     }
@@ -442,8 +500,10 @@ where
 
 fn nonzero_challenge<F: JoltField>(
     transcript: &mut impl Transcript<Challenge = F>,
+    label: &'static [u8],
     name: &'static str,
 ) -> Result<F, ZeromorphError> {
+    transcript.append(&Label(label));
     let challenge = transcript.challenge();
     if challenge.is_zero() {
         Err(ZeromorphError::DegenerateChallenge(name))
@@ -579,7 +639,7 @@ fn combined_identity<F: JoltField>(
     reason = "validated proof rows, points, evaluations, and scalar rows have matching dimensions"
 )]
 fn combined_identity_commitment<P: PairingGroup>(
-    setup: &HyperKZGVerifierSetup<P>,
+    setup: &ZeromorphVerifierSetup<P>,
     commitment: &ZeromorphCommitment<P>,
     points: &[Vec<P::ScalarField>],
     claimed_evals: &[P::ScalarField],
@@ -611,7 +671,7 @@ fn combined_identity_commitment<P: PairingGroup>(
     }
     bases.push(commitment.point());
     scalars.push(commitment_scalar);
-    bases.push(setup.g1());
+    bases.push(setup.g1);
     scalars.push(generator_scalar);
     P::g1_msm(&bases, &scalars)
 }
@@ -646,7 +706,7 @@ where
     type Proof = ZeromorphProof<P>;
     type ProverSetup = ZeromorphProverSetup<P>;
     type VerifierSetup = ZeromorphVerifierSetup<P>;
-    type OpeningHint = ();
+    type OpeningHint = ZeromorphCommitment<P>;
     type SetupParams = (usize, P::G1, P::G2);
 
     fn setup(
@@ -676,7 +736,7 @@ where
         }
         let evaluations = poly.to_dense();
         Self::commit(setup, &evaluations)
-            .map(|commitment| (commitment, ()))
+            .map(|commitment| (commitment, commitment))
             .map_err(|error| OpeningsError::CommitFailed(error.to_string()))
     }
 
@@ -685,11 +745,14 @@ where
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
-        _hint: Option<Self::OpeningHint>,
+        hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
+        let commitment = hint.ok_or_else(|| {
+            OpeningsError::ProveFailed(ZeromorphError::MissingOpeningHint.to_string())
+        })?;
         let evaluations = poly.to_dense();
-        Self::open(setup, &evaluations, point, eval, transcript)
+        Self::open(setup, &evaluations, &commitment, point, eval, transcript)
             .map_err(|error| OpeningsError::ProveFailed(error.to_string()))
     }
 
@@ -719,5 +782,78 @@ where
             .map(HyperKZGCommitment::point)
             .collect::<Vec<_>>();
         HyperKZGCommitment::new(P::g1_msm(&bases, scalars))
+    }
+
+    fn combine_hints(
+        hints: Vec<Self::OpeningHint>,
+        scalars: &[Self::Field],
+    ) -> Self::OpeningHint {
+        Self::combine(&hints, scalars)
+    }
+}
+
+#[cfg(test)]
+mod algebra_tests {
+    #![expect(
+        clippy::indexing_slicing,
+        reason = "small deterministic protocol vectors use explicit coordinates"
+    )]
+
+    use super::{lifted_degree_quotient, multilinear_quotients};
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::Polynomial;
+    use num_traits::Zero;
+
+    #[test]
+    fn quotient_identity_and_constant_tables() {
+        for num_vars in 1..=3 {
+            let size = 1 << num_vars;
+            let evaluations = (0..size)
+                .map(|index| Fr::from_u64((index * index + 3) as u64))
+                .collect::<Vec<_>>();
+            let point = (0..num_vars)
+                .map(|index| Fr::from_u64((index + 2) as u64))
+                .collect::<Vec<_>>();
+            let test_point = (0..num_vars)
+                .map(|index| Fr::from_u64((index + 11) as u64))
+                .collect::<Vec<_>>();
+            let quotients = multilinear_quotients(&evaluations, &point);
+            let polynomial = Polynomial::new(evaluations);
+            let mut reconstructed = polynomial.evaluate(&point);
+            let paper_point = test_point.iter().rev().copied().collect::<Vec<_>>();
+            let paper_opening = point.iter().rev().copied().collect::<Vec<_>>();
+            for (k, quotient) in quotients.iter().enumerate() {
+                let quotient_point = paper_point[..k].iter().rev().copied().collect::<Vec<_>>();
+                let quotient_eval = Polynomial::new(quotient.clone()).evaluate(&quotient_point);
+                reconstructed += (paper_point[k] - paper_opening[k]) * quotient_eval;
+            }
+            assert_eq!(reconstructed, polynomial.evaluate(&test_point));
+
+            let constant = multilinear_quotients(&vec![Fr::from_u64(9); size], &point);
+            assert!(constant.iter().flatten().all(Zero::is_zero));
+        }
+    }
+
+    #[test]
+    fn lifted_coefficients_match_definition() {
+        let num_vars = 3;
+        let size = 1 << num_vars;
+        let evaluations = (0..size)
+            .map(|index| Fr::from_u64((index + 1) as u64))
+            .collect::<Vec<_>>();
+        let point = [Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+        let quotients = multilinear_quotients(&evaluations, &point);
+        let y = Fr::from_u64(7);
+        let lifted = lifted_degree_quotient(&quotients, y, size);
+        let mut expected = vec![Fr::zero(); size];
+        let mut y_power = Fr::from_u64(1);
+        for quotient in &quotients {
+            let offset = size - quotient.len();
+            for (index, coefficient) in quotient.iter().enumerate() {
+                expected[offset + index] += y_power * coefficient;
+            }
+            y_power *= y;
+        }
+        assert_eq!(lifted, expected[size / 2..]);
     }
 }

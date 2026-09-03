@@ -41,6 +41,7 @@ fn benchmark(c: &mut Criterion) {
         let proof = Scheme::open(
             &pk,
             polynomial.evaluations(),
+            &commitment,
             &points[0],
             evaluations[0],
             &mut transcript,
@@ -59,6 +60,7 @@ fn benchmark(c: &mut Criterion) {
                 Scheme::open(
                     &pk,
                     polynomial.evaluations(),
+                    &commitment,
                     &points[0],
                     evaluations[0],
                     &mut transcript,
@@ -72,6 +74,7 @@ fn benchmark(c: &mut Criterion) {
                 Scheme::open_multi(
                     &pk,
                     polynomial.evaluations(),
+                    &commitment,
                     &points,
                     &evaluations,
                     &mut transcript,

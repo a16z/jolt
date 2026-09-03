@@ -35,8 +35,8 @@ where
     /// Generates an SRS from a random generator and secret scalar.
     ///
     /// `max_degree` is the maximum polynomial length (number of evaluations).
-    /// The SRS contains `max_degree + 1` G1 powers, the four low G2 powers used by HyperKZG,
-    /// and the G2 shift used to batch degree-five univariate checks.
+    /// The SRS contains `max(max_degree, 6)` G1 powers, the four low G2 powers used by
+    /// HyperKZG, and the G2 shift used to batch degree-five univariate checks.
     pub fn setup<R: rand_core::RngCore>(
         rng: &mut R,
         max_degree: usize,
@@ -54,7 +54,7 @@ where
     /// KZG binding.
     #[expect(
         clippy::indexing_slicing,
-        reason = "srs_degree is at least five and scalars contains every exponent through it"
+        reason = "num_powers is at least six and scalars contains each published exponent"
     )]
     pub fn setup_from_secret(
         beta: P::ScalarField,
@@ -62,10 +62,10 @@ where
         g1: P::G1,
         g2: P::G2,
     ) -> HyperKZGProverSetup<P> {
-        let srs_degree = max_degree.max(5);
-        let mut scalars = Vec::with_capacity(srs_degree + 1);
+        let num_powers = max_degree.max(6);
+        let mut scalars = Vec::with_capacity(num_powers);
         let mut cur = P::ScalarField::one();
-        for _ in 0..=srs_degree {
+        for _ in 0..num_powers {
             scalars.push(cur);
             cur *= beta;
         }
@@ -79,7 +79,7 @@ where
             cur = cur.scalar_mul(&beta);
         }
 
-        let degree_five_shift_g2 = g2.scalar_mul(&scalars[srs_degree - 5]);
+        let degree_five_shift_g2 = g2.scalar_mul(&scalars[num_powers - 6]);
         HyperKZGProverSetup {
             g1_powers,
             g2_powers,
