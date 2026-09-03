@@ -29,11 +29,30 @@ pub(crate) fn kzg_commit<P: PairingGroup>(
     Ok(P::g1_affine_msm(bases, coeffs))
 }
 
-/// Evaluates a polynomial (in evaluation/coefficient form) at a point.
-///
-/// Standard Horner evaluation: `f(u) = f[0] + f[1]*u + f[2]*u^2 + ...`
+/// Evaluates a polynomial (coefficient form) at a point:
+/// `f(u) = Σ_j u^(jC) · Horner(chunk_j, u)` with the `C`-coefficient chunks
+/// evaluated in parallel.
 pub(crate) fn eval_univariate<F: JoltField>(coeffs: &[F], u: F) -> F {
-    eval_univariate_observed(coeffs, u, &mut NoopVerifierObserver)
+    const CHUNK_LOG: usize = 12;
+    if coeffs.len() <= 1 << CHUNK_LOG {
+        return horner(coeffs, u);
+    }
+    let mut u_chunk = u;
+    for _ in 0..CHUNK_LOG {
+        u_chunk = u_chunk.square();
+    }
+    let partials: Vec<F> = coeffs
+        .par_chunks(1 << CHUNK_LOG)
+        .map(|chunk| horner(chunk, u))
+        .collect();
+    horner(&partials, u_chunk)
+}
+
+fn horner<F: JoltField>(coeffs: &[F], u: F) -> F {
+    coeffs
+        .iter()
+        .rev()
+        .fold(F::zero(), |result, &coefficient| result * u + coefficient)
 }
 
 /// Batch KZG opening at three points with one degree-three quotient witness.
@@ -207,25 +226,123 @@ where
     ]
 }
 
+/// Quotient of `f` by a monic cubic (the remainder is dropped). The top-down
+/// recurrence `q[i] = f[i+3] − d2·q[i+1] − d1·q[i+2] − d0·q[i+3]` runs in
+/// parallel blocks: every block is solved with a zero incoming state, the true
+/// boundary states are propagated with the block transition matrix, and each
+/// block then adds its homogeneous correction.
 #[expect(
     clippy::indexing_slicing,
-    reason = "loop bounds pin all polynomial and degree-three divisor indices"
+    reason = "block slices stay inside f (three longer than the quotient) and incoming has one state per block"
 )]
 fn divide_by_monic_cubic<F: JoltField>(f: &[F], divisor: &[F; 4]) -> Vec<F> {
-    if f.len() <= 3 {
+    let Some(n) = f.len().checked_sub(3).filter(|&n| n > 0) else {
         return vec![];
+    };
+    let block = (n / (4 * rayon::current_num_threads())).max(1 << 12);
+    let mut quotient = vec![F::zero(); n];
+    quotient
+        .par_chunks_mut(block)
+        .enumerate()
+        .for_each(|(index, q)| {
+            let lo = index * block;
+            divide_block(&f[lo..lo + q.len() + 3], divisor, q, [F::zero(); 3]);
+        });
+    let blocks = n.div_ceil(block);
+    if blocks == 1 {
+        return quotient;
     }
-    let mut quotient = vec![F::zero(); f.len() - 3];
-    for i in (0..quotient.len()).rev() {
-        let mut coefficient = f[i + 3];
-        for offset in 1..=3 {
-            if let Some(next) = quotient.get(i + offset) {
-                coefficient -= divisor[3 - offset] * *next;
-            }
-        }
-        quotient[i] = coefficient;
+    let transition = matrix_power(companion(divisor), block);
+    let mut incoming = vec![[F::zero(); 3]; blocks];
+    for index in (0..blocks - 1).rev() {
+        let above = index + 1;
+        let lo = above * block;
+        let local: [F; 3] =
+            std::array::from_fn(|i| quotient.get(lo + i).copied().unwrap_or(F::zero()));
+        incoming[index] = if above == blocks - 1 {
+            local
+        } else {
+            let carried = matvec(&transition, incoming[above]);
+            std::array::from_fn(|i| carried[i] + local[i])
+        };
     }
     quotient
+        .par_chunks_mut(block)
+        .zip(incoming.par_iter())
+        .for_each(|(q, &state)| {
+            if state == [F::zero(); 3] {
+                return;
+            }
+            let mut homogeneous = state;
+            for value in q.iter_mut().rev() {
+                homogeneous = matvec(&companion(divisor), homogeneous);
+                *value += homogeneous[0];
+            }
+        });
+    quotient
+}
+
+/// One block of the quotient recurrence; `f.len() == q.len() + 3` and
+/// `incoming` holds `q[hi], q[hi+1], q[hi+2]` from the block above.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "f has three more entries than q and incoming covers the three indices past q"
+)]
+fn divide_block<F: JoltField>(f: &[F], divisor: &[F; 4], q: &mut [F], incoming: [F; 3]) {
+    let len = q.len();
+    for i in (0..len).rev() {
+        let mut coefficient = f[i + 3];
+        for offset in 1..=3 {
+            let next = if i + offset < len {
+                q[i + offset]
+            } else {
+                incoming[i + offset - len]
+            };
+            coefficient -= divisor[3 - offset] * next;
+        }
+        q[i] = coefficient;
+    }
+}
+
+/// `s_i = A · s_{i+1}` for the state `s_i = (q[i], q[i+1], q[i+2])`.
+fn companion<F: JoltField>(divisor: &[F; 4]) -> [[F; 3]; 3] {
+    [
+        [-divisor[2], -divisor[1], -divisor[0]],
+        [F::one(), F::zero(), F::zero()],
+        [F::zero(), F::one(), F::zero()],
+    ]
+}
+
+fn matvec<F: JoltField>(matrix: &[[F; 3]; 3], vector: [F; 3]) -> [F; 3] {
+    matrix.map(|row| {
+        row.iter()
+            .zip(&vector)
+            .fold(F::zero(), |acc, (&a, &b)| acc + a * b)
+    })
+}
+
+#[expect(clippy::indexing_slicing, reason = "fixed-size three-by-three arrays")]
+fn matmul<F: JoltField>(left: &[[F; 3]; 3], right: &[[F; 3]; 3]) -> [[F; 3]; 3] {
+    std::array::from_fn(|i| {
+        std::array::from_fn(|j| (0..3).fold(F::zero(), |acc, k| acc + left[i][k] * right[k][j]))
+    })
+}
+
+fn matrix_power<F: JoltField>(matrix: [[F; 3]; 3], mut exponent: usize) -> [[F; 3]; 3] {
+    let mut result = [
+        [F::one(), F::zero(), F::zero()],
+        [F::zero(), F::one(), F::zero()],
+        [F::zero(), F::zero(), F::one()],
+    ];
+    let mut base = matrix;
+    while exponent > 0 {
+        if exponent & 1 == 1 {
+            result = matmul(&result, &base);
+        }
+        base = matmul(&base, &base);
+        exponent >>= 1;
+    }
+    result
 }
 
 #[cfg(test)]
@@ -308,6 +425,39 @@ mod tests {
         assert_eq!(divide_by_monic_cubic(&polynomial, &divisor), expected);
         let values = roots.map(|root| eval_univariate(&remainder, root));
         assert_eq!(interpolate_three(&roots, &values), Some(remainder));
+    }
+
+    #[test]
+    fn cubic_quotient_spans_parallel_blocks() {
+        let roots = [Fr::from_u64(2), Fr::from_u64(4), Fr::from_u64(6)];
+        let divisor = vanishing_polynomial(&roots);
+        let expected: Vec<Fr> = (0..(3 << 12) + 5)
+            .map(|i| Fr::from_u64(i as u64 * 7 + 3))
+            .collect();
+        let mut polynomial = vec![Fr::zero(); expected.len() + 3];
+        for (i, &a) in expected.iter().enumerate() {
+            for (j, &b) in divisor.iter().enumerate() {
+                polynomial[i + j] += a * b;
+            }
+        }
+        polynomial[0] += Fr::from_u64(13);
+        polynomial[2] += Fr::from_u64(17);
+        assert_eq!(divide_by_monic_cubic(&polynomial, &divisor), expected);
+    }
+
+    #[test]
+    fn eval_univariate_chunks_match_power_sum() {
+        let f: Vec<Fr> = (0..(1 << 13) + 9)
+            .map(|i| Fr::from_u64(i as u64 * 5 + 1))
+            .collect();
+        let u = Fr::from_u64(3);
+        let mut power = Fr::from_u64(1);
+        let mut expected = Fr::zero();
+        for &coefficient in &f {
+            expected += coefficient * power;
+            power *= u;
+        }
+        assert_eq!(eval_univariate(&f, u), expected);
     }
 
     #[test]

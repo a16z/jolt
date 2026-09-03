@@ -6,7 +6,7 @@
 use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
-use jolt_field::{Field, Ring};
+use jolt_field::{CanonicalBytes, Field, Ring};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -72,8 +72,7 @@ where
             scalars.push(cur);
             cur *= beta;
         }
-        let g1_powers: Vec<P::G1> = scalars.par_iter().map(|s| g1.scalar_mul(s)).collect();
-        let g1_powers = P::g1_to_affine(&g1_powers);
+        let g1_powers = P::g1_to_affine(&fixed_base_powers::<P>(g1, &scalars));
 
         let mut g2_powers = Vec::with_capacity(4);
         let mut cur = g2;
@@ -315,6 +314,49 @@ where
 
         Ok(())
     }
+}
+
+/// `[s · g1]` for every scalar through a fixed-base table: sixteen 16-bit
+/// windows of `g1` multiples, one table add per window instead of a full
+/// double-and-add per power.
+fn fixed_base_powers<P: PairingGroup>(g1: P::G1, scalars: &[P::ScalarField]) -> Vec<P::G1> {
+    const WINDOW_BITS: usize = 16;
+    let windows = <P::ScalarField as CanonicalBytes>::NUM_BYTES.div_ceil(2);
+    let mut window_bases = Vec::with_capacity(windows);
+    let mut base = g1;
+    for _ in 0..windows {
+        window_bases.push(base);
+        for _ in 0..WINDOW_BITS {
+            base = base.double();
+        }
+    }
+    let tables: Vec<Vec<P::G1>> = window_bases
+        .into_par_iter()
+        .map(|base| {
+            let mut table = Vec::with_capacity(1 << WINDOW_BITS);
+            let mut multiple = P::G1::identity();
+            for _ in 0..1usize << WINDOW_BITS {
+                table.push(multiple);
+                multiple += base;
+            }
+            table
+        })
+        .collect();
+    scalars
+        .par_iter()
+        .map(|scalar| {
+            tables.iter().zip(scalar.to_bytes_le_vec().chunks(2)).fold(
+                P::G1::identity(),
+                |acc, (table, digit_bytes)| {
+                    let digit = digit_bytes
+                        .iter()
+                        .rev()
+                        .fold(0usize, |digit, &byte| digit << 8 | usize::from(byte));
+                    table.get(digit).map_or(acc, |multiple| acc + multiple)
+                },
+            )
+        })
+        .collect()
 }
 
 /// # Security note
@@ -740,6 +782,24 @@ mod tests {
                 &blinding,
             )
         );
+    }
+
+    #[test]
+    fn fixed_base_powers_match_scalar_mul() {
+        let g1 = Bn254::g1_generator();
+        let scalars = [
+            Fr::from_u64(0),
+            Fr::from_u64(1),
+            Fr::from_u64(65_535),
+            Fr::from_u64(65_536),
+            Fr::from_u64(u64::MAX),
+            -Fr::from_u64(1),
+            Fr::from_u64(23).inverse().unwrap(),
+        ];
+        let powers = fixed_base_powers::<Bn254>(g1, &scalars);
+        for (power, scalar) in powers.iter().zip(&scalars) {
+            assert_eq!(*power, g1.scalar_mul(scalar));
+        }
     }
 
     #[test]
