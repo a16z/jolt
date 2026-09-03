@@ -352,3 +352,46 @@ Command:
 cargo nextest run -p jolt-wrapper --release --test assembly_term_gate term_compression_gate \
   --run-ignored ignored-only --cargo-quiet --no-capture
 ```
+
+## 01:28 shared committed-round opening
+
+The assembly now delays stage-A and term-stage round openings until both stages have emitted all
+round commitments and next claims. All aggregation coefficients are then drawn together. Each
+stage keeps its own `S(0)` scalar; one variable-batch proof supplies the shared `W`, `W'`, and
+degree-shift commitment. Delta: **−96 B** and **−4 pairing pairs**.
+
+The BDFG verifier evaluates complement vanishing products directly at its challenge rather than
+building each polynomial. The term verifier materializes `eq(t*, ·)` once for its coefficient and
+five factor reductions. Measured Fr work falls 36,936 → **7,945 multiplications**.
+
+One release gate at `rows=2^18`, `k=16`, `T=600`, five factors:
+
+| item | bytes |
+|---|---:|
+| two phase commitments | 64 |
+| stage A: 18 × 64 + `S_A(0)` | 1,184 |
+| term stage: 10 × 64 + `S_T(0)` | 672 |
+| shared BDFG/shift | 96 |
+| five final factor evaluations | 160 |
+| stage B | 320 |
+| reduced claim | 32 |
+| HyperKZG opening | 2,144 |
+| **proof payload** | **4,672** |
+| temporary public challenge IO | 608 |
+| **baseline total** | **5,280** |
+
+Exact bincode: 4,754 B. Executed verifier: 150 ecMul, 149 ecAdd, 8 pairing pairs, 7,945 Fr
+mul, 8 inversions, 300 Keccak; **1,892,109 N4 gas**. Contended timing (load
+8.95/9.16/10.28): setup 5,947 ms, phase commits 85 + 91 ms, prove 10,805 ms, verify 64 ms.
+
+At 270 columns the current projection is **5,408 B**. T1's CopyLink-bound challenge outputs remove
+the temporary 608 B public block, leaving **0 B challenge IO** and 592 B headroom against decimal
+6,000 B. T1 contributes 230 terms; R contributes 26; T2 remains pending.
+
+## T1 stream adapter
+
+`hash_table::StreamColumns` exports typed groups without materializing its 14 u32 word columns as
+field elements: 15 bit groups, one u32 group, one VK-bit group, one VK-u16 group at k=16.
+`hash_table::StreamTermExporter` maps T1's 230 local terms to physical `(group, slot)` IDs and
+binds its two stage-A member coefficients. The adapter is ready on top of committed T1
+`c4a218b14`; the real assembly waits for T2's phase/helper/term export.
