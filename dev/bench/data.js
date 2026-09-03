@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788460913994,
+  "lastUpdate": 1788464011184,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -153346,6 +153346,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 868720,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2037171530110b3ca360c6997f12496a3a51cd25",
+          "message": "perf(prover): ~2x lower peak prover memory at 2^25-2^26, byte-identical proofs (#1734)\n\n* perf(prover): cut peak prover memory ~2x at 2^25-2^26 with byte-identical proofs\n\nPure memory engineering on the optimized kernel backend — no protocol,\nfield, or transcript changes; proof bytes are identical to the base\nbranch (byte_diff 12/12 plus sha256 A/B at 2^25 and 2^26).\n\nMechanisms, in rough order of impact:\n- Return freed-but-retained allocator pages at stage boundaries and at\n  in-stage representation transitions (macOS libmalloc's large-block\n  cache never re-serves shrinking generations; malloc_trim on\n  linux-gnu, no-op elsewhere). The baseline ratcheted 10->31 GiB\n  across stages 1-6 at 2^25 from retention alone.\n- Pack the trace row 160->64 B (registers/RAM state codec, then the\n  spec'd JoltTraceRow load/store slot aliasing) — the trace vector\n  underlies every stage's resident set.\n- Defer or chunk large prepare-time materializations (Spartan az/bz,\n  claim-reduction gamma-tables, one-hot index columns) where a single\n  fused pass keeps wall time flat; restore fused prepare where the\n  re-fold cost grew with scale.\n- In-place forward-compaction binds and SoA layouts for sparse entry\n  generations (registers/RAM read-write checking); fused first-two\n  binds skip a full-size generation.\n- Share one lookup-index column with stage 6b instead of 48 B rows;\n  split session carries so value columns die with their last consumer.\n- Stage-8: move (not clone) Dory hints, fold-once opening views,\n  drop opening columns after the tier-1 fold.\n\nMeasured on an M5 Max MacBook (18 cores, 128 GiB), fibonacci workload,\npeak RSS / nominal trace length:\n\n  2^25: 31.5 GiB (1007 B/cyc) -> 14.2 GiB (453 B/cyc)  [-55%]\n  2^26: 51.9 GiB ( 832 B/cyc) -> 23.1 GiB (369 B/cyc)  [-56%]\n\nWall time within noise (2^26 order-balanced pairs: -3.5%). The\nbaseline's macOS numbers carry ~16 GiB of allocator retention that\nglibc largely avoids, so B/cyc on Linux reference hardware should land\nat or below the above.\n\nEvery layout/fusion change ships with a pinned equivalence test\nagainst the sequential path; per-batch heap-snapshot coverage and a\nproof-sha256 line in the profile harness support future A/B runs.\n\n* test(jolt-kernels): drop old-vs-new parity relic tests from the sparse registers path\n\nRemove the three transition-validation tests that pinned the SoA/in-place/\nfused rewrites against the superseded implementations they replaced\n(in_place_bind_matches_out_of_place, soa_paths_match_aos_machinery,\nfused_first_two_binds_match_sequential), plus the #[cfg(test)] copies of the\nreplaced code kept alive solely as their oracles (bind_sparse_entries,\nbind_seed_entries_soa, merge_fill). They validated this PR's diff; the\nkernel-level parity suite vs the living ReferenceBackend covers the same\npaths against an independent oracle.\n\n* fix: port post-merge main to the packed TraceRow API\n\nThe merge of main brought in #1752's inline-bearing acceptance tests and\n#1729's x86 AOT tracer, both written against the pre-#1734 TraceRow struct\nliteral. Route them through the packed row's accessors/constructor:\n\n- byte_diff.rs / zk_e2e.rs: row.instruction.instruction_kind -> row.instruction_kind()\n- jolt-tracer-x86 reassemble_rows: struct literal -> TraceRow::new(...), which\n  also enforces the final memory-row contract on reassembled rows\n\n* style: fix style invariant violations (nominal imports, native allocative visit)\n\n* fix: gate Sha256 import off under akita in profile harness\n\nThe akita path never computes the Dory proof sha256 (prove_workload is\ncfg(not(akita))), so the import is unused under --features akita,profiling.\nKeep the crate linked via 'as _' so its inline registrations still reach\nthe tracer.\n\n* refactor: wrap trace metadata and fix PR style\n\n* test: remove PR validation residue\n\n* refactor: simplify prover memory follow-ups\n\n* ci: check nominal paths in inline modules\n\n* refactor(prover): address review findings on the memory PR\n\nTrace row and stage 8:\n- TraceRow::new returns Result<_, TraceRowError>; TraceError gains\n  InvalidRow. Deserialize goes through the same constructor (TraceRowWire).\n- Split trace.rs into trace/row.rs and sparse.rs into sparse/{layout,ops}.rs.\n- OpeningView keys on PCS::OPENING_FOLD_IS_TERMINAL instead of assuming Dory\n  folds once; the forwarded MultilinearPoly surface is documented.\n- stage_boundary is gated on PURGE_MIN_LOG_T like every other purge site;\n  release_retained_memory is private, purge_staging renamed\n  purge_retained_memory.\n\nRAM address column:\n- Back to Vec<u32> with the typed encode check; the u64 widening kept 4*T\n  extra bytes live across stages 2-6b with no 64-bit consumer.\n- SharedRamAddresses derives Allocative natively so the Arc dedups; the\n  custom visitor counted the column twice in stage-4/5 heap snapshots.\n- collect_full documents the two-pass trade (u32 addresses outlive values;\n  stage 4 re-reads the trace instead of parking 16*T bytes).\n\nOne owner per rule:\n- Raw-column bind schedule (bound_pair, bind_raw_twice, mul_0_optimized)\n  lives in support.rs; ram_val_check and the register sparse path call it.\n- The 8x shrink law moves into Polynomial::bind_low_to_high_in_place, which\n  reports the release; Polynomial::{capacity, shrink_to_fit} are gone.\n- MatrixEntry::bind / type Bound become inherent methods; the trait keeps\n  only the generic accumulate_pair_evals.\n- TraceRow::is_noop (test-only caller) removed; bind_low_to_high_in_place\n  free fn is private; row.instruction() is decoded once per row in the\n  witness hot paths.\n\nTests: restore rejects_session_carry_from_another_cycle_domain,\nrejects_register_outside_protocol_domain and\ncycle_entry_count_matches_cycle_entries, all on still-live checks.\n\n* fix(jolt-program): drop needless return in TraceRow deserialize under field-inline\n\n* refactor(poly): inline the single-caller in-place bind helper\n\n`bind_low_to_high_in_place` was split across a public method and a\nprivate free function with exactly one caller. A free function is pure\nor shared across >=2 callers; this one mutates `&mut Vec<F>` and\n`Polynomial<F>` owns the behavior. The sibling binds in the same impl\nblock (`bind_low_to_high`, `bind_low_to_high_reusing_scratch`) already\ncarry their loop bodies, cfg split included.\n\nDrop the helper's `half == 0` early return: it only fires at `len == 1`,\nwhich the method's `num_vars > 0` assert already rejects, so the guard\nwas dead and turned a broken length invariant into a silent no-op.\nUnconditional indexing now faults instead.\n\nThe level-by-level aliasing argument moves onto the method doc.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* perf(prover): drop the stage-8 fold-once opening view\n\n`OpeningView` and `CommitmentScheme::OPENING_FOLD_IS_TERMINAL` existed to\nrelease each joint-opening source inside `prove_batch`, at its single\n`fold_rows`. On the optimized backend there is nothing there to release.\n\n`OptimizedJointOpening::prepare` does not materialize the n grid-embedded\ncolumns: it makes one typed trace pass into a single `OpeningColumns`\n(rd_inc, ram_inc, lookup_index, bytecode_pc, ram_address — 64 B/cycle)\nbehind one `Arc`, and returns lazy `TraceOpeningPoly` handles over it. So\nevery trace view shares one store and dropping an individual view frees\nnothing; the store dies with the last one either way. The remaining\n`BlockOpeningPoly` tables are clones of `precommitted_tables`, which\n`prove_stage8` keeps alive for its whole body regardless. Only the\nreference backend embeds dense per polynomial, and that is the naive test\noracle, not a performance path.\n\nMeasured (fibonacci, optimized backend, order-balanced pairs), peak RSS:\n\n  2^25: 9.55 GiB with the view -> 9.62 GiB without  (+0.7%)\n  2^26: 16.43 GiB with        -> 16.36 GiB without  (-0.4%)\n\nBoth within run-to-run spread; proof bytes identical at both scales.\n\nRemoving it also retires an unchecked promise: the const was enforced only\nby runtime `expect`s, and the view forwarded 4 of `MultilinearPoly`'s 10\nmethods while the other 6 fell to defaults that would have degraded\nsilently (`to_dense` materializing a full copy, `is_one_hot` losing the\nsparse path) had `open` ever consulted them.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(kernels): inline the row_extraction_error helpers\n\nThree modules each defined a private `row_extraction_error` whose whole\nbody is one constant `SumcheckError::MissingEvaluationSource`, differing\nonly in the `kind` literal. Fold each into its `map_err` closure.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* perf(kernels): move the precommitted tables into the opened polynomials\n\n`JointOpeningPolynomials::prepare` borrowed `precommitted_tables` and\ncloned each entry into its `BlockOpeningPoly`, so every committed-program\ntable (bytecode chunks, program image) was resident twice for the whole\nbatch opening: once in the opened polynomial and once in the caller's map,\nwhich `prove_stage8` holds until it returns and never reads again.\n\nTake the map by value and `remove` each table instead. Sizes scale with\nthe committed program rather than the trace, so this is well under the\nrun-to-run spread of a peak-RSS measurement — it is duplicate storage with\nno reader, not a measured win.\n\n`final_opening_polynomial_order` emits each `JoltCommittedPolynomial`\nexactly once, so no entry is looked up twice and `remove` cannot miss.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(kernels): keep the shared instruction-input row error helper\n\nPartial revert of e6aa900c5. The other two `row_extraction_error` helpers\nhad one caller each and inlined cleanly; this one has two, so inlining\nduplicated the `kind` literal and pushed both call sites into a\nmulti-line closure. It is pure and shared, which is exactly what a free\nfunction is for.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-03T11:28:27-07:00",
+          "tree_id": "c7710c8b613d685ee8343d14851d85e07bc1ba54",
+          "url": "https://github.com/a16z/jolt/commit/2037171530110b3ca360c6997f12496a3a51cd25"
+        },
+        "date": 1788464005239,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0693,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861916,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.133,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 504624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 497976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7207,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 501220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5662,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.5265,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 501164,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.5207,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.2769,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 865536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5734,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.482,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.7073,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 509064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.9994,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.1428,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1022488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.1056,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 641796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 73.7521,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2147308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.2688,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 501104,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5213,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 501328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.4318,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 867052,
             "unit": "KB",
             "extra": ""
           }
