@@ -427,6 +427,22 @@ Against the fixed CPU the final Metal matrix (32.0 / 33.3-33.5 / 35.7-36.5 s) no
 5x on any workload; the shortfall is 1.0 / 0.3-0.5 / 1.7-2.4 s. The Metal walls themselves are
 unchanged. Section 9 gives the levers that close it.
 
+**Unified branch (main-based) matrix, 2026-09-03.** Same binary for both backends, every proof verified;
+walls are not comparable to the campaign rows above because main's guests emit fewer cycles per
+operation (SHA-2 151 M cycles, BTreeMap 108 M at the 150 M target, which pads to 2^27). Full notes in
+`benchmark-runs/akita-10mhz-studies/analysis.md`, "Unified branch 2026-09-03".
+
+| workload | CPU (unified) | Metal A | Metal B | speedup | padded MHz | peak RSS (Metal) | trace cycles |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| btreemap (target 150M, pads to 2^27) | 77.54 s | 21.00 s | 20.47 s | 3.69-3.79x | 6.39-6.56 | 43.0 GiB | 108 M |
+| btreemap (target 210M, pads to 2^28) | 127.47 s | 31.98 s | 31.08 s | 3.99-4.10x | 8.39-8.64 | 79.5 GiB | 153 M |
+| fibonacci | 188.97 s | 43.36 s | 41.22 s | 4.36-4.58x | 6.19-6.51 | 83.2 GiB | 201 M |
+| sha2-chain | 166.40 s | 37.74 s | 36.33 s | 4.41-4.58x | 7.11-7.39 | 80.8 GiB | 151 M |
+
+The 5x gate fails on all three against the unified CPU. The Metal regression against the campaign line is
+attributed to the witness prepare running serially ahead of the commit (+1.8-2.3 s), the eval proof
+under transcript grinding (+1.4 s), Stage 6a on Fibonacci (+1.3 s) and the commit (+1.3 s).
+
 ## 8. Goal-mode prompt (software campaign to the measured ceiling)
 
 ```text
