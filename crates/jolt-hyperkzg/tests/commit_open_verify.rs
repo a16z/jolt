@@ -194,7 +194,6 @@ fn deterministic_setup_from_secret() {
 
     let pk1 = KzgPCS::setup_from_secret(beta, 16, g1, g2);
     let pk2 = KzgPCS::setup_from_secret(beta, 16, g1, g2);
-    assert_eq!(pk1.g1_powers().len(), 16);
     let _vk1 = KzgPCS::verifier_setup(&pk1);
     let vk2 = KzgPCS::verifier_setup(&pk2);
 

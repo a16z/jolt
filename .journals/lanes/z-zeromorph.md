@@ -59,17 +59,15 @@ Z_x(X)    = f_hat(X) - v Phi_ell(x) - sum_k A_k(x) q_hat_k(X)
 H(X)      = zeta_x(X) + z Z_x(X) = (X - x) Q(X)
 ```
 
-The shared HyperKZG setup now publishes exactly `N` G1 powers, `beta^0` through `beta^(N-1)`. Section 6's degree-enforcing shift is therefore `N_max - (N - 1) = 1`:
+The HyperKZG setup contains `N + 1` G1 powers, so §6's degree-enforcing shift is `N_max - (N - 1) = 2`:
 
 ```text
-pi = [X Q(X)]_1
+pi = [X^2 Q(X)]_1
 
-e(C_H, [beta]_2) = e(pi, [beta - x]_2)
-
-e(C_H - pi, [beta]_2) * e(x pi, [1]_2) = 1
+e(C_H, [tau^2]_2) = e(pi, [tau - x]_2)
 ```
 
-The second form is the implementation: one variable G1 multiplication, no variable G2 operation, and one two-pair multi-pairing against fixed verifier-key G2 elements. The shifted witness uses SRS indices `1..N`, so its maximum exponent is `N-1`. `Phi` suffix products, powers `x^(2^k)`, and every `A_k(x)` take `O(ell)` field operations.
+Verification uses one two-pair multi-pairing. `Phi` suffix products, powers `x^(2^k)`, and every `A_k(x)` take `O(ell)` field operations.
 
 For points `j = 0..t-1`, all quotient and raised-degree commitments precede challenge `rho`; the final polynomial is:
 
@@ -78,27 +76,6 @@ H_multi(X) = sum_j rho^j (zeta_j,x(X) + z Z_j,x(X)).
 ```
 
 It has one shifted KZG witness and the same two-pair equation. A false component can cancel for at most `t - 1` values of `rho`.
-
-## Fiat–Shamir schedule
-
-The statement precedes every proof message and challenge. The `CommitmentScheme` opening hint is the commitment returned by `commit`; RLC callers combine hints with the same scalars as commitments.
-
-```text
-append "zeromorph-statement"
-append C_f, ell, t, ((u_j[0], ..., u_j[ell-1]), v_j) for j = 0..t-1
-
-append "zeromorph-quotients", then every C_(j,k) in point-major order
-append "zeromorph-y";   squeeze y
-
-append "zeromorph-lifted", then every C_q,j
-append "zeromorph-x";   squeeze x
-append "zeromorph-z";   squeeze z
-append "zeromorph-rho"; squeeze rho
-
-append "zeromorph-opening", pi
-```
-
-The adaptive forgery `u = 0`, identity quotient commitments, `v = f_hat(x) / Phi_ell(x)` now fails: changing `v` changes the statement prefix and therefore `x`.
 
 ## Proof bytes
 
@@ -115,12 +92,12 @@ No proof field elements. Single-point size is 72.5% below HyperKZG's 2,560 bytes
 
 ## Timings
 
-Criterion release build, 10 Rayon threads, 10 samples. Shared 16 GiB host; lower-contention prover runs retained because statement absorption and the shift-index correction do not change their MSM shapes. Verification was remeasured after the fixed-G2 rewrite. Peak process RSS across the `ell = 21` commit/open-1/open-3/verify run: **1.10 GB**.
+Criterion release build, 10 Rayon threads, 10 samples. Shared 16 GiB host; lower-contention runs retained. Peak process RSS across the `ell = 21` commit/open-1/open-3/verify run: **1.10 GB**.
 
 | `ell` | Commit | Open 1 point | Open 3 points | Verify |
 |---:|---:|---:|---:|---:|
-| 20 | 0.622 s | **1.638 s** | **3.648 s** | **0.745 ms** |
-| 21 | 1.235 s | **3.084 s** | **6.744 s** | **0.744 ms** |
+| 20 | 0.622 s | **1.638 s** | **3.648 s** | 1.11 ms |
+| 21 | 1.235 s | **3.084 s** | **6.744 s** | 0.85 ms |
 
 HyperKZG comparison supplied for this campaign: 1.35 s / 2.60 s open at `ell = 20 / 21`; Zeromorph is 1.21× / 1.19× slower while removing the evaluation vector.
 
@@ -128,5 +105,5 @@ HyperKZG comparison supplied for this campaign: 1.35 s / 2.60 s open at `ell = 2
 
 - Single point: one MSM over `ell + 3` G1 inputs (`C_q`, `C_f`, `[1]_1`, and `ell` `C_k`); 23 inputs at `ell = 20`.
 - `t` points: one MSM over `t(ell + 1) + 2` G1 inputs; 65 inputs for three points at `ell = 20`.
-- Variable group work after the MSM: one G1 multiplication `x * pi`; G2 inputs `[1]_2` and `[beta]_2` are fixed verifier-key elements.
+- G2: compute `[tau - x]_2`; `[tau^2]_2` comes from the verifier key.
 - Pairing precompile: one product check containing two pairs.
